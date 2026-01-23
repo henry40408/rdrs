@@ -114,7 +114,7 @@ pub async fn get_entry(
         .entry
         .content
         .as_ref()
-        .map(|c| sanitize_html(c));
+        .map(|c| sanitize_html(c, &state.config.image_proxy_secret));
 
     Ok(Json(EntryResponse {
         entry: entry_with_feed,

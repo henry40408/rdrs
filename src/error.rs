@@ -74,6 +74,21 @@ pub enum AppError {
     #[error("Invalid OPML format: {0}")]
     OpmlParseError(String),
 
+    #[error("Invalid image URL")]
+    InvalidImageUrl,
+
+    #[error("Image fetch failed: {0}")]
+    ImageFetchError(String),
+
+    #[error("Image too large")]
+    ImageTooLarge,
+
+    #[error("Unsupported image type")]
+    UnsupportedImageType,
+
+    #[error("Invalid signature")]
+    InvalidSignature,
+
     #[error("Internal server error")]
     Internal(String),
 }
@@ -111,6 +126,13 @@ impl IntoResponse for AppError {
             AppError::OpmlParseError(msg) => {
                 return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
             }
+            AppError::InvalidImageUrl => (StatusCode::BAD_REQUEST, "Invalid image URL"),
+            AppError::ImageFetchError(msg) => {
+                return (StatusCode::BAD_GATEWAY, Json(json!({ "error": msg }))).into_response()
+            }
+            AppError::ImageTooLarge => (StatusCode::BAD_REQUEST, "Image too large"),
+            AppError::UnsupportedImageType => (StatusCode::BAD_REQUEST, "Unsupported image type"),
+            AppError::InvalidSignature => (StatusCode::BAD_REQUEST, "Invalid signature"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
         };
 

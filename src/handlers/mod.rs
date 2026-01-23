@@ -4,4 +4,5 @@ pub mod category;
 pub mod entry;
 pub mod feed;
 pub mod pages;
+pub mod proxy;
 pub mod user;

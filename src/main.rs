@@ -13,6 +13,12 @@ async fn main() {
 
     let config = Config::from_env();
 
+    if config.image_proxy_secret_generated {
+        tracing::warn!(
+            "IMAGE_PROXY_SECRET not set, using temporary key. Proxy URLs will be invalidated on restart."
+        );
+    }
+
     let conn = Connection::open(&config.database_url).expect("Failed to open database");
     db::init_db(&conn).expect("Failed to initialize database");
 

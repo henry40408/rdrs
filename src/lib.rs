@@ -95,5 +95,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/entries/mark-all-read", put(handlers::entry::mark_all_read))
         .route("/api/feeds/{id}/entries", get(handlers::entry::list_feed_entries))
         .route("/api/feeds/{id}/refresh", post(handlers::entry::refresh_feed_handler))
+        // Proxy routes
+        .route("/api/proxy/image", get(handlers::proxy::proxy_image))
         .with_state(state)
 }

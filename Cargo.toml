@@ -33,6 +33,9 @@ scraper = "0.22"
 url = "2"
 quick-xml = { version = "0.37", features = ["serialize"] }
 ammonia = "4"
+base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
 
 [dev-dependencies]
 axum-test = "17"
