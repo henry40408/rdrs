@@ -55,16 +55,16 @@ impl IntoResponse for AppError {
             AppError::InvalidCredentials => (StatusCode::UNAUTHORIZED, "Invalid credentials"),
             AppError::UserNotFound => (StatusCode::NOT_FOUND, "User not found"),
             AppError::UsernameExists => (StatusCode::CONFLICT, "Username already exists"),
-            AppError::RegistrationNotAllowed => {
-                (StatusCode::FORBIDDEN, "Registration not allowed")
-            }
+            AppError::RegistrationNotAllowed => (StatusCode::FORBIDDEN, "Registration not allowed"),
             AppError::UserDisabled => (StatusCode::FORBIDDEN, "User is disabled"),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized"),
             AppError::Forbidden => (StatusCode::FORBIDDEN, "Forbidden"),
             AppError::CannotModifySelf => (StatusCode::BAD_REQUEST, "Cannot modify self"),
             AppError::AlreadyMasquerading => (StatusCode::BAD_REQUEST, "Already masquerading"),
             AppError::NotMasquerading => (StatusCode::BAD_REQUEST, "Not masquerading"),
-            AppError::Validation(msg) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response(),
+            AppError::Validation(msg) => {
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+            }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
         };
 

@@ -61,8 +61,7 @@ fn parse_datetime(s: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
         .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                .map(|dt| dt.and_utc())
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
         })
         .unwrap_or_else(|_| Utc::now())
 }
@@ -130,10 +129,7 @@ pub fn delete_user_sessions(conn: &Connection, user_id: i64) -> AppResult<()> {
 
 #[allow(dead_code)]
 pub fn cleanup_expired(conn: &Connection) -> AppResult<usize> {
-    let deleted = conn.execute(
-        "DELETE FROM session WHERE expires_at < datetime('now')",
-        [],
-    )?;
+    let deleted = conn.execute("DELETE FROM session WHERE expires_at < datetime('now')", [])?;
     Ok(deleted)
 }
 
@@ -189,7 +185,9 @@ mod tests {
         assert!(!session.is_masquerading());
         assert!(!session.is_expired());
 
-        let found = find_by_token(&conn, &session.session_token).unwrap().unwrap();
+        let found = find_by_token(&conn, &session.session_token)
+            .unwrap()
+            .unwrap();
         assert_eq!(found.id, session.id);
     }
 
@@ -216,14 +214,18 @@ mod tests {
 
         start_masquerade(&conn, &session.session_token, target.id).unwrap();
 
-        let masq = find_by_token(&conn, &session.session_token).unwrap().unwrap();
+        let masq = find_by_token(&conn, &session.session_token)
+            .unwrap()
+            .unwrap();
         assert!(masq.is_masquerading());
         assert_eq!(masq.user_id, target.id);
         assert_eq!(masq.original_user_id, Some(admin.id));
 
         stop_masquerade(&conn, &session.session_token).unwrap();
 
-        let restored = find_by_token(&conn, &session.session_token).unwrap().unwrap();
+        let restored = find_by_token(&conn, &session.session_token)
+            .unwrap()
+            .unwrap();
         assert!(!restored.is_masquerading());
         assert_eq!(restored.user_id, admin.id);
     }

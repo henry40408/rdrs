@@ -88,8 +88,7 @@ pub async fn login(
         .lock()
         .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
 
-    let user = user::find_by_username(&conn, &req.username)?
-        .ok_or(AppError::InvalidCredentials)?;
+    let user = user::find_by_username(&conn, &req.username)?.ok_or(AppError::InvalidCredentials)?;
 
     if !verify_password(&req.password, &user.password_hash) {
         return Err(AppError::InvalidCredentials);
