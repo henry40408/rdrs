@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}Register - RDRS{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>Register</h1>
+    {% if let Some(err) = error %}
+    <div class="error">{{ err }}</div>
+    {% else %}
+    <div id="error" class="error" style="display: none;"></div>
+    <form id="register-form">
+        <div class="form-group">
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" required autocomplete="username">
+        </div>
+        <div class="form-group">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required minlength="6" autocomplete="new-password">
+        </div>
+        <div class="form-group">
+            <label for="confirm-password">Confirm Password</label>
+            <input type="password" id="confirm-password" name="confirm-password" required minlength="6" autocomplete="new-password">
+        </div>
+        <button type="submit">Register</button>
+    </form>
+    {% endif %}
+    <div class="link">
+        <a href="/login">Already have an account? Login</a>
+    </div>
+</div>
+<script>
+    const form = document.getElementById('register-form');
+    if (form) {
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const errorDiv = document.getElementById('error');
+            errorDiv.style.display = 'none';
+
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirm-password').value;
+
+            if (password !== confirmPassword) {
+                errorDiv.textContent = 'Passwords do not match';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (response.ok) {
+                    window.location.href = '/login';
+                } else {
+                    const data = await response.json();
+                    errorDiv.textContent = data.error || 'Registration failed';
+                    errorDiv.style.display = 'block';
+                }
+            } catch (err) {
+                errorDiv.textContent = 'An error occurred. Please try again.';
+                errorDiv.style.display = 'block';
+            }
+        });
+    }
+</script>
+{% endblock %}

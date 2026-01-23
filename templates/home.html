@@ -1,0 +1,33 @@
+{% extends "base.html" %} {% block title %}Home - RDRS{% endblock %} {% block
+content %}
+<div class="container">
+  <h1>Welcome, {{ username }}!</h1>
+  <div style="margin: 2rem 0">
+    <div style="margin-bottom: 1rem">
+      <strong>Username:</strong> {{ username }}
+    </div>
+    <div style="margin-bottom: 1rem"><strong>Role:</strong> {{ role }}</div>
+    <div style="margin-bottom: 1rem">
+      <strong>Member since:</strong> {{ created_at }}
+    </div>
+  </div>
+  <button onclick="logout()">Sign Out</button>
+</div>
+<script>
+  async function logout() {
+    try {
+      const response = await fetch("/api/session", {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        window.location.href = "/login";
+      } else {
+        alert("Logout failed");
+      }
+    } catch (err) {
+      alert("An error occurred during logout");
+    }
+  }
+</script>
+{% endblock %}
