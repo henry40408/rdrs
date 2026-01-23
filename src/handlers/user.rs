@@ -4,6 +4,7 @@ use serde::Deserialize;
 use crate::auth::{hash_password, verify_password};
 use crate::error::{AppError, AppResult};
 use crate::middleware::AuthUser;
+use crate::models::session;
 use crate::models::user;
 use crate::AppState;
 
@@ -35,6 +36,9 @@ pub async fn change_password(
 
     let new_hash = hash_password(&req.new_password)?;
     user::update_password(&conn, auth_user.user.id, &new_hash)?;
+
+    // Delete all sessions for the user to force re-login
+    session::delete_user_sessions(&conn, auth_user.user.id)?;
 
     Ok(StatusCode::OK)
 }

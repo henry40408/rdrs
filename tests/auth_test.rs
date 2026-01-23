@@ -305,8 +305,7 @@ async fn test_change_password() {
         .await
         .assert_status_ok();
 
-    server.delete("/api/session").await.assert_status_ok();
-
+    // After password change, all sessions are invalidated, so user needs to login again
     server
         .post("/api/session")
         .json(&json!({
