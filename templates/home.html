@@ -5,61 +5,31 @@
 
 {% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
 
-{% block head %}
-<style>
-  .masquerade-banner {
-    background-color: #fff3cd;
-    color: #856404;
-    padding: 0.75rem;
-    border-radius: 4px;
-    margin-bottom: 1rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .masquerade-banner button {
-    width: auto;
-    padding: 0.5rem 1rem;
-    margin: 0;
-    background-color: #856404;
-  }
-  .masquerade-banner button:hover {
-    background-color: #6c5303;
-  }
-</style>
-{% endblock %}
 {% block content %}
-<div class="container">
-  {% if is_masquerading %}
-  <div class="masquerade-banner">
-    <span>You are currently masquerading as another user.</span>
-    <button onclick="stopMasquerade()">Stop Masquerading</button>
-  </div>
-  {% endif %}
-  <h1>Welcome, {{ username }}!</h1>
-  <div style="margin: 2rem 0">
-    <div style="margin-bottom: 1rem">
-      <strong>Username:</strong> {{ username }}
-    </div>
-    <div style="margin-bottom: 1rem"><strong>Role:</strong> {{ role }}</div>
-    <div style="margin-bottom: 1rem">
-      <strong>Last sign in:</strong> {{ sign_in_time }}
-    </div>
-  </div>
-  <div style="margin-bottom: 1rem">
-    <a href="/change-password" style="color: #007bff; text-decoration: none"
-      >Change Password</a
-    >
-  </div>
-  {% if is_admin %}
-  <div style="margin-bottom: 1rem">
-    <a href="/admin" style="color: #007bff; text-decoration: none"
-      >Admin Panel</a
-    >
-  </div>
-  {% endif %}
-  <button onclick="logout()">Sign Out</button>
+{% if is_masquerading %}
+<div class="flash flash-warning">
+  [MASQUERADE] You are viewing as another user. <a href="#" onclick="stopMasquerade(); return false;">[Stop]</a>
 </div>
+<hr>
+{% endif %}
+<h1>Home</h1>
+<pre>
+Username:     {{ username }}
+Role:         {{ role }}
+Last sign in: {{ sign_in_time }}
+</pre>
+<hr>
+<p>
+  → <a href="/change-password">Change Password</a>
+</p>
+{% if is_admin %}
+<p>
+  → <a href="/admin">Admin Panel</a>
+</p>
+{% endif %}
+<p>
+  → <a href="#" onclick="logout(); return false;">Sign Out</a>
+</p>
 <script>
   async function logout() {
     try {

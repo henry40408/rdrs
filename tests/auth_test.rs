@@ -810,7 +810,7 @@ async fn test_home_page() {
     let response = server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("Welcome, admin!"));
+    assert!(body.contains("Username:"));
     assert!(body.contains("admin"));
     assert!(body.contains("Sign Out"));
 }
