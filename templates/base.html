@@ -83,8 +83,8 @@
         .flash {
             margin-bottom: 0.5rem;
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            gap: 1rem;
         }
         .flash-success::before { content: "[OK] "; }
         .flash-error::before { content: "[ERROR] "; }
@@ -106,6 +106,13 @@
             background: none;
             color: #111;
             text-decoration: none;
+        }
+        .flash-right {
+            margin-left: auto;
+            white-space: nowrap;
+        }
+        .flash-time {
+            color: #666;
         }
         hr {
             border: none;
@@ -167,22 +174,33 @@
     <script>
         // Flash message helper functions
         window.flash = {
+            maxMessages: 3,
             set: function(level, message) {
                 const messages = [{ level: level, message: message }];
                 document.cookie = 'flash=' + encodeURIComponent(JSON.stringify(messages)) + '; path=/; SameSite=Lax';
             },
+            formatTime: function(date) {
+                return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            },
             show: function(level, message) {
-                // Display flash message immediately without page refresh
                 let container = document.querySelector('.flash-container');
                 if (!container) {
                     container = document.createElement('div');
                     container.className = 'flash-container';
                     document.body.insertBefore(container, document.body.firstChild);
                 }
+                // Remove oldest messages if we have too many
+                const existing = container.querySelectorAll('.flash');
+                if (existing.length >= this.maxMessages) {
+                    for (let i = 0; i <= existing.length - this.maxMessages; i++) {
+                        existing[i].remove();
+                    }
+                }
                 const levelClass = 'flash-' + level;
                 const div = document.createElement('div');
                 div.className = 'flash ' + levelClass;
-                div.innerHTML = '<span>' + this.escapeHtml(message) + '</span><a href="#" class="flash-close" onclick="this.parentElement.remove(); return false;">[x]</a>';
+                const timestamp = this.formatTime(new Date());
+                div.innerHTML = '<span>' + this.escapeHtml(message) + '</span><span class="flash-right"><span class="flash-time">' + timestamp + '</span> <a href="#" class="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">[x]</a></span>';
                 container.appendChild(div);
             },
             escapeHtml: function(text) {

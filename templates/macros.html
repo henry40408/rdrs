@@ -4,7 +4,7 @@
     {% for msg in messages %}
     <div class="flash {{ msg.level_class() }}">
         <span>{{ msg.message }}</span>
-        <a href="#" class="flash-close" onclick="this.parentElement.remove(); return false;">[x]</a>
+        <span class="flash-right"><span class="flash-time">{{ msg.formatted_time() }}</span> <a href="#" class="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">[x]</a></span>
     </div>
     {% endfor %}
 </div>

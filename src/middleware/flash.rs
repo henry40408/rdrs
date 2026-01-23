@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, IntoResponseParts, Response, ResponseParts},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub const FLASH_COOKIE_NAME: &str = "flash";
@@ -21,6 +22,8 @@ pub enum FlashLevel {
 pub struct FlashMessage {
     pub level: FlashLevel,
     pub message: String,
+    #[serde(default = "Utc::now")]
+    pub timestamp: DateTime<Utc>,
 }
 
 impl FlashMessage {
@@ -28,6 +31,7 @@ impl FlashMessage {
         Self {
             level: FlashLevel::Success,
             message: message.into(),
+            timestamp: Utc::now(),
         }
     }
 
@@ -35,6 +39,7 @@ impl FlashMessage {
         Self {
             level: FlashLevel::Error,
             message: message.into(),
+            timestamp: Utc::now(),
         }
     }
 
@@ -42,6 +47,7 @@ impl FlashMessage {
         Self {
             level: FlashLevel::Info,
             message: message.into(),
+            timestamp: Utc::now(),
         }
     }
 
@@ -49,6 +55,7 @@ impl FlashMessage {
         Self {
             level: FlashLevel::Warning,
             message: message.into(),
+            timestamp: Utc::now(),
         }
     }
 
@@ -60,7 +67,13 @@ impl FlashMessage {
             FlashLevel::Warning => "flash-warning",
         }
     }
+
+    pub fn formatted_time(&self) -> String {
+        self.timestamp.format("%H:%M:%S").to_string()
+    }
 }
+
+const MAX_FLASH_MESSAGES: usize = 3;
 
 /// Extractor that reads and clears flash messages from cookies
 #[derive(Debug, Clone, Default)]
@@ -86,10 +99,15 @@ where
             .await
             .unwrap_or_default();
 
-        let messages = jar
+        let mut messages = jar
             .get(FLASH_COOKIE_NAME)
             .and_then(|cookie| serde_json::from_str::<Vec<FlashMessage>>(cookie.value()).ok())
             .unwrap_or_default();
+
+        // Keep only the latest MAX_FLASH_MESSAGES
+        if messages.len() > MAX_FLASH_MESSAGES {
+            messages = messages.split_off(messages.len() - MAX_FLASH_MESSAGES);
+        }
 
         Ok(Flash {
             messages,
