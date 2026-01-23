@@ -95,14 +95,17 @@
             border: none;
             cursor: pointer;
             padding: 0;
-            margin-left: 1rem;
+            margin: 0 0 0 1rem;
             font-family: inherit;
             font-size: inherit;
             width: auto;
-            color: inherit;
+            color: #666;
+            text-decoration: none;
         }
         .flash-close:hover {
-            text-decoration: line-through;
+            background: none;
+            color: #111;
+            text-decoration: none;
         }
         hr {
             border: none;
@@ -162,7 +165,7 @@
                 const levelClass = 'flash-' + level;
                 const div = document.createElement('div');
                 div.className = 'flash ' + levelClass;
-                div.innerHTML = '<span>' + this.escapeHtml(message) + '</span><button class="flash-close" onclick="this.parentElement.remove()">&times;</button>';
+                div.innerHTML = '<span>' + this.escapeHtml(message) + '</span><a href="#" class="flash-close" onclick="this.parentElement.remove(); return false;">[x]</a>';
                 container.appendChild(div);
                 // Auto-remove after 5 seconds
                 setTimeout(() => div.remove(), 5000);

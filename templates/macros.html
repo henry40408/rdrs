@@ -4,7 +4,7 @@
     {% for msg in messages %}
     <div class="flash {{ msg.level_class() }}">
         <span>{{ msg.message }}</span>
-        <button class="flash-close" onclick="this.parentElement.remove()">&times;</button>
+        <a href="#" class="flash-close" onclick="this.parentElement.remove(); return false;">[x]</a>
     </div>
     {% endfor %}
 </div>
