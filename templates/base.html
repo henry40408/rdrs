@@ -184,8 +184,6 @@
                 div.className = 'flash ' + levelClass;
                 div.innerHTML = '<span>' + this.escapeHtml(message) + '</span><a href="#" class="flash-close" onclick="this.parentElement.remove(); return false;">[x]</a>';
                 container.appendChild(div);
-                // Auto-remove after 5 seconds
-                setTimeout(() => div.remove(), 5000);
             },
             escapeHtml: function(text) {
                 const div = document.createElement('div');
