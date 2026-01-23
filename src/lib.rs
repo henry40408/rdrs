@@ -84,5 +84,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/feeds/{id}", get(handlers::feed::get_feed))
         .route("/api/feeds/{id}", put(handlers::feed::update_feed))
         .route("/api/feeds/{id}", delete(handlers::feed::delete_feed))
+        // OPML routes
+        .route("/api/opml/export", get(handlers::feed::export_opml))
+        .route("/api/opml/import", post(handlers::feed::import_opml))
         .with_state(state)
 }

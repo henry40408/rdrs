@@ -68,6 +68,9 @@ pub enum AppError {
     #[error("Validation error: {0}")]
     Validation(String),
 
+    #[error("Invalid OPML format: {0}")]
+    OpmlParseError(String),
+
     #[error("Internal server error")]
     Internal(String),
 }
@@ -99,6 +102,9 @@ impl IntoResponse for AppError {
                 return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
             }
             AppError::Validation(msg) => {
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+            }
+            AppError::OpmlParseError(msg) => {
                 return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
             }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),

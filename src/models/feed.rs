@@ -88,6 +88,16 @@ pub fn find_by_id_and_category(conn: &Connection, id: i64, category_id: i64) -> 
     .map_err(AppError::Database)
 }
 
+pub fn find_by_url_and_category(conn: &Connection, url: &str, category_id: i64) -> AppResult<Option<Feed>> {
+    conn.query_row(
+        "SELECT id, category_id, url, title, description, site_url, created_at, updated_at FROM feed WHERE url = ?1 AND category_id = ?2",
+        params![url, category_id],
+        row_to_feed,
+    )
+    .optional()
+    .map_err(AppError::Database)
+}
+
 pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Feed>> {
     let mut stmt = conn.prepare(
         r#"

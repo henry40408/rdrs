@@ -1,6 +1,7 @@
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{header, StatusCode},
+    response::IntoResponse,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -8,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, AppResult};
 use crate::middleware::AuthUser;
 use crate::models::{category, feed};
-use crate::services::feed_discovery;
+use crate::services::{feed_discovery, opml};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -228,5 +229,99 @@ pub async fn fetch_metadata(
         title: discovered.title,
         description: discovered.description,
         site_url: discovered.site_url,
+    }))
+}
+
+pub async fn export_opml(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> AppResult<impl IntoResponse> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+
+    let categories = category::list_by_user(&conn, auth_user.user.id)?;
+    let feeds = feed::list_by_user(&conn, auth_user.user.id)?;
+
+    let opml_content = opml::export_opml(&categories, &feeds);
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/xml; charset=utf-8"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"subscriptions.opml\"",
+            ),
+        ],
+        opml_content,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportOpmlRequest {
+    pub content: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportResult {
+    pub categories_created: i32,
+    pub feeds_created: i32,
+    pub feeds_skipped: i32,
+}
+
+pub async fn import_opml(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    Json(req): Json<ImportOpmlRequest>,
+) -> AppResult<Json<ImportResult>> {
+    let outlines = opml::parse_opml(&req.content)?;
+
+    let mut categories_created = 0;
+    let mut feeds_created = 0;
+    let mut feeds_skipped = 0;
+
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+
+    for outline in outlines {
+        // Find or create category
+        let cat = match category::find_by_name_and_user(&conn, &outline.category_name, auth_user.user.id)? {
+            Some(cat) => cat,
+            None => {
+                let new_cat = category::create_category(&conn, auth_user.user.id, &outline.category_name)?;
+                categories_created += 1;
+                new_cat
+            }
+        };
+
+        // Create feeds
+        for opml_feed in outline.feeds {
+            // Check if feed already exists in this category
+            if feed::find_by_url_and_category(&conn, &opml_feed.xml_url, cat.id)?.is_some() {
+                feeds_skipped += 1;
+                continue;
+            }
+
+            // Create the feed
+            feed::create_feed(
+                &conn,
+                cat.id,
+                &opml_feed.xml_url,
+                opml_feed.title.as_deref(),
+                None,
+                opml_feed.html_url.as_deref(),
+            )?;
+            feeds_created += 1;
+        }
+    }
+
+    Ok(Json(ImportResult {
+        categories_created,
+        feeds_created,
+        feeds_skipped,
     }))
 }

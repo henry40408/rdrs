@@ -49,6 +49,35 @@
     </tbody>
 </table>
 
+<hr>
+
+<h2>Import / Export</h2>
+<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center;">
+    <a href="/api/opml/export" class="btn">[Export OPML]</a>
+    <button type="button" onclick="showImportModal()">[Import OPML]</button>
+</div>
+
+<!-- Import Modal -->
+<div id="import-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:1000;">
+    <div style="background:#fff; max-width:600px; margin:2rem auto; padding:2rem; border:1px solid #111;">
+        <h2 style="font-size:1rem; font-weight:normal; margin-bottom:1rem; border-bottom:1px solid #111; padding-bottom:0.5rem;">Import OPML</h2>
+        <form id="import-form" onsubmit="importOpml(event)">
+            <div class="form-group">
+                <label for="import-file">Upload .opml file</label>
+                <input type="file" id="import-file" accept=".opml,.xml" onchange="loadOpmlFile(this)">
+            </div>
+            <div class="form-group">
+                <label for="import-content">Or paste OPML content</label>
+                <textarea id="import-content" rows="10" style="width:100%; font-family:monospace; font-size:0.875rem;" placeholder="<?xml version=&quot;1.0&quot;?>&#10;<opml version=&quot;2.0&quot;>&#10;  ...&#10;</opml>"></textarea>
+            </div>
+            <div style="display:flex; gap:0.5rem; margin-top:1rem;">
+                <button type="submit" id="import-btn">[Import]</button>
+                <button type="button" onclick="closeImportModal()">[Cancel]</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <!-- Edit Modal -->
 <div id="edit-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:1000;">
     <div style="background:#fff; max-width:600px; margin:2rem auto; padding:2rem; border:1px solid #111;">
@@ -356,6 +385,76 @@
             closeEditModal();
         }
     });
+
+    document.getElementById('import-modal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeImportModal();
+        }
+    });
+
+    function showImportModal() {
+        document.getElementById('import-content').value = '';
+        document.getElementById('import-file').value = '';
+        document.getElementById('import-modal').style.display = 'block';
+    }
+
+    function closeImportModal() {
+        document.getElementById('import-modal').style.display = 'none';
+    }
+
+    function loadOpmlFile(input) {
+        const file = input.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            document.getElementById('import-content').value = e.target.result;
+        };
+        reader.onerror = function() {
+            flash.error('Failed to read file');
+        };
+        reader.readAsText(file);
+    }
+
+    async function importOpml(event) {
+        event.preventDefault();
+
+        const content = document.getElementById('import-content').value.trim();
+        if (!content) {
+            flash.error('Please paste OPML content or upload a file');
+            return;
+        }
+
+        const importBtn = document.getElementById('import-btn');
+        importBtn.textContent = 'Importing...';
+        importBtn.disabled = true;
+
+        try {
+            const response = await fetch('/api/opml/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to import OPML');
+            }
+
+            const result = await response.json();
+            closeImportModal();
+            flash.success(`Imported: ${result.categories_created} categories, ${result.feeds_created} feeds created, ${result.feeds_skipped} feeds skipped.`);
+
+            // Reload data
+            await loadCategories();
+            await loadFeeds();
+        } catch (err) {
+            flash.error(err.message);
+        } finally {
+            importBtn.textContent = '[Import]';
+            importBtn.disabled = false;
+        }
+    }
 
     // Initialize
     loadCategories().then(() => loadFeeds());

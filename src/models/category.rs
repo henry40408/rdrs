@@ -72,6 +72,16 @@ pub fn find_by_id_and_user(conn: &Connection, id: i64, user_id: i64) -> AppResul
     .map_err(AppError::Database)
 }
 
+pub fn find_by_name_and_user(conn: &Connection, name: &str, user_id: i64) -> AppResult<Option<Category>> {
+    conn.query_row(
+        "SELECT id, user_id, name, created_at FROM category WHERE name = ?1 AND user_id = ?2",
+        params![name, user_id],
+        row_to_category,
+    )
+    .optional()
+    .map_err(AppError::Database)
+}
+
 pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Category>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, name, created_at FROM category WHERE user_id = ?1 ORDER BY name ASC",
