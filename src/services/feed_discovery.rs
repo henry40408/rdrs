@@ -33,10 +33,7 @@ pub async fn discover_feed(url: &str) -> AppResult<DiscoveredFeed> {
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
     if !response.status().is_success() {
-        return Err(AppError::FetchError(format!(
-            "HTTP {}",
-            response.status()
-        )));
+        return Err(AppError::FetchError(format!("HTTP {}", response.status())));
     }
 
     let content_type = response
@@ -120,8 +117,8 @@ fn find_feed_link_in_html(html: &str, base_url: &Url) -> AppResult<String> {
 }
 
 fn parse_feed_content(feed_url: &str, content: &str) -> AppResult<DiscoveredFeed> {
-    let feed =
-        feed_rs::parser::parse(content.as_bytes()).map_err(|e| AppError::FeedParseError(e.to_string()))?;
+    let feed = feed_rs::parser::parse(content.as_bytes())
+        .map_err(|e| AppError::FeedParseError(e.to_string()))?;
 
     let title = feed.title.map(|t| t.content);
 

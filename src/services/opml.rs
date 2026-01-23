@@ -26,19 +26,25 @@ pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
     writer
         .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
         .unwrap();
-    writer.write_event(Event::Text(BytesText::new("\n"))).unwrap();
+    writer
+        .write_event(Event::Text(BytesText::new("\n")))
+        .unwrap();
 
     // OPML root element
     let mut opml = BytesStart::new("opml");
     opml.push_attribute(("version", "2.0"));
     writer.write_event(Event::Start(opml)).unwrap();
-    writer.write_event(Event::Text(BytesText::new("\n"))).unwrap();
+    writer
+        .write_event(Event::Text(BytesText::new("\n")))
+        .unwrap();
 
     // Head section
     writer
         .write_event(Event::Start(BytesStart::new("head")))
         .unwrap();
-    writer.write_event(Event::Text(BytesText::new("\n"))).unwrap();
+    writer
+        .write_event(Event::Text(BytesText::new("\n")))
+        .unwrap();
     writer
         .write_event(Event::Start(BytesStart::new("title")))
         .unwrap();
@@ -48,17 +54,23 @@ pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
     writer
         .write_event(Event::End(BytesEnd::new("title")))
         .unwrap();
-    writer.write_event(Event::Text(BytesText::new("\n"))).unwrap();
+    writer
+        .write_event(Event::Text(BytesText::new("\n")))
+        .unwrap();
     writer
         .write_event(Event::End(BytesEnd::new("head")))
         .unwrap();
-    writer.write_event(Event::Text(BytesText::new("\n"))).unwrap();
+    writer
+        .write_event(Event::Text(BytesText::new("\n")))
+        .unwrap();
 
     // Body section
     writer
         .write_event(Event::Start(BytesStart::new("body")))
         .unwrap();
-    writer.write_event(Event::Text(BytesText::new("\n"))).unwrap();
+    writer
+        .write_event(Event::Text(BytesText::new("\n")))
+        .unwrap();
 
     // Group feeds by category
     for cat in categories {
@@ -74,7 +86,9 @@ pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
         cat_outline.push_attribute(("text", cat.name.as_str()));
         cat_outline.push_attribute(("title", cat.name.as_str()));
         writer.write_event(Event::Start(cat_outline)).unwrap();
-        writer.write_event(Event::Text(BytesText::new("\n"))).unwrap();
+        writer
+            .write_event(Event::Text(BytesText::new("\n")))
+            .unwrap();
 
         // Feed outlines
         for feed in cat_feeds {
@@ -91,19 +105,25 @@ pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
             }
 
             writer.write_event(Event::Empty(feed_outline)).unwrap();
-            writer.write_event(Event::Text(BytesText::new("\n"))).unwrap();
+            writer
+                .write_event(Event::Text(BytesText::new("\n")))
+                .unwrap();
         }
 
         writer
             .write_event(Event::End(BytesEnd::new("outline")))
             .unwrap();
-        writer.write_event(Event::Text(BytesText::new("\n"))).unwrap();
+        writer
+            .write_event(Event::Text(BytesText::new("\n")))
+            .unwrap();
     }
 
     writer
         .write_event(Event::End(BytesEnd::new("body")))
         .unwrap();
-    writer.write_event(Event::Text(BytesText::new("\n"))).unwrap();
+    writer
+        .write_event(Event::Text(BytesText::new("\n")))
+        .unwrap();
     writer
         .write_event(Event::End(BytesEnd::new("opml")))
         .unwrap();

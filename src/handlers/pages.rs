@@ -58,7 +58,10 @@ impl IntoResponse for RegisterTemplate {
     }
 }
 
-pub async fn register_page(State(state): State<AppState>, flash: Flash) -> (Flash, RegisterTemplate) {
+pub async fn register_page(
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, RegisterTemplate) {
     let can_register = {
         let conn = state.db.lock().ok();
         conn.and_then(|c| crate::models::user::count(&c).ok())
@@ -177,7 +180,10 @@ impl IntoResponse for ChangePasswordTemplate {
     }
 }
 
-pub async fn change_password_page(auth_user: AuthUser, flash: Flash) -> (Flash, ChangePasswordTemplate) {
+pub async fn change_password_page(
+    auth_user: AuthUser,
+    flash: Flash,
+) -> (Flash, ChangePasswordTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
     let is_admin = if is_masquerading {
         auth_user.session.original_user_id.is_some()

@@ -78,7 +78,11 @@ pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Feed>> {
     .map_err(AppError::Database)
 }
 
-pub fn find_by_id_and_category(conn: &Connection, id: i64, category_id: i64) -> AppResult<Option<Feed>> {
+pub fn find_by_id_and_category(
+    conn: &Connection,
+    id: i64,
+    category_id: i64,
+) -> AppResult<Option<Feed>> {
     conn.query_row(
         "SELECT id, category_id, url, title, description, site_url, created_at, updated_at FROM feed WHERE id = ?1 AND category_id = ?2",
         params![id, category_id],
@@ -88,7 +92,11 @@ pub fn find_by_id_and_category(conn: &Connection, id: i64, category_id: i64) -> 
     .map_err(AppError::Database)
 }
 
-pub fn find_by_url_and_category(conn: &Connection, url: &str, category_id: i64) -> AppResult<Option<Feed>> {
+pub fn find_by_url_and_category(
+    conn: &Connection,
+    url: &str,
+    category_id: i64,
+) -> AppResult<Option<Feed>> {
     conn.query_row(
         "SELECT id, category_id, url, title, description, site_url, created_at, updated_at FROM feed WHERE url = ?1 AND category_id = ?2",
         params![url, category_id],
@@ -226,8 +234,23 @@ mod tests {
         let user_id = create_test_user(&conn, "testuser");
         let category_id = create_test_category(&conn, user_id, "Tech");
 
-        create_feed(&conn, category_id, "https://example.com/feed.xml", None, None, None).unwrap();
-        let result = create_feed(&conn, category_id, "https://example.com/feed.xml", None, None, None);
+        create_feed(
+            &conn,
+            category_id,
+            "https://example.com/feed.xml",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let result = create_feed(
+            &conn,
+            category_id,
+            "https://example.com/feed.xml",
+            None,
+            None,
+            None,
+        );
         assert!(matches!(result, Err(AppError::FeedExists)));
     }
 
@@ -238,8 +261,23 @@ mod tests {
         let cat1 = create_test_category(&conn, user_id, "Tech");
         let cat2 = create_test_category(&conn, user_id, "News");
 
-        create_feed(&conn, cat1, "https://example.com/feed.xml", None, None, None).unwrap();
-        let result = create_feed(&conn, cat2, "https://example.com/feed.xml", None, None, None);
+        create_feed(
+            &conn,
+            cat1,
+            "https://example.com/feed.xml",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let result = create_feed(
+            &conn,
+            cat2,
+            "https://example.com/feed.xml",
+            None,
+            None,
+            None,
+        );
         assert!(result.is_ok());
     }
 
@@ -251,8 +289,24 @@ mod tests {
         let cat1 = create_test_category(&conn, user1, "Tech");
         let cat2 = create_test_category(&conn, user2, "News");
 
-        create_feed(&conn, cat1, "https://example1.com/feed.xml", Some("Feed 1"), None, None).unwrap();
-        create_feed(&conn, cat2, "https://example2.com/feed.xml", Some("Feed 2"), None, None).unwrap();
+        create_feed(
+            &conn,
+            cat1,
+            "https://example1.com/feed.xml",
+            Some("Feed 1"),
+            None,
+            None,
+        )
+        .unwrap();
+        create_feed(
+            &conn,
+            cat2,
+            "https://example2.com/feed.xml",
+            Some("Feed 2"),
+            None,
+            None,
+        )
+        .unwrap();
 
         let user1_feeds = list_by_user(&conn, user1).unwrap();
         assert_eq!(user1_feeds.len(), 1);
@@ -270,9 +324,33 @@ mod tests {
         let cat1 = create_test_category(&conn, user_id, "Tech");
         let cat2 = create_test_category(&conn, user_id, "News");
 
-        create_feed(&conn, cat1, "https://example1.com/feed.xml", None, None, None).unwrap();
-        create_feed(&conn, cat1, "https://example2.com/feed.xml", None, None, None).unwrap();
-        create_feed(&conn, cat2, "https://example3.com/feed.xml", None, None, None).unwrap();
+        create_feed(
+            &conn,
+            cat1,
+            "https://example1.com/feed.xml",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        create_feed(
+            &conn,
+            cat1,
+            "https://example2.com/feed.xml",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        create_feed(
+            &conn,
+            cat2,
+            "https://example3.com/feed.xml",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let cat1_feeds = list_by_category(&conn, cat1).unwrap();
         assert_eq!(cat1_feeds.len(), 2);
@@ -287,7 +365,15 @@ mod tests {
         let user_id = create_test_user(&conn, "testuser");
         let category_id = create_test_category(&conn, user_id, "Tech");
 
-        let feed = create_feed(&conn, category_id, "https://example.com/feed.xml", Some("Old Title"), None, None).unwrap();
+        let feed = create_feed(
+            &conn,
+            category_id,
+            "https://example.com/feed.xml",
+            Some("Old Title"),
+            None,
+            None,
+        )
+        .unwrap();
 
         let updated = update_feed(
             &conn,
@@ -312,7 +398,15 @@ mod tests {
         let user_id = create_test_user(&conn, "testuser");
         let category_id = create_test_category(&conn, user_id, "Tech");
 
-        let feed = create_feed(&conn, category_id, "https://example.com/feed.xml", None, None, None).unwrap();
+        let feed = create_feed(
+            &conn,
+            category_id,
+            "https://example.com/feed.xml",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         delete_feed(&conn, feed.id, category_id).unwrap();
 
         assert!(find_by_id(&conn, feed.id).unwrap().is_none());
@@ -324,7 +418,15 @@ mod tests {
         let user_id = create_test_user(&conn, "testuser");
         let category_id = create_test_category(&conn, user_id, "Tech");
 
-        let feed = create_feed(&conn, category_id, "https://example.com/feed.xml", None, None, None).unwrap();
+        let feed = create_feed(
+            &conn,
+            category_id,
+            "https://example.com/feed.xml",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         // Delete the category
         category::delete_category(&conn, category_id, user_id).unwrap();

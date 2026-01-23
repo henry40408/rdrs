@@ -289,10 +289,15 @@ pub async fn import_opml(
 
     for outline in outlines {
         // Find or create category
-        let cat = match category::find_by_name_and_user(&conn, &outline.category_name, auth_user.user.id)? {
+        let cat = match category::find_by_name_and_user(
+            &conn,
+            &outline.category_name,
+            auth_user.user.id,
+        )? {
             Some(cat) => cat,
             None => {
-                let new_cat = category::create_category(&conn, auth_user.user.id, &outline.category_name)?;
+                let new_cat =
+                    category::create_category(&conn, auth_user.user.id, &outline.category_name)?;
                 categories_created += 1;
                 new_cat
             }

@@ -219,11 +219,7 @@ impl FlashRedirect {
 
 impl IntoResponse for FlashRedirect {
     fn into_response(self) -> Response {
-        (
-            self.flash,
-            axum::response::Redirect::to(&self.location),
-        )
-            .into_response()
+        (self.flash, axum::response::Redirect::to(&self.location)).into_response()
     }
 }
 

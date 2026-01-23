@@ -62,7 +62,11 @@ pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Category>> {
     .map_err(AppError::Database)
 }
 
-pub fn find_by_id_and_user(conn: &Connection, id: i64, user_id: i64) -> AppResult<Option<Category>> {
+pub fn find_by_id_and_user(
+    conn: &Connection,
+    id: i64,
+    user_id: i64,
+) -> AppResult<Option<Category>> {
     conn.query_row(
         "SELECT id, user_id, name, created_at FROM category WHERE id = ?1 AND user_id = ?2",
         params![id, user_id],
@@ -72,7 +76,11 @@ pub fn find_by_id_and_user(conn: &Connection, id: i64, user_id: i64) -> AppResul
     .map_err(AppError::Database)
 }
 
-pub fn find_by_name_and_user(conn: &Connection, name: &str, user_id: i64) -> AppResult<Option<Category>> {
+pub fn find_by_name_and_user(
+    conn: &Connection,
+    name: &str,
+    user_id: i64,
+) -> AppResult<Option<Category>> {
     conn.query_row(
         "SELECT id, user_id, name, created_at FROM category WHERE name = ?1 AND user_id = ?2",
         params![name, user_id],
@@ -95,7 +103,12 @@ pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Category>>
     Ok(categories)
 }
 
-pub fn update_name(conn: &Connection, id: i64, user_id: i64, new_name: &str) -> AppResult<Category> {
+pub fn update_name(
+    conn: &Connection,
+    id: i64,
+    user_id: i64,
+    new_name: &str,
+) -> AppResult<Category> {
     let result = conn.execute(
         "UPDATE category SET name = ?1 WHERE id = ?2 AND user_id = ?3",
         params![new_name, id, user_id],

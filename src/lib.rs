@@ -57,10 +57,7 @@ pub fn create_router(state: AppState) -> Router {
         // Category routes
         .route("/categories", get(handlers::pages::categories_page))
         .route("/api/categories", get(handlers::category::list_categories))
-        .route(
-            "/api/categories",
-            post(handlers::category::create_category),
-        )
+        .route("/api/categories", post(handlers::category::create_category))
         .route(
             "/api/categories/{id}",
             get(handlers::category::get_category),

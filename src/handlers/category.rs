@@ -60,7 +60,9 @@ pub async fn create_category(
     let name = req.name.trim();
 
     if name.is_empty() {
-        return Err(AppError::Validation("Category name cannot be empty".to_string()));
+        return Err(AppError::Validation(
+            "Category name cannot be empty".to_string(),
+        ));
     }
 
     if name.len() > 100 {
@@ -104,7 +106,9 @@ pub async fn update_category(
     let name = req.name.trim();
 
     if name.is_empty() {
-        return Err(AppError::Validation("Category name cannot be empty".to_string()));
+        return Err(AppError::Validation(
+            "Category name cannot be empty".to_string(),
+        ));
     }
 
     if name.len() > 100 {
