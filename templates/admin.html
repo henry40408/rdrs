@@ -6,14 +6,8 @@
 {% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
 
 {% block content %}
-{% if is_masquerading %}
-<div class="flash flash-warning">
-  [MASQUERADE] You are viewing as another user. <a href="#" onclick="stopMasquerade(); return false;">[Stop]</a>
-</div>
-<hr>
-{% endif %}
+{% call macros::nav("admin", true, is_masquerading) %}
 
-<p>← <a href="/">Back to Home</a></p>
 <h1>Admin Panel</h1>
 
 <table>
@@ -137,22 +131,6 @@
                 throw new Error(error.error || 'Failed to start masquerade');
             }
             flash.redirect('/', 'info', 'Now viewing as another user.');
-        } catch (err) {
-            flash.error(err.message);
-        }
-    }
-
-    async function stopMasquerade() {
-        try {
-            const response = await fetch('/api/admin/unmasquerade', {
-                method: 'POST'
-            });
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to stop masquerade');
-            }
-            flash.success('Stopped masquerading.');
-            window.location.reload();
         } catch (err) {
             flash.error(err.message);
         }

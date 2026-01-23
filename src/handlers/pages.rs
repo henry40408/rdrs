@@ -163,6 +163,8 @@ pub async fn admin_page(admin: AdminUser, flash: Flash) -> (Flash, AdminTemplate
 #[derive(Template)]
 #[template(path = "change-password.html")]
 pub struct ChangePasswordTemplate {
+    pub is_admin: bool,
+    pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
 }
 
@@ -175,10 +177,19 @@ impl IntoResponse for ChangePasswordTemplate {
     }
 }
 
-pub async fn change_password_page(_auth_user: AuthUser, flash: Flash) -> (Flash, ChangePasswordTemplate) {
+pub async fn change_password_page(auth_user: AuthUser, flash: Flash) -> (Flash, ChangePasswordTemplate) {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
     (
         flash.clone(),
         ChangePasswordTemplate {
+            is_admin,
+            is_masquerading,
             flash_messages: flash.messages,
         },
     )
@@ -187,6 +198,8 @@ pub async fn change_password_page(_auth_user: AuthUser, flash: Flash) -> (Flash,
 #[derive(Template)]
 #[template(path = "categories.html")]
 pub struct CategoriesTemplate {
+    pub is_admin: bool,
+    pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
 }
 
@@ -199,10 +212,19 @@ impl IntoResponse for CategoriesTemplate {
     }
 }
 
-pub async fn categories_page(_auth_user: AuthUser, flash: Flash) -> (Flash, CategoriesTemplate) {
+pub async fn categories_page(auth_user: AuthUser, flash: Flash) -> (Flash, CategoriesTemplate) {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
     (
         flash.clone(),
         CategoriesTemplate {
+            is_admin,
+            is_masquerading,
             flash_messages: flash.messages,
         },
     )

@@ -141,6 +141,23 @@
         .muted {
             color: #666;
         }
+        nav {
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #111;
+        }
+        nav ul {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        nav a {
+            text-decoration: none;
+        }
+        nav a.active {
+            font-weight: bold;
+        }
     </style>
     {% block head %}{% endblock %}
 </head>

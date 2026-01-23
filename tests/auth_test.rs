@@ -919,7 +919,7 @@ async fn test_home_page_shows_admin_link_for_admin() {
     let response = server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains(">Admin Panel<"));
+    assert!(body.contains("[Admin]"));
     assert!(body.contains(r#"href="/admin""#));
 }
 
@@ -957,7 +957,7 @@ async fn test_home_page_hides_admin_link_for_regular_user() {
     let response = server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(!body.contains(">Admin Panel<"));
+    assert!(!body.contains("[Admin]"));
     assert!(!body.contains(r#"href="/admin""#));
 }
 

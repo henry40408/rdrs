@@ -6,7 +6,8 @@
 {% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
 
 {% block content %}
-<p>← <a href="/">Back to Home</a></p>
+{% call macros::nav("categories", is_admin, is_masquerading) %}
+
 <h1>Categories</h1>
 
 <form id="add-form" onsubmit="addCategory(event)">
