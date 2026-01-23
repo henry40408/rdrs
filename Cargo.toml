@@ -27,6 +27,10 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2"] }
+feed-rs = "2.1"
+scraper = "0.22"
+url = "2"
 
 [dev-dependencies]
 axum-test = "17"

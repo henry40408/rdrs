@@ -36,6 +36,20 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_category_user_id ON category(user_id);
+
+        CREATE TABLE IF NOT EXISTS feed (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGER NOT NULL REFERENCES category(id) ON DELETE CASCADE,
+            url TEXT NOT NULL,
+            title TEXT,
+            description TEXT,
+            site_url TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(category_id, url)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_feed_category_id ON feed(category_id);
         "#,
     )?;
 

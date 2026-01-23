@@ -229,3 +229,38 @@ pub async fn categories_page(auth_user: AuthUser, flash: Flash) -> (Flash, Categ
         },
     )
 }
+
+#[derive(Template)]
+#[template(path = "feeds.html")]
+pub struct FeedsTemplate {
+    pub is_admin: bool,
+    pub is_masquerading: bool,
+    pub flash_messages: Vec<FlashMessage>,
+}
+
+impl IntoResponse for FeedsTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn feeds_page(auth_user: AuthUser, flash: Flash) -> (Flash, FeedsTemplate) {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
+    (
+        flash.clone(),
+        FeedsTemplate {
+            is_admin,
+            is_masquerading,
+            flash_messages: flash.messages,
+        },
+    )
+}

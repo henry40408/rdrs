@@ -1,0 +1,363 @@
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Feeds - RDRS{% endblock %}
+
+{% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
+
+{% block content %}
+{% call macros::nav("feeds", is_admin, is_masquerading) %}
+
+<h1>Feeds</h1>
+
+<form id="add-form" onsubmit="addFeed(event)">
+    <div class="form-group">
+        <label for="url">Feed URL</label>
+        <input type="text" id="url" name="url" placeholder="https://example.com/feed.xml or https://example.com" required>
+    </div>
+    <div class="form-group">
+        <label for="category">Category</label>
+        <select id="category" name="category" required>
+            <option value="">Loading categories...</option>
+        </select>
+    </div>
+    <button type="submit" id="add-btn">Add Feed</button>
+</form>
+
+<hr>
+
+<div class="form-group">
+    <label for="filter-category">Filter by Category</label>
+    <select id="filter-category" onchange="loadFeeds()">
+        <option value="">All Categories</option>
+    </select>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>Title</th>
+            <th>Category</th>
+            <th>Added</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody id="feeds-table">
+        <tr>
+            <td colspan="4">Loading...</td>
+        </tr>
+    </tbody>
+</table>
+
+<!-- Edit Modal -->
+<div id="edit-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:1000;">
+    <div style="background:#fff; max-width:600px; margin:2rem auto; padding:2rem; border:1px solid #111;">
+        <h2 style="font-size:1rem; font-weight:normal; margin-bottom:1rem; border-bottom:1px solid #111; padding-bottom:0.5rem;">Edit Feed</h2>
+        <form id="edit-form" onsubmit="saveFeed(event)">
+            <input type="hidden" id="edit-id">
+            <div class="form-group">
+                <label for="edit-url">Feed URL</label>
+                <div style="display:flex; gap:0.5rem;">
+                    <input type="text" id="edit-url" name="url" required style="flex:1;">
+                    <button type="button" onclick="fetchMetadata()" style="margin:0; white-space:nowrap;">[Fetch]</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="edit-title">Title</label>
+                <input type="text" id="edit-title" name="title">
+            </div>
+            <div class="form-group">
+                <label for="edit-description">Description</label>
+                <input type="text" id="edit-description" name="description">
+            </div>
+            <div class="form-group">
+                <label for="edit-site-url">Site URL</label>
+                <input type="text" id="edit-site-url" name="site_url">
+            </div>
+            <div class="form-group">
+                <label for="edit-category">Category</label>
+                <select id="edit-category" name="category" required>
+                </select>
+            </div>
+            <div style="display:flex; gap:0.5rem; margin-top:1rem;">
+                <button type="submit">[Save]</button>
+                <button type="button" onclick="closeEditModal()">[Cancel]</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    let categories = [];
+    let feeds = [];
+
+    async function loadCategories() {
+        try {
+            const response = await fetch('/api/categories');
+            if (!response.ok) {
+                throw new Error('Failed to load categories');
+            }
+            categories = await response.json();
+            updateCategoryDropdowns();
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    function updateCategoryDropdowns() {
+        const addSelect = document.getElementById('category');
+        const filterSelect = document.getElementById('filter-category');
+        const editSelect = document.getElementById('edit-category');
+
+        if (categories.length === 0) {
+            addSelect.innerHTML = '<option value="">No categories available</option>';
+        } else {
+            addSelect.innerHTML = categories.map(cat =>
+                `<option value="${cat.id}">${escapeHtml(cat.name)}</option>`
+            ).join('');
+        }
+
+        // Filter dropdown keeps "All Categories" option
+        filterSelect.innerHTML = '<option value="">All Categories</option>' +
+            categories.map(cat =>
+                `<option value="${cat.id}">${escapeHtml(cat.name)}</option>`
+            ).join('');
+
+        // Edit dropdown
+        editSelect.innerHTML = categories.map(cat =>
+            `<option value="${cat.id}">${escapeHtml(cat.name)}</option>`
+        ).join('');
+    }
+
+    async function loadFeeds() {
+        try {
+            const response = await fetch('/api/feeds');
+            if (!response.ok) {
+                throw new Error('Failed to load feeds');
+            }
+            feeds = await response.json();
+            renderFeeds();
+        } catch (err) {
+            document.getElementById('feeds-table').innerHTML =
+                '<tr><td colspan="4">[ERROR] Failed to load feeds</td></tr>';
+        }
+    }
+
+    function renderFeeds() {
+        const tbody = document.getElementById('feeds-table');
+        const filterCategory = document.getElementById('filter-category').value;
+
+        let filteredFeeds = feeds;
+        if (filterCategory) {
+            filteredFeeds = feeds.filter(f => f.category_id == filterCategory);
+        }
+
+        if (filteredFeeds.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="muted">No feeds yet.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = filteredFeeds.map(feed => {
+            const category = categories.find(c => c.id === feed.category_id);
+            const categoryName = category ? category.name : 'Unknown';
+            const title = feed.title || feed.url;
+
+            return `
+            <tr id="row-${feed.id}">
+                <td><span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
+                <td>${escapeHtml(categoryName)}</td>
+                <td>${formatDate(feed.created_at)}</td>
+                <td class="actions">
+                    <a href="#" onclick="editFeed(${feed.id}); return false;">[edit]</a>
+                    <a href="#" onclick="deleteFeed(${feed.id}, '${escapeHtml(title).replace(/'/g, "\\'")}'); return false;">[delete]</a>
+                </td>
+            </tr>
+        `}).join('');
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+        return dateStr.split('T')[0];
+    }
+
+    async function addFeed(event) {
+        event.preventDefault();
+        const urlInput = document.getElementById('url');
+        const categorySelect = document.getElementById('category');
+        const addBtn = document.getElementById('add-btn');
+
+        const url = urlInput.value.trim();
+        const categoryId = parseInt(categorySelect.value);
+
+        if (!url) {
+            flash.error('URL cannot be empty');
+            return;
+        }
+
+        if (!categoryId) {
+            flash.error('Please select a category');
+            return;
+        }
+
+        addBtn.textContent = 'Fetching feed...';
+        addBtn.disabled = true;
+
+        try {
+            const response = await fetch('/api/feeds', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, category_id: categoryId })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to add feed');
+            }
+
+            urlInput.value = '';
+            flash.success('Feed added.');
+            loadFeeds();
+        } catch (err) {
+            flash.error(err.message);
+        } finally {
+            addBtn.textContent = 'Add Feed';
+            addBtn.disabled = false;
+        }
+    }
+
+    function editFeed(id) {
+        const feed = feeds.find(f => f.id === id);
+        if (!feed) return;
+
+        document.getElementById('edit-id').value = feed.id;
+        document.getElementById('edit-url').value = feed.url;
+        document.getElementById('edit-title').value = feed.title || '';
+        document.getElementById('edit-description').value = feed.description || '';
+        document.getElementById('edit-site-url').value = feed.site_url || '';
+        document.getElementById('edit-category').value = feed.category_id;
+
+        document.getElementById('edit-modal').style.display = 'block';
+    }
+
+    function closeEditModal() {
+        document.getElementById('edit-modal').style.display = 'none';
+    }
+
+    async function fetchMetadata() {
+        const urlInput = document.getElementById('edit-url');
+        const url = urlInput.value.trim();
+
+        if (!url) {
+            flash.error('URL cannot be empty');
+            return;
+        }
+
+        if (!confirm('Fetch metadata from URL? This will overwrite current values.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/feeds/fetch-metadata', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to fetch metadata');
+            }
+
+            const metadata = await response.json();
+
+            document.getElementById('edit-url').value = metadata.feed_url;
+            document.getElementById('edit-title').value = metadata.title || '';
+            document.getElementById('edit-description').value = metadata.description || '';
+            document.getElementById('edit-site-url').value = metadata.site_url || '';
+
+            flash.success('Metadata fetched.');
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    async function saveFeed(event) {
+        event.preventDefault();
+
+        const id = parseInt(document.getElementById('edit-id').value);
+        const url = document.getElementById('edit-url').value.trim();
+        const title = document.getElementById('edit-title').value.trim() || null;
+        const description = document.getElementById('edit-description').value.trim() || null;
+        const siteUrl = document.getElementById('edit-site-url').value.trim() || null;
+        const categoryId = parseInt(document.getElementById('edit-category').value);
+
+        if (!url) {
+            flash.error('URL cannot be empty');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/feeds/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url,
+                    title,
+                    description,
+                    site_url: siteUrl,
+                    category_id: categoryId
+                })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update feed');
+            }
+
+            closeEditModal();
+            flash.success('Feed updated.');
+            loadFeeds();
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    async function deleteFeed(id, title) {
+        if (!confirm(`Delete feed "${title}"? This cannot be undone.`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/feeds/${id}`, {
+                method: 'DELETE'
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to delete feed');
+            }
+
+            flash.success(`Feed "${title}" deleted.`);
+            loadFeeds();
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    // Close modal when clicking outside
+    document.getElementById('edit-modal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeEditModal();
+        }
+    });
+
+    // Initialize
+    loadCategories().then(() => loadFeeds());
+</script>
+{% endblock %}

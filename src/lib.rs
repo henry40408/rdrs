@@ -13,6 +13,7 @@ pub mod error;
 pub mod handlers;
 pub mod middleware;
 pub mod models;
+pub mod services;
 
 pub use config::Config;
 pub use middleware::auth::SESSION_COOKIE_NAME;
@@ -72,5 +73,16 @@ pub fn create_router(state: AppState) -> Router {
             "/api/categories/{id}",
             delete(handlers::category::delete_category),
         )
+        // Feed routes
+        .route("/feeds", get(handlers::pages::feeds_page))
+        .route("/api/feeds", get(handlers::feed::list_feeds))
+        .route("/api/feeds", post(handlers::feed::create_feed))
+        .route(
+            "/api/feeds/fetch-metadata",
+            post(handlers::feed::fetch_metadata),
+        )
+        .route("/api/feeds/{id}", get(handlers::feed::get_feed))
+        .route("/api/feeds/{id}", put(handlers::feed::update_feed))
+        .route("/api/feeds/{id}", delete(handlers::feed::delete_feed))
         .with_state(state)
 }
