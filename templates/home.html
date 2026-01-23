@@ -8,8 +8,13 @@ content %}
     </div>
     <div style="margin-bottom: 1rem"><strong>Role:</strong> {{ role }}</div>
     <div style="margin-bottom: 1rem">
-      <strong>Member since:</strong> {{ created_at }}
+      <strong>Last sign in:</strong> {{ sign_in_time }}
     </div>
+  </div>
+  <div style="margin-bottom: 1rem">
+    <a href="/change-password" style="color: #007bff; text-decoration: none"
+      >Change Password</a
+    >
   </div>
   <button onclick="logout()">Sign Out</button>
 </div>
