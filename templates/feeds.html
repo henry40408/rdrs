@@ -10,6 +10,13 @@
 
 <h1>Feeds</h1>
 
+<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center; margin-bottom:1rem;">
+    <a href="/api/opml/export" class="btn">[Export OPML]</a>
+    <button type="button" onclick="showImportModal()">[Import OPML]</button>
+</div>
+
+<hr>
+
 <form id="add-form" onsubmit="addFeed(event)">
     <div class="form-group">
         <label for="url">Feed URL</label>
@@ -48,14 +55,6 @@
         </tr>
     </tbody>
 </table>
-
-<hr>
-
-<h2>Import / Export</h2>
-<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center;">
-    <a href="/api/opml/export" class="btn">[Export OPML]</a>
-    <button type="button" onclick="showImportModal()">[Import OPML]</button>
-</div>
 
 <!-- Import Modal -->
 <div id="import-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:1000;">
