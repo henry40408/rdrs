@@ -24,13 +24,14 @@
     <thead>
         <tr>
             <th>Name</th>
+            <th>Feeds</th>
             <th>Created</th>
             <th>Actions</th>
         </tr>
     </thead>
     <tbody id="categories-table">
         <tr>
-            <td colspan="3">Loading...</td>
+            <td colspan="4">Loading...</td>
         </tr>
     </tbody>
 </table>
@@ -52,31 +53,35 @@
             renderCategories(categories);
         } catch (err) {
             document.getElementById('categories-table').innerHTML =
-                '<tr><td colspan="3">[ERROR] Failed to load categories</td></tr>';
+                '<tr><td colspan="4">[ERROR] Failed to load categories</td></tr>';
         }
     }
 
     function renderCategories(categories) {
         const tbody = document.getElementById('categories-table');
         if (categories.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" class="muted">No categories yet.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" class="muted">No categories yet.</td></tr>';
             return;
         }
-        tbody.innerHTML = categories.map(cat => `
+        tbody.innerHTML = categories.map(cat => {
+            const feedCount = feeds.filter(f => f.category_id === cat.id).length;
+            return `
             <tr id="row-${cat.id}">
                 <td>
                     <span class="cat-name">${escapeHtml(cat.name)}</span>
                     <input type="text" class="cat-edit-input" value="${escapeHtml(cat.name)}" style="display:none;" maxlength="100">
                 </td>
+                <td>${feedCount}</td>
                 <td>${formatDate(cat.created_at)}</td>
                 <td class="actions">
+                    <a href="/feeds?category=${cat.id}">[feeds]</a>
                     <a href="#" class="edit-btn" onclick="startEdit(${cat.id}); return false;">[rename]</a>
                     <a href="#" class="save-btn" onclick="saveEdit(${cat.id}); return false;" style="display:none;">[save]</a>
                     <a href="#" class="cancel-btn" onclick="cancelEdit(${cat.id}); return false;" style="display:none;">[cancel]</a>
                     <a href="#" onclick="deleteCategory(${cat.id}, '${escapeHtml(cat.name)}'); return false;">[delete]</a>
                 </td>
             </tr>
-        `).join('');
+        `}).join('');
     }
 
     function escapeHtml(text) {

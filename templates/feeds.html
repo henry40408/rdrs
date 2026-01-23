@@ -468,6 +468,14 @@
     }
 
     // Initialize
-    loadCategories().then(() => loadFeeds());
+    loadCategories().then(() => {
+        // Check for category filter in URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const categoryId = urlParams.get('category');
+        if (categoryId) {
+            document.getElementById('filter-category').value = categoryId;
+        }
+        loadFeeds();
+    });
 </script>
 {% endblock %}
