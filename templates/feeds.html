@@ -146,16 +146,27 @@
             ).join('');
         }
 
-        // Filter dropdown keeps "All Categories" option
-        filterSelect.innerHTML = '<option value="">All Categories</option>' +
-            categories.map(cat =>
-                `<option value="${cat.id}">${escapeHtml(cat.name)}</option>`
-            ).join('');
+        // Filter dropdown keeps "All Categories" option (counts updated after feeds load)
+        updateFilterDropdown();
 
         // Edit dropdown
         editSelect.innerHTML = categories.map(cat =>
             `<option value="${cat.id}">${escapeHtml(cat.name)}</option>`
         ).join('');
+    }
+
+    function updateFilterDropdown() {
+        const filterSelect = document.getElementById('filter-category');
+        const currentValue = filterSelect.value;
+
+        filterSelect.innerHTML = `<option value="">All Categories (${feeds.length})</option>` +
+            categories.map(cat => {
+                const count = feeds.filter(f => f.category_id === cat.id).length;
+                return `<option value="${cat.id}">${escapeHtml(cat.name)} (${count})</option>`;
+            }).join('');
+
+        // Restore selection
+        filterSelect.value = currentValue;
     }
 
     async function loadFeeds() {
@@ -165,6 +176,7 @@
                 throw new Error('Failed to load feeds');
             }
             feeds = await response.json();
+            updateFilterDropdown();
             renderFeeds();
         } catch (err) {
             document.getElementById('feeds-table').innerHTML =
