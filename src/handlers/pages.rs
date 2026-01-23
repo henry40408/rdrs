@@ -6,12 +6,14 @@ use axum::{
 };
 
 use crate::middleware::auth::{AdminUser, AuthUser};
+use crate::middleware::flash::{Flash, FlashMessage};
 use crate::AppState;
 
 #[derive(Template)]
 #[template(path = "login.html")]
 pub struct LoginTemplate {
     pub signup_enabled: bool,
+    pub flash_messages: Vec<FlashMessage>,
 }
 
 impl IntoResponse for LoginTemplate {
@@ -23,7 +25,7 @@ impl IntoResponse for LoginTemplate {
     }
 }
 
-pub async fn login_page(State(state): State<AppState>) -> LoginTemplate {
+pub async fn login_page(State(state): State<AppState>, flash: Flash) -> (Flash, LoginTemplate) {
     let signup_enabled = {
         let conn = state.db.lock().ok();
         conn.and_then(|c| crate::models::user::count(&c).ok())
@@ -31,13 +33,20 @@ pub async fn login_page(State(state): State<AppState>) -> LoginTemplate {
             .unwrap_or(false)
     };
 
-    LoginTemplate { signup_enabled }
+    (
+        flash.clone(),
+        LoginTemplate {
+            signup_enabled,
+            flash_messages: flash.messages,
+        },
+    )
 }
 
 #[derive(Template)]
 #[template(path = "register.html")]
 pub struct RegisterTemplate {
     pub error: Option<String>,
+    pub flash_messages: Vec<FlashMessage>,
 }
 
 impl IntoResponse for RegisterTemplate {
@@ -49,7 +58,7 @@ impl IntoResponse for RegisterTemplate {
     }
 }
 
-pub async fn register_page(State(state): State<AppState>) -> RegisterTemplate {
+pub async fn register_page(State(state): State<AppState>, flash: Flash) -> (Flash, RegisterTemplate) {
     let can_register = {
         let conn = state.db.lock().ok();
         conn.and_then(|c| crate::models::user::count(&c).ok())
@@ -57,13 +66,17 @@ pub async fn register_page(State(state): State<AppState>) -> RegisterTemplate {
             .unwrap_or(false)
     };
 
-    RegisterTemplate {
-        error: if !can_register {
-            Some("Registration is currently disabled".to_string())
-        } else {
-            None
+    (
+        flash.clone(),
+        RegisterTemplate {
+            error: if !can_register {
+                Some("Registration is currently disabled".to_string())
+            } else {
+                None
+            },
+            flash_messages: flash.messages,
         },
-    }
+    )
 }
 
 #[derive(Template)]
@@ -74,6 +87,7 @@ pub struct HomeTemplate {
     pub sign_in_time: String,
     pub is_admin: bool,
     pub is_masquerading: bool,
+    pub flash_messages: Vec<FlashMessage>,
 }
 
 impl IntoResponse for HomeTemplate {
@@ -85,7 +99,7 @@ impl IntoResponse for HomeTemplate {
     }
 }
 
-pub async fn home_page(auth_user: AuthUser) -> HomeTemplate {
+pub async fn home_page(auth_user: AuthUser, flash: Flash) -> (Flash, HomeTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
     let is_admin = if is_masquerading {
         // When masquerading, check if original user is admin
@@ -94,17 +108,21 @@ pub async fn home_page(auth_user: AuthUser) -> HomeTemplate {
         auth_user.user.is_admin()
     };
 
-    HomeTemplate {
-        username: auth_user.user.username,
-        role: auth_user.user.role.as_str().to_string(),
-        sign_in_time: auth_user
-            .session
-            .created_at
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string(),
-        is_admin,
-        is_masquerading,
-    }
+    (
+        flash.clone(),
+        HomeTemplate {
+            username: auth_user.user.username,
+            role: auth_user.user.role.as_str().to_string(),
+            sign_in_time: auth_user
+                .session
+                .created_at
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string(),
+            is_admin,
+            is_masquerading,
+            flash_messages: flash.messages,
+        },
+    )
 }
 
 #[derive(Template)]
@@ -114,6 +132,7 @@ pub struct AdminTemplate {
     pub current_username: String,
     pub original_user_id: i64,
     pub is_masquerading: bool,
+    pub flash_messages: Vec<FlashMessage>,
 }
 
 impl IntoResponse for AdminTemplate {
@@ -125,21 +144,27 @@ impl IntoResponse for AdminTemplate {
     }
 }
 
-pub async fn admin_page(admin: AdminUser) -> AdminTemplate {
+pub async fn admin_page(admin: AdminUser, flash: Flash) -> (Flash, AdminTemplate) {
     let is_masquerading = admin.session.is_masquerading();
     let original_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
 
-    AdminTemplate {
-        current_user_id: admin.user.id,
-        current_username: admin.user.username,
-        original_user_id,
-        is_masquerading,
-    }
+    (
+        flash.clone(),
+        AdminTemplate {
+            current_user_id: admin.user.id,
+            current_username: admin.user.username,
+            original_user_id,
+            is_masquerading,
+            flash_messages: flash.messages,
+        },
+    )
 }
 
 #[derive(Template)]
 #[template(path = "change-password.html")]
-pub struct ChangePasswordTemplate {}
+pub struct ChangePasswordTemplate {
+    pub flash_messages: Vec<FlashMessage>,
+}
 
 impl IntoResponse for ChangePasswordTemplate {
     fn into_response(self) -> Response {
@@ -150,6 +175,11 @@ impl IntoResponse for ChangePasswordTemplate {
     }
 }
 
-pub async fn change_password_page(_auth_user: AuthUser) -> ChangePasswordTemplate {
-    ChangePasswordTemplate {}
+pub async fn change_password_page(_auth_user: AuthUser, flash: Flash) -> (Flash, ChangePasswordTemplate) {
+    (
+        flash.clone(),
+        ChangePasswordTemplate {
+            flash_messages: flash.messages,
+        },
+    )
 }

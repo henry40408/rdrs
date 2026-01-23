@@ -1,4 +1,10 @@
-{% extends "base.html" %} {% block title %}Home - RDRS{% endblock %}
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Home - RDRS{% endblock %}
+
+{% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
+
 {% block head %}
 <style>
   .masquerade-banner {
@@ -62,12 +68,14 @@
       });
 
       if (response.ok) {
-        window.location.href = "/login";
+        flash.redirect("/login", "info", "You have been logged out.");
       } else {
-        alert("Logout failed");
+        flash.error("Logout failed");
+        window.location.reload();
       }
     } catch (err) {
-      alert("An error occurred during logout");
+      flash.error("An error occurred during logout");
+      window.location.reload();
     }
   }
 
@@ -78,13 +86,16 @@
       });
 
       if (response.ok) {
+        flash.success("Stopped masquerading.");
         window.location.reload();
       } else {
         const error = await response.json();
-        alert(error.error || "Failed to stop masquerade");
+        flash.error(error.error || "Failed to stop masquerade");
+        window.location.reload();
       }
     } catch (err) {
-      alert("An error occurred");
+      flash.error("An error occurred");
+      window.location.reload();
     }
   }
 </script>

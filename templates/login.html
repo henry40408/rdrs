@@ -1,6 +1,9 @@
 {% extends "base.html" %}
+{% import "macros.html" as macros %}
 
 {% block title %}Login - RDRS{% endblock %}
+
+{% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
 
 {% block content %}
 <div class="container">

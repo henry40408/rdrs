@@ -1,4 +1,10 @@
-{% extends "base.html" %} {% block title %}Admin Panel - RDRS{% endblock %}
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Admin Panel - RDRS{% endblock %}
+
+{% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
+
 {% block head %}
 <style>
     .container {
@@ -215,9 +221,10 @@
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to update role');
             }
+            flash.success(`User role updated to ${newRole}.`);
             loadUsers();
         } catch (err) {
-            alert(err.message);
+            flash.error(err.message);
         }
     }
 
@@ -232,9 +239,10 @@
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to update user status');
             }
+            flash.success(isCurrentlyDisabled ? 'User enabled.' : 'User disabled.');
             loadUsers();
         } catch (err) {
-            alert(err.message);
+            flash.error(err.message);
         }
     }
 
@@ -247,9 +255,9 @@
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to start masquerade');
             }
-            window.location.href = '/';
+            flash.redirect('/', 'info', 'You are now masquerading as another user.');
         } catch (err) {
-            alert(err.message);
+            flash.error(err.message);
         }
     }
 
@@ -262,9 +270,10 @@
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to stop masquerade');
             }
+            flash.success('Stopped masquerading.');
             window.location.reload();
         } catch (err) {
-            alert(err.message);
+            flash.error(err.message);
         }
     }
 
@@ -280,9 +289,10 @@
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to delete user');
             }
+            flash.success(`User "${username}" deleted.`);
             loadUsers();
         } catch (err) {
-            alert(err.message);
+            flash.error(err.message);
         }
     }
 
