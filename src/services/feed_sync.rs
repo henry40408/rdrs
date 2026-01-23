@@ -17,7 +17,9 @@ pub struct SyncResult {
 
 pub async fn refresh_feed(db: Arc<Mutex<Connection>>, feed_id: i64) -> AppResult<SyncResult> {
     let feed_data = {
-        let conn = db.lock().map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        let conn = db
+            .lock()
+            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
         feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?
     };
 
@@ -53,8 +55,17 @@ pub async fn refresh_feed(db: Arc<Mutex<Connection>>, feed_id: i64) -> AppResult
     // Handle 304 Not Modified
     if status == reqwest::StatusCode::NOT_MODIFIED {
         debug!("Feed {} not modified (304)", feed_id);
-        let conn = db.lock().map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
-        feed::update_fetch_result(&conn, feed_id, Utc::now(), None, feed_data.etag.as_deref(), feed_data.last_modified.as_deref())?;
+        let conn = db
+            .lock()
+            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        feed::update_fetch_result(
+            &conn,
+            feed_id,
+            Utc::now(),
+            None,
+            feed_data.etag.as_deref(),
+            feed_data.last_modified.as_deref(),
+        )?;
         return Ok(SyncResult {
             new_entries: 0,
             updated_entries: 0,
@@ -63,7 +74,9 @@ pub async fn refresh_feed(db: Arc<Mutex<Connection>>, feed_id: i64) -> AppResult
 
     if !status.is_success() {
         let error_msg = format!("HTTP {}", status);
-        let conn = db.lock().map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        let conn = db
+            .lock()
+            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
         feed::update_fetch_result(&conn, feed_id, Utc::now(), Some(&error_msg), None, None)?;
         return Err(AppError::FetchError(error_msg));
     }
@@ -94,17 +107,16 @@ pub async fn refresh_feed(db: Arc<Mutex<Connection>>, feed_id: i64) -> AppResult
     let mut updated_entries = 0i64;
 
     {
-        let conn = db.lock().map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        let conn = db
+            .lock()
+            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
 
         for item in parsed_feed.entries {
             let guid = item.id;
 
             let title = item.title.map(|t| t.content);
 
-            let link = item
-                .links
-                .first()
-                .map(|l| l.href.clone());
+            let link = item.links.first().map(|l| l.href.clone());
 
             let content = item
                 .content
@@ -113,10 +125,7 @@ pub async fn refresh_feed(db: Arc<Mutex<Connection>>, feed_id: i64) -> AppResult
 
             let summary = item.summary.map(|s| s.content);
 
-            let author = item
-                .authors
-                .first()
-                .map(|a| a.name.clone());
+            let author = item.authors.first().map(|a| a.name.clone());
 
             let published_at = item
                 .published

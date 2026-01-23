@@ -48,8 +48,7 @@ pub async fn list_entries(
 
     // Verify category belongs to user if specified
     if let Some(category_id) = query.category_id {
-        let cat =
-            category::find_by_id(&conn, category_id)?.ok_or(AppError::CategoryNotFound)?;
+        let cat = category::find_by_id(&conn, category_id)?.ok_or(AppError::CategoryNotFound)?;
         if cat.user_id != auth_user.user.id {
             return Err(AppError::CategoryNotFound);
         }
@@ -58,8 +57,7 @@ pub async fn list_entries(
     // Verify feed belongs to user if specified
     if let Some(feed_id) = query.feed_id {
         let f = feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
-        let cat =
-            category::find_by_id(&conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
+        let cat = category::find_by_id(&conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
         if cat.user_id != auth_user.user.id {
             return Err(AppError::FeedNotFound);
         }
@@ -72,7 +70,8 @@ pub async fn list_entries(
         starred_only: query.starred_only,
     };
 
-    let entries = entry::list_by_user(&conn, auth_user.user.id, &filter, query.limit, query.offset)?;
+    let entries =
+        entry::list_by_user(&conn, auth_user.user.id, &filter, query.limit, query.offset)?;
     let total = entry::count_by_user(&conn, auth_user.user.id, &filter)?;
 
     Ok(Json(EntriesResponse {
@@ -100,8 +99,7 @@ pub async fn get_entry(
         .lock()
         .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
 
-    let entry_with_feed =
-        entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+    let entry_with_feed = entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
 
     // Verify entry belongs to user
     let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
@@ -147,7 +145,8 @@ pub async fn list_feed_entries(
         starred_only: query.starred_only,
     };
 
-    let entries = entry::list_by_user(&conn, auth_user.user.id, &filter, query.limit, query.offset)?;
+    let entries =
+        entry::list_by_user(&conn, auth_user.user.id, &filter, query.limit, query.offset)?;
     let total = entry::count_by_user(&conn, auth_user.user.id, &filter)?;
 
     Ok(Json(EntriesResponse {
@@ -169,8 +168,7 @@ pub async fn mark_entry_read(
         .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
 
     // Verify entry belongs to user
-    let entry_with_feed =
-        entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+    let entry_with_feed = entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
     let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
         .ok_or(AppError::CategoryNotFound)?;
     if cat.user_id != auth_user.user.id {
@@ -192,8 +190,7 @@ pub async fn mark_entry_unread(
         .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
 
     // Verify entry belongs to user
-    let entry_with_feed =
-        entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+    let entry_with_feed = entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
     let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
         .ok_or(AppError::CategoryNotFound)?;
     if cat.user_id != auth_user.user.id {
@@ -215,8 +212,7 @@ pub async fn toggle_entry_star(
         .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
 
     // Verify entry belongs to user
-    let entry_with_feed =
-        entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+    let entry_with_feed = entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
     let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
         .ok_or(AppError::CategoryNotFound)?;
     if cat.user_id != auth_user.user.id {
@@ -250,8 +246,7 @@ pub async fn mark_all_read(
     let marked_count = if let Some(feed_id) = body.feed_id {
         // Verify feed belongs to user
         let f = feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
-        let cat =
-            category::find_by_id(&conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
+        let cat = category::find_by_id(&conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
         if cat.user_id != auth_user.user.id {
             return Err(AppError::FeedNotFound);
         }
@@ -275,8 +270,7 @@ pub async fn refresh_feed_handler(
             .lock()
             .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
         let f = feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
-        let cat =
-            category::find_by_id(&conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
+        let cat = category::find_by_id(&conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
         if cat.user_id != auth_user.user.id {
             return Err(AppError::FeedNotFound);
         }

@@ -322,7 +322,15 @@ pub fn upsert_entry(
                 published_at = ?6, updated_at = datetime('now')
             WHERE id = ?7
             "#,
-            params![title, link, content, summary, author, published_at_str, existing.id],
+            params![
+                title,
+                link,
+                content,
+                summary,
+                author,
+                published_at_str,
+                existing.id
+            ],
         )?;
 
         let updated = find_by_id(conn, existing.id)?.ok_or(AppError::EntryNotFound)?;

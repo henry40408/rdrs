@@ -145,7 +145,7 @@ pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Feed>> {
         INNER JOIN category c ON f.category_id = c.id
         WHERE c.user_id = ?1
         ORDER BY f.title ASC
-        "#
+        "#,
     )?;
 
     let feeds = stmt
@@ -235,10 +235,7 @@ pub fn update_fetch_result(
 }
 
 pub fn list_by_bucket(conn: &Connection, bucket: u8) -> AppResult<Vec<Feed>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {} FROM feed",
-        SELECT_COLUMNS
-    ))?;
+    let mut stmt = conn.prepare(&format!("SELECT {} FROM feed", SELECT_COLUMNS))?;
 
     let feeds: Vec<Feed> = stmt
         .query_map([], row_to_feed)?

@@ -159,8 +159,7 @@ fn is_private_ip(ip: &IpAddr) -> bool {
 
 fn is_valid_image_type(content_type: &str) -> bool {
     let ct = content_type.to_lowercase();
-    ct.starts_with("image/")
-        || ct == "application/octet-stream" // Some servers don't set proper content-type
+    ct.starts_with("image/") || ct == "application/octet-stream" // Some servers don't set proper content-type
 }
 
 #[cfg(test)]

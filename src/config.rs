@@ -14,8 +14,7 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Self {
-        let (image_proxy_secret, image_proxy_secret_generated) =
-            Self::load_image_proxy_secret();
+        let (image_proxy_secret, image_proxy_secret_generated) = Self::load_image_proxy_secret();
 
         Self {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "rdrs.sqlite3".to_string()),
