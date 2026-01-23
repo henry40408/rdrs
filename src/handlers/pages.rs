@@ -5,7 +5,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
 };
 
-use crate::middleware::auth::AuthUser;
+use crate::middleware::auth::{AdminUser, AuthUser};
 use crate::AppState;
 
 #[derive(Template)]
@@ -72,6 +72,8 @@ pub struct HomeTemplate {
     pub username: String,
     pub role: String,
     pub sign_in_time: String,
+    pub is_admin: bool,
+    pub is_masquerading: bool,
 }
 
 impl IntoResponse for HomeTemplate {
@@ -84,6 +86,14 @@ impl IntoResponse for HomeTemplate {
 }
 
 pub async fn home_page(auth_user: AuthUser) -> HomeTemplate {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        // When masquerading, check if original user is admin
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
     HomeTemplate {
         username: auth_user.user.username,
         role: auth_user.user.role.as_str().to_string(),
@@ -92,6 +102,38 @@ pub async fn home_page(auth_user: AuthUser) -> HomeTemplate {
             .created_at
             .format("%Y-%m-%d %H:%M:%S")
             .to_string(),
+        is_admin,
+        is_masquerading,
+    }
+}
+
+#[derive(Template)]
+#[template(path = "admin.html")]
+pub struct AdminTemplate {
+    pub current_user_id: i64,
+    pub current_username: String,
+    pub original_user_id: i64,
+    pub is_masquerading: bool,
+}
+
+impl IntoResponse for AdminTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn admin_page(admin: AdminUser) -> AdminTemplate {
+    let is_masquerading = admin.session.is_masquerading();
+    let original_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
+
+    AdminTemplate {
+        current_user_id: admin.user.id,
+        current_username: admin.user.username,
+        original_user_id,
+        is_masquerading,
     }
 }
 

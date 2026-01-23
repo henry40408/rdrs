@@ -33,6 +33,7 @@ pub fn create_router(state: AppState) -> Router {
             "/change-password",
             get(handlers::pages::change_password_page),
         )
+        .route("/admin", get(handlers::pages::admin_page))
         .route("/api/register", post(handlers::auth::register))
         .route("/api/session", post(handlers::auth::login))
         .route("/api/session", delete(handlers::auth::logout))

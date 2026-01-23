@@ -1,6 +1,35 @@
-{% extends "base.html" %} {% block title %}Home - RDRS{% endblock %} {% block
-content %}
+{% extends "base.html" %} {% block title %}Home - RDRS{% endblock %}
+{% block head %}
+<style>
+  .masquerade-banner {
+    background-color: #fff3cd;
+    color: #856404;
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .masquerade-banner button {
+    width: auto;
+    padding: 0.5rem 1rem;
+    margin: 0;
+    background-color: #856404;
+  }
+  .masquerade-banner button:hover {
+    background-color: #6c5303;
+  }
+</style>
+{% endblock %}
+{% block content %}
 <div class="container">
+  {% if is_masquerading %}
+  <div class="masquerade-banner">
+    <span>You are currently masquerading as another user.</span>
+    <button onclick="stopMasquerade()">Stop Masquerading</button>
+  </div>
+  {% endif %}
   <h1>Welcome, {{ username }}!</h1>
   <div style="margin: 2rem 0">
     <div style="margin-bottom: 1rem">
@@ -16,6 +45,13 @@ content %}
       >Change Password</a
     >
   </div>
+  {% if is_admin %}
+  <div style="margin-bottom: 1rem">
+    <a href="/admin" style="color: #007bff; text-decoration: none"
+      >Admin Panel</a
+    >
+  </div>
+  {% endif %}
   <button onclick="logout()">Sign Out</button>
 </div>
 <script>
@@ -32,6 +68,23 @@ content %}
       }
     } catch (err) {
       alert("An error occurred during logout");
+    }
+  }
+
+  async function stopMasquerade() {
+    try {
+      const response = await fetch("/api/admin/unmasquerade", {
+        method: "POST",
+      });
+
+      if (response.ok) {
+        window.location.reload();
+      } else {
+        const error = await response.json();
+        alert(error.error || "Failed to stop masquerade");
+      }
+    } catch (err) {
+      alert("An error occurred");
     }
   }
 </script>

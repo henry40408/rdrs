@@ -822,3 +822,141 @@ async fn test_home_page_unauthorized() {
     let response = server.get("/").await;
     response.assert_status_unauthorized();
 }
+
+#[tokio::test]
+async fn test_admin_page_accessible_by_admin() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let response = server.get("/admin").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Admin Panel"));
+}
+
+#[tokio::test]
+async fn test_admin_page_forbidden_for_regular_user() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "user1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({
+            "username": "user1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let response = server.get("/admin").await;
+    response.assert_status_forbidden();
+}
+
+#[tokio::test]
+async fn test_admin_page_unauthorized_without_login() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/admin").await;
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_home_page_shows_admin_link_for_admin() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let response = server.get("/").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains(">Admin Panel<"));
+    assert!(body.contains(r#"href="/admin""#));
+}
+
+#[tokio::test]
+async fn test_home_page_hides_admin_link_for_regular_user() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "user1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({
+            "username": "user1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let response = server.get("/").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(!body.contains(">Admin Panel<"));
+    assert!(!body.contains(r#"href="/admin""#));
+}

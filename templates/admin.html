@@ -1,0 +1,292 @@
+{% extends "base.html" %} {% block title %}Admin Panel - RDRS{% endblock %}
+{% block head %}
+<style>
+    .container {
+        max-width: 800px;
+    }
+    .masquerade-banner {
+        background-color: #fff3cd;
+        color: #856404;
+        padding: 0.75rem;
+        border-radius: 4px;
+        margin-bottom: 1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .masquerade-banner button {
+        width: auto;
+        padding: 0.5rem 1rem;
+        margin: 0;
+        background-color: #856404;
+    }
+    .masquerade-banner button:hover {
+        background-color: #6c5303;
+    }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+    }
+    th, td {
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 1px solid #ddd;
+    }
+    th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+    }
+    tr:hover {
+        background-color: #f5f5f5;
+    }
+    .actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+    .actions button {
+        width: auto;
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+        margin: 0;
+    }
+    .btn-danger {
+        background-color: #dc3545;
+    }
+    .btn-danger:hover {
+        background-color: #c82333;
+    }
+    .btn-warning {
+        background-color: #ffc107;
+        color: #212529;
+    }
+    .btn-warning:hover {
+        background-color: #e0a800;
+    }
+    .btn-secondary {
+        background-color: #6c757d;
+    }
+    .btn-secondary:hover {
+        background-color: #5a6268;
+    }
+    .badge {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    .badge-admin {
+        background-color: #007bff;
+        color: white;
+    }
+    .badge-user {
+        background-color: #6c757d;
+        color: white;
+    }
+    .badge-disabled {
+        background-color: #dc3545;
+        color: white;
+    }
+    .badge-active {
+        background-color: #28a745;
+        color: white;
+    }
+    .back-link {
+        display: inline-block;
+        margin-bottom: 1rem;
+        color: #007bff;
+        text-decoration: none;
+    }
+    .back-link:hover {
+        text-decoration: underline;
+    }
+    h1 {
+        text-align: left;
+    }
+</style>
+{% endblock %}
+{% block content %}
+<div class="container">
+    {% if is_masquerading %}
+    <div class="masquerade-banner">
+        <span>You are currently masquerading as another user.</span>
+        <button onclick="stopMasquerade()">Stop Masquerading</button>
+    </div>
+    {% endif %}
+
+    <a href="/" class="back-link">&larr; Back to Home</a>
+    <h1>Admin Panel</h1>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="users-table">
+            <tr>
+                <td colspan="6">Loading...</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<script>
+    const currentUserId = {{ current_user_id }};
+    const originalUserId = {{ original_user_id }};
+
+    async function loadUsers() {
+        try {
+            const response = await fetch('/api/admin/users');
+            if (!response.ok) {
+                throw new Error('Failed to load users');
+            }
+            const users = await response.json();
+            renderUsers(users);
+        } catch (err) {
+            document.getElementById('users-table').innerHTML =
+                '<tr><td colspan="6" class="error">Failed to load users</td></tr>';
+        }
+    }
+
+    function renderUsers(users) {
+        const tbody = document.getElementById('users-table');
+        tbody.innerHTML = users.map(user => {
+            const isCurrentUser = user.id === currentUserId;
+            const isOriginalUser = user.id === originalUserId;
+            const isSelf = isCurrentUser || isOriginalUser;
+            const isDisabled = user.disabled_at !== null;
+
+            return `
+                <tr>
+                    <td>${user.id}</td>
+                    <td>${escapeHtml(user.username)}</td>
+                    <td><span class="badge badge-${user.role}">${user.role}</span></td>
+                    <td><span class="badge ${isDisabled ? 'badge-disabled' : 'badge-active'}">${isDisabled ? 'Disabled' : 'Active'}</span></td>
+                    <td>${formatDate(user.created_at)}</td>
+                    <td class="actions">
+                        ${!isSelf ? `
+                            <button onclick="toggleRole(${user.id}, '${user.role}')" class="btn-secondary">
+                                ${user.role === 'admin' ? 'Make User' : 'Make Admin'}
+                            </button>
+                            <button onclick="toggleDisabled(${user.id}, ${isDisabled})" class="btn-warning">
+                                ${isDisabled ? 'Enable' : 'Disable'}
+                            </button>
+                            <button onclick="masquerade(${user.id})" class="btn-secondary">
+                                Masquerade
+                            </button>
+                            <button onclick="deleteUser(${user.id}, '${escapeHtml(user.username)}')" class="btn-danger">
+                                Delete
+                            </button>
+                        ` : '<span style="color: #6c757d; font-style: italic;">Current user</span>'}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+        const date = new Date(dateStr);
+        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+    }
+
+    async function toggleRole(userId, currentRole) {
+        const newRole = currentRole === 'admin' ? 'user' : 'admin';
+        try {
+            const response = await fetch(`/api/admin/users/${userId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role: newRole })
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update role');
+            }
+            loadUsers();
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    async function toggleDisabled(userId, isCurrentlyDisabled) {
+        try {
+            const response = await fetch(`/api/admin/users/${userId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ disabled: !isCurrentlyDisabled })
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update user status');
+            }
+            loadUsers();
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    async function masquerade(userId) {
+        try {
+            const response = await fetch(`/api/admin/masquerade/${userId}`, {
+                method: 'POST'
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to start masquerade');
+            }
+            window.location.href = '/';
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    async function stopMasquerade() {
+        try {
+            const response = await fetch('/api/admin/unmasquerade', {
+                method: 'POST'
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to stop masquerade');
+            }
+            window.location.reload();
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    async function deleteUser(userId, username) {
+        if (!confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone.`)) {
+            return;
+        }
+        try {
+            const response = await fetch(`/api/admin/users/${userId}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to delete user');
+            }
+            loadUsers();
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
+    // Load users on page load
+    loadUsers();
+</script>
+{% endblock %}
