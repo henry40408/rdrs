@@ -71,7 +71,7 @@ pub async fn register_page(State(state): State<AppState>) -> RegisterTemplate {
 pub struct HomeTemplate {
     pub username: String,
     pub role: String,
-    pub created_at: String,
+    pub sign_in_time: String,
 }
 
 impl IntoResponse for HomeTemplate {
@@ -87,8 +87,8 @@ pub async fn home_page(auth_user: AuthUser) -> HomeTemplate {
     HomeTemplate {
         username: auth_user.user.username,
         role: auth_user.user.role.as_str().to_string(),
-        created_at: auth_user
-            .user
+        sign_in_time: auth_user
+            .session
             .created_at
             .format("%Y-%m-%d %H:%M:%S")
             .to_string(),
