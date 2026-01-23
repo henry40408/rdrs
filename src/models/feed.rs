@@ -1,3 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -12,8 +15,19 @@ pub struct Feed {
     pub title: Option<String>,
     pub description: Option<String>,
     pub site_url: Option<String>,
+    pub feed_updated_at: Option<DateTime<Utc>>,
+    pub fetched_at: Option<DateTime<Utc>>,
+    pub fetch_error: Option<String>,
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+pub fn url_to_bucket(url: &str) -> u8 {
+    let mut hasher = DefaultHasher::new();
+    url.hash(&mut hasher);
+    (hasher.finish() % 60) as u8
 }
 
 fn parse_datetime(s: &str) -> DateTime<Utc> {
@@ -26,8 +40,10 @@ fn parse_datetime(s: &str) -> DateTime<Utc> {
 }
 
 fn row_to_feed(row: &rusqlite::Row) -> rusqlite::Result<Feed> {
-    let created_at: String = row.get(6)?;
-    let updated_at: String = row.get(7)?;
+    let feed_updated_at: Option<String> = row.get(6)?;
+    let fetched_at: Option<String> = row.get(7)?;
+    let created_at: String = row.get(11)?;
+    let updated_at: String = row.get(12)?;
 
     Ok(Feed {
         id: row.get(0)?,
@@ -36,6 +52,11 @@ fn row_to_feed(row: &rusqlite::Row) -> rusqlite::Result<Feed> {
         title: row.get(3)?,
         description: row.get(4)?,
         site_url: row.get(5)?,
+        feed_updated_at: feed_updated_at.map(|s| parse_datetime(&s)),
+        fetched_at: fetched_at.map(|s| parse_datetime(&s)),
+        fetch_error: row.get(8)?,
+        etag: row.get(9)?,
+        last_modified: row.get(10)?,
         created_at: parse_datetime(&created_at),
         updated_at: parse_datetime(&updated_at),
     })
@@ -68,9 +89,11 @@ pub fn create_feed(
     }
 }
 
+const SELECT_COLUMNS: &str = "id, category_id, url, title, description, site_url, feed_updated_at, fetched_at, fetch_error, etag, last_modified, created_at, updated_at";
+
 pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Feed>> {
     conn.query_row(
-        "SELECT id, category_id, url, title, description, site_url, created_at, updated_at FROM feed WHERE id = ?1",
+        &format!("SELECT {} FROM feed WHERE id = ?1", SELECT_COLUMNS),
         params![id],
         row_to_feed,
     )
@@ -84,7 +107,10 @@ pub fn find_by_id_and_category(
     category_id: i64,
 ) -> AppResult<Option<Feed>> {
     conn.query_row(
-        "SELECT id, category_id, url, title, description, site_url, created_at, updated_at FROM feed WHERE id = ?1 AND category_id = ?2",
+        &format!(
+            "SELECT {} FROM feed WHERE id = ?1 AND category_id = ?2",
+            SELECT_COLUMNS
+        ),
         params![id, category_id],
         row_to_feed,
     )
@@ -98,7 +124,10 @@ pub fn find_by_url_and_category(
     category_id: i64,
 ) -> AppResult<Option<Feed>> {
     conn.query_row(
-        "SELECT id, category_id, url, title, description, site_url, created_at, updated_at FROM feed WHERE url = ?1 AND category_id = ?2",
+        &format!(
+            "SELECT {} FROM feed WHERE url = ?1 AND category_id = ?2",
+            SELECT_COLUMNS
+        ),
         params![url, category_id],
         row_to_feed,
     )
@@ -109,7 +138,9 @@ pub fn find_by_url_and_category(
 pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Feed>> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT f.id, f.category_id, f.url, f.title, f.description, f.site_url, f.created_at, f.updated_at
+        SELECT f.id, f.category_id, f.url, f.title, f.description, f.site_url,
+               f.feed_updated_at, f.fetched_at, f.fetch_error, f.etag, f.last_modified,
+               f.created_at, f.updated_at
         FROM feed f
         INNER JOIN category c ON f.category_id = c.id
         WHERE c.user_id = ?1
@@ -126,9 +157,10 @@ pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Feed>> {
 }
 
 pub fn list_by_category(conn: &Connection, category_id: i64) -> AppResult<Vec<Feed>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, category_id, url, title, description, site_url, created_at, updated_at FROM feed WHERE category_id = ?1 ORDER BY title ASC",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM feed WHERE category_id = ?1 ORDER BY title ASC",
+        SELECT_COLUMNS
+    ))?;
 
     let feeds = stmt
         .query_map(params![category_id], row_to_feed)?
@@ -180,6 +212,38 @@ pub fn delete_feed(conn: &Connection, id: i64, category_id: i64) -> AppResult<()
         return Err(AppError::FeedNotFound);
     }
     Ok(())
+}
+
+pub fn update_fetch_result(
+    conn: &Connection,
+    id: i64,
+    fetched_at: DateTime<Utc>,
+    fetch_error: Option<&str>,
+    etag: Option<&str>,
+    last_modified: Option<&str>,
+) -> AppResult<()> {
+    let fetched_at_str = fetched_at.format("%Y-%m-%d %H:%M:%S").to_string();
+    conn.execute(
+        r#"
+        UPDATE feed
+        SET fetched_at = ?1, fetch_error = ?2, etag = ?3, last_modified = ?4, updated_at = datetime('now')
+        WHERE id = ?5
+        "#,
+        params![fetched_at_str, fetch_error, etag, last_modified, id],
+    )?;
+    Ok(())
+}
+
+pub fn list_by_bucket(conn: &Connection, bucket: u8) -> AppResult<Vec<Feed>> {
+    let mut stmt = conn.prepare(&format!("SELECT {} FROM feed", SELECT_COLUMNS))?;
+
+    let feeds: Vec<Feed> = stmt
+        .query_map([], row_to_feed)?
+        .filter_map(Result::ok)
+        .filter(|feed| url_to_bucket(&feed.url) == bucket)
+        .collect();
+
+    Ok(feeds)
 }
 
 #[cfg(test)]

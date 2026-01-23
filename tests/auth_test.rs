@@ -25,6 +25,8 @@ fn default_test_config() -> Config {
         server_port: 3000,
         signup_enabled: true,
         multi_user_enabled: true,
+        image_proxy_secret: vec![0u8; 32],
+        image_proxy_secret_generated: false,
     }
 }
 

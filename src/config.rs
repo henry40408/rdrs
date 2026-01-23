@@ -1,3 +1,5 @@
+use base64::{engine::general_purpose::STANDARD, Engine};
+use rand::RngCore;
 use std::env;
 
 #[derive(Debug, Clone)]
@@ -6,10 +8,14 @@ pub struct Config {
     pub server_port: u16,
     pub signup_enabled: bool,
     pub multi_user_enabled: bool,
+    pub image_proxy_secret: Vec<u8>,
+    pub image_proxy_secret_generated: bool,
 }
 
 impl Config {
     pub fn from_env() -> Self {
+        let (image_proxy_secret, image_proxy_secret_generated) = Self::load_image_proxy_secret();
+
         Self {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "rdrs.sqlite3".to_string()),
             server_port: env::var("SERVER_PORT")
@@ -22,7 +28,29 @@ impl Config {
             multi_user_enabled: env::var("MULTI_USER_ENABLED")
                 .map(|v| v.to_lowercase() == "true" || v == "1")
                 .unwrap_or(false),
+            image_proxy_secret,
+            image_proxy_secret_generated,
         }
+    }
+
+    fn load_image_proxy_secret() -> (Vec<u8>, bool) {
+        if let Ok(secret_str) = env::var("IMAGE_PROXY_SECRET") {
+            // Try to decode as base64 first
+            if let Ok(decoded) = STANDARD.decode(&secret_str) {
+                if decoded.len() >= 16 {
+                    return (decoded, false);
+                }
+            }
+            // Use raw bytes if at least 16 characters
+            if secret_str.len() >= 16 {
+                return (secret_str.into_bytes(), false);
+            }
+        }
+
+        // Generate a random 32-byte secret
+        let mut secret = vec![0u8; 32];
+        rand::thread_rng().fill_bytes(&mut secret);
+        (secret, true)
     }
 
     pub fn can_register(&self, user_count: i64) -> bool {
@@ -34,14 +62,20 @@ impl Config {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_can_register() {
-        let config = Config {
+    fn test_config() -> Config {
+        Config {
             database_url: "test.db".to_string(),
             server_port: 3000,
             signup_enabled: true,
             multi_user_enabled: false,
-        };
+            image_proxy_secret: vec![0u8; 32],
+            image_proxy_secret_generated: false,
+        }
+    }
+
+    #[test]
+    fn test_can_register() {
+        let config = test_config();
 
         assert!(config.can_register(0));
         assert!(!config.can_register(1));

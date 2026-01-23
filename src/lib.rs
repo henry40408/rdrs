@@ -84,5 +84,36 @@ pub fn create_router(state: AppState) -> Router {
         // OPML routes
         .route("/api/opml/export", get(handlers::feed::export_opml))
         .route("/api/opml/import", post(handlers::feed::import_opml))
+        // Entry routes
+        .route("/entries", get(handlers::pages::entries_page))
+        .route("/entries/{id}", get(handlers::pages::entry_page))
+        .route("/api/entries", get(handlers::entry::list_entries))
+        .route("/api/entries/{id}", get(handlers::entry::get_entry))
+        .route(
+            "/api/entries/{id}/read",
+            put(handlers::entry::mark_entry_read),
+        )
+        .route(
+            "/api/entries/{id}/unread",
+            put(handlers::entry::mark_entry_unread),
+        )
+        .route(
+            "/api/entries/{id}/star",
+            put(handlers::entry::toggle_entry_star),
+        )
+        .route(
+            "/api/entries/mark-all-read",
+            put(handlers::entry::mark_all_read),
+        )
+        .route(
+            "/api/feeds/{id}/entries",
+            get(handlers::entry::list_feed_entries),
+        )
+        .route(
+            "/api/feeds/{id}/refresh",
+            post(handlers::entry::refresh_feed_handler),
+        )
+        // Proxy routes
+        .route("/api/proxy/image", get(handlers::proxy::proxy_image))
         .with_state(state)
 }

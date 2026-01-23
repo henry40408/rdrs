@@ -323,6 +323,11 @@ mod tests {
             title: Some("Rust Blog".to_string()),
             description: None,
             site_url: Some("https://blog.rust-lang.org".to_string()),
+            feed_updated_at: None,
+            fetched_at: None,
+            fetch_error: None,
+            etag: None,
+            last_modified: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];

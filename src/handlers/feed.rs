@@ -40,6 +40,8 @@ pub struct FeedResponse {
     pub title: Option<String>,
     pub description: Option<String>,
     pub site_url: Option<String>,
+    pub fetched_at: Option<String>,
+    pub fetch_error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -61,6 +63,8 @@ impl From<feed::Feed> for FeedResponse {
             title: f.title,
             description: f.description,
             site_url: f.site_url,
+            fetched_at: f.fetched_at.map(|dt| dt.to_rfc3339()),
+            fetch_error: f.fetch_error,
             created_at: f.created_at.to_rfc3339(),
             updated_at: f.updated_at.to_rfc3339(),
         }
