@@ -26,6 +26,30 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_session_token ON session(session_token);
         CREATE INDEX IF NOT EXISTS idx_session_user_id ON session(user_id);
         CREATE INDEX IF NOT EXISTS idx_session_expires_at ON session(expires_at);
+
+        CREATE TABLE IF NOT EXISTS category (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(user_id, name)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_category_user_id ON category(user_id);
+
+        CREATE TABLE IF NOT EXISTS feed (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGER NOT NULL REFERENCES category(id) ON DELETE CASCADE,
+            url TEXT NOT NULL,
+            title TEXT,
+            description TEXT,
+            site_url TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(category_id, url)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_feed_category_id ON feed(category_id);
         "#,
     )?;
 

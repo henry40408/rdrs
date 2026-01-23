@@ -41,8 +41,35 @@ pub enum AppError {
     #[error("Not masquerading")]
     NotMasquerading,
 
+    #[error("Category not found")]
+    CategoryNotFound,
+
+    #[error("Category already exists")]
+    CategoryExists,
+
+    #[error("Feed not found")]
+    FeedNotFound,
+
+    #[error("Feed already exists")]
+    FeedExists,
+
+    #[error("Invalid URL")]
+    InvalidUrl,
+
+    #[error("Failed to fetch: {0}")]
+    FetchError(String),
+
+    #[error("No feed found at URL")]
+    NoFeedFound,
+
+    #[error("Failed to parse feed: {0}")]
+    FeedParseError(String),
+
     #[error("Validation error: {0}")]
     Validation(String),
+
+    #[error("Invalid OPML format: {0}")]
+    OpmlParseError(String),
 
     #[error("Internal server error")]
     Internal(String),
@@ -62,7 +89,22 @@ impl IntoResponse for AppError {
             AppError::CannotModifySelf => (StatusCode::BAD_REQUEST, "Cannot modify self"),
             AppError::AlreadyMasquerading => (StatusCode::BAD_REQUEST, "Already masquerading"),
             AppError::NotMasquerading => (StatusCode::BAD_REQUEST, "Not masquerading"),
+            AppError::CategoryNotFound => (StatusCode::NOT_FOUND, "Category not found"),
+            AppError::CategoryExists => (StatusCode::CONFLICT, "Category already exists"),
+            AppError::FeedNotFound => (StatusCode::NOT_FOUND, "Feed not found"),
+            AppError::FeedExists => (StatusCode::CONFLICT, "Feed already exists"),
+            AppError::InvalidUrl => (StatusCode::BAD_REQUEST, "Invalid URL"),
+            AppError::FetchError(msg) => {
+                return (StatusCode::BAD_GATEWAY, Json(json!({ "error": msg }))).into_response()
+            }
+            AppError::NoFeedFound => (StatusCode::BAD_REQUEST, "No feed found at URL"),
+            AppError::FeedParseError(msg) => {
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+            }
             AppError::Validation(msg) => {
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+            }
+            AppError::OpmlParseError(msg) => {
                 return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
             }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),

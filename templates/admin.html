@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Admin Panel - RDRS{% endblock %}
+
+{% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
+
+{% block content %}
+{% call macros::nav("admin", true, is_masquerading) %}
+
+<h1>Admin Panel</h1>
+
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody id="users-table">
+        <tr>
+            <td colspan="6">Loading...</td>
+        </tr>
+    </tbody>
+</table>
+
+<script>
+    const currentUserId = {{ current_user_id }};
+    const originalUserId = {{ original_user_id }};
+
+    async function loadUsers() {
+        try {
+            const response = await fetch('/api/admin/users');
+            if (!response.ok) {
+                throw new Error('Failed to load users');
+            }
+            const users = await response.json();
+            renderUsers(users);
+        } catch (err) {
+            document.getElementById('users-table').innerHTML =
+                '<tr><td colspan="6">[ERROR] Failed to load users</td></tr>';
+        }
+    }
+
+    function renderUsers(users) {
+        const tbody = document.getElementById('users-table');
+        tbody.innerHTML = users.map(user => {
+            const isCurrentUser = user.id === currentUserId;
+            const isOriginalUser = user.id === originalUserId;
+            const isSelf = isCurrentUser || isOriginalUser;
+            const isDisabled = user.disabled_at !== null;
+
+            return `
+                <tr>
+                    <td>${user.id}</td>
+                    <td>${escapeHtml(user.username)}</td>
+                    <td>${user.role}</td>
+                    <td>${isDisabled ? 'disabled' : 'active'}</td>
+                    <td>${formatDate(user.created_at)}</td>
+                    <td class="actions">
+                        ${!isSelf ? `
+                            <a href="#" onclick="toggleRole(${user.id}, '${user.role}'); return false;">[${user.role === 'admin' ? 'demote' : 'promote'}]</a>
+                            <a href="#" onclick="toggleDisabled(${user.id}, ${isDisabled}); return false;">[${isDisabled ? 'enable' : 'disable'}]</a>
+                            <a href="#" onclick="masquerade(${user.id}); return false;">[view as]</a>
+                            <a href="#" onclick="deleteUser(${user.id}, '${escapeHtml(user.username)}'); return false;">[delete]</a>
+                        ` : '<span class="muted">(you)</span>'}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+        return dateStr.split('T')[0];
+    }
+
+    async function toggleRole(userId, currentRole) {
+        const newRole = currentRole === 'admin' ? 'user' : 'admin';
+        try {
+            const response = await fetch(`/api/admin/users/${userId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role: newRole })
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update role');
+            }
+            flash.success(`Role updated to ${newRole}.`);
+            loadUsers();
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    async function toggleDisabled(userId, isCurrentlyDisabled) {
+        try {
+            const response = await fetch(`/api/admin/users/${userId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ disabled: !isCurrentlyDisabled })
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update user status');
+            }
+            flash.success(isCurrentlyDisabled ? 'User enabled.' : 'User disabled.');
+            loadUsers();
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    async function masquerade(userId) {
+        try {
+            const response = await fetch(`/api/admin/masquerade/${userId}`, {
+                method: 'POST'
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to start masquerade');
+            }
+            flash.redirect('/', 'info', 'Now viewing as another user.');
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    async function deleteUser(userId, username) {
+        if (!confirm(`Delete user "${username}"? This cannot be undone.`)) {
+            return;
+        }
+        try {
+            const response = await fetch(`/api/admin/users/${userId}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to delete user');
+            }
+            flash.success(`User "${username}" deleted.`);
+            loadUsers();
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    loadUsers();
+</script>
+{% endblock %}

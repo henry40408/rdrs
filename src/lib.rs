@@ -13,6 +13,7 @@ pub mod error;
 pub mod handlers;
 pub mod middleware;
 pub mod models;
+pub mod services;
 
 pub use config::Config;
 pub use middleware::auth::SESSION_COOKIE_NAME;
@@ -33,6 +34,7 @@ pub fn create_router(state: AppState) -> Router {
             "/change-password",
             get(handlers::pages::change_password_page),
         )
+        .route("/admin", get(handlers::pages::admin_page))
         .route("/api/register", post(handlers::auth::register))
         .route("/api/session", post(handlers::auth::login))
         .route("/api/session", delete(handlers::auth::logout))
@@ -52,5 +54,35 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/unmasquerade",
             post(handlers::admin::stop_masquerade),
         )
+        // Category routes
+        .route("/categories", get(handlers::pages::categories_page))
+        .route("/api/categories", get(handlers::category::list_categories))
+        .route("/api/categories", post(handlers::category::create_category))
+        .route(
+            "/api/categories/{id}",
+            get(handlers::category::get_category),
+        )
+        .route(
+            "/api/categories/{id}",
+            put(handlers::category::update_category),
+        )
+        .route(
+            "/api/categories/{id}",
+            delete(handlers::category::delete_category),
+        )
+        // Feed routes
+        .route("/feeds", get(handlers::pages::feeds_page))
+        .route("/api/feeds", get(handlers::feed::list_feeds))
+        .route("/api/feeds", post(handlers::feed::create_feed))
+        .route(
+            "/api/feeds/fetch-metadata",
+            post(handlers::feed::fetch_metadata),
+        )
+        .route("/api/feeds/{id}", get(handlers::feed::get_feed))
+        .route("/api/feeds/{id}", put(handlers::feed::update_feed))
+        .route("/api/feeds/{id}", delete(handlers::feed::delete_feed))
+        // OPML routes
+        .route("/api/opml/export", get(handlers::feed::export_opml))
+        .route("/api/opml/import", post(handlers::feed::import_opml))
         .with_state(state)
 }

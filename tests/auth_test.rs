@@ -810,7 +810,7 @@ async fn test_home_page() {
     let response = server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("Welcome, admin!"));
+    assert!(body.contains("Username:"));
     assert!(body.contains("admin"));
     assert!(body.contains("Sign Out"));
 }
@@ -821,4 +821,222 @@ async fn test_home_page_unauthorized() {
 
     let response = server.get("/").await;
     response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_admin_page_accessible_by_admin() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let response = server.get("/admin").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Admin Panel"));
+}
+
+#[tokio::test]
+async fn test_admin_page_forbidden_for_regular_user() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "user1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({
+            "username": "user1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let response = server.get("/admin").await;
+    response.assert_status_forbidden();
+}
+
+#[tokio::test]
+async fn test_admin_page_unauthorized_without_login() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/admin").await;
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_home_page_shows_admin_link_for_admin() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let response = server.get("/").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("[Admin]"));
+    assert!(body.contains(r#"href="/admin""#));
+}
+
+#[tokio::test]
+async fn test_home_page_hides_admin_link_for_regular_user() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "user1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({
+            "username": "user1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let response = server.get("/").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(!body.contains("[Admin]"));
+    assert!(!body.contains(r#"href="/admin""#));
+}
+
+#[tokio::test]
+async fn test_flash_message_displayed_on_login_page() {
+    let server = create_test_server(default_test_config());
+
+    // Set a flash message cookie using add_cookie with cookie::Cookie
+    let response = server
+        .get("/login")
+        .add_cookie(cookie::Cookie::new(
+            "flash",
+            r#"[{"level":"success","message":"Test flash message"}]"#,
+        ))
+        .await;
+
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Test flash message"));
+    assert!(body.contains("flash-success"));
+}
+
+#[tokio::test]
+async fn test_flash_message_cleared_after_display() {
+    let server = create_test_server(default_test_config());
+
+    // First request with flash cookie
+    let response = server
+        .get("/login")
+        .add_cookie(cookie::Cookie::new(
+            "flash",
+            r#"[{"level":"info","message":"First message"}]"#,
+        ))
+        .await;
+
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("First message"));
+
+    // Second request should not have the flash message (cookie was cleared)
+    let response = server.get("/login").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(!body.contains("First message"));
+}
+
+#[tokio::test]
+async fn test_flash_message_on_home_page() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    // Request home page with flash message
+    let response = server
+        .get("/")
+        .add_cookie(cookie::Cookie::new(
+            "flash",
+            r#"[{"level":"warning","message":"Warning test"}]"#,
+        ))
+        .await;
+
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Warning test"));
+    assert!(body.contains("flash-warning"));
 }

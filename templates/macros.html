@@ -1,0 +1,61 @@
+{% macro flash(messages) %}
+{% if !messages.is_empty() %}
+<div class="flash-container">
+    {% for msg in messages %}
+    <div class="flash {{ msg.level_class() }}">
+        <span>{{ msg.message }}</span>
+        <span class="flash-right"><span class="flash-time">{{ msg.formatted_time() }}</span> <a href="#" class="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">[x]</a></span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro nav(current, is_admin, is_masquerading) %}
+<nav>
+    <ul>
+        <li><a href="/"{% if current == "home" %} class="active"{% endif %}>[Home]</a></li>
+        <li><a href="/feeds"{% if current == "feeds" %} class="active"{% endif %}>[Feeds]</a></li>
+        <li><a href="/categories"{% if current == "categories" %} class="active"{% endif %}>[Categories]</a></li>
+        <li><a href="/change-password"{% if current == "change-password" %} class="active"{% endif %}>[Password]</a></li>
+        {% if is_admin %}
+        <li><a href="/admin"{% if current == "admin" %} class="active"{% endif %}>[Admin]</a></li>
+        {% endif %}
+        <li><a href="#" onclick="logout(); return false;">[Sign Out]</a></li>
+    </ul>
+</nav>
+{% if is_masquerading %}
+<div class="flash flash-warning">
+    [MASQUERADE] You are viewing as another user. <a href="#" onclick="stopMasquerade(); return false;">[Stop]</a>
+</div>
+{% endif %}
+<script>
+async function logout() {
+    try {
+        const response = await fetch("/api/session", { method: "DELETE" });
+        if (response.ok) {
+            flash.redirect("/login", "info", "You have been logged out.");
+        } else {
+            flash.error("Logout failed");
+        }
+    } catch (err) {
+        flash.error("An error occurred during logout");
+    }
+}
+
+async function stopMasquerade() {
+    try {
+        const response = await fetch("/api/admin/unmasquerade", { method: "POST" });
+        if (response.ok) {
+            flash.success("Stopped masquerading.");
+            window.location.reload();
+        } else {
+            const error = await response.json();
+            flash.error(error.error || "Failed to stop masquerade");
+        }
+    } catch (err) {
+        flash.error("An error occurred");
+    }
+}
+</script>
+{% endmacro %}

@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Categories - RDRS{% endblock %}
+
+{% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
+
+{% block content %}
+{% call macros::nav("categories", is_admin, is_masquerading) %}
+
+<h1>Categories</h1>
+
+<form id="add-form" onsubmit="addCategory(event)">
+    <div class="form-group">
+        <label for="name">New Category</label>
+        <input type="text" id="name" name="name" placeholder="Category name" required maxlength="100">
+    </div>
+    <button type="submit">Add Category</button>
+</form>
+
+<hr>
+
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Feeds</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody id="categories-table">
+        <tr>
+            <td colspan="4">Loading...</td>
+        </tr>
+    </tbody>
+</table>
+
+<script>
+    let feeds = [];
+
+    async function loadCategories() {
+        try {
+            const [catResponse, feedResponse] = await Promise.all([
+                fetch('/api/categories'),
+                fetch('/api/feeds')
+            ]);
+            if (!catResponse.ok) {
+                throw new Error('Failed to load categories');
+            }
+            const categories = await catResponse.json();
+            feeds = feedResponse.ok ? await feedResponse.json() : [];
+            renderCategories(categories);
+        } catch (err) {
+            document.getElementById('categories-table').innerHTML =
+                '<tr><td colspan="4">[ERROR] Failed to load categories</td></tr>';
+        }
+    }
+
+    function renderCategories(categories) {
+        const tbody = document.getElementById('categories-table');
+        if (categories.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="muted">No categories yet.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = categories.map(cat => {
+            const feedCount = feeds.filter(f => f.category_id === cat.id).length;
+            return `
+            <tr id="row-${cat.id}">
+                <td>
+                    <span class="cat-name">${escapeHtml(cat.name)}</span>
+                    <input type="text" class="cat-edit-input" value="${escapeHtml(cat.name)}" style="display:none;" maxlength="100">
+                </td>
+                <td>${feedCount}</td>
+                <td>${formatDate(cat.created_at)}</td>
+                <td class="actions">
+                    <a href="/feeds?category=${cat.id}">[feeds]</a>
+                    <a href="#" class="edit-btn" onclick="startEdit(${cat.id}); return false;">[rename]</a>
+                    <a href="#" class="save-btn" onclick="saveEdit(${cat.id}); return false;" style="display:none;">[save]</a>
+                    <a href="#" class="cancel-btn" onclick="cancelEdit(${cat.id}); return false;" style="display:none;">[cancel]</a>
+                    <a href="#" onclick="deleteCategory(${cat.id}, '${escapeHtml(cat.name)}'); return false;">[delete]</a>
+                </td>
+            </tr>
+        `}).join('');
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+        return dateStr.split('T')[0];
+    }
+
+    async function addCategory(event) {
+        event.preventDefault();
+        const nameInput = document.getElementById('name');
+        const name = nameInput.value.trim();
+
+        if (!name) {
+            flash.error('Category name cannot be empty');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/categories', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to create category');
+            }
+
+            nameInput.value = '';
+            flash.success('Category created.');
+            loadCategories();
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    function startEdit(id) {
+        const row = document.getElementById(`row-${id}`);
+        row.querySelector('.cat-name').style.display = 'none';
+        row.querySelector('.cat-edit-input').style.display = 'inline';
+        row.querySelector('.edit-btn').style.display = 'none';
+        row.querySelector('.save-btn').style.display = 'inline';
+        row.querySelector('.cancel-btn').style.display = 'inline';
+        row.querySelector('.cat-edit-input').focus();
+    }
+
+    function cancelEdit(id) {
+        const row = document.getElementById(`row-${id}`);
+        const nameSpan = row.querySelector('.cat-name');
+        const input = row.querySelector('.cat-edit-input');
+        input.value = nameSpan.textContent;
+        nameSpan.style.display = 'inline';
+        input.style.display = 'none';
+        row.querySelector('.edit-btn').style.display = 'inline';
+        row.querySelector('.save-btn').style.display = 'none';
+        row.querySelector('.cancel-btn').style.display = 'none';
+    }
+
+    async function saveEdit(id) {
+        const row = document.getElementById(`row-${id}`);
+        const input = row.querySelector('.cat-edit-input');
+        const newName = input.value.trim();
+
+        if (!newName) {
+            flash.error('Category name cannot be empty');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/categories/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: newName })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update category');
+            }
+
+            flash.success('Category renamed.');
+            loadCategories();
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    async function deleteCategory(id, name) {
+        const feedCount = feeds.filter(f => f.category_id === id).length;
+        let message = `Delete category "${name}"?`;
+        if (feedCount > 0) {
+            message += ` This will also delete ${feedCount} feed${feedCount > 1 ? 's' : ''}.`;
+        }
+        message += ' This cannot be undone.';
+        if (!confirm(message)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/categories/${id}`, {
+                method: 'DELETE'
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to delete category');
+            }
+
+            flash.success(`Category "${name}" deleted.`);
+            loadCategories();
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    loadCategories();
+</script>
+{% endblock %}

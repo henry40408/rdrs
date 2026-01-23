@@ -11,80 +11,233 @@
             padding: 0;
         }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-family: "SF Mono", "Monaco", "Inconsolata", "Fira Mono", "Droid Sans Mono", "Source Code Pro", monospace;
+            font-size: 14px;
             line-height: 1.6;
-            background-color: #f5f5f5;
-            color: #333;
-        }
-        .container {
-            max-width: 400px;
-            margin: 100px auto;
-            padding: 2rem;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            background-color: #fff;
+            color: #111;
+            padding: 2rem 4rem;
+            max-width: 1200px;
+            margin: 0 auto;
         }
         h1 {
-            text-align: center;
+            font-size: 1rem;
+            font-weight: normal;
             margin-bottom: 1.5rem;
-            color: #333;
+            border-bottom: 1px solid #111;
+            padding-bottom: 0.5rem;
         }
         .form-group {
             margin-bottom: 1rem;
         }
         label {
             display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 500;
+            margin-bottom: 0.25rem;
         }
         input[type="text"],
         input[type="password"] {
             width: 100%;
-            padding: 0.75rem;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 1rem;
+            padding: 0.5rem;
+            border: 1px solid #111;
+            font-family: inherit;
+            font-size: inherit;
+            background: #fff;
         }
         input:focus {
-            outline: none;
-            border-color: #007bff;
+            outline: 2px solid #111;
+            outline-offset: 1px;
         }
-        button {
+        select {
             width: 100%;
-            padding: 0.75rem;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            font-size: 1rem;
+            padding: 0.5rem;
+            border: 1px solid #111;
+            font-family: inherit;
+            font-size: inherit;
+            background: #fff;
+        }
+        select:focus {
+            outline: 2px solid #111;
+            outline-offset: 1px;
+        }
+        button, .btn {
+            padding: 0.5rem 1rem;
+            background: #111;
+            color: #fff;
+            border: 1px solid #111;
+            font-family: inherit;
+            font-size: inherit;
             cursor: pointer;
             margin-top: 1rem;
         }
-        button:hover {
-            background-color: #0056b3;
+        button:hover, .btn:hover {
+            background: #fff;
+            color: #111;
         }
         .error {
-            color: #dc3545;
-            background-color: #f8d7da;
-            padding: 0.75rem;
-            border-radius: 4px;
             margin-bottom: 1rem;
         }
-        .link {
-            text-align: center;
-            margin-top: 1rem;
+        .error::before {
+            content: "[ERROR] ";
         }
-        .link a {
-            color: #007bff;
+        a {
+            color: #111;
+        }
+        a:hover {
+            background: #111;
+            color: #fff;
+        }
+        .link {
+            margin-top: 1.5rem;
+        }
+        .flash-container {
+            margin-bottom: 1.5rem;
+        }
+        .flash {
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .flash-success::before { content: "[OK] "; }
+        .flash-error::before { content: "[ERROR] "; }
+        .flash-info::before { content: "[INFO] "; }
+        .flash-warning::before { content: "[WARN] "; }
+        .flash-close {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0;
+            margin: 0 0 0 1rem;
+            font-family: inherit;
+            font-size: inherit;
+            width: auto;
+            color: #666;
             text-decoration: none;
         }
-        .link a:hover {
-            text-decoration: underline;
+        .flash-close:hover {
+            background: none;
+            color: #111;
+            text-decoration: none;
+        }
+        .flash-right {
+            margin-left: auto;
+            white-space: nowrap;
+        }
+        .flash-time {
+            color: #666;
+        }
+        hr {
+            border: none;
+            border-top: 1px solid #111;
+            margin: 1.5rem 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+        th, td {
+            text-align: left;
+            padding: 0.25rem 0.5rem;
+            border-bottom: 1px solid #ddd;
+        }
+        td input[type="text"] {
+            padding: 0;
+            margin: 0;
+            border: 1px solid #111;
+            font-family: inherit;
+            font-size: inherit;
+            line-height: inherit;
+            height: auto;
+        }
+        th {
+            border-bottom: 1px solid #111;
+        }
+        .actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        .actions button, .actions .btn {
+            padding: 0.25rem 0.5rem;
+            margin: 0;
+            font-size: 12px;
+        }
+        .badge {
+            font-size: 12px;
+        }
+        .muted {
+            color: #666;
+        }
+        nav {
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #111;
+        }
+        nav ul {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        nav a {
+            text-decoration: none;
+        }
+        nav a.active {
+            font-weight: bold;
         }
     </style>
     {% block head %}{% endblock %}
 </head>
 <body>
+    {% block flash %}{% endblock %}
     {% block content %}{% endblock %}
+    <script>
+        // Flash message helper functions
+        window.flash = {
+            maxMessages: 3,
+            set: function(level, message) {
+                const messages = [{ level: level, message: message }];
+                document.cookie = 'flash=' + encodeURIComponent(JSON.stringify(messages)) + '; path=/; SameSite=Lax';
+            },
+            formatTime: function(date) {
+                return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            },
+            show: function(level, message) {
+                let container = document.querySelector('.flash-container');
+                if (!container) {
+                    container = document.createElement('div');
+                    container.className = 'flash-container';
+                    document.body.insertBefore(container, document.body.firstChild);
+                }
+                // Remove oldest messages if we have too many
+                const existing = container.querySelectorAll('.flash');
+                if (existing.length >= this.maxMessages) {
+                    for (let i = 0; i <= existing.length - this.maxMessages; i++) {
+                        existing[i].remove();
+                    }
+                }
+                const levelClass = 'flash-' + level;
+                const div = document.createElement('div');
+                div.className = 'flash ' + levelClass;
+                const timestamp = this.formatTime(new Date());
+                div.innerHTML = '<span>' + this.escapeHtml(message) + '</span><span class="flash-right"><span class="flash-time">' + timestamp + '</span> <a href="#" class="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">[x]</a></span>';
+                container.appendChild(div);
+            },
+            escapeHtml: function(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            },
+            success: function(message) { this.show('success', message); },
+            error: function(message) { this.show('error', message); },
+            info: function(message) { this.show('info', message); },
+            warning: function(message) { this.show('warning', message); },
+            redirect: function(url, level, message) {
+                this.set(level, message);
+                window.location.href = url;
+            }
+        };
+    </script>
 </body>
 </html>
