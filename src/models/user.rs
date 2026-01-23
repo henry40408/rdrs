@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -18,12 +20,16 @@ impl Role {
             Role::User => "user",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for Role {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "admin" => Some(Role::Admin),
-            "user" => Some(Role::User),
-            _ => None,
+            "admin" => Ok(Role::Admin),
+            "user" => Ok(Role::User),
+            _ => Err(()),
         }
     }
 }
@@ -53,8 +59,7 @@ fn parse_datetime(s: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
         .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                .map(|dt| dt.and_utc())
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
         })
         .unwrap_or_else(|_| Utc::now())
 }
@@ -74,7 +79,12 @@ fn row_to_user(row: &rusqlite::Row) -> rusqlite::Result<User> {
     })
 }
 
-pub fn create_user(conn: &Connection, username: &str, password_hash: &str, role: Role) -> AppResult<User> {
+pub fn create_user(
+    conn: &Connection,
+    username: &str,
+    password_hash: &str,
+    role: Role,
+) -> AppResult<User> {
     let result = conn.execute(
         "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
         params![username, password_hash, role.as_str()],
