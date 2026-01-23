@@ -94,3 +94,20 @@ pub async fn home_page(auth_user: AuthUser) -> HomeTemplate {
             .to_string(),
     }
 }
+
+#[derive(Template)]
+#[template(path = "change-password.html")]
+pub struct ChangePasswordTemplate {}
+
+impl IntoResponse for ChangePasswordTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn change_password_page(_auth_user: AuthUser) -> ChangePasswordTemplate {
+    ChangePasswordTemplate {}
+}
