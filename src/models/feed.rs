@@ -138,6 +138,7 @@ pub fn list_by_category(conn: &Connection, category_id: i64) -> AppResult<Vec<Fe
     Ok(feeds)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_feed(
     conn: &Connection,
     id: i64,
@@ -158,7 +159,7 @@ pub fn update_feed(
     );
 
     match result {
-        Ok(rows) if rows == 0 => Err(AppError::FeedNotFound),
+        Ok(0) => Err(AppError::FeedNotFound),
         Ok(_) => find_by_id(conn, id)?.ok_or(AppError::FeedNotFound),
         Err(rusqlite::Error::SqliteFailure(err, _))
             if err.code == rusqlite::ErrorCode::ConstraintViolation =>

@@ -115,7 +115,7 @@ pub fn update_name(
     );
 
     match result {
-        Ok(rows) if rows == 0 => Err(AppError::CategoryNotFound),
+        Ok(0) => Err(AppError::CategoryNotFound),
         Ok(_) => find_by_id(conn, id)?.ok_or(AppError::CategoryNotFound),
         Err(rusqlite::Error::SqliteFailure(err, _))
             if err.code == rusqlite::ErrorCode::ConstraintViolation =>
