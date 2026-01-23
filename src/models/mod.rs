@@ -1,4 +1,5 @@
 pub mod category;
+pub mod entry;
 pub mod feed;
 pub mod session;
 pub mod user;

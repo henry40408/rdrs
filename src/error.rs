@@ -53,6 +53,9 @@ pub enum AppError {
     #[error("Feed already exists")]
     FeedExists,
 
+    #[error("Entry not found")]
+    EntryNotFound,
+
     #[error("Invalid URL")]
     InvalidUrl,
 
@@ -93,6 +96,7 @@ impl IntoResponse for AppError {
             AppError::CategoryExists => (StatusCode::CONFLICT, "Category already exists"),
             AppError::FeedNotFound => (StatusCode::NOT_FOUND, "Feed not found"),
             AppError::FeedExists => (StatusCode::CONFLICT, "Feed already exists"),
+            AppError::EntryNotFound => (StatusCode::NOT_FOUND, "Entry not found"),
             AppError::InvalidUrl => (StatusCode::BAD_REQUEST, "Invalid URL"),
             AppError::FetchError(msg) => {
                 return (StatusCode::BAD_GATEWAY, Json(json!({ "error": msg }))).into_response()

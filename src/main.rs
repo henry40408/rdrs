@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use rdrs::{create_router, db, AppState, Config};
+use rdrs::{create_router, db, services, AppState, Config};
 use rusqlite::Connection;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -16,10 +16,15 @@ async fn main() {
     let conn = Connection::open(&config.database_url).expect("Failed to open database");
     db::init_db(&conn).expect("Failed to initialize database");
 
+    let db = Arc::new(Mutex::new(conn));
+
     let state = AppState {
-        db: Arc::new(Mutex::new(conn)),
+        db: db.clone(),
         config: Arc::new(config.clone()),
     };
+
+    // Start background sync task
+    let _background_task = services::start_background_sync(db);
 
     let app = create_router(state);
 

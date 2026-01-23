@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Entry - RDRS{% endblock %}
+
+{% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
+
+{% block content %}
+{% call macros::nav("entries", is_admin, is_masquerading) %}
+
+<div id="entry-container">
+    <p class="muted">Loading...</p>
+</div>
+
+<script>
+    const entryId = {{ entry_id }};
+
+    async function loadEntry() {
+        try {
+            const response = await fetch(`/api/entries/${entryId}`);
+            if (!response.ok) {
+                if (response.status === 404) {
+                    document.getElementById('entry-container').innerHTML = '<p class="muted">Entry not found.</p>';
+                    return;
+                }
+                throw new Error('Failed to load entry');
+            }
+            const data = await response.json();
+            renderEntry(data);
+
+            // Auto-mark as read
+            if (data.read_at === null) {
+                await fetch(`/api/entries/${entryId}/read`, { method: 'PUT' });
+            }
+        } catch (err) {
+            document.getElementById('entry-container').innerHTML = '<p class="muted">[ERROR] Failed to load entry</p>';
+        }
+    }
+
+    function renderEntry(data) {
+        const title = data.title || 'Untitled';
+        const feedTitle = data.feed_title || data.feed_url;
+        const author = data.author || '';
+        const date = data.published_at ? new Date(data.published_at).toLocaleString() : '';
+        const isStarred = data.starred_at !== null;
+        const content = data.sanitized_content || data.summary || '<p class="muted">No content available.</p>';
+
+        document.getElementById('entry-container').innerHTML = `
+            <div style="margin-bottom:1rem;">
+                <a href="/entries">&larr; Back to Entries</a>
+            </div>
+
+            <h1 style="margin-bottom:0.5rem;">${escapeHtml(title)}</h1>
+
+            <div class="muted" style="margin-bottom:1rem;">
+                <span>${escapeHtml(feedTitle)}</span>
+                ${author ? ` &middot; <span>${escapeHtml(author)}</span>` : ''}
+                ${date ? ` &middot; <span>${date}</span>` : ''}
+            </div>
+
+            <div style="margin-bottom:1rem;">
+                <button type="button" onclick="toggleStar()" id="star-btn">[${isStarred ? 'Unstar' : 'Star'}]</button>
+                <button type="button" onclick="markUnread()">[Mark Unread]</button>
+                ${data.link ? `<a href="${escapeHtml(data.link)}" target="_blank" rel="noopener noreferrer" class="btn">[View Original]</a>` : ''}
+            </div>
+
+            <hr>
+
+            <article class="entry-content" style="line-height:1.6;">
+                ${content}
+            </article>
+
+            <hr>
+
+            <div style="margin-top:1rem;">
+                <a href="/entries">&larr; Back to Entries</a>
+            </div>
+        `;
+    }
+
+    async function toggleStar() {
+        try {
+            const response = await fetch(`/api/entries/${entryId}/star`, { method: 'PUT' });
+            if (!response.ok) throw new Error('Failed to toggle star');
+            const updated = await response.json();
+            const btn = document.getElementById('star-btn');
+            btn.textContent = updated.starred_at ? '[Unstar]' : '[Star]';
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    async function markUnread() {
+        try {
+            const response = await fetch(`/api/entries/${entryId}/unread`, { method: 'PUT' });
+            if (!response.ok) throw new Error('Failed to mark as unread');
+            flash.success('Marked as unread.');
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Initialize
+    loadEntry();
+</script>
+
+<style>
+    .entry-content img {
+        max-width: 100%;
+        height: auto;
+    }
+    .entry-content pre {
+        overflow-x: auto;
+        background: #f5f5f5;
+        padding: 1rem;
+    }
+    .entry-content blockquote {
+        border-left: 3px solid #ccc;
+        margin-left: 0;
+        padding-left: 1rem;
+        color: #666;
+    }
+</style>
+{% endblock %}

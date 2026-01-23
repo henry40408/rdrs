@@ -44,12 +44,39 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
             title TEXT,
             description TEXT,
             site_url TEXT,
+            feed_updated_at TEXT,
+            fetched_at TEXT,
+            fetch_error TEXT,
+            etag TEXT,
+            last_modified TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(category_id, url)
         );
 
         CREATE INDEX IF NOT EXISTS idx_feed_category_id ON feed(category_id);
+
+        CREATE TABLE IF NOT EXISTS entry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            feed_id INTEGER NOT NULL REFERENCES feed(id) ON DELETE CASCADE,
+            guid TEXT NOT NULL,
+            title TEXT,
+            link TEXT,
+            content TEXT,
+            summary TEXT,
+            author TEXT,
+            published_at TEXT,
+            read_at TEXT,
+            starred_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(feed_id, guid)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_entry_feed_id ON entry(feed_id);
+        CREATE INDEX IF NOT EXISTS idx_entry_published_at ON entry(published_at);
+        CREATE INDEX IF NOT EXISTS idx_entry_read_at ON entry(read_at);
+        CREATE INDEX IF NOT EXISTS idx_entry_starred_at ON entry(starred_at);
         "#,
     )?;
 

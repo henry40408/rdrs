@@ -45,7 +45,7 @@
         <tr>
             <th>Title</th>
             <th>Category</th>
-            <th>Added</th>
+            <th>Last Fetched</th>
             <th>Actions</th>
         </tr>
     </thead>
@@ -201,13 +201,20 @@
             const category = categories.find(c => c.id === feed.category_id);
             const categoryName = category ? category.name : 'Unknown';
             const title = feed.title || feed.url;
+            const fetchedAt = feed.fetched_at ? formatDate(feed.fetched_at) : 'Never';
+            const hasError = feed.fetch_error !== null;
 
             return `
             <tr id="row-${feed.id}">
                 <td><span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
                 <td>${escapeHtml(categoryName)}</td>
-                <td>${formatDate(feed.created_at)}</td>
+                <td>
+                    <span ${hasError ? 'style="color:red;" title="' + escapeHtml(feed.fetch_error) + '"' : ''}>${fetchedAt}</span>
+                    ${hasError ? ' !' : ''}
+                </td>
                 <td class="actions">
+                    <a href="/entries?feed=${feed.id}">[entries]</a>
+                    <a href="#" onclick="refreshFeed(${feed.id}); return false;" id="refresh-${feed.id}">[refresh]</a>
                     <a href="#" onclick="editFeed(${feed.id}); return false;">[edit]</a>
                     <a href="#" onclick="deleteFeed(${feed.id}, '${escapeHtml(title).replace(/'/g, "\\'")}'); return false;">[delete]</a>
                 </td>
@@ -387,6 +394,31 @@
             loadFeeds();
         } catch (err) {
             flash.error(err.message);
+        }
+    }
+
+    async function refreshFeed(id) {
+        const btn = document.getElementById(`refresh-${id}`);
+        const originalText = btn.textContent;
+        btn.textContent = '[...]';
+
+        try {
+            const response = await fetch(`/api/feeds/${id}/refresh`, {
+                method: 'POST'
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to refresh feed');
+            }
+
+            const result = await response.json();
+            flash.success(`Refreshed: ${result.new_entries} new, ${result.updated_entries} updated.`);
+            loadFeeds();
+        } catch (err) {
+            flash.error(err.message);
+        } finally {
+            btn.textContent = originalText;
         }
     }
 

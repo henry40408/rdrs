@@ -1,12 +1,13 @@
 use askama::Template;
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     response::{Html, IntoResponse, Response},
 };
 
 use crate::middleware::auth::{AdminUser, AuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
+use crate::models::entry;
 use crate::AppState;
 
 #[derive(Template)]
@@ -88,6 +89,7 @@ pub struct HomeTemplate {
     pub username: String,
     pub role: String,
     pub sign_in_time: String,
+    pub unread_count: i64,
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
@@ -102,7 +104,11 @@ impl IntoResponse for HomeTemplate {
     }
 }
 
-pub async fn home_page(auth_user: AuthUser, flash: Flash) -> (Flash, HomeTemplate) {
+pub async fn home_page(
+    auth_user: AuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, HomeTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
     let is_admin = if is_masquerading {
         // When masquerading, check if original user is admin
@@ -111,16 +117,23 @@ pub async fn home_page(auth_user: AuthUser, flash: Flash) -> (Flash, HomeTemplat
         auth_user.user.is_admin()
     };
 
+    let unread_count = {
+        let conn = state.db.lock().ok();
+        conn.and_then(|c| entry::count_unread_by_user(&c, auth_user.user.id).ok())
+            .unwrap_or(0)
+    };
+
     (
         flash.clone(),
         HomeTemplate {
-            username: auth_user.user.username,
+            username: auth_user.user.username.clone(),
             role: auth_user.user.role.as_str().to_string(),
             sign_in_time: auth_user
                 .session
                 .created_at
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string(),
+            unread_count,
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
@@ -264,6 +277,82 @@ pub async fn feeds_page(auth_user: AuthUser, flash: Flash) -> (Flash, FeedsTempl
     (
         flash.clone(),
         FeedsTemplate {
+            is_admin,
+            is_masquerading,
+            flash_messages: flash.messages,
+        },
+    )
+}
+
+#[derive(Template)]
+#[template(path = "entries.html")]
+pub struct EntriesTemplate {
+    pub is_admin: bool,
+    pub is_masquerading: bool,
+    pub flash_messages: Vec<FlashMessage>,
+}
+
+impl IntoResponse for EntriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn entries_page(auth_user: AuthUser, flash: Flash) -> (Flash, EntriesTemplate) {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
+    (
+        flash.clone(),
+        EntriesTemplate {
+            is_admin,
+            is_masquerading,
+            flash_messages: flash.messages,
+        },
+    )
+}
+
+#[derive(Template)]
+#[template(path = "entry.html")]
+pub struct EntryTemplate {
+    pub entry_id: i64,
+    pub is_admin: bool,
+    pub is_masquerading: bool,
+    pub flash_messages: Vec<FlashMessage>,
+}
+
+impl IntoResponse for EntryTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn entry_page(
+    auth_user: AuthUser,
+    Path(id): Path<i64>,
+    flash: Flash,
+) -> (Flash, EntryTemplate) {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
+    (
+        flash.clone(),
+        EntryTemplate {
+            entry_id: id,
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,

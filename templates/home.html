@@ -13,5 +13,175 @@
 Username:     {{ username }}
 Role:         {{ role }}
 Last sign in: {{ sign_in_time }}
+Unread:       <span id="unread-count">{{ unread_count }}</span>
 </pre>
+
+<hr>
+
+<h2>Unread Entries</h2>
+<div style="margin-bottom:1rem;">
+    <button type="button" onclick="markAllRead()">[Mark All Read]</button>
+    <button type="button" onclick="loadEntries()">[Refresh]</button>
+</div>
+
+<div id="entries-list">
+    <p class="muted">Loading...</p>
+</div>
+
+<div id="load-more" style="display:none; margin-top:1rem;">
+    <button type="button" onclick="loadMore()">[Load More]</button>
+</div>
+
+<script>
+    let entries = [];
+    let currentOffset = 0;
+    const limit = 20;
+    let total = 0;
+
+    async function loadEntries(reset = true) {
+        if (reset) {
+            currentOffset = 0;
+            entries = [];
+        }
+
+        try {
+            const response = await fetch(`/api/entries?unread_only=true&limit=${limit}&offset=${currentOffset}`);
+            if (!response.ok) {
+                throw new Error('Failed to load entries');
+            }
+            const data = await response.json();
+
+            if (reset) {
+                entries = data.entries;
+            } else {
+                entries = entries.concat(data.entries);
+            }
+            total = data.total;
+
+            renderEntries();
+            updateLoadMoreButton();
+            updateUnreadCount();
+        } catch (err) {
+            document.getElementById('entries-list').innerHTML = '<p class="muted">[ERROR] Failed to load entries</p>';
+        }
+    }
+
+    function renderEntries() {
+        const container = document.getElementById('entries-list');
+
+        if (entries.length === 0) {
+            container.innerHTML = '<p class="muted">No unread entries.</p>';
+            return;
+        }
+
+        container.innerHTML = entries.map(entry => {
+            const title = entry.title || 'Untitled';
+            const feedTitle = entry.feed_title || entry.feed_url;
+            const date = entry.published_at ? entry.published_at.split('T')[0] : '';
+            const isStarred = entry.starred_at !== null;
+
+            return `
+            <div class="entry-item" id="entry-${entry.id}" style="margin-bottom:1rem; padding-bottom:1rem; border-bottom:1px solid #ccc;">
+                <div>
+                    <a href="/entries/${entry.id}" style="font-weight:bold;">${escapeHtml(title)}</a>
+                    ${isStarred ? '<span title="Starred">*</span>' : ''}
+                </div>
+                <div class="muted" style="font-size:0.875rem;">
+                    ${escapeHtml(feedTitle)} &middot; ${date}
+                </div>
+                <div style="margin-top:0.5rem;">
+                    <a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>
+                    <a href="#" onclick="toggleStar(${entry.id}); return false;">[${isStarred ? 'unstar' : 'star'}]</a>
+                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer">[original]</a>` : ''}
+                </div>
+            </div>
+            `;
+        }).join('');
+    }
+
+    function updateLoadMoreButton() {
+        const btn = document.getElementById('load-more');
+        if (entries.length < total) {
+            btn.style.display = 'block';
+        } else {
+            btn.style.display = 'none';
+        }
+    }
+
+    async function loadMore() {
+        currentOffset += limit;
+        await loadEntries(false);
+    }
+
+    async function markRead(id) {
+        try {
+            const response = await fetch(`/api/entries/${id}/read`, { method: 'PUT' });
+            if (!response.ok) {
+                throw new Error('Failed to mark as read');
+            }
+            // Remove from list
+            entries = entries.filter(e => e.id !== id);
+            total--;
+            renderEntries();
+            updateLoadMoreButton();
+            updateUnreadCount();
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    async function toggleStar(id) {
+        try {
+            const response = await fetch(`/api/entries/${id}/star`, { method: 'PUT' });
+            if (!response.ok) {
+                throw new Error('Failed to toggle star');
+            }
+            const updated = await response.json();
+            // Update in list
+            const idx = entries.findIndex(e => e.id === id);
+            if (idx >= 0) {
+                entries[idx].starred_at = updated.starred_at;
+                renderEntries();
+            }
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    async function markAllRead() {
+        if (!confirm('Mark all entries as read?')) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/entries/mark-all-read', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            if (!response.ok) {
+                throw new Error('Failed to mark all as read');
+            }
+            const result = await response.json();
+            flash.success(`Marked ${result.marked_count} entries as read.`);
+            loadEntries();
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    function updateUnreadCount() {
+        document.getElementById('unread-count').textContent = total;
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Initialize
+    loadEntries();
+</script>
 {% endblock %}
