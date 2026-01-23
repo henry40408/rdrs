@@ -53,5 +53,24 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/unmasquerade",
             post(handlers::admin::stop_masquerade),
         )
+        // Category routes
+        .route("/categories", get(handlers::pages::categories_page))
+        .route("/api/categories", get(handlers::category::list_categories))
+        .route(
+            "/api/categories",
+            post(handlers::category::create_category),
+        )
+        .route(
+            "/api/categories/{id}",
+            get(handlers::category::get_category),
+        )
+        .route(
+            "/api/categories/{id}",
+            put(handlers::category::update_category),
+        )
+        .route(
+            "/api/categories/{id}",
+            delete(handlers::category::delete_category),
+        )
         .with_state(state)
 }

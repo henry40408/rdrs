@@ -41,6 +41,12 @@ pub enum AppError {
     #[error("Not masquerading")]
     NotMasquerading,
 
+    #[error("Category not found")]
+    CategoryNotFound,
+
+    #[error("Category already exists")]
+    CategoryExists,
+
     #[error("Validation error: {0}")]
     Validation(String),
 
@@ -62,6 +68,8 @@ impl IntoResponse for AppError {
             AppError::CannotModifySelf => (StatusCode::BAD_REQUEST, "Cannot modify self"),
             AppError::AlreadyMasquerading => (StatusCode::BAD_REQUEST, "Already masquerading"),
             AppError::NotMasquerading => (StatusCode::BAD_REQUEST, "Not masquerading"),
+            AppError::CategoryNotFound => (StatusCode::NOT_FOUND, "Category not found"),
+            AppError::CategoryExists => (StatusCode::CONFLICT, "Category already exists"),
             AppError::Validation(msg) => {
                 return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
             }

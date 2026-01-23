@@ -183,3 +183,27 @@ pub async fn change_password_page(_auth_user: AuthUser, flash: Flash) -> (Flash,
         },
     )
 }
+
+#[derive(Template)]
+#[template(path = "categories.html")]
+pub struct CategoriesTemplate {
+    pub flash_messages: Vec<FlashMessage>,
+}
+
+impl IntoResponse for CategoriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn categories_page(_auth_user: AuthUser, flash: Flash) -> (Flash, CategoriesTemplate) {
+    (
+        flash.clone(),
+        CategoriesTemplate {
+            flash_messages: flash.messages,
+        },
+    )
+}
