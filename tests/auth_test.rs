@@ -16,10 +16,7 @@ fn create_test_server(config: Config) -> TestServer {
     };
 
     let app = create_router(state);
-    TestServer::builder()
-        .save_cookies()
-        .build(app)
-        .unwrap()
+    TestServer::builder().save_cookies().build(app).unwrap()
 }
 
 fn default_test_config() -> Config {
@@ -786,4 +783,43 @@ async fn test_validation_empty_username() {
         .await;
 
     response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn test_home_page() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    let login_response = server
+        .post("/api/session")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await;
+
+    login_response.assert_status_ok();
+
+    let response = server.get("/").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Welcome, admin!"));
+    assert!(body.contains("admin"));
+    assert!(body.contains("Sign Out"));
+}
+
+#[tokio::test]
+async fn test_home_page_unauthorized() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/").await;
+    response.assert_status_unauthorized();
 }

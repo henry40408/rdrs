@@ -26,6 +26,7 @@ pub struct AppState {
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(handlers::pages::home_page))
         .route("/login", get(handlers::pages::login_page))
         .route("/register", get(handlers::pages::register_page))
         .route("/api/register", post(handlers::auth::register))

@@ -5,6 +5,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
 };
 
+use crate::middleware::auth::AuthUser;
 use crate::AppState;
 
 #[derive(Template)]
@@ -62,5 +63,34 @@ pub async fn register_page(State(state): State<AppState>) -> RegisterTemplate {
         } else {
             None
         },
+    }
+}
+
+#[derive(Template)]
+#[template(path = "home.html")]
+pub struct HomeTemplate {
+    pub username: String,
+    pub role: String,
+    pub created_at: String,
+}
+
+impl IntoResponse for HomeTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn home_page(auth_user: AuthUser) -> HomeTemplate {
+    HomeTemplate {
+        username: auth_user.user.username,
+        role: auth_user.user.role.as_str().to_string(),
+        created_at: auth_user
+            .user
+            .created_at
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string(),
     }
 }
