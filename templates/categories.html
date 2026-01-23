@@ -36,13 +36,19 @@
 </table>
 
 <script>
+    let feeds = [];
+
     async function loadCategories() {
         try {
-            const response = await fetch('/api/categories');
-            if (!response.ok) {
+            const [catResponse, feedResponse] = await Promise.all([
+                fetch('/api/categories'),
+                fetch('/api/feeds')
+            ]);
+            if (!catResponse.ok) {
                 throw new Error('Failed to load categories');
             }
-            const categories = await response.json();
+            const categories = await catResponse.json();
+            feeds = feedResponse.ok ? await feedResponse.json() : [];
             renderCategories(categories);
         } catch (err) {
             document.getElementById('categories-table').innerHTML =
@@ -165,7 +171,13 @@
     }
 
     async function deleteCategory(id, name) {
-        if (!confirm(`Delete category "${name}"? This cannot be undone.`)) {
+        const feedCount = feeds.filter(f => f.category_id === id).length;
+        let message = `Delete category "${name}"?`;
+        if (feedCount > 0) {
+            message += ` This will also delete ${feedCount} feed${feedCount > 1 ? 's' : ''}.`;
+        }
+        message += ' This cannot be undone.';
+        if (!confirm(message)) {
             return;
         }
 
