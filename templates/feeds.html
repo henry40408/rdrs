@@ -28,7 +28,7 @@
             <option value="">Loading categories...</option>
         </select>
     </div>
-    <button type="submit" id="add-btn">Add Feed</button>
+    <button type="submit" id="add-btn">[Add Feed]</button>
 </form>
 
 <hr>
@@ -352,7 +352,7 @@
             return;
         }
 
-        addBtn.textContent = 'Fetching feed...';
+        addBtn.textContent = '[Adding...]';
         addBtn.disabled = true;
 
         try {
@@ -373,7 +373,7 @@
         } catch (err) {
             flash.error(err.message);
         } finally {
-            addBtn.textContent = 'Add Feed';
+            addBtn.textContent = '[Add Feed]';
             addBtn.disabled = false;
         }
     }
@@ -570,7 +570,7 @@
         }
 
         const importBtn = document.getElementById('import-btn');
-        importBtn.textContent = 'Importing...';
+        importBtn.textContent = '[Importing...]';
         importBtn.disabled = true;
 
         try {
