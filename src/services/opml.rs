@@ -6,6 +6,16 @@ use std::io::Cursor;
 use crate::error::{AppError, AppResult};
 use crate::models::{category::Category, feed::Feed};
 
+/// Decode HTML entities in a string (e.g., &amp; -> &)
+fn decode_html_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+}
+
 #[derive(Debug, Clone)]
 pub struct OpmlFeed {
     pub title: Option<String>,
@@ -83,8 +93,9 @@ pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
 
         // Category outline
         let mut cat_outline = BytesStart::new("outline");
-        cat_outline.push_attribute(("text", cat.name.as_str()));
-        cat_outline.push_attribute(("title", cat.name.as_str()));
+        let decoded_cat_name = decode_html_entities(&cat.name);
+        cat_outline.push_attribute(("text", decoded_cat_name.as_str()));
+        cat_outline.push_attribute(("title", decoded_cat_name.as_str()));
         writer.write_event(Event::Start(cat_outline)).unwrap();
         writer
             .write_event(Event::Text(BytesText::new("\n")))
@@ -96,12 +107,16 @@ pub fn export_opml(categories: &[Category], feeds: &[Feed]) -> String {
             feed_outline.push_attribute(("type", "rss"));
 
             let title = feed.title.as_deref().unwrap_or(&feed.url);
-            feed_outline.push_attribute(("text", title));
-            feed_outline.push_attribute(("title", title));
-            feed_outline.push_attribute(("xmlUrl", feed.url.as_str()));
+            let decoded_title = decode_html_entities(title);
+            let decoded_url = decode_html_entities(&feed.url);
+
+            feed_outline.push_attribute(("text", decoded_title.as_str()));
+            feed_outline.push_attribute(("title", decoded_title.as_str()));
+            feed_outline.push_attribute(("xmlUrl", decoded_url.as_str()));
 
             if let Some(site_url) = &feed.site_url {
-                feed_outline.push_attribute(("htmlUrl", site_url.as_str()));
+                let decoded_site_url = decode_html_entities(site_url);
+                feed_outline.push_attribute(("htmlUrl", decoded_site_url.as_str()));
             }
 
             writer.write_event(Event::Empty(feed_outline)).unwrap();
@@ -164,7 +179,10 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
 
                 for attr in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_lowercase();
-                    let value = String::from_utf8_lossy(&attr.value).to_string();
+                    let value = attr
+                        .decode_and_unescape_value(reader.decoder())
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|_| String::from_utf8_lossy(&attr.value).to_string());
 
                     match key.as_str() {
                         "text" => text = Some(value),
@@ -223,7 +241,10 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
 
                 for attr in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_lowercase();
-                    let value = String::from_utf8_lossy(&attr.value).to_string();
+                    let value = attr
+                        .decode_and_unescape_value(reader.decoder())
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|_| String::from_utf8_lossy(&attr.value).to_string());
 
                     match key.as_str() {
                         "text" => text = Some(value),

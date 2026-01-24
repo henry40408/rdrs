@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}Settings - RDRS{% endblock %}
+
+{% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
+
+{% block content %}
+{% call macros::nav("settings", is_admin, is_masquerading, username) %}
+
+<h1>Settings</h1>
+
+<p class="muted">These settings are configured via environment variables and cannot be changed at runtime.</p>
+
+<h2>HTTP Client</h2>
+<table>
+    <tbody>
+        <tr>
+            <th style="text-align:left; width:200px;">User Agent</th>
+            <td>
+                <code>{{ user_agent }}</code>
+                {% if user_agent_is_default %}
+                <span class="muted">(default)</span>
+                {% else %}
+                <span class="muted">(custom)</span>
+                {% endif %}
+            </td>
+        </tr>
+    </tbody>
+</table>
+
+<h2>User Registration</h2>
+<table>
+    <tbody>
+        <tr>
+            <th style="text-align:left; width:200px;">Signup Enabled</th>
+            <td>
+                {% if signup_enabled %}
+                <span style="color:green;">Yes</span>
+                {% else %}
+                <span style="color:gray;">No</span>
+                {% endif %}
+            </td>
+        </tr>
+        <tr>
+            <th style="text-align:left;">Multi-User Mode</th>
+            <td>
+                {% if multi_user_enabled %}
+                <span style="color:green;">Yes</span>
+                {% else %}
+                <span style="color:gray;">No</span>
+                {% endif %}
+            </td>
+        </tr>
+    </tbody>
+</table>
+
+<h2>Environment Variables</h2>
+<p class="muted">Configure these environment variables to customize RDRS:</p>
+<table>
+    <thead>
+        <tr>
+            <th style="text-align:left;">Variable</th>
+            <th style="text-align:left;">Description</th>
+            <th style="text-align:left;">Default</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><code>DATABASE_URL</code></td>
+            <td>SQLite database file path</td>
+            <td><code>rdrs.sqlite3</code></td>
+        </tr>
+        <tr>
+            <td><code>SERVER_PORT</code></td>
+            <td>HTTP server port</td>
+            <td><code>3000</code></td>
+        </tr>
+        <tr>
+            <td><code>USER_AGENT</code></td>
+            <td>User agent for HTTP requests</td>
+            <td><code>RDRS/{version} (...)</code></td>
+        </tr>
+        <tr>
+            <td><code>SIGNUP_ENABLED</code></td>
+            <td>Allow new user registration</td>
+            <td><code>false</code></td>
+        </tr>
+        <tr>
+            <td><code>MULTI_USER_ENABLED</code></td>
+            <td>Allow multiple users</td>
+            <td><code>false</code></td>
+        </tr>
+        <tr>
+            <td><code>IMAGE_PROXY_SECRET</code></td>
+            <td>Secret key for image proxy URLs</td>
+            <td><em>(auto-generated)</em></td>
+        </tr>
+    </tbody>
+</table>
+
+{% endblock %}

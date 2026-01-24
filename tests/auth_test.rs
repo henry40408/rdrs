@@ -27,6 +27,7 @@ fn default_test_config() -> Config {
         multi_user_enabled: true,
         image_proxy_secret: vec![0u8; 32],
         image_proxy_secret_generated: false,
+        user_agent: "RDRS-Test/1.0".to_string(),
     }
 }
 
@@ -812,7 +813,7 @@ async fn test_home_page() {
     let response = server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("Username:"));
+    // Username is displayed in the navigation bar
     assert!(body.contains("admin"));
     assert!(body.contains("Sign Out"));
 }

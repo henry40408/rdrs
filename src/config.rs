@@ -2,6 +2,13 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use rand::RngCore;
 use std::env;
 
+/// Default user agent for HTTP requests (transparent and responsible crawling)
+pub const DEFAULT_USER_AGENT: &str = concat!(
+    "RDRS/",
+    env!("CARGO_PKG_VERSION"),
+    " (RSS Reader; +https://github.com/henry40408/rdrs)"
+);
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
@@ -10,6 +17,7 @@ pub struct Config {
     pub multi_user_enabled: bool,
     pub image_proxy_secret: Vec<u8>,
     pub image_proxy_secret_generated: bool,
+    pub user_agent: String,
 }
 
 impl Config {
@@ -30,6 +38,7 @@ impl Config {
                 .unwrap_or(false),
             image_proxy_secret,
             image_proxy_secret_generated,
+            user_agent: env::var("USER_AGENT").unwrap_or_else(|_| DEFAULT_USER_AGENT.to_string()),
         }
     }
 
@@ -70,6 +79,7 @@ mod tests {
             multi_user_enabled: false,
             image_proxy_secret: vec![0u8; 32],
             image_proxy_secret_generated: false,
+            user_agent: DEFAULT_USER_AGENT.to_string(),
         }
     }
 

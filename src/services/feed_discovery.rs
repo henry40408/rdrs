@@ -11,7 +11,7 @@ pub struct DiscoveredFeed {
     pub site_url: Option<String>,
 }
 
-pub async fn discover_feed(url: &str) -> AppResult<DiscoveredFeed> {
+pub async fn discover_feed(url: &str, user_agent: &str) -> AppResult<DiscoveredFeed> {
     // Validate URL
     let parsed_url = Url::parse(url).map_err(|_| AppError::InvalidUrl)?;
 
@@ -22,7 +22,7 @@ pub async fn discover_feed(url: &str) -> AppResult<DiscoveredFeed> {
     // Fetch the URL
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent("RDRS Feed Reader/1.0")
+        .user_agent(user_agent)
         .build()
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 

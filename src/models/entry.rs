@@ -1,8 +1,91 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+
+/// Parse Chinese month names to month number
+fn parse_chinese_month(s: &str) -> Option<u32> {
+    match s {
+        "一月" => Some(1),
+        "二月" => Some(2),
+        "三月" => Some(3),
+        "四月" => Some(4),
+        "五月" => Some(5),
+        "六月" => Some(6),
+        "七月" => Some(7),
+        "八月" => Some(8),
+        "九月" => Some(9),
+        "十月" => Some(10),
+        "十一月" => Some(11),
+        "十二月" => Some(12),
+        _ => None,
+    }
+}
+
+/// Parse Chinese date format like "週二, 6 一月 2026 14:28:00 +0000"
+fn parse_chinese_datetime(s: &str) -> Option<DateTime<Utc>> {
+    // Remove weekday prefix if present (e.g., "週二, " or "星期二, ")
+    let s = s.trim();
+    let s = if let Some(pos) = s.find(", ") {
+        &s[pos + 2..]
+    } else {
+        s
+    };
+
+    // Expected format: "6 一月 2026 14:28:00 +0000"
+    let parts: Vec<&str> = s.splitn(4, ' ').collect();
+    if parts.len() < 4 {
+        return None;
+    }
+
+    let day: u32 = parts[0].parse().ok()?;
+    let month = parse_chinese_month(parts[1])?;
+    let year: i32 = parts[2].parse().ok()?;
+
+    // Parse time and timezone: "14:28:00 +0000"
+    let time_tz = parts[3];
+    let time_parts: Vec<&str> = time_tz.splitn(2, ' ').collect();
+    let time_str = time_parts.first()?;
+
+    let time = NaiveTime::parse_from_str(time_str, "%H:%M:%S").ok()?;
+    let date = NaiveDate::from_ymd_opt(year, month, day)?;
+    let naive_dt = NaiveDateTime::new(date, time);
+
+    // Parse timezone offset if present
+    if let Some(tz_str) = time_parts.get(1) {
+        if let Ok(offset) = parse_timezone_offset(tz_str) {
+            let dt = DateTime::<FixedOffset>::from_naive_utc_and_offset(
+                naive_dt - offset,
+                FixedOffset::east_opt(0).unwrap(),
+            );
+            return Some(dt.with_timezone(&Utc));
+        }
+    }
+
+    Some(naive_dt.and_utc())
+}
+
+/// Parse timezone offset like "+0000", "+0800", "-0500"
+fn parse_timezone_offset(s: &str) -> Result<chrono::Duration, ()> {
+    let s = s.trim();
+    if s.len() < 5 {
+        return Err(());
+    }
+
+    let sign = match s.chars().next() {
+        Some('+') => 1,
+        Some('-') => -1,
+        _ => return Err(()),
+    };
+
+    let hours: i64 = s[1..3].parse().map_err(|_| ())?;
+    let minutes: i64 = s[3..5].parse().map_err(|_| ())?;
+
+    Ok(chrono::Duration::seconds(
+        sign * (hours * 3600 + minutes * 60),
+    ))
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Entry {
@@ -40,11 +123,17 @@ pub struct EntryFilter {
 }
 
 fn parse_datetime(s: &str) -> DateTime<Utc> {
+    // Try RFC 3339 first (standard format)
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
+        // Then try SQL datetime format
         .or_else(|_| {
             chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
         })
+        // Then try dateparser for various formats (RFC 2822, localized dates, etc.)
+        .or_else(|_| dateparser::parse(s).map(|dt| dt.with_timezone(&Utc)))
+        // Then try Chinese date format
+        .or_else(|_| parse_chinese_datetime(s).ok_or(()))
         .unwrap_or_else(|_| Utc::now())
 }
 
@@ -288,6 +377,64 @@ pub fn count_unread_by_user(conn: &Connection, user_id: i64) -> AppResult<i64> {
     Ok(count)
 }
 
+/// Returns a map of feed_id -> unread count for a user
+pub fn count_unread_by_feed(
+    conn: &Connection,
+    user_id: i64,
+) -> AppResult<std::collections::HashMap<i64, i64>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT f.id, COUNT(e.id)
+        FROM feed f
+        INNER JOIN category c ON f.category_id = c.id
+        LEFT JOIN entry e ON e.feed_id = f.id AND e.read_at IS NULL
+        WHERE c.user_id = ?1
+        GROUP BY f.id
+        "#,
+    )?;
+
+    let rows = stmt.query_map(params![user_id], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })?;
+
+    let mut map = std::collections::HashMap::new();
+    for row in rows {
+        let (feed_id, count) = row?;
+        map.insert(feed_id, count);
+    }
+
+    Ok(map)
+}
+
+/// Returns a map of category_id -> unread count for a user
+pub fn count_unread_by_category(
+    conn: &Connection,
+    user_id: i64,
+) -> AppResult<std::collections::HashMap<i64, i64>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT c.id, COUNT(e.id)
+        FROM category c
+        LEFT JOIN feed f ON f.category_id = c.id
+        LEFT JOIN entry e ON e.feed_id = f.id AND e.read_at IS NULL
+        WHERE c.user_id = ?1
+        GROUP BY c.id
+        "#,
+    )?;
+
+    let rows = stmt.query_map(params![user_id], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })?;
+
+    let mut map = std::collections::HashMap::new();
+    for row in rows {
+        let (category_id, count) = row?;
+        map.insert(category_id, count);
+    }
+
+    Ok(map)
+}
+
 pub fn count_by_feed(conn: &Connection, feed_id: i64) -> AppResult<i64> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM entry WHERE feed_id = ?1",
@@ -441,6 +588,7 @@ mod tests {
     use crate::models::category;
     use crate::models::feed;
     use crate::models::user::{self, Role};
+    use chrono::{Datelike, Timelike};
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -597,5 +745,63 @@ mod tests {
         mark_as_read(&conn, entries[1].id).unwrap();
 
         assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 3);
+    }
+
+    #[test]
+    fn test_parse_datetime_rfc3339() {
+        let dt = parse_datetime("2026-01-06T14:28:00Z");
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 1);
+        assert_eq!(dt.day(), 6);
+        assert_eq!(dt.hour(), 14);
+        assert_eq!(dt.minute(), 28);
+    }
+
+    #[test]
+    fn test_parse_datetime_sql_format() {
+        let dt = parse_datetime("2026-01-06 14:28:00");
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 1);
+        assert_eq!(dt.day(), 6);
+    }
+
+    #[test]
+    fn test_parse_chinese_datetime_with_weekday() {
+        let dt = parse_chinese_datetime("週二, 6 一月 2026 14:28:00 +0000");
+        assert!(dt.is_some());
+        let dt = dt.unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 1);
+        assert_eq!(dt.day(), 6);
+        assert_eq!(dt.hour(), 14);
+        assert_eq!(dt.minute(), 28);
+    }
+
+    #[test]
+    fn test_parse_chinese_datetime_different_months() {
+        assert!(parse_chinese_datetime("週一, 15 三月 2026 10:00:00 +0800").is_some());
+        assert!(parse_chinese_datetime("週五, 25 十二月 2026 23:59:59 +0000").is_some());
+        assert!(parse_chinese_datetime("週日, 1 七月 2026 00:00:00 -0500").is_some());
+    }
+
+    #[test]
+    fn test_parse_chinese_month() {
+        assert_eq!(parse_chinese_month("一月"), Some(1));
+        assert_eq!(parse_chinese_month("六月"), Some(6));
+        assert_eq!(parse_chinese_month("十二月"), Some(12));
+        assert_eq!(parse_chinese_month("invalid"), None);
+    }
+
+    #[test]
+    fn test_parse_timezone_offset() {
+        assert_eq!(parse_timezone_offset("+0000").unwrap().num_seconds(), 0);
+        assert_eq!(
+            parse_timezone_offset("+0800").unwrap().num_seconds(),
+            8 * 3600
+        );
+        assert_eq!(
+            parse_timezone_offset("-0500").unwrap().num_seconds(),
+            -5 * 3600
+        );
     }
 }

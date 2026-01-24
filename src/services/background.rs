@@ -8,7 +8,7 @@ use tracing::{debug, error, info};
 
 use super::feed_sync;
 
-pub fn start_background_sync(db: Arc<Mutex<Connection>>) -> JoinHandle<()> {
+pub fn start_background_sync(db: Arc<Mutex<Connection>>, user_agent: String) -> JoinHandle<()> {
     tokio::spawn(async move {
         info!("Background sync task started");
 
@@ -22,7 +22,7 @@ pub fn start_background_sync(db: Arc<Mutex<Connection>>) -> JoinHandle<()> {
 
             debug!("Running background sync for bucket {}", bucket);
 
-            let results = feed_sync::refresh_bucket(db.clone(), bucket).await;
+            let results = feed_sync::refresh_bucket(db.clone(), bucket, &user_agent).await;
 
             let success_count = results.iter().filter(|(_, r)| r.is_ok()).count();
             let fail_count = results.iter().filter(|(_, r)| r.is_err()).count();

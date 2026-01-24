@@ -6,22 +6,28 @@
 {% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
 
 {% block content %}
-{% call macros::nav("home", is_admin, is_masquerading) %}
+{% call macros::nav("home", is_admin, is_masquerading, username) %}
 
 <h1>Home</h1>
-<pre>
-Username:     {{ username }}
-Role:         {{ role }}
-Last sign in: {{ sign_in_time }}
-Unread:       <span id="unread-count">{{ unread_count }}</span>
-</pre>
-
-<hr>
 
 <h2>Unread Entries</h2>
-<div style="margin-bottom:1rem;">
-    <button type="button" onclick="markAllRead()">[Mark All Read]</button>
-    <button type="button" onclick="loadEntries()">[Refresh]</button>
+<div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:1rem;">
+    <div class="form-group" style="margin-bottom:0;">
+        <label for="filter-feed">Feed</label>
+        <select id="filter-feed" onchange="handleFilterChange()">
+            <option value="">All Feeds</option>
+        </select>
+    </div>
+    <div class="form-group" style="margin-bottom:0;">
+        <label for="filter-category">Category</label>
+        <select id="filter-category" onchange="handleFilterChange()">
+            <option value="">All Categories</option>
+        </select>
+    </div>
+    <div>
+        <button type="button" onclick="markAllRead()">[Mark All Read]</button>
+        <button type="button" onclick="loadEntries()">[Refresh]</button>
+    </div>
 </div>
 
 <div id="entries-list">
@@ -34,9 +40,85 @@ Unread:       <span id="unread-count">{{ unread_count }}</span>
 
 <script>
     let entries = [];
+    let categories = [];
+    let feeds = [];
+    let unreadStats = { by_feed: {}, by_category: {} };
     let currentOffset = 0;
     const limit = 20;
     let total = 0;
+
+    async function loadCategories() {
+        try {
+            const response = await fetch('/api/categories');
+            if (!response.ok) throw new Error('Failed to load categories');
+            categories = await response.json();
+            updateCategoryDropdown();
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    async function loadFeeds() {
+        try {
+            const response = await fetch('/api/feeds');
+            if (!response.ok) throw new Error('Failed to load feeds');
+            feeds = await response.json();
+            updateFeedDropdown();
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    async function loadUnreadStats() {
+        try {
+            const response = await fetch('/api/entries/unread-stats');
+            if (!response.ok) throw new Error('Failed to load unread stats');
+            unreadStats = await response.json();
+            updateCategoryDropdown();
+            updateFeedDropdown();
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    function updateCategoryDropdown() {
+        const select = document.getElementById('filter-category');
+        const currentValue = select.value;
+        const totalUnread = Object.values(unreadStats.by_category).reduce((a, b) => a + b, 0);
+        select.innerHTML = `<option value="">All Categories (${totalUnread})</option>` +
+            categories.map(cat => {
+                const count = unreadStats.by_category[cat.id] || 0;
+                return `<option value="${cat.id}">${escapeHtml(cat.name)} (${count})</option>`;
+            }).join('');
+        select.value = currentValue;
+    }
+
+    function updateFeedDropdown() {
+        const select = document.getElementById('filter-feed');
+        const currentValue = select.value;
+        const totalUnread = Object.values(unreadStats.by_feed).reduce((a, b) => a + b, 0);
+        select.innerHTML = `<option value="">All Feeds (${totalUnread})</option>` +
+            feeds.map(f => {
+                const count = unreadStats.by_feed[f.id] || 0;
+                return `<option value="${f.id}">${escapeHtml(f.title || f.url)} (${count})</option>`;
+            }).join('');
+        select.value = currentValue;
+    }
+
+    function updateURL() {
+        const params = new URLSearchParams();
+        const feedId = document.getElementById('filter-feed').value;
+        const categoryId = document.getElementById('filter-category').value;
+        if (feedId) params.set('feed', feedId);
+        if (categoryId) params.set('category', categoryId);
+        const newURL = params.toString() ? `/?${params.toString()}` : '/';
+        history.replaceState(null, '', newURL);
+    }
+
+    function handleFilterChange() {
+        updateURL();
+        loadEntries();
+    }
 
     async function loadEntries(reset = true) {
         if (reset) {
@@ -44,8 +126,15 @@ Unread:       <span id="unread-count">{{ unread_count }}</span>
             entries = [];
         }
 
+        const feedId = document.getElementById('filter-feed').value;
+        const categoryId = document.getElementById('filter-category').value;
+
+        let url = `/api/entries?unread_only=true&limit=${limit}&offset=${currentOffset}`;
+        if (feedId) url += `&feed_id=${feedId}`;
+        if (categoryId) url += `&category_id=${categoryId}`;
+
         try {
-            const response = await fetch(`/api/entries?unread_only=true&limit=${limit}&offset=${currentOffset}`);
+            const response = await fetch(url);
             if (!response.ok) {
                 throw new Error('Failed to load entries');
             }
@@ -77,7 +166,8 @@ Unread:       <span id="unread-count">{{ unread_count }}</span>
         container.innerHTML = entries.map(entry => {
             const title = entry.title || 'Untitled';
             const feedTitle = entry.feed_title || entry.feed_url;
-            const date = entry.published_at ? entry.published_at.split('T')[0] : '';
+            const date = entry.published_at ? formatDate(entry.published_at) : '';
+            const dateTitle = entry.published_at ? formatDateTime(entry.published_at) : '';
             const isStarred = entry.starred_at !== null;
 
             return `
@@ -87,7 +177,7 @@ Unread:       <span id="unread-count">{{ unread_count }}</span>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                 </div>
                 <div class="muted" style="font-size:0.875rem;">
-                    ${escapeHtml(feedTitle)} &middot; ${date}
+                    <a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
                 </div>
                 <div style="margin-top:0.5rem;">
                     <a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>
@@ -171,7 +261,8 @@ Unread:       <span id="unread-count">{{ unread_count }}</span>
     }
 
     function updateUnreadCount() {
-        document.getElementById('unread-count').textContent = total;
+        const el = document.getElementById('unread-count');
+        if (el) el.textContent = total;
     }
 
     function escapeHtml(text) {
@@ -181,7 +272,39 @@ Unread:       <span id="unread-count">{{ unread_count }}</span>
         return div.innerHTML;
     }
 
+    function formatDate(isoString) {
+        const date = new Date(isoString);
+        return date.toLocaleDateString();
+    }
+
+    function formatDateTime(isoString) {
+        const date = new Date(isoString);
+        return date.toLocaleString();
+    }
+
+    document.getElementById('entries-list').addEventListener('click', function(e) {
+        if (e.target.matches('[data-feed-id]')) {
+            e.preventDefault();
+            document.getElementById('filter-feed').value = e.target.dataset.feedId;
+            document.getElementById('filter-category').value = e.target.dataset.feedCategoryId;
+            handleFilterChange();
+        }
+        if (e.target.matches('[data-category-id]')) {
+            e.preventDefault();
+            document.getElementById('filter-category').value = e.target.dataset.categoryId;
+            document.getElementById('filter-feed').value = '';
+            handleFilterChange();
+        }
+    });
+
     // Initialize
-    loadEntries();
+    Promise.all([loadCategories(), loadFeeds(), loadUnreadStats()]).then(() => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const feedId = urlParams.get('feed');
+        const categoryId = urlParams.get('category');
+        if (feedId) document.getElementById('filter-feed').value = feedId;
+        if (categoryId) document.getElementById('filter-category').value = categoryId;
+        loadEntries();
+    });
 </script>
 {% endblock %}

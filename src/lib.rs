@@ -35,6 +35,7 @@ pub fn create_router(state: AppState) -> Router {
             get(handlers::pages::change_password_page),
         )
         .route("/admin", get(handlers::pages::admin_page))
+        .route("/settings", get(handlers::pages::settings_page))
         .route("/api/register", post(handlers::auth::register))
         .route("/api/session", post(handlers::auth::login))
         .route("/api/session", delete(handlers::auth::logout))
@@ -104,6 +105,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/entries/mark-all-read",
             put(handlers::entry::mark_all_read),
+        )
+        .route(
+            "/api/entries/unread-stats",
+            get(handlers::entry::get_unread_stats),
         )
         .route(
             "/api/feeds/{id}/entries",
