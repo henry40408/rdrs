@@ -148,7 +148,8 @@
         container.innerHTML = entries.map(entry => {
             const title = entry.title || 'Untitled';
             const feedTitle = entry.feed_title || entry.feed_url;
-            const date = entry.published_at ? entry.published_at.split('T')[0] : '';
+            const date = entry.published_at ? formatDate(entry.published_at) : '';
+            const dateTitle = entry.published_at ? formatDateTime(entry.published_at) : '';
             const isRead = entry.read_at !== null;
             const isStarred = entry.starred_at !== null;
 
@@ -159,7 +160,7 @@
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                 </div>
                 <div class="muted" style="font-size:0.875rem;">
-                    <a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; ${date}` : ''}
+                    <a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
                 </div>
                 <div style="margin-top:0.5rem;">
                     ${isRead
@@ -261,6 +262,16 @@
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    function formatDate(isoString) {
+        const date = new Date(isoString);
+        return date.toLocaleDateString();
+    }
+
+    function formatDateTime(isoString) {
+        const date = new Date(isoString);
+        return date.toLocaleString();
     }
 
     function updateURL() {
