@@ -59,7 +59,7 @@ pub fn get_entries_per_page(conn: &Connection, user_id: i64) -> AppResult<i64> {
 
 pub fn upsert(conn: &Connection, user_id: i64, entries_per_page: i64) -> AppResult<UserSettings> {
     // Validate range
-    if entries_per_page < MIN_ENTRIES_PER_PAGE || entries_per_page > MAX_ENTRIES_PER_PAGE {
+    if !(MIN_ENTRIES_PER_PAGE..=MAX_ENTRIES_PER_PAGE).contains(&entries_per_page) {
         return Err(AppError::Validation(format!(
             "entries_per_page must be between {} and {}",
             MIN_ENTRIES_PER_PAGE, MAX_ENTRIES_PER_PAGE
