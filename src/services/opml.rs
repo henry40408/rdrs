@@ -349,6 +349,8 @@ mod tests {
             fetch_error: None,
             etag: None,
             last_modified: None,
+            custom_user_agent: None,
+            http2_disabled: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];

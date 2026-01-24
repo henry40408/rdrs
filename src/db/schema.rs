@@ -49,6 +49,8 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
             fetch_error TEXT,
             etag TEXT,
             last_modified TEXT,
+            custom_user_agent TEXT,
+            http2_disabled INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(category_id, url)

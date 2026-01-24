@@ -21,6 +21,8 @@ pub struct Feed {
     pub fetch_error: Option<String>,
     pub etag: Option<String>,
     pub last_modified: Option<String>,
+    pub custom_user_agent: Option<String>,
+    pub http2_disabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -44,8 +46,9 @@ fn parse_datetime(s: &str) -> DateTime<Utc> {
 fn row_to_feed(row: &rusqlite::Row) -> rusqlite::Result<Feed> {
     let feed_updated_at: Option<String> = row.get(6)?;
     let fetched_at: Option<String> = row.get(7)?;
-    let created_at: String = row.get(11)?;
-    let updated_at: String = row.get(12)?;
+    let http2_disabled: i64 = row.get(12)?;
+    let created_at: String = row.get(13)?;
+    let updated_at: String = row.get(14)?;
 
     Ok(Feed {
         id: row.get(0)?,
@@ -59,11 +62,14 @@ fn row_to_feed(row: &rusqlite::Row) -> rusqlite::Result<Feed> {
         fetch_error: row.get(8)?,
         etag: row.get(9)?,
         last_modified: row.get(10)?,
+        custom_user_agent: row.get(11)?,
+        http2_disabled: http2_disabled != 0,
         created_at: parse_datetime(&created_at),
         updated_at: parse_datetime(&updated_at),
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_feed(
     conn: &Connection,
     category_id: i64,
@@ -71,10 +77,13 @@ pub fn create_feed(
     title: Option<&str>,
     description: Option<&str>,
     site_url: Option<&str>,
+    custom_user_agent: Option<&str>,
+    http2_disabled: Option<bool>,
 ) -> AppResult<Feed> {
+    let http2_disabled_int = http2_disabled.unwrap_or(false) as i64;
     let result = conn.execute(
-        "INSERT INTO feed (category_id, url, title, description, site_url) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![category_id, url, title, description, site_url],
+        "INSERT INTO feed (category_id, url, title, description, site_url, custom_user_agent, http2_disabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![category_id, url, title, description, site_url, custom_user_agent, http2_disabled_int],
     );
 
     match result {
@@ -91,7 +100,7 @@ pub fn create_feed(
     }
 }
 
-const SELECT_COLUMNS: &str = "id, category_id, url, title, description, site_url, feed_updated_at, fetched_at, fetch_error, etag, last_modified, created_at, updated_at";
+const SELECT_COLUMNS: &str = "id, category_id, url, title, description, site_url, feed_updated_at, fetched_at, fetch_error, etag, last_modified, custom_user_agent, http2_disabled, created_at, updated_at";
 
 pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Feed>> {
     conn.query_row(
@@ -142,7 +151,7 @@ pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Feed>> {
         r#"
         SELECT f.id, f.category_id, f.url, f.title, f.description, f.site_url,
                f.feed_updated_at, f.fetched_at, f.fetch_error, f.etag, f.last_modified,
-               f.created_at, f.updated_at
+               f.custom_user_agent, f.http2_disabled, f.created_at, f.updated_at
         FROM feed f
         INNER JOIN category c ON f.category_id = c.id
         WHERE c.user_id = ?1
@@ -182,14 +191,17 @@ pub fn update_feed(
     title: Option<&str>,
     description: Option<&str>,
     site_url: Option<&str>,
+    custom_user_agent: Option<&str>,
+    http2_disabled: bool,
 ) -> AppResult<Feed> {
+    let http2_disabled_int = http2_disabled as i64;
     let result = conn.execute(
         r#"
         UPDATE feed
-        SET category_id = ?1, url = ?2, title = ?3, description = ?4, site_url = ?5, updated_at = datetime('now')
-        WHERE id = ?6 AND category_id = ?7
+        SET category_id = ?1, url = ?2, title = ?3, description = ?4, site_url = ?5, custom_user_agent = ?6, http2_disabled = ?7, updated_at = datetime('now')
+        WHERE id = ?8 AND category_id = ?9
         "#,
-        params![new_category_id, url, title, description, site_url, id, category_id],
+        params![new_category_id, url, title, description, site_url, custom_user_agent, http2_disabled_int, id, category_id],
     );
 
     match result {
@@ -288,12 +300,16 @@ mod tests {
             Some("Example Feed"),
             Some("An example feed"),
             Some("https://example.com"),
+            None,
+            None,
         )
         .unwrap();
 
         assert_eq!(feed.url, "https://example.com/feed.xml");
         assert_eq!(feed.title, Some("Example Feed".to_string()));
         assert_eq!(feed.category_id, category_id);
+        assert_eq!(feed.custom_user_agent, None);
+        assert!(!feed.http2_disabled);
 
         let found = find_by_id(&conn, feed.id).unwrap().unwrap();
         assert_eq!(found.url, feed.url);
@@ -312,12 +328,16 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
         let result = create_feed(
             &conn,
             category_id,
             "https://example.com/feed.xml",
+            None,
+            None,
             None,
             None,
             None,
@@ -339,12 +359,16 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
         let result = create_feed(
             &conn,
             cat2,
             "https://example.com/feed.xml",
+            None,
+            None,
             None,
             None,
             None,
@@ -367,6 +391,8 @@ mod tests {
             Some("Feed 1"),
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
         create_feed(
@@ -374,6 +400,8 @@ mod tests {
             cat2,
             "https://example2.com/feed.xml",
             Some("Feed 2"),
+            None,
+            None,
             None,
             None,
         )
@@ -402,6 +430,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
         create_feed(
@@ -411,12 +441,16 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
         create_feed(
             &conn,
             cat2,
             "https://example3.com/feed.xml",
+            None,
+            None,
             None,
             None,
             None,
@@ -443,6 +477,8 @@ mod tests {
             Some("Old Title"),
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
 
@@ -455,12 +491,16 @@ mod tests {
             Some("New Title"),
             Some("New Description"),
             Some("https://example.com"),
+            Some("Custom UA"),
+            true,
         )
         .unwrap();
 
         assert_eq!(updated.url, "https://example.com/new-feed.xml");
         assert_eq!(updated.title, Some("New Title".to_string()));
         assert_eq!(updated.description, Some("New Description".to_string()));
+        assert_eq!(updated.custom_user_agent, Some("Custom UA".to_string()));
+        assert!(updated.http2_disabled);
     }
 
     #[test]
@@ -473,6 +513,8 @@ mod tests {
             &conn,
             category_id,
             "https://example.com/feed.xml",
+            None,
+            None,
             None,
             None,
             None,
@@ -493,6 +535,8 @@ mod tests {
             &conn,
             category_id,
             "https://example.com/feed.xml",
+            None,
+            None,
             None,
             None,
             None,
