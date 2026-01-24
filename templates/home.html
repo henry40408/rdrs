@@ -87,7 +87,7 @@ Unread:       <span id="unread-count">{{ unread_count }}</span>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                 </div>
                 <div class="muted" style="font-size:0.875rem;">
-                    ${escapeHtml(feedTitle)} &middot; ${date}
+                    ${escapeHtml(feedTitle)}${date ? ` &middot; ${date}` : ''}
                 </div>
                 <div style="margin-top:0.5rem;">
                     <a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>

@@ -159,7 +159,7 @@
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                 </div>
                 <div class="muted" style="font-size:0.875rem;">
-                    ${escapeHtml(feedTitle)} &middot; ${escapeHtml(entry.category_name)} &middot; ${date}
+                    ${escapeHtml(feedTitle)} &middot; ${escapeHtml(entry.category_name)}${date ? ` &middot; ${date}` : ''}
                 </div>
                 <div style="margin-top:0.5rem;">
                     ${isRead

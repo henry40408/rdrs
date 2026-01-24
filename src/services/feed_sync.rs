@@ -106,6 +106,12 @@ pub async fn refresh_feed(db: Arc<Mutex<Connection>>, feed_id: i64) -> AppResult
     let mut new_entries = 0i64;
     let mut updated_entries = 0i64;
 
+    // Extract feed-level timestamp as fallback for entries without dates
+    let feed_timestamp = parsed_feed
+        .updated
+        .or(parsed_feed.published)
+        .map(|dt| dt.with_timezone(&Utc));
+
     {
         let conn = db
             .lock()
@@ -127,10 +133,14 @@ pub async fn refresh_feed(db: Arc<Mutex<Connection>>, feed_id: i64) -> AppResult
 
             let author = item.authors.first().map(|a| a.name.clone());
 
-            let published_at = item
-                .published
-                .or(item.updated)
-                .map(|dt| dt.with_timezone(&Utc));
+            // Use published date, fall back to updated date, then feed timestamp, then fetch time
+            let published_at = Some(
+                item.published
+                    .or(item.updated)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .or(feed_timestamp)
+                    .unwrap_or_else(Utc::now),
+            );
 
             let (_, is_new) = entry::upsert_entry(
                 &conn,
