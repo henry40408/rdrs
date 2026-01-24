@@ -125,6 +125,22 @@
                 <select id="edit-category" name="category" required>
                 </select>
             </div>
+            <details style="margin-top:1rem; border:1px solid #ccc; padding:0.5rem;">
+                <summary style="cursor:pointer; font-weight:normal;">HTTP Settings</summary>
+                <div style="margin-top:0.5rem;">
+                    <div class="form-group">
+                        <label for="edit-custom-user-agent">Custom User Agent</label>
+                        <input type="text" id="edit-custom-user-agent" name="custom_user_agent" placeholder="Leave empty to use global default">
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="edit-http2-disabled" name="http2_disabled">
+                            Disable HTTP/2
+                        </label>
+                        <div style="font-size:0.75rem; color:#666;">Enable this if the feed server has HTTP/2 compatibility issues</div>
+                    </div>
+                </div>
+            </details>
             <div style="display:flex; gap:0.5rem; margin-top:1rem;">
                 <button type="submit">[Save]</button>
                 <button type="button" onclick="closeEditModal()">[Cancel]</button>
@@ -388,6 +404,8 @@
         document.getElementById('edit-description').value = feed.description || '';
         document.getElementById('edit-site-url').value = feed.site_url || '';
         document.getElementById('edit-category').value = feed.category_id;
+        document.getElementById('edit-custom-user-agent').value = feed.custom_user_agent || '';
+        document.getElementById('edit-http2-disabled').checked = feed.http2_disabled || false;
 
         document.getElementById('edit-modal').style.display = 'block';
     }
@@ -443,6 +461,8 @@
         const description = document.getElementById('edit-description').value.trim() || null;
         const siteUrl = document.getElementById('edit-site-url').value.trim() || null;
         const categoryId = parseInt(document.getElementById('edit-category').value);
+        const customUserAgent = document.getElementById('edit-custom-user-agent').value.trim() || null;
+        const http2Disabled = document.getElementById('edit-http2-disabled').checked;
 
         if (!url) {
             flash.error('URL cannot be empty');
@@ -458,7 +478,9 @@
                     title,
                     description,
                     site_url: siteUrl,
-                    category_id: categoryId
+                    category_id: categoryId,
+                    custom_user_agent: customUserAgent,
+                    http2_disabled: http2Disabled
                 })
             });
 

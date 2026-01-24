@@ -746,9 +746,18 @@ mod tests {
     }
 
     fn create_test_feed(conn: &Connection, category_id: i64, url: &str) -> i64 {
-        feed::create_feed(conn, category_id, url, Some("Test Feed"), None, None)
-            .unwrap()
-            .id
+        feed::create_feed(
+            conn,
+            category_id,
+            url,
+            Some("Test Feed"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .id
     }
 
     #[test]

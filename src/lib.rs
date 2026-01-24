@@ -30,10 +30,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/", get(handlers::pages::home_page))
         .route("/login", get(handlers::pages::login_page))
         .route("/register", get(handlers::pages::register_page))
-        .route(
-            "/change-password",
-            get(handlers::pages::change_password_page),
-        )
+        .route("/user-settings", get(handlers::pages::user_settings_page))
         .route("/admin", get(handlers::pages::admin_page))
         .route("/settings", get(handlers::pages::settings_page))
         .route("/api/register", post(handlers::auth::register))
@@ -41,6 +38,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/session", delete(handlers::auth::logout))
         .route("/api/user", get(handlers::user::get_current_user))
         .route("/api/user/password", put(handlers::user::change_password))
+        .route("/api/user/settings", put(handlers::user::update_settings))
         .route("/api/admin/users", get(handlers::admin::list_users))
         .route("/api/admin/users/{id}", put(handlers::admin::update_user))
         .route(

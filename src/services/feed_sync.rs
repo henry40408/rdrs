@@ -108,7 +108,7 @@ pub struct SyncResult {
 pub async fn refresh_feed(
     db: Arc<Mutex<Connection>>,
     feed_id: i64,
-    user_agent: &str,
+    default_user_agent: &str,
 ) -> AppResult<SyncResult> {
     let feed_data = {
         let conn = db
@@ -117,9 +117,23 @@ pub async fn refresh_feed(
         feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?
     };
 
-    let client = reqwest::Client::builder()
+    // Use per-feed custom user agent if set, otherwise use global default
+    let effective_user_agent = feed_data
+        .custom_user_agent
+        .as_deref()
+        .unwrap_or(default_user_agent);
+
+    // Build HTTP client with per-feed settings
+    let mut client_builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent(user_agent)
+        .user_agent(effective_user_agent);
+
+    // Disable HTTP/2 if configured for this feed
+    if feed_data.http2_disabled {
+        client_builder = client_builder.http1_only();
+    }
+
+    let client = client_builder
         .build()
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
@@ -260,7 +274,7 @@ pub async fn refresh_feed(
             icon_url.as_deref(),
             logo_url.as_deref(),
             feed_data.site_url.as_deref(),
-            user_agent,
+            effective_user_agent,
         )
         .await
         {

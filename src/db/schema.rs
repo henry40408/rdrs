@@ -49,6 +49,8 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
             fetch_error TEXT,
             etag TEXT,
             last_modified TEXT,
+            custom_user_agent TEXT,
+            http2_disabled INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(category_id, url)
@@ -91,6 +93,16 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_image_entity ON image(entity_type, entity_id);
+
+        CREATE TABLE IF NOT EXISTS user_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE REFERENCES user(id) ON DELETE CASCADE,
+            entries_per_page INTEGER NOT NULL DEFAULT 30,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_user_settings_user_id ON user_settings(user_id);
         "#,
     )?;
 

@@ -16,6 +16,8 @@ use crate::AppState;
 pub struct CreateFeedRequest {
     pub url: String,
     pub category_id: i64,
+    pub custom_user_agent: Option<String>,
+    pub http2_disabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +27,9 @@ pub struct UpdateFeedRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     pub site_url: Option<String>,
+    pub custom_user_agent: Option<String>,
+    #[serde(default)]
+    pub http2_disabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +47,8 @@ pub struct FeedResponse {
     pub site_url: Option<String>,
     pub fetched_at: Option<String>,
     pub fetch_error: Option<String>,
+    pub custom_user_agent: Option<String>,
+    pub http2_disabled: bool,
     pub created_at: String,
     pub updated_at: String,
     pub has_icon: bool,
@@ -66,6 +73,8 @@ impl FeedResponse {
             site_url: f.site_url,
             fetched_at: f.fetched_at.map(|dt| dt.to_rfc3339()),
             fetch_error: f.fetch_error,
+            custom_user_agent: f.custom_user_agent,
+            http2_disabled: f.http2_disabled,
             created_at: f.created_at.to_rfc3339(),
             updated_at: f.updated_at.to_rfc3339(),
             has_icon,
@@ -132,6 +141,8 @@ pub async fn create_feed(
         discovered.title.as_deref(),
         discovered.description.as_deref(),
         discovered.site_url.as_deref(),
+        req.custom_user_agent.as_deref(),
+        req.http2_disabled,
     )?;
 
     Ok((
@@ -197,6 +208,8 @@ pub async fn update_feed(
         req.title.as_deref(),
         req.description.as_deref(),
         req.site_url.as_deref(),
+        req.custom_user_agent.as_deref(),
+        req.http2_disabled,
     )?;
 
     let has_icon = image::exists(&conn, image::ENTITY_FEED, updated.id)?;
@@ -335,6 +348,8 @@ pub async fn import_opml(
                 opml_feed.title.as_deref(),
                 None,
                 opml_feed.html_url.as_deref(),
+                None,
+                None,
             )?;
             feeds_created += 1;
         }

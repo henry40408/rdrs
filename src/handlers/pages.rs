@@ -9,6 +9,7 @@ use crate::config::DEFAULT_USER_AGENT;
 use crate::middleware::auth::{AdminUser, AuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
 use crate::models::entry;
+use crate::models::user_settings;
 use crate::AppState;
 
 #[derive(Template)]
@@ -94,6 +95,7 @@ pub struct HomeTemplate {
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
+    pub entries_per_page: i64,
 }
 
 impl IntoResponse for HomeTemplate {
@@ -118,10 +120,17 @@ pub async fn home_page(
         auth_user.user.is_admin()
     };
 
-    let unread_count = {
+    let (unread_count, entries_per_page) = {
         let conn = state.db.lock().ok();
-        conn.and_then(|c| entry::count_unread_by_user(&c, auth_user.user.id).ok())
-            .unwrap_or(0)
+        let unread = conn
+            .as_ref()
+            .and_then(|c| entry::count_unread_by_user(c, auth_user.user.id).ok())
+            .unwrap_or(0);
+        let epp = conn
+            .as_ref()
+            .and_then(|c| user_settings::get_entries_per_page(c, auth_user.user.id).ok())
+            .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+        (unread, epp)
     };
 
     (
@@ -138,6 +147,7 @@ pub async fn home_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
+            entries_per_page,
         },
     )
 }
@@ -178,15 +188,18 @@ pub async fn admin_page(admin: AdminUser, flash: Flash) -> (Flash, AdminTemplate
 }
 
 #[derive(Template)]
-#[template(path = "change-password.html")]
-pub struct ChangePasswordTemplate {
+#[template(path = "user-settings.html")]
+pub struct UserSettingsTemplate {
     pub username: String,
+    pub role: String,
+    pub created_at: String,
+    pub entries_per_page: i64,
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
 }
 
-impl IntoResponse for ChangePasswordTemplate {
+impl IntoResponse for UserSettingsTemplate {
     fn into_response(self) -> Response {
         match self.render() {
             Ok(html) => Html(html).into_response(),
@@ -195,10 +208,11 @@ impl IntoResponse for ChangePasswordTemplate {
     }
 }
 
-pub async fn change_password_page(
+pub async fn user_settings_page(
     auth_user: AuthUser,
+    State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, ChangePasswordTemplate) {
+) -> (Flash, UserSettingsTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
     let is_admin = if is_masquerading {
         auth_user.session.original_user_id.is_some()
@@ -206,10 +220,23 @@ pub async fn change_password_page(
         auth_user.user.is_admin()
     };
 
+    let entries_per_page = {
+        let conn = state.db.lock().ok();
+        conn.and_then(|c| user_settings::get_entries_per_page(&c, auth_user.user.id).ok())
+            .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+    };
+
     (
         flash.clone(),
-        ChangePasswordTemplate {
+        UserSettingsTemplate {
             username: auth_user.user.username,
+            role: auth_user.user.role.as_str().to_string(),
+            created_at: auth_user
+                .user
+                .created_at
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string(),
+            entries_per_page,
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
@@ -298,6 +325,7 @@ pub struct EntriesTemplate {
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
+    pub entries_per_page: i64,
 }
 
 impl IntoResponse for EntriesTemplate {
@@ -309,12 +337,22 @@ impl IntoResponse for EntriesTemplate {
     }
 }
 
-pub async fn entries_page(auth_user: AuthUser, flash: Flash) -> (Flash, EntriesTemplate) {
+pub async fn entries_page(
+    auth_user: AuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, EntriesTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
     let is_admin = if is_masquerading {
         auth_user.session.original_user_id.is_some()
     } else {
         auth_user.user.is_admin()
+    };
+
+    let entries_per_page = {
+        let conn = state.db.lock().ok();
+        conn.and_then(|c| user_settings::get_entries_per_page(&c, auth_user.user.id).ok())
+            .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
     };
 
     (
@@ -324,6 +362,7 @@ pub async fn entries_page(auth_user: AuthUser, flash: Flash) -> (Flash, EntriesT
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
+            entries_per_page,
         },
     )
 }
