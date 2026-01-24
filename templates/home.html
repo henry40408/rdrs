@@ -42,6 +42,7 @@
     let entries = [];
     let categories = [];
     let feeds = [];
+    let unreadStats = { by_feed: {}, by_category: {} };
     let currentOffset = 0;
     const limit = 20;
     let total = 0;
@@ -68,19 +69,39 @@
         }
     }
 
+    async function loadUnreadStats() {
+        try {
+            const response = await fetch('/api/entries/unread-stats');
+            if (!response.ok) throw new Error('Failed to load unread stats');
+            unreadStats = await response.json();
+            updateCategoryDropdown();
+            updateFeedDropdown();
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
     function updateCategoryDropdown() {
         const select = document.getElementById('filter-category');
         const currentValue = select.value;
-        select.innerHTML = '<option value="">All Categories</option>' +
-            categories.map(cat => `<option value="${cat.id}">${escapeHtml(cat.name)}</option>`).join('');
+        const totalUnread = Object.values(unreadStats.by_category).reduce((a, b) => a + b, 0);
+        select.innerHTML = `<option value="">All Categories (${totalUnread})</option>` +
+            categories.map(cat => {
+                const count = unreadStats.by_category[cat.id] || 0;
+                return `<option value="${cat.id}">${escapeHtml(cat.name)} (${count})</option>`;
+            }).join('');
         select.value = currentValue;
     }
 
     function updateFeedDropdown() {
         const select = document.getElementById('filter-feed');
         const currentValue = select.value;
-        select.innerHTML = '<option value="">All Feeds</option>' +
-            feeds.map(f => `<option value="${f.id}">${escapeHtml(f.title || f.url)}</option>`).join('');
+        const totalUnread = Object.values(unreadStats.by_feed).reduce((a, b) => a + b, 0);
+        select.innerHTML = `<option value="">All Feeds (${totalUnread})</option>` +
+            feeds.map(f => {
+                const count = unreadStats.by_feed[f.id] || 0;
+                return `<option value="${f.id}">${escapeHtml(f.title || f.url)} (${count})</option>`;
+            }).join('');
         select.value = currentValue;
     }
 
@@ -277,7 +298,7 @@
     });
 
     // Initialize
-    Promise.all([loadCategories(), loadFeeds()]).then(() => {
+    Promise.all([loadCategories(), loadFeeds(), loadUnreadStats()]).then(() => {
         const urlParams = new URLSearchParams(window.location.search);
         const feedId = urlParams.get('feed');
         const categoryId = urlParams.get('category');

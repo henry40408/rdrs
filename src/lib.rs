@@ -107,6 +107,10 @@ pub fn create_router(state: AppState) -> Router {
             put(handlers::entry::mark_all_read),
         )
         .route(
+            "/api/entries/unread-stats",
+            get(handlers::entry::get_unread_stats),
+        )
+        .route(
             "/api/feeds/{id}/entries",
             get(handlers::entry::list_feed_entries),
         )

@@ -377,6 +377,58 @@ pub fn count_unread_by_user(conn: &Connection, user_id: i64) -> AppResult<i64> {
     Ok(count)
 }
 
+/// Returns a map of feed_id -> unread count for a user
+pub fn count_unread_by_feed(conn: &Connection, user_id: i64) -> AppResult<std::collections::HashMap<i64, i64>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT f.id, COUNT(e.id)
+        FROM feed f
+        INNER JOIN category c ON f.category_id = c.id
+        LEFT JOIN entry e ON e.feed_id = f.id AND e.read_at IS NULL
+        WHERE c.user_id = ?1
+        GROUP BY f.id
+        "#,
+    )?;
+
+    let rows = stmt.query_map(params![user_id], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })?;
+
+    let mut map = std::collections::HashMap::new();
+    for row in rows {
+        let (feed_id, count) = row?;
+        map.insert(feed_id, count);
+    }
+
+    Ok(map)
+}
+
+/// Returns a map of category_id -> unread count for a user
+pub fn count_unread_by_category(conn: &Connection, user_id: i64) -> AppResult<std::collections::HashMap<i64, i64>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT c.id, COUNT(e.id)
+        FROM category c
+        LEFT JOIN feed f ON f.category_id = c.id
+        LEFT JOIN entry e ON e.feed_id = f.id AND e.read_at IS NULL
+        WHERE c.user_id = ?1
+        GROUP BY c.id
+        "#,
+    )?;
+
+    let rows = stmt.query_map(params![user_id], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })?;
+
+    let mut map = std::collections::HashMap::new();
+    for row in rows {
+        let (category_id, count) = row?;
+        map.insert(category_id, count);
+    }
+
+    Ok(map)
+}
+
 pub fn count_by_feed(conn: &Connection, feed_id: i64) -> AppResult<i64> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM entry WHERE feed_id = ?1",

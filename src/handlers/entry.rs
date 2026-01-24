@@ -258,6 +258,30 @@ pub async fn mark_all_read(
     Ok(Json(MarkAllReadResponse { marked_count }))
 }
 
+#[derive(Debug, Serialize)]
+pub struct UnreadStatsResponse {
+    pub by_feed: std::collections::HashMap<i64, i64>,
+    pub by_category: std::collections::HashMap<i64, i64>,
+}
+
+pub async fn get_unread_stats(
+    auth_user: AuthUser,
+    State(state): State<AppState>,
+) -> AppResult<Json<UnreadStatsResponse>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+
+    let by_feed = entry::count_unread_by_feed(&conn, auth_user.user.id)?;
+    let by_category = entry::count_unread_by_category(&conn, auth_user.user.id)?;
+
+    Ok(Json(UnreadStatsResponse {
+        by_feed,
+        by_category,
+    }))
+}
+
 pub async fn refresh_feed_handler(
     auth_user: AuthUser,
     State(state): State<AppState>,
