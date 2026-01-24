@@ -176,12 +176,21 @@
             const isSelected = index === selectedIndex;
             const titleHtml = search ? highlightText(title, search) : escapeHtml(title);
 
+            // Check if search matches in content and generate snippet
+            let contentSnippetHtml = '';
+            if (search && entry.content) {
+                const snippet = getContentSnippet(entry.content, search);
+                if (snippet) {
+                    contentSnippetHtml = `<div class="muted" style="font-size:0.8rem; margin-top:0.25rem; font-style:italic;">${highlightText(snippet, search)}</div>`;
+                }
+            }
+
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}" style="margin-bottom:1rem; padding-bottom:1rem; border-bottom:1px solid #ccc; ${isRead ? 'opacity:0.6;' : ''}">
                 <div>
                     <a href="/entries/${entry.id}" style="font-weight:${isRead ? 'normal' : 'bold'};">${titleHtml}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
-                </div>
+                </div>${contentSnippetHtml}
                 <div class="muted" style="font-size:0.875rem;">
                     ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
                 </div>
@@ -327,6 +336,25 @@
         // Create a case-insensitive regex to find matches
         const regex = new RegExp(`(${searchEscaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
         return escaped.replace(regex, '<span class="search-highlight">$1</span>');
+    }
+
+    function getContentSnippet(content, search, maxLen = 80) {
+        if (!content || !search) return null;
+        // Strip HTML tags from content
+        const text = content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        const lowerText = text.toLowerCase();
+        const lowerSearch = search.toLowerCase();
+        const idx = lowerText.indexOf(lowerSearch);
+        if (idx === -1) return null;
+
+        // Extract snippet around the match
+        const contextBefore = 30;
+        const start = Math.max(0, idx - contextBefore);
+        const end = Math.min(text.length, idx + search.length + (maxLen - contextBefore));
+        let snippet = text.substring(start, end);
+        if (start > 0) snippet = '...' + snippet;
+        if (end < text.length) snippet = snippet + '...';
+        return snippet;
     }
 
     // Decode HTML entities (e.g., &#x27; -> ')
