@@ -487,23 +487,18 @@ pub fn upsert_entry(
 
     // Try to find existing entry
     if let Some(existing) = find_by_guid_and_feed(conn, guid, feed_id)? {
-        // Update existing entry (preserve read_at and starred_at)
+        // Update existing entry (preserve read_at, starred_at, and published_at)
+        // We don't update published_at because:
+        // 1. The published date shouldn't change for existing entries
+        // 2. Some feeds don't provide dates, causing fallback to current time on each refresh
         conn.execute(
             r#"
             UPDATE entry
             SET title = ?1, link = ?2, content = ?3, summary = ?4, author = ?5,
-                published_at = ?6, updated_at = datetime('now')
-            WHERE id = ?7
+                updated_at = datetime('now')
+            WHERE id = ?6
             "#,
-            params![
-                title,
-                link,
-                content,
-                summary,
-                author,
-                published_at_str,
-                existing.id
-            ],
+            params![title, link, content, summary, author, existing.id],
         )?;
 
         let updated = find_by_id(conn, existing.id)?.ok_or(AppError::EntryNotFound)?;
