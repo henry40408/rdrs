@@ -11,34 +11,34 @@
 <h1>Entries</h1>
 
 <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:1rem;">
-    <div class="form-group" style="margin-bottom:0;">
+    <div class="form-group form-group-inline">
         <label for="filter-feed">Feed</label>
         <select id="filter-feed" onchange="handleFilterChange()" style="width:14em;">
             <option value="">All Feeds</option>
         </select>
     </div>
-    <div class="form-group" style="margin-bottom:0;">
+    <div class="form-group form-group-inline">
         <label for="filter-category">Category</label>
         <select id="filter-category" onchange="handleFilterChange()" style="width:14em;">
             <option value="">All Categories</option>
         </select>
     </div>
-    <div class="form-group" style="margin-bottom:0;">
+    <div class="form-group form-group-inline">
         <label>
             <input type="checkbox" id="filter-unread" onchange="handleFilterChange()"> Unread only
         </label>
     </div>
-    <div class="form-group" style="margin-bottom:0;">
+    <div class="form-group form-group-inline">
         <label>
             <input type="checkbox" id="filter-starred" onchange="handleFilterChange()"> Starred only
         </label>
     </div>
-    <div class="form-group" style="margin-bottom:0;">
+    <div class="form-group form-group-inline">
         <label for="filter-search">Search</label>
         <input type="text" id="filter-search" placeholder="Search..."
                style="width:14em;" onkeydown="handleSearchKeydown(event)">
     </div>
-    <div class="form-group" style="margin-bottom:0;">
+    <div class="form-group form-group-inline">
         <label for="mark-read-age">Mark as Read</label>
         <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;">
             <option value="">Select...</option>
