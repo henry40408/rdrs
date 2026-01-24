@@ -84,7 +84,18 @@
         select.value = currentValue;
     }
 
+    function updateURL() {
+        const params = new URLSearchParams();
+        const feedId = document.getElementById('filter-feed').value;
+        const categoryId = document.getElementById('filter-category').value;
+        if (feedId) params.set('feed', feedId);
+        if (categoryId) params.set('category', categoryId);
+        const newURL = params.toString() ? `/?${params.toString()}` : '/';
+        history.replaceState(null, '', newURL);
+    }
+
     function handleFilterChange() {
+        updateURL();
         loadEntries();
     }
 
@@ -267,6 +278,11 @@
 
     // Initialize
     Promise.all([loadCategories(), loadFeeds()]).then(() => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const feedId = urlParams.get('feed');
+        const categoryId = urlParams.get('category');
+        if (feedId) document.getElementById('filter-feed').value = feedId;
+        if (categoryId) document.getElementById('filter-category').value = categoryId;
         loadEntries();
     });
 </script>
