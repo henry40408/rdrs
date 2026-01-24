@@ -181,20 +181,20 @@
             if (search && entry.content) {
                 const snippet = getContentSnippet(entry.content, search);
                 if (snippet) {
-                    contentSnippetHtml = `<div class="muted" style="font-size:0.8rem; margin-top:0.25rem; font-style:italic;">${highlightText(snippet, search)}</div>`;
+                    contentSnippetHtml = `<div class="muted" style="font-size:0.8rem; margin-top:0.4rem; font-style:italic;">${highlightText(snippet, search)}</div>`;
                 }
             }
 
             return `
-            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}" style="margin-bottom:1rem; padding-bottom:1rem; border-bottom:1px solid #ccc; ${isRead ? 'opacity:0.6;' : ''}">
+            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}" style="margin-bottom:1.25rem; padding-bottom:1rem; border-bottom:1px solid #ccc; ${isRead ? 'opacity:0.6;' : ''}">
                 <div>
                     <a href="/entries/${entry.id}" style="font-weight:${isRead ? 'normal' : 'bold'};">${titleHtml}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                 </div>${contentSnippetHtml}
-                <div class="muted" style="font-size:0.875rem;">
+                <div class="muted" style="font-size:0.875rem; margin-top:0.3rem;">
                     ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
                 </div>
-                <div style="margin-top:0.5rem;">
+                <div style="margin-top:0.4rem;">
                     ${isRead
                         ? `<a href="#" onclick="markUnread(${entry.id}); return false;">[unread]</a>`
                         : `<a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>`
