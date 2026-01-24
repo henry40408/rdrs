@@ -1,0 +1,34 @@
+# Build artifacts
+target/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Database files
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Environment files
+.env
+.env.*
+
+# Documentation
+*.md
+LICENSE
+
+# CI/CD
+.github/
+
+# Nix
+flake.nix
+flake.lock
+.direnv/
