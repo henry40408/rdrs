@@ -214,14 +214,15 @@
             const category = categories.find(c => c.id === feed.category_id);
             const categoryName = category ? category.name : 'Unknown';
             const title = feed.title || feed.url;
-            const fetchedAt = feed.fetched_at ? formatDate(feed.fetched_at) : 'Never';
+            const fetchedAt = feed.fetched_at ? formatDate(feed.fetched_at) : '';
+            const fetchedAtTitle = feed.fetched_at ? formatDateTime(feed.fetched_at) : '';
             const hasError = feed.fetch_error !== null;
 
             let rows = `
             <tr id="row-${feed.id}"${hasError ? ' style="border-bottom:none;"' : ''}>
                 <td${hasError ? ' style="border-bottom:none;"' : ''}><span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
                 <td${hasError ? ' style="border-bottom:none;"' : ''}>${escapeHtml(categoryName)}</td>
-                <td${hasError ? ' style="border-bottom:none;"' : ''}>${fetchedAt}</td>
+                <td${hasError ? ' style="border-bottom:none;"' : ''}>${fetchedAt ? `<span title="${fetchedAtTitle}">${fetchedAt}</span>` : 'Never'}</td>
                 <td class="actions"${hasError ? ' style="border-bottom:none;"' : ''}>
                     <a href="/entries?feed=${feed.id}">[entries]</a>
                     <a href="#" onclick="refreshFeed(${feed.id}); return false;" id="refresh-${feed.id}">[refresh]</a>
@@ -251,7 +252,13 @@
     }
 
     function formatDate(dateStr) {
-        return dateStr.split('T')[0];
+        const date = new Date(dateStr);
+        return date.toLocaleDateString();
+    }
+
+    function formatDateTime(dateStr) {
+        const date = new Date(dateStr);
+        return date.toLocaleString();
     }
 
     async function addFeed(event) {

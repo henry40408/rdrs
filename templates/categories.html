@@ -72,7 +72,7 @@
                     <input type="text" class="cat-edit-input" value="${escapeHtml(cat.name)}" style="display:none;" maxlength="100">
                 </td>
                 <td>${feedCount}</td>
-                <td>${formatDate(cat.created_at)}</td>
+                <td><span title="${formatDateTime(cat.created_at)}">${formatDate(cat.created_at)}</span></td>
                 <td class="actions">
                     <a href="/feeds?category=${cat.id}">[feeds]</a>
                     <a href="#" class="edit-btn" onclick="startEdit(${cat.id}); return false;">[rename]</a>
@@ -91,7 +91,13 @@
     }
 
     function formatDate(dateStr) {
-        return dateStr.split('T')[0];
+        const date = new Date(dateStr);
+        return date.toLocaleDateString();
+    }
+
+    function formatDateTime(dateStr) {
+        const date = new Date(dateStr);
+        return date.toLocaleString();
     }
 
     async function addCategory(event) {
