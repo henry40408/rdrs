@@ -108,6 +108,10 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::entry::fetch_full_content),
         )
         .route(
+            "/api/entries/{id}/neighbors",
+            get(handlers::entry::get_entry_neighbors),
+        )
+        .route(
             "/api/entries/mark-all-read",
             put(handlers::entry::mark_all_read),
         )

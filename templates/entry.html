@@ -14,6 +14,67 @@
 
 <script>
     const entryId = {{ entry_id }};
+    let entryData = null;
+    let neighbors = { prev_id: null, next_id: null };
+
+    async function loadNeighbors() {
+        try {
+            const response = await fetch(`/api/entries/${entryId}/neighbors`);
+            if (response.ok) {
+                neighbors = await response.json();
+                updateNeighborLinks();
+            }
+        } catch (err) {
+            console.error('Failed to load neighbors:', err);
+        }
+    }
+
+    function updateNeighborLinks() {
+        const prevLinks = [
+            document.getElementById('prev-entry-link'),
+            document.getElementById('prev-entry-link-bottom')
+        ];
+        const nextLinks = [
+            document.getElementById('next-entry-link'),
+            document.getElementById('next-entry-link-bottom')
+        ];
+
+        prevLinks.forEach(link => {
+            if (link) {
+                if (neighbors.prev_id) {
+                    link.href = `/entries/${neighbors.prev_id}`;
+                    link.classList.remove('disabled');
+                } else {
+                    link.removeAttribute('href');
+                    link.classList.add('disabled');
+                }
+            }
+        });
+
+        nextLinks.forEach(link => {
+            if (link) {
+                if (neighbors.next_id) {
+                    link.href = `/entries/${neighbors.next_id}`;
+                    link.classList.remove('disabled');
+                } else {
+                    link.removeAttribute('href');
+                    link.classList.add('disabled');
+                }
+            }
+        });
+    }
+
+    function goToPrevEntry() {
+        if (neighbors.prev_id) {
+            window.location.href = `/entries/${neighbors.prev_id}`;
+        }
+    }
+
+    function goToNextEntry() {
+        if (neighbors.next_id) {
+            window.location.href = `/entries/${neighbors.next_id}`;
+        }
+    }
 
     async function loadEntry() {
         try {
@@ -26,12 +87,16 @@
                 throw new Error('Failed to load entry');
             }
             const data = await response.json();
+            entryData = data;
             renderEntry(data);
 
             // Auto-mark as read
             if (data.read_at === null) {
                 await fetch(`/api/entries/${entryId}/read`, { method: 'PUT' });
             }
+
+            // Load neighbors for n/p navigation
+            loadNeighbors();
         } catch (err) {
             document.getElementById('entry-container').innerHTML = '<p class="muted">[ERROR] Failed to load entry</p>';
         }
@@ -51,6 +116,10 @@
         document.getElementById('entry-container').innerHTML = `
             <div class="entry-nav">
                 <a href="/entries">&larr; Back to Entries</a>
+                <span class="entry-nav-sep">&middot;</span>
+                <a href="#" id="prev-entry-link" class="disabled">&larr; Previous</a>
+                <span class="entry-nav-sep">&middot;</span>
+                <a href="#" id="next-entry-link" class="disabled">Next &rarr;</a>
             </div>
 
             <h1 class="entry-title">${escapeHtml(title)}</h1>
@@ -77,7 +146,11 @@
             <hr>
 
             <div class="entry-nav entry-nav-bottom">
-                <a href="/entries">&larr; Back to Entries</a>
+                <a href="#" id="prev-entry-link-bottom" class="disabled">&larr; Previous</a>
+                <span class="entry-nav-sep">&middot;</span>
+                <a href="/entries">Back to Entries</a>
+                <span class="entry-nav-sep">&middot;</span>
+                <a href="#" id="next-entry-link-bottom" class="disabled">Next &rarr;</a>
             </div>
         `;
     }
@@ -175,6 +248,72 @@
         return div.innerHTML;
     }
 
+    // Keyboard navigation functions
+    function scrollContent(direction) {
+        const scrollAmount = window.innerHeight * 0.4;
+        window.scrollBy({
+            top: direction * scrollAmount,
+            behavior: 'smooth'
+        });
+    }
+
+    function goBackToList() {
+        window.location.href = '/entries';
+    }
+
+    function openOriginalLink() {
+        if (entryData && entryData.link) {
+            window.open(entryData.link, '_blank', 'noopener,noreferrer');
+        }
+    }
+
+    // Register keyboard handlers
+    window.keyboard.init('entry');
+    window.keyboard.registerHandlers({
+        handleKey: function(key, shiftKey) {
+            switch (key) {
+                case 'j':
+                    scrollContent(1);
+                    return true;
+                case 'k':
+                    scrollContent(-1);
+                    return true;
+                case 'n':
+                    goToNextEntry();
+                    return true;
+                case 'p':
+                    goToPrevEntry();
+                    return true;
+                case 'u':
+                    markUnread();
+                    return true;
+                case 's':
+                    toggleStar();
+                    return true;
+                case 'v':
+                    openOriginalLink();
+                    return true;
+                case 'f':
+                    // If full content already fetched, toggle between original and full
+                    if (fullContent) {
+                        toggleContent();
+                    } else {
+                        // Otherwise fetch full content
+                        const fetchBtn = document.getElementById('fetch-content-btn');
+                        if (fetchBtn && !fetchBtn.disabled) {
+                            fetchFullContent();
+                        }
+                    }
+                    return true;
+                case 'Escape':
+                case 'q':
+                    goBackToList();
+                    return true;
+            }
+            return false;
+        }
+    });
+
     // Initialize
     loadEntry();
 </script>
@@ -208,11 +347,30 @@
 
     .entry-nav {
         margin-bottom: 1.25rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
     }
 
     .entry-nav-bottom {
         margin-bottom: 0;
         margin-top: 1.25rem;
+    }
+
+    .entry-nav-sep {
+        color: #999;
+    }
+
+    .entry-nav a.disabled {
+        color: #ccc;
+        pointer-events: none;
+        cursor: default;
+    }
+
+    .entry-nav a.disabled:hover {
+        background: none;
+        color: #ccc;
     }
 
     .entry-content {

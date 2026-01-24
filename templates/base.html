@@ -198,12 +198,267 @@
             margin-right: 4px;
             border-radius: 2px;
         }
+        /* Keyboard shortcut help modal */
+        .kb-help-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .kb-help-overlay.visible {
+            display: flex;
+        }
+        .kb-help-modal {
+            background: #fff;
+            border: 2px solid #111;
+            padding: 1.5rem;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            font-size: 0.9rem;
+        }
+        .kb-help-modal h2 {
+            font-size: 1rem;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid #111;
+            padding-bottom: 0.5rem;
+        }
+        .kb-help-modal h3 {
+            font-size: 0.9rem;
+            margin: 1rem 0 0.5rem;
+            color: #666;
+        }
+        .kb-help-modal table {
+            width: 100%;
+            margin-bottom: 1rem;
+        }
+        .kb-help-modal td {
+            padding: 0.25rem 0;
+            border: none;
+        }
+        .kb-help-modal td:first-child {
+            width: 80px;
+            font-family: monospace;
+            font-weight: bold;
+        }
+        .kb-help-close {
+            margin-top: 1rem;
+        }
+        /* Selected entry highlight */
+        .entry-item.selected {
+            background: #f5f5f5;
+            outline: 2px solid #111;
+            outline-offset: -2px;
+            margin-left: -0.5rem;
+            margin-right: -0.5rem;
+            padding-left: 0.5rem;
+            padding-right: 0.5rem;
+        }
+        /* Pending key indicator */
+        .kb-pending-indicator {
+            display: none;
+            position: fixed;
+            bottom: 1rem;
+            right: 1rem;
+            background: #111;
+            color: #fff;
+            padding: 0.5rem 1rem;
+            font-family: monospace;
+            font-size: 1rem;
+            z-index: 999;
+        }
+        .kb-pending-indicator.visible {
+            display: block;
+        }
     </style>
+    <script>
+        // Global keyboard shortcut handler (defined early so child templates can use it)
+        window.keyboard = {
+            pendingKey: null,
+            pendingTimeout: null,
+            handlers: {},
+            pageType: null,
+
+            init: function(pageType) {
+                this.pageType = pageType;
+                document.addEventListener('keydown', this.handleKeyDown.bind(this));
+            },
+
+            handleKeyDown: function(e) {
+                // Ignore when typing in inputs
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+                    return;
+                }
+
+                // Ignore if modifier keys are pressed (except shift)
+                if (e.ctrlKey || e.altKey || e.metaKey) {
+                    return;
+                }
+
+                const key = e.key;
+
+                // Handle pending key combinations (like 'g h')
+                if (this.pendingKey) {
+                    const combo = this.pendingKey + ' ' + key;
+                    this.clearPending();
+                    if (this.handleCombo(combo)) {
+                        e.preventDefault();
+                        return;
+                    }
+                }
+
+                // Check for keys that start combinations
+                if (key === 'g') {
+                    this.setPending('g');
+                    e.preventDefault();
+                    return;
+                }
+
+                // Handle single key shortcuts
+                if (this.handleSingleKey(key, e.shiftKey)) {
+                    e.preventDefault();
+                }
+            },
+
+            setPending: function(key) {
+                this.pendingKey = key;
+                const indicator = document.getElementById('kb-pending-indicator');
+                if (indicator) {
+                    indicator.textContent = key + '-';
+                    indicator.classList.add('visible');
+                }
+                // Clear pending after timeout
+                this.pendingTimeout = setTimeout(() => {
+                    this.clearPending();
+                }, 1500);
+            },
+
+            clearPending: function() {
+                this.pendingKey = null;
+                if (this.pendingTimeout) {
+                    clearTimeout(this.pendingTimeout);
+                    this.pendingTimeout = null;
+                }
+                const indicator = document.getElementById('kb-pending-indicator');
+                if (indicator) {
+                    indicator.classList.remove('visible');
+                }
+            },
+
+            handleCombo: function(combo) {
+                // Global navigation shortcuts
+                switch (combo) {
+                    case 'g h': window.location.href = '/'; return true;
+                    case 'g e': window.location.href = '/entries'; return true;
+                    case 'g f': window.location.href = '/feeds'; return true;
+                    case 'g c': window.location.href = '/categories'; return true;
+                }
+                return false;
+            },
+
+            handleSingleKey: function(key, shiftKey) {
+                // Show help
+                if (key === '?') {
+                    this.toggleHelp();
+                    return true;
+                }
+
+                // Page-specific handlers
+                if (this.handlers.handleKey) {
+                    return this.handlers.handleKey(key, shiftKey);
+                }
+
+                return false;
+            },
+
+            registerHandlers: function(handlers) {
+                this.handlers = handlers;
+            },
+
+            toggleHelp: function() {
+                const overlay = document.getElementById('kb-help-overlay');
+                if (!overlay) return;
+
+                if (overlay.classList.contains('visible')) {
+                    this.hideHelp();
+                    return;
+                }
+
+                const content = document.getElementById('kb-help-content');
+                if (!content) return;
+                let html = '';
+
+                // Global shortcuts
+                html += '<h3>Global Navigation</h3><table>';
+                html += '<tr><td>g h</td><td>Go to Home</td></tr>';
+                html += '<tr><td>g e</td><td>Go to Entries</td></tr>';
+                html += '<tr><td>g f</td><td>Go to Feeds</td></tr>';
+                html += '<tr><td>g c</td><td>Go to Categories</td></tr>';
+                html += '<tr><td>?</td><td>Toggle this help</td></tr>';
+                html += '</table>';
+
+                // Page-specific shortcuts
+                if (this.pageType === 'list') {
+                    html += '<h3>List Navigation</h3><table>';
+                    html += '<tr><td>j</td><td>Next entry</td></tr>';
+                    html += '<tr><td>k</td><td>Previous entry</td></tr>';
+                    html += '<tr><td>n</td><td>Next unread entry</td></tr>';
+                    html += '<tr><td>N</td><td>Previous unread entry</td></tr>';
+                    html += '<tr><td>Enter / o</td><td>Open entry</td></tr>';
+                    html += '<tr><td>v</td><td>Open original in new tab</td></tr>';
+                    html += '<tr><td>m</td><td>Toggle read/unread</td></tr>';
+                    html += '<tr><td>s</td><td>Toggle star</td></tr>';
+                    html += '<tr><td>r</td><td>Refresh list</td></tr>';
+                    html += '</table>';
+                } else if (this.pageType === 'entry') {
+                    html += '<h3>Entry View</h3><table>';
+                    html += '<tr><td>j</td><td>Scroll down</td></tr>';
+                    html += '<tr><td>k</td><td>Scroll up</td></tr>';
+                    html += '<tr><td>n</td><td>Next entry</td></tr>';
+                    html += '<tr><td>p</td><td>Previous entry</td></tr>';
+                    html += '<tr><td>u</td><td>Mark as unread</td></tr>';
+                    html += '<tr><td>s</td><td>Toggle star</td></tr>';
+                    html += '<tr><td>v</td><td>Open original in new tab</td></tr>';
+                    html += '<tr><td>f</td><td>Toggle full content</td></tr>';
+                    html += '<tr><td>Esc / q</td><td>Back to list</td></tr>';
+                    html += '</table>';
+                }
+
+                content.innerHTML = html;
+                document.getElementById('kb-help-overlay').classList.add('visible');
+            },
+
+            hideHelp: function() {
+                const overlay = document.getElementById('kb-help-overlay');
+                if (overlay) {
+                    overlay.classList.remove('visible');
+                }
+            }
+        };
+    </script>
     {% block head %}{% endblock %}
 </head>
 <body>
     {% block flash %}{% endblock %}
     {% block content %}{% endblock %}
+    <!-- Keyboard shortcut help modal -->
+    <div class="kb-help-overlay" id="kb-help-overlay" onclick="if(event.target===this)window.keyboard.hideHelp()">
+        <div class="kb-help-modal">
+            <h2>Keyboard Shortcuts [?]</h2>
+            <div id="kb-help-content"></div>
+            <button class="kb-help-close" onclick="window.keyboard.hideHelp()">[Close]</button>
+        </div>
+    </div>
+
+    <!-- Pending key indicator -->
+    <div class="kb-pending-indicator" id="kb-pending-indicator"></div>
+
     <script>
         // Flash message helper functions
         window.flash = {

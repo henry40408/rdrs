@@ -68,6 +68,7 @@
     let currentOffset = 0;
     const limit = 50;
     let total = 0;
+    let selectedIndex = -1;
 
     async function loadCategories() {
         try {
@@ -154,7 +155,7 @@
             return;
         }
 
-        container.innerHTML = entries.map(entry => {
+        container.innerHTML = entries.map((entry, index) => {
             const title = entry.title || 'Untitled';
             const feedTitle = entry.feed_title || entry.feed_url;
             const date = entry.published_at ? formatDate(entry.published_at) : '';
@@ -164,9 +165,10 @@
             const feedIconHtml = entry.feed_has_icon
                 ? `<img src="/api/feeds/${entry.feed_id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
                 : '';
+            const isSelected = index === selectedIndex;
 
             return `
-            <div class="entry-item" id="entry-${entry.id}" style="margin-bottom:1rem; padding-bottom:1rem; border-bottom:1px solid #ccc; ${isRead ? 'opacity:0.6;' : ''}">
+            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}" style="margin-bottom:1rem; padding-bottom:1rem; border-bottom:1px solid #ccc; ${isRead ? 'opacity:0.6;' : ''}">
                 <div>
                     <a href="/entries/${entry.id}" style="font-weight:${isRead ? 'normal' : 'bold'};">${escapeHtml(title)}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
@@ -350,6 +352,120 @@
             document.getElementById('filter-category').value = e.target.dataset.categoryId;
             document.getElementById('filter-feed').value = '';
             handleFilterChange();
+        }
+    });
+
+    // Keyboard navigation functions
+    function selectEntry(index) {
+        if (entries.length === 0) return;
+
+        // Clamp index to valid range
+        if (index < 0) index = 0;
+        if (index >= entries.length) index = entries.length - 1;
+
+        // Update selection
+        const prevSelected = document.querySelector('.entry-item.selected');
+        if (prevSelected) prevSelected.classList.remove('selected');
+
+        selectedIndex = index;
+        const newSelected = document.querySelector(`.entry-item[data-index="${index}"]`);
+        if (newSelected) {
+            newSelected.classList.add('selected');
+            newSelected.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    }
+
+    function getSelectedEntry() {
+        if (selectedIndex >= 0 && selectedIndex < entries.length) {
+            return entries[selectedIndex];
+        }
+        return null;
+    }
+
+    function findNextUnread(direction) {
+        if (entries.length === 0) return -1;
+
+        const start = selectedIndex < 0 ? (direction > 0 ? -1 : entries.length) : selectedIndex;
+        let index = start + direction;
+
+        while (index >= 0 && index < entries.length) {
+            if (entries[index].read_at === null) {
+                return index;
+            }
+            index += direction;
+        }
+        return -1;
+    }
+
+    function openSelectedEntry() {
+        const entry = getSelectedEntry();
+        if (entry) {
+            window.location.href = `/entries/${entry.id}`;
+        }
+    }
+
+    function openOriginalLink() {
+        const entry = getSelectedEntry();
+        if (entry && entry.link) {
+            window.open(entry.link, '_blank', 'noopener,noreferrer');
+        }
+    }
+
+    async function toggleSelectedRead() {
+        const entry = getSelectedEntry();
+        if (entry) {
+            if (entry.read_at === null) {
+                await markRead(entry.id);
+            } else {
+                await markUnread(entry.id);
+            }
+        }
+    }
+
+    async function toggleSelectedStar() {
+        const entry = getSelectedEntry();
+        if (entry) {
+            await toggleStar(entry.id);
+        }
+    }
+
+    // Register keyboard handlers
+    window.keyboard.init('list');
+    window.keyboard.registerHandlers({
+        handleKey: function(key, shiftKey) {
+            switch (key) {
+                case 'j':
+                    selectEntry(selectedIndex + 1);
+                    return true;
+                case 'k':
+                    selectEntry(selectedIndex - 1);
+                    return true;
+                case 'n':
+                    const nextUnread = findNextUnread(1);
+                    if (nextUnread >= 0) selectEntry(nextUnread);
+                    return true;
+                case 'N':
+                    const prevUnread = findNextUnread(-1);
+                    if (prevUnread >= 0) selectEntry(prevUnread);
+                    return true;
+                case 'Enter':
+                case 'o':
+                    openSelectedEntry();
+                    return true;
+                case 'v':
+                    openOriginalLink();
+                    return true;
+                case 'm':
+                    toggleSelectedRead();
+                    return true;
+                case 's':
+                    toggleSelectedStar();
+                    return true;
+                case 'r':
+                    loadEntries();
+                    return true;
+            }
+            return false;
         }
     });
 
