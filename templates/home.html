@@ -48,6 +48,8 @@
     <button type="button" onclick="loadMore()">[Load More]</button>
 </div>
 
+<p id="entries-count" class="muted"></p>
+
 <script>
     let entries = [];
     let categories = [];
@@ -160,6 +162,7 @@
             renderEntries();
             updateLoadMoreButton();
             updateUnreadCount();
+            updateEntriesCount();
         } catch (err) {
             document.getElementById('entries-list').innerHTML = '<p class="muted">[ERROR] Failed to load entries</p>';
         }
@@ -312,6 +315,10 @@
     function updateUnreadCount() {
         const el = document.getElementById('unread-count');
         if (el) el.textContent = total;
+    }
+
+    function updateEntriesCount() {
+        document.getElementById('entries-count').textContent = `Showing ${entries.length} of ${total} entries`;
     }
 
     function escapeHtml(text) {
