@@ -625,11 +625,7 @@ pub struct EntryNeighbors {
 /// Entries are ordered by COALESCE(published_at, created_at) DESC.
 /// - prev_id: the entry that comes before (newer/higher in list)
 /// - next_id: the entry that comes after (older/lower in list)
-pub fn find_neighbors(
-    conn: &Connection,
-    user_id: i64,
-    entry_id: i64,
-) -> AppResult<EntryNeighbors> {
+pub fn find_neighbors(conn: &Connection, user_id: i64, entry_id: i64) -> AppResult<EntryNeighbors> {
     // Get the current entry's sort timestamp
     let sort_time: Option<String> = conn
         .query_row(
@@ -647,7 +643,12 @@ pub fn find_neighbors(
 
     let sort_time = match sort_time {
         Some(t) => t,
-        None => return Ok(EntryNeighbors { prev_id: None, next_id: None }),
+        None => {
+            return Ok(EntryNeighbors {
+                prev_id: None,
+                next_id: None,
+            })
+        }
     };
 
     // Find previous entry (newer, comes before in DESC order)
