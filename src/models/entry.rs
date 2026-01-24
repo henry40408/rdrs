@@ -566,7 +566,12 @@ pub fn mark_all_read_by_feed(
     older_than_days: Option<i64>,
 ) -> AppResult<i64> {
     let age_condition = older_than_days
-        .map(|days| format!(" AND COALESCE(published_at, created_at) < datetime('now', '-{} days')", days))
+        .map(|days| {
+            format!(
+                " AND COALESCE(published_at, created_at) < datetime('now', '-{} days')",
+                days
+            )
+        })
         .unwrap_or_default();
 
     let sql = format!(
@@ -584,7 +589,12 @@ pub fn mark_all_read_by_user(
     older_than_days: Option<i64>,
 ) -> AppResult<i64> {
     let age_condition = older_than_days
-        .map(|days| format!(" AND COALESCE(published_at, created_at) < datetime('now', '-{} days')", days))
+        .map(|days| {
+            format!(
+                " AND COALESCE(published_at, created_at) < datetime('now', '-{} days')",
+                days
+            )
+        })
         .unwrap_or_default();
 
     let sql = format!(
@@ -610,7 +620,12 @@ pub fn mark_all_read_by_category(
     older_than_days: Option<i64>,
 ) -> AppResult<i64> {
     let age_condition = older_than_days
-        .map(|days| format!(" AND COALESCE(published_at, created_at) < datetime('now', '-{} days')", days))
+        .map(|days| {
+            format!(
+                " AND COALESCE(published_at, created_at) < datetime('now', '-{} days')",
+                days
+            )
+        })
         .unwrap_or_default();
 
     let sql = format!(
