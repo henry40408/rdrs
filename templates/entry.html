@@ -14,6 +14,7 @@
 
 <script>
     const entryId = {{ entry_id }};
+    const hasSaveServices = {{ has_save_services }};
     let entryData = null;
     let neighbors = { prev_id: null, next_id: null };
 
@@ -134,6 +135,7 @@
                 <button type="button" onclick="toggleStar()" id="star-btn">[${isStarred ? 'Unstar' : 'Star'}]</button>
                 <button type="button" onclick="markUnread()">[Mark Unread]</button>
                 ${data.link ? `<button type="button" onclick="fetchFullContent()" id="fetch-content-btn">[Fetch Full Content]</button>` : ''}
+                ${hasSaveServices && data.link ? `<button type="button" onclick="saveEntry()" id="save-btn">[Save]</button>` : ''}
                 ${data.link ? `<a href="${escapeHtml(data.link)}" target="_blank" rel="noopener noreferrer" class="btn">[View Original]</a>` : ''}
             </div>
 
@@ -174,6 +176,53 @@
             flash.success('Marked as unread.');
         } catch (err) {
             flash.error(err.message);
+        }
+    }
+
+    async function saveEntry() {
+        const btn = document.getElementById('save-btn');
+        if (!btn) return;
+
+        btn.textContent = '[Saving...]';
+        btn.disabled = true;
+
+        try {
+            const response = await fetch(`/api/entries/${entryId}/save`, {
+                method: 'POST'
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to save');
+            }
+
+            if (data.all_success) {
+                const count = data.results.length;
+                flash.success(`Saved to ${count} service${count > 1 ? 's' : ''}`);
+                btn.textContent = '[Saved!]';
+                // Reset button after a delay
+                setTimeout(() => {
+                    btn.textContent = '[Save]';
+                }, 2000);
+            } else {
+                // Partial success or all failed
+                const failed = data.results.filter(r => !r.success);
+                const succeeded = data.results.filter(r => r.success);
+
+                if (succeeded.length > 0) {
+                    flash.success(`Saved to: ${succeeded.map(r => r.service).join(', ')}`);
+                }
+                if (failed.length > 0) {
+                    flash.error(`Failed: ${failed.map(r => `${r.service} (${r.message})`).join(', ')}`);
+                }
+                btn.textContent = '[Save]';
+            }
+        } catch (err) {
+            flash.error(err.message);
+            btn.textContent = '[Save]';
+        } finally {
+            btn.disabled = false;
         }
     }
 
@@ -310,6 +359,15 @@
                         const fetchBtn = document.getElementById('fetch-content-btn');
                         if (fetchBtn && !fetchBtn.disabled) {
                             fetchFullContent();
+                        }
+                    }
+                    return true;
+                case 'b':
+                    // Save to bookmark services
+                    if (hasSaveServices && entryData && entryData.link) {
+                        const saveBtn = document.getElementById('save-btn');
+                        if (saveBtn && !saveBtn.disabled) {
+                            saveEntry();
                         }
                     }
                     return true;

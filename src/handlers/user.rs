@@ -7,6 +7,7 @@ use crate::middleware::AuthUser;
 use crate::models::session;
 use crate::models::user;
 use crate::models::user_settings;
+use crate::services::LinkdingConfig;
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -72,5 +73,96 @@ pub async fn update_settings(
 
     Ok(Json(UpdateSettingsResponse {
         entries_per_page: settings.entries_per_page,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateLinkdingRequest {
+    pub api_url: Option<String>,
+    pub api_token: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateLinkdingResponse {
+    pub configured: bool,
+    pub api_url: Option<String>,
+}
+
+pub async fn update_linkding_settings(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    Json(req): Json<UpdateLinkdingRequest>,
+) -> AppResult<Json<UpdateLinkdingResponse>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+
+    // Get current config
+    let mut config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
+
+    // Update Linkding config
+    // If both api_url and api_token are empty strings or None, clear the config
+    let api_url = req.api_url.filter(|s| !s.is_empty());
+    let api_token = req.api_token.filter(|s| !s.is_empty());
+
+    if api_url.is_some() || api_token.is_some() {
+        // Update or create config
+        let current = config.linkding.unwrap_or(LinkdingConfig {
+            api_url: String::new(),
+            api_token: String::new(),
+        });
+
+        config.linkding = Some(LinkdingConfig {
+            api_url: api_url.unwrap_or(current.api_url),
+            api_token: api_token.unwrap_or(current.api_token),
+        });
+    } else {
+        // Clear config if both are empty
+        config.linkding = None;
+    }
+
+    // Save updated config
+    user_settings::update_save_services(&conn, auth_user.user.id, &config)?;
+
+    let configured = config
+        .linkding
+        .as_ref()
+        .map(|c| c.is_configured())
+        .unwrap_or(false);
+
+    Ok(Json(UpdateLinkdingResponse {
+        configured,
+        api_url: config.linkding.map(|c| c.api_url),
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct GetLinkdingResponse {
+    pub configured: bool,
+    pub api_url: Option<String>,
+}
+
+pub async fn get_linkding_settings(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> AppResult<Json<GetLinkdingResponse>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+
+    let config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
+
+    let configured = config
+        .linkding
+        .as_ref()
+        .map(|c| c.is_configured())
+        .unwrap_or(false);
+
+    Ok(Json(GetLinkdingResponse {
+        configured,
+        // Return api_url but not api_token for security
+        api_url: config.linkding.map(|c| c.api_url),
     }))
 }

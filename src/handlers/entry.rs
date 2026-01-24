@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
-use crate::models::{category, entry, feed};
+use crate::models::{category, entry, feed, user_settings};
+use crate::services::save::{linkding, BookmarkData, SaveResult};
 use crate::services::{fetch_and_extract, refresh_feed, sanitize_html, SyncResult};
 use crate::AppState;
 
@@ -387,5 +388,79 @@ pub async fn fetch_full_content(
         title: extracted.title,
         content: extracted.content,
         sanitized_content,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct SaveToServicesResponse {
+    pub results: Vec<SaveResult>,
+    pub all_success: bool,
+}
+
+pub async fn save_to_services(
+    auth_user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<SaveToServicesResponse>> {
+    // Get entry and verify ownership
+    let (entry_data, save_config) = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+
+        let entry_with_feed =
+            entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+
+        // Verify entry belongs to user
+        let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
+            .ok_or(AppError::CategoryNotFound)?;
+        if cat.user_id != auth_user.user.id {
+            return Err(AppError::EntryNotFound);
+        }
+
+        // Check if entry has a link
+        let link = entry_with_feed
+            .entry
+            .link
+            .clone()
+            .ok_or_else(|| AppError::Validation("Entry has no link to save".to_string()))?;
+
+        // Get save services config
+        let config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
+
+        if !config.has_any_service() {
+            return Err(AppError::Validation("No save services configured".to_string()));
+        }
+
+        let bookmark = BookmarkData {
+            url: link,
+            title: entry_with_feed.entry.title.clone(),
+            description: entry_with_feed.entry.summary.clone(),
+            tags: vec![],
+        };
+
+        (bookmark, config)
+    };
+
+    // Save to all configured services in parallel
+    let mut results = Vec::new();
+
+    // Linkding
+    if let Some(linkding_config) = &save_config.linkding {
+        if linkding_config.is_configured() {
+            let result = linkding::save_to_linkding(linkding_config, &entry_data).await?;
+            results.push(result);
+        }
+    }
+
+    // Future services can be added here:
+    // if let Some(pocket_config) = &save_config.pocket { ... }
+
+    let all_success = results.iter().all(|r| r.success);
+
+    Ok(Json(SaveToServicesResponse {
+        results,
+        all_success,
     }))
 }

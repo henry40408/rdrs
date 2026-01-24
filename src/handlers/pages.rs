@@ -197,6 +197,8 @@ pub struct UserSettingsTemplate {
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
+    pub linkding_configured: bool,
+    pub linkding_api_url: String,
 }
 
 impl IntoResponse for UserSettingsTemplate {
@@ -220,10 +222,23 @@ pub async fn user_settings_page(
         auth_user.user.is_admin()
     };
 
-    let entries_per_page = {
+    let (entries_per_page, linkding_configured, linkding_api_url) = {
         let conn = state.db.lock().ok();
-        conn.and_then(|c| user_settings::get_entries_per_page(&c, auth_user.user.id).ok())
-            .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+        let epp = conn
+            .as_ref()
+            .and_then(|c| user_settings::get_entries_per_page(c, auth_user.user.id).ok())
+            .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+
+        let save_config = conn
+            .as_ref()
+            .and_then(|c| user_settings::get_save_services_config(c, auth_user.user.id).ok())
+            .unwrap_or_default();
+
+        let linkding = save_config.linkding.as_ref();
+        let configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
+        let api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
+
+        (epp, configured, api_url)
     };
 
     (
@@ -240,6 +255,8 @@ pub async fn user_settings_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
+            linkding_configured,
+            linkding_api_url,
         },
     )
 }
@@ -375,6 +392,7 @@ pub struct EntryTemplate {
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
+    pub has_save_services: bool,
 }
 
 impl IntoResponse for EntryTemplate {
@@ -388,6 +406,7 @@ impl IntoResponse for EntryTemplate {
 
 pub async fn entry_page(
     auth_user: AuthUser,
+    State(state): State<AppState>,
     Path(id): Path<i64>,
     flash: Flash,
 ) -> (Flash, EntryTemplate) {
@@ -398,6 +417,12 @@ pub async fn entry_page(
         auth_user.user.is_admin()
     };
 
+    let has_save_services = {
+        let conn = state.db.lock().ok();
+        conn.and_then(|c| user_settings::has_save_services(&c, auth_user.user.id).ok())
+            .unwrap_or(false)
+    };
+
     (
         flash.clone(),
         EntryTemplate {
@@ -406,6 +431,7 @@ pub async fn entry_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
+            has_save_services,
         },
     )
 }

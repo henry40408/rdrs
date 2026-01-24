@@ -39,6 +39,14 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/user", get(handlers::user::get_current_user))
         .route("/api/user/password", put(handlers::user::change_password))
         .route("/api/user/settings", put(handlers::user::update_settings))
+        .route(
+            "/api/user/settings/linkding",
+            get(handlers::user::get_linkding_settings),
+        )
+        .route(
+            "/api/user/settings/linkding",
+            put(handlers::user::update_linkding_settings),
+        )
         .route("/api/admin/users", get(handlers::admin::list_users))
         .route("/api/admin/users/{id}", put(handlers::admin::update_user))
         .route(
@@ -104,6 +112,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/entries/{id}/fetch-full-content",
             post(handlers::entry::fetch_full_content),
+        )
+        .route(
+            "/api/entries/{id}/save",
+            post(handlers::entry::save_to_services),
         )
         .route(
             "/api/entries/{id}/neighbors",

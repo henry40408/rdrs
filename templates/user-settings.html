@@ -79,6 +79,108 @@
 
 <hr>
 
+<h2>Integrations</h2>
+<p class="muted">Connect external services to save articles.</p>
+
+<h3>Linkding</h3>
+<p class="muted">
+  <a href="https://github.com/sissbruecker/linkding" target="_blank" rel="noopener noreferrer">Linkding</a>
+  is a self-hosted bookmark manager.
+  {% if linkding_configured %}
+  <span style="color: green;">[Configured]</span>
+  {% endif %}
+</p>
+<div id="linkding-error" class="error" style="display: none"></div>
+<form id="linkding-form">
+  <div class="form-group">
+    <label for="linkding-api-url">API URL</label>
+    <input type="url" id="linkding-api-url" name="linkding-api-url" value="{{ linkding_api_url }}" placeholder="https://linkding.example.com">
+    <span class="muted">(Your Linkding server URL)</span>
+  </div>
+  <div class="form-group">
+    <label for="linkding-api-token">API Token</label>
+    <input type="password" id="linkding-api-token" name="linkding-api-token" placeholder="{% if linkding_configured %}(unchanged){% else %}Enter your API token{% endif %}">
+    <span class="muted">(Settings &rarr; Integrations &rarr; REST API)</span>
+  </div>
+  <button type="submit">[Save Linkding Settings]</button>
+  {% if linkding_configured %}
+  <button type="button" onclick="clearLinkding()" class="btn-secondary">[Clear]</button>
+  {% endif %}
+</form>
+<script>
+  document
+    .getElementById("linkding-form")
+    .addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errorDiv = document.getElementById("linkding-error");
+      errorDiv.style.display = "none";
+
+      const apiUrl = document.getElementById("linkding-api-url").value.trim();
+      const apiToken = document.getElementById("linkding-api-token").value;
+
+      // If URL is provided but token is empty and not previously configured, show error
+      if (apiUrl && !apiToken && !{{ linkding_configured }}) {
+        errorDiv.textContent = "API token is required";
+        errorDiv.style.display = "block";
+        return;
+      }
+
+      try {
+        const body = {};
+        if (apiUrl) body.api_url = apiUrl;
+        if (apiToken) body.api_token = apiToken;
+
+        const response = await fetch("/api/user/settings/linkding", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.configured) {
+            flash.success("Linkding settings saved successfully.");
+          } else {
+            flash.success("Linkding settings cleared.");
+          }
+          // Reload to update UI state
+          setTimeout(() => location.reload(), 1000);
+        } else {
+          const data = await response.json();
+          errorDiv.textContent = data.error || "Failed to save Linkding settings";
+          errorDiv.style.display = "block";
+        }
+      } catch (err) {
+        errorDiv.textContent = "An error occurred. Please try again.";
+        errorDiv.style.display = "block";
+      }
+    });
+
+  async function clearLinkding() {
+    if (!confirm("Clear Linkding settings?")) return;
+
+    try {
+      const response = await fetch("/api/user/settings/linkding", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      if (response.ok) {
+        flash.success("Linkding settings cleared.");
+        setTimeout(() => location.reload(), 1000);
+      } else {
+        const data = await response.json();
+        flash.error(data.error || "Failed to clear Linkding settings");
+      }
+    } catch (err) {
+      flash.error("An error occurred. Please try again.");
+    }
+  }
+</script>
+
+<hr>
+
 <h2>Change Password</h2>
 <div id="password-error" class="error" style="display: none"></div>
 <form id="change-password-form">

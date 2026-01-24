@@ -3,6 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+use crate::services::save::SaveServicesConfig;
 
 pub const DEFAULT_ENTRIES_PER_PAGE: i64 = 30;
 pub const MIN_ENTRIES_PER_PAGE: i64 = 10;
@@ -13,8 +14,24 @@ pub struct UserSettings {
     pub id: i64,
     pub user_id: i64,
     pub entries_per_page: i64,
+    pub save_services: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl UserSettings {
+    /// Parse save_services JSON into SaveServicesConfig
+    pub fn get_save_services_config(&self) -> SaveServicesConfig {
+        self.save_services
+            .as_ref()
+            .and_then(|json| SaveServicesConfig::from_json(json).ok())
+            .unwrap_or_default()
+    }
+
+    /// Check if any save service is configured
+    pub fn has_save_services(&self) -> bool {
+        self.get_save_services_config().has_any_service()
+    }
 }
 
 fn parse_datetime(s: &str) -> DateTime<Utc> {
@@ -35,6 +52,7 @@ fn row_to_user_settings(row: &rusqlite::Row) -> rusqlite::Result<UserSettings> {
         id: row.get(0)?,
         user_id: row.get(1)?,
         entries_per_page: row.get(2)?,
+        save_services: row.get(3)?,
         created_at: parse_datetime(&created_at),
         updated_at: parse_datetime(&updated_at),
     })
@@ -42,7 +60,7 @@ fn row_to_user_settings(row: &rusqlite::Row) -> rusqlite::Result<UserSettings> {
 
 pub fn find_by_user_id(conn: &Connection, user_id: i64) -> AppResult<Option<UserSettings>> {
     conn.query_row(
-        "SELECT id, user_id, entries_per_page, entries_per_page, created_at, updated_at FROM user_settings WHERE user_id = ?1",
+        "SELECT id, user_id, entries_per_page, save_services, created_at, updated_at FROM user_settings WHERE user_id = ?1",
         params![user_id],
         row_to_user_settings,
     )
@@ -74,6 +92,48 @@ pub fn upsert(conn: &Connection, user_id: i64, entries_per_page: i64) -> AppResu
 
     find_by_user_id(conn, user_id)?.ok_or(AppError::Internal(
         "Failed to retrieve user settings after upsert".to_string(),
+    ))
+}
+
+/// Get SaveServicesConfig for a user
+pub fn get_save_services_config(conn: &Connection, user_id: i64) -> AppResult<SaveServicesConfig> {
+    match find_by_user_id(conn, user_id)? {
+        Some(settings) => Ok(settings.get_save_services_config()),
+        None => Ok(SaveServicesConfig::default()),
+    }
+}
+
+/// Check if user has any save services configured
+pub fn has_save_services(conn: &Connection, user_id: i64) -> AppResult<bool> {
+    let config = get_save_services_config(conn, user_id)?;
+    Ok(config.has_any_service())
+}
+
+/// Update save_services configuration for a user
+pub fn update_save_services(
+    conn: &Connection,
+    user_id: i64,
+    config: &SaveServicesConfig,
+) -> AppResult<UserSettings> {
+    let json = config
+        .to_json()
+        .map_err(|e| AppError::Internal(format!("Failed to serialize save_services: {}", e)))?;
+
+    // First ensure user_settings row exists
+    conn.execute(
+        "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)
+         ON CONFLICT(user_id) DO NOTHING",
+        params![user_id, DEFAULT_ENTRIES_PER_PAGE],
+    )?;
+
+    // Then update save_services
+    conn.execute(
+        "UPDATE user_settings SET save_services = ?1, updated_at = datetime('now') WHERE user_id = ?2",
+        params![json, user_id],
+    )?;
+
+    find_by_user_id(conn, user_id)?.ok_or(AppError::Internal(
+        "Failed to retrieve user settings after update".to_string(),
     ))
 }
 
