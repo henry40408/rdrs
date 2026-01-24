@@ -47,12 +47,16 @@ pub async fn refresh_feed(
         }
     }
 
-    let response = client
-        .get(&feed_data.url)
-        .headers(headers)
-        .send()
-        .await
-        .map_err(|e| AppError::FetchError(e.to_string()))?;
+    let response = match client.get(&feed_data.url).headers(headers).send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            let error_msg = e.to_string();
+            if let Ok(conn) = db.lock() {
+                let _ = feed::update_fetch_result(&conn, feed_id, Utc::now(), Some(&error_msg), None, None);
+            }
+            return Err(AppError::FetchError(error_msg));
+        }
+    };
 
     let status = response.status();
 
@@ -98,14 +102,28 @@ pub async fn refresh_feed(
         .and_then(|v| v.to_str().ok())
         .map(String::from);
 
-    let body = response
-        .text()
-        .await
-        .map_err(|e| AppError::FetchError(e.to_string()))?;
+    let body = match response.text().await {
+        Ok(text) => text,
+        Err(e) => {
+            let error_msg = e.to_string();
+            if let Ok(conn) = db.lock() {
+                let _ = feed::update_fetch_result(&conn, feed_id, Utc::now(), Some(&error_msg), None, None);
+            }
+            return Err(AppError::FetchError(error_msg));
+        }
+    };
 
     // Parse feed
-    let parsed_feed = feed_rs::parser::parse(body.as_bytes())
-        .map_err(|e| AppError::FeedParseError(e.to_string()))?;
+    let parsed_feed = match feed_rs::parser::parse(body.as_bytes()) {
+        Ok(feed) => feed,
+        Err(e) => {
+            let error_msg = e.to_string();
+            if let Ok(conn) = db.lock() {
+                let _ = feed::update_fetch_result(&conn, feed_id, Utc::now(), Some(&error_msg), None, None);
+            }
+            return Err(AppError::FeedParseError(error_msg));
+        }
+    };
 
     let mut new_entries = 0i64;
     let mut updated_entries = 0i64;

@@ -33,11 +33,19 @@
 
 <hr>
 
-<div class="form-group">
-    <label for="filter-category">Filter by Category</label>
-    <select id="filter-category" onchange="loadFeeds()">
-        <option value="">All Categories</option>
-    </select>
+<div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end;">
+    <div class="form-group" style="margin-bottom:0;">
+        <label for="filter-category">Filter by Category</label>
+        <select id="filter-category" onchange="renderFeeds()">
+            <option value="">All Categories</option>
+        </select>
+    </div>
+    <div class="form-group" style="margin-bottom:0;">
+        <label>
+            <input type="checkbox" id="filter-errors" onchange="renderFeeds()">
+            Show only feeds with errors
+        </label>
+    </div>
 </div>
 
 <table>
@@ -186,14 +194,19 @@
     function renderFeeds() {
         const tbody = document.getElementById('feeds-table');
         const filterCategory = document.getElementById('filter-category').value;
+        const filterErrors = document.getElementById('filter-errors').checked;
 
         let filteredFeeds = feeds;
         if (filterCategory) {
-            filteredFeeds = feeds.filter(f => f.category_id == filterCategory);
+            filteredFeeds = filteredFeeds.filter(f => f.category_id == filterCategory);
+        }
+        if (filterErrors) {
+            filteredFeeds = filteredFeeds.filter(f => f.fetch_error !== null);
         }
 
         if (filteredFeeds.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="muted">No feeds yet.</td></tr>';
+            const msg = filterErrors ? 'No feeds with errors.' : 'No feeds yet.';
+            tbody.innerHTML = `<tr><td colspan="4" class="muted">${msg}</td></tr>`;
             return;
         }
 
@@ -204,22 +217,30 @@
             const fetchedAt = feed.fetched_at ? formatDate(feed.fetched_at) : 'Never';
             const hasError = feed.fetch_error !== null;
 
-            return `
-            <tr id="row-${feed.id}">
-                <td><span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
-                <td>${escapeHtml(categoryName)}</td>
-                <td>
-                    <span ${hasError ? 'style="color:red;" title="' + escapeHtml(feed.fetch_error) + '"' : ''}>${fetchedAt}</span>
-                    ${hasError ? ' !' : ''}
-                </td>
-                <td class="actions">
+            let rows = `
+            <tr id="row-${feed.id}"${hasError ? ' style="border-bottom:none;"' : ''}>
+                <td${hasError ? ' style="border-bottom:none;"' : ''}><span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
+                <td${hasError ? ' style="border-bottom:none;"' : ''}>${escapeHtml(categoryName)}</td>
+                <td${hasError ? ' style="border-bottom:none;"' : ''}>${fetchedAt}</td>
+                <td class="actions"${hasError ? ' style="border-bottom:none;"' : ''}>
                     <a href="/entries?feed=${feed.id}">[entries]</a>
                     <a href="#" onclick="refreshFeed(${feed.id}); return false;" id="refresh-${feed.id}">[refresh]</a>
                     <a href="#" onclick="editFeed(${feed.id}); return false;">[edit]</a>
                     <a href="#" onclick="deleteFeed(${feed.id}, '${escapeHtml(title).replace(/'/g, "\\'")}'); return false;">[delete]</a>
                 </td>
-            </tr>
-        `}).join('');
+            </tr>`;
+
+            if (hasError) {
+                rows += `
+            <tr class="error-row">
+                <td colspan="4" style="color:red; font-size:0.875rem; padding-top:0;">
+                    [Error] ${escapeHtml(feed.fetch_error)}
+                </td>
+            </tr>`;
+            }
+
+            return rows;
+        }).join('');
     }
 
     function escapeHtml(text) {

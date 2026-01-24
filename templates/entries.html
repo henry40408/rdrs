@@ -10,25 +10,25 @@
 
 <h1>Entries</h1>
 
-<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center; margin-bottom:1rem;">
-    <div class="form-group" style="margin:0;">
+<div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end;">
+    <div class="form-group" style="margin-bottom:0;">
         <label for="filter-feed">Feed</label>
         <select id="filter-feed" onchange="loadEntries()">
             <option value="">All Feeds</option>
         </select>
     </div>
-    <div class="form-group" style="margin:0;">
+    <div class="form-group" style="margin-bottom:0;">
         <label for="filter-category">Category</label>
         <select id="filter-category" onchange="loadEntries()">
             <option value="">All Categories</option>
         </select>
     </div>
-    <div class="form-group" style="margin:0;">
+    <div class="form-group" style="margin-bottom:0;">
         <label>
             <input type="checkbox" id="filter-unread" onchange="loadEntries()"> Unread only
         </label>
     </div>
-    <div class="form-group" style="margin:0;">
+    <div class="form-group" style="margin-bottom:0;">
         <label>
             <input type="checkbox" id="filter-starred" onchange="loadEntries()"> Starred only
         </label>
