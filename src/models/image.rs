@@ -130,15 +130,25 @@ mod tests {
         let conn = setup_db();
 
         let data = vec![0x89, 0x50, 0x4E, 0x47]; // PNG header
-        upsert(&conn, ENTITY_FEED, 1, &data, "image/png", Some("https://example.com/icon.png"))
-            .unwrap();
+        upsert(
+            &conn,
+            ENTITY_FEED,
+            1,
+            &data,
+            "image/png",
+            Some("https://example.com/icon.png"),
+        )
+        .unwrap();
 
         let img = find(&conn, ENTITY_FEED, 1).unwrap().unwrap();
         assert_eq!(img.entity_type, ENTITY_FEED);
         assert_eq!(img.entity_id, 1);
         assert_eq!(img.data, data);
         assert_eq!(img.content_type, "image/png");
-        assert_eq!(img.source_url, Some("https://example.com/icon.png".to_string()));
+        assert_eq!(
+            img.source_url,
+            Some("https://example.com/icon.png".to_string())
+        );
     }
 
     #[test]
@@ -149,8 +159,15 @@ mod tests {
         upsert(&conn, ENTITY_FEED, 1, &data1, "image/png", None).unwrap();
 
         let data2 = vec![0x00, 0x00, 0x01, 0x00]; // ICO header
-        upsert(&conn, ENTITY_FEED, 1, &data2, "image/x-icon", Some("https://example.com/favicon.ico"))
-            .unwrap();
+        upsert(
+            &conn,
+            ENTITY_FEED,
+            1,
+            &data2,
+            "image/x-icon",
+            Some("https://example.com/favicon.ico"),
+        )
+        .unwrap();
 
         let img = find(&conn, ENTITY_FEED, 1).unwrap().unwrap();
         assert_eq!(img.data, data2);

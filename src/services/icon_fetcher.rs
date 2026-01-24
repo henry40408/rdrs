@@ -110,7 +110,11 @@ async fn fetch_favicon(site_url: &str, user_agent: &str) -> AppResult<Option<Fet
     };
 
     // Try /favicon.ico first
-    let favicon_url = format!("{}://{}/favicon.ico", base_url.scheme(), base_url.host_str().unwrap_or(""));
+    let favicon_url = format!(
+        "{}://{}/favicon.ico",
+        base_url.scheme(),
+        base_url.host_str().unwrap_or("")
+    );
     if let Ok(Some(img)) = fetch_image(&favicon_url, user_agent).await {
         debug!("Fetched favicon from {}", favicon_url);
         return Ok(Some(img));
@@ -145,7 +149,12 @@ fn extract_favicon_from_html(html: &str, base_url: &Url) -> Option<String> {
     let html_lower = html.to_lowercase();
 
     // Look for <link rel="icon" or <link rel="shortcut icon"
-    for pattern in &["rel=\"icon\"", "rel='icon'", "rel=\"shortcut icon\"", "rel='shortcut icon'"] {
+    for pattern in &[
+        "rel=\"icon\"",
+        "rel='icon'",
+        "rel=\"shortcut icon\"",
+        "rel='shortcut icon'",
+    ] {
         if let Some(link_pos) = html_lower.find(pattern) {
             // Find the start of this <link> tag
             let tag_start = html_lower[..link_pos].rfind("<link")?;

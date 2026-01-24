@@ -278,7 +278,10 @@ pub async fn refresh_feed(
                 ) {
                     warn!("Failed to save icon for feed {}: {}", feed_id, e);
                 } else {
-                    debug!("Saved icon for feed {} from {}", feed_id, fetched.source_url);
+                    debug!(
+                        "Saved icon for feed {} from {}",
+                        feed_id, fetched.source_url
+                    );
                 }
             }
             Ok(None) => {

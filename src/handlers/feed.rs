@@ -134,7 +134,10 @@ pub async fn create_feed(
         discovered.site_url.as_deref(),
     )?;
 
-    Ok((StatusCode::CREATED, Json(FeedResponse::from_feed(new_feed, false))))
+    Ok((
+        StatusCode::CREATED,
+        Json(FeedResponse::from_feed(new_feed, false)),
+    ))
 }
 
 pub async fn get_feed(
@@ -367,10 +370,7 @@ pub async fn get_feed_icon(
             StatusCode::OK,
             [
                 (header::CONTENT_TYPE, img.content_type),
-                (
-                    header::CACHE_CONTROL,
-                    "public, max-age=86400".to_string(),
-                ),
+                (header::CACHE_CONTROL, "public, max-age=86400".to_string()),
             ],
             img.data,
         )
