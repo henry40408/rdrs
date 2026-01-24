@@ -121,6 +121,7 @@ pub struct EntryFilter {
     pub category_id: Option<i64>,
     pub unread_only: bool,
     pub starred_only: bool,
+    pub search: Option<String>,
 }
 
 fn parse_datetime(s: &str) -> DateTime<Utc> {
@@ -289,6 +290,16 @@ pub fn list_by_user(
         conditions.push("e.starred_at IS NOT NULL".to_string());
     }
 
+    if let Some(ref search) = filter.search {
+        let search_pattern = format!("%{}%", search);
+        let param_idx = params_vec.len() + 1;
+        conditions.push(format!(
+            "(e.title LIKE ?{} COLLATE NOCASE OR e.content LIKE ?{} COLLATE NOCASE)",
+            param_idx, param_idx
+        ));
+        params_vec.push(Box::new(search_pattern));
+    }
+
     let where_clause = conditions.join(" AND ");
 
     let sql = format!(
@@ -344,6 +355,16 @@ pub fn count_by_user(conn: &Connection, user_id: i64, filter: &EntryFilter) -> A
 
     if filter.starred_only {
         conditions.push("e.starred_at IS NOT NULL".to_string());
+    }
+
+    if let Some(ref search) = filter.search {
+        let search_pattern = format!("%{}%", search);
+        let param_idx = params_vec.len() + 1;
+        conditions.push(format!(
+            "(e.title LIKE ?{} COLLATE NOCASE OR e.content LIKE ?{} COLLATE NOCASE)",
+            param_idx, param_idx
+        ));
+        params_vec.push(Box::new(search_pattern));
     }
 
     let where_clause = conditions.join(" AND ");
@@ -951,5 +972,231 @@ mod tests {
             parse_timezone_offset("-0500").unwrap().num_seconds(),
             -5 * 3600
         );
+    }
+
+    #[test]
+    fn test_search_entries_by_title() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        // Create entries with different titles
+        upsert_entry(
+            &conn,
+            feed_id,
+            "guid-1",
+            Some("Rust Programming Guide"),
+            None,
+            Some("Content about Rust"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        upsert_entry(
+            &conn,
+            feed_id,
+            "guid-2",
+            Some("Python Tutorial"),
+            None,
+            Some("Content about Python"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let filter = EntryFilter {
+            search: Some("Rust".to_string()),
+            ..Default::default()
+        };
+        let results = list_by_user(&conn, user_id, &filter, 10, 0).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].entry.title,
+            Some("Rust Programming Guide".to_string())
+        );
+    }
+
+    #[test]
+    fn test_search_entries_by_content() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        upsert_entry(
+            &conn,
+            feed_id,
+            "guid-1",
+            Some("Entry 1"),
+            None,
+            Some("This article discusses WebAssembly"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        upsert_entry(
+            &conn,
+            feed_id,
+            "guid-2",
+            Some("Entry 2"),
+            None,
+            Some("This article discusses JavaScript"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let filter = EntryFilter {
+            search: Some("WebAssembly".to_string()),
+            ..Default::default()
+        };
+        let results = list_by_user(&conn, user_id, &filter, 10, 0).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].entry.title, Some("Entry 1".to_string()));
+    }
+
+    #[test]
+    fn test_search_case_insensitive() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        upsert_entry(
+            &conn,
+            feed_id,
+            "guid-1",
+            Some("UPPERCASE Title"),
+            None,
+            Some("lowercase content"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Search with lowercase should match uppercase title
+        let filter = EntryFilter {
+            search: Some("uppercase".to_string()),
+            ..Default::default()
+        };
+        let results = list_by_user(&conn, user_id, &filter, 10, 0).unwrap();
+        assert_eq!(results.len(), 1);
+
+        // Search with uppercase should match lowercase content
+        let filter = EntryFilter {
+            search: Some("LOWERCASE".to_string()),
+            ..Default::default()
+        };
+        let results = list_by_user(&conn, user_id, &filter, 10, 0).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_search_combined_with_filters() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        let (entry1, _) = upsert_entry(
+            &conn,
+            feed_id,
+            "guid-1",
+            Some("Rust Article"),
+            None,
+            Some("Content"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let (entry2, _) = upsert_entry(
+            &conn,
+            feed_id,
+            "guid-2",
+            Some("Rust Tutorial"),
+            None,
+            Some("Content"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Mark entry1 as read
+        mark_as_read(&conn, entry1.id).unwrap();
+        // Star entry2
+        toggle_star(&conn, entry2.id).unwrap();
+
+        // Search for "Rust" with unread_only - should only return entry2
+        let filter = EntryFilter {
+            search: Some("Rust".to_string()),
+            unread_only: true,
+            ..Default::default()
+        };
+        let results = list_by_user(&conn, user_id, &filter, 10, 0).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].entry.id, entry2.id);
+
+        // Search for "Rust" with starred_only - should only return entry2
+        let filter = EntryFilter {
+            search: Some("Rust".to_string()),
+            starred_only: true,
+            ..Default::default()
+        };
+        let results = list_by_user(&conn, user_id, &filter, 10, 0).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].entry.id, entry2.id);
+    }
+
+    #[test]
+    fn test_search_pagination() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        // Create 5 entries that match the search
+        for i in 0..5 {
+            upsert_entry(
+                &conn,
+                feed_id,
+                &format!("guid-{}", i),
+                Some(&format!("Rust Article {}", i)),
+                None,
+                Some("Content"),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        }
+
+        let filter = EntryFilter {
+            search: Some("Rust".to_string()),
+            ..Default::default()
+        };
+
+        // First page (limit 2)
+        let results = list_by_user(&conn, user_id, &filter, 2, 0).unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Second page
+        let results = list_by_user(&conn, user_id, &filter, 2, 2).unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Third page (only 1 remaining)
+        let results = list_by_user(&conn, user_id, &filter, 2, 4).unwrap();
+        assert_eq!(results.len(), 1);
+
+        // Count should be 5
+        let count = count_by_user(&conn, user_id, &filter).unwrap();
+        assert_eq!(count, 5);
     }
 }
