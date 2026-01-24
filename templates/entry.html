@@ -64,6 +64,7 @@
             <div class="entry-actions">
                 <button type="button" onclick="toggleStar()" id="star-btn">[${isStarred ? 'Unstar' : 'Star'}]</button>
                 <button type="button" onclick="markUnread()">[Mark Unread]</button>
+                ${data.link ? `<button type="button" onclick="fetchFullContent()" id="fetch-content-btn">[Fetch Full Content]</button>` : ''}
                 ${data.link ? `<a href="${escapeHtml(data.link)}" target="_blank" rel="noopener noreferrer" class="btn">[View Original]</a>` : ''}
             </div>
 
@@ -101,6 +102,70 @@
         } catch (err) {
             flash.error(err.message);
         }
+    }
+
+    let showingFullContent = false;
+    let originalContent = null;
+    let fullContent = null;
+
+    async function fetchFullContent() {
+        const btn = document.getElementById('fetch-content-btn');
+        btn.textContent = '[Fetching...]';
+        btn.disabled = true;
+
+        try {
+            const response = await fetch(`/api/entries/${entryId}/fetch-full-content`, {
+                method: 'POST'
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to fetch content');
+            }
+
+            const data = await response.json();
+
+            // Save original content (first time only)
+            if (!originalContent) {
+                originalContent = document.querySelector('.entry-content').innerHTML;
+            }
+
+            // Save full content for toggling
+            fullContent = data.sanitized_content || '<p class="muted">No content extracted.</p>';
+
+            // Display full content
+            document.querySelector('.entry-content').innerHTML = fullContent;
+
+            showingFullContent = true;
+            btn.style.display = 'none';
+
+            // Add toggle button if not exists
+            if (!document.getElementById('toggle-content-btn')) {
+                btn.insertAdjacentHTML('afterend',
+                    ' <button type="button" onclick="toggleContent()" id="toggle-content-btn">[Show Original]</button>');
+            } else {
+                document.getElementById('toggle-content-btn').textContent = '[Show Original]';
+            }
+        } catch (err) {
+            flash.error(err.message);
+            btn.textContent = '[Fetch Full Content]';
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    function toggleContent() {
+        const contentEl = document.querySelector('.entry-content');
+        const toggleBtn = document.getElementById('toggle-content-btn');
+
+        if (showingFullContent) {
+            contentEl.innerHTML = originalContent;
+            toggleBtn.textContent = '[Show Full Content]';
+        } else {
+            contentEl.innerHTML = fullContent;
+            toggleBtn.textContent = '[Show Original]';
+        }
+        showingFullContent = !showingFullContent;
     }
 
     function escapeHtml(text) {

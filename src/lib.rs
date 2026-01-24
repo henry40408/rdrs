@@ -104,6 +104,10 @@ pub fn create_router(state: AppState) -> Router {
             put(handlers::entry::toggle_entry_star),
         )
         .route(
+            "/api/entries/{id}/fetch-full-content",
+            post(handlers::entry::fetch_full_content),
+        )
+        .route(
             "/api/entries/mark-all-read",
             put(handlers::entry::mark_all_read),
         )
