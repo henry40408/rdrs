@@ -7,7 +7,8 @@ use serde::Serialize;
 use tracing::{debug, error, info, warn};
 
 use crate::error::{AppError, AppResult};
-use crate::models::{entry, feed};
+use crate::models::{entry, feed, image};
+use crate::services::icon_fetcher;
 
 /// Parse Chinese month names to month number
 fn parse_chinese_month(s: &str) -> Option<u32> {
@@ -217,27 +218,80 @@ pub async fn refresh_feed(
     };
 
     // Parse feed with custom timestamp parser for Chinese date support
-    let parser = feed_rs::parser::Builder::new()
-        .timestamp_parser(parse_timestamp_with_chinese)
-        .build();
+    let parsed_feed = {
+        let parser = feed_rs::parser::Builder::new()
+            .timestamp_parser(parse_timestamp_with_chinese)
+            .build();
 
-    let parsed_feed = match parser.parse(body.as_bytes()) {
-        Ok(feed) => feed,
-        Err(e) => {
-            let error_msg = e.to_string();
-            if let Ok(conn) = db.lock() {
-                let _ = feed::update_fetch_result(
-                    &conn,
-                    feed_id,
-                    Utc::now(),
-                    Some(&error_msg),
-                    None,
-                    None,
-                );
+        match parser.parse(body.as_bytes()) {
+            Ok(feed) => feed,
+            Err(e) => {
+                let error_msg = e.to_string();
+                if let Ok(conn) = db.lock() {
+                    let _ = feed::update_fetch_result(
+                        &conn,
+                        feed_id,
+                        Utc::now(),
+                        Some(&error_msg),
+                        None,
+                        None,
+                    );
+                }
+                return Err(AppError::FeedParseError(error_msg));
             }
-            return Err(AppError::FeedParseError(error_msg));
         }
     };
+
+    // Extract icon URLs before consuming parsed_feed
+    let icon_url = parsed_feed.icon.as_ref().map(|i| i.uri.clone());
+    let logo_url = parsed_feed.logo.as_ref().map(|l| l.uri.clone());
+
+    // Check if icon refresh is needed (release lock before await)
+    let needs_icon_refresh = {
+        let conn = db
+            .lock()
+            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        image::needs_refresh(&conn, image::ENTITY_FEED, feed_id, 7)?
+    };
+
+    // Fetch icon if needed (every 7 days)
+    if needs_icon_refresh {
+        match icon_fetcher::fetch_feed_icon(
+            icon_url.as_deref(),
+            logo_url.as_deref(),
+            feed_data.site_url.as_deref(),
+            user_agent,
+        )
+        .await
+        {
+            Ok(Some(fetched)) => {
+                let conn = db
+                    .lock()
+                    .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+                if let Err(e) = image::upsert(
+                    &conn,
+                    image::ENTITY_FEED,
+                    feed_id,
+                    &fetched.data,
+                    &fetched.content_type,
+                    Some(&fetched.source_url),
+                ) {
+                    warn!("Failed to save icon for feed {}: {}", feed_id, e);
+                } else {
+                    debug!(
+                        "Saved icon for feed {} from {}",
+                        feed_id, fetched.source_url
+                    );
+                }
+            }
+            Ok(None) => {
+                debug!("No icon found for feed {}", feed_id);
+            }
+            Err(e) => {
+                warn!("Failed to fetch icon for feed {}: {}", feed_id, e);
+            }
+        }
+    }
 
     let mut new_entries = 0i64;
     let mut updated_entries = 0i64;

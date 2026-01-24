@@ -75,6 +75,7 @@
                 <td><span title="${formatDateTime(cat.created_at)}">${formatDate(cat.created_at)}</span></td>
                 <td class="actions">
                     <a href="/feeds?category=${cat.id}">[feeds]</a>
+                    <a href="/entries?category=${cat.id}">[entries]</a>
                     <a href="#" class="edit-btn" onclick="startEdit(${cat.id}); return false;">[rename]</a>
                     <a href="#" class="save-btn" onclick="saveEdit(${cat.id}); return false;" style="display:none;">[save]</a>
                     <a href="#" class="cancel-btn" onclick="cancelEdit(${cat.id}); return false;" style="display:none;">[cancel]</a>

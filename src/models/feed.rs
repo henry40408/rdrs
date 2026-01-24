@@ -6,6 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::error::{AppError, AppResult};
+use crate::models::image;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Feed {
@@ -212,6 +213,10 @@ pub fn delete_feed(conn: &Connection, id: i64, category_id: i64) -> AppResult<()
     if rows == 0 {
         return Err(AppError::FeedNotFound);
     }
+
+    // Clean up associated image
+    image::delete_by_entity(conn, image::ENTITY_FEED, id)?;
+
     Ok(())
 }
 

@@ -169,6 +169,9 @@
             const date = entry.published_at ? formatDate(entry.published_at) : '';
             const dateTitle = entry.published_at ? formatDateTime(entry.published_at) : '';
             const isStarred = entry.starred_at !== null;
+            const feedIconHtml = entry.feed_has_icon
+                ? `<img src="/api/feeds/${entry.feed_id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
+                : '';
 
             return `
             <div class="entry-item" id="entry-${entry.id}" style="margin-bottom:1rem; padding-bottom:1rem; border-bottom:1px solid #ccc;">
@@ -177,7 +180,7 @@
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                 </div>
                 <div class="muted" style="font-size:0.875rem;">
-                    <a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
+                    ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
                 </div>
                 <div style="margin-top:0.5rem;">
                     <a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>

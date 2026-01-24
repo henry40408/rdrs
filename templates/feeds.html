@@ -217,10 +217,13 @@
             const fetchedAt = feed.fetched_at ? formatDate(feed.fetched_at) : '';
             const fetchedAtTitle = feed.fetched_at ? formatDateTime(feed.fetched_at) : '';
             const hasError = feed.fetch_error !== null;
+            const iconHtml = feed.has_icon
+                ? `<img src="/api/feeds/${feed.id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
+                : '';
 
             let rows = `
             <tr id="row-${feed.id}"${hasError ? ' style="border-bottom:none;"' : ''}>
-                <td${hasError ? ' style="border-bottom:none;"' : ''}><span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
+                <td${hasError ? ' style="border-bottom:none;"' : ''}>${iconHtml}<span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
                 <td${hasError ? ' style="border-bottom:none;"' : ''}>${escapeHtml(categoryName)}</td>
                 <td${hasError ? ' style="border-bottom:none;"' : ''}>${fetchedAt ? `<span title="${fetchedAtTitle}">${fetchedAt}</span>` : 'Never'}</td>
                 <td class="actions"${hasError ? ' style="border-bottom:none;"' : ''}>

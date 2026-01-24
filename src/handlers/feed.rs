@@ -1,14 +1,14 @@
 use axum::{
     extract::{Path, State},
     http::{header, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 use crate::middleware::AuthUser;
-use crate::models::{category, feed};
+use crate::models::{category, feed, image};
 use crate::services::{feed_discovery, opml};
 use crate::AppState;
 
@@ -44,6 +44,7 @@ pub struct FeedResponse {
     pub fetch_error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub has_icon: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,8 +55,8 @@ pub struct FeedMetadataResponse {
     pub site_url: Option<String>,
 }
 
-impl From<feed::Feed> for FeedResponse {
-    fn from(f: feed::Feed) -> Self {
+impl FeedResponse {
+    fn from_feed(f: feed::Feed, has_icon: bool) -> Self {
         FeedResponse {
             id: f.id,
             category_id: f.category_id,
@@ -67,6 +68,7 @@ impl From<feed::Feed> for FeedResponse {
             fetch_error: f.fetch_error,
             created_at: f.created_at.to_rfc3339(),
             updated_at: f.updated_at.to_rfc3339(),
+            has_icon,
         }
     }
 }
@@ -81,7 +83,13 @@ pub async fn list_feeds(
         .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
 
     let feeds = feed::list_by_user(&conn, auth_user.user.id)?;
-    let response: Vec<FeedResponse> = feeds.into_iter().map(Into::into).collect();
+    let response: Vec<FeedResponse> = feeds
+        .into_iter()
+        .map(|f| {
+            let has_icon = image::exists(&conn, image::ENTITY_FEED, f.id).unwrap_or(false);
+            FeedResponse::from_feed(f, has_icon)
+        })
+        .collect();
 
     Ok(Json(response))
 }
@@ -126,7 +134,10 @@ pub async fn create_feed(
         discovered.site_url.as_deref(),
     )?;
 
-    Ok((StatusCode::CREATED, Json(new_feed.into())))
+    Ok((
+        StatusCode::CREATED,
+        Json(FeedResponse::from_feed(new_feed, false)),
+    ))
 }
 
 pub async fn get_feed(
@@ -146,7 +157,8 @@ pub async fn get_feed(
     category::find_by_id_and_user(&conn, f.category_id, auth_user.user.id)?
         .ok_or(AppError::FeedNotFound)?;
 
-    Ok(Json(f.into()))
+    let has_icon = image::exists(&conn, image::ENTITY_FEED, f.id)?;
+    Ok(Json(FeedResponse::from_feed(f, has_icon)))
 }
 
 pub async fn update_feed(
@@ -187,7 +199,8 @@ pub async fn update_feed(
         req.site_url.as_deref(),
     )?;
 
-    Ok(Json(updated.into()))
+    let has_icon = image::exists(&conn, image::ENTITY_FEED, updated.id)?;
+    Ok(Json(FeedResponse::from_feed(updated, has_icon)))
 }
 
 pub async fn delete_feed(
@@ -332,4 +345,36 @@ pub async fn import_opml(
         feeds_created,
         feeds_skipped,
     }))
+}
+
+pub async fn get_feed_icon(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    Path(id): Path<i64>,
+) -> AppResult<Response> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+
+    // Find the feed first
+    let f = feed::find_by_id(&conn, id)?.ok_or(AppError::FeedNotFound)?;
+
+    // Verify ownership through category
+    category::find_by_id_and_user(&conn, f.category_id, auth_user.user.id)?
+        .ok_or(AppError::FeedNotFound)?;
+
+    // Get icon
+    match image::find(&conn, image::ENTITY_FEED, id)? {
+        Some(img) => Ok((
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, img.content_type),
+                (header::CACHE_CONTROL, "public, max-age=86400".to_string()),
+            ],
+            img.data,
+        )
+            .into_response()),
+        None => Err(AppError::NotFound("Icon not found".into())),
+    }
 }

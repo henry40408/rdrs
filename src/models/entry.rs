@@ -112,6 +112,7 @@ pub struct EntryWithFeed {
     pub feed_url: String,
     pub category_id: i64,
     pub category_name: String,
+    pub feed_has_icon: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -167,6 +168,7 @@ fn row_to_entry_with_feed(row: &rusqlite::Row) -> rusqlite::Result<EntryWithFeed
     let starred_at: Option<String> = row.get(10)?;
     let created_at: String = row.get(11)?;
     let updated_at: String = row.get(12)?;
+    let has_icon: i64 = row.get(17)?;
 
     Ok(EntryWithFeed {
         entry: Entry {
@@ -188,6 +190,7 @@ fn row_to_entry_with_feed(row: &rusqlite::Row) -> rusqlite::Result<EntryWithFeed
         feed_url: row.get(14)?,
         category_id: row.get(15)?,
         category_name: row.get(16)?,
+        feed_has_icon: has_icon > 0,
     })
 }
 
@@ -208,7 +211,8 @@ pub fn find_by_id_with_feed(conn: &Connection, id: i64) -> AppResult<Option<Entr
         r#"
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, c.id, c.name
+               f.title, f.url, c.id, c.name,
+               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
@@ -291,7 +295,8 @@ pub fn list_by_user(
         r#"
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, c.id, c.name
+               f.title, f.url, c.id, c.name,
+               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
