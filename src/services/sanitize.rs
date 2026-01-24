@@ -13,17 +13,58 @@ const TRACKING_PATHS: &[&str] = &["/pixel", "/beacon", "/track", "/1x1"];
 
 /// Tracking query parameters that should be removed (exact match)
 const TRACKING_PARAMS: &[&str] = &[
-    "fbclid", "gclid", "dclid", "gbraid", "wbraid", "gclsrc", "srsltid",
-    "yclid", "ysclid", "twclid", "msclkid",
-    "mc_cid", "mc_eid", "mc_tc",
-    "_openstat", "fb_action_ids", "fb_action_types", "fb_ref", "fb_source", "fb_comment_id",
-    "hmb_campaign", "hmb_medium", "hmb_source",
-    "itm_campaign", "itm_medium", "itm_source",
-    "campaign_id", "campaign_medium", "campaign_name", "campaign_source", "campaign_term", "campaign_content",
-    "wickedid", "hsa_cam", "_hsenc", "__hssc", "__hstc", "__hsfp", "_hsmi", "hsctatracking",
-    "rb_clickid", "oly_anon_id", "oly_enc_id", "vero_id", "vero_conv",
-    "mkt_tok", "sc_cid", "_bhlid", "_branch_match_id", "_branch_referrer",
-    "__readwiseLocation", "ref",
+    "fbclid",
+    "gclid",
+    "dclid",
+    "gbraid",
+    "wbraid",
+    "gclsrc",
+    "srsltid",
+    "yclid",
+    "ysclid",
+    "twclid",
+    "msclkid",
+    "mc_cid",
+    "mc_eid",
+    "mc_tc",
+    "_openstat",
+    "fb_action_ids",
+    "fb_action_types",
+    "fb_ref",
+    "fb_source",
+    "fb_comment_id",
+    "hmb_campaign",
+    "hmb_medium",
+    "hmb_source",
+    "itm_campaign",
+    "itm_medium",
+    "itm_source",
+    "campaign_id",
+    "campaign_medium",
+    "campaign_name",
+    "campaign_source",
+    "campaign_term",
+    "campaign_content",
+    "wickedid",
+    "hsa_cam",
+    "_hsenc",
+    "__hssc",
+    "__hstc",
+    "__hsfp",
+    "_hsmi",
+    "hsctatracking",
+    "rb_clickid",
+    "oly_anon_id",
+    "oly_enc_id",
+    "vero_id",
+    "vero_conv",
+    "mkt_tok",
+    "sc_cid",
+    "_bhlid",
+    "_branch_match_id",
+    "_branch_referrer",
+    "__readwiseLocation",
+    "ref",
 ];
 
 /// Tracking query parameter prefixes
@@ -91,10 +132,7 @@ fn remove_img_tag_with_src(html: &str, src_url: &str) -> String {
                 let tag = &html[i..tag_end];
 
                 // Check if this img tag contains our target src URL
-                let src_patterns = [
-                    format!("src=\"{}\"", src_url),
-                    format!("src='{}'", src_url),
-                ];
+                let src_patterns = [format!("src=\"{}\"", src_url), format!("src='{}'", src_url)];
 
                 let should_remove = src_patterns.iter().any(|p| tag.contains(p));
 
@@ -122,7 +160,9 @@ fn remove_img_tag_with_src(html: &str, src_url: &str) -> String {
 fn is_tracking_param(name: &str) -> bool {
     let name_lower = name.to_lowercase();
     TRACKING_PARAMS.iter().any(|&p| name_lower == p)
-        || TRACKING_PARAM_PREFIXES.iter().any(|p| name_lower.starts_with(p))
+        || TRACKING_PARAM_PREFIXES
+            .iter()
+            .any(|p| name_lower.starts_with(p))
 }
 
 /// Strip tracking parameters from all URLs in anchor tags
@@ -162,8 +202,10 @@ fn strip_tracking_params(html: &str) -> String {
                             .map(|(k, v)| {
                                 format!(
                                     "{}={}",
-                                    url::form_urlencoded::byte_serialize(k.as_bytes()).collect::<String>(),
-                                    url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>()
+                                    url::form_urlencoded::byte_serialize(k.as_bytes())
+                                        .collect::<String>(),
+                                    url::form_urlencoded::byte_serialize(v.as_bytes())
+                                        .collect::<String>()
                                 )
                             })
                             .collect::<Vec<_>>()
@@ -526,7 +568,8 @@ mod tests {
 
     #[test]
     fn test_strip_matomo_params() {
-        let input = r#"<a href="https://example.com/page?mtm_campaign=test&mtm_source=email">Link</a>"#;
+        let input =
+            r#"<a href="https://example.com/page?mtm_campaign=test&mtm_source=email">Link</a>"#;
         let output = strip_tracking_params(input);
         assert!(!output.contains("mtm_campaign"));
         assert!(!output.contains("mtm_source"));
@@ -555,7 +598,8 @@ mod tests {
 
     #[test]
     fn test_sanitize_removes_tracking_pixels() {
-        let input = r#"<p>Text</p><img src="https://pixel.tracker.com/img.gif" width="1" height="1">"#;
+        let input =
+            r#"<p>Text</p><img src="https://pixel.tracker.com/img.gif" width="1" height="1">"#;
         let output = sanitize_html(input, TEST_SECRET);
         assert!(!output.contains("pixel.tracker.com"));
         assert!(output.contains("<p>Text</p>"));
