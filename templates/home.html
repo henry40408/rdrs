@@ -6,12 +6,9 @@
 {% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
 
 {% block content %}
-{% call macros::nav("home", is_admin, is_masquerading) %}
+{% call macros::nav("home", is_admin, is_masquerading, username) %}
 
 <h1>Home</h1>
-<p class="muted">{{ username }} ({{ role }}) &middot; Last sign in: {{ sign_in_time }} &middot; Unread: <span id="unread-count">{{ unread_count }}</span></p>
-
-<hr>
 
 <h2>Unread Entries</h2>
 <div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:1rem;">

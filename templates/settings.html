@@ -6,7 +6,7 @@
 {% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
 
 {% block content %}
-{% call macros::nav("settings", is_admin, is_masquerading) %}
+{% call macros::nav("settings", is_admin, is_masquerading, username) %}
 
 <h1>Settings</h1>
 

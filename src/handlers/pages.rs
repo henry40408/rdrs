@@ -145,8 +145,8 @@ pub async fn home_page(
 #[derive(Template)]
 #[template(path = "admin.html")]
 pub struct AdminTemplate {
+    pub username: String,
     pub current_user_id: i64,
-    pub current_username: String,
     pub original_user_id: i64,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
@@ -168,8 +168,8 @@ pub async fn admin_page(admin: AdminUser, flash: Flash) -> (Flash, AdminTemplate
     (
         flash.clone(),
         AdminTemplate {
+            username: admin.user.username,
             current_user_id: admin.user.id,
-            current_username: admin.user.username,
             original_user_id,
             is_masquerading,
             flash_messages: flash.messages,
@@ -180,6 +180,7 @@ pub async fn admin_page(admin: AdminUser, flash: Flash) -> (Flash, AdminTemplate
 #[derive(Template)]
 #[template(path = "change-password.html")]
 pub struct ChangePasswordTemplate {
+    pub username: String,
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
@@ -208,6 +209,7 @@ pub async fn change_password_page(
     (
         flash.clone(),
         ChangePasswordTemplate {
+            username: auth_user.user.username,
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
@@ -218,6 +220,7 @@ pub async fn change_password_page(
 #[derive(Template)]
 #[template(path = "categories.html")]
 pub struct CategoriesTemplate {
+    pub username: String,
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
@@ -243,6 +246,7 @@ pub async fn categories_page(auth_user: AuthUser, flash: Flash) -> (Flash, Categ
     (
         flash.clone(),
         CategoriesTemplate {
+            username: auth_user.user.username,
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
@@ -253,6 +257,7 @@ pub async fn categories_page(auth_user: AuthUser, flash: Flash) -> (Flash, Categ
 #[derive(Template)]
 #[template(path = "feeds.html")]
 pub struct FeedsTemplate {
+    pub username: String,
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
@@ -278,6 +283,7 @@ pub async fn feeds_page(auth_user: AuthUser, flash: Flash) -> (Flash, FeedsTempl
     (
         flash.clone(),
         FeedsTemplate {
+            username: auth_user.user.username,
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
@@ -288,6 +294,7 @@ pub async fn feeds_page(auth_user: AuthUser, flash: Flash) -> (Flash, FeedsTempl
 #[derive(Template)]
 #[template(path = "entries.html")]
 pub struct EntriesTemplate {
+    pub username: String,
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
@@ -313,6 +320,7 @@ pub async fn entries_page(auth_user: AuthUser, flash: Flash) -> (Flash, EntriesT
     (
         flash.clone(),
         EntriesTemplate {
+            username: auth_user.user.username,
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
@@ -323,6 +331,7 @@ pub async fn entries_page(auth_user: AuthUser, flash: Flash) -> (Flash, EntriesT
 #[derive(Template)]
 #[template(path = "entry.html")]
 pub struct EntryTemplate {
+    pub username: String,
     pub entry_id: i64,
     pub is_admin: bool,
     pub is_masquerading: bool,
@@ -353,6 +362,7 @@ pub async fn entry_page(
     (
         flash.clone(),
         EntryTemplate {
+            username: auth_user.user.username,
             entry_id: id,
             is_admin,
             is_masquerading,
@@ -364,6 +374,7 @@ pub async fn entry_page(
 #[derive(Template)]
 #[template(path = "settings.html")]
 pub struct SettingsTemplate {
+    pub username: String,
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
@@ -399,6 +410,7 @@ pub async fn settings_page(
     (
         flash.clone(),
         SettingsTemplate {
+            username: auth_user.user.username,
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,

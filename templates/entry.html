@@ -6,7 +6,7 @@
 {% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
 
 {% block content %}
-{% call macros::nav("entries", is_admin, is_masquerading) %}
+{% call macros::nav("entries", is_admin, is_masquerading, username) %}
 
 <div id="entry-container">
     <p class="muted">Loading...</p>

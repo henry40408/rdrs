@@ -6,7 +6,7 @@
 {% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
 
 {% block content %}
-{% call macros::nav("admin", true, is_masquerading) %}
+{% call macros::nav("admin", true, is_masquerading, username) %}
 
 <h1>Admin Panel</h1>
 
