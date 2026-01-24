@@ -179,7 +179,9 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
 
                 for attr in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_lowercase();
-                    let value = String::from_utf8_lossy(&attr.value).to_string();
+                    let value = attr.decode_and_unescape_value(reader.decoder())
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|_| String::from_utf8_lossy(&attr.value).to_string());
 
                     match key.as_str() {
                         "text" => text = Some(value),
@@ -238,7 +240,9 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
 
                 for attr in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_lowercase();
-                    let value = String::from_utf8_lossy(&attr.value).to_string();
+                    let value = attr.decode_and_unescape_value(reader.decoder())
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|_| String::from_utf8_lossy(&attr.value).to_string());
 
                     match key.as_str() {
                         "text" => text = Some(value),
