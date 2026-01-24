@@ -31,10 +31,7 @@ pub async fn fetch_and_extract(url: &str, user_agent: &str) -> AppResult<Extract
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
     if !response.status().is_success() {
-        return Err(AppError::FetchError(format!(
-            "HTTP {}",
-            response.status()
-        )));
+        return Err(AppError::FetchError(format!("HTTP {}", response.status())));
     }
 
     let html = response
