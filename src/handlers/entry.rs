@@ -110,11 +110,13 @@ pub async fn get_entry(
         return Err(AppError::EntryNotFound);
     }
 
+    // Use entry link as base URL for resolving relative image paths
+    let base_url = entry_with_feed.entry.link.as_deref();
     let sanitized_content = entry_with_feed
         .entry
         .content
         .as_ref()
-        .map(|c| sanitize_html(c, &state.config.image_proxy_secret));
+        .map(|c| sanitize_html(c, &state.config.image_proxy_secret, base_url));
 
     Ok(Json(EntryResponse {
         entry: entry_with_feed,
@@ -380,8 +382,12 @@ pub async fn fetch_full_content(
     // Fetch and extract content
     let extracted = fetch_and_extract(&link, &state.config.user_agent).await?;
 
-    // Sanitize the content
-    let sanitized_content = sanitize_html(&extracted.content, &state.config.image_proxy_secret);
+    // Sanitize the content (use the entry link as base URL for relative images)
+    let sanitized_content = sanitize_html(
+        &extracted.content,
+        &state.config.image_proxy_secret,
+        Some(&link),
+    );
 
     Ok(Json(FetchFullContentResponse {
         title: extracted.title,
