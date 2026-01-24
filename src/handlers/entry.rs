@@ -324,6 +324,28 @@ pub struct FetchFullContentResponse {
     pub sanitized_content: String,
 }
 
+pub async fn get_entry_neighbors(
+    auth_user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<entry::EntryNeighbors>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+
+    // Verify entry belongs to user
+    let entry_with_feed = entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+    let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
+        .ok_or(AppError::CategoryNotFound)?;
+    if cat.user_id != auth_user.user.id {
+        return Err(AppError::EntryNotFound);
+    }
+
+    let neighbors = entry::find_neighbors(&conn, auth_user.user.id, id)?;
+    Ok(Json(neighbors))
+}
+
 pub async fn fetch_full_content(
     auth_user: AuthUser,
     State(state): State<AppState>,

@@ -614,6 +614,83 @@ pub fn mark_all_read_by_user(
     Ok(rows as i64)
 }
 
+/// Result of finding neighboring entries
+#[derive(Debug, Clone, Serialize)]
+pub struct EntryNeighbors {
+    pub prev_id: Option<i64>,
+    pub next_id: Option<i64>,
+}
+
+/// Find neighboring entries (prev/next) for a given entry within a user's entries.
+/// Entries are ordered by COALESCE(published_at, created_at) DESC.
+/// - prev_id: the entry that comes before (newer/higher in list)
+/// - next_id: the entry that comes after (older/lower in list)
+pub fn find_neighbors(conn: &Connection, user_id: i64, entry_id: i64) -> AppResult<EntryNeighbors> {
+    // Get the current entry's sort timestamp
+    let sort_time: Option<String> = conn
+        .query_row(
+            r#"
+            SELECT COALESCE(e.published_at, e.created_at)
+            FROM entry e
+            INNER JOIN feed f ON e.feed_id = f.id
+            INNER JOIN category c ON f.category_id = c.id
+            WHERE e.id = ?1 AND c.user_id = ?2
+            "#,
+            params![entry_id, user_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    let sort_time = match sort_time {
+        Some(t) => t,
+        None => {
+            return Ok(EntryNeighbors {
+                prev_id: None,
+                next_id: None,
+            })
+        }
+    };
+
+    // Find previous entry (newer, comes before in DESC order)
+    let prev_id: Option<i64> = conn
+        .query_row(
+            r#"
+            SELECT e.id
+            FROM entry e
+            INNER JOIN feed f ON e.feed_id = f.id
+            INNER JOIN category c ON f.category_id = c.id
+            WHERE c.user_id = ?1
+              AND COALESCE(e.published_at, e.created_at) > ?2
+            ORDER BY COALESCE(e.published_at, e.created_at) ASC
+            LIMIT 1
+            "#,
+            params![user_id, sort_time],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    // Find next entry (older, comes after in DESC order)
+    let next_id: Option<i64> = conn
+        .query_row(
+            r#"
+            SELECT e.id
+            FROM entry e
+            INNER JOIN feed f ON e.feed_id = f.id
+            INNER JOIN category c ON f.category_id = c.id
+            WHERE c.user_id = ?1
+              AND (COALESCE(e.published_at, e.created_at) < ?2
+                   OR (COALESCE(e.published_at, e.created_at) = ?2 AND e.id < ?3))
+            ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
+            LIMIT 1
+            "#,
+            params![user_id, sort_time, entry_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    Ok(EntryNeighbors { prev_id, next_id })
+}
+
 pub fn mark_all_read_by_category(
     conn: &Connection,
     category_id: i64,
