@@ -34,13 +34,17 @@ struct LinkdingBookmarkRequest {
 #[derive(Debug, Deserialize)]
 struct LinkdingBookmarkResponse {
     id: i64,
+    #[allow(dead_code)]
     url: String,
     #[allow(dead_code)]
     title: Option<String>,
 }
 
 /// Save a bookmark to Linkding
-pub async fn save_to_linkding(config: &LinkdingConfig, bookmark: &BookmarkData) -> AppResult<SaveResult> {
+pub async fn save_to_linkding(
+    config: &LinkdingConfig,
+    bookmark: &BookmarkData,
+) -> AppResult<SaveResult> {
     if !config.is_configured() {
         return Ok(SaveResult {
             success: false,
@@ -89,7 +93,10 @@ pub async fn save_to_linkding(config: &LinkdingConfig, bookmark: &BookmarkData) 
             bookmark_url: Some(bookmark_url),
         })
     } else {
-        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
 
         // Handle specific error codes
         let message = match status.as_u16() {
@@ -122,12 +129,9 @@ fn normalize_api_url(base_url: &str) -> String {
 
     // Check if URL already contains /api
     if url.contains("/api") {
-        // URL contains /api - check if it ends with /bookmarks
-        if !url.ends_with("/bookmarks") {
-            if url.ends_with("/api") {
-                url.push_str("/bookmarks");
-            }
-            // Otherwise URL ends with something else after /api, leave it
+        // URL contains /api - add /bookmarks if it ends with /api
+        if !url.ends_with("/bookmarks") && url.ends_with("/api") {
+            url.push_str("/bookmarks");
         }
     } else {
         // URL doesn't contain /api, add /api/bookmarks

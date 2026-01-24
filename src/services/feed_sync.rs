@@ -514,7 +514,10 @@ mod tests {
     fn test_parse_timestamp_colon_timezone() {
         // This format was previously failing
         let result = parse_timestamp("Thu, 22 Jan 2026 15:09:47 +08:00");
-        assert!(result.is_some(), "Should parse RFC2822-like format with colon timezone");
+        assert!(
+            result.is_some(),
+            "Should parse RFC2822-like format with colon timezone"
+        );
 
         let dt = result.unwrap();
         assert_eq!(dt.year(), 2026);

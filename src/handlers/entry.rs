@@ -430,7 +430,9 @@ pub async fn save_to_services(
         let config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
 
         if !config.has_any_service() {
-            return Err(AppError::Validation("No save services configured".to_string()));
+            return Err(AppError::Validation(
+                "No save services configured".to_string(),
+            ));
         }
 
         let bookmark = BookmarkData {
