@@ -65,9 +65,9 @@ pub fn rewrite_image_urls(html: &str, secret: &[u8]) -> String {
             if src.starts_with("http://") || src.starts_with("https://") {
                 let proxy_url = create_proxy_url(src, secret);
 
-                // Replace the original src with the proxy URL
+                // Replace the original src with the proxy URL and add lazy loading
                 let old_attr = format!("src=\"{}\"", src);
-                let new_attr = format!("src=\"{}\"", proxy_url);
+                let new_attr = format!("src=\"{}\" loading=\"lazy\" decoding=\"async\"", proxy_url);
                 result = result.replacen(&old_attr, &new_attr, 1);
             }
         }
