@@ -231,7 +231,11 @@ pub async fn user_settings_page(
         UserSettingsTemplate {
             username: auth_user.user.username,
             role: auth_user.user.role.as_str().to_string(),
-            created_at: auth_user.user.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            created_at: auth_user
+                .user
+                .created_at
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string(),
             entries_per_page,
             is_admin,
             is_masquerading,

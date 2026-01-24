@@ -30,10 +30,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/", get(handlers::pages::home_page))
         .route("/login", get(handlers::pages::login_page))
         .route("/register", get(handlers::pages::register_page))
-        .route(
-            "/user-settings",
-            get(handlers::pages::user_settings_page),
-        )
+        .route("/user-settings", get(handlers::pages::user_settings_page))
         .route("/admin", get(handlers::pages::admin_page))
         .route("/settings", get(handlers::pages::settings_page))
         .route("/api/register", post(handlers::auth::register))
