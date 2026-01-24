@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+
+{% block title %}User Settings - RDRS{% endblock %}
+
+{% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
+
+{% block content %}
+{% call macros::nav("user-settings", is_admin, is_masquerading, username) %}
+
+<h1>User Settings</h1>
+
+<h2>Account Information</h2>
+<table>
+  <tr>
+    <th style="text-align:left; padding-right:2rem;">Username</th>
+    <td>{{ username }}</td>
+  </tr>
+  <tr>
+    <th style="text-align:left; padding-right:2rem;">Role</th>
+    <td>{{ role }}</td>
+  </tr>
+  <tr>
+    <th style="text-align:left; padding-right:2rem;">Registered</th>
+    <td>{{ created_at }}</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>Display Preferences</h2>
+<div id="settings-error" class="error" style="display: none"></div>
+<form id="settings-form">
+  <div class="form-group">
+    <label for="entries-per-page">Entries per page</label>
+    <input type="number" id="entries-per-page" name="entries-per-page" value="{{ entries_per_page }}" min="10" max="100" required>
+    <span class="muted">(10-100)</span>
+  </div>
+  <button type="submit">[Save Preferences]</button>
+</form>
+<script>
+  document
+    .getElementById("settings-form")
+    .addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errorDiv = document.getElementById("settings-error");
+      errorDiv.style.display = "none";
+
+      const entriesPerPage = parseInt(document.getElementById("entries-per-page").value);
+
+      if (entriesPerPage < 10 || entriesPerPage > 100) {
+        errorDiv.textContent = "Entries per page must be between 10 and 100";
+        errorDiv.style.display = "block";
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/user/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entries_per_page: entriesPerPage,
+          }),
+        });
+
+        if (response.ok) {
+          flash.success("Preferences saved successfully.");
+        } else {
+          const data = await response.json();
+          errorDiv.textContent = data.error || "Failed to save preferences";
+          errorDiv.style.display = "block";
+        }
+      } catch (err) {
+        errorDiv.textContent = "An error occurred. Please try again.";
+        errorDiv.style.display = "block";
+      }
+    });
+</script>
+
+<hr>
+
+<h2>Change Password</h2>
+<div id="password-error" class="error" style="display: none"></div>
+<form id="change-password-form">
+  <div class="form-group">
+    <label for="current-password">Current Password</label>
+    <input type="password" id="current-password" name="current-password" required autocomplete="current-password">
+  </div>
+  <div class="form-group">
+    <label for="new-password">New Password</label>
+    <input type="password" id="new-password" name="new-password" required minlength="6" autocomplete="new-password">
+  </div>
+  <div class="form-group">
+    <label for="confirm-password">Confirm New Password</label>
+    <input type="password" id="confirm-password" name="confirm-password" required minlength="6" autocomplete="new-password">
+  </div>
+  <button type="submit">[Change Password]</button>
+</form>
+<script>
+  document
+    .getElementById("change-password-form")
+    .addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errorDiv = document.getElementById("password-error");
+      errorDiv.style.display = "none";
+
+      const currentPassword = document.getElementById("current-password").value;
+      const newPassword = document.getElementById("new-password").value;
+      const confirmPassword = document.getElementById("confirm-password").value;
+
+      if (newPassword !== confirmPassword) {
+        errorDiv.textContent = "New passwords do not match";
+        errorDiv.style.display = "block";
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/user/password", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            current_password: currentPassword,
+            new_password: newPassword,
+          }),
+        });
+
+        if (response.ok) {
+          flash.redirect("/login", "success", "Password changed successfully. Please login with your new password.");
+        } else {
+          const data = await response.json();
+          errorDiv.textContent = data.error || "Failed to change password";
+          errorDiv.style.display = "block";
+        }
+      } catch (err) {
+        errorDiv.textContent = "An error occurred. Please try again.";
+        errorDiv.style.display = "block";
+      }
+    });
+</script>
+{% endblock %}
