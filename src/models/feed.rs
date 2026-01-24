@@ -36,6 +36,7 @@ fn parse_datetime(s: &str) -> DateTime<Utc> {
         .or_else(|_| {
             chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
         })
+        .or_else(|_| dateparser::parse(s).map(|dt| dt.with_timezone(&Utc)))
         .unwrap_or_else(|_| Utc::now())
 }
 

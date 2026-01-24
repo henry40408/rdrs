@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use chrono::Utc;
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use reqwest::header::{HeaderMap, HeaderValue, IF_MODIFIED_SINCE, IF_NONE_MATCH};
 use rusqlite::Connection;
 use serde::Serialize;
@@ -8,6 +8,95 @@ use tracing::{debug, error, info, warn};
 
 use crate::error::{AppError, AppResult};
 use crate::models::{entry, feed};
+
+/// Parse Chinese month names to month number
+fn parse_chinese_month(s: &str) -> Option<u32> {
+    match s {
+        "一月" => Some(1),
+        "二月" => Some(2),
+        "三月" => Some(3),
+        "四月" => Some(4),
+        "五月" => Some(5),
+        "六月" => Some(6),
+        "七月" => Some(7),
+        "八月" => Some(8),
+        "九月" => Some(9),
+        "十月" => Some(10),
+        "十一月" => Some(11),
+        "十二月" => Some(12),
+        _ => None,
+    }
+}
+
+/// Parse timezone offset like "+0000", "+0800", "-0500"
+fn parse_timezone_offset(s: &str) -> Option<i32> {
+    let s = s.trim();
+    if s.len() < 5 {
+        return None;
+    }
+
+    let sign = match s.chars().next()? {
+        '+' => 1,
+        '-' => -1,
+        _ => return None,
+    };
+
+    let hours: i32 = s[1..3].parse().ok()?;
+    let minutes: i32 = s[3..5].parse().ok()?;
+
+    Some(sign * (hours * 3600 + minutes * 60))
+}
+
+/// Parse Chinese date format like "週二, 6 一月 2026 14:28:00 +0000"
+fn parse_chinese_datetime(s: &str) -> Option<DateTime<Utc>> {
+    let s = s.trim();
+    // Remove weekday prefix if present (e.g., "週二, " or "星期二, ")
+    let s = if let Some(pos) = s.find(", ") {
+        &s[pos + 2..]
+    } else {
+        s
+    };
+
+    // Expected format: "6 一月 2026 14:28:00 +0000"
+    let parts: Vec<&str> = s.splitn(4, ' ').collect();
+    if parts.len() < 4 {
+        return None;
+    }
+
+    let day: u32 = parts[0].parse().ok()?;
+    let month = parse_chinese_month(parts[1])?;
+    let year: i32 = parts[2].parse().ok()?;
+
+    // Parse time and timezone: "14:28:00 +0000"
+    let time_tz = parts[3];
+    let time_parts: Vec<&str> = time_tz.splitn(2, ' ').collect();
+    let time_str = time_parts.first()?;
+
+    let time = NaiveTime::parse_from_str(time_str, "%H:%M:%S").ok()?;
+    let date = NaiveDate::from_ymd_opt(year, month, day)?;
+    let naive_dt = NaiveDateTime::new(date, time);
+
+    // Parse timezone offset if present
+    if let Some(tz_str) = time_parts.get(1) {
+        if let Some(offset_secs) = parse_timezone_offset(tz_str) {
+            let offset = FixedOffset::east_opt(offset_secs)?;
+            let dt = naive_dt.and_local_timezone(offset).single()?;
+            return Some(dt.with_timezone(&Utc));
+        }
+    }
+
+    Some(naive_dt.and_utc())
+}
+
+/// Custom timestamp parser that handles standard formats plus Chinese dates
+fn parse_timestamp_with_chinese(text: &str) -> Option<DateTime<Utc>> {
+    // Try standard parsing first (via dateparser)
+    dateparser::parse(text)
+        .map(|dt| dt.with_timezone(&Utc))
+        .ok()
+        // Then try Chinese date format
+        .or_else(|| parse_chinese_datetime(text))
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SyncResult {
@@ -113,8 +202,12 @@ pub async fn refresh_feed(
         }
     };
 
-    // Parse feed
-    let parsed_feed = match feed_rs::parser::parse(body.as_bytes()) {
+    // Parse feed with custom timestamp parser for Chinese date support
+    let parser = feed_rs::parser::Builder::new()
+        .timestamp_parser(parse_timestamp_with_chinese)
+        .build();
+
+    let parsed_feed = match parser.parse(body.as_bytes()) {
         Ok(feed) => feed,
         Err(e) => {
             let error_msg = e.to_string();

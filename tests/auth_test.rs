@@ -27,6 +27,7 @@ fn default_test_config() -> Config {
         multi_user_enabled: true,
         image_proxy_secret: vec![0u8; 32],
         image_proxy_secret_generated: false,
+        user_agent: "RDRS-Test/1.0".to_string(),
     }
 }
 
