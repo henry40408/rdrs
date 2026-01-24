@@ -30,7 +30,7 @@ async fn main() {
     };
 
     // Start background sync task
-    let _background_task = services::start_background_sync(db);
+    let _background_task = services::start_background_sync(db, config.user_agent.clone());
 
     let app = create_router(state);
 

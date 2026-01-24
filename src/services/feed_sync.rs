@@ -15,7 +15,11 @@ pub struct SyncResult {
     pub updated_entries: i64,
 }
 
-pub async fn refresh_feed(db: Arc<Mutex<Connection>>, feed_id: i64) -> AppResult<SyncResult> {
+pub async fn refresh_feed(
+    db: Arc<Mutex<Connection>>,
+    feed_id: i64,
+    user_agent: &str,
+) -> AppResult<SyncResult> {
     let feed_data = {
         let conn = db
             .lock()
@@ -25,7 +29,7 @@ pub async fn refresh_feed(db: Arc<Mutex<Connection>>, feed_id: i64) -> AppResult
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent("RDRS Feed Reader/1.0")
+        .user_agent(user_agent)
         .build()
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
@@ -186,6 +190,7 @@ pub async fn refresh_feed(db: Arc<Mutex<Connection>>, feed_id: i64) -> AppResult
 pub async fn refresh_bucket(
     db: Arc<Mutex<Connection>>,
     bucket: u8,
+    user_agent: &str,
 ) -> Vec<(i64, Result<SyncResult, String>)> {
     let feeds = {
         let conn = match db.lock() {
@@ -214,7 +219,7 @@ pub async fn refresh_bucket(
     let mut results = Vec::new();
 
     for feed_data in feeds {
-        let result = refresh_feed(db.clone(), feed_data.id).await;
+        let result = refresh_feed(db.clone(), feed_data.id, user_agent).await;
         match &result {
             Ok(sync) => {
                 debug!(

@@ -51,7 +51,7 @@ pub async fn proxy_image(
 
     let response = client
         .get(url.as_str())
-        .header("User-Agent", "Mozilla/5.0 (compatible; RSSReader/1.0)")
+        .header("User-Agent", state.config.user_agent.as_str())
         .send()
         .await
         .map_err(|e| AppError::ImageFetchError(e.to_string()))?;

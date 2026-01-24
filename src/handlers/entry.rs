@@ -276,6 +276,6 @@ pub async fn refresh_feed_handler(
         }
     }
 
-    let result = refresh_feed(state.db.clone(), feed_id).await?;
+    let result = refresh_feed(state.db.clone(), feed_id, &state.config.user_agent).await?;
     Ok(Json(result))
 }

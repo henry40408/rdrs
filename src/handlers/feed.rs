@@ -109,7 +109,7 @@ pub async fn create_feed(
     }
 
     // Discover feed metadata
-    let discovered = feed_discovery::discover_feed(url).await?;
+    let discovered = feed_discovery::discover_feed(url, &state.config.user_agent).await?;
 
     // Create the feed
     let conn = state
@@ -223,10 +223,9 @@ pub async fn fetch_metadata(
     }
 
     // Just verify the user is authenticated (already done by AuthUser extractor)
-    // We don't need to check DB here as this is just a metadata fetch
-    let _ = (state, auth_user);
+    let _ = auth_user;
 
-    let discovered = feed_discovery::discover_feed(url).await?;
+    let discovered = feed_discovery::discover_feed(url, &state.config.user_agent).await?;
 
     Ok(Json(FeedMetadataResponse {
         feed_url: discovered.feed_url,
