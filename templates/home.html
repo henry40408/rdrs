@@ -242,15 +242,36 @@
     }
 
     async function markAllRead() {
-        if (!confirm('Mark all entries as read?')) {
+        const feedId = document.getElementById('filter-feed').value;
+        const categoryId = document.getElementById('filter-category').value;
+
+        let confirmMsg = 'Mark all entries as read?';
+        if (feedId) {
+            const feedSelect = document.getElementById('filter-feed');
+            const feedName = feedSelect.options[feedSelect.selectedIndex].text;
+            confirmMsg = `Mark all entries in feed "${feedName}" as read?`;
+        } else if (categoryId) {
+            const categorySelect = document.getElementById('filter-category');
+            const categoryName = categorySelect.options[categorySelect.selectedIndex].text;
+            confirmMsg = `Mark all entries in category "${categoryName}" as read?`;
+        }
+
+        if (!confirm(confirmMsg)) {
             return;
         }
 
         try {
+            const body = {};
+            if (feedId) {
+                body.feed_id = parseInt(feedId);
+            } else if (categoryId) {
+                body.category_id = parseInt(categoryId);
+            }
+
             const response = await fetch('/api/entries/mark-all-read', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({})
+                body: JSON.stringify(body)
             });
             if (!response.ok) {
                 throw new Error('Failed to mark all as read');
@@ -258,6 +279,7 @@
             const result = await response.json();
             flash.success(`Marked ${result.marked_count} entries as read.`);
             loadEntries();
+            loadUnreadStats();
         } catch (err) {
             flash.error(err.message);
         }

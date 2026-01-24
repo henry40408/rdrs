@@ -586,6 +586,21 @@ pub fn mark_all_read_by_user(conn: &Connection, user_id: i64) -> AppResult<i64> 
     Ok(rows as i64)
 }
 
+pub fn mark_all_read_by_category(conn: &Connection, category_id: i64) -> AppResult<i64> {
+    let rows = conn.execute(
+        r#"
+        UPDATE entry
+        SET read_at = datetime('now'), updated_at = datetime('now')
+        WHERE read_at IS NULL AND feed_id IN (
+            SELECT id FROM feed WHERE category_id = ?1
+        )
+        "#,
+        params![category_id],
+    )?;
+
+    Ok(rows as i64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -226,6 +226,7 @@ pub async fn toggle_entry_star(
 #[derive(Debug, Deserialize)]
 pub struct MarkAllReadRequest {
     pub feed_id: Option<i64>,
+    pub category_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -251,6 +252,13 @@ pub async fn mark_all_read(
             return Err(AppError::FeedNotFound);
         }
         entry::mark_all_read_by_feed(&conn, feed_id)?
+    } else if let Some(category_id) = body.category_id {
+        // Verify category belongs to user
+        let cat = category::find_by_id(&conn, category_id)?.ok_or(AppError::CategoryNotFound)?;
+        if cat.user_id != auth_user.user.id {
+            return Err(AppError::CategoryNotFound);
+        }
+        entry::mark_all_read_by_category(&conn, category_id)?
     } else {
         entry::mark_all_read_by_user(&conn, auth_user.user.id)?
     };
