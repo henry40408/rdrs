@@ -5,6 +5,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
 };
 
+use crate::config::DEFAULT_USER_AGENT;
 use crate::middleware::auth::{AdminUser, AuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
 use crate::models::entry;
@@ -356,6 +357,55 @@ pub async fn entry_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
+        },
+    )
+}
+
+#[derive(Template)]
+#[template(path = "settings.html")]
+pub struct SettingsTemplate {
+    pub is_admin: bool,
+    pub is_masquerading: bool,
+    pub flash_messages: Vec<FlashMessage>,
+    pub user_agent: String,
+    pub user_agent_is_default: bool,
+    pub signup_enabled: bool,
+    pub multi_user_enabled: bool,
+}
+
+impl IntoResponse for SettingsTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn settings_page(
+    auth_user: AuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, SettingsTemplate) {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
+    let user_agent_is_default = state.config.user_agent == DEFAULT_USER_AGENT;
+
+    (
+        flash.clone(),
+        SettingsTemplate {
+            is_admin,
+            is_masquerading,
+            flash_messages: flash.messages,
+            user_agent: state.config.user_agent.clone(),
+            user_agent_is_default,
+            signup_enabled: state.config.signup_enabled,
+            multi_user_enabled: state.config.multi_user_enabled,
         },
     )
 }

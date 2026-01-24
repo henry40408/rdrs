@@ -19,6 +19,7 @@
         <li><a href="/feeds"{% if current == "feeds" %} class="active"{% endif %}>[Feeds]</a></li>
         <li><a href="/categories"{% if current == "categories" %} class="active"{% endif %}>[Categories]</a></li>
         <li><a href="/change-password"{% if current == "change-password" %} class="active"{% endif %}>[Password]</a></li>
+        <li><a href="/settings"{% if current == "settings" %} class="active"{% endif %}>[Settings]</a></li>
         {% if is_admin %}
         <li><a href="/admin"{% if current == "admin" %} class="active"{% endif %}>[Admin]</a></li>
         {% endif %}
