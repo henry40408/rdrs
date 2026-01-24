@@ -395,6 +395,9 @@
         if (event.key === 'Enter') {
             event.preventDefault();
             handleFilterChange();
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            event.target.blur();
         }
     }
 
