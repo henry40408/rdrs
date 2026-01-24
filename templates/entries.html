@@ -10,7 +10,7 @@
 
 <h1>Entries</h1>
 
-<div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end;">
+<div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:1rem;">
     <div class="form-group" style="margin-bottom:0;">
         <label for="filter-feed">Feed</label>
         <select id="filter-feed" onchange="handleFilterChange()">
@@ -33,9 +33,6 @@
             <input type="checkbox" id="filter-starred" onchange="handleFilterChange()"> Starred only
         </label>
     </div>
-</div>
-
-<div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:1rem;">
     <div class="form-group" style="margin-bottom:0;">
         <label for="mark-read-age">Mark as Read</label>
         <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;">
