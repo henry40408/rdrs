@@ -560,29 +560,86 @@ pub fn toggle_star(conn: &Connection, id: i64) -> AppResult<Entry> {
     find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
 }
 
-pub fn mark_all_read_by_feed(conn: &Connection, feed_id: i64) -> AppResult<i64> {
-    let rows = conn.execute(
-        "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') WHERE feed_id = ?1 AND read_at IS NULL",
-        params![feed_id],
-    )?;
+pub fn mark_all_read_by_feed(
+    conn: &Connection,
+    feed_id: i64,
+    older_than_days: Option<i64>,
+) -> AppResult<i64> {
+    let age_condition = older_than_days
+        .map(|days| {
+            format!(
+                " AND COALESCE(published_at, created_at) < datetime('now', '-{} days')",
+                days
+            )
+        })
+        .unwrap_or_default();
 
+    let sql = format!(
+        "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') WHERE feed_id = ?1 AND read_at IS NULL{}",
+        age_condition
+    );
+
+    let rows = conn.execute(&sql, params![feed_id])?;
     Ok(rows as i64)
 }
 
-pub fn mark_all_read_by_user(conn: &Connection, user_id: i64) -> AppResult<i64> {
-    let rows = conn.execute(
+pub fn mark_all_read_by_user(
+    conn: &Connection,
+    user_id: i64,
+    older_than_days: Option<i64>,
+) -> AppResult<i64> {
+    let age_condition = older_than_days
+        .map(|days| {
+            format!(
+                " AND COALESCE(published_at, created_at) < datetime('now', '-{} days')",
+                days
+            )
+        })
+        .unwrap_or_default();
+
+    let sql = format!(
         r#"
         UPDATE entry
         SET read_at = datetime('now'), updated_at = datetime('now')
-        WHERE read_at IS NULL AND feed_id IN (
+        WHERE read_at IS NULL{} AND feed_id IN (
             SELECT f.id FROM feed f
             INNER JOIN category c ON f.category_id = c.id
             WHERE c.user_id = ?1
         )
         "#,
-        params![user_id],
-    )?;
+        age_condition
+    );
 
+    let rows = conn.execute(&sql, params![user_id])?;
+    Ok(rows as i64)
+}
+
+pub fn mark_all_read_by_category(
+    conn: &Connection,
+    category_id: i64,
+    older_than_days: Option<i64>,
+) -> AppResult<i64> {
+    let age_condition = older_than_days
+        .map(|days| {
+            format!(
+                " AND COALESCE(published_at, created_at) < datetime('now', '-{} days')",
+                days
+            )
+        })
+        .unwrap_or_default();
+
+    let sql = format!(
+        r#"
+        UPDATE entry
+        SET read_at = datetime('now'), updated_at = datetime('now')
+        WHERE read_at IS NULL{} AND feed_id IN (
+            SELECT id FROM feed WHERE category_id = ?1
+        )
+        "#,
+        age_condition
+    );
+
+    let rows = conn.execute(&sql, params![category_id])?;
     Ok(rows as i64)
 }
 

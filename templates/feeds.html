@@ -28,7 +28,7 @@
             <option value="">Loading categories...</option>
         </select>
     </div>
-    <button type="submit" id="add-btn">Add Feed</button>
+    <button type="submit" id="add-btn">[Add Feed]</button>
 </form>
 
 <hr>
@@ -36,13 +36,22 @@
 <div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end;">
     <div class="form-group" style="margin-bottom:0;">
         <label for="filter-category">Filter by Category</label>
-        <select id="filter-category" onchange="renderFeeds()">
+        <select id="filter-category" onchange="handleFilterChange()">
             <option value="">All Categories</option>
         </select>
     </div>
     <div class="form-group" style="margin-bottom:0;">
+        <label for="sort-by">Sort by</label>
+        <select id="sort-by" onchange="handleFilterChange()">
+            <option value="title">Title</option>
+            <option value="unread">Unread Count</option>
+            <option value="fetched">Last Fetched</option>
+            <option value="category">Category</option>
+        </select>
+    </div>
+    <div class="form-group" style="margin-bottom:0;">
         <label>
-            <input type="checkbox" id="filter-errors" onchange="renderFeeds()">
+            <input type="checkbox" id="filter-errors" onchange="handleFilterChange()">
             Show only feeds with errors
         </label>
     </div>
@@ -53,13 +62,14 @@
         <tr>
             <th>Title</th>
             <th>Category</th>
+            <th>Unread</th>
             <th>Last Fetched</th>
             <th>Actions</th>
         </tr>
     </thead>
     <tbody id="feeds-table">
         <tr>
-            <td colspan="4">Loading...</td>
+            <td colspan="5">Loading...</td>
         </tr>
     </tbody>
 </table>
@@ -126,6 +136,7 @@
 <script>
     let categories = [];
     let feeds = [];
+    let unreadStats = { by_feed: {}, by_category: {} };
 
     async function loadCategories() {
         try {
@@ -187,16 +198,47 @@
             renderFeeds();
         } catch (err) {
             document.getElementById('feeds-table').innerHTML =
-                '<tr><td colspan="4">[ERROR] Failed to load feeds</td></tr>';
+                '<tr><td colspan="5">[ERROR] Failed to load feeds</td></tr>';
         }
+    }
+
+    async function loadUnreadStats() {
+        try {
+            const response = await fetch('/api/entries/unread-stats');
+            if (!response.ok) throw new Error('Failed to load unread stats');
+            unreadStats = await response.json();
+            renderFeeds();
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    function updateURL() {
+        const params = new URLSearchParams();
+        const categoryId = document.getElementById('filter-category').value;
+        const sortBy = document.getElementById('sort-by').value;
+        const filterErrors = document.getElementById('filter-errors').checked;
+
+        if (categoryId) params.set('category', categoryId);
+        if (sortBy && sortBy !== 'title') params.set('sort', sortBy);
+        if (filterErrors) params.set('errors', '1');
+
+        const newURL = params.toString() ? `/feeds?${params.toString()}` : '/feeds';
+        history.replaceState(null, '', newURL);
+    }
+
+    function handleFilterChange() {
+        updateURL();
+        renderFeeds();
     }
 
     function renderFeeds() {
         const tbody = document.getElementById('feeds-table');
         const filterCategory = document.getElementById('filter-category').value;
         const filterErrors = document.getElementById('filter-errors').checked;
+        const sortBy = document.getElementById('sort-by').value;
 
-        let filteredFeeds = feeds;
+        let filteredFeeds = feeds.slice(); // Create a copy
         if (filterCategory) {
             filteredFeeds = filteredFeeds.filter(f => f.category_id == filterCategory);
         }
@@ -204,9 +246,34 @@
             filteredFeeds = filteredFeeds.filter(f => f.fetch_error !== null);
         }
 
+        // Sort feeds
+        filteredFeeds.sort((a, b) => {
+            switch (sortBy) {
+                case 'unread':
+                    const unreadA = unreadStats.by_feed[a.id] || 0;
+                    const unreadB = unreadStats.by_feed[b.id] || 0;
+                    return unreadB - unreadA; // Descending
+                case 'fetched':
+                    const dateA = a.fetched_at ? new Date(a.fetched_at) : new Date(0);
+                    const dateB = b.fetched_at ? new Date(b.fetched_at) : new Date(0);
+                    return dateB - dateA; // Most recent first
+                case 'category':
+                    const catA = categories.find(c => c.id === a.category_id);
+                    const catB = categories.find(c => c.id === b.category_id);
+                    const catNameA = catA ? catA.name.toLowerCase() : '';
+                    const catNameB = catB ? catB.name.toLowerCase() : '';
+                    return catNameA.localeCompare(catNameB);
+                case 'title':
+                default:
+                    const titleA = (a.title || a.url).toLowerCase();
+                    const titleB = (b.title || b.url).toLowerCase();
+                    return titleA.localeCompare(titleB);
+            }
+        });
+
         if (filteredFeeds.length === 0) {
             const msg = filterErrors ? 'No feeds with errors.' : 'No feeds yet.';
-            tbody.innerHTML = `<tr><td colspan="4" class="muted">${msg}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="5" class="muted">${msg}</td></tr>`;
             return;
         }
 
@@ -220,11 +287,13 @@
             const iconHtml = feed.has_icon
                 ? `<img src="/api/feeds/${feed.id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
                 : '';
+            const unreadCount = unreadStats.by_feed[feed.id] || 0;
 
             let rows = `
             <tr id="row-${feed.id}"${hasError ? ' style="border-bottom:none;"' : ''}>
                 <td${hasError ? ' style="border-bottom:none;"' : ''}>${iconHtml}<span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
                 <td${hasError ? ' style="border-bottom:none;"' : ''}>${escapeHtml(categoryName)}</td>
+                <td${hasError ? ' style="border-bottom:none;"' : ''}>${unreadCount > 0 ? `<strong>${unreadCount}</strong>` : '0'}</td>
                 <td${hasError ? ' style="border-bottom:none;"' : ''}>${fetchedAt ? `<span title="${fetchedAtTitle}">${fetchedAt}</span>` : 'Never'}</td>
                 <td class="actions"${hasError ? ' style="border-bottom:none;"' : ''}>
                     <a href="/entries?feed=${feed.id}">[entries]</a>
@@ -237,7 +306,7 @@
             if (hasError) {
                 rows += `
             <tr class="error-row">
-                <td colspan="4" style="color:red; font-size:0.875rem; padding-top:0;">
+                <td colspan="5" style="color:red; font-size:0.875rem; padding-top:0;">
                     [Error] ${escapeHtml(feed.fetch_error)}
                 </td>
             </tr>`;
@@ -283,7 +352,7 @@
             return;
         }
 
-        addBtn.textContent = 'Fetching feed...';
+        addBtn.textContent = '[Adding...]';
         addBtn.disabled = true;
 
         try {
@@ -304,7 +373,7 @@
         } catch (err) {
             flash.error(err.message);
         } finally {
-            addBtn.textContent = 'Add Feed';
+            addBtn.textContent = '[Add Feed]';
             addBtn.disabled = false;
         }
     }
@@ -446,6 +515,7 @@
             const result = await response.json();
             flash.success(`Refreshed: ${result.new_entries} new, ${result.updated_entries} updated.`);
             loadFeeds();
+            loadUnreadStats();
         } catch (err) {
             flash.error(err.message);
         } finally {
@@ -500,7 +570,7 @@
         }
 
         const importBtn = document.getElementById('import-btn');
-        importBtn.textContent = 'Importing...';
+        importBtn.textContent = '[Importing...]';
         importBtn.disabled = true;
 
         try {
@@ -532,13 +602,18 @@
 
     // Initialize
     loadCategories().then(() => {
-        // Check for category filter in URL
+        // Read filters from URL
         const urlParams = new URLSearchParams(window.location.search);
         const categoryId = urlParams.get('category');
-        if (categoryId) {
-            document.getElementById('filter-category').value = categoryId;
-        }
+        const sortBy = urlParams.get('sort');
+        const filterErrors = urlParams.get('errors');
+
+        if (categoryId) document.getElementById('filter-category').value = categoryId;
+        if (sortBy) document.getElementById('sort-by').value = sortBy;
+        if (filterErrors) document.getElementById('filter-errors').checked = true;
+
         loadFeeds();
+        loadUnreadStats();
     });
 </script>
 {% endblock %}

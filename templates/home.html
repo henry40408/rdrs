@@ -11,21 +11,31 @@
 <h1>Home</h1>
 
 <h2>Unread Entries</h2>
-<div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:1rem;">
+<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:1rem;">
     <div class="form-group" style="margin-bottom:0;">
         <label for="filter-feed">Feed</label>
-        <select id="filter-feed" onchange="handleFilterChange()">
-            <option value="">All Feeds</option>
+        <select id="filter-feed" onchange="handleFilterChange()" style="width:14em;">
+            <option value="">All Feeds (0)</option>
         </select>
     </div>
     <div class="form-group" style="margin-bottom:0;">
         <label for="filter-category">Category</label>
-        <select id="filter-category" onchange="handleFilterChange()">
-            <option value="">All Categories</option>
+        <select id="filter-category" onchange="handleFilterChange()" style="width:14em;">
+            <option value="">All Categories (0)</option>
+        </select>
+    </div>
+    <div class="form-group" style="margin-bottom:0;">
+        <label for="mark-read-age">Mark as Read</label>
+        <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;">
+            <option value="">Select...</option>
+            <option value="1">Older than 1 day</option>
+            <option value="7">Older than 1 week</option>
+            <option value="30">Older than 1 month</option>
+            <option value="365">Older than 1 year</option>
+            <option value="all">All entries</option>
         </select>
     </div>
     <div>
-        <button type="button" onclick="markAllRead()">[Mark All Read]</button>
         <button type="button" onclick="loadEntries()">[Refresh]</button>
     </div>
 </div>
@@ -37,6 +47,8 @@
 <div id="load-more" style="display:none; margin-top:1rem;">
     <button type="button" onclick="loadMore()">[Load More]</button>
 </div>
+
+<p id="entries-count" class="muted"></p>
 
 <script>
     let entries = [];
@@ -150,6 +162,7 @@
             renderEntries();
             updateLoadMoreButton();
             updateUnreadCount();
+            updateEntriesCount();
         } catch (err) {
             document.getElementById('entries-list').innerHTML = '<p class="muted">[ERROR] Failed to load entries</p>';
         }
@@ -241,23 +254,59 @@
         }
     }
 
-    async function markAllRead() {
-        if (!confirm('Mark all entries as read?')) {
+    async function markAsRead(age) {
+        if (!age) return;
+
+        const feedId = document.getElementById('filter-feed').value;
+        const categoryId = document.getElementById('filter-category').value;
+
+        const ageLabels = {
+            '1': 'older than 1 day',
+            '7': 'older than 1 week',
+            '30': 'older than 1 month',
+            '365': 'older than 1 year',
+            'all': 'all'
+        };
+        const ageLabel = ageLabels[age] || age;
+
+        let scope = '';
+        if (feedId) {
+            const feedSelect = document.getElementById('filter-feed');
+            const feedName = feedSelect.options[feedSelect.selectedIndex].text;
+            scope = ` in feed "${feedName}"`;
+        } else if (categoryId) {
+            const categorySelect = document.getElementById('filter-category');
+            const categoryName = categorySelect.options[categorySelect.selectedIndex].text;
+            scope = ` in category "${categoryName}"`;
+        }
+
+        if (!confirm(`Mark ${ageLabel} entries${scope} as read?`)) {
             return;
         }
 
         try {
+            const body = {};
+            if (feedId) {
+                body.feed_id = parseInt(feedId);
+            } else if (categoryId) {
+                body.category_id = parseInt(categoryId);
+            }
+            if (age !== 'all') {
+                body.older_than_days = parseInt(age);
+            }
+
             const response = await fetch('/api/entries/mark-all-read', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({})
+                body: JSON.stringify(body)
             });
             if (!response.ok) {
-                throw new Error('Failed to mark all as read');
+                throw new Error('Failed to mark as read');
             }
             const result = await response.json();
             flash.success(`Marked ${result.marked_count} entries as read.`);
             loadEntries();
+            loadUnreadStats();
         } catch (err) {
             flash.error(err.message);
         }
@@ -266,6 +315,10 @@
     function updateUnreadCount() {
         const el = document.getElementById('unread-count');
         if (el) el.textContent = total;
+    }
+
+    function updateEntriesCount() {
+        document.getElementById('entries-count').textContent = `Showing ${entries.length} of ${total} entries`;
     }
 
     function escapeHtml(text) {
