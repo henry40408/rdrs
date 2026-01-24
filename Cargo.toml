@@ -34,6 +34,7 @@ scraper = "0.22"
 url = "2"
 quick-xml = { version = "0.37", features = ["serialize"] }
 ammonia = "4"
+readability = { version = "0.3", default-features = false }
 base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"

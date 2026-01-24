@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::{category, entry, feed};
-use crate::services::{refresh_feed, sanitize_html, SyncResult};
+use crate::services::{fetch_and_extract, refresh_feed, sanitize_html, SyncResult};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -302,4 +302,52 @@ pub async fn refresh_feed_handler(
 
     let result = refresh_feed(state.db.clone(), feed_id, &state.config.user_agent).await?;
     Ok(Json(result))
+}
+
+#[derive(Debug, Serialize)]
+pub struct FetchFullContentResponse {
+    pub title: Option<String>,
+    pub content: String,
+    pub sanitized_content: String,
+}
+
+pub async fn fetch_full_content(
+    auth_user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<FetchFullContentResponse>> {
+    // Verify entry exists and belongs to user
+    let link = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+
+        let entry_with_feed =
+            entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+
+        let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
+            .ok_or(AppError::CategoryNotFound)?;
+        if cat.user_id != auth_user.user.id {
+            return Err(AppError::EntryNotFound);
+        }
+
+        // Check if entry has a link
+        entry_with_feed
+            .entry
+            .link
+            .ok_or_else(|| AppError::Validation("Entry has no link".to_string()))?
+    };
+
+    // Fetch and extract content
+    let extracted = fetch_and_extract(&link, &state.config.user_agent).await?;
+
+    // Sanitize the content
+    let sanitized_content = sanitize_html(&extracted.content, &state.config.image_proxy_secret);
+
+    Ok(Json(FetchFullContentResponse {
+        title: extracted.title,
+        content: extracted.content,
+        sanitized_content,
+    }))
 }
