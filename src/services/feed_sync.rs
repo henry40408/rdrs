@@ -89,14 +89,56 @@ fn parse_chinese_datetime(s: &str) -> Option<DateTime<Utc>> {
     Some(naive_dt.and_utc())
 }
 
-/// Custom timestamp parser that handles standard formats plus Chinese dates
-fn parse_timestamp_with_chinese(text: &str) -> Option<DateTime<Utc>> {
+/// Custom timestamp parser for feed-rs that handles:
+/// - Standard formats (via dateparser)
+/// - ISO 8601 style timezone in RFC 2822 dates (+08:00 -> +0800)
+/// - Chinese date formats (e.g., "週二, 6 一月 2026 14:28:00 +0000")
+fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
     // Try standard parsing first (via dateparser)
     dateparser::parse(text)
         .map(|dt| dt.with_timezone(&Utc))
         .ok()
+        // Try with normalized timezone format (convert +08:00 to +0800)
+        .or_else(|| {
+            let normalized = normalize_timezone_format(text);
+            if normalized != text {
+                dateparser::parse(&normalized)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .ok()
+            } else {
+                None
+            }
+        })
         // Then try Chinese date format
         .or_else(|| parse_chinese_datetime(text))
+}
+
+/// Normalize timezone format: convert "+08:00" to "+0800"
+/// Some feeds use ISO 8601 style timezone in RFC 2822 dates, which dateparser can't handle
+fn normalize_timezone_format(text: &str) -> String {
+    let text = text.trim();
+    let len = text.len();
+
+    // Check if ends with timezone like "+08:00" or "-05:30" (6 chars)
+    if len >= 6 {
+        let suffix = &text[len - 6..];
+        if let Some(sign) = suffix.chars().next() {
+            if (sign == '+' || sign == '-')
+                && suffix.chars().nth(3) == Some(':')
+                && suffix[1..3].chars().all(|c| c.is_ascii_digit())
+                && suffix[4..6].chars().all(|c| c.is_ascii_digit())
+            {
+                // Convert "+08:00" to "+0800"
+                let mut result = text[..len - 6].to_string();
+                result.push(sign);
+                result.push_str(&suffix[1..3]);
+                result.push_str(&suffix[4..6]);
+                return result;
+            }
+        }
+    }
+
+    text.to_string()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -234,7 +276,7 @@ pub async fn refresh_feed(
     // Parse feed with custom timestamp parser for Chinese date support
     let parsed_feed = {
         let parser = feed_rs::parser::Builder::new()
-            .timestamp_parser(parse_timestamp_with_chinese)
+            .timestamp_parser(parse_timestamp)
             .build();
 
         match parser.parse(body.as_bytes()) {
@@ -337,14 +379,13 @@ pub async fn refresh_feed(
 
             let author = item.authors.first().map(|a| a.name.clone());
 
-            // Use published date, fall back to updated date, then feed timestamp, then fetch time
-            let published_at = Some(
-                item.published
-                    .or(item.updated)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .or(feed_timestamp)
-                    .unwrap_or_else(Utc::now),
-            );
+            // Use published date, fall back to updated date, then feed timestamp
+            // If no date is available, use None so sorting falls back to created_at
+            let published_at = item
+                .published
+                .or(item.updated)
+                .map(|dt| dt.with_timezone(&Utc))
+                .or(feed_timestamp);
 
             let (_, is_new) = entry::upsert_entry(
                 &conn,
@@ -435,4 +476,67 @@ pub async fn refresh_bucket(
     }
 
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Datelike, Timelike};
+
+    #[test]
+    fn test_normalize_timezone_format() {
+        // Should convert +08:00 to +0800
+        assert_eq!(
+            normalize_timezone_format("Thu, 22 Jan 2026 15:09:47 +08:00"),
+            "Thu, 22 Jan 2026 15:09:47 +0800"
+        );
+
+        // Should convert -05:30 to -0530
+        assert_eq!(
+            normalize_timezone_format("Mon, 01 Jan 2026 12:00:00 -05:30"),
+            "Mon, 01 Jan 2026 12:00:00 -0530"
+        );
+
+        // Should leave already correct format unchanged
+        assert_eq!(
+            normalize_timezone_format("Thu, 22 Jan 2026 15:09:47 +0800"),
+            "Thu, 22 Jan 2026 15:09:47 +0800"
+        );
+
+        // Should handle trailing whitespace
+        assert_eq!(
+            normalize_timezone_format("Thu, 22 Jan 2026 15:09:47 +08:00  "),
+            "Thu, 22 Jan 2026 15:09:47 +0800"
+        );
+    }
+
+    #[test]
+    fn test_parse_timestamp_colon_timezone() {
+        // This format was previously failing
+        let result = parse_timestamp("Thu, 22 Jan 2026 15:09:47 +08:00");
+        assert!(
+            result.is_some(),
+            "Should parse RFC2822-like format with colon timezone"
+        );
+
+        let dt = result.unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 1);
+        assert_eq!(dt.day(), 22);
+        // The time should be converted to UTC (15:09:47 +08:00 = 07:09:47 UTC)
+        assert_eq!(dt.hour(), 7);
+        assert_eq!(dt.minute(), 9);
+    }
+
+    #[test]
+    fn test_parse_timestamp_various_formats() {
+        // Standard RFC2822
+        assert!(parse_timestamp("Thu, 22 Jan 2026 15:09:47 +0800").is_some());
+
+        // ISO 8601 / RFC 3339
+        assert!(parse_timestamp("2026-01-22T15:09:47+08:00").is_some());
+
+        // Chinese format
+        assert!(parse_timestamp("週四, 22 一月 2026 15:09:47 +0800").is_some());
+    }
 }

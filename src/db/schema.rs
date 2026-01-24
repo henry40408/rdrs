@@ -98,6 +98,7 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL UNIQUE REFERENCES user(id) ON DELETE CASCADE,
             entries_per_page INTEGER NOT NULL DEFAULT 30,
+            save_services TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
@@ -105,6 +106,13 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_user_settings_user_id ON user_settings(user_id);
         "#,
     )?;
+
+    // Migration: Add save_services column if not exists
+    // SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we ignore the error
+    let _ = conn.execute(
+        "ALTER TABLE user_settings ADD COLUMN save_services TEXT",
+        [],
+    );
 
     Ok(())
 }
