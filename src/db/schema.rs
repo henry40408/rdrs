@@ -77,6 +77,20 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_entry_published_at ON entry(published_at);
         CREATE INDEX IF NOT EXISTS idx_entry_read_at ON entry(read_at);
         CREATE INDEX IF NOT EXISTS idx_entry_starred_at ON entry(starred_at);
+
+        CREATE TABLE IF NOT EXISTS image (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_id INTEGER NOT NULL,
+            data BLOB NOT NULL,
+            content_type TEXT NOT NULL,
+            source_url TEXT,
+            fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(entity_type, entity_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_image_entity ON image(entity_type, entity_id);
         "#,
     )?;
 

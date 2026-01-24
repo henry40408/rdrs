@@ -44,6 +44,9 @@
         const date = data.published_at ? new Date(data.published_at).toLocaleString() : '';
         const isStarred = data.starred_at !== null;
         const content = data.sanitized_content || data.summary || '<p class="muted">No content available.</p>';
+        const feedIconHtml = data.feed_has_icon
+            ? `<img src="/api/feeds/${data.feed_id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
+            : '';
 
         document.getElementById('entry-container').innerHTML = `
             <div class="entry-nav">
@@ -53,7 +56,7 @@
             <h1 class="entry-title">${escapeHtml(title)}</h1>
 
             <div class="entry-meta">
-                <span>${escapeHtml(feedTitle)}</span>
+                ${feedIconHtml}<span>${escapeHtml(feedTitle)}</span>
                 ${author ? ` &middot; <span>${escapeHtml(author)}</span>` : ''}
                 ${date ? ` &middot; <span>${date}</span>` : ''}
             </div>

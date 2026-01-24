@@ -89,6 +89,9 @@ pub enum AppError {
     #[error("Invalid signature")]
     InvalidSignature,
 
+    #[error("{0}")]
+    NotFound(String),
+
     #[error("Internal server error")]
     Internal(String),
 }
@@ -133,6 +136,9 @@ impl IntoResponse for AppError {
             AppError::ImageTooLarge => (StatusCode::BAD_REQUEST, "Image too large"),
             AppError::UnsupportedImageType => (StatusCode::BAD_REQUEST, "Unsupported image type"),
             AppError::InvalidSignature => (StatusCode::BAD_REQUEST, "Invalid signature"),
+            AppError::NotFound(msg) => {
+                return (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response()
+            }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
         };
 
