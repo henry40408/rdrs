@@ -50,7 +50,8 @@ pub fn sanitize_html(content: &str, secret: &[u8]) -> String {
         .clean(content)
         .to_string();
 
-    rewrite_image_urls(&sanitized, secret)
+    let with_images = rewrite_image_urls(&sanitized, secret);
+    add_target_blank_to_links(&with_images)
 }
 
 pub fn rewrite_image_urls(html: &str, secret: &[u8]) -> String {
@@ -68,6 +69,27 @@ pub fn rewrite_image_urls(html: &str, secret: &[u8]) -> String {
                 // Replace the original src with the proxy URL and add lazy loading
                 let old_attr = format!("src=\"{}\"", src);
                 let new_attr = format!("src=\"{}\" loading=\"lazy\" decoding=\"async\"", proxy_url);
+                result = result.replacen(&old_attr, &new_attr, 1);
+            }
+        }
+    }
+
+    result
+}
+
+/// Add target="_blank" to all external links for opening in new tab
+fn add_target_blank_to_links(html: &str) -> String {
+    let document = Html::parse_fragment(html);
+    let a_selector = Selector::parse("a[href]").unwrap();
+
+    let mut result = html.to_string();
+
+    for element in document.select(&a_selector) {
+        if let Some(href) = element.value().attr("href") {
+            // Only process http/https links (external links)
+            if href.starts_with("http://") || href.starts_with("https://") {
+                let old_attr = format!("href=\"{}\"", href);
+                let new_attr = format!("href=\"{}\" target=\"_blank\"", href);
                 result = result.replacen(&old_attr, &new_attr, 1);
             }
         }
@@ -150,5 +172,28 @@ mod tests {
         assert_eq!(proxy_count, 2);
         let sig_count = output.matches("&s=").count();
         assert_eq!(sig_count, 2);
+    }
+
+    #[test]
+    fn test_links_have_target_blank() {
+        let input = r#"<a href="https://example.com">Link</a>"#;
+        let output = sanitize_html(input, TEST_SECRET);
+        assert!(output.contains("target=\"_blank\""));
+        assert!(output.contains("rel=\"noopener noreferrer\""));
+    }
+
+    #[test]
+    fn test_multiple_links_have_target_blank() {
+        let input = r#"<a href="https://a.com">A</a><a href="https://b.com">B</a>"#;
+        let output = sanitize_html(input, TEST_SECRET);
+        let target_count = output.matches("target=\"_blank\"").count();
+        assert_eq!(target_count, 2);
+    }
+
+    #[test]
+    fn test_relative_links_no_target_blank() {
+        let input = r#"<a href="/local/path">Local</a>"#;
+        let output = sanitize_html(input, TEST_SECRET);
+        assert!(!output.contains("target=\"_blank\""));
     }
 }
