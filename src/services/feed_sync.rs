@@ -141,7 +141,14 @@ pub async fn refresh_feed(
         Err(e) => {
             let error_msg = e.to_string();
             if let Ok(conn) = db.lock() {
-                let _ = feed::update_fetch_result(&conn, feed_id, Utc::now(), Some(&error_msg), None, None);
+                let _ = feed::update_fetch_result(
+                    &conn,
+                    feed_id,
+                    Utc::now(),
+                    Some(&error_msg),
+                    None,
+                    None,
+                );
             }
             return Err(AppError::FetchError(error_msg));
         }
@@ -196,7 +203,14 @@ pub async fn refresh_feed(
         Err(e) => {
             let error_msg = e.to_string();
             if let Ok(conn) = db.lock() {
-                let _ = feed::update_fetch_result(&conn, feed_id, Utc::now(), Some(&error_msg), None, None);
+                let _ = feed::update_fetch_result(
+                    &conn,
+                    feed_id,
+                    Utc::now(),
+                    Some(&error_msg),
+                    None,
+                    None,
+                );
             }
             return Err(AppError::FetchError(error_msg));
         }
@@ -212,7 +226,14 @@ pub async fn refresh_feed(
         Err(e) => {
             let error_msg = e.to_string();
             if let Ok(conn) = db.lock() {
-                let _ = feed::update_fetch_result(&conn, feed_id, Utc::now(), Some(&error_msg), None, None);
+                let _ = feed::update_fetch_result(
+                    &conn,
+                    feed_id,
+                    Utc::now(),
+                    Some(&error_msg),
+                    None,
+                    None,
+                );
             }
             return Err(AppError::FeedParseError(error_msg));
         }

@@ -82,7 +82,9 @@ fn parse_timezone_offset(s: &str) -> Result<chrono::Duration, ()> {
     let hours: i64 = s[1..3].parse().map_err(|_| ())?;
     let minutes: i64 = s[3..5].parse().map_err(|_| ())?;
 
-    Ok(chrono::Duration::seconds(sign * (hours * 3600 + minutes * 60)))
+    Ok(chrono::Duration::seconds(
+        sign * (hours * 3600 + minutes * 60),
+    ))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -129,9 +131,7 @@ fn parse_datetime(s: &str) -> DateTime<Utc> {
             chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
         })
         // Then try dateparser for various formats (RFC 2822, localized dates, etc.)
-        .or_else(|_| {
-            dateparser::parse(s).map(|dt| dt.with_timezone(&Utc))
-        })
+        .or_else(|_| dateparser::parse(s).map(|dt| dt.with_timezone(&Utc)))
         // Then try Chinese date format
         .or_else(|_| parse_chinese_datetime(s).ok_or(()))
         .unwrap_or_else(|_| Utc::now())
@@ -378,7 +378,10 @@ pub fn count_unread_by_user(conn: &Connection, user_id: i64) -> AppResult<i64> {
 }
 
 /// Returns a map of feed_id -> unread count for a user
-pub fn count_unread_by_feed(conn: &Connection, user_id: i64) -> AppResult<std::collections::HashMap<i64, i64>> {
+pub fn count_unread_by_feed(
+    conn: &Connection,
+    user_id: i64,
+) -> AppResult<std::collections::HashMap<i64, i64>> {
     let mut stmt = conn.prepare(
         r#"
         SELECT f.id, COUNT(e.id)
@@ -404,7 +407,10 @@ pub fn count_unread_by_feed(conn: &Connection, user_id: i64) -> AppResult<std::c
 }
 
 /// Returns a map of category_id -> unread count for a user
-pub fn count_unread_by_category(conn: &Connection, user_id: i64) -> AppResult<std::collections::HashMap<i64, i64>> {
+pub fn count_unread_by_category(
+    conn: &Connection,
+    user_id: i64,
+) -> AppResult<std::collections::HashMap<i64, i64>> {
     let mut stmt = conn.prepare(
         r#"
         SELECT c.id, COUNT(e.id)
@@ -581,8 +587,8 @@ mod tests {
     use crate::db::init_db;
     use crate::models::category;
     use crate::models::feed;
-    use chrono::{Datelike, Timelike};
     use crate::models::user::{self, Role};
+    use chrono::{Datelike, Timelike};
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -789,7 +795,13 @@ mod tests {
     #[test]
     fn test_parse_timezone_offset() {
         assert_eq!(parse_timezone_offset("+0000").unwrap().num_seconds(), 0);
-        assert_eq!(parse_timezone_offset("+0800").unwrap().num_seconds(), 8 * 3600);
-        assert_eq!(parse_timezone_offset("-0500").unwrap().num_seconds(), -5 * 3600);
+        assert_eq!(
+            parse_timezone_offset("+0800").unwrap().num_seconds(),
+            8 * 3600
+        );
+        assert_eq!(
+            parse_timezone_offset("-0500").unwrap().num_seconds(),
+            -5 * 3600
+        );
     }
 }
