@@ -18,6 +18,7 @@ pub struct ListEntriesQuery {
     pub unread_only: bool,
     #[serde(default)]
     pub starred_only: bool,
+    pub search: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: i64,
     #[serde(default)]
@@ -68,6 +69,7 @@ pub async fn list_entries(
         category_id: query.category_id,
         unread_only: query.unread_only,
         starred_only: query.starred_only,
+        search: query.search,
     };
 
     let entries =
@@ -143,6 +145,7 @@ pub async fn list_feed_entries(
         category_id: None,
         unread_only: query.unread_only,
         starred_only: query.starred_only,
+        search: query.search,
     };
 
     let entries =

@@ -12,19 +12,19 @@
 
 <h2>Unread Entries</h2>
 <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:1rem;">
-    <div class="form-group" style="margin-bottom:0;">
+    <div class="form-group form-group-inline">
         <label for="filter-feed">Feed</label>
         <select id="filter-feed" onchange="handleFilterChange()" style="width:14em;">
             <option value="">All Feeds (0)</option>
         </select>
     </div>
-    <div class="form-group" style="margin-bottom:0;">
+    <div class="form-group form-group-inline">
         <label for="filter-category">Category</label>
         <select id="filter-category" onchange="handleFilterChange()" style="width:14em;">
             <option value="">All Categories (0)</option>
         </select>
     </div>
-    <div class="form-group" style="margin-bottom:0;">
+    <div class="form-group form-group-inline">
         <label for="mark-read-age">Mark as Read</label>
         <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;">
             <option value="">Select...</option>
@@ -189,15 +189,15 @@
             const isSelected = index === selectedIndex;
 
             return `
-            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}" style="margin-bottom:1rem; padding-bottom:1rem; border-bottom:1px solid #ccc;">
+            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}" style="margin-bottom:1.25rem; padding-bottom:1rem; border-bottom:1px solid #ccc;">
                 <div>
                     <a href="/entries/${entry.id}" style="font-weight:bold;">${escapeHtml(title)}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                 </div>
-                <div class="muted" style="font-size:0.875rem;">
+                <div class="muted" style="font-size:0.875rem; margin-top:0.3rem;">
                     ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
                 </div>
-                <div style="margin-top:0.5rem;">
+                <div style="margin-top:0.4rem;">
                     <a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>
                     <a href="#" onclick="toggleStar(${entry.id}); return false;">[${isStarred ? 'unstar' : 'star'}]</a>
                     ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer">[original]</a>` : ''}

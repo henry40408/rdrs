@@ -30,6 +30,9 @@
         .form-group {
             margin-bottom: 1rem;
         }
+        .form-group-inline {
+            margin-bottom: 0;
+        }
         label {
             display: block;
             margin-bottom: 0.25rem;
@@ -276,6 +279,13 @@
         .kb-pending-indicator.visible {
             display: block;
         }
+        /* Search highlight */
+        .search-highlight {
+            background-color: #ffeb3b;
+            color: #111;
+            padding: 0 2px;
+            border-radius: 2px;
+        }
     </style>
     <script>
         // Global keyboard shortcut handler (defined early so child templates can use it)
@@ -415,6 +425,7 @@
                     html += '<tr><td>m</td><td>Toggle read/unread</td></tr>';
                     html += '<tr><td>s</td><td>Toggle star</td></tr>';
                     html += '<tr><td>r</td><td>Refresh list</td></tr>';
+                    html += '<tr><td>/</td><td>Focus search box</td></tr>';
                     html += '</table>';
                 } else if (this.pageType === 'entry') {
                     html += '<h3>Entry View</h3><table>';
