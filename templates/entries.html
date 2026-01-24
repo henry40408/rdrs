@@ -13,24 +13,24 @@
 <div style="display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-end;">
     <div class="form-group" style="margin-bottom:0;">
         <label for="filter-feed">Feed</label>
-        <select id="filter-feed" onchange="loadEntries()">
+        <select id="filter-feed" onchange="handleFilterChange()">
             <option value="">All Feeds</option>
         </select>
     </div>
     <div class="form-group" style="margin-bottom:0;">
         <label for="filter-category">Category</label>
-        <select id="filter-category" onchange="loadEntries()">
+        <select id="filter-category" onchange="handleFilterChange()">
             <option value="">All Categories</option>
         </select>
     </div>
     <div class="form-group" style="margin-bottom:0;">
         <label>
-            <input type="checkbox" id="filter-unread" onchange="loadEntries()"> Unread only
+            <input type="checkbox" id="filter-unread" onchange="handleFilterChange()"> Unread only
         </label>
     </div>
     <div class="form-group" style="margin-bottom:0;">
         <label>
-            <input type="checkbox" id="filter-starred" onchange="loadEntries()"> Starred only
+            <input type="checkbox" id="filter-starred" onchange="handleFilterChange()"> Starred only
         </label>
     </div>
 </div>
@@ -159,7 +159,7 @@
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                 </div>
                 <div class="muted" style="font-size:0.875rem;">
-                    ${escapeHtml(feedTitle)} &middot; ${escapeHtml(entry.category_name)}${date ? ` &middot; ${date}` : ''}
+                    <a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; ${date}` : ''}
                 </div>
                 <div style="margin-top:0.5rem;">
                     ${isRead
@@ -263,14 +263,52 @@
         return div.innerHTML;
     }
 
+    function updateURL() {
+        const params = new URLSearchParams();
+        const feedId = document.getElementById('filter-feed').value;
+        const categoryId = document.getElementById('filter-category').value;
+        const unreadOnly = document.getElementById('filter-unread').checked;
+        const starredOnly = document.getElementById('filter-starred').checked;
+        if (feedId) params.set('feed', feedId);
+        if (categoryId) params.set('category', categoryId);
+        if (unreadOnly) params.set('unread', '1');
+        if (starredOnly) params.set('starred', '1');
+        const newURL = params.toString() ? `/entries?${params.toString()}` : '/entries';
+        history.replaceState(null, '', newURL);
+    }
+
+    function handleFilterChange() {
+        updateURL();
+        loadEntries();
+    }
+
+    document.getElementById('entries-list').addEventListener('click', function(e) {
+        if (e.target.matches('[data-feed-id]')) {
+            e.preventDefault();
+            document.getElementById('filter-feed').value = e.target.dataset.feedId;
+            document.getElementById('filter-category').value = e.target.dataset.feedCategoryId;
+            handleFilterChange();
+        }
+        if (e.target.matches('[data-category-id]')) {
+            e.preventDefault();
+            document.getElementById('filter-category').value = e.target.dataset.categoryId;
+            document.getElementById('filter-feed').value = '';
+            handleFilterChange();
+        }
+    });
+
     // Initialize
     Promise.all([loadCategories(), loadFeeds()]).then(() => {
         // Check URL params
         const urlParams = new URLSearchParams(window.location.search);
         const feedId = urlParams.get('feed');
         const categoryId = urlParams.get('category');
+        const unreadOnly = urlParams.get('unread');
+        const starredOnly = urlParams.get('starred');
         if (feedId) document.getElementById('filter-feed').value = feedId;
         if (categoryId) document.getElementById('filter-category').value = categoryId;
+        if (unreadOnly) document.getElementById('filter-unread').checked = true;
+        if (starredOnly) document.getElementById('filter-starred').checked = true;
         loadEntries();
     });
 </script>
