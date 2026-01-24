@@ -227,6 +227,9 @@ pub async fn toggle_entry_star(
 pub struct MarkAllReadRequest {
     pub feed_id: Option<i64>,
     pub category_id: Option<i64>,
+    /// Mark entries older than this many days as read.
+    /// None means mark all entries.
+    pub older_than_days: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -244,6 +247,8 @@ pub async fn mark_all_read(
         .lock()
         .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
 
+    let older_than_days = body.older_than_days;
+
     let marked_count = if let Some(feed_id) = body.feed_id {
         // Verify feed belongs to user
         let f = feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
@@ -251,16 +256,16 @@ pub async fn mark_all_read(
         if cat.user_id != auth_user.user.id {
             return Err(AppError::FeedNotFound);
         }
-        entry::mark_all_read_by_feed(&conn, feed_id)?
+        entry::mark_all_read_by_feed(&conn, feed_id, older_than_days)?
     } else if let Some(category_id) = body.category_id {
         // Verify category belongs to user
         let cat = category::find_by_id(&conn, category_id)?.ok_or(AppError::CategoryNotFound)?;
         if cat.user_id != auth_user.user.id {
             return Err(AppError::CategoryNotFound);
         }
-        entry::mark_all_read_by_category(&conn, category_id)?
+        entry::mark_all_read_by_category(&conn, category_id, older_than_days)?
     } else {
-        entry::mark_all_read_by_user(&conn, auth_user.user.id)?
+        entry::mark_all_read_by_user(&conn, auth_user.user.id, older_than_days)?
     };
 
     Ok(Json(MarkAllReadResponse { marked_count }))
