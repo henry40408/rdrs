@@ -1,5 +1,12 @@
 # RDRS - Rust RSS Reader
 
+[![CI](https://github.com/henry40408/rdrs/actions/workflows/ci.yml/badge.svg)](https://github.com/henry40408/rdrs/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/henry40408/rdrs/graph/badge.svg)](https://codecov.io/gh/henry40408/rdrs)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
+[![Rust](https://img.shields.io/badge/rust-1.92%2B-blue.svg)](https://www.rust-lang.org/)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io-blue.svg)](https://ghcr.io/henry40408/rdrs)
+[![Casual Maintenance Intended](https://casuallymaintained.tech/badge.svg)](https://casuallymaintained.tech/)
+
 A self-hosted RSS/Atom feed reader built with Rust. Privacy-focused, lightweight, and designed for personal use.
 
 ## Features
@@ -112,7 +119,7 @@ The Dockerfile uses multi-stage builds with a distroless base image for minimal 
 
 ### Prerequisites
 
-- Rust 1.75+
+- Rust 1.92+
 - SQLite (bundled via rusqlite)
 
 ### Running Tests
