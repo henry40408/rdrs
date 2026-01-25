@@ -434,17 +434,16 @@ pub async fn summarize_entry(
         }
 
         // Check if entry has a link
-        let link = entry_with_feed
-            .entry
-            .link
-            .clone()
-            .ok_or_else(|| AppError::Validation("Entry has no link to summarize".to_string()))?;
+        let link =
+            entry_with_feed.entry.link.clone().ok_or_else(|| {
+                AppError::Validation("Entry has no link to summarize".to_string())
+            })?;
 
         // Get Kagi config
         let config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
-        let kagi = config.kagi.ok_or_else(|| {
-            AppError::Validation("Kagi is not configured".to_string())
-        })?;
+        let kagi = config
+            .kagi
+            .ok_or_else(|| AppError::Validation("Kagi is not configured".to_string()))?;
 
         if !kagi.is_configured() {
             return Err(AppError::Validation("Kagi is not configured".to_string()));

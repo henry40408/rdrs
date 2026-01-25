@@ -244,7 +244,13 @@ pub async fn user_settings_page(
         let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
         let kagi_lang = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
 
-        (epp, linkding_configured, api_url, kagi_configured, kagi_lang)
+        (
+            epp,
+            linkding_configured,
+            api_url,
+            kagi_configured,
+            kagi_lang,
+        )
     };
 
     (
