@@ -2,6 +2,7 @@
 name = "rdrs"
 version = "0.1.0"
 edition = "2021"
+description = "RSS Reader in Rust"
 
 [lib]
 name = "rdrs"

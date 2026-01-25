@@ -1,4 +1,4 @@
-# RDRS - Rust RSS Reader
+# RDRS - RSS Reader in Rust
 
 [![CI](https://github.com/henry40408/rdrs/actions/workflows/ci.yml/badge.svg)](https://github.com/henry40408/rdrs/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/henry40408/rdrs/graph/badge.svg)](https://codecov.io/gh/henry40408/rdrs)
