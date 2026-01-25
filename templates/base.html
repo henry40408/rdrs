@@ -5,6 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}RDRS{% endblock %}</title>
     <style>
+        :root {
+            --space-1: 0.25rem;   /* 4px */
+            --space-2: 0.5rem;    /* 8px */
+            --space-3: 0.75rem;   /* 12px */
+            --space-4: 1rem;      /* 16px */
+            --space-5: 1.25rem;   /* 20px */
+            --space-6: 1.5rem;    /* 24px */
+            --space-8: 2rem;      /* 32px */
+            --space-16: 4rem;     /* 64px */
+        }
         * {
             box-sizing: border-box;
             margin: 0;
@@ -194,6 +204,66 @@
         }
         .muted {
             color: #666;
+        }
+        /* Filter bar */
+        .filter-bar {
+            display: flex;
+            gap: var(--space-4);
+            flex-wrap: wrap;
+            align-items: flex-end;
+            margin-bottom: var(--space-4);
+        }
+        /* Entry item */
+        .entry-item {
+            margin-bottom: var(--space-5);
+            padding-bottom: var(--space-4);
+            border-bottom: 1px solid #ccc;
+        }
+        .entry-item-meta {
+            font-size: 0.875rem;
+            margin-top: var(--space-1);
+        }
+        .entry-item-actions {
+            margin-top: var(--space-2);
+        }
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+        .modal-content {
+            background: #fff;
+            max-width: 600px;
+            margin: var(--space-8) auto;
+            padding: var(--space-8);
+            border: 1px solid #111;
+        }
+        .modal-title {
+            font-size: 1rem;
+            font-weight: normal;
+            margin-bottom: var(--space-4);
+            border-bottom: 1px solid #111;
+            padding-bottom: var(--space-2);
+        }
+        .modal-actions {
+            display: flex;
+            gap: var(--space-2);
+            margin-top: var(--space-4);
+        }
+        /* Settings table header */
+        .settings-th {
+            text-align: left;
+            padding-right: var(--space-8);
+        }
+        /* Utilities */
+        .d-none {
+            display: none;
+        }
+        .ml-auto {
+            margin-left: auto;
         }
         nav {
             margin-bottom: 1.5rem;

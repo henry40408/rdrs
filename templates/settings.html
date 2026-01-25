@@ -10,13 +10,16 @@
 
 <h1>Settings</h1>
 
+<p>Version: <code>{{ git_version }}</code></p>
+
+<h2>Configuration</h2>
 <p class="muted">These settings are configured via environment variables and cannot be changed at runtime.</p>
 
-<h2>HTTP Client</h2>
+<h3>HTTP Client</h3>
 <table>
     <tbody>
         <tr>
-            <th style="text-align:left; width:200px;">User Agent</th>
+            <th class="settings-th" style="width:200px;">User Agent</th>
             <td>
                 <code>{{ user_agent }}</code>
                 {% if user_agent_is_default %}
@@ -29,11 +32,11 @@
     </tbody>
 </table>
 
-<h2>User Registration</h2>
+<h3>User Registration</h3>
 <table>
     <tbody>
         <tr>
-            <th style="text-align:left; width:200px;">Signup Enabled</th>
+            <th class="settings-th" style="width:200px;">Signup Enabled</th>
             <td>
                 {% if signup_enabled %}
                 <span style="color:green;">Yes</span>
@@ -43,7 +46,7 @@
             </td>
         </tr>
         <tr>
-            <th style="text-align:left;">Multi-User Mode</th>
+            <th class="settings-th">Multi-User Mode</th>
             <td>
                 {% if multi_user_enabled %}
                 <span style="color:green;">Yes</span>
@@ -55,14 +58,14 @@
     </tbody>
 </table>
 
-<h2>Environment Variables</h2>
+<h3>Environment Variables</h3>
 <p class="muted">Configure these environment variables to customize RDRS:</p>
 <table>
     <thead>
         <tr>
-            <th style="text-align:left;">Variable</th>
-            <th style="text-align:left;">Description</th>
-            <th style="text-align:left;">Default</th>
+            <th class="settings-th">Variable</th>
+            <th class="settings-th">Description</th>
+            <th class="settings-th">Default</th>
         </tr>
     </thead>
     <tbody>

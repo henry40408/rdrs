@@ -33,7 +33,7 @@
 
 <hr>
 
-<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-end;">
+<div class="filter-bar">
     <div class="form-group form-group-inline">
         <label for="filter-category">Filter by Category</label>
         <select id="filter-category" onchange="handleFilterChange()">
@@ -75,9 +75,9 @@
 </table>
 
 <!-- Import Modal -->
-<div id="import-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:1000;">
-    <div style="background:#fff; max-width:600px; margin:2rem auto; padding:2rem; border:1px solid #111;">
-        <h2 style="font-size:1rem; font-weight:normal; margin-bottom:1rem; border-bottom:1px solid #111; padding-bottom:0.5rem;">Import OPML</h2>
+<div id="import-modal" class="modal-overlay">
+    <div class="modal-content">
+        <h2 class="modal-title">Import OPML</h2>
         <form id="import-form" onsubmit="importOpml(event)">
             <div class="form-group">
                 <label for="import-file">Upload .opml file</label>
@@ -87,7 +87,7 @@
                 <label for="import-content">Or paste OPML content</label>
                 <textarea id="import-content" rows="10" style="width:100%; font-family:monospace; font-size:0.875rem;" placeholder="<?xml version=&quot;1.0&quot;?>&#10;<opml version=&quot;2.0&quot;>&#10;  ...&#10;</opml>"></textarea>
             </div>
-            <div style="display:flex; gap:0.5rem; margin-top:1rem;">
+            <div class="modal-actions">
                 <button type="submit" id="import-btn">[Import]</button>
                 <button type="button" onclick="closeImportModal()">[Cancel]</button>
             </div>
@@ -96,9 +96,9 @@
 </div>
 
 <!-- Edit Modal -->
-<div id="edit-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:1000;">
-    <div style="background:#fff; max-width:600px; margin:2rem auto; padding:2rem; border:1px solid #111;">
-        <h2 style="font-size:1rem; font-weight:normal; margin-bottom:1rem; border-bottom:1px solid #111; padding-bottom:0.5rem;">Edit Feed</h2>
+<div id="edit-modal" class="modal-overlay">
+    <div class="modal-content">
+        <h2 class="modal-title">Edit Feed</h2>
         <form id="edit-form" onsubmit="saveFeed(event)">
             <input type="hidden" id="edit-id">
             <div class="form-group">
@@ -141,7 +141,7 @@
                     </div>
                 </div>
             </details>
-            <div style="display:flex; gap:0.5rem; margin-top:1rem;">
+            <div class="modal-actions">
                 <button type="submit">[Save]</button>
                 <button type="button" onclick="closeEditModal()">[Cancel]</button>
             </div>
@@ -414,6 +414,16 @@
         document.getElementById('edit-modal').style.display = 'none';
     }
 
+    function showImportModal() {
+        document.getElementById('import-content').value = '';
+        document.getElementById('import-file').value = '';
+        document.getElementById('import-modal').style.display = 'block';
+    }
+
+    function closeImportModal() {
+        document.getElementById('import-modal').style.display = 'none';
+    }
+
     async function fetchMetadata() {
         const urlInput = document.getElementById('edit-url');
         const url = urlInput.value.trim();
@@ -557,16 +567,6 @@
             closeImportModal();
         }
     });
-
-    function showImportModal() {
-        document.getElementById('import-content').value = '';
-        document.getElementById('import-file').value = '';
-        document.getElementById('import-modal').style.display = 'block';
-    }
-
-    function closeImportModal() {
-        document.getElementById('import-modal').style.display = 'none';
-    }
 
     function loadOpmlFile(input) {
         const file = input.files[0];

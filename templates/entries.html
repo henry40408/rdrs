@@ -10,7 +10,7 @@
 
 <h1>Entries</h1>
 
-<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:1rem;">
+<div class="filter-bar">
     <div class="form-group form-group-inline">
         <label for="filter-feed">Feed</label>
         <select id="filter-feed" onchange="handleFilterChange()" style="width:14em;">
@@ -186,15 +186,15 @@
             }
 
             return `
-            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}" style="margin-bottom:1.25rem; padding-bottom:1rem; border-bottom:1px solid #ccc; ${isRead ? 'opacity:0.6;' : ''}">
+            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}"${isRead ? ' style="opacity:0.6;"' : ''}>
                 <div>
                     <a href="/entries/${entry.id}" style="font-weight:${isRead ? 'normal' : 'bold'};">${titleHtml}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                 </div>${contentSnippetHtml}
-                <div class="muted" style="font-size:0.875rem; margin-top:0.3rem;">
+                <div class="muted entry-item-meta">
                     ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
                 </div>
-                <div style="margin-top:0.4rem;">
+                <div class="entry-item-actions">
                     ${isRead
                         ? `<a href="#" onclick="markUnread(${entry.id}); return false;">[unread]</a>`
                         : `<a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>`
