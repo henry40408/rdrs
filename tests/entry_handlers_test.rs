@@ -525,10 +525,7 @@ async fn test_list_entries_with_search_no_results() {
     login(&app.server).await;
 
     // Search for non-existent content
-    let response = app
-        .server
-        .get("/api/entries?search=nonexistent12345")
-        .await;
+    let response = app.server.get("/api/entries?search=nonexistent12345").await;
     response.assert_status_ok();
 
     let body: serde_json::Value = response.json();
@@ -633,10 +630,7 @@ async fn test_get_category_with_data() {
     let (_user_id, cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
     login(&app.server).await;
 
-    let response = app
-        .server
-        .get(&format!("/api/categories/{}", cat_id))
-        .await;
+    let response = app.server.get(&format!("/api/categories/{}", cat_id)).await;
     response.assert_status_ok();
 
     let body: serde_json::Value = response.json();
@@ -674,10 +668,7 @@ async fn test_delete_category_with_data() {
     response.assert_status(StatusCode::NO_CONTENT);
 
     // Verify it's gone
-    let response = app
-        .server
-        .get(&format!("/api/categories/{}", cat_id))
-        .await;
+    let response = app.server.get(&format!("/api/categories/{}", cat_id)).await;
     response.assert_status_not_found();
 }
 
@@ -959,7 +950,10 @@ async fn test_cannot_get_other_user_feed() {
     login(&app.server).await;
 
     // Try to get other user's feed
-    let response = app.server.get(&format!("/api/feeds/{}", other_feed_id)).await;
+    let response = app
+        .server
+        .get(&format!("/api/feeds/{}", other_feed_id))
+        .await;
     response.assert_status_not_found();
 }
 
@@ -1076,7 +1070,10 @@ async fn test_cannot_fetch_full_content_other_user_entry() {
     // Try to fetch full content of other user's entry
     let response = app
         .server
-        .post(&format!("/api/entries/{}/fetch-full-content", other_entry_ids[0]))
+        .post(&format!(
+            "/api/entries/{}/fetch-full-content",
+            other_entry_ids[0]
+        ))
         .await;
     response.assert_status_not_found();
 }
@@ -1168,7 +1165,10 @@ async fn test_fetch_full_content_entry_no_link() {
     // Try to fetch full content of entry without link
     let response = app
         .server
-        .post(&format!("/api/entries/{}/fetch-full-content", no_link_entry_id))
+        .post(&format!(
+            "/api/entries/{}/fetch-full-content",
+            no_link_entry_id
+        ))
         .await;
     response.assert_status_bad_request();
 
