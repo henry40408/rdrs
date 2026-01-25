@@ -7,6 +7,7 @@ pub mod opml;
 pub mod readability;
 pub mod sanitize;
 pub mod save;
+pub mod summarize;
 
 pub use background::start_background_sync;
 pub use feed_discovery::{discover_feed, DiscoveredFeed};
@@ -16,3 +17,4 @@ pub use opml::{export_opml, parse_opml, OpmlFeed, OpmlOutline};
 pub use readability::{fetch_and_extract, ExtractedContent};
 pub use sanitize::sanitize_html;
 pub use save::{BookmarkData, LinkdingConfig, SaveResult, SaveServicesConfig};
+pub use summarize::KagiConfig;

@@ -15,8 +15,10 @@
 <script>
     const entryId = {{ entry_id }};
     const hasSaveServices = {{ has_save_services }};
+    const hasKagiConfigured = {{ has_kagi_configured }};
     let entryData = null;
     let neighbors = { prev_id: null, next_id: null };
+    let currentSummary = null;
 
     async function loadNeighbors() {
         try {
@@ -135,8 +137,19 @@
                 <button type="button" onclick="toggleStar()" id="star-btn">[${isStarred ? 'Unstar' : 'Star'}]</button>
                 <button type="button" onclick="markUnread()">[Mark Unread]</button>
                 ${data.link ? `<button type="button" onclick="fetchFullContent()" id="fetch-content-btn">[Fetch Full Content]</button>` : ''}
+                ${hasKagiConfigured && data.link ? `<button type="button" onclick="summarizeEntry()" id="summarize-btn">[Summarize]</button>` : ''}
                 ${hasSaveServices && data.link ? `<button type="button" onclick="saveEntry()" id="save-btn">[Save]</button>` : ''}
                 ${data.link ? `<a href="${escapeHtml(data.link)}" target="_blank" rel="noopener noreferrer" class="btn">[View Original]</a>` : ''}
+            </div>
+
+            <div id="summary-container" style="display: none;">
+                <div class="summary-box">
+                    <div class="summary-actions">
+                        <button type="button" onclick="copySummary()" id="copy-summary-btn">[Copy]</button>
+                        <button type="button" onclick="dismissSummary()">[Dismiss]</button>
+                    </div>
+                    <blockquote id="summary-content"></blockquote>
+                </div>
             </div>
 
             <hr>
@@ -176,6 +189,97 @@
             flash.success('Marked as unread.');
         } catch (err) {
             flash.error(err.message);
+        }
+    }
+
+    async function summarizeEntry() {
+        const btn = document.getElementById('summarize-btn');
+        if (!btn) return;
+
+        btn.textContent = '[Summarizing...]';
+        btn.disabled = true;
+
+        try {
+            const response = await fetch(`/api/entries/${entryId}/summarize`, {
+                method: 'POST'
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to summarize');
+            }
+
+            if (data.success && data.output_text) {
+                currentSummary = data.output_text;
+                showSummary(data.output_text);
+                btn.textContent = '[Summarize]';
+            } else {
+                throw new Error(data.error || 'No summary returned');
+            }
+        } catch (err) {
+            flash.error(err.message);
+            btn.textContent = '[Summarize]';
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    function showSummary(summaryText) {
+        const container = document.getElementById('summary-container');
+        const content = document.getElementById('summary-content');
+        if (container && content && entryData) {
+            const cleanTitle = sanitizeTitleForTiddlyWiki(decodeHtml(entryData.title) || 'Untitled');
+            const link = entryData.link || '';
+            const formattedText = `${cleanTitle}\n\n${link}\n\n${summaryText}`;
+            content.textContent = formattedText;
+            container.style.display = 'block';
+        }
+    }
+
+    function dismissSummary() {
+        const container = document.getElementById('summary-container');
+        if (container) {
+            container.style.display = 'none';
+        }
+        currentSummary = null;
+    }
+
+    function sanitizeTitleForTiddlyWiki(title) {
+        if (!title) return '';
+        // Remove characters that TiddlyWiki doesn't support
+        return title
+            .replace(/\[\[/g, '')  // Double brackets (links)
+            .replace(/\]\]/g, '')
+            .replace(/\[/g, '')    // Single brackets
+            .replace(/\]/g, '')
+            .replace(/\|/g, '')    // Pipe (link separator)
+            .replace(/\{/g, '')    // Curly braces (macros)
+            .replace(/\}/g, '')
+            .replace(/</g, '')     // Angle brackets (HTML)
+            .replace(/>/g, '')
+            .trim();
+    }
+
+    async function copySummary() {
+        if (!currentSummary || !entryData) return;
+
+        const cleanTitle = sanitizeTitleForTiddlyWiki(decodeHtml(entryData.title) || 'Untitled');
+        const link = entryData.link || '';
+
+        const formattedText = `${cleanTitle}\n\n${link}\n\n${currentSummary}`;
+
+        try {
+            await navigator.clipboard.writeText(formattedText);
+            const btn = document.getElementById('copy-summary-btn');
+            if (btn) {
+                btn.textContent = '[Copied!]';
+                setTimeout(() => {
+                    btn.textContent = '[Copy]';
+                }, 2000);
+            }
+        } catch (err) {
+            flash.error('Failed to copy to clipboard');
         }
     }
 
@@ -368,6 +472,15 @@
                         const saveBtn = document.getElementById('save-btn');
                         if (saveBtn && !saveBtn.disabled) {
                             saveEntry();
+                        }
+                    }
+                    return true;
+                case 'z':
+                    // Summarize with Kagi
+                    if (hasKagiConfigured && entryData && entryData.link) {
+                        const summarizeBtn = document.getElementById('summarize-btn');
+                        if (summarizeBtn && !summarizeBtn.disabled) {
+                            summarizeEntry();
                         }
                     }
                     return true;
@@ -592,6 +705,37 @@
     .entry-content em,
     .entry-content i {
         font-style: italic;
+    }
+
+    /* Summary box styles */
+    #summary-container {
+        margin-bottom: 1.5rem;
+    }
+
+    .summary-box {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        padding: 1rem;
+    }
+
+    .summary-actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .summary-box blockquote {
+        border-left: 4px solid #0066cc;
+        margin: 0;
+        padding: 0.5rem 0 0.5rem 1rem;
+        color: #333;
+        font-style: normal;
+        background: transparent;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 1rem;
+        line-height: 1.6;
+        white-space: pre-wrap;
     }
 </style>
 {% endblock %}

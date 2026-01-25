@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 pub use linkding::LinkdingConfig;
 
+use super::summarize::KagiConfig;
+
 /// Bookmark data to save to external services
 #[derive(Debug, Clone)]
 pub struct BookmarkData {
@@ -27,6 +29,8 @@ pub struct SaveResult {
 pub struct SaveServicesConfig {
     #[serde(default)]
     pub linkding: Option<LinkdingConfig>,
+    #[serde(default)]
+    pub kagi: Option<KagiConfig>,
     // Future services can be added here:
     // pub pocket: Option<PocketConfig>,
     // pub wallabag: Option<WallabagConfig>,

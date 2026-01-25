@@ -47,6 +47,14 @@ pub fn create_router(state: AppState) -> Router {
             "/api/user/settings/linkding",
             put(handlers::user::update_linkding_settings),
         )
+        .route(
+            "/api/user/settings/kagi",
+            get(handlers::user::get_kagi_settings),
+        )
+        .route(
+            "/api/user/settings/kagi",
+            put(handlers::user::update_kagi_settings),
+        )
         .route("/api/admin/users", get(handlers::admin::list_users))
         .route("/api/admin/users/{id}", put(handlers::admin::update_user))
         .route(
@@ -116,6 +124,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/entries/{id}/save",
             post(handlers::entry::save_to_services),
+        )
+        .route(
+            "/api/entries/{id}/summarize",
+            post(handlers::entry::summarize_entry),
         )
         .route(
             "/api/entries/{id}/neighbors",
