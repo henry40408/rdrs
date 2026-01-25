@@ -228,8 +228,11 @@
     function showSummary(summaryText) {
         const container = document.getElementById('summary-container');
         const content = document.getElementById('summary-content');
-        if (container && content) {
-            content.textContent = summaryText;
+        if (container && content && entryData) {
+            const cleanTitle = sanitizeTitleForTiddlyWiki(decodeHtml(entryData.title) || 'Untitled');
+            const link = entryData.link || '';
+            const formattedText = `${cleanTitle}\n\n${link}\n\n${summaryText}`;
+            content.textContent = formattedText;
             container.style.display = 'block';
         }
     }

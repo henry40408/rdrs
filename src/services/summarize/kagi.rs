@@ -20,10 +20,16 @@ impl KagiConfig {
     }
 }
 
+/// Output data from Kagi Summary API
+#[derive(Debug, Deserialize)]
+struct KagiOutputData {
+    markdown: Option<String>,
+}
+
 /// Response from Kagi Summary API
 #[derive(Debug, Deserialize)]
 struct KagiSummaryResponse {
-    output_text: Option<String>,
+    output_data: Option<KagiOutputData>,
     error: Option<String>,
 }
 
@@ -85,10 +91,19 @@ pub async fn summarize_url(config: &KagiConfig, url: &str) -> AppResult<Summariz
                 output_text: None,
                 error: Some(error),
             })
-        } else if let Some(output) = body.output_text {
+        } else if let Some(markdown) = body.output_data.and_then(|d| d.markdown) {
+            // Remove "Title: [website title]\n\n" prefix if present
+            let cleaned = if markdown.starts_with("Title: ") {
+                markdown
+                    .find("\n\n")
+                    .map(|pos| markdown[pos + 2..].to_string())
+                    .unwrap_or(markdown)
+            } else {
+                markdown
+            };
             Ok(SummarizeResult {
                 success: true,
-                output_text: Some(output),
+                output_text: Some(cleaned),
                 error: None,
             })
         } else {
