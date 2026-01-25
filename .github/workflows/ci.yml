@@ -63,8 +63,10 @@ jobs:
       - name: Generate coverage
         run: cargo llvm-cov --lcov --output-path lcov.info
 
-      - name: Upload to Codecov
+      - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: henry40408/rdrs
           files: lcov.info
           fail_ci_if_error: true
