@@ -225,4 +225,27 @@ mod tests {
         );
         assert_eq!(ChallengeType::from_str("invalid"), None);
     }
+
+    #[test]
+    fn test_cleanup_expired() {
+        let conn = setup_db();
+
+        // Create an expired challenge by inserting directly with past expiry
+        conn.execute(
+            "INSERT INTO webauthn_challenge (challenge, challenge_type, state_data, expires_at) VALUES (?1, ?2, ?3, datetime('now', '-1 hour'))",
+            params![vec![1u8, 2, 3], "registration", "{}"],
+        )
+        .unwrap();
+
+        // Create a valid challenge
+        create_challenge(&conn, &[4, 5, 6], None, ChallengeType::Registration, "{}").unwrap();
+
+        // Cleanup should delete 1 expired challenge
+        let deleted = cleanup_expired(&conn).unwrap();
+        assert_eq!(deleted, 1);
+
+        // Valid challenge should still exist
+        let found = find_and_delete_challenge(&conn, None, ChallengeType::Registration);
+        assert!(found.is_ok());
+    }
 }

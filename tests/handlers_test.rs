@@ -1307,3 +1307,150 @@ async fn test_create_feed_invalid_category() {
 
     response.assert_status_not_found();
 }
+
+// ============================================================================
+// Passkey Handler Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_passkey_register_start_unauthorized() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.post("/api/passkey/register/start").await;
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_passkey_register_start_authorized() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server.post("/api/passkey/register/start").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert!(body["options"]["publicKey"]["challenge"].is_string());
+    assert!(body["options"]["publicKey"]["user"]["name"].is_string());
+}
+
+#[tokio::test]
+async fn test_passkey_register_finish_unauthorized() {
+    let server = create_test_server(default_test_config());
+
+    let response = server
+        .post("/api/passkey/register/finish")
+        .json(&json!({
+            "name": "Test Passkey",
+            "credential": {}
+        }))
+        .await;
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_passkey_auth_start_no_passkeys() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.post("/api/passkey/auth/start").await;
+    response.assert_status_unauthorized();
+
+    let body: serde_json::Value = response.json();
+    assert!(body["error"].as_str().unwrap().contains("No passkeys"));
+}
+
+#[tokio::test]
+async fn test_passkey_auth_finish_no_challenge() {
+    let server = create_test_server(default_test_config());
+
+    let response = server
+        .post("/api/passkey/auth/finish")
+        .json(&json!({
+            "credential": {
+                "id": "dGVzdA",
+                "rawId": "dGVzdA",
+                "type": "public-key",
+                "response": {
+                    "authenticatorData": "dGVzdA",
+                    "clientDataJSON": "dGVzdA",
+                    "signature": "dGVzdA"
+                }
+            }
+        }))
+        .await;
+    response.assert_status_bad_request();
+
+    let body: serde_json::Value = response.json();
+    assert!(body["error"].as_str().unwrap().contains("Challenge"));
+}
+
+#[tokio::test]
+async fn test_list_passkeys_unauthorized() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/api/passkeys").await;
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_list_passkeys_empty() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server.get("/api/passkeys").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["passkeys"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn test_rename_passkey_unauthorized() {
+    let server = create_test_server(default_test_config());
+
+    let response = server
+        .put("/api/passkeys/1")
+        .json(&json!({ "name": "New Name" }))
+        .await;
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_rename_passkey_not_found() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .put("/api/passkeys/9999")
+        .json(&json!({ "name": "New Name" }))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_rename_passkey_empty_name() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .put("/api/passkeys/1")
+        .json(&json!({ "name": "" }))
+        .await;
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn test_delete_passkey_unauthorized() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.delete("/api/passkeys/1").await;
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_delete_passkey_not_found() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server.delete("/api/passkeys/9999").await;
+    response.assert_status_not_found();
+}

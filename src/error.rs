@@ -442,6 +442,42 @@ mod tests {
         assert!(body.contains("Internal server error"));
     }
 
+    #[tokio::test]
+    async fn test_passkey_not_found_response() {
+        let err = AppError::PasskeyNotFound;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Passkey not found"));
+    }
+
+    #[tokio::test]
+    async fn test_passkey_registration_failed_response() {
+        let err = AppError::PasskeyRegistrationFailed("Invalid attestation".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Invalid attestation"));
+    }
+
+    #[tokio::test]
+    async fn test_passkey_authentication_failed_response() {
+        let err = AppError::PasskeyAuthenticationFailed("Signature mismatch".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Signature mismatch"));
+    }
+
+    #[tokio::test]
+    async fn test_challenge_not_found_response() {
+        let err = AppError::ChallengeNotFound;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Challenge not found"));
+    }
+
     #[test]
     fn test_error_display() {
         assert_eq!(

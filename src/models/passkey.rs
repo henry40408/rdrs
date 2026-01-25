@@ -244,4 +244,37 @@ mod tests {
         let result = delete_passkey(&conn, passkey.id, user2.id);
         assert!(matches!(result, Err(AppError::PasskeyNotFound)));
     }
+
+    #[test]
+    fn test_get_all_passkeys() {
+        let conn = setup_db();
+        let user1 = user::create_user(&conn, "user1", "hash", Role::User).unwrap();
+        let user2 = user::create_user(&conn, "user2", "hash", Role::User).unwrap();
+
+        create_passkey(&conn, user1.id, &[1], &[1], 0, "User1 Passkey", None).unwrap();
+        create_passkey(&conn, user2.id, &[2], &[2], 0, "User2 Passkey", None).unwrap();
+
+        let all_passkeys = get_all_passkeys(&conn).unwrap();
+        assert_eq!(all_passkeys.len(), 2);
+    }
+
+    #[test]
+    fn test_rename_passkey_wrong_user() {
+        let conn = setup_db();
+        let user1 = user::create_user(&conn, "user1", "hash", Role::User).unwrap();
+        let user2 = user::create_user(&conn, "user2", "hash", Role::User).unwrap();
+
+        let passkey = create_passkey(&conn, user1.id, &[1], &[1], 0, "Passkey", None).unwrap();
+
+        let result = rename_passkey(&conn, passkey.id, user2.id, "New Name");
+        assert!(matches!(result, Err(AppError::PasskeyNotFound)));
+    }
+
+    #[test]
+    fn test_find_by_credential_id_not_found() {
+        let conn = setup_db();
+
+        let result = find_by_credential_id(&conn, &[99, 99, 99]).unwrap();
+        assert!(result.is_none());
+    }
 }
