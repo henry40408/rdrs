@@ -147,3 +147,299 @@ impl IntoResponse for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_body_util::BodyExt;
+
+    async fn get_response_body(response: Response) -> String {
+        let body = response.into_body();
+        let bytes = body.collect().await.unwrap().to_bytes();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_database_error_response() {
+        let err = AppError::Database(rusqlite::Error::QueryReturnedNoRows);
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Database error"));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_credentials_response() {
+        let err = AppError::InvalidCredentials;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Invalid credentials"));
+    }
+
+    #[tokio::test]
+    async fn test_user_not_found_response() {
+        let err = AppError::UserNotFound;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = get_response_body(response).await;
+        assert!(body.contains("User not found"));
+    }
+
+    #[tokio::test]
+    async fn test_username_exists_response() {
+        let err = AppError::UsernameExists;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Username already exists"));
+    }
+
+    #[tokio::test]
+    async fn test_registration_not_allowed_response() {
+        let err = AppError::RegistrationNotAllowed;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Registration not allowed"));
+    }
+
+    #[tokio::test]
+    async fn test_user_disabled_response() {
+        let err = AppError::UserDisabled;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = get_response_body(response).await;
+        assert!(body.contains("User is disabled"));
+    }
+
+    #[tokio::test]
+    async fn test_unauthorized_response() {
+        let err = AppError::Unauthorized;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Unauthorized"));
+    }
+
+    #[tokio::test]
+    async fn test_forbidden_response() {
+        let err = AppError::Forbidden;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Forbidden"));
+    }
+
+    #[tokio::test]
+    async fn test_cannot_modify_self_response() {
+        let err = AppError::CannotModifySelf;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Cannot modify self"));
+    }
+
+    #[tokio::test]
+    async fn test_already_masquerading_response() {
+        let err = AppError::AlreadyMasquerading;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Already masquerading"));
+    }
+
+    #[tokio::test]
+    async fn test_not_masquerading_response() {
+        let err = AppError::NotMasquerading;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Not masquerading"));
+    }
+
+    #[tokio::test]
+    async fn test_category_not_found_response() {
+        let err = AppError::CategoryNotFound;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Category not found"));
+    }
+
+    #[tokio::test]
+    async fn test_category_exists_response() {
+        let err = AppError::CategoryExists;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Category already exists"));
+    }
+
+    #[tokio::test]
+    async fn test_feed_not_found_response() {
+        let err = AppError::FeedNotFound;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Feed not found"));
+    }
+
+    #[tokio::test]
+    async fn test_feed_exists_response() {
+        let err = AppError::FeedExists;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Feed already exists"));
+    }
+
+    #[tokio::test]
+    async fn test_entry_not_found_response() {
+        let err = AppError::EntryNotFound;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Entry not found"));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_url_response() {
+        let err = AppError::InvalidUrl;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Invalid URL"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_error_response() {
+        let err = AppError::FetchError("Connection timeout".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Connection timeout"));
+    }
+
+    #[tokio::test]
+    async fn test_no_feed_found_response() {
+        let err = AppError::NoFeedFound;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("No feed found at URL"));
+    }
+
+    #[tokio::test]
+    async fn test_feed_parse_error_response() {
+        let err = AppError::FeedParseError("Invalid XML".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Invalid XML"));
+    }
+
+    #[tokio::test]
+    async fn test_validation_error_response() {
+        let err = AppError::Validation("Name is required".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Name is required"));
+    }
+
+    #[tokio::test]
+    async fn test_opml_parse_error_response() {
+        let err = AppError::OpmlParseError("Invalid OPML structure".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Invalid OPML structure"));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_image_url_response() {
+        let err = AppError::InvalidImageUrl;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Invalid image URL"));
+    }
+
+    #[tokio::test]
+    async fn test_image_fetch_error_response() {
+        let err = AppError::ImageFetchError("404 Not Found".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body = get_response_body(response).await;
+        assert!(body.contains("404 Not Found"));
+    }
+
+    #[tokio::test]
+    async fn test_image_too_large_response() {
+        let err = AppError::ImageTooLarge;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Image too large"));
+    }
+
+    #[tokio::test]
+    async fn test_unsupported_image_type_response() {
+        let err = AppError::UnsupportedImageType;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Unsupported image type"));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_signature_response() {
+        let err = AppError::InvalidSignature;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Invalid signature"));
+    }
+
+    #[tokio::test]
+    async fn test_not_found_response() {
+        let err = AppError::NotFound("Resource not found".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Resource not found"));
+    }
+
+    #[tokio::test]
+    async fn test_internal_error_response() {
+        let err = AppError::Internal("Something went wrong".to_string());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Internal server error"));
+    }
+
+    #[test]
+    fn test_error_display() {
+        assert_eq!(
+            format!("{}", AppError::InvalidCredentials),
+            "Invalid credentials"
+        );
+        assert_eq!(
+            format!("{}", AppError::FetchError("timeout".to_string())),
+            "Failed to fetch: timeout"
+        );
+        assert_eq!(
+            format!("{}", AppError::Validation("invalid".to_string())),
+            "Validation error: invalid"
+        );
+    }
+
+    #[test]
+    fn test_error_from_rusqlite() {
+        let sqlite_err = rusqlite::Error::QueryReturnedNoRows;
+        let app_err: AppError = sqlite_err.into();
+        assert!(matches!(app_err, AppError::Database(_)));
+    }
+}

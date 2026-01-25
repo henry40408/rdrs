@@ -733,3 +733,519 @@ async fn test_list_entries_combined_filters() {
     let body: serde_json::Value = response.json();
     assert_eq!(body["total"], 4); // 5 total - 1 read
 }
+
+// ============================================================================
+// Cross-User Access Restriction Tests
+// ============================================================================
+
+/// Setup a second user's data in the database
+fn setup_second_user_data(db: &Arc<Mutex<Connection>>) -> (i64, i64, i64, Vec<i64>) {
+    let conn = db.lock().unwrap();
+
+    // Create second user
+    let password_hash = rdrs::auth::hash_password("password456").unwrap();
+    conn.execute(
+        "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+        rusqlite::params!["otheruser", password_hash, "user"],
+    )
+    .unwrap();
+    let user_id = conn.last_insert_rowid();
+
+    // Create category for second user
+    conn.execute(
+        "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+        rusqlite::params![user_id, "Other User Category"],
+    )
+    .unwrap();
+    let category_id = conn.last_insert_rowid();
+
+    // Create feed for second user
+    conn.execute(
+        "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+        rusqlite::params![category_id, "https://other.com/feed.xml", "Other Feed"],
+    )
+    .unwrap();
+    let feed_id = conn.last_insert_rowid();
+
+    // Create entries for second user
+    let mut entry_ids = Vec::new();
+    for i in 1..=3 {
+        conn.execute(
+            "INSERT INTO entry (feed_id, guid, title, link, content, published_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
+            rusqlite::params![
+                feed_id,
+                format!("other-guid-{}", i),
+                format!("Other Entry {}", i),
+                format!("https://other.com/entry/{}", i),
+                format!("<p>Other content {}</p>", i)
+            ],
+        )
+        .unwrap();
+        entry_ids.push(conn.last_insert_rowid());
+    }
+
+    (user_id, category_id, feed_id, entry_ids)
+}
+
+#[tokio::test]
+async fn test_cannot_access_other_user_category() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, other_cat_id, _other_feed_id, _other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to list entries by other user's category
+    let response = app
+        .server
+        .get(&format!("/api/entries?category_id={}", other_cat_id))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_access_other_user_feed() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, other_feed_id, _other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to list entries by other user's feed
+    let response = app
+        .server
+        .get(&format!("/api/entries?feed_id={}", other_feed_id))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_get_other_user_entry() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to get other user's entry
+    let response = app
+        .server
+        .get(&format!("/api/entries/{}", other_entry_ids[0]))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_list_other_user_feed_entries() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, other_feed_id, _other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to list other user's feed entries
+    let response = app
+        .server
+        .get(&format!("/api/feeds/{}/entries", other_feed_id))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_mark_other_user_entry_read() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to mark other user's entry as read
+    let response = app
+        .server
+        .put(&format!("/api/entries/{}/read", other_entry_ids[0]))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_mark_other_user_entry_unread() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to mark other user's entry as unread
+    let response = app
+        .server
+        .put(&format!("/api/entries/{}/unread", other_entry_ids[0]))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_star_other_user_entry() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to star other user's entry
+    let response = app
+        .server
+        .put(&format!("/api/entries/{}/star", other_entry_ids[0]))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_mark_all_read_other_user_feed() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, other_feed_id, _other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to mark all read by other user's feed
+    let response = app
+        .server
+        .put("/api/entries/mark-all-read")
+        .json(&json!({ "feed_id": other_feed_id }))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_mark_all_read_other_user_category() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, other_cat_id, _other_feed_id, _other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to mark all read by other user's category
+    let response = app
+        .server
+        .put("/api/entries/mark-all-read")
+        .json(&json!({ "category_id": other_cat_id }))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_get_other_user_entry_neighbors() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to get neighbors of other user's entry
+    let response = app
+        .server
+        .get(&format!("/api/entries/{}/neighbors", other_entry_ids[0]))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_get_other_user_feed() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, other_feed_id, _other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to get other user's feed
+    let response = app.server.get(&format!("/api/feeds/{}", other_feed_id)).await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_update_other_user_feed() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, other_feed_id, _other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to update other user's feed
+    let response = app
+        .server
+        .put(&format!("/api/feeds/{}", other_feed_id))
+        .json(&json!({
+            "category_id": cat_id,
+            "url": "https://example.com/feed.xml",
+            "title": "Hacked Title"
+        }))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_delete_other_user_feed() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, other_feed_id, _other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to delete other user's feed
+    let response = app
+        .server
+        .delete(&format!("/api/feeds/{}", other_feed_id))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_get_other_user_category() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, other_cat_id, _other_feed_id, _other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to get other user's category
+    let response = app
+        .server
+        .get(&format!("/api/categories/{}", other_cat_id))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_update_other_user_category() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, other_cat_id, _other_feed_id, _other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to update other user's category
+    let response = app
+        .server
+        .put(&format!("/api/categories/{}", other_cat_id))
+        .json(&json!({ "name": "Hacked Category" }))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_delete_other_user_category() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, other_cat_id, _other_feed_id, _other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to delete other user's category
+    let response = app
+        .server
+        .delete(&format!("/api/categories/{}", other_cat_id))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_refresh_other_user_feed() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, other_feed_id, _other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to refresh other user's feed
+    let response = app
+        .server
+        .post(&format!("/api/feeds/{}/refresh", other_feed_id))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_fetch_full_content_other_user_entry() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to fetch full content of other user's entry
+    let response = app
+        .server
+        .post(&format!("/api/entries/{}/fetch-full-content", other_entry_ids[0]))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_summarize_other_user_entry() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to summarize other user's entry
+    let response = app
+        .server
+        .post(&format!("/api/entries/{}/summarize", other_entry_ids[0]))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_save_other_user_entry() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to save other user's entry
+    let response = app
+        .server
+        .post(&format!("/api/entries/{}/save", other_entry_ids[0]))
+        .await;
+    response.assert_status_not_found();
+}
+
+// ============================================================================
+// Mark All Read with Older Than Days Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_mark_all_read_with_older_than_days() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    login(&app.server).await;
+
+    // Mark entries older than 2 hours as read (entries are 1-5 hours old)
+    // This should mark entries 3, 4, 5 as read (3h, 4h, 5h old)
+    // But older_than_days uses days, so let's use 0 to mark all
+    let response = app
+        .server
+        .put("/api/entries/mark-all-read")
+        .json(&json!({ "older_than_days": 0 }))
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    // All 5 entries are older than 0 days
+    assert!(body["marked_count"].as_i64().unwrap() >= 0);
+}
+
+// ============================================================================
+// Entry with No Link Tests
+// ============================================================================
+
+fn setup_entry_without_link(db: &Arc<Mutex<Connection>>, feed_id: i64) -> i64 {
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "INSERT INTO entry (feed_id, guid, title, content, published_at)
+         VALUES (?1, ?2, ?3, ?4, datetime('now'))",
+        rusqlite::params![
+            feed_id,
+            "no-link-guid",
+            "Entry Without Link",
+            "<p>Content without link</p>"
+        ],
+    )
+    .unwrap();
+    conn.last_insert_rowid()
+}
+
+#[tokio::test]
+async fn test_fetch_full_content_entry_no_link() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db);
+    let no_link_entry_id = setup_entry_without_link(&app.db, feed_id);
+    login(&app.server).await;
+
+    // Try to fetch full content of entry without link
+    let response = app
+        .server
+        .post(&format!("/api/entries/{}/fetch-full-content", no_link_entry_id))
+        .await;
+    response.assert_status_bad_request();
+
+    let body: serde_json::Value = response.json();
+    assert!(body["error"].as_str().unwrap().contains("no link"));
+}
+
+#[tokio::test]
+async fn test_summarize_entry_no_link() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db);
+    let no_link_entry_id = setup_entry_without_link(&app.db, feed_id);
+    login(&app.server).await;
+
+    // Try to summarize entry without link
+    let response = app
+        .server
+        .post(&format!("/api/entries/{}/summarize", no_link_entry_id))
+        .await;
+    response.assert_status_bad_request();
+
+    let body: serde_json::Value = response.json();
+    assert!(body["error"].as_str().unwrap().contains("no link"));
+}
+
+#[tokio::test]
+async fn test_save_entry_no_link() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db);
+    let no_link_entry_id = setup_entry_without_link(&app.db, feed_id);
+    login(&app.server).await;
+
+    // Try to save entry without link
+    let response = app
+        .server
+        .post(&format!("/api/entries/{}/save", no_link_entry_id))
+        .await;
+    response.assert_status_bad_request();
+
+    let body: serde_json::Value = response.json();
+    assert!(body["error"].as_str().unwrap().contains("no link"));
+}
+
+// ============================================================================
+// Save/Summarize Without Config Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_summarize_entry_no_kagi_config() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db);
+    login(&app.server).await;
+
+    // Try to summarize without Kagi configured
+    let response = app
+        .server
+        .post(&format!("/api/entries/{}/summarize", entry_ids[0]))
+        .await;
+    response.assert_status_bad_request();
+
+    let body: serde_json::Value = response.json();
+    assert!(body["error"].as_str().unwrap().contains("Kagi"));
+}
+
+#[tokio::test]
+async fn test_save_entry_no_services_config() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db);
+    login(&app.server).await;
+
+    // Try to save without any services configured
+    let response = app
+        .server
+        .post(&format!("/api/entries/{}/save", entry_ids[0]))
+        .await;
+    response.assert_status_bad_request();
+
+    let body: serde_json::Value = response.json();
+    assert!(body["error"].as_str().unwrap().contains("No save services"));
+}

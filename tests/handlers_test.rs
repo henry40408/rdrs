@@ -978,3 +978,327 @@ async fn test_update_category_with_whitespace_name() {
     let body: serde_json::Value = response.json();
     assert_eq!(body["name"], "Updated");
 }
+
+// ============================================================================
+// Additional OPML Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_export_opml_with_feeds() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // Import feeds to create data
+    let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+    <body>
+        <outline text="ExportTestCategory">
+            <outline type="rss" text="Export Test Feed" xmlUrl="https://export.example.com/feed.xml"/>
+        </outline>
+    </body>
+</opml>"#;
+
+    server
+        .post("/api/opml/import")
+        .json(&json!({ "content": opml_content }))
+        .await
+        .assert_status_ok();
+
+    let response = server.get("/api/opml/export").await;
+    response.assert_status_ok();
+
+    let body = response.text();
+    assert!(body.contains("ExportTestCategory"));
+    assert!(body.contains("export.example.com"));
+}
+
+#[tokio::test]
+async fn test_export_opml_unauthorized() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/api/opml/export").await;
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_import_opml_unauthorized() {
+    let server = create_test_server(default_test_config());
+
+    let response = server
+        .post("/api/opml/import")
+        .json(&json!({ "content": "<opml></opml>" }))
+        .await;
+
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_import_opml_multiple_categories() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+    <head><title>Subscriptions</title></head>
+    <body>
+        <outline text="MultiTech" title="MultiTech">
+            <outline type="rss" text="Feed 1" xmlUrl="https://multi.example.com/feed1.xml"/>
+        </outline>
+        <outline text="MultiNews" title="MultiNews">
+            <outline type="rss" text="Feed 2" xmlUrl="https://multi.example.com/feed2.xml"/>
+            <outline type="rss" text="Feed 3" xmlUrl="https://multi.example.com/feed3.xml"/>
+        </outline>
+    </body>
+</opml>"#;
+
+    let response = server
+        .post("/api/opml/import")
+        .json(&json!({ "content": opml_content }))
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["categories_created"], 2);
+    assert_eq!(body["feeds_created"], 3);
+}
+
+// ============================================================================
+// Additional Feed Icon Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_get_feed_icon_unauthorized() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/api/feeds/1/icon").await;
+    response.assert_status_unauthorized();
+}
+
+// ============================================================================
+// Move Feed Between Categories Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_move_feed_to_different_category() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // Import a feed to create it
+    let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+    <body>
+        <outline text="MoveCategory1">
+            <outline type="rss" text="Move Test Feed" xmlUrl="https://move.example.com/feed.xml"/>
+        </outline>
+    </body>
+</opml>"#;
+
+    server
+        .post("/api/opml/import")
+        .json(&json!({ "content": opml_content }))
+        .await
+        .assert_status_ok();
+
+    // Get feeds to find the feed ID
+    let response = server.get("/api/feeds").await;
+    let feeds: Vec<serde_json::Value> = response.json();
+    let feed_id = feeds[0]["id"].as_i64().unwrap();
+    let original_cat_id = feeds[0]["category_id"].as_i64().unwrap();
+
+    // Create new category
+    let new_cat_id = create_category(&server, "MoveNewCategory").await;
+
+    // Update feed to move to new category
+    let response = server
+        .put(&format!("/api/feeds/{}", feed_id))
+        .json(&json!({
+            "category_id": new_cat_id,
+            "url": "https://move.example.com/feed.xml",
+            "title": "Move Test Feed"
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["category_id"], new_cat_id);
+    assert_ne!(body["category_id"], original_cat_id);
+}
+
+#[tokio::test]
+async fn test_update_feed_to_other_user_category() {
+    let server = create_test_server(default_test_config());
+
+    // User 1 creates a category
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "movefeeduser1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({
+            "username": "movefeeduser1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let user1_cat_id = create_category(&server, "MoveFeedUser1 Category").await;
+
+    // Logout user1
+    server.delete("/api/session").await.assert_status_ok();
+
+    // User 2 creates a category
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "movefeeduser2",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({
+            "username": "movefeeduser2",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let _user2_cat_id = create_category(&server, "MoveFeedUser2 Category").await;
+
+    // Import a feed for user2
+    server
+        .post("/api/opml/import")
+        .json(&json!({ "content": r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+    <body>
+        <outline text="MoveFeedUser2 Category">
+            <outline type="rss" text="User2 Move Feed" xmlUrl="https://movefeeduser2.example.com/feed.xml"/>
+        </outline>
+    </body>
+</opml>"# }))
+        .await
+        .assert_status_ok();
+
+    // Get user2's feed ID
+    let response = server.get("/api/feeds").await;
+    let feeds: Vec<serde_json::Value> = response.json();
+    let feed_id = feeds[0]["id"].as_i64().unwrap();
+
+    // User 2 tries to move their feed to User 1's category - should fail
+    let response = server
+        .put(&format!("/api/feeds/{}", feed_id))
+        .json(&json!({
+            "category_id": user1_cat_id,
+            "url": "https://movefeeduser2.example.com/feed.xml",
+            "title": "User2 Move Feed"
+        }))
+        .await;
+
+    response.assert_status_not_found();
+}
+
+// ============================================================================
+// Fetch Metadata Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_fetch_metadata_empty_url() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/api/feeds/fetch-metadata")
+        .json(&json!({ "url": "" }))
+        .await;
+
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn test_fetch_metadata_whitespace_url() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/api/feeds/fetch-metadata")
+        .json(&json!({ "url": "   " }))
+        .await;
+
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn test_fetch_metadata_unauthorized() {
+    let server = create_test_server(default_test_config());
+
+    let response = server
+        .post("/api/feeds/fetch-metadata")
+        .json(&json!({ "url": "https://example.com" }))
+        .await;
+
+    response.assert_status_unauthorized();
+}
+
+// ============================================================================
+// Create Feed Validation Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_create_feed_empty_url() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let cat_id = create_category(&server, "Test").await;
+
+    let response = server
+        .post("/api/feeds")
+        .json(&json!({
+            "url": "",
+            "category_id": cat_id
+        }))
+        .await;
+
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn test_create_feed_whitespace_url() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let cat_id = create_category(&server, "Test").await;
+
+    let response = server
+        .post("/api/feeds")
+        .json(&json!({
+            "url": "   ",
+            "category_id": cat_id
+        }))
+        .await;
+
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn test_create_feed_invalid_category() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/api/feeds")
+        .json(&json!({
+            "url": "https://example.com/feed.xml",
+            "category_id": 9999
+        }))
+        .await;
+
+    response.assert_status_not_found();
+}

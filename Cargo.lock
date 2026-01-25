@@ -1682,6 +1682,7 @@ dependencies = [
  "dateparser",
  "feed-rs",
  "hmac",
+ "http-body-util",
  "quick-xml",
  "rand 0.8.5",
  "readability",
