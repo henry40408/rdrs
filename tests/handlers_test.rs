@@ -11,9 +11,14 @@ use std::sync::{Arc, Mutex};
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
-use rdrs::{auth, create_router, db, AppState, Config};
+use rdrs::{auth, create_router, db, AppState, Config, Role};
 use rusqlite::Connection;
 use serde_json::json;
+
+struct TestApp {
+    server: TestServer,
+    db: Arc<Mutex<Connection>>,
+}
 
 fn create_test_server(config: Config) -> TestServer {
     let conn = Connection::open_in_memory().unwrap();
@@ -28,6 +33,24 @@ fn create_test_server(config: Config) -> TestServer {
 
     let app = create_router(state);
     TestServer::builder().save_cookies().build(app).unwrap()
+}
+
+fn create_test_app(config: Config) -> TestApp {
+    let conn = Connection::open_in_memory().unwrap();
+    db::init_db(&conn).unwrap();
+
+    let db = Arc::new(Mutex::new(conn));
+    let webauthn = auth::create_webauthn(&config).unwrap();
+    let state = AppState {
+        db: db.clone(),
+        config: Arc::new(config),
+        webauthn: Arc::new(webauthn),
+    };
+
+    let app = create_router(state);
+    let server = TestServer::builder().save_cookies().build(app).unwrap();
+
+    TestApp { server, db }
 }
 
 fn default_test_config() -> Config {
@@ -1453,4 +1476,228 @@ async fn test_delete_passkey_not_found() {
 
     let response = server.delete("/api/passkeys/9999").await;
     response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_passkey_auth_start_with_invalid_passkey_data() {
+    let app = create_test_app(default_test_config());
+
+    // Create user and passkey with invalid public_key JSON
+    {
+        let conn = app.db.lock().unwrap();
+        let password_hash = auth::hash_password("password123").unwrap();
+        conn.execute(
+            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["testuser", password_hash, Role::User.as_str()],
+        )
+        .unwrap();
+        let user_id = conn.last_insert_rowid();
+
+        // Insert passkey with invalid JSON in public_key
+        conn.execute(
+            "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![user_id, vec![1u8, 2, 3], b"invalid json", 0, "Test Passkey"],
+        )
+        .unwrap();
+    }
+
+    let response = app.server.post("/api/passkey/auth/start").await;
+    response.assert_status_unauthorized();
+
+    let body: serde_json::Value = response.json();
+    assert!(body["error"]
+        .as_str()
+        .unwrap()
+        .contains("No valid passkeys"));
+}
+
+#[tokio::test]
+async fn test_passkey_register_finish_empty_name() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // First start registration to create a challenge
+    server.post("/api/passkey/register/start").await;
+
+    // Try to finish with empty name - this should fail validation before checking credential
+    let response = server
+        .post("/api/passkey/register/finish")
+        .json(&json!({
+            "name": "",
+            "credential": {
+                "id": "dGVzdA",
+                "rawId": "dGVzdA",
+                "type": "public-key",
+                "response": {
+                    "attestationObject": "dGVzdA",
+                    "clientDataJSON": "dGVzdA"
+                }
+            }
+        }))
+        .await;
+
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert!(body["error"].as_str().unwrap().contains("name"));
+}
+
+#[tokio::test]
+async fn test_passkey_register_finish_no_challenge() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // Try to finish registration without starting (no challenge exists)
+    let response = server
+        .post("/api/passkey/register/finish")
+        .json(&json!({
+            "name": "Test Passkey",
+            "credential": {
+                "id": "dGVzdA",
+                "rawId": "dGVzdA",
+                "type": "public-key",
+                "response": {
+                    "attestationObject": "dGVzdA",
+                    "clientDataJSON": "dGVzdA"
+                }
+            }
+        }))
+        .await;
+
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert!(body["error"].as_str().unwrap().contains("Challenge"));
+}
+
+#[tokio::test]
+async fn test_list_passkeys_with_data() {
+    let app = create_test_app(default_test_config());
+
+    // Create user and passkey
+    {
+        let conn = app.db.lock().unwrap();
+        let password_hash = auth::hash_password("password123").unwrap();
+        conn.execute(
+            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["testuser", password_hash, Role::User.as_str()],
+        )
+        .unwrap();
+        let user_id = conn.last_insert_rowid();
+
+        conn.execute(
+            "INSERT INTO passkey (user_id, credential_id, public_key, counter, name, transports) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![user_id, vec![1u8, 2, 3], b"{}", 5, "My Passkey", "usb,nfc"],
+        )
+        .unwrap();
+    }
+
+    // Login
+    app.server
+        .post("/api/session")
+        .json(&json!({
+            "username": "testuser",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let response = app.server.get("/api/passkeys").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let passkeys = body["passkeys"].as_array().unwrap();
+    assert_eq!(passkeys.len(), 1);
+    assert_eq!(passkeys[0]["name"], "My Passkey");
+}
+
+#[tokio::test]
+async fn test_rename_passkey_success() {
+    let app = create_test_app(default_test_config());
+
+    // Create user and passkey
+    let passkey_id: i64;
+    {
+        let conn = app.db.lock().unwrap();
+        let password_hash = auth::hash_password("password123").unwrap();
+        conn.execute(
+            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["testuser", password_hash, Role::User.as_str()],
+        )
+        .unwrap();
+        let user_id = conn.last_insert_rowid();
+
+        conn.execute(
+            "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![user_id, vec![1u8, 2, 3], b"{}", 0, "Old Name"],
+        )
+        .unwrap();
+        passkey_id = conn.last_insert_rowid();
+    }
+
+    // Login
+    app.server
+        .post("/api/session")
+        .json(&json!({
+            "username": "testuser",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let response = app
+        .server
+        .put(&format!("/api/passkeys/{}", passkey_id))
+        .json(&json!({ "name": "New Name" }))
+        .await;
+    response.assert_status(StatusCode::NO_CONTENT);
+
+    // Verify rename
+    let response = app.server.get("/api/passkeys").await;
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["passkeys"][0]["name"], "New Name");
+}
+
+#[tokio::test]
+async fn test_delete_passkey_success() {
+    let app = create_test_app(default_test_config());
+
+    // Create user and passkey
+    let passkey_id: i64;
+    {
+        let conn = app.db.lock().unwrap();
+        let password_hash = auth::hash_password("password123").unwrap();
+        conn.execute(
+            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["testuser", password_hash, Role::User.as_str()],
+        )
+        .unwrap();
+        let user_id = conn.last_insert_rowid();
+
+        conn.execute(
+            "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![user_id, vec![1u8, 2, 3], b"{}", 0, "Test Passkey"],
+        )
+        .unwrap();
+        passkey_id = conn.last_insert_rowid();
+    }
+
+    // Login
+    app.server
+        .post("/api/session")
+        .json(&json!({
+            "username": "testuser",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let response = app
+        .server
+        .delete(&format!("/api/passkeys/{}", passkey_id))
+        .await;
+    response.assert_status(StatusCode::NO_CONTENT);
+
+    // Verify deletion
+    let response = app.server.get("/api/passkeys").await;
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["passkeys"].as_array().unwrap().len(), 0);
 }
