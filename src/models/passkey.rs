@@ -74,7 +74,10 @@ pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Passkey>> {
     .map_err(AppError::Database)
 }
 
-pub fn find_by_credential_id(conn: &Connection, credential_id: &[u8]) -> AppResult<Option<Passkey>> {
+pub fn find_by_credential_id(
+    conn: &Connection,
+    credential_id: &[u8],
+) -> AppResult<Option<Passkey>> {
     conn.query_row(
         "SELECT id, user_id, credential_id, public_key, counter, name, transports, created_at, last_used_at FROM passkey WHERE credential_id = ?1",
         params![credential_id],
@@ -172,7 +175,9 @@ mod tests {
         let found = find_by_id(&conn, passkey.id).unwrap().unwrap();
         assert_eq!(found.id, passkey.id);
 
-        let found = find_by_credential_id(&conn, &credential_id).unwrap().unwrap();
+        let found = find_by_credential_id(&conn, &credential_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(found.id, passkey.id);
     }
 

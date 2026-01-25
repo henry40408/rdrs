@@ -58,7 +58,8 @@ fn row_to_challenge(row: &rusqlite::Row) -> rusqlite::Result<WebauthnChallenge> 
         id: row.get(0)?,
         challenge: row.get(1)?,
         user_id: row.get(2)?,
-        challenge_type: ChallengeType::from_str(&challenge_type_str).unwrap_or(ChallengeType::Registration),
+        challenge_type: ChallengeType::from_str(&challenge_type_str)
+            .unwrap_or(ChallengeType::Registration),
         state_data: row.get(4)?,
         created_at: parse_datetime(&created_at),
         expires_at: parse_datetime(&expires_at),
@@ -116,7 +117,10 @@ pub fn find_and_delete_challenge(
     .ok_or(AppError::ChallengeNotFound)?;
 
     // Delete the challenge after retrieval
-    conn.execute("DELETE FROM webauthn_challenge WHERE id = ?1", params![challenge.id])?;
+    conn.execute(
+        "DELETE FROM webauthn_challenge WHERE id = ?1",
+        params![challenge.id],
+    )?;
 
     Ok(challenge)
 }
@@ -179,7 +183,8 @@ mod tests {
         )
         .unwrap();
 
-        let found = find_and_delete_challenge(&conn, Some(user.id), ChallengeType::Registration).unwrap();
+        let found =
+            find_and_delete_challenge(&conn, Some(user.id), ChallengeType::Registration).unwrap();
         assert_eq!(found.challenge, challenge_bytes);
 
         // Should be deleted
@@ -210,8 +215,14 @@ mod tests {
     fn test_challenge_type_conversion() {
         assert_eq!(ChallengeType::Registration.as_str(), "registration");
         assert_eq!(ChallengeType::Authentication.as_str(), "authentication");
-        assert_eq!(ChallengeType::from_str("registration"), Some(ChallengeType::Registration));
-        assert_eq!(ChallengeType::from_str("authentication"), Some(ChallengeType::Authentication));
+        assert_eq!(
+            ChallengeType::from_str("registration"),
+            Some(ChallengeType::Registration)
+        );
+        assert_eq!(
+            ChallengeType::from_str("authentication"),
+            Some(ChallengeType::Authentication)
+        );
         assert_eq!(ChallengeType::from_str("invalid"), None);
     }
 }

@@ -155,7 +155,9 @@ impl IntoResponse for AppError {
             AppError::PasskeyAuthenticationFailed(msg) => {
                 return (StatusCode::UNAUTHORIZED, Json(json!({ "error": msg }))).into_response()
             }
-            AppError::ChallengeNotFound => (StatusCode::BAD_REQUEST, "Challenge not found or expired"),
+            AppError::ChallengeNotFound => {
+                (StatusCode::BAD_REQUEST, "Challenge not found or expired")
+            }
             AppError::NotFound(msg) => {
                 return (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response()
             }

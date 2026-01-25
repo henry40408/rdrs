@@ -12,7 +12,9 @@ pub fn create_webauthn(config: &Config) -> AppResult<Webauthn> {
         .map_err(|e| AppError::Internal(e.to_string()))?
         .rp_name(&config.webauthn_rp_name);
 
-    builder.build().map_err(|e| AppError::Internal(e.to_string()))
+    builder
+        .build()
+        .map_err(|e| AppError::Internal(e.to_string()))
 }
 
 #[cfg(test)]

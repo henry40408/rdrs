@@ -97,8 +97,8 @@ pub async fn finish_registration(
     )?;
 
     // Deserialize the registration state
-    let reg_state: PasskeyRegistration =
-        serde_json::from_str(&challenge.state_data).map_err(|e| AppError::Internal(e.to_string()))?;
+    let reg_state: PasskeyRegistration = serde_json::from_str(&challenge.state_data)
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Complete registration
     let passkey_data = state
@@ -112,17 +112,12 @@ pub async fn finish_registration(
         serde_json::to_vec(&passkey_data).map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Get transports from the credential response if available
-    let transports = req
-        .credential
-        .response
-        .transports
-        .as_ref()
-        .map(|t| {
-            t.iter()
-                .map(|t| format!("{:?}", t).to_lowercase())
-                .collect::<Vec<_>>()
-                .join(",")
-        });
+    let transports = req.credential.response.transports.as_ref().map(|t| {
+        t.iter()
+            .map(|t| format!("{:?}", t).to_lowercase())
+            .collect::<Vec<_>>()
+            .join(",")
+    });
 
     let new_passkey = passkey::create_passkey(
         &conn,
@@ -230,13 +225,13 @@ pub async fn finish_authentication(
     )?;
 
     // Deserialize the auth state
-    let auth_state: PasskeyAuthentication =
-        serde_json::from_str(&challenge.state_data).map_err(|e| AppError::Internal(e.to_string()))?;
+    let auth_state: PasskeyAuthentication = serde_json::from_str(&challenge.state_data)
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Find the passkey by credential ID (use raw_id which contains raw bytes)
     let credential_id: &[u8] = req.credential.raw_id.as_ref();
-    let stored_passkey = passkey::find_by_credential_id(&conn, credential_id)?
-        .ok_or(AppError::PasskeyNotFound)?;
+    let stored_passkey =
+        passkey::find_by_credential_id(&conn, credential_id)?.ok_or(AppError::PasskeyNotFound)?;
 
     // Verify the user is not disabled
     let db_user = user::find_by_id(&conn, stored_passkey.user_id)?.ok_or(AppError::UserNotFound)?;
@@ -245,8 +240,8 @@ pub async fn finish_authentication(
     }
 
     // Deserialize the stored passkey data
-    let mut passkey_data: Passkey =
-        serde_json::from_slice(&stored_passkey.public_key).map_err(|e| AppError::Internal(e.to_string()))?;
+    let mut passkey_data: Passkey = serde_json::from_slice(&stored_passkey.public_key)
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Complete authentication
     let auth_result = state
@@ -308,11 +303,15 @@ pub async fn list_passkeys(
             id: p.id,
             name: p.name,
             created_at: p.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            last_used_at: p.last_used_at.map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string()),
+            last_used_at: p
+                .last_used_at
+                .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string()),
         })
         .collect();
 
-    Ok(Json(ListPasskeysResponse { passkeys: passkey_infos }))
+    Ok(Json(ListPasskeysResponse {
+        passkeys: passkey_infos,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
