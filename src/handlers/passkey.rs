@@ -233,8 +233,8 @@ pub async fn finish_authentication(
     let auth_state: PasskeyAuthentication =
         serde_json::from_str(&challenge.state_data).map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // Find the passkey by credential ID
-    let credential_id = req.credential.id.as_ref();
+    // Find the passkey by credential ID (use raw_id which contains raw bytes)
+    let credential_id: &[u8] = req.credential.raw_id.as_ref();
     let stored_passkey = passkey::find_by_credential_id(&conn, credential_id)?
         .ok_or(AppError::PasskeyNotFound)?;
 
