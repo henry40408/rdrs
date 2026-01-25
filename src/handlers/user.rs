@@ -1,5 +1,6 @@
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use crate::auth::{hash_password, verify_password};
 use crate::error::{AppError, AppResult};
@@ -167,9 +168,20 @@ pub async fn get_linkding_settings(
     }))
 }
 
+fn extract_kagi_session_token(session_link: &str) -> Result<String, AppError> {
+    let url = Url::parse(session_link.trim())
+        .map_err(|_| AppError::Validation("Invalid session link URL".to_string()))?;
+
+    url.query_pairs()
+        .find(|(key, _)| key == "token")
+        .map(|(_, value)| value.to_string())
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| AppError::Validation("No token found in session link".to_string()))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UpdateKagiRequest {
-    pub session_token: Option<String>,
+    pub session_link: Option<String>,
     pub language: Option<String>,
 }
 
@@ -194,7 +206,10 @@ pub async fn update_kagi_settings(
 
     // Update Kagi config
     let has_language_field = req.language.is_some();
-    let session_token = req.session_token.filter(|s| !s.is_empty());
+    let session_token = match req.session_link.filter(|s| !s.is_empty()) {
+        Some(link) => Some(extract_kagi_session_token(&link)?),
+        None => None,
+    };
     let language = req.language.filter(|s| !s.is_empty());
 
     if session_token.is_some() || has_language_field {

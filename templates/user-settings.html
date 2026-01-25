@@ -190,9 +190,9 @@
 <div id="kagi-error" class="error" style="display: none"></div>
 <form id="kagi-form">
   <div class="form-group">
-    <label for="kagi-session-token">Session Token</label>
-    <input type="password" id="kagi-session-token" name="kagi-session-token" placeholder="{% if kagi_configured %}(unchanged){% else %}Enter your session token{% endif %}">
-    <span class="muted">(Settings &rarr; Session Link &rarr; copy token from URL)</span>
+    <label for="kagi-session-link">Session Link</label>
+    <input type="text" id="kagi-session-link" name="kagi-session-link" placeholder="{% if kagi_configured %}(unchanged){% else %}Paste your session link{% endif %}">
+    <span class="muted">(Settings &rarr; Session Link &rarr; copy the full URL)</span>
   </div>
   <div class="form-group">
     <label for="kagi-language">Target Language</label>
@@ -223,19 +223,19 @@
       const errorDiv = document.getElementById("kagi-error");
       errorDiv.style.display = "none";
 
-      const sessionToken = document.getElementById("kagi-session-token").value;
+      const sessionLink = document.getElementById("kagi-session-link").value;
       const language = document.getElementById("kagi-language").value;
 
-      // If token is empty and not previously configured, show error
-      if (!sessionToken && !{{ kagi_configured }}) {
-        errorDiv.textContent = "Session token is required";
+      // If session link is empty and not previously configured, show error
+      if (!sessionLink && !{{ kagi_configured }}) {
+        errorDiv.textContent = "Session link is required";
         errorDiv.style.display = "block";
         return;
       }
 
       try {
         const body = {};
-        if (sessionToken) body.session_token = sessionToken;
+        if (sessionLink) body.session_link = sessionLink;
         body.language = language || null;
 
         const response = await fetch("/api/user/settings/kagi", {

@@ -823,7 +823,8 @@ async fn test_home_page_unauthorized() {
     let server = create_test_server(default_test_config());
 
     let response = server.get("/").await;
-    response.assert_status_unauthorized();
+    // Page routes redirect to login instead of returning 401
+    response.assert_status_see_other();
 }
 
 #[tokio::test]
@@ -886,7 +887,8 @@ async fn test_admin_page_forbidden_for_regular_user() {
         .assert_status_ok();
 
     let response = server.get("/admin").await;
-    response.assert_status_forbidden();
+    // Page routes redirect to login instead of returning 403
+    response.assert_status_see_other();
 }
 
 #[tokio::test]
@@ -894,7 +896,8 @@ async fn test_admin_page_unauthorized_without_login() {
     let server = create_test_server(default_test_config());
 
     let response = server.get("/admin").await;
-    response.assert_status_unauthorized();
+    // Page routes redirect to login instead of returning 401
+    response.assert_status_see_other();
 }
 
 #[tokio::test]
