@@ -199,6 +199,8 @@ pub struct UserSettingsTemplate {
     pub flash_messages: Vec<FlashMessage>,
     pub linkding_configured: bool,
     pub linkding_api_url: String,
+    pub kagi_configured: bool,
+    pub kagi_language: String,
 }
 
 impl IntoResponse for UserSettingsTemplate {
@@ -222,7 +224,7 @@ pub async fn user_settings_page(
         auth_user.user.is_admin()
     };
 
-    let (entries_per_page, linkding_configured, linkding_api_url) = {
+    let (entries_per_page, linkding_configured, linkding_api_url, kagi_configured, kagi_language) = {
         let conn = state.db.lock().ok();
         let epp = conn
             .as_ref()
@@ -235,10 +237,14 @@ pub async fn user_settings_page(
             .unwrap_or_default();
 
         let linkding = save_config.linkding.as_ref();
-        let configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
+        let linkding_configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
         let api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
 
-        (epp, configured, api_url)
+        let kagi = save_config.kagi.as_ref();
+        let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
+        let kagi_lang = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
+
+        (epp, linkding_configured, api_url, kagi_configured, kagi_lang)
     };
 
     (
@@ -257,6 +263,8 @@ pub async fn user_settings_page(
             flash_messages: flash.messages,
             linkding_configured,
             linkding_api_url,
+            kagi_configured,
+            kagi_language,
         },
     )
 }
@@ -393,6 +401,7 @@ pub struct EntryTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub has_save_services: bool,
+    pub has_kagi_configured: bool,
 }
 
 impl IntoResponse for EntryTemplate {
@@ -417,10 +426,25 @@ pub async fn entry_page(
         auth_user.user.is_admin()
     };
 
-    let has_save_services = {
+    let (has_save_services, has_kagi_configured) = {
         let conn = state.db.lock().ok();
-        conn.and_then(|c| user_settings::has_save_services(&c, auth_user.user.id).ok())
-            .unwrap_or(false)
+        let save_services = conn
+            .as_ref()
+            .and_then(|c| user_settings::has_save_services(c, auth_user.user.id).ok())
+            .unwrap_or(false);
+
+        let save_config = conn
+            .as_ref()
+            .and_then(|c| user_settings::get_save_services_config(c, auth_user.user.id).ok())
+            .unwrap_or_default();
+
+        let kagi_configured = save_config
+            .kagi
+            .as_ref()
+            .map(|c| c.is_configured())
+            .unwrap_or(false);
+
+        (save_services, kagi_configured)
     };
 
     (
@@ -432,6 +456,7 @@ pub async fn entry_page(
             is_masquerading,
             flash_messages: flash.messages,
             has_save_services,
+            has_kagi_configured,
         },
     )
 }

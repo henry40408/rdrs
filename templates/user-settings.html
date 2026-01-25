@@ -179,6 +179,114 @@
   }
 </script>
 
+<h3>Kagi Universal Summarizer</h3>
+<p class="muted">
+  <a href="https://kagi.com/summarizer" target="_blank" rel="noopener noreferrer">Kagi Universal Summarizer</a>
+  provides AI-powered article summaries.
+  {% if kagi_configured %}
+  <span style="color: green;">[Configured]</span>
+  {% endif %}
+</p>
+<div id="kagi-error" class="error" style="display: none"></div>
+<form id="kagi-form">
+  <div class="form-group">
+    <label for="kagi-session-token">Session Token</label>
+    <input type="password" id="kagi-session-token" name="kagi-session-token" placeholder="{% if kagi_configured %}(unchanged){% else %}Enter your session token{% endif %}">
+    <span class="muted">(Settings &rarr; Session Link &rarr; copy token from URL)</span>
+  </div>
+  <div class="form-group">
+    <label for="kagi-language">Target Language</label>
+    <select id="kagi-language" name="kagi-language">
+      <option value="">Auto-detect</option>
+      <option value="EN" {% if kagi_language == "EN" %}selected{% endif %}>English</option>
+      <option value="ZH-TW" {% if kagi_language == "ZH-TW" %}selected{% endif %}>繁體中文</option>
+      <option value="ZH-CN" {% if kagi_language == "ZH-CN" %}selected{% endif %}>简体中文</option>
+      <option value="JA" {% if kagi_language == "JA" %}selected{% endif %}>日本語</option>
+      <option value="KO" {% if kagi_language == "KO" %}selected{% endif %}>한국어</option>
+      <option value="DE" {% if kagi_language == "DE" %}selected{% endif %}>Deutsch</option>
+      <option value="FR" {% if kagi_language == "FR" %}selected{% endif %}>Français</option>
+      <option value="ES" {% if kagi_language == "ES" %}selected{% endif %}>Español</option>
+      <option value="PT" {% if kagi_language == "PT" %}selected{% endif %}>Português</option>
+    </select>
+    <span class="muted">(Optional: translate summary to this language)</span>
+  </div>
+  <button type="submit">[Save Kagi Settings]</button>
+  {% if kagi_configured %}
+  <button type="button" onclick="clearKagi()" class="btn-secondary">[Clear]</button>
+  {% endif %}
+</form>
+<script>
+  document
+    .getElementById("kagi-form")
+    .addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errorDiv = document.getElementById("kagi-error");
+      errorDiv.style.display = "none";
+
+      const sessionToken = document.getElementById("kagi-session-token").value;
+      const language = document.getElementById("kagi-language").value;
+
+      // If token is empty and not previously configured, show error
+      if (!sessionToken && !{{ kagi_configured }}) {
+        errorDiv.textContent = "Session token is required";
+        errorDiv.style.display = "block";
+        return;
+      }
+
+      try {
+        const body = {};
+        if (sessionToken) body.session_token = sessionToken;
+        body.language = language || null;
+
+        const response = await fetch("/api/user/settings/kagi", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.configured) {
+            flash.success("Kagi settings saved successfully.");
+          } else {
+            flash.success("Kagi settings cleared.");
+          }
+          // Reload to update UI state
+          setTimeout(() => location.reload(), 1000);
+        } else {
+          const data = await response.json();
+          errorDiv.textContent = data.error || "Failed to save Kagi settings";
+          errorDiv.style.display = "block";
+        }
+      } catch (err) {
+        errorDiv.textContent = "An error occurred. Please try again.";
+        errorDiv.style.display = "block";
+      }
+    });
+
+  async function clearKagi() {
+    if (!confirm("Clear Kagi settings?")) return;
+
+    try {
+      const response = await fetch("/api/user/settings/kagi", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      if (response.ok) {
+        flash.success("Kagi settings cleared.");
+        setTimeout(() => location.reload(), 1000);
+      } else {
+        const data = await response.json();
+        flash.error(data.error || "Failed to clear Kagi settings");
+      }
+    } catch (err) {
+      flash.error("An error occurred. Please try again.");
+    }
+  }
+</script>
+
 <hr>
 
 <h2>Change Password</h2>

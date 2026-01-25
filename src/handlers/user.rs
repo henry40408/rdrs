@@ -7,7 +7,7 @@ use crate::middleware::AuthUser;
 use crate::models::session;
 use crate::models::user;
 use crate::models::user_settings;
-use crate::services::LinkdingConfig;
+use crate::services::{KagiConfig, LinkdingConfig};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -164,5 +164,100 @@ pub async fn get_linkding_settings(
         configured,
         // Return api_url but not api_token for security
         api_url: config.linkding.map(|c| c.api_url),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateKagiRequest {
+    pub session_token: Option<String>,
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateKagiResponse {
+    pub configured: bool,
+    pub language: Option<String>,
+}
+
+pub async fn update_kagi_settings(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    Json(req): Json<UpdateKagiRequest>,
+) -> AppResult<Json<UpdateKagiResponse>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+
+    // Get current config
+    let mut config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
+
+    // Update Kagi config
+    let has_language_field = req.language.is_some();
+    let session_token = req.session_token.filter(|s| !s.is_empty());
+    let language = req.language.filter(|s| !s.is_empty());
+
+    if session_token.is_some() || has_language_field {
+        // Update or create config
+        let current = config.kagi.unwrap_or(KagiConfig {
+            session_token: String::new(),
+            language: None,
+        });
+
+        config.kagi = Some(KagiConfig {
+            session_token: session_token.unwrap_or(current.session_token),
+            language: if has_language_field {
+                language
+            } else {
+                current.language
+            },
+        });
+    } else if session_token.is_none() && !has_language_field {
+        // Clear config if both are empty/not provided
+        config.kagi = None;
+    }
+
+    // Save updated config
+    user_settings::update_save_services(&conn, auth_user.user.id, &config)?;
+
+    let configured = config
+        .kagi
+        .as_ref()
+        .map(|c| c.is_configured())
+        .unwrap_or(false);
+
+    Ok(Json(UpdateKagiResponse {
+        configured,
+        language: config.kagi.and_then(|c| c.language),
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct GetKagiResponse {
+    pub configured: bool,
+    pub language: Option<String>,
+}
+
+pub async fn get_kagi_settings(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> AppResult<Json<GetKagiResponse>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+
+    let config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
+
+    let configured = config
+        .kagi
+        .as_ref()
+        .map(|c| c.is_configured())
+        .unwrap_or(false);
+
+    Ok(Json(GetKagiResponse {
+        configured,
+        // Return language but not session_token for security
+        language: config.kagi.and_then(|c| c.language),
     }))
 }
