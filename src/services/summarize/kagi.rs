@@ -8,7 +8,7 @@ use crate::error::{AppError, AppResult};
 pub struct KagiConfig {
     /// Session token extracted from Kagi session link
     pub session_token: String,
-    /// Target language for summary (optional, e.g., "ZH-TW", "EN")
+    /// Target language for summary (optional, e.g., "ZH-HANT", "EN")
     #[serde(default)]
     pub language: Option<String>,
 }
@@ -127,7 +127,7 @@ mod tests {
     fn test_kagi_config_is_configured() {
         let config = KagiConfig {
             session_token: "some_token".to_string(),
-            language: Some("ZH-TW".to_string()),
+            language: Some("ZH-HANT".to_string()),
         };
         assert!(config.is_configured());
 
