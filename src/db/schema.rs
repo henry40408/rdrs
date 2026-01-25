@@ -104,6 +104,33 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_user_settings_user_id ON user_settings(user_id);
+
+        CREATE TABLE IF NOT EXISTS passkey (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+            credential_id BLOB NOT NULL UNIQUE,
+            public_key BLOB NOT NULL,
+            counter INTEGER NOT NULL DEFAULT 0,
+            name TEXT NOT NULL,
+            transports TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_used_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_passkey_user_id ON passkey(user_id);
+        CREATE INDEX IF NOT EXISTS idx_passkey_credential_id ON passkey(credential_id);
+
+        CREATE TABLE IF NOT EXISTS webauthn_challenge (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            challenge BLOB NOT NULL UNIQUE,
+            user_id INTEGER REFERENCES user(id) ON DELETE CASCADE,
+            challenge_type TEXT NOT NULL CHECK (challenge_type IN ('registration', 'authentication')),
+            state_data TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            expires_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_webauthn_challenge_expires_at ON webauthn_challenge(expires_at);
         "#,
     )?;
 
@@ -136,5 +163,7 @@ mod tests {
 
         assert!(tables.contains(&"user".to_string()));
         assert!(tables.contains(&"session".to_string()));
+        assert!(tables.contains(&"passkey".to_string()));
+        assert!(tables.contains(&"webauthn_challenge".to_string()));
     }
 }

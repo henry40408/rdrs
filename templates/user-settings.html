@@ -289,6 +289,240 @@
 
 <hr>
 
+<h2>Passkeys</h2>
+<p class="muted">Passkeys let you sign in without a password using your device's biometrics or security key.</p>
+
+<div id="passkey-unsupported" style="display: none;">
+    <p class="error">Your browser does not support passkeys.</p>
+</div>
+
+<div id="passkey-section" style="display: none;">
+    <div id="passkey-error" class="error" style="display: none"></div>
+
+    <h3>Registered Passkeys</h3>
+    <div id="passkeys-list">
+        <p class="muted">Loading...</p>
+    </div>
+
+    <h3>Register New Passkey</h3>
+    <form id="register-passkey-form">
+        <div class="form-group">
+            <label for="passkey-name">Passkey Name</label>
+            <input type="text" id="passkey-name" name="passkey-name" required placeholder="e.g., MacBook Touch ID">
+        </div>
+        <button type="submit" id="register-passkey-btn">[Register Passkey]</button>
+    </form>
+</div>
+
+<script>
+    const isWebAuthnSupported = window.PublicKeyCredential !== undefined;
+
+    if (isWebAuthnSupported) {
+        document.getElementById('passkey-section').style.display = 'block';
+        loadPasskeys();
+    } else {
+        document.getElementById('passkey-unsupported').style.display = 'block';
+    }
+
+    function base64urlToBuffer(base64url) {
+        const padding = '='.repeat((4 - base64url.length % 4) % 4);
+        const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/') + padding;
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    function bufferToBase64url(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    }
+
+    async function loadPasskeys() {
+        const listDiv = document.getElementById('passkeys-list');
+        try {
+            const response = await fetch('/api/passkeys');
+            if (!response.ok) throw new Error('Failed to load passkeys');
+
+            const data = await response.json();
+            if (data.passkeys.length === 0) {
+                listDiv.innerHTML = '<p class="muted">No passkeys registered yet.</p>';
+            } else {
+                listDiv.innerHTML = '<table><thead><tr><th>Name</th><th>Created</th><th>Last Used</th><th>Actions</th></tr></thead><tbody>' +
+                    data.passkeys.map(p => `
+                        <tr id="passkey-row-${p.id}">
+                            <td><span id="passkey-name-${p.id}">${escapeHtml(p.name)}</span></td>
+                            <td>${p.created_at}</td>
+                            <td>${p.last_used_at || 'Never'}</td>
+                            <td>
+                                <a href="#" onclick="renamePasskey(${p.id}); return false;">[Rename]</a>
+                                <a href="#" onclick="deletePasskey(${p.id}); return false;">[Delete]</a>
+                            </td>
+                        </tr>
+                    `).join('') +
+                    '</tbody></table>';
+            }
+        } catch (err) {
+            listDiv.innerHTML = '<p class="error">Failed to load passkeys.</p>';
+        }
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    async function renamePasskey(id) {
+        const currentName = document.getElementById(`passkey-name-${id}`).textContent;
+        const newName = prompt('Enter new name:', currentName);
+        if (!newName || newName === currentName) return;
+
+        try {
+            const response = await fetch(`/api/passkeys/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: newName })
+            });
+
+            if (response.ok) {
+                flash.success('Passkey renamed successfully.');
+                loadPasskeys();
+            } else {
+                const data = await response.json();
+                flash.error(data.error || 'Failed to rename passkey');
+            }
+        } catch (err) {
+            flash.error('An error occurred. Please try again.');
+        }
+    }
+
+    async function deletePasskey(id) {
+        if (!confirm('Are you sure you want to delete this passkey?')) return;
+
+        try {
+            const response = await fetch(`/api/passkeys/${id}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                flash.success('Passkey deleted successfully.');
+                loadPasskeys();
+            } else {
+                const data = await response.json();
+                flash.error(data.error || 'Failed to delete passkey');
+            }
+        } catch (err) {
+            flash.error('An error occurred. Please try again.');
+        }
+    }
+
+    document.getElementById('register-passkey-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const errorDiv = document.getElementById('passkey-error');
+        const btn = document.getElementById('register-passkey-btn');
+        const nameInput = document.getElementById('passkey-name');
+        errorDiv.style.display = 'none';
+
+        const name = nameInput.value.trim();
+        if (!name) {
+            errorDiv.textContent = 'Passkey name is required';
+            errorDiv.style.display = 'block';
+            return;
+        }
+
+        try {
+            btn.disabled = true;
+            btn.textContent = '[Registering...]';
+
+            // Start registration
+            const startResponse = await fetch('/api/passkey/register/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (!startResponse.ok) {
+                const data = await startResponse.json();
+                throw new Error(data.error || 'Failed to start registration');
+            }
+
+            const { options } = await startResponse.json();
+
+            // Prepare credential creation options
+            const publicKey = {
+                ...options.publicKey,
+                challenge: base64urlToBuffer(options.publicKey.challenge),
+                user: {
+                    ...options.publicKey.user,
+                    id: base64urlToBuffer(options.publicKey.user.id)
+                },
+                excludeCredentials: options.publicKey.excludeCredentials?.map(cred => ({
+                    ...cred,
+                    id: base64urlToBuffer(cred.id)
+                })) || []
+            };
+
+            // Create credential
+            const credential = await navigator.credentials.create({ publicKey });
+
+            // Prepare credential for server
+            const credentialForServer = {
+                id: credential.id,
+                rawId: bufferToBase64url(credential.rawId),
+                type: credential.type,
+                response: {
+                    attestationObject: bufferToBase64url(credential.response.attestationObject),
+                    clientDataJSON: bufferToBase64url(credential.response.clientDataJSON)
+                }
+            };
+
+            // Add transports if available
+            if (credential.response.getTransports) {
+                credentialForServer.response.transports = credential.response.getTransports();
+            }
+
+            // Finish registration
+            const finishResponse = await fetch('/api/passkey/register/finish', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: name,
+                    credential: credentialForServer
+                })
+            });
+
+            if (finishResponse.ok) {
+                flash.success('Passkey registered successfully.');
+                nameInput.value = '';
+                loadPasskeys();
+            } else {
+                const data = await finishResponse.json();
+                throw new Error(data.error || 'Registration failed');
+            }
+        } catch (err) {
+            if (err.name === 'NotAllowedError') {
+                errorDiv.textContent = 'Registration was cancelled or timed out.';
+            } else if (err.name === 'InvalidStateError') {
+                errorDiv.textContent = 'This passkey is already registered.';
+            } else {
+                errorDiv.textContent = err.message || 'An error occurred. Please try again.';
+            }
+            errorDiv.style.display = 'block';
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '[Register Passkey]';
+        }
+    });
+</script>
+
+<hr>
+
 <h2>Change Password</h2>
 <div id="password-error" class="error" style="display: none"></div>
 <form id="change-password-form">

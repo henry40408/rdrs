@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use rdrs::{create_router, db, services, AppState, Config};
+use rdrs::{auth, create_router, db, services, AppState, Config};
 use rusqlite::Connection;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -24,9 +24,12 @@ async fn main() {
 
     let db = Arc::new(Mutex::new(conn));
 
+    let webauthn = auth::create_webauthn(&config).expect("Failed to create WebAuthn");
+
     let state = AppState {
         db: db.clone(),
         config: Arc::new(config.clone()),
+        webauthn: Arc::new(webauthn),
     };
 
     // Start background sync task

@@ -38,6 +38,10 @@ readability = { version = "0.3", default-features = false }
 base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
+webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
+webauthn-rs-proto = "0.5"
+uuid = { version = "1", features = ["v4", "serde"] }
+openssl = { version = "0.10", features = ["vendored"] }
 
 [dev-dependencies]
 axum-test = "17"

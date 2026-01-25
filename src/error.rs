@@ -89,6 +89,18 @@ pub enum AppError {
     #[error("Invalid signature")]
     InvalidSignature,
 
+    #[error("Passkey not found")]
+    PasskeyNotFound,
+
+    #[error("Passkey registration failed: {0}")]
+    PasskeyRegistrationFailed(String),
+
+    #[error("Passkey authentication failed: {0}")]
+    PasskeyAuthenticationFailed(String),
+
+    #[error("Challenge not found or expired")]
+    ChallengeNotFound,
+
     #[error("{0}")]
     NotFound(String),
 
@@ -136,6 +148,14 @@ impl IntoResponse for AppError {
             AppError::ImageTooLarge => (StatusCode::BAD_REQUEST, "Image too large"),
             AppError::UnsupportedImageType => (StatusCode::BAD_REQUEST, "Unsupported image type"),
             AppError::InvalidSignature => (StatusCode::BAD_REQUEST, "Invalid signature"),
+            AppError::PasskeyNotFound => (StatusCode::NOT_FOUND, "Passkey not found"),
+            AppError::PasskeyRegistrationFailed(msg) => {
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+            }
+            AppError::PasskeyAuthenticationFailed(msg) => {
+                return (StatusCode::UNAUTHORIZED, Json(json!({ "error": msg }))).into_response()
+            }
+            AppError::ChallengeNotFound => (StatusCode::BAD_REQUEST, "Challenge not found or expired"),
             AppError::NotFound(msg) => {
                 return (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response()
             }

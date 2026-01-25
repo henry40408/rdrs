@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
-use rdrs::{create_router, db, AppState, Config};
+use rdrs::{auth, create_router, db, AppState, Config};
 use rusqlite::Connection;
 use serde_json::json;
 
@@ -10,9 +10,12 @@ fn create_test_server(config: Config) -> TestServer {
     let conn = Connection::open_in_memory().unwrap();
     db::init_db(&conn).unwrap();
 
+    let webauthn = auth::create_webauthn(&config).unwrap();
+
     let state = AppState {
         db: Arc::new(Mutex::new(conn)),
         config: Arc::new(config),
+        webauthn: Arc::new(webauthn),
     };
 
     let app = create_router(state);
@@ -28,6 +31,9 @@ fn default_test_config() -> Config {
         image_proxy_secret: vec![0u8; 32],
         image_proxy_secret_generated: false,
         user_agent: "RDRS-Test/1.0".to_string(),
+        webauthn_rp_id: "localhost".to_string(),
+        webauthn_rp_origin: "http://localhost:3000".to_string(),
+        webauthn_rp_name: "rdrs-test".to_string(),
     }
 }
 
