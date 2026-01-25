@@ -5,7 +5,7 @@ use std::env;
 /// Default user agent for HTTP requests (transparent and responsible crawling)
 pub const DEFAULT_USER_AGENT: &str = concat!(
     "RDRS/",
-    env!("CARGO_PKG_VERSION"),
+    env!("GIT_VERSION"),
     " (RSS Reader; +https://github.com/henry40408/rdrs)"
 );
 

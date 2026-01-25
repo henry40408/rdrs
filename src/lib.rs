@@ -14,10 +14,12 @@ pub mod handlers;
 pub mod middleware;
 pub mod models;
 pub mod services;
+pub mod version;
 
 pub use config::Config;
 pub use middleware::auth::SESSION_COOKIE_NAME;
 pub use models::{Role, User};
+pub use version::{GIT_VERSION, PKG_VERSION};
 
 #[derive(Clone)]
 pub struct AppState {
