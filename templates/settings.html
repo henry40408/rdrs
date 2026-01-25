@@ -19,7 +19,7 @@
 <table>
     <tbody>
         <tr>
-            <th style="text-align:left; width:200px;">User Agent</th>
+            <th class="settings-th" style="width:200px;">User Agent</th>
             <td>
                 <code>{{ user_agent }}</code>
                 {% if user_agent_is_default %}
@@ -36,7 +36,7 @@
 <table>
     <tbody>
         <tr>
-            <th style="text-align:left; width:200px;">Signup Enabled</th>
+            <th class="settings-th" style="width:200px;">Signup Enabled</th>
             <td>
                 {% if signup_enabled %}
                 <span style="color:green;">Yes</span>
@@ -46,7 +46,7 @@
             </td>
         </tr>
         <tr>
-            <th style="text-align:left;">Multi-User Mode</th>
+            <th class="settings-th">Multi-User Mode</th>
             <td>
                 {% if multi_user_enabled %}
                 <span style="color:green;">Yes</span>
@@ -63,9 +63,9 @@
 <table>
     <thead>
         <tr>
-            <th style="text-align:left;">Variable</th>
-            <th style="text-align:left;">Description</th>
-            <th style="text-align:left;">Default</th>
+            <th class="settings-th">Variable</th>
+            <th class="settings-th">Description</th>
+            <th class="settings-th">Default</th>
         </tr>
     </thead>
     <tbody>

@@ -23,7 +23,7 @@
         {% if is_admin %}
         <li><a href="/admin"{% if current == "admin" %} class="active"{% endif %}>[Admin]</a></li>
         {% endif %}
-        <li style="margin-left:auto;"><span class="muted">{{ username }}</span> <a href="#" onclick="logout(); return false;">[Sign Out]</a></li>
+        <li class="ml-auto"><span class="muted">{{ username }}</span> <a href="#" onclick="logout(); return false;">[Sign Out]</a></li>
     </ul>
 </nav>
 {% if is_masquerading %}
