@@ -5,6 +5,7 @@ use axum::{
     Router,
 };
 use rusqlite::Connection;
+use webauthn_rs::prelude::Webauthn;
 
 pub mod auth;
 pub mod config;
@@ -25,6 +26,7 @@ pub use version::{GIT_VERSION, PKG_VERSION};
 pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub config: Arc<Config>,
+    pub webauthn: Arc<Webauthn>,
 }
 
 pub fn create_router(state: AppState) -> Router {
@@ -153,5 +155,28 @@ pub fn create_router(state: AppState) -> Router {
         )
         // Proxy routes
         .route("/api/proxy/image", get(handlers::proxy::proxy_image))
+        // Passkey routes
+        .route(
+            "/api/passkey/register/start",
+            post(handlers::passkey::start_registration),
+        )
+        .route(
+            "/api/passkey/register/finish",
+            post(handlers::passkey::finish_registration),
+        )
+        .route(
+            "/api/passkey/auth/start",
+            post(handlers::passkey::start_authentication),
+        )
+        .route(
+            "/api/passkey/auth/finish",
+            post(handlers::passkey::finish_authentication),
+        )
+        .route("/api/passkeys", get(handlers::passkey::list_passkeys))
+        .route("/api/passkeys/{id}", put(handlers::passkey::rename_passkey))
+        .route(
+            "/api/passkeys/{id}",
+            delete(handlers::passkey::delete_passkey),
+        )
         .with_state(state)
 }

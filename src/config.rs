@@ -18,18 +18,22 @@ pub struct Config {
     pub image_proxy_secret: Vec<u8>,
     pub image_proxy_secret_generated: bool,
     pub user_agent: String,
+    pub webauthn_rp_id: String,
+    pub webauthn_rp_origin: String,
+    pub webauthn_rp_name: String,
 }
 
 impl Config {
     pub fn from_env() -> Self {
         let (image_proxy_secret, image_proxy_secret_generated) = Self::load_image_proxy_secret();
+        let server_port = env::var("SERVER_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(3000);
 
         Self {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "rdrs.sqlite3".to_string()),
-            server_port: env::var("SERVER_PORT")
-                .ok()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(3000),
+            server_port,
             signup_enabled: env::var("SIGNUP_ENABLED")
                 .map(|v| v.to_lowercase() == "true" || v == "1")
                 .unwrap_or(false),
@@ -39,6 +43,10 @@ impl Config {
             image_proxy_secret,
             image_proxy_secret_generated,
             user_agent: env::var("USER_AGENT").unwrap_or_else(|_| DEFAULT_USER_AGENT.to_string()),
+            webauthn_rp_id: env::var("WEBAUTHN_RP_ID").unwrap_or_else(|_| "localhost".to_string()),
+            webauthn_rp_origin: env::var("WEBAUTHN_RP_ORIGIN")
+                .unwrap_or_else(|_| format!("http://localhost:{}", server_port)),
+            webauthn_rp_name: env::var("WEBAUTHN_RP_NAME").unwrap_or_else(|_| "rdrs".to_string()),
         }
     }
 
@@ -80,6 +88,9 @@ mod tests {
             image_proxy_secret: vec![0u8; 32],
             image_proxy_secret_generated: false,
             user_agent: DEFAULT_USER_AGENT.to_string(),
+            webauthn_rp_id: "localhost".to_string(),
+            webauthn_rp_origin: "http://localhost:3000".to_string(),
+            webauthn_rp_name: "rdrs".to_string(),
         }
     }
 
