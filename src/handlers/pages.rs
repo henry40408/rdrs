@@ -6,7 +6,7 @@ use axum::{
 };
 
 use crate::config::DEFAULT_USER_AGENT;
-use crate::middleware::auth::{AdminUser, AuthUser};
+use crate::middleware::auth::{PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
 use crate::models::entry;
 use crate::models::user_settings;
@@ -108,7 +108,7 @@ impl IntoResponse for HomeTemplate {
 }
 
 pub async fn home_page(
-    auth_user: AuthUser,
+    auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, HomeTemplate) {
@@ -171,7 +171,7 @@ impl IntoResponse for AdminTemplate {
     }
 }
 
-pub async fn admin_page(admin: AdminUser, flash: Flash) -> (Flash, AdminTemplate) {
+pub async fn admin_page(admin: PageAdminUser, flash: Flash) -> (Flash, AdminTemplate) {
     let is_masquerading = admin.session.is_masquerading();
     let original_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
 
@@ -211,7 +211,7 @@ impl IntoResponse for UserSettingsTemplate {
 }
 
 pub async fn user_settings_page(
-    auth_user: AuthUser,
+    auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, UserSettingsTemplate) {
@@ -279,7 +279,7 @@ impl IntoResponse for CategoriesTemplate {
     }
 }
 
-pub async fn categories_page(auth_user: AuthUser, flash: Flash) -> (Flash, CategoriesTemplate) {
+pub async fn categories_page(auth_user: PageAuthUser, flash: Flash) -> (Flash, CategoriesTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
     let is_admin = if is_masquerading {
         auth_user.session.original_user_id.is_some()
@@ -316,7 +316,7 @@ impl IntoResponse for FeedsTemplate {
     }
 }
 
-pub async fn feeds_page(auth_user: AuthUser, flash: Flash) -> (Flash, FeedsTemplate) {
+pub async fn feeds_page(auth_user: PageAuthUser, flash: Flash) -> (Flash, FeedsTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
     let is_admin = if is_masquerading {
         auth_user.session.original_user_id.is_some()
@@ -355,7 +355,7 @@ impl IntoResponse for EntriesTemplate {
 }
 
 pub async fn entries_page(
-    auth_user: AuthUser,
+    auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, EntriesTemplate) {
@@ -405,7 +405,7 @@ impl IntoResponse for EntryTemplate {
 }
 
 pub async fn entry_page(
-    auth_user: AuthUser,
+    auth_user: PageAuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
     flash: Flash,
@@ -459,7 +459,7 @@ impl IntoResponse for SettingsTemplate {
 }
 
 pub async fn settings_page(
-    auth_user: AuthUser,
+    auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, SettingsTemplate) {
