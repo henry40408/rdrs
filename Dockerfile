@@ -15,10 +15,18 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo build --release
 
+# Create data directory with placeholder for copying to runtime
+RUN mkdir -p /data && touch /data/.keep
+
 # Stage 4: Runtime
 FROM gcr.io/distroless/cc-debian12
 
 COPY --from=builder /app/target/release/rdrs /rdrs
+
+# Create /data directory with world-writable permissions (777)
+# This allows the container to run with any user (e.g., user: 1000:1000 in docker-compose)
+# The directory needs to be writable for SQLite to create journal/WAL files
+COPY --from=builder --chmod=777 /data /data
 
 VOLUME /data
 
