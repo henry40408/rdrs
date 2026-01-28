@@ -1259,3 +1259,106 @@ async fn test_save_entry_no_services_config() {
     let body: serde_json::Value = response.json();
     assert!(body["error"].as_str().unwrap().contains("No save services"));
 }
+
+// ============================================================================
+// Entry Summary Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_get_entry_summary_not_found() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db);
+    login(&app.server).await;
+
+    // Try to get summary for an entry that has no summary cached
+    let response = app
+        .server
+        .get(&format!("/api/entries/{}/summary", entry_ids[0]))
+        .await;
+    response.assert_status_not_found();
+
+    let body: serde_json::Value = response.json();
+    assert!(body["error"].as_str().unwrap().contains("No summary"));
+}
+
+#[tokio::test]
+async fn test_delete_entry_summary() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db);
+    login(&app.server).await;
+
+    // Delete summary (even if none exists, should succeed)
+    let response = app
+        .server
+        .delete(&format!("/api/entries/{}/summary", entry_ids[0]))
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["success"], true);
+}
+
+#[tokio::test]
+async fn test_get_entry_neighbors_unread_only() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db);
+    login(&app.server).await;
+
+    // Mark some entries as read
+    app.server
+        .put(&format!("/api/entries/{}/read", entry_ids[0]))
+        .await
+        .assert_status_ok();
+    app.server
+        .put(&format!("/api/entries/{}/read", entry_ids[2]))
+        .await
+        .assert_status_ok();
+
+    // Get neighbors with unread_only=true for a middle entry
+    let response = app
+        .server
+        .get(&format!(
+            "/api/entries/{}/neighbors?unread_only=true",
+            entry_ids[1]
+        ))
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    // Should have neighbors that are unread
+    // The response should contain prev_id and next_id fields
+    assert!(body.get("prev_id").is_some());
+    assert!(body.get("next_id").is_some());
+}
+
+#[tokio::test]
+async fn test_cannot_get_other_user_entry_summary() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to get summary of other user's entry
+    let response = app
+        .server
+        .get(&format!("/api/entries/{}/summary", other_entry_ids[0]))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_cannot_delete_other_user_entry_summary() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db);
+    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
+        setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // Try to delete summary of other user's entry
+    let response = app
+        .server
+        .delete(&format!("/api/entries/{}/summary", other_entry_ids[0]))
+        .await;
+    response.assert_status_not_found();
+}

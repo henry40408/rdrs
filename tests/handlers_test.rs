@@ -1711,3 +1711,87 @@ async fn test_delete_passkey_success() {
     let body: serde_json::Value = response.json();
     assert_eq!(body["passkeys"].as_array().unwrap().len(), 0);
 }
+
+// ============================================================================
+// Favicon Handler Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_favicon_ico() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/favicon.ico").await;
+    response.assert_status_ok();
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(content_type, "image/x-icon");
+}
+
+#[tokio::test]
+async fn test_favicon_svg() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/favicon.svg").await;
+    response.assert_status_ok();
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(content_type, "image/svg+xml");
+}
+
+#[tokio::test]
+async fn test_favicon_16() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/favicon-16x16.png").await;
+    response.assert_status_ok();
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(content_type, "image/png");
+}
+
+#[tokio::test]
+async fn test_favicon_32() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/favicon-32x32.png").await;
+    response.assert_status_ok();
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(content_type, "image/png");
+}
+
+#[tokio::test]
+async fn test_apple_touch_icon() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/apple-touch-icon.png").await;
+    response.assert_status_ok();
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(content_type, "image/png");
+}
