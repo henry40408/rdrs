@@ -4,8 +4,8 @@ use rusqlite::Connection;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
 
-use super::summary_cache::SummaryCache;
 use super::summarize::kagi::{self, KagiConfig};
+use super::summary_cache::SummaryCache;
 use crate::models::user_settings;
 
 /// A job to summarize an entry
@@ -115,7 +115,9 @@ async fn summarize_with_kagi(config: &KagiConfig, url: &str) -> Result<String, S
 }
 
 /// Create a summary job queue channel
-pub fn create_summary_channel(buffer_size: usize) -> (mpsc::Sender<SummaryJob>, mpsc::Receiver<SummaryJob>) {
+pub fn create_summary_channel(
+    buffer_size: usize,
+) -> (mpsc::Sender<SummaryJob>, mpsc::Receiver<SummaryJob>) {
     mpsc::channel(buffer_size)
 }
 

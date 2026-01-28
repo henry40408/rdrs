@@ -8,7 +8,9 @@ use crate::error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::{category, entry, feed, user_settings};
 use crate::services::save::{linkding, BookmarkData, SaveResult};
-use crate::services::{fetch_and_extract, refresh_feed, sanitize_html, SummaryJob, SummaryStatus, SyncResult};
+use crate::services::{
+    fetch_and_extract, refresh_feed, sanitize_html, SummaryJob, SummaryStatus, SyncResult,
+};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -83,15 +85,16 @@ pub async fn list_entries(
         search: query.search.clone(),
     };
 
-    let entries =
-        entry::list_by_user(&conn, user_id, &filter, query.limit, query.offset)?;
+    let entries = entry::list_by_user(&conn, user_id, &filter, query.limit, query.offset)?;
     let total = entry::count_by_user(&conn, user_id, &filter)?;
 
     // Check summary status for each entry
     let entries_with_summary: Vec<EntryWithSummary> = entries
         .into_iter()
         .map(|e| {
-            let has_summary = state.summary_cache.has_completed_summary(user_id, e.entry.id);
+            let has_summary = state
+                .summary_cache
+                .has_completed_summary(user_id, e.entry.id);
             EntryWithSummary {
                 entry: e,
                 has_summary,
@@ -182,15 +185,16 @@ pub async fn list_feed_entries(
         search: query.search,
     };
 
-    let entries =
-        entry::list_by_user(&conn, user_id, &filter, query.limit, query.offset)?;
+    let entries = entry::list_by_user(&conn, user_id, &filter, query.limit, query.offset)?;
     let total = entry::count_by_user(&conn, user_id, &filter)?;
 
     // Check summary status for each entry
     let entries_with_summary: Vec<EntryWithSummary> = entries
         .into_iter()
         .map(|e| {
-            let has_summary = state.summary_cache.has_completed_summary(user_id, e.entry.id);
+            let has_summary = state
+                .summary_cache
+                .has_completed_summary(user_id, e.entry.id);
             EntryWithSummary {
                 entry: e,
                 has_summary,

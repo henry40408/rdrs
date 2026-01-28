@@ -136,13 +136,7 @@ impl SummaryCache {
     pub fn list_by_user(&self, user_id: i64) -> Vec<i64> {
         self.cache
             .iter()
-            .filter_map(|(key, _)| {
-                if key.0 == user_id {
-                    Some(key.1)
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(key, _)| if key.0 == user_id { Some(key.1) } else { None })
             .collect()
     }
 

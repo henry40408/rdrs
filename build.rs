@@ -41,12 +41,16 @@ fn generate_favicons() {
     let tree = resvg::usvg::Tree::from_data(&svg_data, &options).expect("Failed to parse SVG");
 
     // 生成各種尺寸的 PNG
-    let sizes = [(16, "favicon-16x16.png"), (32, "favicon-32x32.png"), (180, "apple-touch-icon.png")];
+    let sizes = [
+        (16, "favicon-16x16.png"),
+        (32, "favicon-32x32.png"),
+        (180, "apple-touch-icon.png"),
+    ];
 
     for (size, filename) in sizes {
         let png_data = render_svg_to_png(&tree, size);
         let path = out_path.join(filename);
-        std::fs::write(&path, &png_data).expect(&format!("Failed to write {}", filename));
+        std::fs::write(&path, &png_data).unwrap_or_else(|_| panic!("Failed to write {}", filename));
     }
 
     // 生成 ICO 檔案（包含 16x16 和 32x32）
@@ -68,8 +72,8 @@ fn render_svg_to_png(tree: &resvg::usvg::Tree, size: u32) -> Vec<u8> {
     let offset_x = (size as f32 - scaled_w) / 2.0;
     let offset_y = (size as f32 - scaled_h) / 2.0;
 
-    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale)
-        .post_translate(offset_x, offset_y);
+    let transform =
+        resvg::tiny_skia::Transform::from_scale(scale, scale).post_translate(offset_x, offset_y);
 
     resvg::render(tree, transform, &mut pixmap.as_mut());
     pixmap.encode_png().unwrap()
