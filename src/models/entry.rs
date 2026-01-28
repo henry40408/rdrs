@@ -641,7 +641,13 @@ pub struct EntryNeighbors {
 /// Entries are ordered by COALESCE(published_at, created_at) DESC.
 /// - prev_id: the entry that comes before (newer/higher in list)
 /// - next_id: the entry that comes after (older/lower in list)
-pub fn find_neighbors(conn: &Connection, user_id: i64, entry_id: i64) -> AppResult<EntryNeighbors> {
+/// - unread_only: if true, only consider unread entries as neighbors
+pub fn find_neighbors(
+    conn: &Connection,
+    user_id: i64,
+    entry_id: i64,
+    unread_only: bool,
+) -> AppResult<EntryNeighbors> {
     // Get the current entry's sort timestamp
     let sort_time: Option<String> = conn
         .query_row(
@@ -667,41 +673,51 @@ pub fn find_neighbors(conn: &Connection, user_id: i64, entry_id: i64) -> AppResu
         }
     };
 
+    let unread_condition = if unread_only {
+        " AND e.read_at IS NULL"
+    } else {
+        ""
+    };
+
     // Find previous entry (newer, comes before in DESC order)
+    let prev_sql = format!(
+        r#"
+        SELECT e.id
+        FROM entry e
+        INNER JOIN feed f ON e.feed_id = f.id
+        INNER JOIN category c ON f.category_id = c.id
+        WHERE c.user_id = ?1
+          AND COALESCE(e.published_at, e.created_at) > ?2
+          {}
+        ORDER BY COALESCE(e.published_at, e.created_at) ASC
+        LIMIT 1
+        "#,
+        unread_condition
+    );
     let prev_id: Option<i64> = conn
-        .query_row(
-            r#"
-            SELECT e.id
-            FROM entry e
-            INNER JOIN feed f ON e.feed_id = f.id
-            INNER JOIN category c ON f.category_id = c.id
-            WHERE c.user_id = ?1
-              AND COALESCE(e.published_at, e.created_at) > ?2
-            ORDER BY COALESCE(e.published_at, e.created_at) ASC
-            LIMIT 1
-            "#,
-            params![user_id, sort_time],
-            |row| row.get(0),
-        )
+        .query_row(&prev_sql, params![user_id, sort_time], |row| row.get(0))
         .optional()?;
 
     // Find next entry (older, comes after in DESC order)
+    let next_sql = format!(
+        r#"
+        SELECT e.id
+        FROM entry e
+        INNER JOIN feed f ON e.feed_id = f.id
+        INNER JOIN category c ON f.category_id = c.id
+        WHERE c.user_id = ?1
+          AND (COALESCE(e.published_at, e.created_at) < ?2
+               OR (COALESCE(e.published_at, e.created_at) = ?2 AND e.id < ?3))
+          {}
+        ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
+        LIMIT 1
+        "#,
+        unread_condition
+    );
     let next_id: Option<i64> = conn
-        .query_row(
-            r#"
-            SELECT e.id
-            FROM entry e
-            INNER JOIN feed f ON e.feed_id = f.id
-            INNER JOIN category c ON f.category_id = c.id
-            WHERE c.user_id = ?1
-              AND (COALESCE(e.published_at, e.created_at) < ?2
-                   OR (COALESCE(e.published_at, e.created_at) = ?2 AND e.id < ?3))
-            ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
-            LIMIT 1
-            "#,
-            params![user_id, sort_time, entry_id],
-            |row| row.get(0),
-        )
+        .query_row(&next_sql, params![user_id, sort_time, entry_id], |row| {
+            row.get(0)
+        })
         .optional()?;
 
     Ok(EntryNeighbors { prev_id, next_id })

@@ -373,10 +373,17 @@ pub struct FetchFullContentResponse {
     pub sanitized_content: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct NeighborsQuery {
+    #[serde(default)]
+    pub unread_only: bool,
+}
+
 pub async fn get_entry_neighbors(
     auth_user: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(query): Query<NeighborsQuery>,
 ) -> AppResult<Json<entry::EntryNeighbors>> {
     let conn = state
         .db
@@ -391,7 +398,7 @@ pub async fn get_entry_neighbors(
         return Err(AppError::EntryNotFound);
     }
 
-    let neighbors = entry::find_neighbors(&conn, auth_user.user.id, id)?;
+    let neighbors = entry::find_neighbors(&conn, auth_user.user.id, id, query.unread_only)?;
     Ok(Json(neighbors))
 }
 
