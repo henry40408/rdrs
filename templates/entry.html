@@ -18,6 +18,7 @@
     const hasKagiConfigured = {{ has_kagi_configured }};
     let entryData = null;
     let neighbors = { prev_id: null, next_id: null };
+    let unreadNeighbors = { prev_id: null, next_id: null };
     let currentSummary = null;
 
     async function loadNeighbors() {
@@ -29,6 +30,18 @@
             }
         } catch (err) {
             console.error('Failed to load neighbors:', err);
+        }
+    }
+
+    async function loadUnreadNeighbors() {
+        try {
+            const response = await fetch(`/api/entries/${entryId}/neighbors?unread_only=true`);
+            if (response.ok) {
+                unreadNeighbors = await response.json();
+                updateUnreadNeighborLinks();
+            }
+        } catch (err) {
+            console.error('Failed to load unread neighbors:', err);
         }
     }
 
@@ -67,6 +80,41 @@
         });
     }
 
+    function updateUnreadNeighborLinks() {
+        const prevUnreadLinks = [
+            document.getElementById('prev-unread-link'),
+            document.getElementById('prev-unread-link-bottom')
+        ];
+        const nextUnreadLinks = [
+            document.getElementById('next-unread-link'),
+            document.getElementById('next-unread-link-bottom')
+        ];
+
+        prevUnreadLinks.forEach(link => {
+            if (link) {
+                if (unreadNeighbors.prev_id) {
+                    link.href = `/entries/${unreadNeighbors.prev_id}`;
+                    link.classList.remove('disabled');
+                } else {
+                    link.removeAttribute('href');
+                    link.classList.add('disabled');
+                }
+            }
+        });
+
+        nextUnreadLinks.forEach(link => {
+            if (link) {
+                if (unreadNeighbors.next_id) {
+                    link.href = `/entries/${unreadNeighbors.next_id}`;
+                    link.classList.remove('disabled');
+                } else {
+                    link.removeAttribute('href');
+                    link.classList.add('disabled');
+                }
+            }
+        });
+    }
+
     function goToPrevEntry() {
         if (neighbors.prev_id) {
             window.location.href = `/entries/${neighbors.prev_id}`;
@@ -76,6 +124,18 @@
     function goToNextEntry() {
         if (neighbors.next_id) {
             window.location.href = `/entries/${neighbors.next_id}`;
+        }
+    }
+
+    function goToPrevUnreadEntry() {
+        if (unreadNeighbors.prev_id) {
+            window.location.href = `/entries/${unreadNeighbors.prev_id}`;
+        }
+    }
+
+    function goToNextUnreadEntry() {
+        if (unreadNeighbors.next_id) {
+            window.location.href = `/entries/${unreadNeighbors.next_id}`;
         }
     }
 
@@ -100,6 +160,8 @@
 
             // Load neighbors for n/p navigation
             loadNeighbors();
+            // Load unread neighbors for N/P navigation
+            loadUnreadNeighbors();
 
             // Load cached summary if exists
             if (data.has_summary) {
@@ -142,6 +204,10 @@
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="prev-entry-link" class="disabled">&larr; Previous</a>
                 <span class="entry-nav-sep">&middot;</span>
+                <a href="#" id="prev-unread-link" class="disabled">&larr; Previous Unread</a>
+                <span class="entry-nav-sep">&middot;</span>
+                <a href="#" id="next-unread-link" class="disabled">Next Unread &rarr;</a>
+                <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="next-entry-link" class="disabled">Next &rarr;</a>
             </div>
 
@@ -183,7 +249,11 @@
             <div class="entry-nav entry-nav-bottom">
                 <a href="#" id="prev-entry-link-bottom" class="disabled">&larr; Previous</a>
                 <span class="entry-nav-sep">&middot;</span>
+                <a href="#" id="prev-unread-link-bottom" class="disabled">&larr; Previous Unread</a>
+                <span class="entry-nav-sep">&middot;</span>
                 <a href="/entries">Back to Entries</a>
+                <span class="entry-nav-sep">&middot;</span>
+                <a href="#" id="next-unread-link-bottom" class="disabled">Next Unread &rarr;</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="next-entry-link-bottom" class="disabled">Next &rarr;</a>
             </div>
@@ -542,8 +612,14 @@
                 case 'n':
                     goToNextEntry();
                     return true;
+                case 'N':
+                    goToNextUnreadEntry();
+                    return true;
                 case 'p':
                     goToPrevEntry();
+                    return true;
+                case 'P':
+                    goToPrevUnreadEntry();
                     return true;
                 case 'u':
                     markUnread();
