@@ -26,10 +26,21 @@ async fn main() {
 
     let webauthn = auth::create_webauthn(&config).expect("Failed to create WebAuthn");
 
+    // Create summary cache (max 1000 entries, 24 hour TTL)
+    let summary_cache = services::create_summary_cache(1000, 24);
+
+    // Create summary worker channel (buffer size 100)
+    let (summary_tx, summary_rx) = services::create_summary_channel(100);
+
+    // Start summary worker
+    services::start_summary_worker(summary_rx, summary_cache.clone(), db.clone());
+
     let state = AppState {
         db: db.clone(),
         config: Arc::new(config.clone()),
         webauthn: Arc::new(webauthn),
+        summary_cache,
+        summary_tx,
     };
 
     // Start background sync task

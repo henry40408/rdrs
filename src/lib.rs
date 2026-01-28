@@ -5,6 +5,7 @@ use axum::{
     Router,
 };
 use rusqlite::Connection;
+use tokio::sync::mpsc;
 use webauthn_rs::prelude::Webauthn;
 
 pub mod auth;
@@ -22,11 +23,15 @@ pub use middleware::auth::SESSION_COOKIE_NAME;
 pub use models::{Role, User};
 pub use version::{GIT_VERSION, PKG_VERSION};
 
+use services::{SummaryCache, SummaryJob};
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub config: Arc<Config>,
     pub webauthn: Arc<Webauthn>,
+    pub summary_cache: Arc<SummaryCache>,
+    pub summary_tx: mpsc::Sender<SummaryJob>,
 }
 
 pub fn create_router(state: AppState) -> Router {
@@ -132,6 +137,14 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/entries/{id}/summarize",
             post(handlers::entry::summarize_entry),
+        )
+        .route(
+            "/api/entries/{id}/summary",
+            get(handlers::entry::get_entry_summary),
+        )
+        .route(
+            "/api/entries/{id}/summary",
+            delete(handlers::entry::delete_entry_summary),
         )
         .route(
             "/api/entries/{id}/neighbors",

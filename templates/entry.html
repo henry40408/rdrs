@@ -100,8 +100,28 @@
 
             // Load neighbors for n/p navigation
             loadNeighbors();
+
+            // Load cached summary if exists
+            if (data.has_summary) {
+                loadCachedSummary();
+            }
         } catch (err) {
             document.getElementById('entry-container').innerHTML = '<p class="muted">[ERROR] Failed to load entry</p>';
+        }
+    }
+
+    async function loadCachedSummary() {
+        try {
+            const response = await fetch(`/api/entries/${entryId}/summary`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.status === 'completed' && data.summary_text) {
+                    currentSummary = data.summary_text;
+                    showSummary(data.summary_text);
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load cached summary:', err);
         }
     }
 
@@ -192,6 +212,8 @@
         }
     }
 
+    let summaryPollInterval = null;
+
     async function summarizeEntry() {
         const btn = document.getElementById('summarize-btn');
         if (!btn) return;
@@ -210,18 +232,87 @@
                 throw new Error(data.error || 'Failed to summarize');
             }
 
-            if (data.success && data.output_text) {
-                currentSummary = data.output_text;
-                showSummary(data.output_text);
+            // Handle async response based on status
+            if (data.status === 'completed' && data.summary_text) {
+                // Already cached
+                currentSummary = data.summary_text;
+                showSummary(data.summary_text);
                 btn.textContent = '[Summarize]';
+                btn.disabled = false;
+            } else if (data.status === 'pending' || data.status === 'processing') {
+                // Start polling
+                startSummaryPolling();
+            } else if (data.status === 'failed') {
+                throw new Error(data.error || 'Summarization failed');
             } else {
-                throw new Error(data.error || 'No summary returned');
+                throw new Error('Unknown response status');
             }
         } catch (err) {
             flash.error(err.message);
             btn.textContent = '[Summarize]';
-        } finally {
             btn.disabled = false;
+        }
+    }
+
+    function startSummaryPolling() {
+        if (summaryPollInterval) return;
+
+        summaryPollInterval = setInterval(async () => {
+            try {
+                const response = await fetch(`/api/entries/${entryId}/summary`);
+
+                if (response.status === 404) {
+                    // Summary was cleared
+                    stopSummaryPolling();
+                    const btn = document.getElementById('summarize-btn');
+                    if (btn) {
+                        btn.textContent = '[Summarize]';
+                        btn.disabled = false;
+                    }
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error('Failed to check summary status');
+                }
+
+                const data = await response.json();
+
+                if (data.status === 'completed' && data.summary_text) {
+                    stopSummaryPolling();
+                    currentSummary = data.summary_text;
+                    showSummary(data.summary_text);
+                    const btn = document.getElementById('summarize-btn');
+                    if (btn) {
+                        btn.textContent = '[Summarize]';
+                        btn.disabled = false;
+                    }
+                } else if (data.status === 'failed') {
+                    stopSummaryPolling();
+                    flash.error(data.error || 'Summarization failed');
+                    const btn = document.getElementById('summarize-btn');
+                    if (btn) {
+                        btn.textContent = '[Summarize]';
+                        btn.disabled = false;
+                    }
+                }
+                // Keep polling if still pending or processing
+            } catch (err) {
+                stopSummaryPolling();
+                flash.error(err.message);
+                const btn = document.getElementById('summarize-btn');
+                if (btn) {
+                    btn.textContent = '[Summarize]';
+                    btn.disabled = false;
+                }
+            }
+        }, 2000); // Poll every 2 seconds
+    }
+
+    function stopSummaryPolling() {
+        if (summaryPollInterval) {
+            clearInterval(summaryPollInterval);
+            summaryPollInterval = null;
         }
     }
 
@@ -237,12 +328,21 @@
         }
     }
 
-    function dismissSummary() {
+    async function dismissSummary() {
         const container = document.getElementById('summary-container');
         if (container) {
             container.style.display = 'none';
         }
         currentSummary = null;
+
+        // Delete summary from cache
+        try {
+            await fetch(`/api/entries/${entryId}/summary`, {
+                method: 'DELETE'
+            });
+        } catch (err) {
+            console.error('Failed to delete summary from cache:', err);
+        }
     }
 
     function sanitizeTitleForTiddlyWiki(title) {

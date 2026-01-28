@@ -8,8 +8,7 @@ use crate::error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::{category, entry, feed, user_settings};
 use crate::services::save::{linkding, BookmarkData, SaveResult};
-use crate::services::summarize::kagi;
-use crate::services::{fetch_and_extract, refresh_feed, sanitize_html, SyncResult};
+use crate::services::{fetch_and_extract, refresh_feed, sanitize_html, SummaryJob, SummaryStatus, SyncResult};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -31,9 +30,17 @@ fn default_limit() -> i64 {
     50
 }
 
+/// Entry with summary status
+#[derive(Debug, Serialize)]
+pub struct EntryWithSummary {
+    #[serde(flatten)]
+    pub entry: entry::EntryWithFeed,
+    pub has_summary: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub struct EntriesResponse {
-    pub entries: Vec<entry::EntryWithFeed>,
+    pub entries: Vec<EntryWithSummary>,
     pub total: i64,
     pub limit: i64,
     pub offset: i64,
@@ -44,6 +51,8 @@ pub async fn list_entries(
     State(state): State<AppState>,
     Query(query): Query<ListEntriesQuery>,
 ) -> AppResult<Json<EntriesResponse>> {
+    let user_id = auth_user.user.id;
+
     let conn = state
         .db
         .lock()
@@ -52,7 +61,7 @@ pub async fn list_entries(
     // Verify category belongs to user if specified
     if let Some(category_id) = query.category_id {
         let cat = category::find_by_id(&conn, category_id)?.ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != auth_user.user.id {
+        if cat.user_id != user_id {
             return Err(AppError::CategoryNotFound);
         }
     }
@@ -61,7 +70,7 @@ pub async fn list_entries(
     if let Some(feed_id) = query.feed_id {
         let f = feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
         let cat = category::find_by_id(&conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != auth_user.user.id {
+        if cat.user_id != user_id {
             return Err(AppError::FeedNotFound);
         }
     }
@@ -71,15 +80,27 @@ pub async fn list_entries(
         category_id: query.category_id,
         unread_only: query.unread_only,
         starred_only: query.starred_only,
-        search: query.search,
+        search: query.search.clone(),
     };
 
     let entries =
-        entry::list_by_user(&conn, auth_user.user.id, &filter, query.limit, query.offset)?;
-    let total = entry::count_by_user(&conn, auth_user.user.id, &filter)?;
+        entry::list_by_user(&conn, user_id, &filter, query.limit, query.offset)?;
+    let total = entry::count_by_user(&conn, user_id, &filter)?;
+
+    // Check summary status for each entry
+    let entries_with_summary: Vec<EntryWithSummary> = entries
+        .into_iter()
+        .map(|e| {
+            let has_summary = state.summary_cache.has_completed_summary(user_id, e.entry.id);
+            EntryWithSummary {
+                entry: e,
+                has_summary,
+            }
+        })
+        .collect();
 
     Ok(Json(EntriesResponse {
-        entries,
+        entries: entries_with_summary,
         total,
         limit: query.limit,
         offset: query.offset,
@@ -91,6 +112,7 @@ pub struct EntryResponse {
     #[serde(flatten)]
     pub entry: entry::EntryWithFeed,
     pub sanitized_content: Option<String>,
+    pub has_summary: bool,
 }
 
 pub async fn get_entry(
@@ -98,6 +120,8 @@ pub async fn get_entry(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<EntryResponse>> {
+    let user_id = auth_user.user.id;
+
     let conn = state
         .db
         .lock()
@@ -108,7 +132,7 @@ pub async fn get_entry(
     // Verify entry belongs to user
     let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
         .ok_or(AppError::CategoryNotFound)?;
-    if cat.user_id != auth_user.user.id {
+    if cat.user_id != user_id {
         return Err(AppError::EntryNotFound);
     }
 
@@ -120,9 +144,13 @@ pub async fn get_entry(
         .as_ref()
         .map(|c| sanitize_html(c, &state.config.image_proxy_secret, base_url));
 
+    // Check if there's a completed summary
+    let has_summary = state.summary_cache.has_completed_summary(user_id, id);
+
     Ok(Json(EntryResponse {
         entry: entry_with_feed,
         sanitized_content,
+        has_summary,
     }))
 }
 
@@ -132,6 +160,8 @@ pub async fn list_feed_entries(
     Path(feed_id): Path<i64>,
     Query(query): Query<ListEntriesQuery>,
 ) -> AppResult<Json<EntriesResponse>> {
+    let user_id = auth_user.user.id;
+
     let conn = state
         .db
         .lock()
@@ -140,7 +170,7 @@ pub async fn list_feed_entries(
     // Verify feed belongs to user
     let f = feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
     let cat = category::find_by_id(&conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
-    if cat.user_id != auth_user.user.id {
+    if cat.user_id != user_id {
         return Err(AppError::FeedNotFound);
     }
 
@@ -153,11 +183,23 @@ pub async fn list_feed_entries(
     };
 
     let entries =
-        entry::list_by_user(&conn, auth_user.user.id, &filter, query.limit, query.offset)?;
-    let total = entry::count_by_user(&conn, auth_user.user.id, &filter)?;
+        entry::list_by_user(&conn, user_id, &filter, query.limit, query.offset)?;
+    let total = entry::count_by_user(&conn, user_id, &filter)?;
+
+    // Check summary status for each entry
+    let entries_with_summary: Vec<EntryWithSummary> = entries
+        .into_iter()
+        .map(|e| {
+            let has_summary = state.summary_cache.has_completed_summary(user_id, e.entry.id);
+            EntryWithSummary {
+                entry: e,
+                has_summary,
+            }
+        })
+        .collect();
 
     Ok(Json(EntriesResponse {
-        entries,
+        entries: entries_with_summary,
         total,
         limit: query.limit,
         offset: query.offset,
@@ -404,20 +446,35 @@ pub struct SaveToServicesResponse {
     pub all_success: bool,
 }
 
+/// Response for summary-related endpoints
 #[derive(Debug, Serialize)]
-pub struct SummarizeResponse {
-    pub success: bool,
-    pub output_text: Option<String>,
+pub struct SummaryResponse {
+    pub status: SummaryStatus,
+    pub summary_text: Option<String>,
     pub error: Option<String>,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// POST /api/entries/{id}/summarize - Queue or return cached summary
 pub async fn summarize_entry(
     auth_user: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> AppResult<Json<SummarizeResponse>> {
+) -> AppResult<Json<SummaryResponse>> {
+    let user_id = auth_user.user.id;
+
+    // Check cache first
+    if let Some(cached) = state.summary_cache.get(user_id, id) {
+        return Ok(Json(SummaryResponse {
+            status: cached.status,
+            summary_text: cached.summary_text,
+            error: cached.error_message,
+            created_at: Some(cached.created_at),
+        }));
+    }
+
     // Get entry and verify ownership
-    let (link, kagi_config) = {
+    let link = {
         let conn = state
             .db
             .lock()
@@ -429,7 +486,7 @@ pub async fn summarize_entry(
         // Verify entry belongs to user
         let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
             .ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != auth_user.user.id {
+        if cat.user_id != user_id {
             return Err(AppError::EntryNotFound);
         }
 
@@ -439,8 +496,8 @@ pub async fn summarize_entry(
                 AppError::Validation("Entry has no link to summarize".to_string())
             })?;
 
-        // Get Kagi config
-        let config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
+        // Verify Kagi is configured
+        let config = user_settings::get_save_services_config(&conn, user_id)?;
         let kagi = config
             .kagi
             .ok_or_else(|| AppError::Validation("Kagi is not configured".to_string()))?;
@@ -449,17 +506,101 @@ pub async fn summarize_entry(
             return Err(AppError::Validation("Kagi is not configured".to_string()));
         }
 
-        (link, kagi)
+        link
     };
 
-    // Call Kagi API
-    let result = kagi::summarize_url(&kagi_config, &link).await?;
+    // Set pending status and queue the job
+    state.summary_cache.set_pending(user_id, id);
 
-    Ok(Json(SummarizeResponse {
-        success: result.success,
-        output_text: result.output_text,
-        error: result.error,
+    let job = SummaryJob {
+        user_id,
+        entry_id: id,
+        entry_link: link,
+    };
+
+    state
+        .summary_tx
+        .send(job)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to queue summary job: {}", e)))?;
+
+    // Return pending status
+    Ok(Json(SummaryResponse {
+        status: SummaryStatus::Pending,
+        summary_text: None,
+        error: None,
+        created_at: Some(chrono::Utc::now()),
     }))
+}
+
+/// GET /api/entries/{id}/summary - Get summary status
+pub async fn get_entry_summary(
+    auth_user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<SummaryResponse>> {
+    let user_id = auth_user.user.id;
+
+    // Verify entry ownership
+    {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+
+        let entry_with_feed =
+            entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+
+        let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
+            .ok_or(AppError::CategoryNotFound)?;
+        if cat.user_id != user_id {
+            return Err(AppError::EntryNotFound);
+        }
+    }
+
+    // Get from cache
+    if let Some(cached) = state.summary_cache.get(user_id, id) {
+        Ok(Json(SummaryResponse {
+            status: cached.status,
+            summary_text: cached.summary_text,
+            error: cached.error_message,
+            created_at: Some(cached.created_at),
+        }))
+    } else {
+        // No summary exists
+        Err(AppError::NotFound("No summary found".to_string()))
+    }
+}
+
+/// DELETE /api/entries/{id}/summary - Delete summary from cache
+pub async fn delete_entry_summary(
+    auth_user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<serde_json::Value>> {
+    let user_id = auth_user.user.id;
+
+    // Verify entry ownership
+    {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+
+        let entry_with_feed =
+            entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+
+        let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
+            .ok_or(AppError::CategoryNotFound)?;
+        if cat.user_id != user_id {
+            return Err(AppError::EntryNotFound);
+        }
+    }
+
+    // Remove from cache
+    state.summary_cache.remove(user_id, id);
+
+    Ok(Json(serde_json::json!({ "success": true })))
 }
 
 pub async fn save_to_services(
