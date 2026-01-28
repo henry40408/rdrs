@@ -60,6 +60,10 @@ All configuration is done via environment variables:
 | `MULTI_USER_ENABLED` | `false` | Allow multiple users (requires signup enabled) |
 | `IMAGE_PROXY_SECRET` | Auto-generated | HMAC secret for secure image proxying |
 | `USER_AGENT` | `RDRS/...` | Custom user agent for feed fetching |
+| `WEBAUTHN_RP_ID` | `localhost` | WebAuthn Relying Party ID for passkey authentication |
+| `WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin URL |
+| `WEBAUTHN_RP_NAME` | `rdrs` | WebAuthn Relying Party display name |
+| `RUST_LOG` | - | Log level filter (e.g., `info`, `debug`, `rdrs=debug`) |
 
 ## Usage
 
