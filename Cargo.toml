@@ -43,6 +43,12 @@ webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"]
 webauthn-rs-proto = "0.5"
 uuid = { version = "1", features = ["v4", "serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
+moka = { version = "0.12", features = ["sync"] }
+
+[build-dependencies]
+resvg = "0.45"
+image = "0.25"
+ico = "0.4"
 
 [dev-dependencies]
 axum-test = "17"

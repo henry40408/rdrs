@@ -8,6 +8,8 @@ pub mod readability;
 pub mod sanitize;
 pub mod save;
 pub mod summarize;
+pub mod summary_cache;
+pub mod summary_worker;
 
 pub use background::start_background_sync;
 pub use feed_discovery::{discover_feed, DiscoveredFeed};
@@ -18,3 +20,5 @@ pub use readability::{fetch_and_extract, ExtractedContent};
 pub use sanitize::sanitize_html;
 pub use save::{BookmarkData, LinkdingConfig, SaveResult, SaveServicesConfig};
 pub use summarize::KagiConfig;
+pub use summary_cache::{create_summary_cache, SummaryCache, SummaryCacheEntry, SummaryStatus};
+pub use summary_worker::{create_summary_channel, start_summary_worker, SummaryJob};

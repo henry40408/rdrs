@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}RDRS{% endblock %}</title>
+    <link rel="icon" href="/favicon.ico" sizes="32x32">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     <style>
         :root {
             --space-1: 0.25rem;   /* 4px */
@@ -379,6 +382,12 @@
             padding: 0 2px;
             border-radius: 2px;
         }
+        /* Summary badge */
+        .summary-badge {
+            color: #0066cc;
+            font-weight: normal;
+            margin-left: 0.25rem;
+        }
     </style>
     <script>
         // Global keyboard shortcut handler (defined early so child templates can use it)
@@ -525,7 +534,9 @@
                     html += '<tr><td>j</td><td>Scroll down</td></tr>';
                     html += '<tr><td>k</td><td>Scroll up</td></tr>';
                     html += '<tr><td>n</td><td>Next entry</td></tr>';
+                    html += '<tr><td>N</td><td>Next unread entry</td></tr>';
                     html += '<tr><td>p</td><td>Previous entry</td></tr>';
+                    html += '<tr><td>P</td><td>Previous unread entry</td></tr>';
                     html += '<tr><td>u</td><td>Mark as unread</td></tr>';
                     html += '<tr><td>s</td><td>Toggle star</td></tr>';
                     html += '<tr><td>v</td><td>Open original in new tab</td></tr>';

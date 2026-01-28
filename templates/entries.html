@@ -34,6 +34,11 @@
         </label>
     </div>
     <div class="form-group form-group-inline">
+        <label>
+            <input type="checkbox" id="filter-has-summary" onchange="handleFilterChange()"> Has Summary
+        </label>
+    </div>
+    <div class="form-group form-group-inline">
         <label for="filter-search">Search</label>
         <input type="text" id="filter-search" placeholder="Search..."
                style="width:14em;" onkeydown="handleSearchKeydown(event)">
@@ -157,19 +162,27 @@
     function renderEntries() {
         const container = document.getElementById('entries-list');
         const search = document.getElementById('filter-search').value.trim();
+        const hasSummaryFilter = document.getElementById('filter-has-summary').checked;
 
-        if (entries.length === 0) {
+        // Client-side filter for has_summary (since it's not a DB filter)
+        let filteredEntries = entries;
+        if (hasSummaryFilter) {
+            filteredEntries = entries.filter(e => e.has_summary);
+        }
+
+        if (filteredEntries.length === 0) {
             container.innerHTML = '<p class="muted">No entries found.</p>';
             return;
         }
 
-        container.innerHTML = entries.map((entry, index) => {
+        container.innerHTML = filteredEntries.map((entry, index) => {
             const title = decodeHtml(entry.title) || 'Untitled';
             const feedTitle = decodeHtml(entry.feed_title) || entry.feed_url;
             const date = entry.published_at ? formatDate(entry.published_at) : '';
             const dateTitle = entry.published_at ? formatDateTime(entry.published_at) : '';
             const isRead = entry.read_at !== null;
             const isStarred = entry.starred_at !== null;
+            const hasSummary = entry.has_summary;
             const feedIconHtml = entry.feed_has_icon
                 ? `<img src="/api/feeds/${entry.feed_id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
                 : '';
@@ -190,6 +203,7 @@
                 <div>
                     <a href="/entries/${entry.id}" style="font-weight:${isRead ? 'normal' : 'bold'};">${titleHtml}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
+                    ${hasSummary ? '<span title="Has Summary" class="summary-badge">[S]</span>' : ''}
                 </div>${contentSnippetHtml}
                 <div class="muted entry-item-meta">
                     ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
@@ -217,7 +231,9 @@
     }
 
     function updateEntriesCount() {
-        document.getElementById('entries-count').textContent = `Showing ${entries.length} of ${total} entries`;
+        const hasSummaryFilter = document.getElementById('filter-has-summary').checked;
+        const displayedCount = hasSummaryFilter ? entries.filter(e => e.has_summary).length : entries.length;
+        document.getElementById('entries-count').textContent = `Showing ${displayedCount} of ${total} entries`;
     }
 
     async function loadMore() {
@@ -381,11 +397,13 @@
         const categoryId = document.getElementById('filter-category').value;
         const unreadOnly = document.getElementById('filter-unread').checked;
         const starredOnly = document.getElementById('filter-starred').checked;
+        const hasSummary = document.getElementById('filter-has-summary').checked;
         const search = document.getElementById('filter-search').value.trim();
         if (feedId) params.set('feed', feedId);
         if (categoryId) params.set('category', categoryId);
         if (unreadOnly) params.set('unread', '1');
         if (starredOnly) params.set('starred', '1');
+        if (hasSummary) params.set('has_summary', '1');
         if (search) params.set('search', search);
         const newURL = params.toString() ? `/entries?${params.toString()}` : '/entries';
         history.replaceState(null, '', newURL);
@@ -546,11 +564,13 @@
         const categoryId = urlParams.get('category');
         const unreadOnly = urlParams.get('unread');
         const starredOnly = urlParams.get('starred');
+        const hasSummary = urlParams.get('has_summary');
         const search = urlParams.get('search');
         if (feedId) document.getElementById('filter-feed').value = feedId;
         if (categoryId) document.getElementById('filter-category').value = categoryId;
         if (unreadOnly) document.getElementById('filter-unread').checked = true;
         if (starredOnly) document.getElementById('filter-starred').checked = true;
+        if (hasSummary) document.getElementById('filter-has-summary').checked = true;
         if (search) document.getElementById('filter-search').value = search;
         loadEntries();
     });

@@ -18,6 +18,7 @@
     const hasKagiConfigured = {{ has_kagi_configured }};
     let entryData = null;
     let neighbors = { prev_id: null, next_id: null };
+    let unreadNeighbors = { prev_id: null, next_id: null };
     let currentSummary = null;
 
     async function loadNeighbors() {
@@ -29,6 +30,18 @@
             }
         } catch (err) {
             console.error('Failed to load neighbors:', err);
+        }
+    }
+
+    async function loadUnreadNeighbors() {
+        try {
+            const response = await fetch(`/api/entries/${entryId}/neighbors?unread_only=true`);
+            if (response.ok) {
+                unreadNeighbors = await response.json();
+                updateUnreadNeighborLinks();
+            }
+        } catch (err) {
+            console.error('Failed to load unread neighbors:', err);
         }
     }
 
@@ -67,6 +80,41 @@
         });
     }
 
+    function updateUnreadNeighborLinks() {
+        const prevUnreadLinks = [
+            document.getElementById('prev-unread-link'),
+            document.getElementById('prev-unread-link-bottom')
+        ];
+        const nextUnreadLinks = [
+            document.getElementById('next-unread-link'),
+            document.getElementById('next-unread-link-bottom')
+        ];
+
+        prevUnreadLinks.forEach(link => {
+            if (link) {
+                if (unreadNeighbors.prev_id) {
+                    link.href = `/entries/${unreadNeighbors.prev_id}`;
+                    link.classList.remove('disabled');
+                } else {
+                    link.removeAttribute('href');
+                    link.classList.add('disabled');
+                }
+            }
+        });
+
+        nextUnreadLinks.forEach(link => {
+            if (link) {
+                if (unreadNeighbors.next_id) {
+                    link.href = `/entries/${unreadNeighbors.next_id}`;
+                    link.classList.remove('disabled');
+                } else {
+                    link.removeAttribute('href');
+                    link.classList.add('disabled');
+                }
+            }
+        });
+    }
+
     function goToPrevEntry() {
         if (neighbors.prev_id) {
             window.location.href = `/entries/${neighbors.prev_id}`;
@@ -76,6 +124,18 @@
     function goToNextEntry() {
         if (neighbors.next_id) {
             window.location.href = `/entries/${neighbors.next_id}`;
+        }
+    }
+
+    function goToPrevUnreadEntry() {
+        if (unreadNeighbors.prev_id) {
+            window.location.href = `/entries/${unreadNeighbors.prev_id}`;
+        }
+    }
+
+    function goToNextUnreadEntry() {
+        if (unreadNeighbors.next_id) {
+            window.location.href = `/entries/${unreadNeighbors.next_id}`;
         }
     }
 
@@ -100,8 +160,30 @@
 
             // Load neighbors for n/p navigation
             loadNeighbors();
+            // Load unread neighbors for N/P navigation
+            loadUnreadNeighbors();
+
+            // Load cached summary if exists
+            if (data.has_summary) {
+                loadCachedSummary();
+            }
         } catch (err) {
             document.getElementById('entry-container').innerHTML = '<p class="muted">[ERROR] Failed to load entry</p>';
+        }
+    }
+
+    async function loadCachedSummary() {
+        try {
+            const response = await fetch(`/api/entries/${entryId}/summary`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.status === 'completed' && data.summary_text) {
+                    currentSummary = data.summary_text;
+                    showSummary(data.summary_text);
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load cached summary:', err);
         }
     }
 
@@ -121,6 +203,10 @@
                 <a href="/entries">&larr; Back to Entries</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="prev-entry-link" class="disabled">&larr; Previous</a>
+                <span class="entry-nav-sep">&middot;</span>
+                <a href="#" id="prev-unread-link" class="disabled">&larr; Previous Unread</a>
+                <span class="entry-nav-sep">&middot;</span>
+                <a href="#" id="next-unread-link" class="disabled">Next Unread &rarr;</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="next-entry-link" class="disabled">Next &rarr;</a>
             </div>
@@ -163,7 +249,11 @@
             <div class="entry-nav entry-nav-bottom">
                 <a href="#" id="prev-entry-link-bottom" class="disabled">&larr; Previous</a>
                 <span class="entry-nav-sep">&middot;</span>
+                <a href="#" id="prev-unread-link-bottom" class="disabled">&larr; Previous Unread</a>
+                <span class="entry-nav-sep">&middot;</span>
                 <a href="/entries">Back to Entries</a>
+                <span class="entry-nav-sep">&middot;</span>
+                <a href="#" id="next-unread-link-bottom" class="disabled">Next Unread &rarr;</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="next-entry-link-bottom" class="disabled">Next &rarr;</a>
             </div>
@@ -192,6 +282,8 @@
         }
     }
 
+    let summaryPollInterval = null;
+
     async function summarizeEntry() {
         const btn = document.getElementById('summarize-btn');
         if (!btn) return;
@@ -210,18 +302,87 @@
                 throw new Error(data.error || 'Failed to summarize');
             }
 
-            if (data.success && data.output_text) {
-                currentSummary = data.output_text;
-                showSummary(data.output_text);
+            // Handle async response based on status
+            if (data.status === 'completed' && data.summary_text) {
+                // Already cached
+                currentSummary = data.summary_text;
+                showSummary(data.summary_text);
                 btn.textContent = '[Summarize]';
+                btn.disabled = false;
+            } else if (data.status === 'pending' || data.status === 'processing') {
+                // Start polling
+                startSummaryPolling();
+            } else if (data.status === 'failed') {
+                throw new Error(data.error || 'Summarization failed');
             } else {
-                throw new Error(data.error || 'No summary returned');
+                throw new Error('Unknown response status');
             }
         } catch (err) {
             flash.error(err.message);
             btn.textContent = '[Summarize]';
-        } finally {
             btn.disabled = false;
+        }
+    }
+
+    function startSummaryPolling() {
+        if (summaryPollInterval) return;
+
+        summaryPollInterval = setInterval(async () => {
+            try {
+                const response = await fetch(`/api/entries/${entryId}/summary`);
+
+                if (response.status === 404) {
+                    // Summary was cleared
+                    stopSummaryPolling();
+                    const btn = document.getElementById('summarize-btn');
+                    if (btn) {
+                        btn.textContent = '[Summarize]';
+                        btn.disabled = false;
+                    }
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error('Failed to check summary status');
+                }
+
+                const data = await response.json();
+
+                if (data.status === 'completed' && data.summary_text) {
+                    stopSummaryPolling();
+                    currentSummary = data.summary_text;
+                    showSummary(data.summary_text);
+                    const btn = document.getElementById('summarize-btn');
+                    if (btn) {
+                        btn.textContent = '[Summarize]';
+                        btn.disabled = false;
+                    }
+                } else if (data.status === 'failed') {
+                    stopSummaryPolling();
+                    flash.error(data.error || 'Summarization failed');
+                    const btn = document.getElementById('summarize-btn');
+                    if (btn) {
+                        btn.textContent = '[Summarize]';
+                        btn.disabled = false;
+                    }
+                }
+                // Keep polling if still pending or processing
+            } catch (err) {
+                stopSummaryPolling();
+                flash.error(err.message);
+                const btn = document.getElementById('summarize-btn');
+                if (btn) {
+                    btn.textContent = '[Summarize]';
+                    btn.disabled = false;
+                }
+            }
+        }, 2000); // Poll every 2 seconds
+    }
+
+    function stopSummaryPolling() {
+        if (summaryPollInterval) {
+            clearInterval(summaryPollInterval);
+            summaryPollInterval = null;
         }
     }
 
@@ -237,12 +398,21 @@
         }
     }
 
-    function dismissSummary() {
+    async function dismissSummary() {
         const container = document.getElementById('summary-container');
         if (container) {
             container.style.display = 'none';
         }
         currentSummary = null;
+
+        // Delete summary from cache
+        try {
+            await fetch(`/api/entries/${entryId}/summary`, {
+                method: 'DELETE'
+            });
+        } catch (err) {
+            console.error('Failed to delete summary from cache:', err);
+        }
     }
 
     function sanitizeTitleForTiddlyWiki(title) {
@@ -442,8 +612,14 @@
                 case 'n':
                     goToNextEntry();
                     return true;
+                case 'N':
+                    goToNextUnreadEntry();
+                    return true;
                 case 'p':
                     goToPrevEntry();
+                    return true;
+                case 'P':
+                    goToPrevUnreadEntry();
                     return true;
                 case 'u':
                     markUnread();

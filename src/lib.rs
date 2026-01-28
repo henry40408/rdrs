@@ -5,6 +5,7 @@ use axum::{
     Router,
 };
 use rusqlite::Connection;
+use tokio::sync::mpsc;
 use webauthn_rs::prelude::Webauthn;
 
 pub mod auth;
@@ -22,15 +23,28 @@ pub use middleware::auth::SESSION_COOKIE_NAME;
 pub use models::{Role, User};
 pub use version::{GIT_VERSION, PKG_VERSION};
 
+use services::{SummaryCache, SummaryJob};
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub config: Arc<Config>,
     pub webauthn: Arc<Webauthn>,
+    pub summary_cache: Arc<SummaryCache>,
+    pub summary_tx: mpsc::Sender<SummaryJob>,
 }
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
+        // Favicon routes
+        .route("/favicon.ico", get(handlers::favicon::favicon_ico))
+        .route("/favicon.svg", get(handlers::favicon::favicon_svg))
+        .route("/favicon-16x16.png", get(handlers::favicon::favicon_16))
+        .route("/favicon-32x32.png", get(handlers::favicon::favicon_32))
+        .route(
+            "/apple-touch-icon.png",
+            get(handlers::favicon::apple_touch_icon),
+        )
         .route("/", get(handlers::pages::home_page))
         .route("/login", get(handlers::pages::login_page))
         .route("/register", get(handlers::pages::register_page))
@@ -132,6 +146,14 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/entries/{id}/summarize",
             post(handlers::entry::summarize_entry),
+        )
+        .route(
+            "/api/entries/{id}/summary",
+            get(handlers::entry::get_entry_summary),
+        )
+        .route(
+            "/api/entries/{id}/summary",
+            delete(handlers::entry::delete_entry_summary),
         )
         .route(
             "/api/entries/{id}/neighbors",
