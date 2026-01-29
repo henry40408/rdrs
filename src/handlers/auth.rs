@@ -1,6 +1,7 @@
 use axum::{extract::State, http::StatusCode, Json};
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use serde::{Deserialize, Serialize};
+use time::Duration;
 
 use crate::auth::{hash_password, verify_password};
 use crate::error::{AppError, AppResult};
@@ -104,6 +105,7 @@ pub async fn login(
         .path("/")
         .http_only(true)
         .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .max_age(Duration::days(session::SESSION_EXPIRY_DAYS))
         .build();
 
     Ok((

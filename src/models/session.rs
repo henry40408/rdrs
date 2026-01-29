@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::{AppError, AppResult};
 
-const SESSION_EXPIRY_DAYS: i64 = 7;
+pub const SESSION_EXPIRY_DAYS: i64 = 7;
 const TOKEN_LENGTH: usize = 32;
 
 #[derive(Debug, Clone)]
