@@ -3,7 +3,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-// 在編譯時嵌入生成的 favicon 檔案
+// Embed generated favicon files at compile time
 const FAVICON_ICO: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/favicon.ico"));
 const FAVICON_SVG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/favicon.svg"));
 const FAVICON_16: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/favicon-16x16.png"));
