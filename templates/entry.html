@@ -678,8 +678,10 @@
                     }
                     return true;
                 case 'z':
-                    // Summarize with Kagi
-                    if (hasKagiConfigured && entryData && entryData.link) {
+                    // Toggle summary - dismiss if shown, otherwise summarize with Kagi
+                    if (currentSummary) {
+                        dismissSummary();
+                    } else if (hasKagiConfigured && entryData && entryData.link) {
                         const summarizeBtn = document.getElementById('summarize-btn');
                         if (summarizeBtn && !summarizeBtn.disabled) {
                             summarizeEntry();
