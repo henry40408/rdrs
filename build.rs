@@ -26,7 +26,7 @@ fn get_git_version() -> String {
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+        .unwrap_or_else(|| "dev".to_string())
 }
 
 fn generate_favicons() {
