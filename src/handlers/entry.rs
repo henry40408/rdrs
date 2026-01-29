@@ -290,6 +290,16 @@ pub struct MarkAllReadResponse {
     pub marked_count: i64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MarkReadByIdsRequest {
+    pub entry_ids: Vec<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MarkReadByIdsResponse {
+    pub marked_count: i64,
+}
+
 pub async fn mark_all_read(
     auth_user: AuthUser,
     State(state): State<AppState>,
@@ -322,6 +332,21 @@ pub async fn mark_all_read(
     };
 
     Ok(Json(MarkAllReadResponse { marked_count }))
+}
+
+pub async fn mark_read_by_ids(
+    auth_user: AuthUser,
+    State(state): State<AppState>,
+    Json(body): Json<MarkReadByIdsRequest>,
+) -> AppResult<Json<MarkReadByIdsResponse>> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+
+    let marked_count = entry::mark_read_by_ids(&conn, auth_user.user.id, &body.entry_ids)?;
+
+    Ok(Json(MarkReadByIdsResponse { marked_count }))
 }
 
 #[derive(Debug, Serialize)]
