@@ -4,15 +4,8 @@ use serde::Serialize;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Summary processing status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SummaryStatus {
-    Pending,
-    Processing,
-    Completed,
-    Failed,
-}
+// Re-export SummaryStatus from models for backward compatibility
+pub use crate::models::entry_summary::SummaryStatus;
 
 /// A cached summary entry
 #[derive(Debug, Clone, Serialize)]
@@ -130,6 +123,20 @@ impl SummaryCache {
             .get(&(user_id, entry_id))
             .map(|e| e.status == SummaryStatus::Completed)
             .unwrap_or(false)
+    }
+
+    /// Check if a job is in-flight (pending or processing)
+    /// Used to prevent duplicate submissions
+    pub fn is_in_flight(&self, user_id: i64, entry_id: i64) -> bool {
+        self.cache
+            .get(&(user_id, entry_id))
+            .map(|e| e.status == SummaryStatus::Pending || e.status == SummaryStatus::Processing)
+            .unwrap_or(false)
+    }
+
+    /// Get the status of a summary if it exists in cache
+    pub fn get_status(&self, user_id: i64, entry_id: i64) -> Option<SummaryStatus> {
+        self.cache.get(&(user_id, entry_id)).map(|e| e.status)
     }
 
     /// List all entry IDs with summaries for a user

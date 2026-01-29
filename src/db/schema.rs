@@ -80,6 +80,22 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_entry_read_at ON entry(read_at);
         CREATE INDEX IF NOT EXISTS idx_entry_starred_at ON entry(starred_at);
 
+        CREATE TABLE IF NOT EXISTS entry_summary (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+            entry_id INTEGER NOT NULL REFERENCES entry(id) ON DELETE CASCADE,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+            summary_text TEXT,
+            error_message TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(user_id, entry_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_entry_summary_user_entry ON entry_summary(user_id, entry_id);
+        CREATE INDEX IF NOT EXISTS idx_entry_summary_user_status ON entry_summary(user_id, status);
+        CREATE INDEX IF NOT EXISTS idx_entry_summary_entry_id ON entry_summary(entry_id);
+
         CREATE TABLE IF NOT EXISTS image (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_type TEXT NOT NULL,
@@ -165,5 +181,6 @@ mod tests {
         assert!(tables.contains(&"session".to_string()));
         assert!(tables.contains(&"passkey".to_string()));
         assert!(tables.contains(&"webauthn_challenge".to_string()));
+        assert!(tables.contains(&"entry_summary".to_string()));
     }
 }
