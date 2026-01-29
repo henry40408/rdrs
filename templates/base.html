@@ -382,11 +382,31 @@
             padding: 0 2px;
             border-radius: 2px;
         }
-        /* Summary badge */
+        /* Summary badges */
         .summary-badge {
             color: #0066cc;
             font-weight: normal;
             margin-left: 0.25rem;
+        }
+        .summary-badge-pending {
+            color: #888;
+            font-weight: normal;
+            margin-left: 0.25rem;
+        }
+        .summary-badge-processing {
+            color: #0066cc;
+            font-weight: normal;
+            margin-left: 0.25rem;
+            animation: blink 1s infinite;
+        }
+        .summary-badge-failed {
+            color: #cc0000;
+            font-weight: normal;
+            margin-left: 0.25rem;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
         }
         /* Entries count spacing */
         #entries-count {

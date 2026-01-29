@@ -6,11 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
-use crate::models::{category, entry, feed, user_settings};
+use crate::models::{category, entry, entry_summary, feed, user_settings, SummaryStatus};
 use crate::services::save::{linkding, BookmarkData, SaveResult};
-use crate::services::{
-    fetch_and_extract, refresh_feed, sanitize_html, SummaryJob, SummaryStatus, SyncResult,
-};
+use crate::services::{fetch_and_extract, refresh_feed, sanitize_html, SummaryJob, SyncResult};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -22,6 +20,7 @@ pub struct ListEntriesQuery {
     #[serde(default)]
     pub starred_only: bool,
     pub search: Option<String>,
+    pub has_summary: Option<bool>,
     #[serde(default = "default_limit")]
     pub limit: i64,
     #[serde(default)]
@@ -37,7 +36,7 @@ fn default_limit() -> i64 {
 pub struct EntryWithSummary {
     #[serde(flatten)]
     pub entry: entry::EntryWithFeed,
-    pub has_summary: bool,
+    pub summary_status: Option<SummaryStatus>,
 }
 
 #[derive(Debug, Serialize)]
@@ -83,21 +82,31 @@ pub async fn list_entries(
         unread_only: query.unread_only,
         starred_only: query.starred_only,
         search: query.search.clone(),
+        has_summary: query.has_summary,
     };
 
     let entries = entry::list_by_user(&conn, user_id, &filter, query.limit, query.offset)?;
     let total = entry::count_by_user(&conn, user_id, &filter)?;
 
-    // Check summary status for each entry
+    // Batch query summary statuses from DB
+    let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
+    let db_statuses = entry_summary::get_statuses_for_entries(&conn, user_id, &entry_ids)?;
+
+    // Build response with summary status (prefer cache for in-flight, DB for completed/failed)
     let entries_with_summary: Vec<EntryWithSummary> = entries
         .into_iter()
         .map(|e| {
-            let has_summary = state
-                .summary_cache
-                .has_completed_summary(user_id, e.entry.id);
+            // Check cache first for in-flight status
+            let summary_status = if let Some(cached) = state.summary_cache.get(user_id, e.entry.id)
+            {
+                Some(cached.status)
+            } else {
+                // Fall back to DB status
+                db_statuses.get(&e.entry.id).copied()
+            };
             EntryWithSummary {
                 entry: e,
-                has_summary,
+                summary_status,
             }
         })
         .collect();
@@ -115,7 +124,7 @@ pub struct EntryResponse {
     #[serde(flatten)]
     pub entry: entry::EntryWithFeed,
     pub sanitized_content: Option<String>,
-    pub has_summary: bool,
+    pub summary_status: Option<SummaryStatus>,
 }
 
 pub async fn get_entry(
@@ -147,13 +156,17 @@ pub async fn get_entry(
         .as_ref()
         .map(|c| sanitize_html(c, &state.config.image_proxy_secret, base_url));
 
-    // Check if there's a completed summary
-    let has_summary = state.summary_cache.has_completed_summary(user_id, id);
+    // Check summary status (cache first, then DB)
+    let summary_status = if let Some(cached) = state.summary_cache.get(user_id, id) {
+        Some(cached.status)
+    } else {
+        entry_summary::find_by_user_and_entry(&conn, user_id, id)?.map(|s| s.status)
+    };
 
     Ok(Json(EntryResponse {
         entry: entry_with_feed,
         sanitized_content,
-        has_summary,
+        summary_status,
     }))
 }
 
@@ -183,21 +196,29 @@ pub async fn list_feed_entries(
         unread_only: query.unread_only,
         starred_only: query.starred_only,
         search: query.search,
+        has_summary: query.has_summary,
     };
 
     let entries = entry::list_by_user(&conn, user_id, &filter, query.limit, query.offset)?;
     let total = entry::count_by_user(&conn, user_id, &filter)?;
 
-    // Check summary status for each entry
+    // Batch query summary statuses from DB
+    let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
+    let db_statuses = entry_summary::get_statuses_for_entries(&conn, user_id, &entry_ids)?;
+
+    // Build response with summary status (prefer cache for in-flight, DB for completed/failed)
     let entries_with_summary: Vec<EntryWithSummary> = entries
         .into_iter()
         .map(|e| {
-            let has_summary = state
-                .summary_cache
-                .has_completed_summary(user_id, e.entry.id);
+            let summary_status = if let Some(cached) = state.summary_cache.get(user_id, e.entry.id)
+            {
+                Some(cached.status)
+            } else {
+                db_statuses.get(&e.entry.id).copied()
+            };
             EntryWithSummary {
                 entry: e,
-                has_summary,
+                summary_status,
             }
         })
         .collect();
@@ -499,7 +520,7 @@ pub async fn summarize_entry(
 ) -> AppResult<Json<SummaryResponse>> {
     let user_id = auth_user.user.id;
 
-    // Check cache first
+    // Check cache first for in-flight jobs
     if let Some(cached) = state.summary_cache.get(user_id, id) {
         return Ok(Json(SummaryResponse {
             status: cached.status,
@@ -515,6 +536,16 @@ pub async fn summarize_entry(
             .db
             .lock()
             .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+
+        // Check DB for existing summary
+        if let Some(db_summary) = entry_summary::find_by_user_and_entry(&conn, user_id, id)? {
+            return Ok(Json(SummaryResponse {
+                status: db_summary.status,
+                summary_text: db_summary.summary_text,
+                error: db_summary.error_message,
+                created_at: Some(db_summary.created_at),
+            }));
+        }
 
         let entry_with_feed =
             entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
@@ -542,10 +573,13 @@ pub async fn summarize_entry(
             return Err(AppError::Validation("Kagi is not configured".to_string()));
         }
 
+        // Create pending record in DB
+        entry_summary::upsert_pending(&conn, user_id, id)?;
+
         link
     };
 
-    // Set pending status and queue the job
+    // Set pending status in cache
     state.summary_cache.set_pending(user_id, id);
 
     let job = SummaryJob {
@@ -577,30 +611,37 @@ pub async fn get_entry_summary(
 ) -> AppResult<Json<SummaryResponse>> {
     let user_id = auth_user.user.id;
 
-    // Verify entry ownership
-    {
-        let conn = state
-            .db
-            .lock()
-            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
-
-        let entry_with_feed =
-            entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
-
-        let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
-            .ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != user_id {
-            return Err(AppError::EntryNotFound);
-        }
-    }
-
-    // Get from cache
+    // Check cache first for in-flight status
     if let Some(cached) = state.summary_cache.get(user_id, id) {
-        Ok(Json(SummaryResponse {
+        return Ok(Json(SummaryResponse {
             status: cached.status,
             summary_text: cached.summary_text,
             error: cached.error_message,
             created_at: Some(cached.created_at),
+        }));
+    }
+
+    // Verify entry ownership and get from DB
+    let conn = state
+        .db
+        .lock()
+        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+
+    let entry_with_feed = entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+
+    let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
+        .ok_or(AppError::CategoryNotFound)?;
+    if cat.user_id != user_id {
+        return Err(AppError::EntryNotFound);
+    }
+
+    // Get from DB
+    if let Some(db_summary) = entry_summary::find_by_user_and_entry(&conn, user_id, id)? {
+        Ok(Json(SummaryResponse {
+            status: db_summary.status,
+            summary_text: db_summary.summary_text,
+            error: db_summary.error_message,
+            created_at: Some(db_summary.created_at),
         }))
     } else {
         // No summary exists
@@ -608,7 +649,7 @@ pub async fn get_entry_summary(
     }
 }
 
-/// DELETE /api/entries/{id}/summary - Delete summary from cache
+/// DELETE /api/entries/{id}/summary - Delete summary from cache and DB
 pub async fn delete_entry_summary(
     auth_user: AuthUser,
     State(state): State<AppState>,
@@ -616,7 +657,7 @@ pub async fn delete_entry_summary(
 ) -> AppResult<Json<serde_json::Value>> {
     let user_id = auth_user.user.id;
 
-    // Verify entry ownership
+    // Verify entry ownership and delete from DB
     {
         let conn = state
             .db
@@ -631,6 +672,9 @@ pub async fn delete_entry_summary(
         if cat.user_id != user_id {
             return Err(AppError::EntryNotFound);
         }
+
+        // Delete from DB
+        entry_summary::delete(&conn, user_id, id)?;
     }
 
     // Remove from cache

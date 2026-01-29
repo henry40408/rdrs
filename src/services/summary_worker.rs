@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use super::summarize::kagi::{self, KagiConfig};
 use super::summary_cache::SummaryCache;
-use crate::models::user_settings;
+use crate::models::{entry_summary, user_settings};
 
 /// A job to summarize an entry
 #[derive(Debug, Clone)]
@@ -33,8 +33,16 @@ pub fn start_summary_worker(
                 job.entry_link
             );
 
-            // Mark as processing
+            // Mark as processing in both cache and DB
             cache.set_processing(job.user_id, job.entry_id);
+            {
+                if let Ok(conn) = db.lock() {
+                    if let Err(e) = entry_summary::set_processing(&conn, job.user_id, job.entry_id)
+                    {
+                        tracing::warn!("Failed to set DB status to processing: {}", e);
+                    }
+                }
+            }
 
             // Get Kagi config for the user
             let kagi_config = {
@@ -42,11 +50,17 @@ pub fn start_summary_worker(
                     Ok(c) => c,
                     Err(e) => {
                         tracing::error!("Failed to acquire DB lock: {}", e);
-                        cache.set_failed(
-                            job.user_id,
-                            job.entry_id,
-                            "Internal error: DB lock failed".to_string(),
-                        );
+                        let error_msg = "Internal error: DB lock failed".to_string();
+                        cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
+                        // Try to update DB as well
+                        if let Ok(conn) = db.lock() {
+                            let _ = entry_summary::set_failed(
+                                &conn,
+                                job.user_id,
+                                job.entry_id,
+                                &error_msg,
+                            );
+                        }
                         continue;
                     }
                 };
@@ -55,11 +69,10 @@ pub fn start_summary_worker(
                     Ok(config) => config.kagi,
                     Err(e) => {
                         tracing::error!("Failed to get user settings: {}", e);
-                        cache.set_failed(
-                            job.user_id,
-                            job.entry_id,
-                            "Failed to load Kagi settings".to_string(),
-                        );
+                        let error_msg = "Failed to load Kagi settings".to_string();
+                        cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
+                        let _ =
+                            entry_summary::set_failed(&conn, job.user_id, job.entry_id, &error_msg);
                         continue;
                     }
                 }
@@ -68,11 +81,12 @@ pub fn start_summary_worker(
             let kagi_config = match kagi_config {
                 Some(c) if c.is_configured() => c,
                 _ => {
-                    cache.set_failed(
-                        job.user_id,
-                        job.entry_id,
-                        "Kagi is not configured".to_string(),
-                    );
+                    let error_msg = "Kagi is not configured".to_string();
+                    cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
+                    if let Ok(conn) = db.lock() {
+                        let _ =
+                            entry_summary::set_failed(&conn, job.user_id, job.entry_id, &error_msg);
+                    }
                     continue;
                 }
             };
@@ -85,11 +99,27 @@ pub fn start_summary_worker(
                         job.entry_id,
                         summary_text.len()
                     );
-                    cache.set_completed(job.user_id, job.entry_id, summary_text);
+                    // Update cache
+                    cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
+                    // Update DB
+                    if let Ok(conn) = db.lock() {
+                        if let Err(e) = entry_summary::set_completed(
+                            &conn,
+                            job.user_id,
+                            job.entry_id,
+                            &summary_text,
+                        ) {
+                            tracing::error!("Failed to save summary to DB: {}", e);
+                        }
+                    }
                 }
                 Err(error) => {
                     tracing::warn!("Summary failed for entry {}: {}", job.entry_id, error);
-                    cache.set_failed(job.user_id, job.entry_id, error);
+                    cache.set_failed(job.user_id, job.entry_id, error.clone());
+                    // Update DB
+                    if let Ok(conn) = db.lock() {
+                        let _ = entry_summary::set_failed(&conn, job.user_id, job.entry_id, &error);
+                    }
                 }
             }
         }
@@ -119,6 +149,54 @@ pub fn create_summary_channel(
     buffer_size: usize,
 ) -> (mpsc::Sender<SummaryJob>, mpsc::Receiver<SummaryJob>) {
     mpsc::channel(buffer_size)
+}
+
+/// Recover incomplete summary jobs on startup
+/// Returns the number of jobs re-queued
+pub async fn recover_incomplete_jobs(
+    db: Arc<Mutex<Connection>>,
+    tx: mpsc::Sender<SummaryJob>,
+    cache: Arc<SummaryCache>,
+) -> usize {
+    let incomplete = {
+        let conn = match db.lock() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Failed to acquire DB lock for recovery: {}", e);
+                return 0;
+            }
+        };
+
+        match entry_summary::find_incomplete(&conn) {
+            Ok(jobs) => jobs,
+            Err(e) => {
+                tracing::error!("Failed to find incomplete jobs: {}", e);
+                return 0;
+            }
+        }
+    };
+
+    let count = incomplete.len();
+    if count > 0 {
+        tracing::info!("Recovering {} incomplete summary jobs", count);
+    }
+
+    for (user_id, entry_id, entry_link) in incomplete {
+        // Set pending in cache to track the job
+        cache.set_pending(user_id, entry_id);
+
+        let job = SummaryJob {
+            user_id,
+            entry_id,
+            entry_link,
+        };
+
+        if let Err(e) = tx.send(job).await {
+            tracing::error!("Failed to re-queue job: {}", e);
+        }
+    }
+
+    count
 }
 
 #[cfg(test)]

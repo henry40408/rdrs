@@ -35,6 +35,17 @@ async fn main() {
     // Start summary worker
     services::start_summary_worker(summary_rx, summary_cache.clone(), db.clone());
 
+    // Recover incomplete summary jobs from database
+    let recovered =
+        services::recover_incomplete_jobs(db.clone(), summary_tx.clone(), summary_cache.clone())
+            .await;
+    if recovered > 0 {
+        tracing::info!("Recovered {} incomplete summary jobs", recovered);
+    }
+
+    // Start summary cleanup worker (every 1 hour, delete summaries older than 24 hours)
+    services::start_cleanup_worker(db.clone(), 1, 24);
+
     let state = AppState {
         db: db.clone(),
         config: Arc::new(config.clone()),

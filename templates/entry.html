@@ -163,16 +163,34 @@
             // Load unread neighbors for N/P navigation
             loadUnreadNeighbors();
 
-            // Load cached summary if exists
-            if (data.has_summary) {
-                loadCachedSummary();
+            // Load summary based on status
+            if (data.summary_status) {
+                handleSummaryStatus(data.summary_status);
             }
         } catch (err) {
             document.getElementById('entry-container').innerHTML = '<p class="muted">[ERROR] Failed to load entry</p>';
         }
     }
 
-    async function loadCachedSummary() {
+    function handleSummaryStatus(status) {
+        if (status === 'completed') {
+            // Load the completed summary
+            loadSummaryFromServer();
+        } else if (status === 'pending' || status === 'processing') {
+            // Summary is being generated, start polling
+            const btn = document.getElementById('summarize-btn');
+            if (btn) {
+                btn.textContent = '[Summarizing...]';
+                btn.disabled = true;
+            }
+            startSummaryPolling();
+        } else if (status === 'failed') {
+            // Summary generation failed - user can retry by clicking the button
+            console.log('Previous summary generation failed');
+        }
+    }
+
+    async function loadSummaryFromServer() {
         try {
             const response = await fetch(`/api/entries/${entryId}/summary`);
             if (response.ok) {
@@ -180,10 +198,18 @@
                 if (data.status === 'completed' && data.summary_text) {
                     currentSummary = data.summary_text;
                     showSummary(data.summary_text);
+                } else if (data.status === 'pending' || data.status === 'processing') {
+                    // Still processing, start polling
+                    const btn = document.getElementById('summarize-btn');
+                    if (btn) {
+                        btn.textContent = '[Summarizing...]';
+                        btn.disabled = true;
+                    }
+                    startSummaryPolling();
                 }
             }
         } catch (err) {
-            console.error('Failed to load cached summary:', err);
+            console.error('Failed to load summary:', err);
         }
     }
 

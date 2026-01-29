@@ -130,12 +130,15 @@
         const starredOnly = document.getElementById('filter-starred').checked;
         const search = document.getElementById('filter-search').value.trim();
 
+        const hasSummaryFilter = document.getElementById('filter-has-summary').checked;
+
         let url = `/api/entries?limit=${limit}&offset=${currentOffset}`;
         if (feedId) url += `&feed_id=${feedId}`;
         if (categoryId) url += `&category_id=${categoryId}`;
         if (unreadOnly) url += `&unread_only=true`;
         if (starredOnly) url += `&starred_only=true`;
         if (search) url += `&search=${encodeURIComponent(search)}`;
+        if (hasSummaryFilter) url += `&has_summary=true`;
 
         try {
             const response = await fetch(url);
@@ -162,13 +165,9 @@
     function renderEntries() {
         const container = document.getElementById('entries-list');
         const search = document.getElementById('filter-search').value.trim();
-        const hasSummaryFilter = document.getElementById('filter-has-summary').checked;
 
-        // Client-side filter for has_summary (since it's not a DB filter)
+        // Entries are already filtered server-side when has_summary is set
         let filteredEntries = entries;
-        if (hasSummaryFilter) {
-            filteredEntries = entries.filter(e => e.has_summary);
-        }
 
         if (filteredEntries.length === 0) {
             container.innerHTML = '<p class="muted">No entries found.</p>';
@@ -182,12 +181,24 @@
             const dateTitle = entry.published_at ? formatDateTime(entry.published_at) : '';
             const isRead = entry.read_at !== null;
             const isStarred = entry.starred_at !== null;
-            const hasSummary = entry.has_summary;
+            const summaryStatus = entry.summary_status;
             const feedIconHtml = entry.feed_has_icon
                 ? `<img src="/api/feeds/${entry.feed_id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
                 : '';
             const isSelected = index === selectedIndex;
             const titleHtml = search ? highlightText(title, search) : escapeHtml(title);
+
+            // Determine summary badge based on status
+            let summaryBadgeHtml = '';
+            if (summaryStatus === 'completed') {
+                summaryBadgeHtml = '<span title="Has Summary" class="summary-badge">[S]</span>';
+            } else if (summaryStatus === 'pending') {
+                summaryBadgeHtml = '<span title="Pending" class="summary-badge-pending">[P]</span>';
+            } else if (summaryStatus === 'processing') {
+                summaryBadgeHtml = '<span title="Processing" class="summary-badge-processing">[...]</span>';
+            } else if (summaryStatus === 'failed') {
+                summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">[F]</span>';
+            }
 
             // Check if search matches in content and generate snippet
             let contentSnippetHtml = '';
@@ -203,7 +214,7 @@
                 <div>
                     <a href="/entries/${entry.id}" style="font-weight:${isRead ? 'normal' : 'bold'};">${titleHtml}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
-                    ${hasSummary ? '<span title="Has Summary" class="summary-badge">[S]</span>' : ''}
+                    ${summaryBadgeHtml}
                 </div>${contentSnippetHtml}
                 <div class="muted entry-item-meta">
                     ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
@@ -231,9 +242,7 @@
     }
 
     function updateEntriesCount() {
-        const hasSummaryFilter = document.getElementById('filter-has-summary').checked;
-        const displayedCount = hasSummaryFilter ? entries.filter(e => e.has_summary).length : entries.length;
-        document.getElementById('entries-count').textContent = `Showing ${displayedCount} of ${total} entries`;
+        document.getElementById('entries-count').textContent = `Showing ${entries.length} of ${total} entries`;
     }
 
     async function loadMore() {

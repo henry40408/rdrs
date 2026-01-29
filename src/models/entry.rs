@@ -122,6 +122,7 @@ pub struct EntryFilter {
     pub unread_only: bool,
     pub starred_only: bool,
     pub search: Option<String>,
+    pub has_summary: Option<bool>,
 }
 
 fn parse_datetime(s: &str) -> DateTime<Utc> {
@@ -300,6 +301,20 @@ pub fn list_by_user(
         params_vec.push(Box::new(search_pattern));
     }
 
+    if let Some(has_summary) = filter.has_summary {
+        if has_summary {
+            // Show entries that have any summary record (pending/processing/completed/failed)
+            conditions.push(
+                "EXISTS (SELECT 1 FROM entry_summary es WHERE es.user_id = ?1 AND es.entry_id = e.id)".to_string()
+            );
+        } else {
+            // Show entries without any summary record
+            conditions.push(
+                "NOT EXISTS (SELECT 1 FROM entry_summary es WHERE es.user_id = ?1 AND es.entry_id = e.id)".to_string()
+            );
+        }
+    }
+
     let where_clause = conditions.join(" AND ");
 
     let sql = format!(
@@ -365,6 +380,18 @@ pub fn count_by_user(conn: &Connection, user_id: i64, filter: &EntryFilter) -> A
             param_idx, param_idx
         ));
         params_vec.push(Box::new(search_pattern));
+    }
+
+    if let Some(has_summary) = filter.has_summary {
+        if has_summary {
+            conditions.push(
+                "EXISTS (SELECT 1 FROM entry_summary es WHERE es.user_id = ?1 AND es.entry_id = e.id)".to_string()
+            );
+        } else {
+            conditions.push(
+                "NOT EXISTS (SELECT 1 FROM entry_summary es WHERE es.user_id = ?1 AND es.entry_id = e.id)".to_string()
+            );
+        }
     }
 
     let where_clause = conditions.join(" AND ");
