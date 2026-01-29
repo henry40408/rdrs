@@ -752,6 +752,48 @@ pub fn mark_all_read_by_category(
     Ok(rows as i64)
 }
 
+/// Mark multiple entries as read by their IDs.
+/// Only marks entries that belong to the user (via feed -> category -> user).
+/// Returns the count of entries that were actually marked as read.
+pub fn mark_read_by_ids(conn: &Connection, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
+    if entry_ids.is_empty() {
+        return Ok(0);
+    }
+
+    // Build placeholders for IN clause
+    let placeholders: Vec<String> = entry_ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect();
+    let in_clause = placeholders.join(", ");
+
+    let sql = format!(
+        r#"
+        UPDATE entry
+        SET read_at = datetime('now'), updated_at = datetime('now')
+        WHERE read_at IS NULL
+          AND id IN ({})
+          AND feed_id IN (
+              SELECT f.id FROM feed f
+              INNER JOIN category c ON f.category_id = c.id
+              WHERE c.user_id = ?1
+          )
+        "#,
+        in_clause
+    );
+
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+    for id in entry_ids {
+        params_vec.push(Box::new(*id));
+    }
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+    let rows = conn.execute(&sql, params_refs.as_slice())?;
+    Ok(rows as i64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1209,5 +1251,101 @@ mod tests {
         // Count should be 5
         let count = count_by_user(&conn, user_id, &filter).unwrap();
         assert_eq!(count, 5);
+    }
+
+    #[test]
+    fn test_mark_read_by_ids() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let user2_id = create_test_user(&conn, "testuser2");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let category2_id = create_test_category(&conn, user2_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+        let feed2_id = create_test_feed(&conn, category2_id, "https://example2.com/feed.xml");
+
+        // Create entries for user 1
+        let (entry1, _) = upsert_entry(
+            &conn,
+            feed_id,
+            "guid-1",
+            Some("Entry 1"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let (entry2, _) = upsert_entry(
+            &conn,
+            feed_id,
+            "guid-2",
+            Some("Entry 2"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let (entry3, _) = upsert_entry(
+            &conn,
+            feed_id,
+            "guid-3",
+            Some("Entry 3"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Create entry for user 2
+        let (other_entry, _) = upsert_entry(
+            &conn,
+            feed2_id,
+            "guid-4",
+            Some("Other Entry"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        // All entries should be unread
+        assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 3);
+        assert_eq!(count_unread_by_user(&conn, user2_id).unwrap(), 1);
+
+        // Mark entries 1 and 2 as read (user 1)
+        let marked = mark_read_by_ids(&conn, user_id, &[entry1.id, entry2.id]).unwrap();
+        assert_eq!(marked, 2);
+
+        // Entry 3 should still be unread
+        assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 1);
+
+        // Try to mark user 2's entry as read with user 1's credentials - should not work
+        let marked = mark_read_by_ids(&conn, user_id, &[other_entry.id]).unwrap();
+        assert_eq!(marked, 0);
+
+        // User 2's entry should still be unread
+        assert_eq!(count_unread_by_user(&conn, user2_id).unwrap(), 1);
+
+        // Mark already-read entries again - should return 0
+        let marked = mark_read_by_ids(&conn, user_id, &[entry1.id, entry2.id]).unwrap();
+        assert_eq!(marked, 0);
+
+        // Empty array should return 0
+        let marked = mark_read_by_ids(&conn, user_id, &[]).unwrap();
+        assert_eq!(marked, 0);
+
+        // Mark remaining entry
+        let marked = mark_read_by_ids(&conn, user_id, &[entry3.id]).unwrap();
+        assert_eq!(marked, 1);
+
+        // All user 1 entries should now be read
+        assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 0);
     }
 }

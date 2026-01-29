@@ -421,6 +421,103 @@ async fn test_mark_all_read_by_feed() {
     assert_eq!(body["marked_count"], 5);
 }
 
+#[tokio::test]
+async fn test_mark_read_by_ids() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db);
+    login(&app.server).await;
+
+    // Mark first 3 entries as read by IDs
+    let response = app
+        .server
+        .put("/api/entries/mark-read-by-ids")
+        .json(&json!({ "entry_ids": [entry_ids[0], entry_ids[1], entry_ids[2]] }))
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["marked_count"], 3);
+
+    // Verify remaining 2 entries are still unread
+    let response = app.server.get("/api/entries?unread_only=true").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["total"], 2);
+}
+
+#[tokio::test]
+async fn test_mark_read_by_ids_empty_array() {
+    let app = create_test_app(default_test_config());
+    setup_test_data(&app.db);
+    login(&app.server).await;
+
+    // Mark with empty array should return 0
+    let response = app
+        .server
+        .put("/api/entries/mark-read-by-ids")
+        .json(&json!({ "entry_ids": [] }))
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["marked_count"], 0);
+}
+
+#[tokio::test]
+async fn test_mark_read_by_ids_already_read() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db);
+    login(&app.server).await;
+
+    // Mark entry as read first
+    app.server
+        .put(&format!("/api/entries/{}/read", entry_ids[0]))
+        .await
+        .assert_status_ok();
+
+    // Try to mark the same entry again - should return 0
+    let response = app
+        .server
+        .put("/api/entries/mark-read-by-ids")
+        .json(&json!({ "entry_ids": [entry_ids[0]] }))
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["marked_count"], 0);
+}
+
+#[tokio::test]
+async fn test_cannot_mark_read_by_ids_other_user() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db);
+    let (_user2_id, _cat2_id, _feed2_id, entry2_ids) = setup_second_user_data(&app.db);
+    login(&app.server).await;
+
+    // User 1 tries to mark user 2's entries as read - should mark 0
+    let response = app
+        .server
+        .put("/api/entries/mark-read-by-ids")
+        .json(&json!({ "entry_ids": [entry2_ids[0], entry2_ids[1]] }))
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["marked_count"], 0);
+
+    // User 1 marking their own entries should still work
+    let response = app
+        .server
+        .put("/api/entries/mark-read-by-ids")
+        .json(&json!({ "entry_ids": [entry_ids[0]] }))
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["marked_count"], 1);
+}
+
 // ============================================================================
 // Unread Stats Tests
 // ============================================================================

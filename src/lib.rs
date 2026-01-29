@@ -164,6 +164,10 @@ pub fn create_router(state: AppState) -> Router {
             put(handlers::entry::mark_all_read),
         )
         .route(
+            "/api/entries/mark-read-by-ids",
+            put(handlers::entry::mark_read_by_ids),
+        )
+        .route(
             "/api/entries/unread-stats",
             get(handlers::entry::get_unread_stats),
         )

@@ -48,6 +48,10 @@
     <button type="button" onclick="loadMore()">[Load More]</button>
 </div>
 
+<div id="mark-above-read" style="display:none; margin-top:1rem;">
+    <button type="button" onclick="markAboveAsRead()">[Mark Above as Read]</button>
+</div>
+
 <p id="entries-count" class="muted"></p>
 
 <script>
@@ -174,6 +178,7 @@
 
         if (entries.length === 0) {
             container.innerHTML = '<p class="muted">No unread entries.</p>';
+            updateMarkAboveButton();
             return;
         }
 
@@ -205,6 +210,8 @@
             </div>
             `;
         }).join('');
+
+        updateMarkAboveButton();
     }
 
     function updateLoadMoreButton() {
@@ -321,6 +328,42 @@
 
     function updateEntriesCount() {
         document.getElementById('entries-count').textContent = `Showing ${entries.length} of ${total} entries`;
+    }
+
+    function updateMarkAboveButton() {
+        const btn = document.getElementById('mark-above-read');
+        if (entries.length > 0) {
+            btn.style.display = 'block';
+        } else {
+            btn.style.display = 'none';
+        }
+    }
+
+    async function markAboveAsRead() {
+        if (entries.length === 0) return;
+
+        if (!confirm(`Mark all ${entries.length} loaded entries as read?`)) {
+            return;
+        }
+
+        const entryIds = entries.map(e => e.id);
+
+        try {
+            const response = await fetch('/api/entries/mark-read-by-ids', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ entry_ids: entryIds })
+            });
+            if (!response.ok) {
+                throw new Error('Failed to mark entries as read');
+            }
+            const result = await response.json();
+            flash.success(`Marked ${result.marked_count} entries as read.`);
+            loadEntries();
+            loadUnreadStats();
+        } catch (err) {
+            flash.error(err.message);
+        }
     }
 
     function escapeHtml(text) {
