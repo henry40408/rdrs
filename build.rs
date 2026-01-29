@@ -3,44 +3,44 @@ use std::path::Path;
 use std::process::Command;
 
 fn main() {
-    // 當 git HEAD 變更時重新執行 build script
+    // Re-run build script when git HEAD changes
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/index");
 
     let git_version = get_git_version();
     println!("cargo:rustc-env=GIT_VERSION={}", git_version);
 
-    // 生成 favicon 檔案
+    // Generate favicon files
     println!("cargo:rerun-if-changed=favicon.svg");
     generate_favicons();
 }
 
 fn get_git_version() -> String {
     // git describe --tags --always --dirty
-    // --tags: 使用 annotated 和 lightweight tags
-    // --always: 沒有 tag 時 fallback 到 commit hash
-    // --dirty: 有未提交的變更時加上 -dirty 後綴
+    // --tags: Use both annotated and lightweight tags
+    // --always: Fall back to commit hash when no tags exist
+    // --dirty: Append -dirty suffix when there are uncommitted changes
     Command::new("git")
         .args(["describe", "--tags", "--always", "--dirty"])
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+        .unwrap_or_else(|| "dev".to_string())
 }
 
 fn generate_favicons() {
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir);
 
-    // 讀取 SVG 檔案
+    // Read SVG file
     let svg_data = std::fs::read("favicon.svg").expect("Failed to read favicon.svg");
 
-    // 解析 SVG
+    // Parse SVG
     let options = resvg::usvg::Options::default();
     let tree = resvg::usvg::Tree::from_data(&svg_data, &options).expect("Failed to parse SVG");
 
-    // 生成各種尺寸的 PNG
+    // Generate PNGs in various sizes
     let sizes = [
         (16, "favicon-16x16.png"),
         (32, "favicon-32x32.png"),
@@ -53,10 +53,10 @@ fn generate_favicons() {
         std::fs::write(&path, &png_data).unwrap_or_else(|_| panic!("Failed to write {}", filename));
     }
 
-    // 生成 ICO 檔案（包含 16x16 和 32x32）
+    // Generate ICO file (contains 16x16 and 32x32)
     generate_ico(&tree, out_path);
 
-    // 複製原始 SVG 到 OUT_DIR
+    // Copy original SVG to OUT_DIR
     std::fs::copy("favicon.svg", out_path.join("favicon.svg")).expect("Failed to copy favicon.svg");
 }
 
@@ -66,7 +66,7 @@ fn render_svg_to_png(tree: &resvg::usvg::Tree, size: u32) -> Vec<u8> {
 
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).unwrap();
 
-    // 計算置中偏移
+    // Calculate centering offset
     let scaled_w = tree_size.width() * scale;
     let scaled_h = tree_size.height() * scale;
     let offset_x = (size as f32 - scaled_w) / 2.0;
@@ -86,7 +86,7 @@ fn generate_ico(tree: &resvg::usvg::Tree, out_path: &Path) {
 
     let mut icon_dir = ico::IconDir::new(ico::ResourceType::Icon);
 
-    // 新增 16x16 和 32x32 圖片
+    // Add 16x16 and 32x32 images
     for size in [16u32, 32u32] {
         let png_data = render_svg_to_png(tree, size);
         let img = image::load_from_memory(&png_data).expect("Failed to load PNG");

@@ -17,7 +17,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 取得完整 history 供 git describe 使用
+          fetch-depth: 0  # Fetch full history for git describe
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.92.0
