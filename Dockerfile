@@ -10,10 +10,14 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 3: Builder - build dependencies then app
 FROM chef AS builder
+
+# Accept version as build argument (for Docker builds where .git is not available)
+ARG GIT_VERSION=dev
+
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN cargo build --release
+RUN GIT_VERSION=${GIT_VERSION} cargo build --release
 
 # Stage 4: Runtime
 FROM gcr.io/distroless/cc-debian12
