@@ -16,6 +16,14 @@ fn main() {
 }
 
 fn get_git_version() -> String {
+    // First, check if GIT_VERSION is set via environment variable
+    // This is used for Docker builds where .git directory is not available
+    if let Ok(version) = std::env::var("GIT_VERSION") {
+        if !version.is_empty() && version != "dev" {
+            return version;
+        }
+    }
+
     // git describe --tags --always --dirty
     // --tags: Use both annotated and lightweight tags
     // --always: Fall back to commit hash when no tags exist
