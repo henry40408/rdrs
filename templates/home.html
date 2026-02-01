@@ -336,7 +336,7 @@
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}">
                 <div>
-                    <a href="/entries/${entry.id}${getFilterQueryString()}" style="font-weight:bold;">${escapeHtml(title)}</a>
+                    <a href="/entries/${entry.id}${getFilterQueryString()}" onclick="openEntry(${entry.id}); return false;" style="font-weight:bold;">${escapeHtml(title)}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>
@@ -628,10 +628,21 @@
         return -1;
     }
 
+    function openEntry(id) {
+        // Remove from list immediately so back button won't show it
+        entries = entries.filter(e => e.id !== id);
+        total--;
+        renderEntries();
+        updateLoadMoreButton();
+        updateUnreadCount();
+        // Navigate to entry page
+        window.location.href = `/entries/${id}${getFilterQueryString()}`;
+    }
+
     function openSelectedEntry() {
         const entry = getSelectedEntry();
         if (entry) {
-            window.location.href = `/entries/${entry.id}${getFilterQueryString()}`;
+            openEntry(entry.id);
         }
     }
 
