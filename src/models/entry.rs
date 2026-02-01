@@ -669,11 +669,15 @@ pub struct EntryNeighbors {
 /// - prev_id: the entry that comes before (newer/higher in list)
 /// - next_id: the entry that comes after (older/lower in list)
 /// - unread_only: if true, only consider unread entries as neighbors
+/// - feed_id: if Some, only consider entries from this feed
+/// - category_id: if Some, only consider entries from this category
 pub fn find_neighbors(
     conn: &Connection,
     user_id: i64,
     entry_id: i64,
     unread_only: bool,
+    feed_id: Option<i64>,
+    category_id: Option<i64>,
 ) -> AppResult<EntryNeighbors> {
     // Get the current entry's sort timestamp
     let sort_time: Option<String> = conn
@@ -700,10 +704,22 @@ pub fn find_neighbors(
         }
     };
 
-    let unread_condition = if unread_only {
-        " AND e.read_at IS NULL"
+    // Build filter conditions
+    let mut conditions = Vec::new();
+    if unread_only {
+        conditions.push("e.read_at IS NULL".to_string());
+    }
+    if let Some(fid) = feed_id {
+        conditions.push(format!("e.feed_id = {}", fid));
+    }
+    if let Some(cid) = category_id {
+        conditions.push(format!("c.id = {}", cid));
+    }
+
+    let extra_conditions = if conditions.is_empty() {
+        String::new()
     } else {
-        ""
+        format!(" AND {}", conditions.join(" AND "))
     };
 
     // Find previous entry (newer, comes before in DESC order)
@@ -719,7 +735,7 @@ pub fn find_neighbors(
         ORDER BY COALESCE(e.published_at, e.created_at) ASC
         LIMIT 1
         "#,
-        unread_condition
+        extra_conditions
     );
     let prev_id: Option<i64> = conn
         .query_row(&prev_sql, params![user_id, sort_time], |row| row.get(0))
@@ -739,7 +755,7 @@ pub fn find_neighbors(
         ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
         LIMIT 1
         "#,
-        unread_condition
+        extra_conditions
     );
     let next_id: Option<i64> = conn
         .query_row(&next_sql, params![user_id, sort_time, entry_id], |row| {

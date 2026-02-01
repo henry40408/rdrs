@@ -336,7 +336,7 @@
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}">
                 <div>
-                    <a href="/entries/${entry.id}" style="font-weight:bold;">${escapeHtml(title)}</a>
+                    <a href="/entries/${entry.id}${getFilterQueryString()}" style="font-weight:bold;">${escapeHtml(title)}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>
@@ -563,6 +563,16 @@
         return date.toLocaleString();
     }
 
+    function getFilterQueryString() {
+        const feedId = document.getElementById('filter-feed').value;
+        const categoryId = document.getElementById('filter-category').value;
+        const params = new URLSearchParams();
+        if (feedId) params.set('feed', feedId);
+        if (categoryId) params.set('category', categoryId);
+        const str = params.toString();
+        return str ? '?' + str : '';
+    }
+
     document.getElementById('entries-list').addEventListener('click', function(e) {
         if (e.target.matches('[data-feed-id]')) {
             e.preventDefault();
@@ -621,7 +631,7 @@
     function openSelectedEntry() {
         const entry = getSelectedEntry();
         if (entry) {
-            window.location.href = `/entries/${entry.id}`;
+            window.location.href = `/entries/${entry.id}${getFilterQueryString()}`;
         }
     }
 
