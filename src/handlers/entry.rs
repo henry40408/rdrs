@@ -427,6 +427,8 @@ pub struct FetchFullContentResponse {
 pub struct NeighborsQuery {
     #[serde(default)]
     pub unread_only: bool,
+    pub feed_id: Option<i64>,
+    pub category_id: Option<i64>,
 }
 
 pub async fn get_entry_neighbors(
@@ -448,7 +450,14 @@ pub async fn get_entry_neighbors(
         return Err(AppError::EntryNotFound);
     }
 
-    let neighbors = entry::find_neighbors(&conn, auth_user.user.id, id, query.unread_only)?;
+    let neighbors = entry::find_neighbors(
+        &conn,
+        auth_user.user.id,
+        id,
+        query.unread_only,
+        query.feed_id,
+        query.category_id,
+    )?;
     Ok(Json(neighbors))
 }
 

@@ -21,6 +21,25 @@
     let unreadNeighbors = { prev_id: null, next_id: null };
     let currentSummary = null;
 
+    // Get filter parameters from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const filterFeedId = urlParams.get('feed');
+    const filterCategoryId = urlParams.get('category');
+
+    function getFilterQueryString() {
+        const params = new URLSearchParams();
+        if (filterFeedId) params.set('feed', filterFeedId);
+        if (filterCategoryId) params.set('category', filterCategoryId);
+        const str = params.toString();
+        return str ? '?' + str : '';
+    }
+
+    function getBackUrl() {
+        // If we have filters, go back to home page with filters; otherwise go to /entries
+        const filterQuery = getFilterQueryString();
+        return filterQuery ? '/' + filterQuery : '/entries';
+    }
+
     async function loadNeighbors() {
         try {
             const response = await fetch(`/api/entries/${entryId}/neighbors`);
@@ -35,7 +54,10 @@
 
     async function loadUnreadNeighbors() {
         try {
-            const response = await fetch(`/api/entries/${entryId}/neighbors?unread_only=true`);
+            let url = `/api/entries/${entryId}/neighbors?unread_only=true`;
+            if (filterFeedId) url += `&feed_id=${filterFeedId}`;
+            if (filterCategoryId) url += `&category_id=${filterCategoryId}`;
+            const response = await fetch(url);
             if (response.ok) {
                 unreadNeighbors = await response.json();
                 updateUnreadNeighborLinks();
@@ -46,6 +68,7 @@
     }
 
     function updateNeighborLinks() {
+        const filterQuery = getFilterQueryString();
         const prevLinks = [
             document.getElementById('prev-entry-link'),
             document.getElementById('prev-entry-link-bottom')
@@ -58,7 +81,7 @@
         prevLinks.forEach(link => {
             if (link) {
                 if (neighbors.prev_id) {
-                    link.href = `/entries/${neighbors.prev_id}`;
+                    link.href = `/entries/${neighbors.prev_id}${filterQuery}`;
                     link.classList.remove('disabled');
                 } else {
                     link.removeAttribute('href');
@@ -70,7 +93,7 @@
         nextLinks.forEach(link => {
             if (link) {
                 if (neighbors.next_id) {
-                    link.href = `/entries/${neighbors.next_id}`;
+                    link.href = `/entries/${neighbors.next_id}${filterQuery}`;
                     link.classList.remove('disabled');
                 } else {
                     link.removeAttribute('href');
@@ -81,6 +104,7 @@
     }
 
     function updateUnreadNeighborLinks() {
+        const filterQuery = getFilterQueryString();
         const prevUnreadLinks = [
             document.getElementById('prev-unread-link'),
             document.getElementById('prev-unread-link-bottom')
@@ -93,7 +117,7 @@
         prevUnreadLinks.forEach(link => {
             if (link) {
                 if (unreadNeighbors.prev_id) {
-                    link.href = `/entries/${unreadNeighbors.prev_id}`;
+                    link.href = `/entries/${unreadNeighbors.prev_id}${filterQuery}`;
                     link.classList.remove('disabled');
                 } else {
                     link.removeAttribute('href');
@@ -105,7 +129,7 @@
         nextUnreadLinks.forEach(link => {
             if (link) {
                 if (unreadNeighbors.next_id) {
-                    link.href = `/entries/${unreadNeighbors.next_id}`;
+                    link.href = `/entries/${unreadNeighbors.next_id}${filterQuery}`;
                     link.classList.remove('disabled');
                 } else {
                     link.removeAttribute('href');
@@ -117,25 +141,25 @@
 
     function goToPrevEntry() {
         if (neighbors.prev_id) {
-            window.location.href = `/entries/${neighbors.prev_id}`;
+            window.location.href = `/entries/${neighbors.prev_id}${getFilterQueryString()}`;
         }
     }
 
     function goToNextEntry() {
         if (neighbors.next_id) {
-            window.location.href = `/entries/${neighbors.next_id}`;
+            window.location.href = `/entries/${neighbors.next_id}${getFilterQueryString()}`;
         }
     }
 
     function goToPrevUnreadEntry() {
         if (unreadNeighbors.prev_id) {
-            window.location.href = `/entries/${unreadNeighbors.prev_id}`;
+            window.location.href = `/entries/${unreadNeighbors.prev_id}${getFilterQueryString()}`;
         }
     }
 
     function goToNextUnreadEntry() {
         if (unreadNeighbors.next_id) {
-            window.location.href = `/entries/${unreadNeighbors.next_id}`;
+            window.location.href = `/entries/${unreadNeighbors.next_id}${getFilterQueryString()}`;
         }
     }
 
@@ -215,6 +239,7 @@
 
     function renderEntry(data) {
         const title = decodeHtml(data.title) || 'Untitled';
+        document.title = `${title} - RDRS`;
         const feedTitle = decodeHtml(data.feed_title) || data.feed_url;
         const author = decodeHtml(data.author) || '';
         const date = data.published_at ? new Date(data.published_at).toLocaleString() : '';
@@ -226,7 +251,7 @@
 
         document.getElementById('entry-container').innerHTML = `
             <div class="entry-nav">
-                <a href="/entries">&larr; Back to Entries</a>
+                <a href="${getBackUrl()}">&larr; Back to Entries</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="prev-entry-link" class="disabled">&larr; Previous</a>
                 <span class="entry-nav-sep">&middot;</span>
@@ -277,7 +302,7 @@
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="prev-unread-link-bottom" class="disabled">&larr; Previous Unread</a>
                 <span class="entry-nav-sep">&middot;</span>
-                <a href="/entries">Back to Entries</a>
+                <a href="${getBackUrl()}">Back to Entries</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="next-unread-link-bottom" class="disabled">Next Unread &rarr;</a>
                 <span class="entry-nav-sep">&middot;</span>
@@ -615,7 +640,7 @@
     }
 
     function goBackToList() {
-        window.location.href = '/entries';
+        window.location.href = getBackUrl();
     }
 
     function openOriginalLink() {
