@@ -295,7 +295,16 @@
         const container = document.getElementById('entries-list');
 
         if (entries.length === 0) {
-            container.innerHTML = '<p class="muted">No unread entries.</p>';
+            const feedId = document.getElementById('filter-feed').value;
+            const categoryId = document.getElementById('filter-category').value;
+            const hasFilters = feedId || categoryId;
+
+            let html = '<p class="muted">No unread entries.';
+            if (hasFilters) {
+                html += ' <a href="#" onclick="resetFilters(); return false;">[reset filters]</a>';
+            }
+            html += '</p>';
+            container.innerHTML = html;
             updateMarkAboveButton();
             return;
         }
@@ -469,6 +478,36 @@
             btn.style.display = 'block';
         } else {
             btn.style.display = 'none';
+        }
+    }
+
+    async function resetFilters() {
+        const feedSelect = document.getElementById('filter-feed');
+        const categorySelect = document.getElementById('filter-category');
+
+        // Step 1: If feed filter is active, reset it first
+        if (feedSelect.value) {
+            feedSelect.value = '';
+            updateCategoryDropdown();
+            updateFeedDropdown();
+            updateURL();
+            await loadEntries();
+
+            // If still no entries, continue to reset category
+            if (entries.length === 0 && categorySelect.value) {
+                categorySelect.value = '';
+                updateCategoryDropdown();
+                updateFeedDropdown();
+                updateURL();
+                await loadEntries();
+            }
+        } else if (categorySelect.value) {
+            // Step 2: Only category filter is active, reset it
+            categorySelect.value = '';
+            updateCategoryDropdown();
+            updateFeedDropdown();
+            updateURL();
+            await loadEntries();
         }
     }
 
