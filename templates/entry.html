@@ -34,6 +34,12 @@
         return str ? '?' + str : '';
     }
 
+    function getBackUrl() {
+        // If we have filters, go back to home page with filters; otherwise go to /entries
+        const filterQuery = getFilterQueryString();
+        return filterQuery ? '/' + filterQuery : '/entries';
+    }
+
     async function loadNeighbors() {
         try {
             const response = await fetch(`/api/entries/${entryId}/neighbors`);
@@ -244,7 +250,7 @@
 
         document.getElementById('entry-container').innerHTML = `
             <div class="entry-nav">
-                <a href="/entries">&larr; Back to Entries</a>
+                <a href="${getBackUrl()}">&larr; Back to Entries</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="prev-entry-link" class="disabled">&larr; Previous</a>
                 <span class="entry-nav-sep">&middot;</span>
@@ -295,7 +301,7 @@
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="prev-unread-link-bottom" class="disabled">&larr; Previous Unread</a>
                 <span class="entry-nav-sep">&middot;</span>
-                <a href="/entries">Back to Entries</a>
+                <a href="${getBackUrl()}">Back to Entries</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="next-unread-link-bottom" class="disabled">Next Unread &rarr;</a>
                 <span class="entry-nav-sep">&middot;</span>
@@ -633,7 +639,7 @@
     }
 
     function goBackToList() {
-        window.location.href = '/entries';
+        window.location.href = getBackUrl();
     }
 
     function openOriginalLink() {
