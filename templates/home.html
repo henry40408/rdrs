@@ -220,10 +220,15 @@
         const feedSelect = document.getElementById('filter-feed');
 
         if (source === 'category') {
-            // Clear feed selection if it doesn't belong to the selected category
             const selectedCategoryId = categorySelect.value;
             const selectedFeedId = feedSelect.value;
-            if (selectedFeedId && selectedCategoryId) {
+
+            if (!selectedCategoryId) {
+                // "All Categories" selected: clear feed and reset category dropdown
+                feedSelect.value = '';
+                updateCategoryDropdown();
+            } else if (selectedFeedId) {
+                // Clear feed selection if it doesn't belong to the selected category
                 const selectedFeed = feeds.find(f => f.id === parseInt(selectedFeedId));
                 if (selectedFeed && selectedFeed.category_id !== parseInt(selectedCategoryId)) {
                     feedSelect.value = '';
