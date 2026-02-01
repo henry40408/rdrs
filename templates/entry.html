@@ -239,6 +239,7 @@
 
     function renderEntry(data) {
         const title = decodeHtml(data.title) || 'Untitled';
+        document.title = `${title} - RDRS`;
         const feedTitle = decodeHtml(data.feed_title) || data.feed_url;
         const author = decodeHtml(data.author) || '';
         const date = data.published_at ? new Date(data.published_at).toLocaleString() : '';
