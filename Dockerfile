@@ -1,5 +1,5 @@
-# Stage 1: Chef - prepare recipe
-FROM rust:1.92-bookworm AS chef
+# Stage 1: Chef - prepare recipe (runs on build platform)
+FROM --platform=$BUILDPLATFORM rust:1.92-bookworm AS chef
 RUN cargo install cargo-chef
 WORKDIR /app
 
@@ -8,21 +8,57 @@ FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-# Stage 3: Builder - build dependencies then app
+# Stage 3: Builder - cross-compile for target platform
 FROM chef AS builder
 
-# Accept version as build argument (for Docker builds where .git is not available)
+# Target platform args (set by docker buildx)
+ARG TARGETPLATFORM
 ARG GIT_VERSION=dev
 
+# Install cross-compilation toolchain based on target
+RUN case "$TARGETPLATFORM" in \
+        "linux/arm64") \
+            apt-get update && apt-get install -y gcc-aarch64-linux-gnu && \
+            rustup target add aarch64-unknown-linux-gnu \
+            ;; \
+        "linux/amd64") \
+            # Native build, no extra toolchain needed \
+            ;; \
+    esac
+
+# Configure cargo for cross-compilation
+RUN mkdir -p .cargo && \
+    case "$TARGETPLATFORM" in \
+        "linux/arm64") \
+            echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml && \
+            echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml \
+            ;; \
+    esac
+
+# Set the Rust target based on platform
+RUN case "$TARGETPLATFORM" in \
+        "linux/arm64") echo "aarch64-unknown-linux-gnu" > /tmp/rust_target ;; \
+        "linux/amd64") echo "x86_64-unknown-linux-gnu" > /tmp/rust_target ;; \
+        *) echo "x86_64-unknown-linux-gnu" > /tmp/rust_target ;; \
+    esac
+
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+
+# Cook dependencies with target
+RUN RUST_TARGET=$(cat /tmp/rust_target) && \
+    cargo chef cook --release --recipe-path recipe.json --target $RUST_TARGET
+
 COPY . .
-RUN GIT_VERSION=${GIT_VERSION} cargo build --release
+
+# Build the application
+RUN RUST_TARGET=$(cat /tmp/rust_target) && \
+    GIT_VERSION=${GIT_VERSION} cargo build --release --target $RUST_TARGET && \
+    cp target/$RUST_TARGET/release/rdrs /app/rdrs
 
 # Stage 4: Runtime
 FROM gcr.io/distroless/cc-debian12
 
-COPY --from=builder /app/target/release/rdrs /rdrs
+COPY --from=builder /app/rdrs /rdrs
 
 VOLUME /data
 

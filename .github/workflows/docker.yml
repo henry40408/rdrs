@@ -50,3 +50,5 @@ jobs:
             GIT_VERSION=${{ steps.version.outputs.GIT_VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Provenance false avoids unknown/unknown platform in manifest
+          provenance: false
