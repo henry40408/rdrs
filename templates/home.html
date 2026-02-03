@@ -37,13 +37,13 @@
     </div>
     <div class="form-group form-group-inline">
         <label for="filter-category">Category</label>
-        <select id="filter-category" onchange="handleFilterChange('category')" style="width:14em;">
+        <select id="filter-category" onchange="handleFilterChange('category')" onkeydown="if(event.key==='Escape'){event.preventDefault();this.blur();}" style="width:14em;">
             <option value="">All Categories (0)</option>
         </select>
     </div>
     <div class="form-group form-group-inline">
         <label for="filter-feed">Feed</label>
-        <select id="filter-feed" onchange="handleFilterChange('feed')" style="width:14em;">
+        <select id="filter-feed" onchange="handleFilterChange('feed')" onkeydown="if(event.key==='Escape'){event.preventDefault();this.blur();}" style="width:14em;">
             <option value="">All Feeds (0)</option>
         </select>
     </div>
@@ -709,6 +709,12 @@
                 case 'r':
                     loadEntries();
                     loadUnreadStats();
+                    return true;
+                case 'x':
+                    resetFilters();
+                    return true;
+                case 'A':
+                    markAboveAsRead();
                     return true;
             }
             return false;
