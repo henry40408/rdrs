@@ -326,4 +326,61 @@ mod tests {
 
         assert_eq!(count, 10);
     }
+
+    #[test]
+    fn test_dberror_display() {
+        let err = DbError::ActorStopped;
+        assert_eq!(format!("{}", err), "Database actor has stopped");
+    }
+
+    #[test]
+    fn test_dbpool_debug() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let pool = rt.block_on(async {
+            let conn = Connection::open_in_memory().unwrap();
+            DbPool::new(conn)
+        });
+        let debug_str = format!("{:?}", pool);
+        assert!(debug_str.contains("DbPool"));
+    }
+
+    #[tokio::test]
+    async fn test_actor_stops_when_pool_dropped() {
+        // Create a pool and immediately extract a clone of the senders
+        // so we can attempt to use them after the actor stops.
+        let conn = Connection::open_in_memory().unwrap();
+        let (user_tx, user_rx) = mpsc::channel::<DbMessage>(256);
+        let (bg_tx, bg_rx) = mpsc::channel::<DbMessage>(64);
+
+        tokio::spawn(actor_loop(conn, user_rx, bg_rx));
+
+        // Verify the actor works
+        let (resp_tx, resp_rx) = oneshot::channel();
+        user_tx
+            .send(DbMessage {
+                work: Box::new(|_conn| Box::new(42i32) as Box<dyn std::any::Any + Send>),
+                respond: resp_tx,
+            })
+            .await
+            .unwrap();
+        let result = resp_rx.await.unwrap();
+        assert_eq!(*result.downcast::<i32>().unwrap(), 42);
+
+        // Drop the user_tx — this closes the user channel, causing actor to
+        // drain background and exit.
+        drop(user_tx);
+
+        // Give the actor time to exit
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // bg channel send should now fail because the actor has stopped
+        let (resp_tx2, _resp_rx2) = oneshot::channel();
+        let send_result = bg_tx
+            .send(DbMessage {
+                work: Box::new(|_conn| Box::new(()) as Box<dyn std::any::Any + Send>),
+                respond: resp_tx2,
+            })
+            .await;
+        assert!(send_result.is_err());
+    }
 }

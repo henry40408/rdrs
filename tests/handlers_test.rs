@@ -1721,6 +1721,244 @@ async fn test_delete_passkey_success() {
 }
 
 // ============================================================================
+// Cross-User Passkey Isolation Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_passkey_rename_other_user() {
+    let app = create_test_app(default_test_config());
+
+    // Create two users, each with a passkey
+    let (passkey_id_user1,) = app
+        .db
+        .user(move |conn| {
+            let hash1 = auth::hash_password("password123").unwrap();
+            conn.execute(
+                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["pkuser1", hash1, Role::User.as_str()],
+            )
+            .unwrap();
+            let user1_id = conn.last_insert_rowid();
+
+            conn.execute(
+                "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![user1_id, vec![1u8, 2, 3], b"{}", 0, "User1 Passkey"],
+            )
+            .unwrap();
+            let pk_id = conn.last_insert_rowid();
+
+            let hash2 = auth::hash_password("password123").unwrap();
+            conn.execute(
+                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["pkuser2", hash2, Role::User.as_str()],
+            )
+            .unwrap();
+
+            (pk_id,)
+        })
+        .await
+        .unwrap();
+
+    // Login as user2
+    app.server
+        .post("/api/session")
+        .json(&json!({
+            "username": "pkuser2",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    // User2 tries to rename User1's passkey → 404
+    let response = app
+        .server
+        .put(&format!("/api/passkeys/{}", passkey_id_user1))
+        .json(&json!({ "name": "Hacked Name" }))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_passkey_delete_other_user() {
+    let app = create_test_app(default_test_config());
+
+    // Create two users, user1 has a passkey
+    let (passkey_id_user1,) = app
+        .db
+        .user(move |conn| {
+            let hash1 = auth::hash_password("password123").unwrap();
+            conn.execute(
+                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["pkdeluser1", hash1, Role::User.as_str()],
+            )
+            .unwrap();
+            let user1_id = conn.last_insert_rowid();
+
+            conn.execute(
+                "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![user1_id, vec![4u8, 5, 6], b"{}", 0, "User1 Key"],
+            )
+            .unwrap();
+            let pk_id = conn.last_insert_rowid();
+
+            let hash2 = auth::hash_password("password123").unwrap();
+            conn.execute(
+                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["pkdeluser2", hash2, Role::User.as_str()],
+            )
+            .unwrap();
+
+            (pk_id,)
+        })
+        .await
+        .unwrap();
+
+    // Login as user2
+    app.server
+        .post("/api/session")
+        .json(&json!({
+            "username": "pkdeluser2",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    // User2 tries to delete User1's passkey → 404
+    let response = app
+        .server
+        .delete(&format!("/api/passkeys/{}", passkey_id_user1))
+        .await;
+    response.assert_status_not_found();
+}
+
+// ============================================================================
+// Feed Icon & Cross-User Feed Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_get_feed_icon_no_icon() {
+    let app = create_test_app(default_test_config());
+
+    // Create user and a feed (via OPML import) that has no icon
+    let hash = auth::hash_password("password123").unwrap();
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["iconuser", hash, Role::User.as_str()],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    app.server
+        .post("/api/session")
+        .json(&json!({
+            "username": "iconuser",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    // Import a feed
+    let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+    <body>
+        <outline text="IconTestCat">
+            <outline type="rss" text="No Icon Feed" xmlUrl="https://noicon.example.com/feed.xml"/>
+        </outline>
+    </body>
+</opml>"#;
+    app.server
+        .post("/api/opml/import")
+        .json(&json!({ "content": opml_content }))
+        .await
+        .assert_status_ok();
+
+    // Get feed ID
+    let response = app.server.get("/api/feeds").await;
+    let feeds: Vec<serde_json::Value> = response.json();
+    let feed_id = feeds[0]["id"].as_i64().unwrap();
+
+    // Request icon for a feed that exists but has no icon → 404
+    let response = app
+        .server
+        .get(&format!("/api/feeds/{}/icon", feed_id))
+        .await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_delete_feed_other_user() {
+    let app = create_test_app(default_test_config());
+
+    // User1 registers and imports a feed
+    app.server
+        .post("/api/register")
+        .json(&json!({
+            "username": "feeddeluser1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    app.server
+        .post("/api/session")
+        .json(&json!({
+            "username": "feeddeluser1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+    <body>
+        <outline text="DelTestCat">
+            <outline type="rss" text="Del Test Feed" xmlUrl="https://deltest.example.com/feed.xml"/>
+        </outline>
+    </body>
+</opml>"#;
+    app.server
+        .post("/api/opml/import")
+        .json(&json!({ "content": opml_content }))
+        .await
+        .assert_status_ok();
+
+    // Get user1's feed ID
+    let response = app.server.get("/api/feeds").await;
+    let feeds: Vec<serde_json::Value> = response.json();
+    let feed_id = feeds[0]["id"].as_i64().unwrap();
+
+    // Logout user1
+    app.server.delete("/api/session").await.assert_status_ok();
+
+    // User2 registers and logs in
+    app.server
+        .post("/api/register")
+        .json(&json!({
+            "username": "feeddeluser2",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    app.server
+        .post("/api/session")
+        .json(&json!({
+            "username": "feeddeluser2",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+
+    // User2 tries to delete User1's feed → 404
+    let response = app.server.delete(&format!("/api/feeds/{}", feed_id)).await;
+    response.assert_status_not_found();
+}
+
+// ============================================================================
 // Favicon Handler Tests
 // ============================================================================
 

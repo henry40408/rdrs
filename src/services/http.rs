@@ -338,4 +338,191 @@ mod tests {
         assert_eq!(ICON_TIMEOUT, Duration::from_secs(10));
         assert_eq!(EXTERNAL_API_TIMEOUT, Duration::from_secs(60));
     }
+
+    #[tokio::test]
+    async fn test_send_with_retry_success() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("ok"))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = RetryConfig {
+            max_retries: 3,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(10),
+        };
+
+        let url = mock_server.uri();
+        let client = reqwest::Client::new();
+        let response = send_with_retry(&config, || client.get(&url)).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "ok");
+    }
+
+    #[tokio::test]
+    async fn test_send_with_retry_on_status_retries_5xx() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(503))
+            .up_to_n_times(2)
+            .expect(2)
+            .mount(&mock_server)
+            .await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("recovered"))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = RetryConfig {
+            max_retries: 3,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(10),
+        };
+
+        let url = mock_server.uri();
+        let client = reqwest::Client::new();
+        let response = send_with_retry_on_status(&config, || client.get(&url))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "recovered");
+    }
+
+    #[tokio::test]
+    async fn test_send_with_retry_on_status_no_retry_4xx() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = RetryConfig {
+            max_retries: 3,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(10),
+        };
+
+        let url = mock_server.uri();
+        let client = reqwest::Client::new();
+        let response = send_with_retry_on_status(&config, || client.get(&url))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_retry_on_status_retries_429() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(429))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("ok"))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = RetryConfig {
+            max_retries: 3,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(10),
+        };
+
+        let url = mock_server.uri();
+        let client = reqwest::Client::new();
+        let response = send_with_retry_on_status(&config, || client.get(&url))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_retry_on_status_exhausted() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(503))
+            .expect(3)
+            .mount(&mock_server)
+            .await;
+
+        let config = RetryConfig {
+            max_retries: 2,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(10),
+        };
+
+        let url = mock_server.uri();
+        let client = reqwest::Client::new();
+        let response = send_with_retry_on_status(&config, || client.get(&url))
+            .await
+            .unwrap();
+
+        // After exhausting retries, returns the last 503 response
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_backoff_capping() {
+        let config = RetryConfig {
+            max_retries: 5,
+            initial_backoff: Duration::from_millis(100),
+            max_backoff: Duration::from_millis(200),
+        };
+
+        let mut backoff = config.initial_backoff;
+        let mut backoffs = vec![];
+        for _ in 0..config.max_retries {
+            backoffs.push(backoff);
+            backoff = (backoff * 2).min(config.max_backoff);
+        }
+
+        // initial_backoff=100, doubled=200 (capped), doubled=400->capped to 200, ...
+        assert_eq!(backoffs[0], Duration::from_millis(100));
+        assert_eq!(backoffs[1], Duration::from_millis(200));
+        assert_eq!(backoffs[2], Duration::from_millis(200));
+        assert_eq!(backoffs[3], Duration::from_millis(200));
+        assert_eq!(backoffs[4], Duration::from_millis(200));
+    }
+
+    #[tokio::test]
+    async fn test_is_transient_error_with_timeout() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string("slow")
+                    .set_delay(Duration::from_secs(5)),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(10))
+            .build()
+            .unwrap();
+
+        let err = client.get(&mock_server.uri()).send().await.unwrap_err();
+
+        assert!(is_transient_error(&err));
+        assert!(err.is_timeout());
+    }
 }
