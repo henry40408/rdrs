@@ -495,6 +495,10 @@
                     case 'g f': window.location.href = '/feeds'; return true;
                     case 'g c': window.location.href = '/categories'; return true;
                 }
+                // Page-specific combo handlers
+                if (this.handlers.handleCombo) {
+                    return this.handlers.handleCombo(combo);
+                }
                 return false;
             },
 
@@ -544,6 +548,8 @@
                     html += '<h3>List Navigation</h3><table>';
                     html += '<tr><td>j</td><td>Next entry</td></tr>';
                     html += '<tr><td>k</td><td>Previous entry</td></tr>';
+                    html += '<tr><td>g g</td><td>First entry</td></tr>';
+                    html += '<tr><td>G</td><td>Last entry</td></tr>';
                     html += '<tr><td>n</td><td>Next unread entry</td></tr>';
                     html += '<tr><td>N</td><td>Previous unread entry</td></tr>';
                     html += '<tr><td>Enter / o</td><td>Open entry</td></tr>';
@@ -565,6 +571,8 @@
                     html += '<h3>Entry View</h3><table>';
                     html += '<tr><td>j</td><td>Scroll down</td></tr>';
                     html += '<tr><td>k</td><td>Scroll up</td></tr>';
+                    html += '<tr><td>g g</td><td>Scroll to top</td></tr>';
+                    html += '<tr><td>G</td><td>Scroll to bottom</td></tr>';
                     html += '<tr><td>n</td><td>Next entry</td></tr>';
                     html += '<tr><td>N</td><td>Next unread entry</td></tr>';
                     html += '<tr><td>p</td><td>Previous entry</td></tr>';

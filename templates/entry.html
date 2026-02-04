@@ -652,6 +652,13 @@
     // Register keyboard handlers
     window.keyboard.init('entry');
     window.keyboard.registerHandlers({
+        handleCombo: function(combo) {
+            if (combo === 'g g') {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                return true;
+            }
+            return false;
+        },
         handleKey: function(key, shiftKey) {
             switch (key) {
                 case 'j':
@@ -659,6 +666,9 @@
                     return true;
                 case 'k':
                     scrollContent(-1);
+                    return true;
+                case 'G':
+                    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
                     return true;
                 case 'n':
                     goToNextEntry();
