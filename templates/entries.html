@@ -225,7 +225,7 @@
                         : `<a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>`
                     }
                     <a href="#" onclick="toggleStar(${entry.id}); return false;">[${isStarred ? 'unstar' : 'star'}]</a>
-                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer">[original]</a>` : ''}
+                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markRead(${entry.id})">[original]</a>` : ''}
                 </div>
             </div>
             `;
@@ -500,6 +500,7 @@
     function openOriginalLink() {
         const entry = getSelectedEntry();
         if (entry && entry.link) {
+            markRead(entry.id);
             window.open(entry.link, '_blank', 'noopener,noreferrer');
         }
     }
