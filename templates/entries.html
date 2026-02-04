@@ -525,6 +525,13 @@
     // Register keyboard handlers
     window.keyboard.init('list');
     window.keyboard.registerHandlers({
+        handleCombo: function(combo) {
+            if (combo === 'g g') {
+                selectEntry(0);
+                return true;
+            }
+            return false;
+        },
         handleKey: function(key, shiftKey) {
             switch (key) {
                 case 'j':
@@ -532,6 +539,9 @@
                     return true;
                 case 'k':
                     selectEntry(selectedIndex - 1);
+                    return true;
+                case 'G':
+                    if (entries.length > 0) selectEntry(entries.length - 1);
                     return true;
                 case 'n':
                     const nextUnread = findNextUnread(1);
