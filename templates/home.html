@@ -30,7 +30,7 @@
 <div class="filter-bar">
     <div class="form-group form-group-inline">
         <label for="filter-sort">Sort</label>
-        <select id="filter-sort" onchange="handleSortChange()" style="width:8em;">
+        <select id="filter-sort" onchange="handleSortChange()" onkeydown="if(event.key==='Escape'){event.preventDefault();this.blur();}" style="width:8em;">
             <option value="name" selected>Name</option>
             <option value="unread">Unread</option>
         </select>
@@ -715,6 +715,31 @@
                     return true;
                 case 'A':
                     markAboveAsRead();
+                    return true;
+                case 'c':
+                    const entryC = getSelectedEntry();
+                    if (entryC) {
+                        document.getElementById('filter-category').value = entryC.category_id;
+                        document.getElementById('filter-feed').value = '';
+                        handleFilterChange('category');
+                    }
+                    return true;
+                case 'f':
+                    const entryF = getSelectedEntry();
+                    if (entryF) {
+                        document.getElementById('filter-feed').value = entryF.feed_id;
+                        document.getElementById('filter-category').value = entryF.category_id;
+                        handleFilterChange('feed');
+                    }
+                    return true;
+                case 'S':
+                    document.getElementById('filter-sort').focus();
+                    return true;
+                case 'C':
+                    document.getElementById('filter-category').focus();
+                    return true;
+                case 'F':
+                    document.getElementById('filter-feed').focus();
                     return true;
             }
             return false;
