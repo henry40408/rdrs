@@ -7,17 +7,17 @@
 //! - handlers/user.rs (settings management)
 //! - handlers/pages.rs (page rendering)
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
-use rdrs::{auth, create_router, db, services, AppState, Config, Role};
+use rdrs::{auth, create_router, db, services, AppState, Config, DbPool, Role};
 use rusqlite::Connection;
 use serde_json::json;
 
 struct TestApp {
     server: TestServer,
-    db: Arc<Mutex<Connection>>,
+    db: DbPool,
 }
 
 fn create_test_server(config: Config) -> TestServer {
@@ -29,7 +29,7 @@ fn create_test_server(config: Config) -> TestServer {
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
 
     let state = AppState {
-        db: Arc::new(Mutex::new(conn)),
+        db: DbPool::new(conn),
         config: Arc::new(config),
         webauthn: Arc::new(webauthn),
         summary_cache,
@@ -44,7 +44,7 @@ fn create_test_app(config: Config) -> TestApp {
     let conn = Connection::open_in_memory().unwrap();
     db::init_db(&conn).unwrap();
 
-    let db = Arc::new(Mutex::new(conn));
+    let db = DbPool::new(conn);
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -1493,23 +1493,25 @@ async fn test_passkey_auth_start_with_invalid_passkey_data() {
     let app = create_test_app(default_test_config());
 
     // Create user and passkey with invalid public_key JSON
-    {
-        let conn = app.db.lock().unwrap();
-        let password_hash = auth::hash_password("password123").unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            rusqlite::params!["testuser", password_hash, Role::User.as_str()],
-        )
-        .unwrap();
-        let user_id = conn.last_insert_rowid();
+    app.db
+        .user(move |conn| {
+            let password_hash = auth::hash_password("password123").unwrap();
+            conn.execute(
+                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["testuser", password_hash, Role::User.as_str()],
+            )
+            .unwrap();
+            let user_id = conn.last_insert_rowid();
 
-        // Insert passkey with invalid JSON in public_key
-        conn.execute(
-            "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![user_id, vec![1u8, 2, 3], b"invalid json", 0, "Test Passkey"],
-        )
+            // Insert passkey with invalid JSON in public_key
+            conn.execute(
+                "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![user_id, vec![1u8, 2, 3], b"invalid json", 0, "Test Passkey"],
+            )
+            .unwrap();
+        })
+        .await
         .unwrap();
-    }
 
     let response = app.server.post("/api/passkey/auth/start").await;
     response.assert_status_unauthorized();
@@ -1583,22 +1585,24 @@ async fn test_list_passkeys_with_data() {
     let app = create_test_app(default_test_config());
 
     // Create user and passkey
-    {
-        let conn = app.db.lock().unwrap();
-        let password_hash = auth::hash_password("password123").unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            rusqlite::params!["testuser", password_hash, Role::User.as_str()],
-        )
-        .unwrap();
-        let user_id = conn.last_insert_rowid();
+    app.db
+        .user(move |conn| {
+            let password_hash = auth::hash_password("password123").unwrap();
+            conn.execute(
+                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["testuser", password_hash, Role::User.as_str()],
+            )
+            .unwrap();
+            let user_id = conn.last_insert_rowid();
 
-        conn.execute(
-            "INSERT INTO passkey (user_id, credential_id, public_key, counter, name, transports) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![user_id, vec![1u8, 2, 3], b"{}", 5, "My Passkey", "usb,nfc"],
-        )
+            conn.execute(
+                "INSERT INTO passkey (user_id, credential_id, public_key, counter, name, transports) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![user_id, vec![1u8, 2, 3], b"{}", 5, "My Passkey", "usb,nfc"],
+            )
+            .unwrap();
+        })
+        .await
         .unwrap();
-    }
 
     // Login
     app.server
@@ -1624,24 +1628,26 @@ async fn test_rename_passkey_success() {
     let app = create_test_app(default_test_config());
 
     // Create user and passkey
-    let passkey_id: i64;
-    {
-        let conn = app.db.lock().unwrap();
-        let password_hash = auth::hash_password("password123").unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            rusqlite::params!["testuser", password_hash, Role::User.as_str()],
-        )
-        .unwrap();
-        let user_id = conn.last_insert_rowid();
+    let passkey_id: i64 = app
+        .db
+        .user(move |conn| {
+            let password_hash = auth::hash_password("password123").unwrap();
+            conn.execute(
+                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["testuser", password_hash, Role::User.as_str()],
+            )
+            .unwrap();
+            let user_id = conn.last_insert_rowid();
 
-        conn.execute(
-            "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![user_id, vec![1u8, 2, 3], b"{}", 0, "Old Name"],
-        )
+            conn.execute(
+                "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![user_id, vec![1u8, 2, 3], b"{}", 0, "Old Name"],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        })
+        .await
         .unwrap();
-        passkey_id = conn.last_insert_rowid();
-    }
 
     // Login
     app.server
@@ -1671,24 +1677,26 @@ async fn test_delete_passkey_success() {
     let app = create_test_app(default_test_config());
 
     // Create user and passkey
-    let passkey_id: i64;
-    {
-        let conn = app.db.lock().unwrap();
-        let password_hash = auth::hash_password("password123").unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            rusqlite::params!["testuser", password_hash, Role::User.as_str()],
-        )
-        .unwrap();
-        let user_id = conn.last_insert_rowid();
+    let passkey_id: i64 = app
+        .db
+        .user(move |conn| {
+            let password_hash = auth::hash_password("password123").unwrap();
+            conn.execute(
+                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["testuser", password_hash, Role::User.as_str()],
+            )
+            .unwrap();
+            let user_id = conn.last_insert_rowid();
 
-        conn.execute(
-            "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![user_id, vec![1u8, 2, 3], b"{}", 0, "Test Passkey"],
-        )
+            conn.execute(
+                "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![user_id, vec![1u8, 2, 3], b"{}", 0, "Test Passkey"],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        })
+        .await
         .unwrap();
-        passkey_id = conn.last_insert_rowid();
-    }
 
     // Login
     app.server

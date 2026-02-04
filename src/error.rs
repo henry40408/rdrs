@@ -106,6 +106,9 @@ pub enum AppError {
 
     #[error("Internal server error")]
     Internal(String),
+
+    #[error("Database pool error: {0}")]
+    DbPool(#[from] crate::db::DbError),
 }
 
 impl IntoResponse for AppError {
@@ -162,6 +165,7 @@ impl IntoResponse for AppError {
                 return (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response()
             }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
+            AppError::DbPool(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error"),
         };
 
         (status, Json(json!({ "error": message }))).into_response()

@@ -2,6 +2,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+use crate::services::http::{send_with_retry, RetryConfig, EXTERNAL_API_TIMEOUT};
 
 /// Kagi Universal Summarizer configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +52,10 @@ pub async fn summarize_url(config: &KagiConfig, url: &str) -> AppResult<Summariz
         });
     }
 
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(EXTERNAL_API_TIMEOUT)
+        .build()
+        .map_err(|e| AppError::Internal(format!("Failed to build HTTP client: {}", e)))?;
 
     // Build the API URL with query parameters
     let mut api_url = url::Url::parse("https://kagi.com/mother/summary_labs")
@@ -69,13 +73,16 @@ pub async fn summarize_url(config: &KagiConfig, url: &str) -> AppResult<Summariz
         }
     }
 
-    let response = client
-        .get(api_url)
-        .header("Authorization", &config.session_token)
-        .header("Content-Type", "application/json")
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(format!("Failed to connect to Kagi: {}", e)))?;
+    let api_url_str = api_url.to_string();
+    let session_token = config.session_token.clone();
+    let response = send_with_retry(&RetryConfig::default(), || {
+        client
+            .get(&api_url_str)
+            .header("Authorization", &session_token)
+            .header("Content-Type", "application/json")
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Failed to connect to Kagi: {}", e)))?;
 
     let status = response.status();
 

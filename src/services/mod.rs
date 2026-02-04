@@ -1,6 +1,7 @@
 pub mod background;
 pub mod feed_discovery;
 pub mod feed_sync;
+pub mod http;
 pub mod icon_fetcher;
 pub mod image_proxy;
 pub mod opml;

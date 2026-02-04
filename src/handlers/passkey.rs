@@ -25,41 +25,42 @@ pub async fn start_registration(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> AppResult<Json<StartRegistrationResponse>> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+    let user_id = auth_user.user.id;
+    let username = auth_user.user.username.clone();
 
-    // Get existing passkeys for exclude list
-    let existing_passkeys = passkey::list_by_user(&conn, auth_user.user.id)?;
+    let existing_passkeys = state
+        .db
+        .user(move |conn| passkey::list_by_user(conn, user_id))
+        .await??;
+
     let exclude_credentials: Vec<CredentialID> = existing_passkeys
         .iter()
         .map(|p| CredentialID::from(p.credential_id.clone()))
         .collect();
 
-    let user_id = Uuid::new_v4();
+    let user_uuid = Uuid::new_v4();
     let (ccr, reg_state) = state
         .webauthn
-        .start_passkey_registration(
-            user_id,
-            &auth_user.user.username,
-            &auth_user.user.username,
-            Some(exclude_credentials),
-        )
+        .start_passkey_registration(user_uuid, &username, &username, Some(exclude_credentials))
         .map_err(|e| AppError::PasskeyRegistrationFailed(e.to_string()))?;
 
     // Serialize and store the registration state
     let state_json =
         serde_json::to_string(&reg_state).map_err(|e| AppError::Internal(e.to_string()))?;
-    let challenge_bytes: &[u8] = ccr.public_key.challenge.as_ref();
+    let challenge_bytes: Vec<u8> = ccr.public_key.challenge.as_ref().to_vec();
 
-    webauthn_challenge::create_challenge(
-        &conn,
-        challenge_bytes,
-        Some(auth_user.user.id),
-        webauthn_challenge::ChallengeType::Registration,
-        &state_json,
-    )?;
+    state
+        .db
+        .user(move |conn| {
+            webauthn_challenge::create_challenge(
+                conn,
+                &challenge_bytes,
+                Some(user_id),
+                webauthn_challenge::ChallengeType::Registration,
+                &state_json,
+            )
+        })
+        .await??;
 
     Ok(Json(StartRegistrationResponse { options: ccr }))
 }
@@ -85,17 +86,19 @@ pub async fn finish_registration(
         return Err(AppError::Validation("Passkey name is required".to_string()));
     }
 
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+    let user_id = auth_user.user.id;
 
     // Find and consume the challenge
-    let challenge = webauthn_challenge::find_and_delete_challenge(
-        &conn,
-        Some(auth_user.user.id),
-        webauthn_challenge::ChallengeType::Registration,
-    )?;
+    let challenge = state
+        .db
+        .user(move |conn| {
+            webauthn_challenge::find_and_delete_challenge(
+                conn,
+                Some(user_id),
+                webauthn_challenge::ChallengeType::Registration,
+            )
+        })
+        .await??;
 
     // Deserialize the registration state
     let reg_state: PasskeyRegistration = serde_json::from_str(&challenge.state_data)
@@ -108,7 +111,7 @@ pub async fn finish_registration(
         .map_err(|e| AppError::PasskeyRegistrationFailed(e.to_string()))?;
 
     // Serialize the passkey data for storage
-    let credential_id = passkey_data.cred_id().as_ref();
+    let credential_id: Vec<u8> = passkey_data.cred_id().as_ref().to_vec();
     let public_key_json =
         serde_json::to_vec(&passkey_data).map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -120,15 +123,21 @@ pub async fn finish_registration(
             .join(",")
     });
 
-    let new_passkey = passkey::create_passkey(
-        &conn,
-        auth_user.user.id,
-        credential_id,
-        &public_key_json,
-        0,
-        &req.name,
-        transports.as_deref(),
-    )?;
+    let name = req.name;
+    let new_passkey = state
+        .db
+        .user(move |conn| {
+            passkey::create_passkey(
+                conn,
+                user_id,
+                &credential_id,
+                &public_key_json,
+                0,
+                &name,
+                transports.as_deref(),
+            )
+        })
+        .await??;
 
     Ok((
         StatusCode::CREATED,
@@ -149,13 +158,7 @@ pub struct StartAuthenticationResponse {
 pub async fn start_authentication(
     State(state): State<AppState>,
 ) -> AppResult<Json<StartAuthenticationResponse>> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    // Get all passkeys for discoverable credentials
-    let all_passkeys = passkey::get_all_passkeys(&conn)?;
+    let all_passkeys = state.db.user(passkey::get_all_passkeys).await??;
 
     if all_passkeys.is_empty() {
         return Err(AppError::PasskeyAuthenticationFailed(
@@ -184,15 +187,20 @@ pub async fn start_authentication(
     // Store the auth state
     let state_json =
         serde_json::to_string(&auth_state).map_err(|e| AppError::Internal(e.to_string()))?;
-    let challenge_bytes: &[u8] = rcr.public_key.challenge.as_ref();
+    let challenge_bytes: Vec<u8> = rcr.public_key.challenge.as_ref().to_vec();
 
-    webauthn_challenge::create_challenge(
-        &conn,
-        challenge_bytes,
-        None, // No user_id for authentication
-        webauthn_challenge::ChallengeType::Authentication,
-        &state_json,
-    )?;
+    state
+        .db
+        .user(move |conn| {
+            webauthn_challenge::create_challenge(
+                conn,
+                &challenge_bytes,
+                None, // No user_id for authentication
+                webauthn_challenge::ChallengeType::Authentication,
+                &state_json,
+            )
+        })
+        .await??;
 
     Ok(Json(StartAuthenticationResponse { options: rcr }))
 }
@@ -213,32 +221,40 @@ pub async fn finish_authentication(
     jar: CookieJar,
     Json(req): Json<FinishAuthenticationRequest>,
 ) -> AppResult<(CookieJar, Json<FinishAuthenticationResponse>)> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
     // Find and consume the challenge
-    let challenge = webauthn_challenge::find_and_delete_challenge(
-        &conn,
-        None,
-        webauthn_challenge::ChallengeType::Authentication,
-    )?;
+    let challenge = state
+        .db
+        .user(|conn| {
+            webauthn_challenge::find_and_delete_challenge(
+                conn,
+                None,
+                webauthn_challenge::ChallengeType::Authentication,
+            )
+        })
+        .await??;
 
     // Deserialize the auth state
     let auth_state: PasskeyAuthentication = serde_json::from_str(&challenge.state_data)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Find the passkey by credential ID (use raw_id which contains raw bytes)
-    let credential_id: &[u8] = req.credential.raw_id.as_ref();
-    let stored_passkey =
-        passkey::find_by_credential_id(&conn, credential_id)?.ok_or(AppError::PasskeyNotFound)?;
+    let credential_id: Vec<u8> = req.credential.raw_id.as_ref().to_vec();
+    let (stored_passkey, db_user) = state
+        .db
+        .user(move |conn| {
+            let stored_passkey = passkey::find_by_credential_id(conn, &credential_id)?
+                .ok_or(AppError::PasskeyNotFound)?;
 
-    // Verify the user is not disabled
-    let db_user = user::find_by_id(&conn, stored_passkey.user_id)?.ok_or(AppError::UserNotFound)?;
-    if db_user.is_disabled() {
-        return Err(AppError::UserDisabled);
-    }
+            // Verify the user is not disabled
+            let db_user =
+                user::find_by_id(conn, stored_passkey.user_id)?.ok_or(AppError::UserNotFound)?;
+            if db_user.is_disabled() {
+                return Err(AppError::UserDisabled);
+            }
+
+            Ok::<_, AppError>((stored_passkey, db_user))
+        })
+        .await??;
 
     // Deserialize the stored passkey data
     let mut passkey_data: Passkey = serde_json::from_slice(&stored_passkey.public_key)
@@ -252,10 +268,18 @@ pub async fn finish_authentication(
 
     // Update the counter
     passkey_data.update_credential(&auth_result);
-    passkey::update_counter(&conn, stored_passkey.id, auth_result.counter() as i64)?;
+    let passkey_id = stored_passkey.id;
+    let counter = auth_result.counter() as i64;
+    let passkey_user_id = stored_passkey.user_id;
 
-    // Create a new session
-    let new_session = session::create_session(&conn, stored_passkey.user_id)?;
+    let new_session = state
+        .db
+        .user(move |conn| {
+            passkey::update_counter(conn, passkey_id, counter)?;
+            let new_session = session::create_session(conn, passkey_user_id)?;
+            Ok::<_, AppError>(new_session)
+        })
+        .await??;
 
     let cookie = Cookie::build((SESSION_COOKIE_NAME, new_session.session_token))
         .path("/")
@@ -292,12 +316,11 @@ pub async fn list_passkeys(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> AppResult<Json<ListPasskeysResponse>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+    let passkeys = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    let passkeys = passkey::list_by_user(&conn, auth_user.user.id)?;
+        .user(move |conn| passkey::list_by_user(conn, user_id))
+        .await??;
 
     let passkey_infos: Vec<PasskeyInfo> = passkeys
         .into_iter()
@@ -331,12 +354,12 @@ pub async fn rename_passkey(
         return Err(AppError::Validation("Name is required".to_string()));
     }
 
-    let conn = state
+    let user_id = auth_user.user.id;
+    let name = req.name;
+    state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    passkey::rename_passkey(&conn, id, auth_user.user.id, &req.name)?;
+        .user(move |conn| passkey::rename_passkey(conn, id, user_id, &name))
+        .await??;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -346,12 +369,11 @@ pub async fn delete_passkey(
     auth_user: AuthUser,
     Path(id): Path<i64>,
 ) -> AppResult<StatusCode> {
-    let conn = state
+    let user_id = auth_user.user.id;
+    state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    passkey::delete_passkey(&conn, id, auth_user.user.id)?;
+        .user(move |conn| passkey::delete_passkey(conn, id, user_id))
+        .await??;
 
     Ok(StatusCode::NO_CONTENT)
 }

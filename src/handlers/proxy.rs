@@ -11,6 +11,7 @@ use url::Url;
 use crate::{
     error::{AppError, AppResult},
     middleware::auth::AuthUser,
+    services::http::{send_with_retry, RetryConfig, DEFAULT_TIMEOUT},
     services::verify_signature,
     AppState,
 };
@@ -45,16 +46,17 @@ pub async fn proxy_image(
 
     // Fetch the image
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(DEFAULT_TIMEOUT)
         .build()
         .map_err(|e| AppError::ImageFetchError(e.to_string()))?;
 
-    let response = client
-        .get(url.as_str())
-        .header("User-Agent", state.config.user_agent.as_str())
-        .send()
-        .await
-        .map_err(|e| AppError::ImageFetchError(e.to_string()))?;
+    let url_str = url.to_string();
+    let user_agent = state.config.user_agent.clone();
+    let response = send_with_retry(&RetryConfig::default(), || {
+        client.get(&url_str).header("User-Agent", &user_agent)
+    })
+    .await
+    .map_err(|e| AppError::ImageFetchError(e.to_string()))?;
 
     if !response.status().is_success() {
         return Err(AppError::ImageFetchError(format!(

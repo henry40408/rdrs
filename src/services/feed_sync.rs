@@ -1,13 +1,12 @@
-use std::sync::{Arc, Mutex};
-
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use reqwest::header::{HeaderMap, HeaderValue, IF_MODIFIED_SINCE, IF_NONE_MATCH};
-use rusqlite::Connection;
 use serde::Serialize;
 use tracing::{debug, error, info, warn};
 
+use crate::db::DbPool;
 use crate::error::{AppError, AppResult};
 use crate::models::{entry, feed, image};
+use crate::services::http::{send_with_retry, RetryConfig, DEFAULT_TIMEOUT};
 use crate::services::icon_fetcher;
 
 /// Parse Chinese month names to month number
@@ -148,16 +147,14 @@ pub struct SyncResult {
 }
 
 pub async fn refresh_feed(
-    db: Arc<Mutex<Connection>>,
+    db: DbPool,
     feed_id: i64,
     default_user_agent: &str,
 ) -> AppResult<SyncResult> {
-    let feed_data = {
-        let conn = db
-            .lock()
-            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
-        feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?
-    };
+    let feed_data = db
+        .background(move |conn| feed::find_by_id(conn, feed_id))
+        .await??
+        .ok_or(AppError::FeedNotFound)?;
 
     // Use per-feed custom user agent if set, otherwise use global default
     let effective_user_agent = feed_data
@@ -167,7 +164,7 @@ pub async fn refresh_feed(
 
     // Build HTTP client with per-feed settings
     let mut client_builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(DEFAULT_TIMEOUT)
         .user_agent(effective_user_agent);
 
     // Disable HTTP/2 if configured for this feed
@@ -193,20 +190,28 @@ pub async fn refresh_feed(
         }
     }
 
-    let response = match client.get(&feed_data.url).headers(headers).send().await {
+    let retry_config = RetryConfig::default();
+    let response = match send_with_retry(&retry_config, || {
+        client.get(&feed_data.url).headers(headers.clone())
+    })
+    .await
+    {
         Ok(resp) => resp,
         Err(e) => {
             let error_msg = e.to_string();
-            if let Ok(conn) = db.lock() {
-                let _ = feed::update_fetch_result(
-                    &conn,
-                    feed_id,
-                    Utc::now(),
-                    Some(&error_msg),
-                    None,
-                    None,
-                );
-            }
+            let err_clone = error_msg.clone();
+            let _ = db
+                .background(move |conn| {
+                    feed::update_fetch_result(
+                        conn,
+                        feed_id,
+                        Utc::now(),
+                        Some(&err_clone),
+                        None,
+                        None,
+                    )
+                })
+                .await;
             return Err(AppError::FetchError(error_msg));
         }
     };
@@ -216,17 +221,19 @@ pub async fn refresh_feed(
     // Handle 304 Not Modified
     if status == reqwest::StatusCode::NOT_MODIFIED {
         debug!("Feed {} not modified (304)", feed_id);
-        let conn = db
-            .lock()
-            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
-        feed::update_fetch_result(
-            &conn,
-            feed_id,
-            Utc::now(),
-            None,
-            feed_data.etag.as_deref(),
-            feed_data.last_modified.as_deref(),
-        )?;
+        let etag = feed_data.etag.clone();
+        let last_modified = feed_data.last_modified.clone();
+        db.background(move |conn| {
+            feed::update_fetch_result(
+                conn,
+                feed_id,
+                Utc::now(),
+                None,
+                etag.as_deref(),
+                last_modified.as_deref(),
+            )
+        })
+        .await??;
         return Ok(SyncResult {
             new_entries: 0,
             updated_entries: 0,
@@ -235,10 +242,11 @@ pub async fn refresh_feed(
 
     if !status.is_success() {
         let error_msg = format!("HTTP {}", status);
-        let conn = db
-            .lock()
-            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
-        feed::update_fetch_result(&conn, feed_id, Utc::now(), Some(&error_msg), None, None)?;
+        let err_clone = error_msg.clone();
+        db.background(move |conn| {
+            feed::update_fetch_result(conn, feed_id, Utc::now(), Some(&err_clone), None, None)
+        })
+        .await??;
         return Err(AppError::FetchError(error_msg));
     }
 
@@ -259,42 +267,50 @@ pub async fn refresh_feed(
         Ok(text) => text,
         Err(e) => {
             let error_msg = e.to_string();
-            if let Ok(conn) = db.lock() {
-                let _ = feed::update_fetch_result(
-                    &conn,
-                    feed_id,
-                    Utc::now(),
-                    Some(&error_msg),
-                    None,
-                    None,
-                );
-            }
+            let err_clone = error_msg.clone();
+            let _ = db
+                .background(move |conn| {
+                    feed::update_fetch_result(
+                        conn,
+                        feed_id,
+                        Utc::now(),
+                        Some(&err_clone),
+                        None,
+                        None,
+                    )
+                })
+                .await;
             return Err(AppError::FetchError(error_msg));
         }
     };
 
     // Parse feed with custom timestamp parser for Chinese date support
-    let parsed_feed = {
+    // Note: Parser is not Send, so we must drop it before any .await
+    let parse_result = {
         let parser = feed_rs::parser::Builder::new()
             .timestamp_parser(parse_timestamp)
             .build();
+        parser.parse(body.as_bytes())
+    };
 
-        match parser.parse(body.as_bytes()) {
-            Ok(feed) => feed,
-            Err(e) => {
-                let error_msg = e.to_string();
-                if let Ok(conn) = db.lock() {
-                    let _ = feed::update_fetch_result(
-                        &conn,
+    let parsed_feed = match parse_result {
+        Ok(feed) => feed,
+        Err(e) => {
+            let error_msg = e.to_string();
+            let err_clone = error_msg.clone();
+            let _ = db
+                .background(move |conn| {
+                    feed::update_fetch_result(
+                        conn,
                         feed_id,
                         Utc::now(),
-                        Some(&error_msg),
+                        Some(&err_clone),
                         None,
                         None,
-                    );
-                }
-                return Err(AppError::FeedParseError(error_msg));
-            }
+                    )
+                })
+                .await;
+            return Err(AppError::FeedParseError(error_msg));
         }
     };
 
@@ -302,13 +318,10 @@ pub async fn refresh_feed(
     let icon_url = parsed_feed.icon.as_ref().map(|i| i.uri.clone());
     let logo_url = parsed_feed.logo.as_ref().map(|l| l.uri.clone());
 
-    // Check if icon refresh is needed (release lock before await)
-    let needs_icon_refresh = {
-        let conn = db
-            .lock()
-            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
-        image::needs_refresh(&conn, image::ENTITY_FEED, feed_id, 7)?
-    };
+    // Check if icon refresh is needed
+    let needs_icon_refresh = db
+        .background(move |conn| image::needs_refresh(conn, image::ENTITY_FEED, feed_id, 7))
+        .await??;
 
     // Fetch icon if needed (every 7 days)
     if needs_icon_refresh {
@@ -321,23 +334,29 @@ pub async fn refresh_feed(
         .await
         {
             Ok(Some(fetched)) => {
-                let conn = db
-                    .lock()
-                    .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
-                if let Err(e) = image::upsert(
-                    &conn,
-                    image::ENTITY_FEED,
-                    feed_id,
-                    &fetched.data,
-                    &fetched.content_type,
-                    Some(&fetched.source_url),
-                ) {
-                    warn!("Failed to save icon for feed {}: {}", feed_id, e);
-                } else {
-                    debug!(
-                        "Saved icon for feed {} from {}",
-                        feed_id, fetched.source_url
-                    );
+                let source_url = fetched.source_url.clone();
+                let save_result = db
+                    .background(move |conn| {
+                        image::upsert(
+                            conn,
+                            image::ENTITY_FEED,
+                            feed_id,
+                            &fetched.data,
+                            &fetched.content_type,
+                            Some(&fetched.source_url),
+                        )
+                    })
+                    .await;
+                match save_result {
+                    Ok(Ok(())) => {
+                        debug!("Saved icon for feed {} from {}", feed_id, source_url);
+                    }
+                    Ok(Err(e)) => {
+                        warn!("Failed to save icon for feed {}: {}", feed_id, e);
+                    }
+                    Err(e) => {
+                        warn!("Failed to save icon for feed {}: {}", feed_id, e);
+                    }
                 }
             }
             Ok(None) => {
@@ -349,73 +368,73 @@ pub async fn refresh_feed(
         }
     }
 
-    let mut new_entries = 0i64;
-    let mut updated_entries = 0i64;
-
     // Extract feed-level timestamp as fallback for entries without dates
     let feed_timestamp = parsed_feed
         .updated
         .or(parsed_feed.published)
         .map(|dt| dt.with_timezone(&Utc));
 
-    {
-        let conn = db
-            .lock()
-            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+    let (new_entries, updated_entries) = db
+        .background(move |conn| {
+            let mut new_entries = 0i64;
+            let mut updated_entries = 0i64;
 
-        for item in parsed_feed.entries {
-            let guid = item.id;
+            for item in parsed_feed.entries {
+                let guid = item.id;
 
-            let title = item.title.map(|t| t.content);
+                let title = item.title.map(|t| t.content);
 
-            let link = item.links.first().map(|l| l.href.clone());
+                let link = item.links.first().map(|l| l.href.clone());
 
-            let content = item
-                .content
-                .and_then(|c| c.body)
-                .or_else(|| item.summary.clone().map(|s| s.content));
+                let content = item
+                    .content
+                    .and_then(|c| c.body)
+                    .or_else(|| item.summary.clone().map(|s| s.content));
 
-            let summary = item.summary.map(|s| s.content);
+                let summary = item.summary.map(|s| s.content);
 
-            let author = item.authors.first().map(|a| a.name.clone());
+                let author = item.authors.first().map(|a| a.name.clone());
 
-            // Use published date, fall back to updated date, then feed timestamp
-            // If no date is available, use None so sorting falls back to created_at
-            let published_at = item
-                .published
-                .or(item.updated)
-                .map(|dt| dt.with_timezone(&Utc))
-                .or(feed_timestamp);
+                // Use published date, fall back to updated date, then feed timestamp
+                // If no date is available, use None so sorting falls back to created_at
+                let published_at = item
+                    .published
+                    .or(item.updated)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .or(feed_timestamp);
 
-            let (_, is_new) = entry::upsert_entry(
-                &conn,
+                let (_, is_new) = entry::upsert_entry(
+                    conn,
+                    feed_id,
+                    &guid,
+                    title.as_deref(),
+                    link.as_deref(),
+                    content.as_deref(),
+                    summary.as_deref(),
+                    author.as_deref(),
+                    published_at,
+                )?;
+
+                if is_new {
+                    new_entries += 1;
+                } else {
+                    updated_entries += 1;
+                }
+            }
+
+            // Update feed fetch result
+            feed::update_fetch_result(
+                conn,
                 feed_id,
-                &guid,
-                title.as_deref(),
-                link.as_deref(),
-                content.as_deref(),
-                summary.as_deref(),
-                author.as_deref(),
-                published_at,
+                Utc::now(),
+                None,
+                new_etag.as_deref(),
+                new_last_modified.as_deref(),
             )?;
 
-            if is_new {
-                new_entries += 1;
-            } else {
-                updated_entries += 1;
-            }
-        }
-
-        // Update feed fetch result
-        feed::update_fetch_result(
-            &conn,
-            feed_id,
-            Utc::now(),
-            None,
-            new_etag.as_deref(),
-            new_last_modified.as_deref(),
-        )?;
-    }
+            Ok::<_, AppError>((new_entries, updated_entries))
+        })
+        .await??;
 
     info!(
         "Feed {} refreshed: {} new, {} updated",
@@ -429,24 +448,22 @@ pub async fn refresh_feed(
 }
 
 pub async fn refresh_bucket(
-    db: Arc<Mutex<Connection>>,
+    db: DbPool,
     bucket: u8,
     user_agent: &str,
 ) -> Vec<(i64, Result<SyncResult, String>)> {
-    let feeds = {
-        let conn = match db.lock() {
-            Ok(c) => c,
-            Err(_) => {
-                error!("Failed to lock DB for bucket {}", bucket);
-                return vec![];
-            }
-        };
-        match feed::list_by_bucket(&conn, bucket) {
-            Ok(f) => f,
-            Err(e) => {
-                error!("Failed to list feeds for bucket {}: {}", bucket, e);
-                return vec![];
-            }
+    let feeds = match db
+        .background(move |conn| feed::list_by_bucket(conn, bucket))
+        .await
+    {
+        Ok(Ok(f)) => f,
+        Ok(Err(e)) => {
+            error!("Failed to list feeds for bucket {}: {}", bucket, e);
+            return vec![];
+        }
+        Err(e) => {
+            error!("Failed to access DB for bucket {}: {}", bucket, e);
+            return vec![];
         }
     };
 

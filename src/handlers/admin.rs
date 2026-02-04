@@ -15,12 +15,7 @@ pub async fn list_users(
     State(state): State<AppState>,
     _admin: AdminUser,
 ) -> AppResult<Json<Vec<User>>> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    let users = user::list_all(&conn)?;
+    let users = state.db.user(user::list_all).await??;
     Ok(Json(users))
 }
 
@@ -41,27 +36,29 @@ pub async fn update_user(
         return Err(AppError::CannotModifySelf);
     }
 
-    let conn = state
+    state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+        .user(move |conn| {
+            let target = user::find_by_id(conn, user_id)?.ok_or(AppError::UserNotFound)?;
 
-    let target = user::find_by_id(&conn, user_id)?.ok_or(AppError::UserNotFound)?;
+            if let Some(role) = req.role {
+                if target.role != role {
+                    user::update_role(conn, user_id, role)?;
+                }
+            }
 
-    if let Some(role) = req.role {
-        if target.role != role {
-            user::update_role(&conn, user_id, role)?;
-        }
-    }
+            if let Some(disabled) = req.disabled {
+                if disabled && !target.is_disabled() {
+                    user::disable_user(conn, user_id)?;
+                    session::delete_user_sessions(conn, user_id)?;
+                } else if !disabled && target.is_disabled() {
+                    user::enable_user(conn, user_id)?;
+                }
+            }
 
-    if let Some(disabled) = req.disabled {
-        if disabled && !target.is_disabled() {
-            user::disable_user(&conn, user_id)?;
-            session::delete_user_sessions(&conn, user_id)?;
-        } else if !disabled && target.is_disabled() {
-            user::enable_user(&conn, user_id)?;
-        }
-    }
+            Ok::<_, AppError>(())
+        })
+        .await??;
 
     Ok(StatusCode::OK)
 }
@@ -76,12 +73,10 @@ pub async fn delete_user(
         return Err(AppError::CannotModifySelf);
     }
 
-    let conn = state
+    state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    user::delete_user(&conn, user_id)?;
+        .user(move |conn| user::delete_user(conn, user_id))
+        .await??;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -95,18 +90,21 @@ pub async fn start_masquerade(
         return Err(AppError::AlreadyMasquerading);
     }
 
-    let conn = state
+    let session_token = admin.session.session_token.clone();
+    state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+        .user(move |conn| {
+            let target = user::find_by_id(conn, target_user_id)?.ok_or(AppError::UserNotFound)?;
 
-    let target = user::find_by_id(&conn, target_user_id)?.ok_or(AppError::UserNotFound)?;
+            if target.is_disabled() {
+                return Err(AppError::UserDisabled);
+            }
 
-    if target.is_disabled() {
-        return Err(AppError::UserDisabled);
-    }
+            session::start_masquerade(conn, &session_token, target_user_id)?;
 
-    session::start_masquerade(&conn, &admin.session.session_token, target_user_id)?;
+            Ok::<_, AppError>(())
+        })
+        .await??;
 
     Ok(StatusCode::OK)
 }
@@ -119,12 +117,11 @@ pub async fn stop_masquerade(
         return Err(AppError::NotMasquerading);
     }
 
-    let conn = state
+    let session_token = admin.session.session_token.clone();
+    state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    session::stop_masquerade(&conn, &admin.session.session_token)?;
+        .user(move |conn| session::stop_masquerade(conn, &session_token))
+        .await??;
 
     Ok(StatusCode::OK)
 }

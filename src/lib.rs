@@ -1,10 +1,9 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use rusqlite::Connection;
 use tokio::sync::mpsc;
 use webauthn_rs::prelude::Webauthn;
 
@@ -19,6 +18,7 @@ pub mod services;
 pub mod version;
 
 pub use config::Config;
+pub use db::DbPool;
 pub use middleware::auth::SESSION_COOKIE_NAME;
 pub use models::{Role, User};
 pub use version::{GIT_VERSION, PKG_VERSION};
@@ -27,7 +27,7 @@ use services::{SummaryCache, SummaryJob};
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: Arc<Mutex<Connection>>,
+    pub db: DbPool,
     pub config: Arc<Config>,
     pub webauthn: Arc<Webauthn>,
     pub summary_cache: Arc<SummaryCache>,

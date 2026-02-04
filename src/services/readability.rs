@@ -1,10 +1,10 @@
 use std::net::IpAddr;
-use std::time::Duration;
 
 use readability::extractor;
 use url::Url;
 
 use crate::error::{AppError, AppResult};
+use crate::services::http::{send_with_retry, RetryConfig, DEFAULT_TIMEOUT};
 
 pub struct ExtractedContent {
     pub title: Option<String>,
@@ -19,14 +19,13 @@ pub async fn fetch_and_extract(url: &str, user_agent: &str) -> AppResult<Extract
 
     // Fetch HTML using existing reqwest (rustls-tls)
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(DEFAULT_TIMEOUT)
         .user_agent(user_agent)
         .build()
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
-    let response = client
-        .get(url)
-        .send()
+    let url_owned = url.to_string();
+    let response = send_with_retry(&RetryConfig::default(), || client.get(&url_owned))
         .await
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 

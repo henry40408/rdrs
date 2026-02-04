@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use rdrs::{auth, create_router, db, services, AppState, Config};
+use rdrs::{auth, create_router, db, services, AppState, Config, DbPool};
 use rusqlite::Connection;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -22,7 +22,7 @@ async fn main() {
     let conn = Connection::open(&config.database_url).expect("Failed to open database");
     db::init_db(&conn).expect("Failed to initialize database");
 
-    let db = Arc::new(Mutex::new(conn));
+    let db = DbPool::new(conn);
 
     let webauthn = auth::create_webauthn(&config).expect("Failed to create WebAuthn");
 

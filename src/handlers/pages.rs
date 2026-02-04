@@ -29,12 +29,14 @@ impl IntoResponse for LoginTemplate {
 }
 
 pub async fn login_page(State(state): State<AppState>, flash: Flash) -> (Flash, LoginTemplate) {
-    let signup_enabled = {
-        let conn = state.db.lock().ok();
-        conn.and_then(|c| crate::models::user::count(&c).ok())
-            .map(|count| state.config.can_register(count))
-            .unwrap_or(false)
-    };
+    let signup_enabled = state
+        .db
+        .user(|c| crate::models::user::count(c).ok())
+        .await
+        .ok()
+        .flatten()
+        .map(|count| state.config.can_register(count))
+        .unwrap_or(false);
 
     (
         flash.clone(),
@@ -65,12 +67,14 @@ pub async fn register_page(
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, RegisterTemplate) {
-    let can_register = {
-        let conn = state.db.lock().ok();
-        conn.and_then(|c| crate::models::user::count(&c).ok())
-            .map(|count| state.config.can_register(count))
-            .unwrap_or(false)
-    };
+    let can_register = state
+        .db
+        .user(|c| crate::models::user::count(c).ok())
+        .await
+        .ok()
+        .flatten()
+        .map(|count| state.config.can_register(count))
+        .unwrap_or(false);
 
     (
         flash.clone(),
@@ -120,18 +124,17 @@ pub async fn home_page(
         auth_user.user.is_admin()
     };
 
-    let (unread_count, entries_per_page) = {
-        let conn = state.db.lock().ok();
-        let unread = conn
-            .as_ref()
-            .and_then(|c| entry::count_unread_by_user(c, auth_user.user.id).ok())
-            .unwrap_or(0);
-        let epp = conn
-            .as_ref()
-            .and_then(|c| user_settings::get_entries_per_page(c, auth_user.user.id).ok())
-            .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-        (unread, epp)
-    };
+    let user_id = auth_user.user.id;
+    let (unread_count, entries_per_page) = state
+        .db
+        .user(move |c| {
+            let unread = entry::count_unread_by_user(c, user_id).unwrap_or(0);
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            (unread, epp)
+        })
+        .await
+        .unwrap_or((0, user_settings::DEFAULT_ENTRIES_PER_PAGE));
 
     (
         flash.clone(),
@@ -224,34 +227,41 @@ pub async fn user_settings_page(
         auth_user.user.is_admin()
     };
 
-    let (entries_per_page, linkding_configured, linkding_api_url, kagi_configured, kagi_language) = {
-        let conn = state.db.lock().ok();
-        let epp = conn
-            .as_ref()
-            .and_then(|c| user_settings::get_entries_per_page(c, auth_user.user.id).ok())
-            .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+    let user_id = auth_user.user.id;
+    let (entries_per_page, linkding_configured, linkding_api_url, kagi_configured, kagi_language) =
+        state
+            .db
+            .user(move |c| {
+                let epp = user_settings::get_entries_per_page(c, user_id)
+                    .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
 
-        let save_config = conn
-            .as_ref()
-            .and_then(|c| user_settings::get_save_services_config(c, auth_user.user.id).ok())
-            .unwrap_or_default();
+                let save_config =
+                    user_settings::get_save_services_config(c, user_id).unwrap_or_default();
 
-        let linkding = save_config.linkding.as_ref();
-        let linkding_configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
-        let api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
+                let linkding = save_config.linkding.as_ref();
+                let linkding_configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
+                let api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
 
-        let kagi = save_config.kagi.as_ref();
-        let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
-        let kagi_lang = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
+                let kagi = save_config.kagi.as_ref();
+                let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
+                let kagi_lang = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
 
-        (
-            epp,
-            linkding_configured,
-            api_url,
-            kagi_configured,
-            kagi_lang,
-        )
-    };
+                (
+                    epp,
+                    linkding_configured,
+                    api_url,
+                    kagi_configured,
+                    kagi_lang,
+                )
+            })
+            .await
+            .unwrap_or((
+                user_settings::DEFAULT_ENTRIES_PER_PAGE,
+                false,
+                String::new(),
+                false,
+                String::new(),
+            ));
 
     (
         flash.clone(),
@@ -380,11 +390,15 @@ pub async fn entries_page(
         auth_user.user.is_admin()
     };
 
-    let entries_per_page = {
-        let conn = state.db.lock().ok();
-        conn.and_then(|c| user_settings::get_entries_per_page(&c, auth_user.user.id).ok())
-            .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
-    };
+    let user_id = auth_user.user.id;
+    let entries_per_page = state
+        .db
+        .user(move |c| {
+            user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+        })
+        .await
+        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
 
     (
         flash.clone(),
@@ -432,26 +446,25 @@ pub async fn entry_page(
         auth_user.user.is_admin()
     };
 
-    let (has_save_services, has_kagi_configured) = {
-        let conn = state.db.lock().ok();
-        let save_services = conn
-            .as_ref()
-            .and_then(|c| user_settings::has_save_services(c, auth_user.user.id).ok())
-            .unwrap_or(false);
+    let user_id = auth_user.user.id;
+    let (has_save_services, has_kagi_configured) = state
+        .db
+        .user(move |c| {
+            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
 
-        let save_config = conn
-            .as_ref()
-            .and_then(|c| user_settings::get_save_services_config(c, auth_user.user.id).ok())
-            .unwrap_or_default();
+            let save_config =
+                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
 
-        let kagi_configured = save_config
-            .kagi
-            .as_ref()
-            .map(|c| c.is_configured())
-            .unwrap_or(false);
+            let kagi_configured = save_config
+                .kagi
+                .as_ref()
+                .map(|c| c.is_configured())
+                .unwrap_or(false);
 
-        (save_services, kagi_configured)
-    };
+            (save_services, kagi_configured)
+        })
+        .await
+        .unwrap_or((false, false));
 
     (
         flash.clone(),

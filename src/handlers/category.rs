@@ -41,12 +41,11 @@ pub async fn list_categories(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> AppResult<Json<Vec<CategoryResponse>>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+    let categories = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    let categories = category::list_by_user(&conn, auth_user.user.id)?;
+        .user(move |conn| category::list_by_user(conn, user_id))
+        .await??;
     let response: Vec<CategoryResponse> = categories.into_iter().map(Into::into).collect();
 
     Ok(Json(response))
@@ -57,7 +56,7 @@ pub async fn create_category(
     auth_user: AuthUser,
     Json(req): Json<CreateCategoryRequest>,
 ) -> AppResult<(StatusCode, Json<CategoryResponse>)> {
-    let name = req.name.trim();
+    let name = req.name.trim().to_string();
 
     if name.is_empty() {
         return Err(AppError::Validation(
@@ -71,12 +70,11 @@ pub async fn create_category(
         ));
     }
 
-    let conn = state
+    let user_id = auth_user.user.id;
+    let cat = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    let cat = category::create_category(&conn, auth_user.user.id, name)?;
+        .user(move |conn| category::create_category(conn, user_id, &name))
+        .await??;
 
     Ok((StatusCode::CREATED, Json(cat.into())))
 }
@@ -86,13 +84,13 @@ pub async fn get_category(
     auth_user: AuthUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<CategoryResponse>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+    let cat = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    let cat = category::find_by_id_and_user(&conn, id, auth_user.user.id)?
-        .ok_or(AppError::CategoryNotFound)?;
+        .user(move |conn| {
+            category::find_by_id_and_user(conn, id, user_id)?.ok_or(AppError::CategoryNotFound)
+        })
+        .await??;
 
     Ok(Json(cat.into()))
 }
@@ -103,7 +101,7 @@ pub async fn update_category(
     Path(id): Path<i64>,
     Json(req): Json<UpdateCategoryRequest>,
 ) -> AppResult<Json<CategoryResponse>> {
-    let name = req.name.trim();
+    let name = req.name.trim().to_string();
 
     if name.is_empty() {
         return Err(AppError::Validation(
@@ -117,12 +115,11 @@ pub async fn update_category(
         ));
     }
 
-    let conn = state
+    let user_id = auth_user.user.id;
+    let cat = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    let cat = category::update_name(&conn, id, auth_user.user.id, name)?;
+        .user(move |conn| category::update_name(conn, id, user_id, &name))
+        .await??;
 
     Ok(Json(cat.into()))
 }
@@ -132,12 +129,11 @@ pub async fn delete_category(
     auth_user: AuthUser,
     Path(id): Path<i64>,
 ) -> AppResult<StatusCode> {
-    let conn = state
+    let user_id = auth_user.user.id;
+    state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    category::delete_category(&conn, id, auth_user.user.id)?;
+        .user(move |conn| category::delete_category(conn, id, user_id))
+        .await??;
 
     Ok(StatusCode::NO_CONTENT)
 }
