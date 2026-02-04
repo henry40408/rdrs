@@ -9,9 +9,21 @@
 {% call macros::nav("home", is_admin, is_masquerading, username) %}
 
 <style>
+.filter-toggle {
+    display: none;
+    margin-top: 0;
+    margin-bottom: var(--space-4);
+}
+
 @media (max-width: 768px) {
+    .filter-toggle {
+        display: inline-block;
+    }
     .filter-bar {
         flex-wrap: wrap;
+    }
+    .filter-bar.collapsed {
+        display: none;
     }
     .filter-bar .form-group-inline {
         width: 100%;
@@ -27,6 +39,7 @@
 <h1>Home</h1>
 
 <h2>Unread Entries</h2>
+<button type="button" id="filter-toggle" class="filter-toggle" onclick="toggleFilters()">[Filters]</button>
 <div class="filter-bar">
     <div class="form-group form-group-inline">
         <label for="filter-sort">Sort</label>
@@ -86,6 +99,40 @@
     const limit = {{ entries_per_page }};
     let total = 0;
     let selectedIndex = -1;
+
+    function toggleFilters() {
+        const bar = document.querySelector('.filter-bar');
+        const collapsed = !bar.classList.contains('collapsed');
+        setFiltersCollapsed(collapsed);
+    }
+
+    function setFiltersCollapsed(collapsed) {
+        const bar = document.querySelector('.filter-bar');
+        const btn = document.getElementById('filter-toggle');
+        if (collapsed) {
+            bar.classList.add('collapsed');
+        } else {
+            bar.classList.remove('collapsed');
+        }
+        sessionStorage.setItem('filtersCollapsed', collapsed ? '1' : '0');
+        updateFilterToggleLabel();
+    }
+
+    function expandFiltersIfCollapsed() {
+        const bar = document.querySelector('.filter-bar');
+        if (bar.classList.contains('collapsed')) {
+            setFiltersCollapsed(false);
+        }
+    }
+
+    function updateFilterToggleLabel() {
+        const btn = document.getElementById('filter-toggle');
+        const feedId = document.getElementById('filter-feed').value;
+        const categoryId = document.getElementById('filter-category').value;
+        const sortValue = document.getElementById('filter-sort').value;
+        const hasActiveFilters = feedId || categoryId || sortValue !== 'name';
+        btn.textContent = hasActiveFilters ? '[Filters *]' : '[Filters]';
+    }
 
     async function loadCategories() {
         try {
@@ -213,6 +260,7 @@
         updateURL();
         updateCategoryDropdown();
         updateFeedDropdown();
+        updateFilterToggleLabel();
     }
 
     function handleFilterChange(source = null) {
@@ -253,6 +301,7 @@
 
         updateURL();
         loadEntries();
+        updateFilterToggleLabel();
     }
 
     async function loadEntries(reset = true) {
@@ -733,12 +782,15 @@
                     }
                     return true;
                 case 'S':
+                    expandFiltersIfCollapsed();
                     document.getElementById('filter-sort').focus();
                     return true;
                 case 'C':
+                    expandFiltersIfCollapsed();
                     document.getElementById('filter-category').focus();
                     return true;
                 case 'F':
+                    expandFiltersIfCollapsed();
                     document.getElementById('filter-feed').focus();
                     return true;
             }
@@ -772,6 +824,21 @@
         // Update dropdowns with cascade filtering
         updateCategoryDropdown();
         updateFeedDropdown();
+
+        // Initialize filter toggle state for mobile
+        const isMobile = window.matchMedia('(max-width: 768px)').matches;
+        if (isMobile) {
+            const hasUrlFilters = feedId || categoryId;
+            const savedState = sessionStorage.getItem('filtersCollapsed');
+            if (hasUrlFilters) {
+                setFiltersCollapsed(false);
+            } else if (savedState !== null) {
+                setFiltersCollapsed(savedState === '1');
+            } else {
+                setFiltersCollapsed(true);
+            }
+        }
+        updateFilterToggleLabel();
 
         loadEntries();
     });
