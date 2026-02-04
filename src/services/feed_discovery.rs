@@ -2,6 +2,7 @@ use scraper::{Html, Selector};
 use url::Url;
 
 use crate::error::{AppError, AppResult};
+use crate::services::http::{send_with_retry, RetryConfig, DEFAULT_TIMEOUT};
 
 #[derive(Debug, Clone)]
 pub struct DiscoveredFeed {
@@ -21,14 +22,15 @@ pub async fn discover_feed(url: &str, user_agent: &str) -> AppResult<DiscoveredF
 
     // Fetch the URL
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(DEFAULT_TIMEOUT)
         .user_agent(user_agent)
         .build()
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
-    let response = client
-        .get(url)
-        .send()
+    let retry_config = RetryConfig::default();
+    let url_owned = url.to_string();
+
+    let response = send_with_retry(&retry_config, || client.get(&url_owned))
         .await
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
@@ -57,9 +59,7 @@ pub async fn discover_feed(url: &str, user_agent: &str) -> AppResult<DiscoveredF
     let feed_url = find_feed_link_in_html(&body, &parsed_url)?;
 
     // Fetch and parse the discovered feed
-    let feed_response = client
-        .get(&feed_url)
-        .send()
+    let feed_response = send_with_retry(&retry_config, || client.get(&feed_url))
         .await
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 

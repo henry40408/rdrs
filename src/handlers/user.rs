@@ -28,20 +28,22 @@ pub async fn change_password(
         ));
     }
 
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
     if !verify_password(&req.current_password, &auth_user.user.password_hash) {
         return Err(AppError::InvalidCredentials);
     }
 
     let new_hash = hash_password(&req.new_password)?;
-    user::update_password(&conn, auth_user.user.id, &new_hash)?;
+    let user_id = auth_user.user.id;
 
-    // Delete all sessions for the user to force re-login
-    session::delete_user_sessions(&conn, auth_user.user.id)?;
+    state
+        .db
+        .user(move |conn| {
+            user::update_password(conn, user_id, &new_hash)?;
+            // Delete all sessions for the user to force re-login
+            session::delete_user_sessions(conn, user_id)?;
+            Ok::<_, AppError>(())
+        })
+        .await??;
 
     Ok(StatusCode::OK)
 }
@@ -65,12 +67,13 @@ pub async fn update_settings(
     auth_user: AuthUser,
     Json(req): Json<UpdateSettingsRequest>,
 ) -> AppResult<Json<UpdateSettingsResponse>> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+    let user_id = auth_user.user.id;
+    let epp = req.entries_per_page;
 
-    let settings = user_settings::upsert(&conn, auth_user.user.id, req.entries_per_page)?;
+    let settings = state
+        .db
+        .user(move |conn| user_settings::upsert(conn, user_id, epp))
+        .await??;
 
     Ok(Json(UpdateSettingsResponse {
         entries_per_page: settings.entries_per_page,
@@ -94,47 +97,48 @@ pub async fn update_linkding_settings(
     auth_user: AuthUser,
     Json(req): Json<UpdateLinkdingRequest>,
 ) -> AppResult<Json<UpdateLinkdingResponse>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+
+    let (configured, api_url) = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+        .user(move |conn| {
+            // Get current config
+            let mut config = user_settings::get_save_services_config(conn, user_id)?;
 
-    // Get current config
-    let mut config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
+            // Update Linkding config
+            let api_url = req.api_url.filter(|s| !s.is_empty());
+            let api_token = req.api_token.filter(|s| !s.is_empty());
 
-    // Update Linkding config
-    // If both api_url and api_token are empty strings or None, clear the config
-    let api_url = req.api_url.filter(|s| !s.is_empty());
-    let api_token = req.api_token.filter(|s| !s.is_empty());
+            if api_url.is_some() || api_token.is_some() {
+                let current = config.linkding.unwrap_or(LinkdingConfig {
+                    api_url: String::new(),
+                    api_token: String::new(),
+                });
 
-    if api_url.is_some() || api_token.is_some() {
-        // Update or create config
-        let current = config.linkding.unwrap_or(LinkdingConfig {
-            api_url: String::new(),
-            api_token: String::new(),
-        });
+                config.linkding = Some(LinkdingConfig {
+                    api_url: api_url.unwrap_or(current.api_url),
+                    api_token: api_token.unwrap_or(current.api_token),
+                });
+            } else {
+                config.linkding = None;
+            }
 
-        config.linkding = Some(LinkdingConfig {
-            api_url: api_url.unwrap_or(current.api_url),
-            api_token: api_token.unwrap_or(current.api_token),
-        });
-    } else {
-        // Clear config if both are empty
-        config.linkding = None;
-    }
+            user_settings::update_save_services(conn, user_id, &config)?;
 
-    // Save updated config
-    user_settings::update_save_services(&conn, auth_user.user.id, &config)?;
+            let configured = config
+                .linkding
+                .as_ref()
+                .map(|c| c.is_configured())
+                .unwrap_or(false);
+            let url = config.linkding.map(|c| c.api_url);
 
-    let configured = config
-        .linkding
-        .as_ref()
-        .map(|c| c.is_configured())
-        .unwrap_or(false);
+            Ok::<_, AppError>((configured, url))
+        })
+        .await??;
 
     Ok(Json(UpdateLinkdingResponse {
         configured,
-        api_url: config.linkding.map(|c| c.api_url),
+        api_url,
     }))
 }
 
@@ -148,23 +152,26 @@ pub async fn get_linkding_settings(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> AppResult<Json<GetLinkdingResponse>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+
+    let (configured, api_url) = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+        .user(move |conn| {
+            let config = user_settings::get_save_services_config(conn, user_id)?;
 
-    let config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
+            let configured = config
+                .linkding
+                .as_ref()
+                .map(|c| c.is_configured())
+                .unwrap_or(false);
 
-    let configured = config
-        .linkding
-        .as_ref()
-        .map(|c| c.is_configured())
-        .unwrap_or(false);
+            Ok::<_, AppError>((configured, config.linkding.map(|c| c.api_url)))
+        })
+        .await??;
 
     Ok(Json(GetLinkdingResponse {
         configured,
-        // Return api_url but not api_token for security
-        api_url: config.linkding.map(|c| c.api_url),
+        api_url,
     }))
 }
 
@@ -196,15 +203,6 @@ pub async fn update_kagi_settings(
     auth_user: AuthUser,
     Json(req): Json<UpdateKagiRequest>,
 ) -> AppResult<Json<UpdateKagiResponse>> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    // Get current config
-    let mut config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
-
-    // Update Kagi config
     let has_language_field = req.language.is_some();
     let session_token = match req.session_link.filter(|s| !s.is_empty()) {
         Some(link) => Some(extract_kagi_session_token(&link)?),
@@ -212,38 +210,46 @@ pub async fn update_kagi_settings(
     };
     let language = req.language.filter(|s| !s.is_empty());
 
-    if session_token.is_some() || has_language_field {
-        // Update or create config
-        let current = config.kagi.unwrap_or(KagiConfig {
-            session_token: String::new(),
-            language: None,
-        });
+    let user_id = auth_user.user.id;
+    let (configured, lang) = state
+        .db
+        .user(move |conn| {
+            let mut config = user_settings::get_save_services_config(conn, user_id)?;
 
-        config.kagi = Some(KagiConfig {
-            session_token: session_token.unwrap_or(current.session_token),
-            language: if has_language_field {
-                language
-            } else {
-                current.language
-            },
-        });
-    } else if session_token.is_none() && !has_language_field {
-        // Clear config if both are empty/not provided
-        config.kagi = None;
-    }
+            if session_token.is_some() || has_language_field {
+                let current = config.kagi.unwrap_or(KagiConfig {
+                    session_token: String::new(),
+                    language: None,
+                });
 
-    // Save updated config
-    user_settings::update_save_services(&conn, auth_user.user.id, &config)?;
+                config.kagi = Some(KagiConfig {
+                    session_token: session_token.unwrap_or(current.session_token),
+                    language: if has_language_field {
+                        language
+                    } else {
+                        current.language
+                    },
+                });
+            } else if session_token.is_none() && !has_language_field {
+                config.kagi = None;
+            }
 
-    let configured = config
-        .kagi
-        .as_ref()
-        .map(|c| c.is_configured())
-        .unwrap_or(false);
+            user_settings::update_save_services(conn, user_id, &config)?;
+
+            let configured = config
+                .kagi
+                .as_ref()
+                .map(|c| c.is_configured())
+                .unwrap_or(false);
+            let lang = config.kagi.and_then(|c| c.language);
+
+            Ok::<_, AppError>((configured, lang))
+        })
+        .await??;
 
     Ok(Json(UpdateKagiResponse {
         configured,
-        language: config.kagi.and_then(|c| c.language),
+        language: lang,
     }))
 }
 
@@ -257,22 +263,25 @@ pub async fn get_kagi_settings(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> AppResult<Json<GetKagiResponse>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+
+    let (configured, language) = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+        .user(move |conn| {
+            let config = user_settings::get_save_services_config(conn, user_id)?;
 
-    let config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
+            let configured = config
+                .kagi
+                .as_ref()
+                .map(|c| c.is_configured())
+                .unwrap_or(false);
 
-    let configured = config
-        .kagi
-        .as_ref()
-        .map(|c| c.is_configured())
-        .unwrap_or(false);
+            Ok::<_, AppError>((configured, config.kagi.and_then(|c| c.language)))
+        })
+        .await??;
 
     Ok(Json(GetKagiResponse {
         configured,
-        // Return language but not session_token for security
-        language: config.kagi.and_then(|c| c.language),
+        language,
     }))
 }

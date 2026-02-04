@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{BookmarkData, SaveResult};
 use crate::error::{AppError, AppResult};
+use crate::services::http::{send_with_retry, RetryConfig, EXTERNAL_API_TIMEOUT};
 
 /// Linkding service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,7 +20,7 @@ impl LinkdingConfig {
 }
 
 /// Request body for Linkding API
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct LinkdingBookmarkRequest {
     url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,7 +55,10 @@ pub async fn save_to_linkding(
         });
     }
 
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(EXTERNAL_API_TIMEOUT)
+        .build()
+        .map_err(|e| AppError::Internal(format!("Failed to build HTTP client: {}", e)))?;
 
     // Normalize API URL - ensure it ends with /api/bookmarks/
     let api_url = normalize_api_url(&config.api_url);
@@ -66,14 +70,16 @@ pub async fn save_to_linkding(
         tag_names: bookmark.tags.clone(),
     };
 
-    let response = client
-        .post(&api_url)
-        .header("Authorization", format!("Token {}", config.api_token))
-        .header("Content-Type", "application/json")
-        .json(&request_body)
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(format!("Failed to connect to Linkding: {}", e)))?;
+    let token = format!("Token {}", config.api_token);
+    let response = send_with_retry(&RetryConfig::default(), || {
+        client
+            .post(&api_url)
+            .header("Authorization", &token)
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Failed to connect to Linkding: {}", e)))?;
 
     let status = response.status();
 

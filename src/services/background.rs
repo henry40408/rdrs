@@ -1,14 +1,12 @@
-use std::sync::{Arc, Mutex};
-
 use chrono::Utc;
-use rusqlite::Connection;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info};
 
 use super::feed_sync;
+use crate::db::DbPool;
 
-pub fn start_background_sync(db: Arc<Mutex<Connection>>, user_agent: String) -> JoinHandle<()> {
+pub fn start_background_sync(db: DbPool, user_agent: String) -> JoinHandle<()> {
     tokio::spawn(async move {
         info!("Background sync task started");
 

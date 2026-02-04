@@ -1,9 +1,6 @@
-use std::sync::Arc;
 use std::time::Duration;
 
-use rusqlite::Connection;
-use std::sync::Mutex;
-
+use crate::db::DbPool;
 use crate::models::entry_summary;
 
 /// Start the summary cleanup worker that periodically removes expired summaries
@@ -12,7 +9,7 @@ use crate::models::entry_summary;
 /// * `db` - Database connection
 /// * `interval_hours` - How often to run cleanup (in hours)
 /// * `ttl_hours` - Delete summaries older than this many hours
-pub fn start_cleanup_worker(db: Arc<Mutex<Connection>>, interval_hours: u64, ttl_hours: i64) {
+pub fn start_cleanup_worker(db: DbPool, interval_hours: u64, ttl_hours: i64) {
     tokio::spawn(async move {
         tracing::info!(
             "Summary cleanup worker started: interval={}h, ttl={}h",
@@ -27,21 +24,18 @@ pub fn start_cleanup_worker(db: Arc<Mutex<Connection>>, interval_hours: u64, ttl
 
             tracing::debug!("Running summary cleanup...");
 
-            let deleted = {
-                let conn = match db.lock() {
-                    Ok(c) => c,
-                    Err(e) => {
-                        tracing::error!("Failed to acquire DB lock for cleanup: {}", e);
-                        continue;
-                    }
-                };
-
-                match entry_summary::delete_expired(&conn, ttl_hours) {
-                    Ok(count) => count,
-                    Err(e) => {
-                        tracing::error!("Failed to cleanup expired summaries: {}", e);
-                        continue;
-                    }
+            let deleted = match db
+                .background(move |conn| entry_summary::delete_expired(conn, ttl_hours))
+                .await
+            {
+                Ok(Ok(count)) => count,
+                Ok(Err(e)) => {
+                    tracing::error!("Failed to cleanup expired summaries: {}", e);
+                    continue;
+                }
+                Err(e) => {
+                    tracing::error!("Failed to access DB for cleanup: {}", e);
+                    continue;
                 }
             };
 
@@ -58,6 +52,7 @@ mod tests {
     use crate::db::init_db;
     use crate::models::user::Role;
     use crate::models::{category, entry, feed, user};
+    use rusqlite::Connection;
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

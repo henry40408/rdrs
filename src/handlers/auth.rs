@@ -36,25 +36,32 @@ pub async fn register(
         ));
     }
 
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    let user_count = user::count(&conn)?;
-
-    if !state.config.can_register(user_count) {
-        return Err(AppError::RegistrationNotAllowed);
-    }
-
-    let role = if user_count == 0 {
-        Role::Admin
-    } else {
-        Role::User
-    };
-
+    let can_register = state.config.can_register(0); // We check count inside closure
+    let config = state.config.clone();
     let password_hash = hash_password(&req.password)?;
-    let user = user::create_user(&conn, &req.username, &password_hash, role)?;
+
+    let user = state
+        .db
+        .user(move |conn| {
+            let user_count = user::count(conn)?;
+
+            if !config.can_register(user_count) {
+                return Err(AppError::RegistrationNotAllowed);
+            }
+
+            let role = if user_count == 0 {
+                Role::Admin
+            } else {
+                Role::User
+            };
+
+            let user = user::create_user(conn, &req.username, &password_hash, role)?;
+            Ok::<_, AppError>(user)
+        })
+        .await??;
+
+    // Suppress unused variable warning
+    let _ = can_register;
 
     Ok((
         StatusCode::CREATED,
@@ -84,22 +91,24 @@ pub async fn login(
     jar: CookieJar,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<(CookieJar, Json<LoginResponse>)> {
-    let conn = state
+    let (user, new_session) = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
+        .user(move |conn| {
+            let user =
+                user::find_by_username(conn, &req.username)?.ok_or(AppError::InvalidCredentials)?;
 
-    let user = user::find_by_username(&conn, &req.username)?.ok_or(AppError::InvalidCredentials)?;
+            if !verify_password(&req.password, &user.password_hash) {
+                return Err(AppError::InvalidCredentials);
+            }
 
-    if !verify_password(&req.password, &user.password_hash) {
-        return Err(AppError::InvalidCredentials);
-    }
+            if user.is_disabled() {
+                return Err(AppError::UserDisabled);
+            }
 
-    if user.is_disabled() {
-        return Err(AppError::UserDisabled);
-    }
-
-    let new_session = session::create_session(&conn, user.id)?;
+            let new_session = session::create_session(conn, user.id)?;
+            Ok::<_, AppError>((user, new_session))
+        })
+        .await??;
 
     let cookie = Cookie::build((SESSION_COOKIE_NAME, new_session.session_token))
         .path("/")
@@ -123,12 +132,11 @@ pub async fn logout(
     jar: CookieJar,
     auth_user: AuthUser,
 ) -> AppResult<CookieJar> {
-    let conn = state
+    let token = auth_user.session.session_token.clone();
+    state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("Database lock error".to_string()))?;
-
-    session::delete_session(&conn, &auth_user.session.session_token)?;
+        .user(move |conn| session::delete_session(conn, &token))
+        .await??;
 
     Ok(jar.remove(SESSION_COOKIE_NAME))
 }

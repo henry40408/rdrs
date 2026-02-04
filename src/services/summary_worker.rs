@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use rusqlite::Connection;
-use std::sync::Mutex;
 use tokio::sync::mpsc;
 
 use super::summarize::kagi::{self, KagiConfig};
 use super::summary_cache::SummaryCache;
+use crate::db::DbPool;
 use crate::models::{entry_summary, user_settings};
 
 /// A job to summarize an entry
@@ -20,7 +19,7 @@ pub struct SummaryJob {
 pub fn start_summary_worker(
     mut rx: mpsc::Receiver<SummaryJob>,
     cache: Arc<SummaryCache>,
-    db: Arc<Mutex<Connection>>,
+    db: DbPool,
 ) {
     tokio::spawn(async move {
         tracing::info!("Summary worker started");
@@ -36,45 +35,37 @@ pub fn start_summary_worker(
             // Mark as processing in both cache and DB
             cache.set_processing(job.user_id, job.entry_id);
             {
-                if let Ok(conn) = db.lock() {
-                    if let Err(e) = entry_summary::set_processing(&conn, job.user_id, job.entry_id)
-                    {
-                        tracing::warn!("Failed to set DB status to processing: {}", e);
-                    }
-                }
+                let user_id = job.user_id;
+                let entry_id = job.entry_id;
+                let _ = db
+                    .background(move |conn| entry_summary::set_processing(conn, user_id, entry_id))
+                    .await;
             }
 
             // Get Kagi config for the user
-            let kagi_config = {
-                let conn = match db.lock() {
-                    Ok(c) => c,
-                    Err(e) => {
-                        tracing::error!("Failed to acquire DB lock: {}", e);
-                        let error_msg = "Internal error: DB lock failed".to_string();
-                        cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
-                        // Try to update DB as well
-                        if let Ok(conn) = db.lock() {
-                            let _ = entry_summary::set_failed(
-                                &conn,
-                                job.user_id,
-                                job.entry_id,
-                                &error_msg,
-                            );
-                        }
-                        continue;
-                    }
-                };
-
-                match user_settings::get_save_services_config(&conn, job.user_id) {
-                    Ok(config) => config.kagi,
-                    Err(e) => {
-                        tracing::error!("Failed to get user settings: {}", e);
-                        let error_msg = "Failed to load Kagi settings".to_string();
-                        cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
-                        let _ =
-                            entry_summary::set_failed(&conn, job.user_id, job.entry_id, &error_msg);
-                        continue;
-                    }
+            let user_id = job.user_id;
+            let entry_id = job.entry_id;
+            let kagi_config = match db
+                .background(move |conn| user_settings::get_save_services_config(conn, user_id))
+                .await
+            {
+                Ok(Ok(config)) => config.kagi,
+                Ok(Err(e)) => {
+                    tracing::error!("Failed to get user settings: {}", e);
+                    let error_msg = "Failed to load Kagi settings".to_string();
+                    cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
+                    let _ = db
+                        .background(move |conn| {
+                            entry_summary::set_failed(conn, user_id, entry_id, &error_msg)
+                        })
+                        .await;
+                    continue;
+                }
+                Err(e) => {
+                    tracing::error!("Failed to access DB: {}", e);
+                    let error_msg = "Internal error: DB access failed".to_string();
+                    cache.set_failed(job.user_id, job.entry_id, error_msg);
+                    continue;
                 }
             };
 
@@ -83,10 +74,13 @@ pub fn start_summary_worker(
                 _ => {
                     let error_msg = "Kagi is not configured".to_string();
                     cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
-                    if let Ok(conn) = db.lock() {
-                        let _ =
-                            entry_summary::set_failed(&conn, job.user_id, job.entry_id, &error_msg);
-                    }
+                    let user_id = job.user_id;
+                    let entry_id = job.entry_id;
+                    let _ = db
+                        .background(move |conn| {
+                            entry_summary::set_failed(conn, user_id, entry_id, &error_msg)
+                        })
+                        .await;
                     continue;
                 }
             };
@@ -102,24 +96,25 @@ pub fn start_summary_worker(
                     // Update cache
                     cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
                     // Update DB
-                    if let Ok(conn) = db.lock() {
-                        if let Err(e) = entry_summary::set_completed(
-                            &conn,
-                            job.user_id,
-                            job.entry_id,
-                            &summary_text,
-                        ) {
-                            tracing::error!("Failed to save summary to DB: {}", e);
-                        }
-                    }
+                    let user_id = job.user_id;
+                    let entry_id = job.entry_id;
+                    let _ = db
+                        .background(move |conn| {
+                            entry_summary::set_completed(conn, user_id, entry_id, &summary_text)
+                        })
+                        .await;
                 }
                 Err(error) => {
                     tracing::warn!("Summary failed for entry {}: {}", job.entry_id, error);
                     cache.set_failed(job.user_id, job.entry_id, error.clone());
                     // Update DB
-                    if let Ok(conn) = db.lock() {
-                        let _ = entry_summary::set_failed(&conn, job.user_id, job.entry_id, &error);
-                    }
+                    let user_id = job.user_id;
+                    let entry_id = job.entry_id;
+                    let _ = db
+                        .background(move |conn| {
+                            entry_summary::set_failed(conn, user_id, entry_id, &error)
+                        })
+                        .await;
                 }
             }
         }
@@ -154,25 +149,19 @@ pub fn create_summary_channel(
 /// Recover incomplete summary jobs on startup
 /// Returns the number of jobs re-queued
 pub async fn recover_incomplete_jobs(
-    db: Arc<Mutex<Connection>>,
+    db: DbPool,
     tx: mpsc::Sender<SummaryJob>,
     cache: Arc<SummaryCache>,
 ) -> usize {
-    let incomplete = {
-        let conn = match db.lock() {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!("Failed to acquire DB lock for recovery: {}", e);
-                return 0;
-            }
-        };
-
-        match entry_summary::find_incomplete(&conn) {
-            Ok(jobs) => jobs,
-            Err(e) => {
-                tracing::error!("Failed to find incomplete jobs: {}", e);
-                return 0;
-            }
+    let incomplete = match db.background(entry_summary::find_incomplete).await {
+        Ok(Ok(jobs)) => jobs,
+        Ok(Err(e)) => {
+            tracing::error!("Failed to find incomplete jobs: {}", e);
+            return 0;
+        }
+        Err(e) => {
+            tracing::error!("Failed to access DB for recovery: {}", e);
+            return 0;
         }
     };
 

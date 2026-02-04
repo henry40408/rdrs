@@ -5,24 +5,24 @@
 //! - Masquerading behavior in pages
 //! - Flash message handling
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
-use rdrs::{auth, create_router, db, services, AppState, Config, Role};
+use rdrs::{auth, create_router, db, services, AppState, Config, DbPool, Role};
 use rusqlite::Connection;
 use serde_json::json;
 
 struct TestApp {
     server: TestServer,
-    db: Arc<Mutex<Connection>>,
+    db: DbPool,
 }
 
 fn create_test_app(config: Config) -> TestApp {
     let conn = Connection::open_in_memory().unwrap();
     db::init_db(&conn).unwrap();
 
-    let db = Arc::new(Mutex::new(conn));
+    let db = DbPool::new(conn);
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -57,28 +57,30 @@ fn default_test_config() -> Config {
 }
 
 /// Setup admin and regular user
-fn setup_users(db: &Arc<Mutex<Connection>>) -> (i64, i64) {
-    let conn = db.lock().unwrap();
+async fn setup_users(db: &DbPool) -> (i64, i64) {
+    db.user(move |conn| {
+        // Create admin user
+        let password_hash = rdrs::auth::hash_password("password123").unwrap();
+        conn.execute(
+            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["admin", password_hash, Role::Admin.as_str()],
+        )
+        .unwrap();
+        let admin_id = conn.last_insert_rowid();
 
-    // Create admin user
-    let password_hash = rdrs::auth::hash_password("password123").unwrap();
-    conn.execute(
-        "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-        rusqlite::params!["admin", password_hash, Role::Admin.as_str()],
-    )
-    .unwrap();
-    let admin_id = conn.last_insert_rowid();
+        // Create regular user
+        let password_hash = rdrs::auth::hash_password("password123").unwrap();
+        conn.execute(
+            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["user", password_hash, Role::User.as_str()],
+        )
+        .unwrap();
+        let user_id = conn.last_insert_rowid();
 
-    // Create regular user
-    let password_hash = rdrs::auth::hash_password("password123").unwrap();
-    conn.execute(
-        "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-        rusqlite::params!["user", password_hash, Role::User.as_str()],
-    )
-    .unwrap();
-    let user_id = conn.last_insert_rowid();
-
-    (admin_id, user_id)
+        (admin_id, user_id)
+    })
+    .await
+    .unwrap()
 }
 
 async fn login(server: &TestServer, username: &str) {
@@ -99,30 +101,32 @@ async fn login(server: &TestServer, username: &str) {
 #[tokio::test]
 async fn test_home_page_shows_unread_count() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
 
     // Create some entries
-    {
-        let conn = app.db.lock().unwrap();
-        conn.execute(
-            "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-            rusqlite::params![1, "Test"],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-            rusqlite::params![1, "https://example.com/feed.xml", "Test Feed"],
-        )
-        .unwrap();
-        // Add 3 unread entries
-        for i in 1..=3 {
+    app.db
+        .user(move |conn| {
             conn.execute(
-                "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, format!("guid-{}", i), format!("Entry {}", i)],
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Test"],
             )
             .unwrap();
-        }
-    }
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/feed.xml", "Test Feed"],
+            )
+            .unwrap();
+            // Add 3 unread entries
+            for i in 1..=3 {
+                conn.execute(
+                    "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![1, format!("guid-{}", i), format!("Entry {}", i)],
+                )
+                .unwrap();
+            }
+        })
+        .await
+        .unwrap();
 
     login(&app.server, "admin").await;
 
@@ -136,7 +140,7 @@ async fn test_home_page_shows_unread_count() {
 #[tokio::test]
 async fn test_home_page_while_masquerading() {
     let app = create_test_app(default_test_config());
-    let (admin_id, user_id) = setup_users(&app.db);
+    let (admin_id, user_id) = setup_users(&app.db).await;
 
     login(&app.server, "admin").await;
 
@@ -168,7 +172,7 @@ async fn test_home_page_while_masquerading() {
 #[tokio::test]
 async fn test_admin_page_while_masquerading() {
     let app = create_test_app(default_test_config());
-    let (_admin_id, user_id) = setup_users(&app.db);
+    let (_admin_id, user_id) = setup_users(&app.db).await;
 
     login(&app.server, "admin").await;
 
@@ -188,7 +192,7 @@ async fn test_admin_page_while_masquerading() {
 #[tokio::test]
 async fn test_user_settings_page_content() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
 
     login(&app.server, "admin").await;
 
@@ -204,7 +208,7 @@ async fn test_user_settings_page_content() {
 #[tokio::test]
 async fn test_settings_page_shows_version() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
 
     login(&app.server, "admin").await;
 
@@ -286,7 +290,7 @@ async fn test_register_page_shows_disabled_after_first_user_in_single_mode() {
 #[tokio::test]
 async fn test_categories_page_with_flash() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
     let response = app
@@ -306,7 +310,7 @@ async fn test_categories_page_with_flash() {
 #[tokio::test]
 async fn test_feeds_page_with_flash() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
     let response = app
@@ -326,7 +330,7 @@ async fn test_feeds_page_with_flash() {
 #[tokio::test]
 async fn test_entries_page_with_flash() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
     let response = app
@@ -346,7 +350,7 @@ async fn test_entries_page_with_flash() {
 #[tokio::test]
 async fn test_user_settings_page_with_flash() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
     let response = app
@@ -370,40 +374,42 @@ async fn test_user_settings_page_with_flash() {
 #[tokio::test]
 async fn test_entry_page_shows_save_button_when_configured() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
 
     // Configure Linkding for user
-    {
-        let conn = app.db.lock().unwrap();
-        let config = serde_json::json!({
-            "linkding": {
-                "api_url": "https://linkding.example.com",
-                "api_token": "secret"
-            }
-        });
-        conn.execute(
-            "INSERT INTO user_settings (user_id, save_services) VALUES (?1, ?2)",
-            rusqlite::params![1, config.to_string()],
-        )
-        .unwrap();
+    app.db
+        .user(move |conn| {
+            let config = serde_json::json!({
+                "linkding": {
+                    "api_url": "https://linkding.example.com",
+                    "api_token": "secret"
+                }
+            });
+            conn.execute(
+                "INSERT INTO user_settings (user_id, save_services) VALUES (?1, ?2)",
+                rusqlite::params![1, config.to_string()],
+            )
+            .unwrap();
 
-        // Create entry
-        conn.execute(
-            "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-            rusqlite::params![1, "Test"],
-        )
+            // Create entry
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Test"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/feed.xml", "Test Feed"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, title, link) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![1, "guid-1", "Test Entry", "https://example.com/entry"],
+            )
+            .unwrap();
+        })
+        .await
         .unwrap();
-        conn.execute(
-            "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-            rusqlite::params![1, "https://example.com/feed.xml", "Test Feed"],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO entry (feed_id, guid, title, link) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![1, "guid-1", "Test Entry", "https://example.com/entry"],
-        )
-        .unwrap();
-    }
 
     login(&app.server, "admin").await;
 
@@ -415,40 +421,42 @@ async fn test_entry_page_shows_save_button_when_configured() {
 #[tokio::test]
 async fn test_entry_page_shows_summarize_when_kagi_configured() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
 
     // Configure Kagi for user
-    {
-        let conn = app.db.lock().unwrap();
-        let config = serde_json::json!({
-            "kagi": {
-                "session_token": "secret-token",
-                "language": "EN"
-            }
-        });
-        conn.execute(
-            "INSERT INTO user_settings (user_id, save_services) VALUES (?1, ?2)",
-            rusqlite::params![1, config.to_string()],
-        )
-        .unwrap();
+    app.db
+        .user(move |conn| {
+            let config = serde_json::json!({
+                "kagi": {
+                    "session_token": "secret-token",
+                    "language": "EN"
+                }
+            });
+            conn.execute(
+                "INSERT INTO user_settings (user_id, save_services) VALUES (?1, ?2)",
+                rusqlite::params![1, config.to_string()],
+            )
+            .unwrap();
 
-        // Create entry
-        conn.execute(
-            "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-            rusqlite::params![1, "Test"],
-        )
+            // Create entry
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Test"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/feed.xml", "Test Feed"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, title, link) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![1, "guid-1", "Test Entry", "https://example.com/entry"],
+            )
+            .unwrap();
+        })
+        .await
         .unwrap();
-        conn.execute(
-            "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-            rusqlite::params![1, "https://example.com/feed.xml", "Test Feed"],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO entry (feed_id, guid, title, link) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![1, "guid-1", "Test Entry", "https://example.com/entry"],
-        )
-        .unwrap();
-    }
 
     login(&app.server, "admin").await;
 
@@ -464,7 +472,7 @@ async fn test_entry_page_shows_summarize_when_kagi_configured() {
 #[tokio::test]
 async fn test_regular_user_home_page_no_admin_link() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
 
     login(&app.server, "user").await;
 
@@ -481,7 +489,7 @@ async fn test_regular_user_home_page_no_admin_link() {
 #[tokio::test]
 async fn test_regular_user_cannot_access_admin_page() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
 
     login(&app.server, "user").await;
 
@@ -493,7 +501,7 @@ async fn test_regular_user_cannot_access_admin_page() {
 #[tokio::test]
 async fn test_regular_user_cannot_access_admin_api() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
 
     login(&app.server, "user").await;
 
@@ -508,23 +516,25 @@ async fn test_regular_user_cannot_access_admin_api() {
 #[tokio::test]
 async fn test_user_settings_page_shows_linkding_configured() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
 
     // Configure Linkding
-    {
-        let conn = app.db.lock().unwrap();
-        let config = serde_json::json!({
-            "linkding": {
-                "api_url": "https://linkding.example.com",
-                "api_token": "secret"
-            }
-        });
-        conn.execute(
-            "INSERT INTO user_settings (user_id, save_services) VALUES (?1, ?2)",
-            rusqlite::params![1, config.to_string()],
-        )
+    app.db
+        .user(move |conn| {
+            let config = serde_json::json!({
+                "linkding": {
+                    "api_url": "https://linkding.example.com",
+                    "api_token": "secret"
+                }
+            });
+            conn.execute(
+                "INSERT INTO user_settings (user_id, save_services) VALUES (?1, ?2)",
+                rusqlite::params![1, config.to_string()],
+            )
+            .unwrap();
+        })
+        .await
         .unwrap();
-    }
 
     login(&app.server, "admin").await;
 
@@ -539,17 +549,19 @@ async fn test_user_settings_page_shows_linkding_configured() {
 #[tokio::test]
 async fn test_user_settings_page_shows_custom_entries_per_page() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db);
+    setup_users(&app.db).await;
 
     // Set custom entries per page
-    {
-        let conn = app.db.lock().unwrap();
-        conn.execute(
-            "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)",
-            rusqlite::params![1, 100],
-        )
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)",
+                rusqlite::params![1, 100],
+            )
+            .unwrap();
+        })
+        .await
         .unwrap();
-    }
 
     login(&app.server, "admin").await;
 
@@ -573,7 +585,7 @@ async fn test_settings_page_shows_signup_status() {
         ..default_test_config()
     };
     let app = create_test_app(config);
-    setup_users(&app.db);
+    setup_users(&app.db).await;
 
     login(&app.server, "admin").await;
 
@@ -597,7 +609,7 @@ async fn test_settings_page_with_custom_user_agent() {
         ..default_test_config()
     };
     let app = create_test_app(config);
-    setup_users(&app.db);
+    setup_users(&app.db).await;
 
     login(&app.server, "admin").await;
 

@@ -54,43 +54,47 @@ pub async fn list_entries(
 ) -> AppResult<Json<EntriesResponse>> {
     let user_id = auth_user.user.id;
 
-    let conn = state
+    let (entries, total, db_statuses) = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        .user(move |conn| {
+            // Verify category belongs to user if specified
+            if let Some(category_id) = query.category_id {
+                let cat =
+                    category::find_by_id(conn, category_id)?.ok_or(AppError::CategoryNotFound)?;
+                if cat.user_id != user_id {
+                    return Err(AppError::CategoryNotFound);
+                }
+            }
 
-    // Verify category belongs to user if specified
-    if let Some(category_id) = query.category_id {
-        let cat = category::find_by_id(&conn, category_id)?.ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != user_id {
-            return Err(AppError::CategoryNotFound);
-        }
-    }
+            // Verify feed belongs to user if specified
+            if let Some(feed_id) = query.feed_id {
+                let f = feed::find_by_id(conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
+                let cat =
+                    category::find_by_id(conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
+                if cat.user_id != user_id {
+                    return Err(AppError::FeedNotFound);
+                }
+            }
 
-    // Verify feed belongs to user if specified
-    if let Some(feed_id) = query.feed_id {
-        let f = feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
-        let cat = category::find_by_id(&conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != user_id {
-            return Err(AppError::FeedNotFound);
-        }
-    }
+            let filter = entry::EntryFilter {
+                feed_id: query.feed_id,
+                category_id: query.category_id,
+                unread_only: query.unread_only,
+                starred_only: query.starred_only,
+                search: query.search.clone(),
+                has_summary: query.has_summary,
+            };
 
-    let filter = entry::EntryFilter {
-        feed_id: query.feed_id,
-        category_id: query.category_id,
-        unread_only: query.unread_only,
-        starred_only: query.starred_only,
-        search: query.search.clone(),
-        has_summary: query.has_summary,
-    };
+            let entries = entry::list_by_user(conn, user_id, &filter, query.limit, query.offset)?;
+            let total = entry::count_by_user(conn, user_id, &filter)?;
 
-    let entries = entry::list_by_user(&conn, user_id, &filter, query.limit, query.offset)?;
-    let total = entry::count_by_user(&conn, user_id, &filter)?;
+            // Batch query summary statuses from DB
+            let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
+            let db_statuses = entry_summary::get_statuses_for_entries(conn, user_id, &entry_ids)?;
 
-    // Batch query summary statuses from DB
-    let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
-    let db_statuses = entry_summary::get_statuses_for_entries(&conn, user_id, &entry_ids)?;
+            Ok::<_, AppError>((entries, total, db_statuses))
+        })
+        .await??;
 
     // Build response with summary status (prefer cache for in-flight, DB for completed/failed)
     let entries_with_summary: Vec<EntryWithSummary> = entries
@@ -133,20 +137,28 @@ pub async fn get_entry(
     Path(id): Path<i64>,
 ) -> AppResult<Json<EntryResponse>> {
     let user_id = auth_user.user.id;
+    let proxy_secret = state.config.image_proxy_secret.clone();
 
-    let conn = state
+    let (entry_with_feed, summary_status_db) = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        .user(move |conn| {
+            let entry_with_feed =
+                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
 
-    let entry_with_feed = entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+            // Verify entry belongs to user
+            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
+                .ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::EntryNotFound);
+            }
 
-    // Verify entry belongs to user
-    let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
-        .ok_or(AppError::CategoryNotFound)?;
-    if cat.user_id != user_id {
-        return Err(AppError::EntryNotFound);
-    }
+            // Check summary status from DB
+            let summary_status_db =
+                entry_summary::find_by_user_and_entry(conn, user_id, id)?.map(|s| s.status);
+
+            Ok::<_, AppError>((entry_with_feed, summary_status_db))
+        })
+        .await??;
 
     // Use entry link as base URL for resolving relative image paths
     let base_url = entry_with_feed.entry.link.as_deref();
@@ -154,13 +166,13 @@ pub async fn get_entry(
         .entry
         .content
         .as_ref()
-        .map(|c| sanitize_html(c, &state.config.image_proxy_secret, base_url));
+        .map(|c| sanitize_html(c, &proxy_secret, base_url));
 
     // Check summary status (cache first, then DB)
     let summary_status = if let Some(cached) = state.summary_cache.get(user_id, id) {
         Some(cached.status)
     } else {
-        entry_summary::find_by_user_and_entry(&conn, user_id, id)?.map(|s| s.status)
+        summary_status_db
     };
 
     Ok(Json(EntryResponse {
@@ -178,33 +190,36 @@ pub async fn list_feed_entries(
 ) -> AppResult<Json<EntriesResponse>> {
     let user_id = auth_user.user.id;
 
-    let conn = state
+    let (entries, total, db_statuses) = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        .user(move |conn| {
+            // Verify feed belongs to user
+            let f = feed::find_by_id(conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
+            let cat =
+                category::find_by_id(conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::FeedNotFound);
+            }
 
-    // Verify feed belongs to user
-    let f = feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
-    let cat = category::find_by_id(&conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
-    if cat.user_id != user_id {
-        return Err(AppError::FeedNotFound);
-    }
+            let filter = entry::EntryFilter {
+                feed_id: Some(feed_id),
+                category_id: None,
+                unread_only: query.unread_only,
+                starred_only: query.starred_only,
+                search: query.search,
+                has_summary: query.has_summary,
+            };
 
-    let filter = entry::EntryFilter {
-        feed_id: Some(feed_id),
-        category_id: None,
-        unread_only: query.unread_only,
-        starred_only: query.starred_only,
-        search: query.search,
-        has_summary: query.has_summary,
-    };
+            let entries = entry::list_by_user(conn, user_id, &filter, query.limit, query.offset)?;
+            let total = entry::count_by_user(conn, user_id, &filter)?;
 
-    let entries = entry::list_by_user(&conn, user_id, &filter, query.limit, query.offset)?;
-    let total = entry::count_by_user(&conn, user_id, &filter)?;
+            // Batch query summary statuses from DB
+            let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
+            let db_statuses = entry_summary::get_statuses_for_entries(conn, user_id, &entry_ids)?;
 
-    // Batch query summary statuses from DB
-    let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
-    let db_statuses = entry_summary::get_statuses_for_entries(&conn, user_id, &entry_ids)?;
+            Ok::<_, AppError>((entries, total, db_statuses))
+        })
+        .await??;
 
     // Build response with summary status (prefer cache for in-flight, DB for completed/failed)
     let entries_with_summary: Vec<EntryWithSummary> = entries
@@ -236,20 +251,23 @@ pub async fn mark_entry_read(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<entry::Entry>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+    let updated = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        .user(move |conn| {
+            // Verify entry belongs to user
+            let entry_with_feed =
+                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
+            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
+                .ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::EntryNotFound);
+            }
 
-    // Verify entry belongs to user
-    let entry_with_feed = entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
-    let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
-        .ok_or(AppError::CategoryNotFound)?;
-    if cat.user_id != auth_user.user.id {
-        return Err(AppError::EntryNotFound);
-    }
-
-    let updated = entry::mark_as_read(&conn, id)?;
+            let updated = entry::mark_as_read(conn, id)?;
+            Ok::<_, AppError>(updated)
+        })
+        .await??;
     Ok(Json(updated))
 }
 
@@ -258,20 +276,23 @@ pub async fn mark_entry_unread(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<entry::Entry>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+    let updated = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        .user(move |conn| {
+            // Verify entry belongs to user
+            let entry_with_feed =
+                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
+            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
+                .ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::EntryNotFound);
+            }
 
-    // Verify entry belongs to user
-    let entry_with_feed = entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
-    let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
-        .ok_or(AppError::CategoryNotFound)?;
-    if cat.user_id != auth_user.user.id {
-        return Err(AppError::EntryNotFound);
-    }
-
-    let updated = entry::mark_as_unread(&conn, id)?;
+            let updated = entry::mark_as_unread(conn, id)?;
+            Ok::<_, AppError>(updated)
+        })
+        .await??;
     Ok(Json(updated))
 }
 
@@ -280,20 +301,23 @@ pub async fn toggle_entry_star(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<entry::Entry>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+    let updated = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        .user(move |conn| {
+            // Verify entry belongs to user
+            let entry_with_feed =
+                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
+            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
+                .ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::EntryNotFound);
+            }
 
-    // Verify entry belongs to user
-    let entry_with_feed = entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
-    let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
-        .ok_or(AppError::CategoryNotFound)?;
-    if cat.user_id != auth_user.user.id {
-        return Err(AppError::EntryNotFound);
-    }
-
-    let updated = entry::toggle_star(&conn, id)?;
+            let updated = entry::toggle_star(conn, id)?;
+            Ok::<_, AppError>(updated)
+        })
+        .await??;
     Ok(Json(updated))
 }
 
@@ -326,31 +350,36 @@ pub async fn mark_all_read(
     State(state): State<AppState>,
     Json(body): Json<MarkAllReadRequest>,
 ) -> AppResult<Json<MarkAllReadResponse>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+    let marked_count = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        .user(move |conn| {
+            let older_than_days = body.older_than_days;
 
-    let older_than_days = body.older_than_days;
+            let marked_count = if let Some(feed_id) = body.feed_id {
+                // Verify feed belongs to user
+                let f = feed::find_by_id(conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
+                let cat =
+                    category::find_by_id(conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
+                if cat.user_id != user_id {
+                    return Err(AppError::FeedNotFound);
+                }
+                entry::mark_all_read_by_feed(conn, feed_id, older_than_days)?
+            } else if let Some(category_id) = body.category_id {
+                // Verify category belongs to user
+                let cat =
+                    category::find_by_id(conn, category_id)?.ok_or(AppError::CategoryNotFound)?;
+                if cat.user_id != user_id {
+                    return Err(AppError::CategoryNotFound);
+                }
+                entry::mark_all_read_by_category(conn, category_id, older_than_days)?
+            } else {
+                entry::mark_all_read_by_user(conn, user_id, older_than_days)?
+            };
 
-    let marked_count = if let Some(feed_id) = body.feed_id {
-        // Verify feed belongs to user
-        let f = feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
-        let cat = category::find_by_id(&conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != auth_user.user.id {
-            return Err(AppError::FeedNotFound);
-        }
-        entry::mark_all_read_by_feed(&conn, feed_id, older_than_days)?
-    } else if let Some(category_id) = body.category_id {
-        // Verify category belongs to user
-        let cat = category::find_by_id(&conn, category_id)?.ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != auth_user.user.id {
-            return Err(AppError::CategoryNotFound);
-        }
-        entry::mark_all_read_by_category(&conn, category_id, older_than_days)?
-    } else {
-        entry::mark_all_read_by_user(&conn, auth_user.user.id, older_than_days)?
-    };
+            Ok::<_, AppError>(marked_count)
+        })
+        .await??;
 
     Ok(Json(MarkAllReadResponse { marked_count }))
 }
@@ -360,12 +389,11 @@ pub async fn mark_read_by_ids(
     State(state): State<AppState>,
     Json(body): Json<MarkReadByIdsRequest>,
 ) -> AppResult<Json<MarkReadByIdsResponse>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+    let marked_count = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
-
-    let marked_count = entry::mark_read_by_ids(&conn, auth_user.user.id, &body.entry_ids)?;
+        .user(move |conn| entry::mark_read_by_ids(conn, user_id, &body.entry_ids))
+        .await??;
 
     Ok(Json(MarkReadByIdsResponse { marked_count }))
 }
@@ -380,13 +408,15 @@ pub async fn get_unread_stats(
     auth_user: AuthUser,
     State(state): State<AppState>,
 ) -> AppResult<Json<UnreadStatsResponse>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+    let (by_feed, by_category) = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
-
-    let by_feed = entry::count_unread_by_feed(&conn, auth_user.user.id)?;
-    let by_category = entry::count_unread_by_category(&conn, auth_user.user.id)?;
+        .user(move |conn| {
+            let by_feed = entry::count_unread_by_feed(conn, user_id)?;
+            let by_category = entry::count_unread_by_category(conn, user_id)?;
+            Ok::<_, AppError>((by_feed, by_category))
+        })
+        .await??;
 
     Ok(Json(UnreadStatsResponse {
         by_feed,
@@ -400,17 +430,19 @@ pub async fn refresh_feed_handler(
     Path(feed_id): Path<i64>,
 ) -> AppResult<Json<SyncResult>> {
     // Verify feed belongs to user
-    {
-        let conn = state
-            .db
-            .lock()
-            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
-        let f = feed::find_by_id(&conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
-        let cat = category::find_by_id(&conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != auth_user.user.id {
-            return Err(AppError::FeedNotFound);
-        }
-    }
+    let user_id = auth_user.user.id;
+    state
+        .db
+        .user(move |conn| {
+            let f = feed::find_by_id(conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
+            let cat =
+                category::find_by_id(conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::FeedNotFound);
+            }
+            Ok::<_, AppError>(())
+        })
+        .await??;
 
     let result = refresh_feed(state.db.clone(), feed_id, &state.config.user_agent).await?;
     Ok(Json(result))
@@ -437,27 +469,30 @@ pub async fn get_entry_neighbors(
     Path(id): Path<i64>,
     Query(query): Query<NeighborsQuery>,
 ) -> AppResult<Json<entry::EntryNeighbors>> {
-    let conn = state
+    let user_id = auth_user.user.id;
+    let neighbors = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        .user(move |conn| {
+            // Verify entry belongs to user
+            let entry_with_feed =
+                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
+            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
+                .ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::EntryNotFound);
+            }
 
-    // Verify entry belongs to user
-    let entry_with_feed = entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
-    let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
-        .ok_or(AppError::CategoryNotFound)?;
-    if cat.user_id != auth_user.user.id {
-        return Err(AppError::EntryNotFound);
-    }
-
-    let neighbors = entry::find_neighbors(
-        &conn,
-        auth_user.user.id,
-        id,
-        query.unread_only,
-        query.feed_id,
-        query.category_id,
-    )?;
+            let neighbors = entry::find_neighbors(
+                conn,
+                user_id,
+                id,
+                query.unread_only,
+                query.feed_id,
+                query.category_id,
+            )?;
+            Ok::<_, AppError>(neighbors)
+        })
+        .await??;
     Ok(Json(neighbors))
 }
 
@@ -467,27 +502,26 @@ pub async fn fetch_full_content(
     Path(id): Path<i64>,
 ) -> AppResult<Json<FetchFullContentResponse>> {
     // Verify entry exists and belongs to user
-    let link = {
-        let conn = state
-            .db
-            .lock()
-            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+    let user_id = auth_user.user.id;
+    let link = state
+        .db
+        .user(move |conn| {
+            let entry_with_feed =
+                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
 
-        let entry_with_feed =
-            entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
+                .ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::EntryNotFound);
+            }
 
-        let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
-            .ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != auth_user.user.id {
-            return Err(AppError::EntryNotFound);
-        }
-
-        // Check if entry has a link
-        entry_with_feed
-            .entry
-            .link
-            .ok_or_else(|| AppError::Validation("Entry has no link".to_string()))?
-    };
+            // Check if entry has a link
+            entry_with_feed
+                .entry
+                .link
+                .ok_or_else(|| AppError::Validation("Entry has no link".to_string()))
+        })
+        .await??;
 
     // Fetch and extract content
     let extracted = fetch_and_extract(&link, &state.config.user_agent).await?;
@@ -540,52 +574,55 @@ pub async fn summarize_entry(
     }
 
     // Get entry and verify ownership
-    let link = {
-        let conn = state
-            .db
-            .lock()
-            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+    let link = state
+        .db
+        .user(move |conn| {
+            // Check DB for existing summary
+            if let Some(db_summary) = entry_summary::find_by_user_and_entry(conn, user_id, id)? {
+                return Ok::<_, AppError>(Err(SummaryResponse {
+                    status: db_summary.status,
+                    summary_text: db_summary.summary_text,
+                    error: db_summary.error_message,
+                    created_at: Some(db_summary.created_at),
+                }));
+            }
 
-        // Check DB for existing summary
-        if let Some(db_summary) = entry_summary::find_by_user_and_entry(&conn, user_id, id)? {
-            return Ok(Json(SummaryResponse {
-                status: db_summary.status,
-                summary_text: db_summary.summary_text,
-                error: db_summary.error_message,
-                created_at: Some(db_summary.created_at),
-            }));
-        }
+            let entry_with_feed =
+                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
 
-        let entry_with_feed =
-            entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+            // Verify entry belongs to user
+            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
+                .ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::EntryNotFound);
+            }
 
-        // Verify entry belongs to user
-        let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
-            .ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != user_id {
-            return Err(AppError::EntryNotFound);
-        }
-
-        // Check if entry has a link
-        let link =
-            entry_with_feed.entry.link.clone().ok_or_else(|| {
+            // Check if entry has a link
+            let link = entry_with_feed.entry.link.clone().ok_or_else(|| {
                 AppError::Validation("Entry has no link to summarize".to_string())
             })?;
 
-        // Verify Kagi is configured
-        let config = user_settings::get_save_services_config(&conn, user_id)?;
-        let kagi = config
-            .kagi
-            .ok_or_else(|| AppError::Validation("Kagi is not configured".to_string()))?;
+            // Verify Kagi is configured
+            let config = user_settings::get_save_services_config(conn, user_id)?;
+            let kagi = config
+                .kagi
+                .ok_or_else(|| AppError::Validation("Kagi is not configured".to_string()))?;
 
-        if !kagi.is_configured() {
-            return Err(AppError::Validation("Kagi is not configured".to_string()));
-        }
+            if !kagi.is_configured() {
+                return Err(AppError::Validation("Kagi is not configured".to_string()));
+            }
 
-        // Create pending record in DB
-        entry_summary::upsert_pending(&conn, user_id, id)?;
+            // Create pending record in DB
+            entry_summary::upsert_pending(conn, user_id, id)?;
 
-        link
+            Ok(Ok(link))
+        })
+        .await??;
+
+    // Check if we got a cached summary from DB
+    let link = match link {
+        Ok(link) => link,
+        Err(response) => return Ok(Json(response)),
     };
 
     // Set pending status in cache
@@ -631,30 +668,35 @@ pub async fn get_entry_summary(
     }
 
     // Verify entry ownership and get from DB
-    let conn = state
+    let result = state
         .db
-        .lock()
-        .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+        .user(move |conn| {
+            let entry_with_feed =
+                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
 
-    let entry_with_feed = entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
+                .ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::EntryNotFound);
+            }
 
-    let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
-        .ok_or(AppError::CategoryNotFound)?;
-    if cat.user_id != user_id {
-        return Err(AppError::EntryNotFound);
-    }
+            // Get from DB
+            if let Some(db_summary) = entry_summary::find_by_user_and_entry(conn, user_id, id)? {
+                Ok::<_, AppError>(Some(SummaryResponse {
+                    status: db_summary.status,
+                    summary_text: db_summary.summary_text,
+                    error: db_summary.error_message,
+                    created_at: Some(db_summary.created_at),
+                }))
+            } else {
+                Ok(None)
+            }
+        })
+        .await??;
 
-    // Get from DB
-    if let Some(db_summary) = entry_summary::find_by_user_and_entry(&conn, user_id, id)? {
-        Ok(Json(SummaryResponse {
-            status: db_summary.status,
-            summary_text: db_summary.summary_text,
-            error: db_summary.error_message,
-            created_at: Some(db_summary.created_at),
-        }))
-    } else {
-        // No summary exists
-        Err(AppError::NotFound("No summary found".to_string()))
+    match result {
+        Some(response) => Ok(Json(response)),
+        None => Err(AppError::NotFound("No summary found".to_string())),
     }
 }
 
@@ -667,24 +709,23 @@ pub async fn delete_entry_summary(
     let user_id = auth_user.user.id;
 
     // Verify entry ownership and delete from DB
-    {
-        let conn = state
-            .db
-            .lock()
-            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+    state
+        .db
+        .user(move |conn| {
+            let entry_with_feed =
+                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
 
-        let entry_with_feed =
-            entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
+                .ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::EntryNotFound);
+            }
 
-        let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
-            .ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != user_id {
-            return Err(AppError::EntryNotFound);
-        }
-
-        // Delete from DB
-        entry_summary::delete(&conn, user_id, id)?;
-    }
+            // Delete from DB
+            entry_summary::delete(conn, user_id, id)?;
+            Ok::<_, AppError>(())
+        })
+        .await??;
 
     // Remove from cache
     state.summary_cache.remove(user_id, id);
@@ -698,47 +739,46 @@ pub async fn save_to_services(
     Path(id): Path<i64>,
 ) -> AppResult<Json<SaveToServicesResponse>> {
     // Get entry and verify ownership
-    let (entry_data, save_config) = {
-        let conn = state
-            .db
-            .lock()
-            .map_err(|_| AppError::Internal("DB lock failed".to_string()))?;
+    let user_id = auth_user.user.id;
+    let (entry_data, save_config) = state
+        .db
+        .user(move |conn| {
+            let entry_with_feed =
+                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
 
-        let entry_with_feed =
-            entry::find_by_id_with_feed(&conn, id)?.ok_or(AppError::EntryNotFound)?;
+            // Verify entry belongs to user
+            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
+                .ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::EntryNotFound);
+            }
 
-        // Verify entry belongs to user
-        let cat = category::find_by_id(&conn, entry_with_feed.category_id)?
-            .ok_or(AppError::CategoryNotFound)?;
-        if cat.user_id != auth_user.user.id {
-            return Err(AppError::EntryNotFound);
-        }
+            // Check if entry has a link
+            let link = entry_with_feed
+                .entry
+                .link
+                .clone()
+                .ok_or_else(|| AppError::Validation("Entry has no link to save".to_string()))?;
 
-        // Check if entry has a link
-        let link = entry_with_feed
-            .entry
-            .link
-            .clone()
-            .ok_or_else(|| AppError::Validation("Entry has no link to save".to_string()))?;
+            // Get save services config
+            let config = user_settings::get_save_services_config(conn, user_id)?;
 
-        // Get save services config
-        let config = user_settings::get_save_services_config(&conn, auth_user.user.id)?;
+            if !config.has_any_service() {
+                return Err(AppError::Validation(
+                    "No save services configured".to_string(),
+                ));
+            }
 
-        if !config.has_any_service() {
-            return Err(AppError::Validation(
-                "No save services configured".to_string(),
-            ));
-        }
+            let bookmark = BookmarkData {
+                url: link,
+                title: entry_with_feed.entry.title.clone(),
+                description: entry_with_feed.entry.summary.clone(),
+                tags: vec![],
+            };
 
-        let bookmark = BookmarkData {
-            url: link,
-            title: entry_with_feed.entry.title.clone(),
-            description: entry_with_feed.entry.summary.clone(),
-            tags: vec![],
-        };
-
-        (bookmark, config)
-    };
+            Ok::<_, AppError>((bookmark, config))
+        })
+        .await??;
 
     // Save to all configured services in parallel
     let mut results = Vec::new();

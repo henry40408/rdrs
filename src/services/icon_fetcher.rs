@@ -3,9 +3,9 @@ use tracing::debug;
 use url::Url;
 
 use crate::error::{AppError, AppResult};
+use crate::services::http::{send_with_retry, RetryConfig, ICON_TIMEOUT};
 
 const MAX_ICON_SIZE: usize = 256 * 1024; // 256KB
-const ICON_TIMEOUT_SECS: u64 = 10;
 
 pub struct FetchedImage {
     pub data: Vec<u8>,
@@ -47,12 +47,15 @@ pub async fn fetch_feed_icon(
 
 async fn fetch_image(url: &str, user_agent: &str) -> AppResult<Option<FetchedImage>> {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(ICON_TIMEOUT_SECS))
+        .timeout(ICON_TIMEOUT)
         .user_agent(user_agent)
         .build()
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
-    let response = match client.get(url).send().await {
+    let retry_config = RetryConfig::icon();
+    let url_owned = url.to_string();
+
+    let response = match send_with_retry(&retry_config, || client.get(&url_owned)).await {
         Ok(r) => r,
         Err(e) => {
             debug!("Failed to fetch image from {}: {}", url, e);
@@ -122,12 +125,15 @@ async fn fetch_favicon(site_url: &str, user_agent: &str) -> AppResult<Option<Fet
 
     // Try parsing HTML for link rel="icon"
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(ICON_TIMEOUT_SECS))
+        .timeout(ICON_TIMEOUT)
         .user_agent(user_agent)
         .build()
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
-    let html = match client.get(site_url).send().await {
+    let retry_config = RetryConfig::icon();
+    let site_url_owned = site_url.to_string();
+
+    let html = match send_with_retry(&retry_config, || client.get(&site_url_owned)).await {
         Ok(r) if r.status().is_success() => match r.text().await {
             Ok(t) => t,
             Err(_) => return Ok(None),

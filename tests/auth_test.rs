@@ -1,8 +1,6 @@
-use std::sync::{Arc, Mutex};
-
 use axum::http::StatusCode;
 use axum_test::TestServer;
-use rdrs::{auth, create_router, db, services, AppState, Config};
+use rdrs::{auth, create_router, db, services, AppState, Config, DbPool};
 use rusqlite::Connection;
 use serde_json::json;
 
@@ -15,7 +13,7 @@ fn create_test_server(config: Config) -> TestServer {
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
 
     let state = AppState {
-        db: Arc::new(Mutex::new(conn)),
+        db: DbPool::new(conn),
         config: Arc::new(config),
         webauthn: Arc::new(webauthn),
         summary_cache,
@@ -25,6 +23,8 @@ fn create_test_server(config: Config) -> TestServer {
     let app = create_router(state);
     TestServer::builder().save_cookies().build(app).unwrap()
 }
+
+use std::sync::Arc;
 
 fn default_test_config() -> Config {
     Config {
