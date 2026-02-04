@@ -28,7 +28,7 @@ dateparser = "0.2"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-axum-extra = { version = "0.10", features = ["cookie"] }
+axum-extra = { version = "0.12", features = ["cookie"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "json"] }
 feed-rs = "2.1"
 scraper = "0.22"
