@@ -4,6 +4,7 @@ pub mod category;
 pub mod entry;
 pub mod favicon;
 pub mod feed;
+pub mod health;
 pub mod pages;
 pub mod passkey;
 pub mod proxy;
