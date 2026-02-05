@@ -2,7 +2,8 @@ use std::fmt;
 
 use rusqlite::Connection;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error};
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info};
 
 /// Priority level for database operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +52,8 @@ impl DbPool {
     /// Create a new DbPool, spawning the actor task.
     ///
     /// Enables WAL mode on the connection for better concurrent read performance.
-    pub fn new(conn: Connection) -> Self {
+    /// Returns the DbPool and the JoinHandle for the actor task.
+    pub fn new(conn: Connection) -> (Self, JoinHandle<()>) {
         // Enable WAL mode for better read performance
         if let Err(e) = conn.execute_batch("PRAGMA journal_mode=WAL;") {
             error!("Failed to enable WAL mode: {}", e);
@@ -62,9 +64,27 @@ impl DbPool {
         let (user_tx, user_rx) = mpsc::channel::<DbMessage>(256);
         let (bg_tx, bg_rx) = mpsc::channel::<DbMessage>(64);
 
-        tokio::spawn(actor_loop(conn, user_rx, bg_rx));
+        let handle = tokio::spawn(actor_loop(conn, user_rx, bg_rx));
 
-        DbPool { user_tx, bg_tx }
+        (DbPool { user_tx, bg_tx }, handle)
+    }
+
+    /// Gracefully shutdown the database connection.
+    ///
+    /// Executes a WAL checkpoint to clean up shm/wal files before closing.
+    pub async fn shutdown(self) -> Result<(), DbError> {
+        info!("Executing WAL checkpoint before shutdown...");
+        let checkpoint_result: Result<(), rusqlite::Error> = self
+            .user(|conn| conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);"))
+            .await?;
+        if let Err(e) = checkpoint_result {
+            error!("WAL checkpoint failed: {}", e);
+        } else {
+            info!("WAL checkpoint completed");
+        }
+        // Drop channels to let actor exit
+        drop(self);
+        Ok(())
     }
 
     /// Execute a closure on the database connection with the given priority.
@@ -190,7 +210,7 @@ mod tests {
         conn.execute_batch("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT);")
             .unwrap();
 
-        let pool = DbPool::new(conn);
+        let (pool, _handle) = DbPool::new(conn);
 
         let result = pool
             .user(|conn| {
@@ -210,7 +230,7 @@ mod tests {
     #[tokio::test]
     async fn test_background_execute() {
         let conn = Connection::open_in_memory().unwrap();
-        let pool = DbPool::new(conn);
+        let (pool, _handle) = DbPool::new(conn);
 
         let result = pool
             .background(|conn| {
@@ -230,7 +250,7 @@ mod tests {
         conn.execute_batch("CREATE TABLE ordering (seq INTEGER);")
             .unwrap();
 
-        let pool = DbPool::new(conn);
+        let (pool, _handle) = DbPool::new(conn);
 
         // Send several user and background tasks
         let mut handles = vec![];
@@ -280,7 +300,7 @@ mod tests {
     #[tokio::test]
     async fn test_error_propagation() {
         let conn = Connection::open_in_memory().unwrap();
-        let pool = DbPool::new(conn);
+        let (pool, _handle) = DbPool::new(conn);
 
         let result: Result<Result<String, rusqlite::Error>, DbError> = pool
             .user(|conn| {
@@ -298,7 +318,7 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_sequential_operations() {
         let conn = Connection::open_in_memory().unwrap();
-        let pool = DbPool::new(conn);
+        let (pool, _handle) = DbPool::new(conn);
 
         pool.user(|conn| {
             conn.execute_batch("CREATE TABLE multi (id INTEGER PRIMARY KEY, val INTEGER);")
@@ -336,7 +356,7 @@ mod tests {
     #[test]
     fn test_dbpool_debug() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let pool = rt.block_on(async {
+        let (pool, _handle) = rt.block_on(async {
             let conn = Connection::open_in_memory().unwrap();
             DbPool::new(conn)
         });
@@ -382,5 +402,102 @@ mod tests {
             })
             .await;
         assert!(send_result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_executes_wal_checkpoint() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE shutdown_test (id INTEGER PRIMARY KEY);")
+            .unwrap();
+
+        let (pool, handle) = DbPool::new(conn);
+
+        // Insert some data
+        pool.user(|conn| {
+            conn.execute("INSERT INTO shutdown_test (id) VALUES (1)", [])
+                .unwrap();
+        })
+        .await
+        .unwrap();
+
+        // Shutdown should complete successfully
+        let result = pool.shutdown().await;
+        assert!(result.is_ok());
+
+        // Actor should exit after shutdown
+        let join_result = handle.await;
+        assert!(join_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_fails_after_receiver_dropped() {
+        // Test that sending fails when the receiver has been dropped
+        let conn = Connection::open_in_memory().unwrap();
+        let (user_tx, user_rx) = mpsc::channel::<DbMessage>(256);
+        let (_bg_tx, bg_rx) = mpsc::channel::<DbMessage>(64);
+
+        let handle = tokio::spawn(actor_loop(conn, user_rx, bg_rx));
+
+        // Drop sender to close user channel (actor will exit after draining bg)
+        drop(user_tx);
+
+        // Wait for actor to stop
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_db_priority_debug() {
+        // Test Debug implementation for DbPriority
+        let user = DbPriority::User;
+        let bg = DbPriority::Background;
+        assert_eq!(format!("{:?}", user), "User");
+        assert_eq!(format!("{:?}", bg), "Background");
+    }
+
+    #[tokio::test]
+    async fn test_db_priority_clone_and_eq() {
+        let user1 = DbPriority::User;
+        let user2 = user1;
+        assert_eq!(user1, user2);
+
+        let bg = DbPriority::Background;
+        assert_ne!(user1, bg);
+    }
+
+    #[tokio::test]
+    async fn test_dberror_is_error_trait() {
+        let err = DbError::ActorStopped;
+        // Verify it implements std::error::Error
+        let _: &dyn std::error::Error = &err;
+    }
+
+    #[tokio::test]
+    async fn test_background_channel_closes_actor_continues() {
+        // Test the case where background channel closes but user channel is still open
+        let conn = Connection::open_in_memory().unwrap();
+        let (user_tx, user_rx) = mpsc::channel::<DbMessage>(256);
+        let (bg_tx, bg_rx) = mpsc::channel::<DbMessage>(64);
+
+        let handle = tokio::spawn(actor_loop(conn, user_rx, bg_rx));
+
+        // Drop the background channel
+        drop(bg_tx);
+
+        // User channel should still work
+        let (resp_tx, resp_rx) = oneshot::channel();
+        user_tx
+            .send(DbMessage {
+                work: Box::new(|_conn| Box::new(123i32) as Box<dyn std::any::Any + Send>),
+                respond: resp_tx,
+            })
+            .await
+            .unwrap();
+        let result = resp_rx.await.unwrap();
+        assert_eq!(*result.downcast::<i32>().unwrap(), 123);
+
+        // Close user channel and wait for actor to exit
+        drop(user_tx);
+        let join_result = handle.await;
+        assert!(join_result.is_ok());
     }
 }

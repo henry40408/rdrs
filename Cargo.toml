@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 rusqlite = { version = "0.38", features = ["bundled"] }
 askama = "0.15"
 argon2 = "0.5"

@@ -12,8 +12,9 @@ fn create_test_server(config: Config) -> TestServer {
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
 
+    let (db, _handle) = DbPool::new(conn);
     let state = AppState {
-        db: DbPool::new(conn),
+        db,
         config: Arc::new(config),
         webauthn: Arc::new(webauthn),
         summary_cache,
