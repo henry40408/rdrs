@@ -412,8 +412,59 @@
         #entries-count {
             margin-top: var(--space-4); /* 1rem / 16px */
         }
+        /* Global loading indicator */
+        .global-loading-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: transparent;
+            z-index: 1001;
+            overflow: hidden;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+        .global-loading-bar.active { opacity: 1; }
+        .global-loading-bar::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -30%;
+            width: 30%;
+            height: 100%;
+            background: #0066cc;
+            animation: loading-slide 1.5s ease-in-out infinite;
+        }
+        @keyframes loading-slide {
+            0% { left: -30%; }
+            50% { left: 100%; }
+            100% { left: -30%; }
+        }
     </style>
     <script>
+        // Global loading indicator
+        window.loading = {
+            count: 0,
+            element: null,
+            init: function() {
+                this.element = document.createElement('div');
+                this.element.className = 'global-loading-bar';
+                this.element.id = 'global-loading-bar';
+                document.body.insertBefore(this.element, document.body.firstChild);
+            },
+            start: function() {
+                this.count++;
+                if (this.element) this.element.classList.add('active');
+            },
+            stop: function() {
+                this.count = Math.max(0, this.count - 1);
+                if (this.count === 0 && this.element) {
+                    this.element.classList.remove('active');
+                }
+            }
+        };
+
         // Global keyboard shortcut handler (defined early so child templates can use it)
         window.keyboard = {
             pendingKey: null,
@@ -617,6 +668,9 @@
     <div class="kb-pending-indicator" id="kb-pending-indicator"></div>
 
     <script>
+        // Initialize global loading indicator
+        if (window.loading) window.loading.init();
+
         // Flash message helper functions
         window.flash = {
             maxMessages: 3,
