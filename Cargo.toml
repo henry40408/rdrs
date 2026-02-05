@@ -16,7 +16,7 @@ path = "src/main.rs"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 rusqlite = { version = "0.38", features = ["bundled"] }
-askama = "0.12"
+askama = "0.15"
 argon2 = "0.5"
 rand = "0.8"
 tower-http = { version = "0.6", features = ["fs", "trace"] }
@@ -29,7 +29,12 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum-extra = { version = "0.12", features = ["cookie"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "json"] }
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls",
+  "charset",
+  "http2",
+  "json",
+] }
 feed-rs = "2.1"
 scraper = "0.22"
 url = "2"
@@ -39,7 +44,9 @@ readability = { version = "0.3", default-features = false }
 base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
-webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
+webauthn-rs = { version = "0.5", features = [
+  "danger-allow-state-serialisation",
+] }
 webauthn-rs-proto = "0.5"
 uuid = { version = "1", features = ["v4", "serde"] }
 openssl = { version = "0.10", features = ["vendored"] }

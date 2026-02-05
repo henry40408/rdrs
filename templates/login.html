@@ -3,7 +3,7 @@
 
 {% block title %}Login - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
+{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
 
 {% block content %}
 <h1>Login</h1>
