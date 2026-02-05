@@ -2042,3 +2042,29 @@ async fn test_apple_touch_icon() {
         .unwrap();
     assert_eq!(content_type, "image/png");
 }
+
+// ============================================================================
+// Health Check Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_health_check() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/health").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["status"], "ok");
+    assert!(body["version"].is_string());
+    assert!(body["git_version"].is_string());
+}
+
+#[tokio::test]
+async fn test_health_check_no_auth_required() {
+    let server = create_test_server(default_test_config());
+
+    // Health check should work without authentication
+    let response = server.get("/health").await;
+    response.assert_status_ok();
+}
