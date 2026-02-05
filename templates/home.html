@@ -39,14 +39,6 @@
     opacity: 0.5;
     pointer-events: none;
 }
-#refresh-indicator {
-    display: none;
-    text-align: center;
-    padding: var(--space-2);
-    color: #0066cc;
-    animation: blink 1s infinite;
-}
-#refresh-indicator.active { display: block; }
 </style>
 
 <h1>Home</h1>
@@ -89,7 +81,6 @@
     </div>
 </div>
 
-<div id="refresh-indicator">[Refreshing...]</div>
 <div id="entries-list">
     <p class="muted">Loading...</p>
 </div>
@@ -320,11 +311,9 @@
 
     async function loadEntries(reset = true) {
         const container = document.getElementById('entries-list');
-        const indicator = document.getElementById('refresh-indicator');
 
         // Show refreshing state
         container.classList.add('entries-list-refreshing');
-        if (indicator) indicator.classList.add('active');
         if (window.loading) window.loading.start();
 
         if (reset) {
@@ -361,7 +350,6 @@
             document.getElementById('entries-list').innerHTML = '<p class="muted">[ERROR] Failed to load entries</p>';
         } finally {
             container.classList.remove('entries-list-refreshing');
-            if (indicator) indicator.classList.remove('active');
             if (window.loading) window.loading.stop();
         }
     }
