@@ -3,10 +3,10 @@
 
 {% block title %}Settings - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
+{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
 
 {% block content %}
-{% call macros::nav("settings", is_admin, is_masquerading, username) %}
+{% call macros::nav("settings", is_admin, is_masquerading, username) %}{% endcall %}
 
 <h1>Settings</h1>
 

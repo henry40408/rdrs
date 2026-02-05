@@ -3,10 +3,10 @@
 
 {% block title %}Unread - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endblock %}
+{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
 
 {% block content %}
-{% call macros::nav("home", is_admin, is_masquerading, username) %}
+{% call macros::nav("home", is_admin, is_masquerading, username) %}{% endcall %}
 
 <style>
 .filter-toggle {
