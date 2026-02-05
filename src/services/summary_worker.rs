@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use super::summarize::kagi::{self, KagiConfig};
 use super::summary_cache::SummaryCache;
@@ -20,107 +22,129 @@ pub fn start_summary_worker(
     mut rx: mpsc::Receiver<SummaryJob>,
     cache: Arc<SummaryCache>,
     db: DbPool,
-) {
+    cancel_token: CancellationToken,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         tracing::info!("Summary worker started");
 
-        while let Some(job) = rx.recv().await {
-            tracing::debug!(
-                "Processing summary job: user={}, entry={}, link={}",
-                job.user_id,
-                job.entry_id,
-                job.entry_link
-            );
-
-            // Mark as processing in both cache and DB
-            cache.set_processing(job.user_id, job.entry_id);
-            {
-                let user_id = job.user_id;
-                let entry_id = job.entry_id;
-                let _ = db
-                    .background(move |conn| entry_summary::set_processing(conn, user_id, entry_id))
-                    .await;
-            }
-
-            // Get Kagi config for the user
-            let user_id = job.user_id;
-            let entry_id = job.entry_id;
-            let kagi_config = match db
-                .background(move |conn| user_settings::get_save_services_config(conn, user_id))
-                .await
-            {
-                Ok(Ok(config)) => config.kagi,
-                Ok(Err(e)) => {
-                    tracing::error!("Failed to get user settings: {}", e);
-                    let error_msg = "Failed to load Kagi settings".to_string();
-                    cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
-                    let _ = db
-                        .background(move |conn| {
-                            entry_summary::set_failed(conn, user_id, entry_id, &error_msg)
-                        })
-                        .await;
-                    continue;
+        loop {
+            let job = tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    tracing::info!("Summary worker stopping, draining remaining jobs...");
+                    // Drain remaining jobs before exiting
+                    while let Ok(job) = rx.try_recv() {
+                        process_summary_job(&job, &cache, &db).await;
+                    }
+                    break;
                 }
-                Err(e) => {
-                    tracing::error!("Failed to access DB: {}", e);
-                    let error_msg = "Internal error: DB access failed".to_string();
-                    cache.set_failed(job.user_id, job.entry_id, error_msg);
-                    continue;
+                job = rx.recv() => {
+                    match job {
+                        Some(job) => job,
+                        None => break,
+                    }
                 }
             };
 
-            let kagi_config = match kagi_config {
-                Some(c) if c.is_configured() => c,
-                _ => {
-                    let error_msg = "Kagi is not configured".to_string();
-                    cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
-                    let user_id = job.user_id;
-                    let entry_id = job.entry_id;
-                    let _ = db
-                        .background(move |conn| {
-                            entry_summary::set_failed(conn, user_id, entry_id, &error_msg)
-                        })
-                        .await;
-                    continue;
-                }
-            };
-
-            // Call Kagi API
-            match summarize_with_kagi(&kagi_config, &job.entry_link).await {
-                Ok(summary_text) => {
-                    tracing::debug!(
-                        "Summary completed for entry {}: {} chars",
-                        job.entry_id,
-                        summary_text.len()
-                    );
-                    // Update cache
-                    cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
-                    // Update DB
-                    let user_id = job.user_id;
-                    let entry_id = job.entry_id;
-                    let _ = db
-                        .background(move |conn| {
-                            entry_summary::set_completed(conn, user_id, entry_id, &summary_text)
-                        })
-                        .await;
-                }
-                Err(error) => {
-                    tracing::warn!("Summary failed for entry {}: {}", job.entry_id, error);
-                    cache.set_failed(job.user_id, job.entry_id, error.clone());
-                    // Update DB
-                    let user_id = job.user_id;
-                    let entry_id = job.entry_id;
-                    let _ = db
-                        .background(move |conn| {
-                            entry_summary::set_failed(conn, user_id, entry_id, &error)
-                        })
-                        .await;
-                }
-            }
+            process_summary_job(&job, &cache, &db).await;
         }
 
         tracing::info!("Summary worker stopped");
-    });
+    })
+}
+
+async fn process_summary_job(job: &SummaryJob, cache: &Arc<SummaryCache>, db: &DbPool) {
+    tracing::debug!(
+        "Processing summary job: user={}, entry={}, link={}",
+        job.user_id,
+        job.entry_id,
+        job.entry_link
+    );
+
+    // Mark as processing in both cache and DB
+    cache.set_processing(job.user_id, job.entry_id);
+    {
+        let user_id = job.user_id;
+        let entry_id = job.entry_id;
+        let _ = db
+            .background(move |conn| entry_summary::set_processing(conn, user_id, entry_id))
+            .await;
+    }
+
+    // Get Kagi config for the user
+    let user_id = job.user_id;
+    let entry_id = job.entry_id;
+    let kagi_config = match db
+        .background(move |conn| user_settings::get_save_services_config(conn, user_id))
+        .await
+    {
+        Ok(Ok(config)) => config.kagi,
+        Ok(Err(e)) => {
+            tracing::error!("Failed to get user settings: {}", e);
+            let error_msg = "Failed to load Kagi settings".to_string();
+            cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
+            let _ = db
+                .background(move |conn| {
+                    entry_summary::set_failed(conn, user_id, entry_id, &error_msg)
+                })
+                .await;
+            return;
+        }
+        Err(e) => {
+            tracing::error!("Failed to access DB: {}", e);
+            let error_msg = "Internal error: DB access failed".to_string();
+            cache.set_failed(job.user_id, job.entry_id, error_msg);
+            return;
+        }
+    };
+
+    let kagi_config = match kagi_config {
+        Some(c) if c.is_configured() => c,
+        _ => {
+            let error_msg = "Kagi is not configured".to_string();
+            cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
+            let user_id = job.user_id;
+            let entry_id = job.entry_id;
+            let _ = db
+                .background(move |conn| {
+                    entry_summary::set_failed(conn, user_id, entry_id, &error_msg)
+                })
+                .await;
+            return;
+        }
+    };
+
+    // Call Kagi API
+    match summarize_with_kagi(&kagi_config, &job.entry_link).await {
+        Ok(summary_text) => {
+            tracing::debug!(
+                "Summary completed for entry {}: {} chars",
+                job.entry_id,
+                summary_text.len()
+            );
+            // Update cache
+            cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
+            // Update DB
+            let user_id = job.user_id;
+            let entry_id = job.entry_id;
+            let _ = db
+                .background(move |conn| {
+                    entry_summary::set_completed(conn, user_id, entry_id, &summary_text)
+                })
+                .await;
+        }
+        Err(error) => {
+            tracing::warn!("Summary failed for entry {}: {}", job.entry_id, error);
+            cache.set_failed(job.user_id, job.entry_id, error.clone());
+            // Update DB
+            let user_id = job.user_id;
+            let entry_id = job.entry_id;
+            let _ = db
+                .background(move |conn| {
+                    entry_summary::set_failed(conn, user_id, entry_id, &error)
+                })
+                .await;
+        }
+    }
 }
 
 /// Call Kagi API to get a summary

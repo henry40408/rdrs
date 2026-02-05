@@ -20,7 +20,7 @@ fn create_test_app(config: Config) -> TestApp {
     let conn = Connection::open_in_memory().unwrap();
     db::init_db(&conn).unwrap();
 
-    let db = DbPool::new(conn);
+    let (db, _handle) = DbPool::new(conn);
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);

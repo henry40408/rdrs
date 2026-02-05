@@ -1,5 +1,8 @@
 use std::time::Duration;
 
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+
 use crate::db::DbPool;
 use crate::models::entry_summary;
 
@@ -9,7 +12,13 @@ use crate::models::entry_summary;
 /// * `db` - Database connection
 /// * `interval_hours` - How often to run cleanup (in hours)
 /// * `ttl_hours` - Delete summaries older than this many hours
-pub fn start_cleanup_worker(db: DbPool, interval_hours: u64, ttl_hours: i64) {
+/// * `cancel_token` - Token to signal graceful shutdown
+pub fn start_cleanup_worker(
+    db: DbPool,
+    interval_hours: u64,
+    ttl_hours: i64,
+    cancel_token: CancellationToken,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         tracing::info!(
             "Summary cleanup worker started: interval={}h, ttl={}h",
@@ -20,30 +29,38 @@ pub fn start_cleanup_worker(db: DbPool, interval_hours: u64, ttl_hours: i64) {
         let mut interval = tokio::time::interval(Duration::from_secs(interval_hours * 3600));
 
         loop {
-            interval.tick().await;
-
-            tracing::debug!("Running summary cleanup...");
-
-            let deleted = match db
-                .background(move |conn| entry_summary::delete_expired(conn, ttl_hours))
-                .await
-            {
-                Ok(Ok(count)) => count,
-                Ok(Err(e)) => {
-                    tracing::error!("Failed to cleanup expired summaries: {}", e);
-                    continue;
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    tracing::info!("Summary cleanup worker stopping...");
+                    break;
                 }
-                Err(e) => {
-                    tracing::error!("Failed to access DB for cleanup: {}", e);
-                    continue;
-                }
-            };
+                _ = interval.tick() => {
+                    tracing::debug!("Running summary cleanup...");
 
-            if deleted > 0 {
-                tracing::info!("Cleaned up {} expired summaries", deleted);
+                    let deleted = match db
+                        .background(move |conn| entry_summary::delete_expired(conn, ttl_hours))
+                        .await
+                    {
+                        Ok(Ok(count)) => count,
+                        Ok(Err(e)) => {
+                            tracing::error!("Failed to cleanup expired summaries: {}", e);
+                            continue;
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to access DB for cleanup: {}", e);
+                            continue;
+                        }
+                    };
+
+                    if deleted > 0 {
+                        tracing::info!("Cleaned up {} expired summaries", deleted);
+                    }
+                }
             }
         }
-    });
+
+        tracing::info!("Summary cleanup worker stopped");
+    })
 }
 
 #[cfg(test)]
