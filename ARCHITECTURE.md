@@ -30,25 +30,31 @@ src/
 ├── error.rs             # Error types and HTTP responses
 │
 ├── db/
-│   └── schema.rs        # SQLite schema initialization
+│   ├── schema.rs        # SQLite schema initialization
+│   └── pool.rs          # Priority-based database connection pool
 │
 ├── models/              # Data models and database operations
 │   ├── user.rs          # User accounts
 │   ├── session.rs       # Session management
 │   ├── feed.rs          # RSS feeds
 │   ├── entry.rs         # Feed entries
+│   ├── entry_summary.rs # Article summaries
 │   ├── category.rs      # Feed categories
 │   ├── image.rs         # Image storage
+│   ├── passkey.rs       # WebAuthn credentials
+│   ├── webauthn_challenge.rs # WebAuthn challenge state
 │   └── user_settings.rs # User preferences
 │
 ├── handlers/            # HTTP request handlers
 │   ├── pages.rs         # HTML page rendering
 │   ├── auth.rs          # Authentication endpoints
+│   ├── passkey.rs       # Passkey/WebAuthn endpoints
 │   ├── admin.rs         # Admin operations
 │   ├── user.rs          # User operations
 │   ├── category.rs      # Category CRUD
 │   ├── feed.rs          # Feed CRUD
 │   ├── entry.rs         # Entry operations
+│   ├── favicon.rs       # Favicon serving
 │   └── proxy.rs         # Image proxy
 │
 ├── services/            # Business logic
@@ -60,15 +66,22 @@ src/
 │   ├── opml.rs          # OPML import/export
 │   ├── icon_fetcher.rs  # Feed icon fetching
 │   ├── image_proxy.rs   # Secure image proxying
-│   └── save/
-│       └── linkding.rs  # Linkding integration
+│   ├── summary_cache.rs # Summary caching
+│   ├── summary_cleanup.rs # Summary cleanup task
+│   ├── summary_worker.rs# Summary generation worker
+│   ├── save/
+│   │   └── linkding.rs  # Linkding integration
+│   └── summarize/       # AI summarization
+│       ├── mod.rs       # Summarizer trait
+│       └── kagi.rs      # Kagi AI service
 │
 ├── middleware/          # HTTP middleware
 │   ├── auth.rs          # Session authentication
 │   └── flash.rs         # Flash messages
 │
 └── auth/
-    └── password.rs      # Password hashing (Argon2)
+    ├── password.rs      # Password hashing (Argon2)
+    └── webauthn.rs      # WebAuthn/Passkey authentication
 
 templates/               # Askama HTML templates
 tests/                   # Integration tests
@@ -107,7 +120,7 @@ Custom `AppError` type that maps to appropriate HTTP responses:
 
 ### Database (`db/schema.rs`)
 
-SQLite schema with 8 tables:
+SQLite schema with 10 tables:
 
 | Table | Purpose |
 |-------|---------|
@@ -116,8 +129,11 @@ SQLite schema with 8 tables:
 | `category` | Feed categories per user |
 | `feed` | Feed metadata with etag caching |
 | `entry` | Feed items with read/starred status |
+| `entry_summary` | AI-generated article summaries |
 | `image` | Polymorphic image storage |
 | `user_settings` | User preferences and service configs |
+| `passkey` | WebAuthn credential storage |
+| `webauthn_challenge` | WebAuthn challenge state |
 
 ### Models
 
@@ -152,6 +168,24 @@ Request handlers are organized by resource:
 3. Creates session record in database
 4. Sets session cookie
 5. Subsequent requests extract user from `AuthUser` extractor
+
+### WebAuthn/Passkey Authentication
+
+RDRS supports passwordless authentication via WebAuthn/Passkey:
+
+**Registration Flow:**
+1. User initiates passkey registration from settings
+2. Server generates challenge and stores in `webauthn_challenge` table
+3. Browser prompts user to create passkey (biometric/security key)
+4. Client sends attestation to server
+5. Server validates and stores credential in `passkey` table
+
+**Authentication Flow:**
+1. User clicks "Login with Passkey"
+2. Server generates authentication challenge
+3. Browser prompts user to verify passkey
+4. Client sends assertion to server
+5. Server validates signature and creates session
 
 ## Services
 
@@ -196,6 +230,28 @@ Uses HMAC-SHA256 signatures to prevent abuse:
 **Linkding** (`save/linkding.rs`):
 - Saves entries to Linkding bookmark manager
 - Configured per-user in settings
+
+### AI Summarization
+
+RDRS integrates with Kagi AI for automatic article summarization:
+
+**Architecture:**
+- `summarize/kagi.rs` - Kagi Universal Summarizer API client
+- `summary_worker.rs` - Background worker for async processing
+- `summary_cache.rs` - In-memory cache for summaries
+- `summary_cleanup.rs` - Periodic cleanup of stale summaries
+
+**Processing Flow:**
+1. User requests summary for an entry
+2. System checks cache, then database for existing summary
+3. If not found, queues request to background worker
+4. Worker calls Kagi API and stores result in `entry_summary` table
+5. Summary is cached and returned to client
+
+**Status Tracking:**
+- Summaries track state: pending, processing, completed, failed
+- Failed requests include error messages for debugging
+- Cleanup task removes orphaned or expired summaries
 
 ## Security
 
