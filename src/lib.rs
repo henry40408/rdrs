@@ -36,6 +36,8 @@ pub struct AppState {
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
+        // Health check
+        .route("/health", get(handlers::health::health_check))
         // Favicon routes
         .route("/favicon.ico", get(handlers::favicon::favicon_ico))
         .route("/favicon.svg", get(handlers::favicon::favicon_svg))
