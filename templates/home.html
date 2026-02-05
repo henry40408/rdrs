@@ -34,6 +34,11 @@
         width: 100% !important;
     }
 }
+.entries-list-refreshing {
+    position: relative;
+    opacity: 0.5;
+    pointer-events: none;
+}
 </style>
 
 <h1>Home</h1>
@@ -305,6 +310,12 @@
     }
 
     async function loadEntries(reset = true) {
+        const container = document.getElementById('entries-list');
+
+        // Show refreshing state
+        container.classList.add('entries-list-refreshing');
+        if (window.loading) window.loading.start();
+
         if (reset) {
             currentOffset = 0;
             entries = [];
@@ -337,6 +348,9 @@
             updateEntriesCount();
         } catch (err) {
             document.getElementById('entries-list').innerHTML = '<p class="muted">[ERROR] Failed to load entries</p>';
+        } finally {
+            container.classList.remove('entries-list-refreshing');
+            if (window.loading) window.loading.stop();
         }
     }
 

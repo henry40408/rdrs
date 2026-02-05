@@ -33,6 +33,26 @@
 
 <hr>
 
+<style>
+.feed-row-syncing { background: #f8f9fa; }
+#sync-status-bar {
+    display: none;
+    padding: var(--space-2) var(--space-4);
+    background: #f8f9fa;
+    border: 1px solid #e0e0e0;
+    margin-bottom: var(--space-4);
+}
+#sync-status-bar.active { display: block; }
+#sync-status-text {
+    color: #0066cc;
+    animation: blink 1s infinite;
+}
+</style>
+
+<div id="sync-status-bar">
+    <span id="sync-status-text"></span>
+</div>
+
 <div class="filter-bar">
     <div class="form-group form-group-inline">
         <label for="filter-category">Filter by Category</label>
@@ -153,6 +173,22 @@
     let categories = [];
     let feeds = [];
     let unreadStats = { by_feed: {}, by_category: {} };
+    let activeSyncs = new Set();
+
+    function updateSyncStatus() {
+        const bar = document.getElementById('sync-status-bar');
+        const text = document.getElementById('sync-status-text');
+        if (!bar || !text) return;
+
+        if (activeSyncs.size > 0) {
+            bar.classList.add('active');
+            text.textContent = activeSyncs.size === 1
+                ? '[Syncing 1 feed...]'
+                : `[Syncing ${activeSyncs.size} feeds...]`;
+        } else {
+            bar.classList.remove('active');
+        }
+    }
 
     async function loadCategories() {
         try {
@@ -531,8 +567,14 @@
 
     async function refreshFeed(id) {
         const btn = document.getElementById(`refresh-${id}`);
+        const row = document.getElementById(`row-${id}`);
         const originalText = btn.textContent;
+
         btn.textContent = '[...]';
+        row?.classList.add('feed-row-syncing');
+        activeSyncs.add(id);
+        updateSyncStatus();
+        if (window.loading) window.loading.start();
 
         try {
             const response = await fetch(`/api/feeds/${id}/refresh`, {
@@ -552,6 +594,10 @@
             flash.error(err.message);
         } finally {
             btn.textContent = originalText;
+            row?.classList.remove('feed-row-syncing');
+            activeSyncs.delete(id);
+            updateSyncStatus();
+            if (window.loading) window.loading.stop();
         }
     }
 
