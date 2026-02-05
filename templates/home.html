@@ -399,7 +399,7 @@
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}">
                 <div>
-                    <a href="/entries/${entry.id}${getFilterQueryString()}" onclick="openEntry(${entry.id}); return false;" style="font-weight:bold;">${escapeHtml(title)}</a>
+                    <a href="/entries/${entry.id}${getFilterQueryString()}" class="entry-item-title" onclick="openEntry(${entry.id}); return false;" style="font-weight:bold;">${escapeHtml(title)}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>

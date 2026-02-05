@@ -229,7 +229,7 @@
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}"${isRead ? ' style="opacity:0.6;"' : ''}>
                 <div>
-                    <a href="/entries/${entry.id}" style="font-weight:${isRead ? 'normal' : 'bold'};">${titleHtml}</a>
+                    <a href="/entries/${entry.id}" class="entry-item-title" style="font-weight:${isRead ? 'normal' : 'bold'};">${titleHtml}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>${contentSnippetHtml}
