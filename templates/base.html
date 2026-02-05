@@ -543,8 +543,6 @@
                 switch (combo) {
                     case 'g h': window.location.href = '/'; return true;
                     case 'g e': window.location.href = '/entries'; return true;
-                    case 'g f': window.location.href = '/feeds'; return true;
-                    case 'g c': window.location.href = '/categories'; return true;
                 }
                 // Page-specific combo handlers
                 if (this.handlers.handleCombo) {
@@ -589,8 +587,6 @@
                 html += '<h3>Global Navigation</h3><table>';
                 html += '<tr><td>g h</td><td>Go to Home</td></tr>';
                 html += '<tr><td>g e</td><td>Go to Entries</td></tr>';
-                html += '<tr><td>g f</td><td>Go to Feeds</td></tr>';
-                html += '<tr><td>g c</td><td>Go to Categories</td></tr>';
                 html += '<tr><td>?</td><td>Toggle this help</td></tr>';
                 html += '</table>';
 
