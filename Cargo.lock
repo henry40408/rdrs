@@ -2683,7 +2683,7 @@ dependencies = [
  "moka",
  "openssl",
  "quick-xml 0.39.0",
- "rand 0.8.5",
+ "rand 0.9.2",
  "readability",
  "reqwest",
  "resvg",
