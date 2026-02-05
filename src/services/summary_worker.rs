@@ -139,9 +139,7 @@ async fn process_summary_job(job: &SummaryJob, cache: &Arc<SummaryCache>, db: &D
             let user_id = job.user_id;
             let entry_id = job.entry_id;
             let _ = db
-                .background(move |conn| {
-                    entry_summary::set_failed(conn, user_id, entry_id, &error)
-                })
+                .background(move |conn| entry_summary::set_failed(conn, user_id, entry_id, &error))
                 .await;
         }
     }
@@ -215,6 +213,17 @@ pub async fn recover_incomplete_jobs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::init_db;
+    use crate::models::user::Role;
+    use crate::models::{category, entry, feed, user};
+    use rusqlite::Connection;
+
+    fn setup_test_db() -> DbPool {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        let (pool, _handle) = DbPool::new(conn);
+        pool
+    }
 
     #[test]
     fn test_summary_job_creation() {
@@ -227,6 +236,34 @@ mod tests {
         assert_eq!(job.user_id, 1);
         assert_eq!(job.entry_id, 100);
         assert_eq!(job.entry_link, "https://example.com/article");
+    }
+
+    #[test]
+    fn test_summary_job_clone() {
+        let job = SummaryJob {
+            user_id: 1,
+            entry_id: 100,
+            entry_link: "https://example.com/article".to_string(),
+        };
+
+        let cloned = job.clone();
+        assert_eq!(cloned.user_id, job.user_id);
+        assert_eq!(cloned.entry_id, job.entry_id);
+        assert_eq!(cloned.entry_link, job.entry_link);
+    }
+
+    #[test]
+    fn test_summary_job_debug() {
+        let job = SummaryJob {
+            user_id: 1,
+            entry_id: 100,
+            entry_link: "https://example.com/article".to_string(),
+        };
+
+        let debug_str = format!("{:?}", job);
+        assert!(debug_str.contains("SummaryJob"));
+        assert!(debug_str.contains("user_id: 1"));
+        assert!(debug_str.contains("entry_id: 100"));
     }
 
     #[tokio::test]
@@ -245,5 +282,208 @@ mod tests {
         assert_eq!(received.user_id, job.user_id);
         assert_eq!(received.entry_id, job.entry_id);
         assert_eq!(received.entry_link, job.entry_link);
+    }
+
+    #[tokio::test]
+    async fn test_worker_stops_on_cancellation() {
+        let (tx, rx) = create_summary_channel(10);
+        let cache = Arc::new(SummaryCache::new(100, 24));
+        let db = setup_test_db();
+        let cancel_token = CancellationToken::new();
+
+        let handle = start_summary_worker(rx, cache, db, cancel_token.clone());
+
+        // Send a job (it won't be processed properly without Kagi config, but that's OK)
+        let _ = tx
+            .send(SummaryJob {
+                user_id: 1,
+                entry_id: 1,
+                entry_link: "https://example.com".to_string(),
+            })
+            .await;
+
+        // Cancel the worker
+        cancel_token.cancel();
+
+        // Worker should stop
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+        assert!(result.is_ok(), "Worker should stop after cancellation");
+    }
+
+    #[tokio::test]
+    async fn test_worker_stops_when_channel_closed() {
+        let (tx, rx) = create_summary_channel(10);
+        let cache = Arc::new(SummaryCache::new(100, 24));
+        let db = setup_test_db();
+        let cancel_token = CancellationToken::new();
+
+        let handle = start_summary_worker(rx, cache, db, cancel_token);
+
+        // Drop the sender to close the channel
+        drop(tx);
+
+        // Worker should stop
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+        assert!(result.is_ok(), "Worker should stop when channel closes");
+    }
+
+    #[tokio::test]
+    async fn test_recover_incomplete_jobs_empty() {
+        let db = setup_test_db();
+        let (tx, _rx) = create_summary_channel(10);
+        let cache = Arc::new(SummaryCache::new(100, 24));
+
+        // No incomplete jobs to recover
+        let count = recover_incomplete_jobs(db, tx, cache).await;
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_recover_incomplete_jobs_with_pending() {
+        let db = setup_test_db();
+
+        // Create test data with a pending summary
+        db.user(|conn| {
+            let user_id = user::create_user(conn, "testuser", "hash", Role::User)
+                .unwrap()
+                .id;
+            let category_id = category::create_category(conn, user_id, "Tech").unwrap().id;
+            let feed_id = feed::create_feed(
+                conn,
+                category_id,
+                "https://example.com/feed.xml",
+                Some("Feed"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+            .id;
+
+            let (entry_obj, _) = entry::upsert_entry(
+                conn,
+                feed_id,
+                "guid-1",
+                Some("Entry"),
+                Some("https://example.com/article"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+            // Create a pending summary
+            entry_summary::upsert_pending(conn, user_id, entry_obj.id).unwrap();
+        })
+        .await
+        .unwrap();
+
+        let (tx, mut rx) = create_summary_channel(10);
+        let cache = Arc::new(SummaryCache::new(100, 24));
+
+        let count = recover_incomplete_jobs(db, tx, cache.clone()).await;
+        assert_eq!(count, 1);
+
+        // Verify job was queued
+        let job = rx.try_recv().unwrap();
+        assert_eq!(job.entry_link, "https://example.com/article");
+
+        // Verify cache was updated
+        let status = cache.get(job.user_id, job.entry_id);
+        assert!(status.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_recover_incomplete_jobs_with_processing() {
+        let db = setup_test_db();
+
+        // Create test data with a processing (stuck) summary
+        db.user(|conn| {
+            let user_id = user::create_user(conn, "testuser", "hash", Role::User)
+                .unwrap()
+                .id;
+            let category_id = category::create_category(conn, user_id, "Tech").unwrap().id;
+            let feed_id = feed::create_feed(
+                conn,
+                category_id,
+                "https://example.com/feed.xml",
+                Some("Feed"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+            .id;
+
+            let (entry_obj, _) = entry::upsert_entry(
+                conn,
+                feed_id,
+                "guid-2",
+                Some("Entry 2"),
+                Some("https://example.com/article2"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+            // Create a processing summary (simulates a crashed worker)
+            entry_summary::upsert_pending(conn, user_id, entry_obj.id).unwrap();
+            entry_summary::set_processing(conn, user_id, entry_obj.id).unwrap();
+        })
+        .await
+        .unwrap();
+
+        let (tx, mut rx) = create_summary_channel(10);
+        let cache = Arc::new(SummaryCache::new(100, 24));
+
+        let count = recover_incomplete_jobs(db, tx, cache).await;
+        assert_eq!(count, 1);
+
+        // Verify job was queued
+        let job = rx.try_recv().unwrap();
+        assert_eq!(job.entry_link, "https://example.com/article2");
+    }
+
+    #[tokio::test]
+    async fn test_worker_drains_jobs_on_cancellation() {
+        let (tx, rx) = create_summary_channel(10);
+        let cache = Arc::new(SummaryCache::new(100, 24));
+        let db = setup_test_db();
+        let cancel_token = CancellationToken::new();
+
+        // Create test user for the jobs
+        db.user(|conn| {
+            user::create_user(conn, "testuser", "hash", Role::User).unwrap();
+        })
+        .await
+        .unwrap();
+
+        let handle = start_summary_worker(rx, cache.clone(), db, cancel_token.clone());
+
+        // Send multiple jobs
+        for i in 1..=3 {
+            tx.send(SummaryJob {
+                user_id: 1,
+                entry_id: i,
+                entry_link: format!("https://example.com/{}", i),
+            })
+            .await
+            .unwrap();
+        }
+
+        // Give worker a moment to start processing
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Cancel the worker
+        cancel_token.cancel();
+
+        // Worker should stop after draining
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+        assert!(result.is_ok(), "Worker should stop after draining jobs");
     }
 }

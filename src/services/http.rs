@@ -520,7 +520,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let err = client.get(&mock_server.uri()).send().await.unwrap_err();
+        let err = client.get(mock_server.uri()).send().await.unwrap_err();
 
         assert!(is_transient_error(&err));
         assert!(err.is_timeout());

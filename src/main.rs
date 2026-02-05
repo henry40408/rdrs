@@ -66,8 +66,11 @@ async fn main() {
     };
 
     // Start background sync task
-    let background_handle =
-        services::start_background_sync(db.clone(), config.user_agent.clone(), cancel_token.clone());
+    let background_handle = services::start_background_sync(
+        db.clone(),
+        config.user_agent.clone(),
+        cancel_token.clone(),
+    );
 
     let app = create_router(state);
 

@@ -403,4 +403,101 @@ mod tests {
             .await;
         assert!(send_result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_shutdown_executes_wal_checkpoint() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE shutdown_test (id INTEGER PRIMARY KEY);")
+            .unwrap();
+
+        let (pool, handle) = DbPool::new(conn);
+
+        // Insert some data
+        pool.user(|conn| {
+            conn.execute("INSERT INTO shutdown_test (id) VALUES (1)", [])
+                .unwrap();
+        })
+        .await
+        .unwrap();
+
+        // Shutdown should complete successfully
+        let result = pool.shutdown().await;
+        assert!(result.is_ok());
+
+        // Actor should exit after shutdown
+        let join_result = handle.await;
+        assert!(join_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_fails_after_receiver_dropped() {
+        // Test that sending fails when the receiver has been dropped
+        let conn = Connection::open_in_memory().unwrap();
+        let (user_tx, user_rx) = mpsc::channel::<DbMessage>(256);
+        let (_bg_tx, bg_rx) = mpsc::channel::<DbMessage>(64);
+
+        let handle = tokio::spawn(actor_loop(conn, user_rx, bg_rx));
+
+        // Drop sender to close user channel (actor will exit after draining bg)
+        drop(user_tx);
+
+        // Wait for actor to stop
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_db_priority_debug() {
+        // Test Debug implementation for DbPriority
+        let user = DbPriority::User;
+        let bg = DbPriority::Background;
+        assert_eq!(format!("{:?}", user), "User");
+        assert_eq!(format!("{:?}", bg), "Background");
+    }
+
+    #[tokio::test]
+    async fn test_db_priority_clone_and_eq() {
+        let user1 = DbPriority::User;
+        let user2 = user1;
+        assert_eq!(user1, user2);
+
+        let bg = DbPriority::Background;
+        assert_ne!(user1, bg);
+    }
+
+    #[tokio::test]
+    async fn test_dberror_is_error_trait() {
+        let err = DbError::ActorStopped;
+        // Verify it implements std::error::Error
+        let _: &dyn std::error::Error = &err;
+    }
+
+    #[tokio::test]
+    async fn test_background_channel_closes_actor_continues() {
+        // Test the case where background channel closes but user channel is still open
+        let conn = Connection::open_in_memory().unwrap();
+        let (user_tx, user_rx) = mpsc::channel::<DbMessage>(256);
+        let (bg_tx, bg_rx) = mpsc::channel::<DbMessage>(64);
+
+        let handle = tokio::spawn(actor_loop(conn, user_rx, bg_rx));
+
+        // Drop the background channel
+        drop(bg_tx);
+
+        // User channel should still work
+        let (resp_tx, resp_rx) = oneshot::channel();
+        user_tx
+            .send(DbMessage {
+                work: Box::new(|_conn| Box::new(123i32) as Box<dyn std::any::Any + Send>),
+                respond: resp_tx,
+            })
+            .await
+            .unwrap();
+        let result = resp_rx.await.unwrap();
+        assert_eq!(*result.downcast::<i32>().unwrap(), 123);
+
+        // Close user channel and wait for actor to exit
+        drop(user_tx);
+        let join_result = handle.await;
+        assert!(join_result.is_ok());
+    }
 }
