@@ -126,6 +126,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/entries/starred", get(handlers::pages::starred_entries_page))
         .route("/entries/summarized", get(handlers::pages::summarized_entries_page))
         .route("/entries/{id}", get(handlers::pages::entry_page))
+        .route("/search", get(handlers::pages::search_page))
         // Category entries page
         .route("/categories/{id}/entries", get(handlers::pages::category_entries_page))
         // Feed entries page

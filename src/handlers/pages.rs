@@ -725,6 +725,60 @@ pub async fn category_entries_page(
     ))
 }
 
+// Search page
+#[derive(Template)]
+#[template(path = "search.html")]
+pub struct SearchTemplate {
+    pub username: String,
+    pub is_admin: bool,
+    pub is_masquerading: bool,
+    pub flash_messages: Vec<FlashMessage>,
+    pub entries_per_page: i64,
+}
+
+impl IntoResponse for SearchTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn search_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, SearchTemplate) {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
+    let user_id = auth_user.user.id;
+    let entries_per_page = state
+        .db
+        .user(move |c| {
+            user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+        })
+        .await
+        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+
+    (
+        flash.clone(),
+        SearchTemplate {
+            username: auth_user.user.username,
+            is_admin,
+            is_masquerading,
+            flash_messages: flash.messages,
+            entries_per_page,
+        },
+    )
+}
+
 // Feed entries page
 #[derive(Template)]
 #[template(path = "feed_entries.html")]

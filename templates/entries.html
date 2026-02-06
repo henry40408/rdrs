@@ -36,38 +36,6 @@
 
 <div class="filter-bar">
     <div class="form-group form-group-inline">
-        <label for="filter-feed">Feed</label>
-        <select id="filter-feed" onchange="handleFilterChange()" style="width:14em;">
-            <option value="">All Feeds</option>
-        </select>
-    </div>
-    <div class="form-group form-group-inline">
-        <label for="filter-category">Category</label>
-        <select id="filter-category" onchange="handleFilterChange()" style="width:14em;">
-            <option value="">All Categories</option>
-        </select>
-    </div>
-    <div class="form-group form-group-inline">
-        <label>
-            <input type="checkbox" id="filter-unread" onchange="handleFilterChange()"> Unread only
-        </label>
-    </div>
-    <div class="form-group form-group-inline">
-        <label>
-            <input type="checkbox" id="filter-starred" onchange="handleFilterChange()"> Starred only
-        </label>
-    </div>
-    <div class="form-group form-group-inline">
-        <label>
-            <input type="checkbox" id="filter-has-summary" onchange="handleFilterChange()"> Has Summary
-        </label>
-    </div>
-    <div class="form-group form-group-inline">
-        <label for="filter-search">Search</label>
-        <input type="text" id="filter-search" placeholder="Search..."
-               style="width:14em;" onkeydown="handleSearchKeydown(event)">
-    </div>
-    <div class="form-group form-group-inline">
         <label for="mark-read-age">Mark as Read</label>
         <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;">
             <option value="">Select...</option>
@@ -97,50 +65,10 @@
 
 <script>
     let entries = [];
-    let categories = [];
-    let feeds = [];
     let currentOffset = 0;
     const limit = {{ entries_per_page }};
     let total = 0;
     let selectedIndex = -1;
-
-    async function loadCategories() {
-        try {
-            const response = await fetch('/api/categories');
-            if (!response.ok) throw new Error('Failed to load categories');
-            categories = await response.json();
-            updateCategoryDropdown();
-        } catch (err) {
-            console.error(err);
-        }
-    }
-
-    async function loadFeeds() {
-        try {
-            const response = await fetch('/api/feeds');
-            if (!response.ok) throw new Error('Failed to load feeds');
-            feeds = await response.json();
-            updateFeedDropdown();
-        } catch (err) {
-            console.error(err);
-        }
-    }
-
-    function updateCategoryDropdown() {
-        const select = document.getElementById('filter-category');
-        const currentValue = select.value;
-        select.innerHTML = '<option value="">All Categories</option>' +
-            categories.map(cat => `<option value="${cat.id}">${escapeHtml(cat.name)}</option>`).join('');
-        select.value = currentValue;
-    }
-
-    function updateFeedDropdown() {
-        const select = document.getElementById('filter-feed');
-        const currentValue = select.value;
-        select.innerHTML = '<option value="">All Feeds</option>' +
-            feeds.map(f => `<option value="${f.id}">${escapeHtml(f.title || f.url)}</option>`).join('');
-        select.value = currentValue;
-    }
 
     async function loadEntries(reset = true) {
         const container = document.getElementById('entries-list');
@@ -154,21 +82,7 @@
             entries = [];
         }
 
-        const feedId = document.getElementById('filter-feed').value;
-        const categoryId = document.getElementById('filter-category').value;
-        const unreadOnly = document.getElementById('filter-unread').checked;
-        const starredOnly = document.getElementById('filter-starred').checked;
-        const search = document.getElementById('filter-search').value.trim();
-
-        const hasSummaryFilter = document.getElementById('filter-has-summary').checked;
-
         let url = `/api/entries?limit=${limit}&offset=${currentOffset}`;
-        if (feedId) url += `&feed_id=${feedId}`;
-        if (categoryId) url += `&category_id=${categoryId}`;
-        if (unreadOnly) url += `&unread_only=true`;
-        if (starredOnly) url += `&starred_only=true`;
-        if (search) url += `&search=${encodeURIComponent(search)}`;
-        if (hasSummaryFilter) url += `&has_summary=true`;
 
         try {
             const response = await fetch(url);
@@ -197,17 +111,13 @@
 
     function renderEntries() {
         const container = document.getElementById('entries-list');
-        const search = document.getElementById('filter-search').value.trim();
 
-        // Entries are already filtered server-side when has_summary is set
-        let filteredEntries = entries;
-
-        if (filteredEntries.length === 0) {
+        if (entries.length === 0) {
             container.innerHTML = '<p class="muted">No entries found.</p>';
             return;
         }
 
-        container.innerHTML = filteredEntries.map((entry, index) => {
+        container.innerHTML = entries.map((entry, index) => {
             const title = decodeHtml(entry.title) || 'Untitled';
             const feedTitle = decodeHtml(entry.feed_title) || entry.feed_url;
             const date = entry.published_at ? formatDate(entry.published_at) : '';
@@ -219,7 +129,6 @@
                 ? `<img src="/api/feeds/${entry.feed_id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
                 : '';
             const isSelected = index === selectedIndex;
-            const titleHtml = search ? highlightText(title, search) : escapeHtml(title);
 
             // Determine summary badge based on status
             let summaryBadgeHtml = '';
@@ -233,24 +142,15 @@
                 summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">[F]</span>';
             }
 
-            // Check if search matches in content and generate snippet
-            let contentSnippetHtml = '';
-            if (search && entry.content) {
-                const snippet = getContentSnippet(entry.content, search);
-                if (snippet) {
-                    contentSnippetHtml = `<div class="muted" style="font-size:0.8rem; margin-top:0.4rem; font-style:italic;">${highlightText(snippet, search)}</div>`;
-                }
-            }
-
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}"${isRead ? ' style="opacity:0.6;"' : ''}>
                 <div>
-                    <a href="/entries/${entry.id}" class="entry-item-title" style="font-weight:${isRead ? 'normal' : 'bold'};">${titleHtml}</a>
+                    <a href="/entries/${entry.id}" class="entry-item-title" style="font-weight:${isRead ? 'normal' : 'bold'};">${escapeHtml(title)}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
-                </div>${contentSnippetHtml}
+                </div>
                 <div class="muted entry-item-meta">
-                    ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
+                    ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
                 </div>
                 <div class="entry-item-actions">
                     ${isRead
@@ -328,9 +228,6 @@
     async function markAsRead(age) {
         if (!age) return;
 
-        const feedId = document.getElementById('filter-feed').value;
-        const categoryId = document.getElementById('filter-category').value;
-
         const ageLabels = {
             '1': 'older than 1 day',
             '7': 'older than 1 week',
@@ -340,28 +237,12 @@
         };
         const ageLabel = ageLabels[age] || age;
 
-        let scope = '';
-        if (feedId) {
-            const feedSelect = document.getElementById('filter-feed');
-            const feedName = feedSelect.options[feedSelect.selectedIndex].text;
-            scope = ` in feed "${feedName}"`;
-        } else if (categoryId) {
-            const categorySelect = document.getElementById('filter-category');
-            const categoryName = categorySelect.options[categorySelect.selectedIndex].text;
-            scope = ` in category "${categoryName}"`;
-        }
-
-        if (!confirm(`Mark ${ageLabel} entries${scope} as read?`)) {
+        if (!confirm(`Mark ${ageLabel} entries as read?`)) {
             return;
         }
 
         try {
             const body = {};
-            if (feedId) {
-                body.feed_id = parseInt(feedId);
-            } else if (categoryId) {
-                body.category_id = parseInt(categoryId);
-            }
             if (age !== 'all') {
                 body.older_than_days = parseInt(age);
             }
@@ -387,34 +268,6 @@
         return div.innerHTML;
     }
 
-    function highlightText(text, search) {
-        if (!search || !text) return escapeHtml(text);
-        const escaped = escapeHtml(text);
-        const searchEscaped = escapeHtml(search);
-        // Create a case-insensitive regex to find matches
-        const regex = new RegExp(`(${searchEscaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-        return escaped.replace(regex, '<span class="search-highlight">$1</span>');
-    }
-
-    function getContentSnippet(content, search, maxLen = 80) {
-        if (!content || !search) return null;
-        // Strip HTML tags from content
-        const text = content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-        const lowerText = text.toLowerCase();
-        const lowerSearch = search.toLowerCase();
-        const idx = lowerText.indexOf(lowerSearch);
-        if (idx === -1) return null;
-
-        // Extract snippet around the match
-        const contextBefore = 30;
-        const start = Math.max(0, idx - contextBefore);
-        const end = Math.min(text.length, idx + search.length + (maxLen - contextBefore));
-        let snippet = text.substring(start, end);
-        if (start > 0) snippet = '...' + snippet;
-        if (end < text.length) snippet = snippet + '...';
-        return snippet;
-    }
-
     // Decode HTML entities (e.g., &#x27; -> ')
     function decodeHtml(html) {
         if (!html) return '';
@@ -433,51 +286,14 @@
         return date.toLocaleString();
     }
 
-    function updateURL() {
-        const params = new URLSearchParams();
-        const feedId = document.getElementById('filter-feed').value;
-        const categoryId = document.getElementById('filter-category').value;
-        const unreadOnly = document.getElementById('filter-unread').checked;
-        const starredOnly = document.getElementById('filter-starred').checked;
-        const hasSummary = document.getElementById('filter-has-summary').checked;
-        const search = document.getElementById('filter-search').value.trim();
-        if (feedId) params.set('feed', feedId);
-        if (categoryId) params.set('category', categoryId);
-        if (unreadOnly) params.set('unread', '1');
-        if (starredOnly) params.set('starred', '1');
-        if (hasSummary) params.set('has_summary', '1');
-        if (search) params.set('search', search);
-        const newURL = params.toString() ? `/entries?${params.toString()}` : '/entries';
-        history.replaceState(null, '', newURL);
-    }
-
-    function handleSearchKeydown(event) {
-        if (event.key === 'Enter') {
-            event.preventDefault();
-            handleFilterChange();
-        } else if (event.key === 'Escape') {
-            event.preventDefault();
-            event.target.blur();
-        }
-    }
-
-    function handleFilterChange() {
-        updateURL();
-        loadEntries();
-    }
-
     document.getElementById('entries-list').addEventListener('click', function(e) {
         if (e.target.matches('[data-feed-id]')) {
             e.preventDefault();
-            document.getElementById('filter-feed').value = e.target.dataset.feedId;
-            document.getElementById('filter-category').value = e.target.dataset.feedCategoryId;
-            handleFilterChange();
+            window.location.href = `/feeds/${e.target.dataset.feedId}/entries`;
         }
         if (e.target.matches('[data-category-id]')) {
             e.preventDefault();
-            document.getElementById('filter-category').value = e.target.dataset.categoryId;
-            document.getElementById('filter-feed').value = '';
-            handleFilterChange();
+            window.location.href = `/categories/${e.target.dataset.categoryId}/entries`;
         }
     });
 
@@ -570,7 +386,8 @@
         { key: 'm', desc: 'Toggle read/unread' },
         { key: 's', desc: 'Toggle star' },
         { key: 'r', desc: 'Refresh list' },
-        { key: '/', desc: 'Focus search box' },
+        { key: 'c', desc: 'Go to category page' },
+        { key: 'f', desc: 'Go to feed page' },
         { key: '1', desc: 'Go to All entries' },
         { key: '2', desc: 'Go to Read entries' },
         { key: '3', desc: 'Go to Starred entries' },
@@ -619,8 +436,17 @@
                 case 'r':
                     loadEntries();
                     return true;
-                case '/':
-                    document.getElementById('filter-search').focus();
+                case 'c':
+                    const entryC = getSelectedEntry();
+                    if (entryC) {
+                        window.location.href = `/categories/${entryC.category_id}/entries`;
+                    }
+                    return true;
+                case 'f':
+                    const entryF = getSelectedEntry();
+                    if (entryF) {
+                        window.location.href = `/feeds/${entryF.feed_id}/entries`;
+                    }
                     return true;
                 case '1':
                     window.location.href = '/entries';
@@ -640,22 +466,6 @@
     });
 
     // Initialize
-    Promise.all([loadCategories(), loadFeeds()]).then(() => {
-        // Check URL params
-        const urlParams = new URLSearchParams(window.location.search);
-        const feedId = urlParams.get('feed');
-        const categoryId = urlParams.get('category');
-        const unreadOnly = urlParams.get('unread');
-        const starredOnly = urlParams.get('starred');
-        const hasSummary = urlParams.get('has_summary');
-        const search = urlParams.get('search');
-        if (feedId) document.getElementById('filter-feed').value = feedId;
-        if (categoryId) document.getElementById('filter-category').value = categoryId;
-        if (unreadOnly) document.getElementById('filter-unread').checked = true;
-        if (starredOnly) document.getElementById('filter-starred').checked = true;
-        if (hasSummary) document.getElementById('filter-has-summary').checked = true;
-        if (search) document.getElementById('filter-search').value = search;
-        loadEntries();
-    });
+    loadEntries();
 </script>
 {% endblock %}

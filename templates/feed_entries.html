@@ -39,11 +39,6 @@
         </select>
     </div>
     <div class="form-group form-group-inline">
-        <label for="filter-search">Search</label>
-        <input type="text" id="filter-search" placeholder="Search..."
-               style="width:14em;" onkeydown="handleSearchKeydown(event)">
-    </div>
-    <div class="form-group form-group-inline">
         <label for="mark-read-age">Mark as Read</label>
         <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;">
             <option value="">Select...</option>
@@ -55,7 +50,6 @@
         </select>
     </div>
     <div>
-        <button type="button" onclick="refreshFeed()">[Sync]</button>
         <button type="button" onclick="loadEntries()">[Refresh]</button>
     </div>
 </div>
@@ -74,6 +68,7 @@
 
 <script>
     const feedId = {{ feed_id }};
+    const categoryId = {{ category_id }};
     let entries = [];
     let currentOffset = 0;
     const limit = {{ entries_per_page }};
@@ -91,18 +86,13 @@
         else if (status === 'read') params.set('read_only', 'true');
         else if (status === 'starred') params.set('starred_only', 'true');
 
-        const search = document.getElementById('filter-search').value.trim();
-        if (search) params.set('search', search);
-
         return params.toString();
     }
 
     function updateURL() {
         const params = new URLSearchParams();
         const status = document.getElementById('filter-status').value;
-        const search = document.getElementById('filter-search').value.trim();
         if (status) params.set('status', status);
-        if (search) params.set('search', search);
         const newURL = params.toString()
             ? `/feeds/${feedId}/entries?${params.toString()}`
             : `/feeds/${feedId}/entries`;
@@ -154,7 +144,6 @@
 
     function renderEntries() {
         const container = document.getElementById('entries-list');
-        const search = document.getElementById('filter-search').value.trim();
 
         if (entries.length === 0) {
             container.innerHTML = '<p class="muted">No entries found.</p>';
@@ -169,7 +158,6 @@
             const isStarred = entry.starred_at !== null;
             const summaryStatus = entry.summary_status;
             const isSelected = index === selectedIndex;
-            const titleHtml = search ? highlightText(title, search) : escapeHtml(title);
 
             let summaryBadgeHtml = '';
             if (summaryStatus === 'completed') {
@@ -182,21 +170,13 @@
                 summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">[F]</span>';
             }
 
-            let contentSnippetHtml = '';
-            if (search && entry.content) {
-                const snippet = getContentSnippet(entry.content, search);
-                if (snippet) {
-                    contentSnippetHtml = `<div class="muted" style="font-size:0.8rem; margin-top:0.4rem; font-style:italic;">${highlightText(snippet, search)}</div>`;
-                }
-            }
-
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}"${isRead ? ' style="opacity:0.6;"' : ''}>
                 <div>
-                    <a href="/entries/${entry.id}" class="entry-item-title" style="font-weight:${isRead ? 'normal' : 'bold'};">${titleHtml}</a>
+                    <a href="/entries/${entry.id}" class="entry-item-title" style="font-weight:${isRead ? 'normal' : 'bold'};">${escapeHtml(title)}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
-                </div>${contentSnippetHtml}
+                </div>
                 <div class="muted entry-item-meta">
                     ${date ? `<span title="${dateTitle}">${date}</span>` : ''}
                 </div>
@@ -229,25 +209,6 @@
     async function loadMore() {
         currentOffset += limit;
         await loadEntries(false);
-    }
-
-    async function refreshFeed() {
-        if (window.loading) window.loading.start();
-
-        try {
-            const response = await fetch(`/api/feeds/${feedId}/refresh`, { method: 'POST' });
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to refresh feed');
-            }
-            const result = await response.json();
-            flash.success(`Refreshed: ${result.new_entries} new, ${result.updated_entries} updated.`);
-            loadEntries();
-        } catch (err) {
-            flash.error(err.message);
-        } finally {
-            if (window.loading) window.loading.stop();
-        }
     }
 
     async function markEntryRead(id) {
@@ -335,31 +296,6 @@
         return div.innerHTML;
     }
 
-    function highlightText(text, search) {
-        if (!search || !text) return escapeHtml(text);
-        const escaped = escapeHtml(text);
-        const searchEscaped = escapeHtml(search);
-        const regex = new RegExp(`(${searchEscaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-        return escaped.replace(regex, '<span class="search-highlight">$1</span>');
-    }
-
-    function getContentSnippet(content, search, maxLen = 80) {
-        if (!content || !search) return null;
-        const text = content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-        const lowerText = text.toLowerCase();
-        const lowerSearch = search.toLowerCase();
-        const idx = lowerText.indexOf(lowerSearch);
-        if (idx === -1) return null;
-
-        const contextBefore = 30;
-        const start = Math.max(0, idx - contextBefore);
-        const end = Math.min(text.length, idx + search.length + (maxLen - contextBefore));
-        let snippet = text.substring(start, end);
-        if (start > 0) snippet = '...' + snippet;
-        if (end < text.length) snippet = snippet + '...';
-        return snippet;
-    }
-
     function decodeHtml(html) {
         if (!html) return '';
         const textarea = document.createElement('textarea');
@@ -375,16 +311,6 @@
     function formatDateTime(isoString) {
         const date = new Date(isoString);
         return date.toLocaleString();
-    }
-
-    function handleSearchKeydown(event) {
-        if (event.key === 'Enter') {
-            event.preventDefault();
-            handleFilterChange();
-        } else if (event.key === 'Escape') {
-            event.preventDefault();
-            event.target.blur();
-        }
     }
 
     // Keyboard navigation
@@ -473,8 +399,8 @@
         { key: 'm', desc: 'Toggle read/unread' },
         { key: 's', desc: 'Toggle star' },
         { key: 'r', desc: 'Refresh list' },
-        { key: 'R', desc: 'Sync feed from source' },
-        { key: '/', desc: 'Focus search box' },
+        { key: 'c', desc: 'Go to category page' },
+        { key: 'f', desc: 'Refresh list (current feed)' },
     ]);
     window.keyboard.registerHandlers({
         handleCombo: function(combo) {
@@ -519,11 +445,12 @@
                 case 'r':
                     loadEntries();
                     return true;
-                case 'R':
-                    refreshFeed();
+                case 'c':
+                    window.location.href = `/categories/${categoryId}/entries`;
                     return true;
-                case '/':
-                    document.getElementById('filter-search').focus();
+                case 'f':
+                    // Already on feed page, refresh
+                    loadEntries();
                     return true;
             }
             return false;
@@ -534,9 +461,7 @@
     (function() {
         const urlParams = new URLSearchParams(window.location.search);
         const status = urlParams.get('status');
-        const search = urlParams.get('search');
         if (status) document.getElementById('filter-status').value = status;
-        if (search) document.getElementById('filter-search').value = search;
         loadEntries();
     })();
 </script>

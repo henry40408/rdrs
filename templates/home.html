@@ -9,37 +9,6 @@
 {% call macros::nav("home", is_admin, is_masquerading, username) %}{% endcall %}
 
 <style>
-.mobile-toolbar {
-    display: none;
-    margin-top: 0;
-    margin-bottom: var(--space-4);
-}
-.mobile-toolbar .refresh-collapsed {
-    display: none;
-}
-
-@media (max-width: 768px) {
-    .mobile-toolbar {
-        display: block;
-    }
-    .mobile-toolbar.collapsed .refresh-collapsed {
-        display: inline-block;
-    }
-    .filter-bar {
-        flex-wrap: wrap;
-    }
-    .filter-bar.collapsed {
-        display: none;
-    }
-    .filter-bar .form-group-inline {
-        width: 100%;
-    }
-    #filter-sort,
-    #filter-category,
-    #filter-feed {
-        width: 100% !important;
-    }
-}
 .entries-list-refreshing {
     position: relative;
     opacity: 0.5;
@@ -50,30 +19,7 @@
 <h1>Home</h1>
 
 <h2>Unread Entries</h2>
-<div class="mobile-toolbar" id="mobile-toolbar">
-    <button type="button" id="filter-toggle" onclick="toggleFilters()">[Filters]</button>
-    <button type="button" class="refresh-collapsed" onclick="loadEntries()">[Refresh]</button>
-</div>
 <div class="filter-bar">
-    <div class="form-group form-group-inline">
-        <label for="filter-sort">Sort Feeds</label>
-        <select id="filter-sort" onchange="handleSortChange()" onkeydown="if(event.key==='Escape'){event.preventDefault();this.blur();}" style="width:8em;">
-            <option value="name" selected>By Name</option>
-            <option value="unread">By Unread</option>
-        </select>
-    </div>
-    <div class="form-group form-group-inline">
-        <label for="filter-category">Category</label>
-        <select id="filter-category" onchange="handleFilterChange('category')" onkeydown="if(event.key==='Escape'){event.preventDefault();this.blur();}" style="width:14em;">
-            <option value="">All Categories (0)</option>
-        </select>
-    </div>
-    <div class="form-group form-group-inline">
-        <label for="filter-feed">Feed</label>
-        <select id="filter-feed" onchange="handleFilterChange('feed')" onkeydown="if(event.key==='Escape'){event.preventDefault();this.blur();}" style="width:14em;">
-            <option value="">All Feeds (0)</option>
-        </select>
-    </div>
     <div class="form-group form-group-inline">
         <label for="mark-read-age">Mark as Read</label>
         <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;">
@@ -106,219 +52,10 @@
 
 <script>
     let entries = [];
-    let categories = [];
-    let feeds = [];
-    let unreadStats = { by_feed: {}, by_category: {} };
     let currentOffset = 0;
     const limit = {{ entries_per_page }};
     let total = 0;
     let selectedIndex = -1;
-
-    function toggleFilters() {
-        const bar = document.querySelector('.filter-bar');
-        const collapsed = !bar.classList.contains('collapsed');
-        setFiltersCollapsed(collapsed);
-    }
-
-    function setFiltersCollapsed(collapsed) {
-        const bar = document.querySelector('.filter-bar');
-        const toolbar = document.getElementById('mobile-toolbar');
-        if (collapsed) {
-            bar.classList.add('collapsed');
-            toolbar.classList.add('collapsed');
-        } else {
-            bar.classList.remove('collapsed');
-            toolbar.classList.remove('collapsed');
-        }
-        sessionStorage.setItem('filtersCollapsed', collapsed ? '1' : '0');
-        updateFilterToggleLabel();
-    }
-
-    function expandFiltersIfCollapsed() {
-        const bar = document.querySelector('.filter-bar');
-        if (bar.classList.contains('collapsed')) {
-            setFiltersCollapsed(false);
-        }
-    }
-
-    function updateFilterToggleLabel() {
-        const btn = document.getElementById('filter-toggle');
-        const feedId = document.getElementById('filter-feed').value;
-        const categoryId = document.getElementById('filter-category').value;
-        const sortValue = document.getElementById('filter-sort').value;
-        const hasActiveFilters = feedId || categoryId || sortValue !== 'name';
-        btn.textContent = hasActiveFilters ? '[Filters *]' : '[Filters]';
-    }
-
-    async function loadCategories() {
-        try {
-            const response = await fetch('/api/categories');
-            if (!response.ok) throw new Error('Failed to load categories');
-            categories = await response.json();
-            updateCategoryDropdown();
-        } catch (err) {
-            console.error(err);
-        }
-    }
-
-    async function loadFeeds() {
-        try {
-            const response = await fetch('/api/feeds');
-            if (!response.ok) throw new Error('Failed to load feeds');
-            feeds = await response.json();
-            updateFeedDropdown();
-        } catch (err) {
-            console.error(err);
-        }
-    }
-
-    async function loadUnreadStats() {
-        try {
-            const response = await fetch('/api/entries/unread-stats');
-            if (!response.ok) throw new Error('Failed to load unread stats');
-            unreadStats = await response.json();
-            updateCategoryDropdown();
-            updateFeedDropdown();
-        } catch (err) {
-            console.error(err);
-        }
-    }
-
-    function getCurrentSort() {
-        return document.getElementById('filter-sort').value;
-    }
-
-    function sortItems(items, nameKey, statsMap, idKey) {
-        const sort = getCurrentSort();
-        if (sort === 'unread') {
-            return [...items].sort((a, b) => {
-                const countA = statsMap[a[idKey]] || 0;
-                const countB = statsMap[b[idKey]] || 0;
-                if (countB !== countA) return countB - countA;
-                const nameA = (a[nameKey] || a.url || '').toLowerCase();
-                const nameB = (b[nameKey] || b.url || '').toLowerCase();
-                return nameA.localeCompare(nameB);
-            });
-        }
-        return [...items].sort((a, b) => {
-            const nameA = (a[nameKey] || a.url || '').toLowerCase();
-            const nameB = (b[nameKey] || b.url || '').toLowerCase();
-            return nameA.localeCompare(nameB);
-        });
-    }
-
-    function updateCategoryDropdown() {
-        const select = document.getElementById('filter-category');
-        const currentValue = select.value;
-        const feedSelect = document.getElementById('filter-feed');
-        const selectedFeedId = feedSelect.value;
-
-        // Determine which categories to show
-        let categoriesToShow = categories;
-        if (selectedFeedId) {
-            // When a feed is selected, only show that feed's category
-            const selectedFeed = feeds.find(f => f.id === parseInt(selectedFeedId));
-            if (selectedFeed) {
-                categoriesToShow = categories.filter(c => c.id === selectedFeed.category_id);
-            }
-        }
-
-        const totalUnread = Object.values(unreadStats.by_category).reduce((a, b) => a + b, 0);
-        const sortedCategories = sortItems(categoriesToShow, 'name', unreadStats.by_category, 'id');
-
-        select.innerHTML = `<option value="">(${totalUnread}) All Categories</option>` +
-            sortedCategories.map(cat => {
-                const count = unreadStats.by_category[cat.id] || 0;
-                return `<option value="${cat.id}">(${count}) ${escapeHtml(cat.name)}</option>`;
-            }).join('');
-        select.value = currentValue;
-    }
-
-    function updateFeedDropdown() {
-        const select = document.getElementById('filter-feed');
-        const currentValue = select.value;
-        const categorySelect = document.getElementById('filter-category');
-        const selectedCategoryId = categorySelect.value;
-
-        // Determine which feeds to show
-        let feedsToShow = feeds;
-        if (selectedCategoryId) {
-            // When a category is selected, only show that category's feeds
-            feedsToShow = feeds.filter(f => f.category_id === parseInt(selectedCategoryId));
-        }
-
-        const totalUnread = Object.values(unreadStats.by_feed).reduce((a, b) => a + b, 0);
-        const sortedFeeds = sortItems(feedsToShow, 'title', unreadStats.by_feed, 'id');
-
-        select.innerHTML = `<option value="">(${totalUnread}) All Feeds</option>` +
-            sortedFeeds.map(f => {
-                const count = unreadStats.by_feed[f.id] || 0;
-                return `<option value="${f.id}">(${count}) ${escapeHtml(f.title || f.url)}</option>`;
-            }).join('');
-        select.value = currentValue;
-    }
-
-    function updateURL() {
-        const params = new URLSearchParams();
-        const sortValue = document.getElementById('filter-sort').value;
-        const feedId = document.getElementById('filter-feed').value;
-        const categoryId = document.getElementById('filter-category').value;
-
-        if (sortValue && sortValue !== 'name') params.set('sort', sortValue);
-        if (feedId) params.set('feed', feedId);
-        if (categoryId) params.set('category', categoryId);
-
-        const newURL = params.toString() ? `/?${params.toString()}` : '/';
-        history.replaceState(null, '', newURL);
-    }
-
-    function handleSortChange() {
-        updateURL();
-        updateCategoryDropdown();
-        updateFeedDropdown();
-        updateFilterToggleLabel();
-    }
-
-    function handleFilterChange(source = null) {
-        const categorySelect = document.getElementById('filter-category');
-        const feedSelect = document.getElementById('filter-feed');
-
-        if (source === 'category') {
-            const selectedCategoryId = categorySelect.value;
-            const selectedFeedId = feedSelect.value;
-
-            if (!selectedCategoryId) {
-                // "All Categories" selected: clear feed and reset category dropdown
-                feedSelect.value = '';
-                updateCategoryDropdown();
-            } else if (selectedFeedId) {
-                // Clear feed selection if it doesn't belong to the selected category
-                const selectedFeed = feeds.find(f => f.id === parseInt(selectedFeedId));
-                if (selectedFeed && selectedFeed.category_id !== parseInt(selectedCategoryId)) {
-                    feedSelect.value = '';
-                }
-            }
-            updateFeedDropdown();
-        } else if (source === 'feed') {
-            // Auto-select the feed's category
-            const selectedFeedId = feedSelect.value;
-            if (selectedFeedId) {
-                const selectedFeed = feeds.find(f => f.id === parseInt(selectedFeedId));
-                if (selectedFeed) {
-                    categorySelect.value = selectedFeed.category_id;
-                }
-            }
-            updateCategoryDropdown();
-            updateFeedDropdown();
-        } else {
-            updateCategoryDropdown();
-            updateFeedDropdown();
-        }
-
-        updateURL();
-        loadEntries();
-        updateFilterToggleLabel();
-    }
 
     async function loadEntries(reset = true) {
         const container = document.getElementById('entries-list');
@@ -332,12 +69,7 @@
             entries = [];
         }
 
-        const feedId = document.getElementById('filter-feed').value;
-        const categoryId = document.getElementById('filter-category').value;
-
         let url = `/api/entries?unread_only=true&limit=${limit}&offset=${currentOffset}`;
-        if (feedId) url += `&feed_id=${feedId}`;
-        if (categoryId) url += `&category_id=${categoryId}`;
 
         try {
             const response = await fetch(url);
@@ -369,16 +101,7 @@
         const container = document.getElementById('entries-list');
 
         if (entries.length === 0) {
-            const feedId = document.getElementById('filter-feed').value;
-            const categoryId = document.getElementById('filter-category').value;
-            const hasFilters = feedId || categoryId;
-
-            let html = '<p class="muted">No unread entries.';
-            if (hasFilters) {
-                html += ' <a href="#" onclick="resetFilters(); return false;">[reset filters]</a>';
-            }
-            html += '</p>';
-            container.innerHTML = html;
+            container.innerHTML = '<p class="muted">No unread entries.</p>';
             updateMarkAboveButton();
             return;
         }
@@ -410,12 +133,12 @@
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}">
                 <div>
-                    <a href="/entries/${entry.id}${getFilterQueryString()}" class="entry-item-title" onclick="openEntry(${entry.id}); return false;" style="font-weight:bold;">${escapeHtml(title)}</a>
+                    <a href="/entries/${entry.id}" class="entry-item-title" onclick="openEntry(${entry.id}); return false;" style="font-weight:bold;">${escapeHtml(title)}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>
                 <div class="muted entry-item-meta">
-                    ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}" data-feed-category-id="${entry.category_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
+                    ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
                 </div>
                 <div class="entry-item-actions">
                     <a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>
@@ -455,7 +178,6 @@
             renderEntries();
             updateLoadMoreButton();
             updateUnreadCount();
-            loadUnreadStats();  // Refresh dropdown stats for sorting
         } catch (err) {
             flash.error(err.message);
         }
@@ -482,9 +204,6 @@
     async function markAsRead(age) {
         if (!age) return;
 
-        const feedId = document.getElementById('filter-feed').value;
-        const categoryId = document.getElementById('filter-category').value;
-
         const ageLabels = {
             '1': 'older than 1 day',
             '7': 'older than 1 week',
@@ -494,28 +213,12 @@
         };
         const ageLabel = ageLabels[age] || age;
 
-        let scope = '';
-        if (feedId) {
-            const feedSelect = document.getElementById('filter-feed');
-            const feedName = feedSelect.options[feedSelect.selectedIndex].text;
-            scope = ` in feed "${feedName}"`;
-        } else if (categoryId) {
-            const categorySelect = document.getElementById('filter-category');
-            const categoryName = categorySelect.options[categorySelect.selectedIndex].text;
-            scope = ` in category "${categoryName}"`;
-        }
-
-        if (!confirm(`Mark ${ageLabel} entries${scope} as read?`)) {
+        if (!confirm(`Mark ${ageLabel} entries as read?`)) {
             return;
         }
 
         try {
             const body = {};
-            if (feedId) {
-                body.feed_id = parseInt(feedId);
-            } else if (categoryId) {
-                body.category_id = parseInt(categoryId);
-            }
             if (age !== 'all') {
                 body.older_than_days = parseInt(age);
             }
@@ -531,7 +234,6 @@
             const result = await response.json();
             flash.success(`Marked ${result.marked_count} entries as read.`);
             loadEntries();
-            loadUnreadStats();
         } catch (err) {
             flash.error(err.message);
         }
@@ -552,36 +254,6 @@
             btn.style.display = 'block';
         } else {
             btn.style.display = 'none';
-        }
-    }
-
-    async function resetFilters() {
-        const feedSelect = document.getElementById('filter-feed');
-        const categorySelect = document.getElementById('filter-category');
-
-        // Step 1: If feed filter is active, reset it first
-        if (feedSelect.value) {
-            feedSelect.value = '';
-            updateCategoryDropdown();
-            updateFeedDropdown();
-            updateURL();
-            await loadEntries();
-
-            // If still no entries, continue to reset category
-            if (entries.length === 0 && categorySelect.value) {
-                categorySelect.value = '';
-                updateCategoryDropdown();
-                updateFeedDropdown();
-                updateURL();
-                await loadEntries();
-            }
-        } else if (categorySelect.value) {
-            // Step 2: Only category filter is active, reset it
-            categorySelect.value = '';
-            updateCategoryDropdown();
-            updateFeedDropdown();
-            updateURL();
-            await loadEntries();
         }
     }
 
@@ -606,7 +278,6 @@
             const result = await response.json();
             flash.success(`Marked ${result.marked_count} entries as read.`);
             loadEntries();
-            loadUnreadStats();
         } catch (err) {
             flash.error(err.message);
         }
@@ -637,28 +308,14 @@
         return date.toLocaleString();
     }
 
-    function getFilterQueryString() {
-        const feedId = document.getElementById('filter-feed').value;
-        const categoryId = document.getElementById('filter-category').value;
-        const params = new URLSearchParams();
-        if (feedId) params.set('feed', feedId);
-        if (categoryId) params.set('category', categoryId);
-        const str = params.toString();
-        return str ? '?' + str : '';
-    }
-
     document.getElementById('entries-list').addEventListener('click', function(e) {
         if (e.target.matches('[data-feed-id]')) {
             e.preventDefault();
-            document.getElementById('filter-feed').value = e.target.dataset.feedId;
-            document.getElementById('filter-category').value = e.target.dataset.feedCategoryId;
-            handleFilterChange('feed');
+            window.location.href = `/feeds/${e.target.dataset.feedId}/entries`;
         }
         if (e.target.matches('[data-category-id]')) {
             e.preventDefault();
-            document.getElementById('filter-category').value = e.target.dataset.categoryId;
-            document.getElementById('filter-feed').value = '';
-            handleFilterChange('category');
+            window.location.href = `/categories/${e.target.dataset.categoryId}/entries`;
         }
     });
 
@@ -710,7 +367,7 @@
         updateLoadMoreButton();
         updateUnreadCount();
         // Navigate to entry page
-        window.location.href = `/entries/${id}${getFilterQueryString()}`;
+        window.location.href = `/entries/${id}`;
     }
 
     function openSelectedEntry() {
@@ -763,13 +420,9 @@
         { key: 'm', desc: 'Mark as read' },
         { key: 's', desc: 'Toggle star' },
         { key: 'r', desc: 'Refresh list' },
-        { key: 'x', desc: 'Reset filters' },
         { key: 'A', desc: 'Mark above as read' },
-        { key: 'c', desc: 'Filter by category' },
-        { key: 'f', desc: 'Filter by feed' },
-        { key: 'S', desc: 'Focus sort selector' },
-        { key: 'C', desc: 'Focus category selector' },
-        { key: 'F', desc: 'Focus feed selector' },
+        { key: 'c', desc: 'Go to category page' },
+        { key: 'f', desc: 'Go to feed page' },
     ]);
     window.keyboard.registerHandlers({
         handleCombo: function(combo) {
@@ -813,10 +466,6 @@
                     return true;
                 case 'r':
                     loadEntries();
-                    loadUnreadStats();
-                    return true;
-                case 'x':
-                    resetFilters();
                     return true;
                 case 'A':
                     markAboveAsRead();
@@ -824,30 +473,14 @@
                 case 'c':
                     const entryC = getSelectedEntry();
                     if (entryC) {
-                        document.getElementById('filter-category').value = entryC.category_id;
-                        document.getElementById('filter-feed').value = '';
-                        handleFilterChange('category');
+                        window.location.href = `/categories/${entryC.category_id}/entries`;
                     }
                     return true;
                 case 'f':
                     const entryF = getSelectedEntry();
                     if (entryF) {
-                        document.getElementById('filter-feed').value = entryF.feed_id;
-                        document.getElementById('filter-category').value = entryF.category_id;
-                        handleFilterChange('feed');
+                        window.location.href = `/feeds/${entryF.feed_id}/entries`;
                     }
-                    return true;
-                case 'S':
-                    expandFiltersIfCollapsed();
-                    document.getElementById('filter-sort').focus();
-                    return true;
-                case 'C':
-                    expandFiltersIfCollapsed();
-                    document.getElementById('filter-category').focus();
-                    return true;
-                case 'F':
-                    expandFiltersIfCollapsed();
-                    document.getElementById('filter-feed').focus();
                     return true;
             }
             return false;
@@ -855,48 +488,6 @@
     });
 
     // Initialize
-    Promise.all([loadCategories(), loadFeeds(), loadUnreadStats()]).then(() => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const sort = urlParams.get('sort');
-        const feedId = urlParams.get('feed');
-        const categoryId = urlParams.get('category');
-
-        // Restore sort preference
-        if (sort === 'unread') {
-            document.getElementById('filter-sort').value = 'unread';
-        }
-
-        // Restore filter selections with cascade logic
-        if (feedId) {
-            const selectedFeed = feeds.find(f => f.id === parseInt(feedId));
-            if (selectedFeed) {
-                document.getElementById('filter-feed').value = feedId;
-                document.getElementById('filter-category').value = selectedFeed.category_id;
-            }
-        } else if (categoryId) {
-            document.getElementById('filter-category').value = categoryId;
-        }
-
-        // Update dropdowns with cascade filtering
-        updateCategoryDropdown();
-        updateFeedDropdown();
-
-        // Initialize filter toggle state for mobile
-        const isMobile = window.matchMedia('(max-width: 768px)').matches;
-        if (isMobile) {
-            const hasUrlFilters = feedId || categoryId;
-            const savedState = sessionStorage.getItem('filtersCollapsed');
-            if (hasUrlFilters) {
-                setFiltersCollapsed(false);
-            } else if (savedState !== null) {
-                setFiltersCollapsed(savedState === '1');
-            } else {
-                setFiltersCollapsed(true);
-            }
-        }
-        updateFilterToggleLabel();
-
-        loadEntries();
-    });
+    loadEntries();
 </script>
 {% endblock %}
