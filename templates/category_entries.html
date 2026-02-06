@@ -391,6 +391,10 @@
 
     window.keyboard.init('list');
     window.keyboard.setHelpItems([
+        { key: '1', desc: 'Show all entries' },
+        { key: '2', desc: 'Show unread only' },
+        { key: '3', desc: 'Show read only' },
+        { key: '4', desc: 'Show starred only' },
         { key: 'j', desc: 'Next entry' },
         { key: 'k', desc: 'Previous entry' },
         { key: 'g g', desc: 'First entry' },
@@ -416,6 +420,22 @@
         },
         handleKey: function(key, shiftKey) {
             switch (key) {
+                case '1':
+                    document.getElementById('filter-status').value = '';
+                    handleFilterChange();
+                    return true;
+                case '2':
+                    document.getElementById('filter-status').value = 'unread';
+                    handleFilterChange();
+                    return true;
+                case '3':
+                    document.getElementById('filter-status').value = 'read';
+                    handleFilterChange();
+                    return true;
+                case '4':
+                    document.getElementById('filter-status').value = 'starred';
+                    handleFilterChange();
+                    return true;
                 case 'j':
                     selectEntry(selectedIndex + 1);
                     return true;
@@ -471,7 +491,8 @@
     (function() {
         const urlParams = new URLSearchParams(window.location.search);
         const status = urlParams.get('status');
-        if (status) document.getElementById('filter-status').value = status;
+        // Default to 'unread' if no status specified
+        document.getElementById('filter-status').value = status || 'unread';
         loadEntries();
     })();
 </script>
