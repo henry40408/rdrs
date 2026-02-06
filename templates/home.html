@@ -47,10 +47,10 @@
 <button type="button" id="filter-toggle" class="filter-toggle" onclick="toggleFilters()">[Filters]</button>
 <div class="filter-bar">
     <div class="form-group form-group-inline">
-        <label for="filter-sort">Sort</label>
+        <label for="filter-sort">Sort Feeds</label>
         <select id="filter-sort" onchange="handleSortChange()" onkeydown="if(event.key==='Escape'){event.preventDefault();this.blur();}" style="width:8em;">
-            <option value="name" selected>Name</option>
-            <option value="unread">Unread</option>
+            <option value="name" selected>By Name</option>
+            <option value="unread">By Unread</option>
         </select>
     </div>
     <div class="form-group form-group-inline">

@@ -19,8 +19,12 @@ pub struct ListEntriesQuery {
     pub unread_only: bool,
     #[serde(default)]
     pub starred_only: bool,
+    #[serde(default)]
+    pub read_only: bool,
     pub search: Option<String>,
     pub has_summary: Option<bool>,
+    #[serde(default)]
+    pub sort: entry::EntrySortOrder,
     #[serde(default = "default_limit")]
     pub limit: i64,
     #[serde(default)]
@@ -81,11 +85,12 @@ pub async fn list_entries(
                 category_id: query.category_id,
                 unread_only: query.unread_only,
                 starred_only: query.starred_only,
+                read_only: query.read_only,
                 search: query.search.clone(),
                 has_summary: query.has_summary,
             };
 
-            let entries = entry::list_by_user(conn, user_id, &filter, query.limit, query.offset)?;
+            let entries = entry::list_by_user(conn, user_id, &filter, query.sort, query.limit, query.offset)?;
             let total = entry::count_by_user(conn, user_id, &filter)?;
 
             // Batch query summary statuses from DB
@@ -206,11 +211,12 @@ pub async fn list_feed_entries(
                 category_id: None,
                 unread_only: query.unread_only,
                 starred_only: query.starred_only,
+                read_only: query.read_only,
                 search: query.search,
                 has_summary: query.has_summary,
             };
 
-            let entries = entry::list_by_user(conn, user_id, &filter, query.limit, query.offset)?;
+            let entries = entry::list_by_user(conn, user_id, &filter, query.sort, query.limit, query.offset)?;
             let total = entry::count_by_user(conn, user_id, &filter)?;
 
             // Batch query summary statuses from DB

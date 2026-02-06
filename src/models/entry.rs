@@ -4,6 +4,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 
+/// Sort order for entries
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum EntrySortOrder {
+    #[default]
+    PublishedAt, // COALESCE(published_at, created_at) DESC
+    ReadAt,      // read_at DESC
+    StarredAt,   // starred_at DESC
+}
+
 /// Parse Chinese month names to month number
 fn parse_chinese_month(s: &str) -> Option<u32> {
     match s {
@@ -121,6 +131,7 @@ pub struct EntryFilter {
     pub category_id: Option<i64>,
     pub unread_only: bool,
     pub starred_only: bool,
+    pub read_only: bool,
     pub search: Option<String>,
     pub has_summary: Option<bool>,
 }
@@ -267,6 +278,7 @@ pub fn list_by_user(
     conn: &Connection,
     user_id: i64,
     filter: &EntryFilter,
+    sort_order: EntrySortOrder,
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<EntryWithFeed>> {
@@ -289,6 +301,10 @@ pub fn list_by_user(
 
     if filter.starred_only {
         conditions.push("e.starred_at IS NOT NULL".to_string());
+    }
+
+    if filter.read_only {
+        conditions.push("e.read_at IS NOT NULL".to_string());
     }
 
     if let Some(ref search) = filter.search {
@@ -317,6 +333,12 @@ pub fn list_by_user(
 
     let where_clause = conditions.join(" AND ");
 
+    let order_by = match sort_order {
+        EntrySortOrder::PublishedAt => "COALESCE(e.published_at, e.created_at) DESC",
+        EntrySortOrder::ReadAt => "e.read_at DESC",
+        EntrySortOrder::StarredAt => "e.starred_at DESC",
+    };
+
     let sql = format!(
         r#"
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
@@ -327,10 +349,11 @@ pub fn list_by_user(
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
         WHERE {}
-        ORDER BY COALESCE(e.published_at, e.created_at) DESC
+        ORDER BY {}
         LIMIT ?{} OFFSET ?{}
         "#,
         where_clause,
+        order_by,
         params_vec.len() + 1,
         params_vec.len() + 2
     );
@@ -370,6 +393,10 @@ pub fn count_by_user(conn: &Connection, user_id: i64, filter: &EntryFilter) -> A
 
     if filter.starred_only {
         conditions.push("e.starred_at IS NOT NULL".to_string());
+    }
+
+    if filter.read_only {
+        conditions.push("e.read_at IS NOT NULL".to_string());
     }
 
     if let Some(ref search) = filter.search {
@@ -1107,7 +1134,7 @@ mod tests {
             search: Some("Rust".to_string()),
             ..Default::default()
         };
-        let results = list_by_user(&conn, user_id, &filter, 10, 0).unwrap();
+        let results = list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 10, 0).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].entry.title,
@@ -1151,7 +1178,7 @@ mod tests {
             search: Some("WebAssembly".to_string()),
             ..Default::default()
         };
-        let results = list_by_user(&conn, user_id, &filter, 10, 0).unwrap();
+        let results = list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 10, 0).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].entry.title, Some("Entry 1".to_string()));
     }
@@ -1181,7 +1208,7 @@ mod tests {
             search: Some("uppercase".to_string()),
             ..Default::default()
         };
-        let results = list_by_user(&conn, user_id, &filter, 10, 0).unwrap();
+        let results = list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 10, 0).unwrap();
         assert_eq!(results.len(), 1);
 
         // Search with uppercase should match lowercase content
@@ -1189,7 +1216,7 @@ mod tests {
             search: Some("LOWERCASE".to_string()),
             ..Default::default()
         };
-        let results = list_by_user(&conn, user_id, &filter, 10, 0).unwrap();
+        let results = list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 10, 0).unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -1236,7 +1263,7 @@ mod tests {
             unread_only: true,
             ..Default::default()
         };
-        let results = list_by_user(&conn, user_id, &filter, 10, 0).unwrap();
+        let results = list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 10, 0).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].entry.id, entry2.id);
 
@@ -1246,7 +1273,7 @@ mod tests {
             starred_only: true,
             ..Default::default()
         };
-        let results = list_by_user(&conn, user_id, &filter, 10, 0).unwrap();
+        let results = list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 10, 0).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].entry.id, entry2.id);
     }
@@ -1280,15 +1307,15 @@ mod tests {
         };
 
         // First page (limit 2)
-        let results = list_by_user(&conn, user_id, &filter, 2, 0).unwrap();
+        let results = list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 2, 0).unwrap();
         assert_eq!(results.len(), 2);
 
         // Second page
-        let results = list_by_user(&conn, user_id, &filter, 2, 2).unwrap();
+        let results = list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 2, 2).unwrap();
         assert_eq!(results.len(), 2);
 
         // Third page (only 1 remaining)
-        let results = list_by_user(&conn, user_id, &filter, 2, 4).unwrap();
+        let results = list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 2, 4).unwrap();
         assert_eq!(results.len(), 1);
 
         // Count should be 5

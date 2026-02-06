@@ -6,9 +6,10 @@ use axum::{
 };
 
 use crate::config::DEFAULT_USER_AGENT;
+use crate::error::AppError;
 use crate::middleware::auth::{PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
-use crate::models::entry;
+use crate::models::{category, entry, feed};
 use crate::models::user_settings;
 use crate::AppState;
 
@@ -531,4 +532,264 @@ pub async fn settings_page(
             multi_user_enabled: state.config.multi_user_enabled,
         },
     )
+}
+
+// Archive entries pages (read/starred/summarized)
+#[derive(Template)]
+#[template(path = "entries_archive.html")]
+pub struct ArchiveEntriesTemplate {
+    pub username: String,
+    pub is_admin: bool,
+    pub is_masquerading: bool,
+    pub flash_messages: Vec<FlashMessage>,
+    pub entries_per_page: i64,
+    pub page_mode: String,
+    pub page_title: String,
+}
+
+impl IntoResponse for ArchiveEntriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn read_entries_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, ArchiveEntriesTemplate) {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
+    let user_id = auth_user.user.id;
+    let entries_per_page = state
+        .db
+        .user(move |c| {
+            user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+        })
+        .await
+        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+
+    (
+        flash.clone(),
+        ArchiveEntriesTemplate {
+            username: auth_user.user.username,
+            is_admin,
+            is_masquerading,
+            flash_messages: flash.messages,
+            entries_per_page,
+            page_mode: "read".to_string(),
+            page_title: "Read Entries".to_string(),
+        },
+    )
+}
+
+pub async fn starred_entries_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, ArchiveEntriesTemplate) {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
+    let user_id = auth_user.user.id;
+    let entries_per_page = state
+        .db
+        .user(move |c| {
+            user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+        })
+        .await
+        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+
+    (
+        flash.clone(),
+        ArchiveEntriesTemplate {
+            username: auth_user.user.username,
+            is_admin,
+            is_masquerading,
+            flash_messages: flash.messages,
+            entries_per_page,
+            page_mode: "starred".to_string(),
+            page_title: "Starred Entries".to_string(),
+        },
+    )
+}
+
+pub async fn summarized_entries_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, ArchiveEntriesTemplate) {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
+    let user_id = auth_user.user.id;
+    let entries_per_page = state
+        .db
+        .user(move |c| {
+            user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+        })
+        .await
+        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+
+    (
+        flash.clone(),
+        ArchiveEntriesTemplate {
+            username: auth_user.user.username,
+            is_admin,
+            is_masquerading,
+            flash_messages: flash.messages,
+            entries_per_page,
+            page_mode: "summarized".to_string(),
+            page_title: "Summarized Entries".to_string(),
+        },
+    )
+}
+
+// Category entries page
+#[derive(Template)]
+#[template(path = "category_entries.html")]
+pub struct CategoryEntriesTemplate {
+    pub username: String,
+    pub is_admin: bool,
+    pub is_masquerading: bool,
+    pub flash_messages: Vec<FlashMessage>,
+    pub entries_per_page: i64,
+    pub category_id: i64,
+    pub category_name: String,
+}
+
+impl IntoResponse for CategoryEntriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn category_entries_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    flash: Flash,
+) -> Result<(Flash, CategoryEntriesTemplate), AppError> {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
+    let user_id = auth_user.user.id;
+    let (entries_per_page, category_name) = state
+        .db
+        .user(move |c| {
+            let cat = category::find_by_id_and_user(c, id, user_id)?
+                .ok_or(AppError::CategoryNotFound)?;
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            Ok::<_, AppError>((epp, cat.name))
+        })
+        .await??;
+
+    Ok((
+        flash.clone(),
+        CategoryEntriesTemplate {
+            username: auth_user.user.username,
+            is_admin,
+            is_masquerading,
+            flash_messages: flash.messages,
+            entries_per_page,
+            category_id: id,
+            category_name,
+        },
+    ))
+}
+
+// Feed entries page
+#[derive(Template)]
+#[template(path = "feed_entries.html")]
+pub struct FeedEntriesTemplate {
+    pub username: String,
+    pub is_admin: bool,
+    pub is_masquerading: bool,
+    pub flash_messages: Vec<FlashMessage>,
+    pub entries_per_page: i64,
+    pub feed_id: i64,
+    pub feed_title: String,
+    pub category_id: i64,
+    pub category_name: String,
+}
+
+impl IntoResponse for FeedEntriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn feed_entries_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    flash: Flash,
+) -> Result<(Flash, FeedEntriesTemplate), AppError> {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+
+    let user_id = auth_user.user.id;
+    let (entries_per_page, feed_title, category_id, category_name) = state
+        .db
+        .user(move |c| {
+            let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
+            let cat = category::find_by_id(c, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::FeedNotFound);
+            }
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let feed_title = f.title.unwrap_or_else(|| f.url.clone());
+            Ok::<_, AppError>((epp, feed_title, cat.id, cat.name))
+        })
+        .await??;
+
+    Ok((
+        flash.clone(),
+        FeedEntriesTemplate {
+            username: auth_user.user.username,
+            is_admin,
+            is_masquerading,
+            flash_messages: flash.messages,
+            entries_per_page,
+            feed_id: id,
+            feed_title,
+            category_id,
+            category_name,
+        },
+    ))
 }
