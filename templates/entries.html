@@ -558,6 +558,24 @@
 
     // Register keyboard handlers
     window.keyboard.init('list');
+    window.keyboard.setHelpItems([
+        { key: 'j', desc: 'Next entry' },
+        { key: 'k', desc: 'Previous entry' },
+        { key: 'g g', desc: 'First entry' },
+        { key: 'G', desc: 'Last entry' },
+        { key: 'n', desc: 'Next unread entry' },
+        { key: 'N', desc: 'Previous unread entry' },
+        { key: 'Enter / o', desc: 'Open entry' },
+        { key: 'v', desc: 'Open original in new tab' },
+        { key: 'm', desc: 'Toggle read/unread' },
+        { key: 's', desc: 'Toggle star' },
+        { key: 'r', desc: 'Refresh list' },
+        { key: '/', desc: 'Focus search box' },
+        { key: '1', desc: 'Go to All entries' },
+        { key: '2', desc: 'Go to Read entries' },
+        { key: '3', desc: 'Go to Starred entries' },
+        { key: '4', desc: 'Go to Summarized entries' },
+    ]);
     window.keyboard.registerHandlers({
         handleCombo: function(combo) {
             if (combo === 'g g') {

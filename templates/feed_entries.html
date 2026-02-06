@@ -461,6 +461,21 @@
     }
 
     window.keyboard.init('list');
+    window.keyboard.setHelpItems([
+        { key: 'j', desc: 'Next entry' },
+        { key: 'k', desc: 'Previous entry' },
+        { key: 'g g', desc: 'First entry' },
+        { key: 'G', desc: 'Last entry' },
+        { key: 'n', desc: 'Next unread entry' },
+        { key: 'N', desc: 'Previous unread entry' },
+        { key: 'Enter / o', desc: 'Open entry' },
+        { key: 'v', desc: 'Open original in new tab' },
+        { key: 'm', desc: 'Toggle read/unread' },
+        { key: 's', desc: 'Toggle star' },
+        { key: 'r', desc: 'Refresh list' },
+        { key: 'R', desc: 'Sync feed from source' },
+        { key: '/', desc: 'Focus search box' },
+    ]);
     window.keyboard.registerHandlers({
         handleCombo: function(combo) {
             if (combo === 'g g') {
