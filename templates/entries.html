@@ -604,6 +604,18 @@
                 case '/':
                     document.getElementById('filter-search').focus();
                     return true;
+                case '1':
+                    window.location.href = '/entries';
+                    return true;
+                case '2':
+                    window.location.href = '/entries/read';
+                    return true;
+                case '3':
+                    window.location.href = '/entries/starred';
+                    return true;
+                case '4':
+                    window.location.href = '/entries/summarized';
+                    return true;
             }
             return false;
         }
