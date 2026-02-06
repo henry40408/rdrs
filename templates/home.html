@@ -9,14 +9,20 @@
 {% call macros::nav("home", is_admin, is_masquerading, username) %}{% endcall %}
 
 <style>
-.filter-toggle {
+.mobile-toolbar {
     display: none;
     margin-top: 0;
     margin-bottom: var(--space-4);
 }
+.mobile-toolbar .refresh-collapsed {
+    display: none;
+}
 
 @media (max-width: 768px) {
-    .filter-toggle {
+    .mobile-toolbar {
+        display: block;
+    }
+    .mobile-toolbar.collapsed .refresh-collapsed {
         display: inline-block;
     }
     .filter-bar {
@@ -44,7 +50,10 @@
 <h1>Home</h1>
 
 <h2>Unread Entries</h2>
-<button type="button" id="filter-toggle" class="filter-toggle" onclick="toggleFilters()">[Filters]</button>
+<div class="mobile-toolbar" id="mobile-toolbar">
+    <button type="button" id="filter-toggle" onclick="toggleFilters()">[Filters]</button>
+    <button type="button" class="refresh-collapsed" onclick="loadEntries()">[Refresh]</button>
+</div>
 <div class="filter-bar">
     <div class="form-group form-group-inline">
         <label for="filter-sort">Sort Feeds</label>
@@ -113,11 +122,13 @@
 
     function setFiltersCollapsed(collapsed) {
         const bar = document.querySelector('.filter-bar');
-        const btn = document.getElementById('filter-toggle');
+        const toolbar = document.getElementById('mobile-toolbar');
         if (collapsed) {
             bar.classList.add('collapsed');
+            toolbar.classList.add('collapsed');
         } else {
             bar.classList.remove('collapsed');
+            toolbar.classList.remove('collapsed');
         }
         sessionStorage.setItem('filtersCollapsed', collapsed ? '1' : '0');
         updateFilterToggleLabel();
