@@ -362,6 +362,83 @@ async fn test_list_entries_starred_only() {
     assert_eq!(body["total"], 1);
 }
 
+#[tokio::test]
+async fn test_list_entries_read_only() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    // Mark first two entries as read
+    app.server
+        .put(&format!("/api/entries/{}/read", entry_ids[0]))
+        .await
+        .assert_status_ok();
+    app.server
+        .put(&format!("/api/entries/{}/read", entry_ids[1]))
+        .await
+        .assert_status_ok();
+
+    // Get read entries only
+    let response = app.server.get("/api/entries?read_only=true").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["total"], 2);
+}
+
+#[tokio::test]
+async fn test_list_entries_with_sort_read_at() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    // Mark entries as read in specific order
+    app.server
+        .put(&format!("/api/entries/{}/read", entry_ids[0]))
+        .await
+        .assert_status_ok();
+
+    // Get entries sorted by read_at
+    let response = app
+        .server
+        .get("/api/entries?read_only=true&sort=read_at")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["total"], 1);
+}
+
+#[tokio::test]
+async fn test_list_entries_with_sort_starred_at() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    // Star some entries
+    app.server
+        .put(&format!("/api/entries/{}/star", entry_ids[0]))
+        .await
+        .assert_status_ok();
+    app.server
+        .put(&format!("/api/entries/{}/star", entry_ids[1]))
+        .await
+        .assert_status_ok();
+
+    // Get entries sorted by starred_at
+    let response = app
+        .server
+        .get("/api/entries?starred_only=true&sort=starred_at")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["total"], 2);
+    // Entries should be returned (sorted by starred_at DESC)
+    let entries = body["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+}
+
 // ============================================================================
 // Mark All Read Tests
 // ============================================================================

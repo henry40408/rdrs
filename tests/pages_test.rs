@@ -620,3 +620,192 @@ async fn test_settings_page_with_custom_user_agent() {
     // Should show custom user agent
     assert!(body.contains("Custom-Agent/2.0"));
 }
+
+// ============================================================================
+// Archive Entry Pages Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_read_entries_page() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/entries/read").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Read Entries") || body.contains("read"));
+}
+
+#[tokio::test]
+async fn test_starred_entries_page() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/entries/starred").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Starred Entries") || body.contains("starred"));
+}
+
+#[tokio::test]
+async fn test_summarized_entries_page() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/entries/summarized").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Summarized Entries") || body.contains("summarized"));
+}
+
+#[tokio::test]
+async fn test_search_page() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/search").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Search") || body.contains("search"));
+}
+
+// ============================================================================
+// Category Entries Page Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_category_entries_page() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    // Create category
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Test Category"],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/categories/1/entries").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Test Category"));
+}
+
+#[tokio::test]
+async fn test_category_entries_page_not_found() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/categories/999/entries").await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_category_entries_page_other_user() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    // Create category for user 2
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![2, "User2 Category"],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    // Admin (user 1) should not see user 2's category
+    let response = app.server.get("/categories/1/entries").await;
+    response.assert_status_not_found();
+}
+
+// ============================================================================
+// Feed Entries Page Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_feed_entries_page() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    // Create category and feed
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Test Category"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/feed.xml", "Test Feed"],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/feeds/1/entries").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Test Feed"));
+    assert!(body.contains("Test Category"));
+}
+
+#[tokio::test]
+async fn test_feed_entries_page_not_found() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/feeds/999/entries").await;
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
+async fn test_feed_entries_page_other_user() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    // Create category and feed for user 2
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![2, "User2 Category"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/feed.xml", "User2 Feed"],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    // Admin (user 1) should not see user 2's feed
+    let response = app.server.get("/feeds/1/entries").await;
+    response.assert_status_not_found();
+}
