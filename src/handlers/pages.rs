@@ -736,6 +736,7 @@ pub struct FeedEntriesTemplate {
     pub entries_per_page: i64,
     pub feed_id: i64,
     pub feed_title: String,
+    pub feed_has_icon: bool,
     pub category_id: i64,
     pub category_name: String,
 }
@@ -763,7 +764,7 @@ pub async fn feed_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, feed_title, category_id, category_name) = state
+    let (entries_per_page, feed_title, feed_has_icon, category_id, category_name) = state
         .db
         .user(move |c| {
             let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
@@ -774,7 +775,14 @@ pub async fn feed_entries_page(
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
             let feed_title = f.title.unwrap_or_else(|| f.url.clone());
-            Ok::<_, AppError>((epp, feed_title, cat.id, cat.name))
+            let has_icon: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM image WHERE entity_type = 'feed' AND entity_id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            Ok::<_, AppError>((epp, feed_title, has_icon > 0, cat.id, cat.name))
         })
         .await??;
 
@@ -788,6 +796,7 @@ pub async fn feed_entries_page(
             entries_per_page,
             feed_id: id,
             feed_title,
+            feed_has_icon,
             category_id,
             category_name,
         },

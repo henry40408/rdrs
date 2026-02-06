@@ -26,7 +26,7 @@
     <a href="/feeds">[Feeds]</a> / <a href="/categories/{{ category_id }}/entries">{{ category_name }}</a> / {{ feed_title }}
 </div>
 
-<h1>{{ feed_title }}</h1>
+<h1>{% if feed_has_icon %}<img src="/api/feeds/{{ feed_id }}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">{% endif %}{{ feed_title }}</h1>
 
 <div class="filter-bar">
     <div class="form-group form-group-inline">
