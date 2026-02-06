@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% import "macros.html" as macros %}
 
-{% block title %}Unread - RDRS{% endblock %}
+{% block title %}{{ category_name }} - Entries - RDRS{% endblock %}
 
 {% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
 
 {% block content %}
-{% call macros::nav("home", is_admin, is_masquerading, username) %}{% endcall %}
+{% call macros::nav("categories", is_admin, is_masquerading, username) %}{% endcall %}
 
 <style>
 .entries-list-refreshing {
@@ -14,12 +14,30 @@
     opacity: 0.5;
     pointer-events: none;
 }
+.breadcrumb {
+    margin-bottom: var(--space-4);
+}
+.breadcrumb a {
+    color: inherit;
+}
 </style>
 
-<h1>Home</h1>
+<div class="breadcrumb">
+    <a href="/categories">[Categories]</a> / {{ category_name }}
+</div>
 
-<h2>Unread Entries</h2>
+<h1>{{ category_name }}</h1>
+
 <div class="filter-bar">
+    <div class="form-group form-group-inline">
+        <label for="filter-status">Status</label>
+        <select id="filter-status" onchange="handleFilterChange()">
+            <option value="">All</option>
+            <option value="unread">Unread</option>
+            <option value="read">Read</option>
+            <option value="starred">Starred</option>
+        </select>
+    </div>
     <div class="form-group form-group-inline">
         <label for="mark-read-age">Mark as Read</label>
         <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;">
@@ -36,6 +54,8 @@
     </div>
 </div>
 
+<hr>
+
 <div id="entries-list">
     <p class="muted">Loading...</p>
 </div>
@@ -44,23 +64,48 @@
     <button type="button" onclick="loadMore()">[Load More]</button>
 </div>
 
-<div id="mark-above-read" style="display:none; margin-top:1rem;">
-    <button type="button" onclick="markAboveAsRead()">[Mark Above as Read]</button>
-</div>
-
 <p id="entries-count" class="muted"></p>
 
 <script>
+    const categoryId = {{ category_id }};
     let entries = [];
     let currentOffset = 0;
     const limit = {{ entries_per_page }};
     let total = 0;
     let selectedIndex = -1;
 
+    function getApiParams() {
+        const params = new URLSearchParams();
+        params.set('category_id', categoryId);
+        params.set('limit', limit);
+        params.set('offset', currentOffset);
+
+        const status = document.getElementById('filter-status').value;
+        if (status === 'unread') params.set('unread_only', 'true');
+        else if (status === 'read') params.set('read_only', 'true');
+        else if (status === 'starred') params.set('starred_only', 'true');
+
+        return params.toString();
+    }
+
+    function updateURL() {
+        const params = new URLSearchParams();
+        const status = document.getElementById('filter-status').value;
+        if (status) params.set('status', status);
+        const newURL = params.toString()
+            ? `/categories/${categoryId}/entries?${params.toString()}`
+            : `/categories/${categoryId}/entries`;
+        history.replaceState(null, '', newURL);
+    }
+
+    function handleFilterChange() {
+        updateURL();
+        loadEntries();
+    }
+
     async function loadEntries(reset = true) {
         const container = document.getElementById('entries-list');
 
-        // Show refreshing state
         container.classList.add('entries-list-refreshing');
         if (window.loading) window.loading.start();
 
@@ -69,7 +114,7 @@
             entries = [];
         }
 
-        let url = `/api/entries?unread_only=true&limit=${limit}&offset=${currentOffset}`;
+        const url = `/api/entries?${getApiParams()}`;
 
         try {
             const response = await fetch(url);
@@ -87,7 +132,6 @@
 
             renderEntries();
             updateLoadMoreButton();
-            updateUnreadCount();
             updateEntriesCount();
         } catch (err) {
             document.getElementById('entries-list').innerHTML = '<p class="muted">[ERROR] Failed to load entries</p>';
@@ -101,8 +145,7 @@
         const container = document.getElementById('entries-list');
 
         if (entries.length === 0) {
-            container.innerHTML = '<p class="muted">No unread entries.</p>';
-            updateMarkAboveButton();
+            container.innerHTML = '<p class="muted">No entries found.</p>';
             return;
         }
 
@@ -111,6 +154,7 @@
             const feedTitle = decodeHtml(entry.feed_title) || entry.feed_url;
             const date = entry.published_at ? formatDate(entry.published_at) : '';
             const dateTitle = entry.published_at ? formatDateTime(entry.published_at) : '';
+            const isRead = entry.read_at !== null;
             const isStarred = entry.starred_at !== null;
             const summaryStatus = entry.summary_status;
             const feedIconHtml = entry.feed_has_icon
@@ -118,7 +162,6 @@
                 : '';
             const isSelected = index === selectedIndex;
 
-            // Determine summary badge based on status
             let summaryBadgeHtml = '';
             if (summaryStatus === 'completed') {
                 summaryBadgeHtml = '<span title="Has Summary" class="summary-badge">[S]</span>';
@@ -131,25 +174,26 @@
             }
 
             return `
-            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}">
+            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}"${isRead ? ' style="opacity:0.6;"' : ''}>
                 <div>
-                    <a href="/entries/${entry.id}" class="entry-item-title" onclick="openEntry(${entry.id}); return false;" style="font-weight:bold;">${escapeHtml(title)}</a>
+                    <a href="/entries/${entry.id}" class="entry-item-title" style="font-weight:${isRead ? 'normal' : 'bold'};">${escapeHtml(title)}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>
                 <div class="muted entry-item-meta">
-                    ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
+                    ${feedIconHtml}<a href="/feeds/${entry.feed_id}/entries">${escapeHtml(feedTitle)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
                 </div>
                 <div class="entry-item-actions">
-                    <a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>
+                    ${isRead
+                        ? `<a href="#" onclick="markEntryUnread(${entry.id}); return false;">[unread]</a>`
+                        : `<a href="#" onclick="markEntryRead(${entry.id}); return false;">[read]</a>`
+                    }
                     <a href="#" onclick="toggleStar(${entry.id}); return false;">[${isStarred ? 'unstar' : 'star'}]</a>
-                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markRead(${entry.id})">[original]</a>` : ''}
+                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markEntryRead(${entry.id})">[original]</a>` : ''}
                 </div>
             </div>
             `;
         }).join('');
-
-        updateMarkAboveButton();
     }
 
     function updateLoadMoreButton() {
@@ -161,23 +205,32 @@
         }
     }
 
+    function updateEntriesCount() {
+        document.getElementById('entries-count').textContent = `Showing ${entries.length} of ${total} entries`;
+    }
+
     async function loadMore() {
         currentOffset += limit;
         await loadEntries(false);
     }
 
-    async function markRead(id) {
+    async function markEntryRead(id) {
         try {
             const response = await fetch(`/api/entries/${id}/read`, { method: 'PUT' });
-            if (!response.ok) {
-                throw new Error('Failed to mark as read');
-            }
-            // Remove from list
-            entries = entries.filter(e => e.id !== id);
-            total--;
-            renderEntries();
-            updateLoadMoreButton();
-            updateUnreadCount();
+            if (!response.ok) throw new Error('Failed to mark as read');
+            const updated = await response.json();
+            updateEntryInList(id, updated);
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    async function markEntryUnread(id) {
+        try {
+            const response = await fetch(`/api/entries/${id}/unread`, { method: 'PUT' });
+            if (!response.ok) throw new Error('Failed to mark as unread');
+            const updated = await response.json();
+            updateEntryInList(id, updated);
         } catch (err) {
             flash.error(err.message);
         }
@@ -186,18 +239,20 @@
     async function toggleStar(id) {
         try {
             const response = await fetch(`/api/entries/${id}/star`, { method: 'PUT' });
-            if (!response.ok) {
-                throw new Error('Failed to toggle star');
-            }
+            if (!response.ok) throw new Error('Failed to toggle star');
             const updated = await response.json();
-            // Update in list
-            const idx = entries.findIndex(e => e.id === id);
-            if (idx >= 0) {
-                entries[idx].starred_at = updated.starred_at;
-                renderEntries();
-            }
+            updateEntryInList(id, updated);
         } catch (err) {
             flash.error(err.message);
+        }
+    }
+
+    function updateEntryInList(id, updated) {
+        const idx = entries.findIndex(e => e.id === id);
+        if (idx >= 0) {
+            entries[idx].read_at = updated.read_at;
+            entries[idx].starred_at = updated.starred_at;
+            renderEntries();
         }
     }
 
@@ -213,12 +268,12 @@
         };
         const ageLabel = ageLabels[age] || age;
 
-        if (!confirm(`Mark ${ageLabel} entries as read?`)) {
+        if (!confirm(`Mark ${ageLabel} entries in this category as read?`)) {
             return;
         }
 
         try {
-            const body = {};
+            const body = { category_id: categoryId };
             if (age !== 'all') {
                 body.older_than_days = parseInt(age);
             }
@@ -228,53 +283,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
             });
-            if (!response.ok) {
-                throw new Error('Failed to mark as read');
-            }
-            const result = await response.json();
-            flash.success(`Marked ${result.marked_count} entries as read.`);
-            loadEntries();
-        } catch (err) {
-            flash.error(err.message);
-        }
-    }
-
-    function updateUnreadCount() {
-        const el = document.getElementById('unread-count');
-        if (el) el.textContent = total;
-    }
-
-    function updateEntriesCount() {
-        document.getElementById('entries-count').textContent = `Showing ${entries.length} of ${total} entries`;
-    }
-
-    function updateMarkAboveButton() {
-        const btn = document.getElementById('mark-above-read');
-        if (entries.length > 0) {
-            btn.style.display = 'block';
-        } else {
-            btn.style.display = 'none';
-        }
-    }
-
-    async function markAboveAsRead() {
-        if (entries.length === 0) return;
-
-        if (!confirm(`Mark all ${entries.length} loaded entries as read?`)) {
-            return;
-        }
-
-        const entryIds = entries.map(e => e.id);
-
-        try {
-            const response = await fetch('/api/entries/mark-read-by-ids', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entry_ids: entryIds })
-            });
-            if (!response.ok) {
-                throw new Error('Failed to mark entries as read');
-            }
+            if (!response.ok) throw new Error('Failed to mark as read');
             const result = await response.json();
             flash.success(`Marked ${result.marked_count} entries as read.`);
             loadEntries();
@@ -290,7 +299,6 @@
         return div.innerHTML;
     }
 
-    // Decode HTML entities (e.g., &#x27; -> ')
     function decodeHtml(html) {
         if (!html) return '';
         const textarea = document.createElement('textarea');
@@ -308,26 +316,13 @@
         return date.toLocaleString();
     }
 
-    document.getElementById('entries-list').addEventListener('click', function(e) {
-        if (e.target.matches('[data-feed-id]')) {
-            e.preventDefault();
-            window.location.href = `/feeds/${e.target.dataset.feedId}/entries`;
-        }
-        if (e.target.matches('[data-category-id]')) {
-            e.preventDefault();
-            window.location.href = `/categories/${e.target.dataset.categoryId}/entries`;
-        }
-    });
-
-    // Keyboard navigation functions
+    // Keyboard navigation
     function selectEntry(index) {
         if (entries.length === 0) return;
 
-        // Clamp index to valid range
         if (index < 0) index = 0;
         if (index >= entries.length) index = entries.length - 1;
 
-        // Update selection
         const prevSelected = document.querySelector('.entry-item.selected');
         if (prevSelected) prevSelected.classList.remove('selected');
 
@@ -349,38 +344,29 @@
     function findNextUnread(direction) {
         if (entries.length === 0) return -1;
 
-        // In home page, all entries are unread, so just move in direction
         const start = selectedIndex < 0 ? (direction > 0 ? -1 : entries.length) : selectedIndex;
         let index = start + direction;
 
-        if (index >= 0 && index < entries.length) {
-            return index;
+        while (index >= 0 && index < entries.length) {
+            if (entries[index].read_at === null) {
+                return index;
+            }
+            index += direction;
         }
         return -1;
-    }
-
-    function openEntry(id) {
-        // Remove from list immediately so back button won't show it
-        entries = entries.filter(e => e.id !== id);
-        total--;
-        renderEntries();
-        updateLoadMoreButton();
-        updateUnreadCount();
-        // Navigate to entry page
-        window.location.href = `/entries/${id}`;
     }
 
     function openSelectedEntry() {
         const entry = getSelectedEntry();
         if (entry) {
-            openEntry(entry.id);
+            window.location.href = `/entries/${entry.id}`;
         }
     }
 
     function openOriginalLink() {
         const entry = getSelectedEntry();
         if (entry && entry.link) {
-            markRead(entry.id);
+            markEntryRead(entry.id);
             window.open(entry.link, '_blank', 'noopener,noreferrer');
         }
     }
@@ -388,13 +374,10 @@
     async function toggleSelectedRead() {
         const entry = getSelectedEntry();
         if (entry) {
-            await markRead(entry.id);
-            // After marking read, adjust selection
-            if (selectedIndex >= entries.length) {
-                selectedIndex = entries.length - 1;
-            }
-            if (entries.length > 0 && selectedIndex >= 0) {
-                selectEntry(selectedIndex);
+            if (entry.read_at === null) {
+                await markEntryRead(entry.id);
+            } else {
+                await markEntryUnread(entry.id);
             }
         }
     }
@@ -406,9 +389,12 @@
         }
     }
 
-    // Register keyboard handlers
     window.keyboard.init('list');
     window.keyboard.setHelpItems([
+        { key: '1', desc: 'Show all entries' },
+        { key: '2', desc: 'Show unread only' },
+        { key: '3', desc: 'Show read only' },
+        { key: '4', desc: 'Show starred only' },
         { key: 'j', desc: 'Next entry' },
         { key: 'k', desc: 'Previous entry' },
         { key: 'g g', desc: 'First entry' },
@@ -417,12 +403,12 @@
         { key: 'N', desc: 'Previous unread entry' },
         { key: 'Enter / o', desc: 'Open entry' },
         { key: 'v', desc: 'Open original in new tab' },
-        { key: 'm', desc: 'Mark as read' },
+        { key: 'm', desc: 'Toggle read/unread' },
         { key: 's', desc: 'Toggle star' },
         { key: 'r', desc: 'Refresh list' },
-        { key: 'A', desc: 'Mark above as read' },
-        { key: 'c', desc: 'Go to category page (requires selection)' },
+        { key: 'c', desc: 'Go to category page (current)' },
         { key: 'f', desc: 'Go to feed page (requires selection)' },
+        { key: 'x', desc: 'Go to home page' },
     ]);
     window.keyboard.registerHandlers({
         handleCombo: function(combo) {
@@ -434,6 +420,22 @@
         },
         handleKey: function(key, shiftKey) {
             switch (key) {
+                case '1':
+                    document.getElementById('filter-status').value = '';
+                    handleFilterChange();
+                    return true;
+                case '2':
+                    document.getElementById('filter-status').value = 'unread';
+                    handleFilterChange();
+                    return true;
+                case '3':
+                    document.getElementById('filter-status').value = 'read';
+                    handleFilterChange();
+                    return true;
+                case '4':
+                    document.getElementById('filter-status').value = 'starred';
+                    handleFilterChange();
+                    return true;
                 case 'j':
                     selectEntry(selectedIndex + 1);
                     return true;
@@ -467,14 +469,9 @@
                 case 'r':
                     loadEntries();
                     return true;
-                case 'A':
-                    markAboveAsRead();
-                    return true;
                 case 'c':
-                    const entryC = getSelectedEntry();
-                    if (entryC) {
-                        window.location.href = `/categories/${entryC.category_id}/entries`;
-                    }
+                    // Already on category page, refresh
+                    loadEntries();
                     return true;
                 case 'f':
                     const entryF = getSelectedEntry();
@@ -482,12 +479,21 @@
                         window.location.href = `/feeds/${entryF.feed_id}/entries`;
                     }
                     return true;
+                case 'x':
+                    window.location.href = '/';
+                    return true;
             }
             return false;
         }
     });
 
     // Initialize
-    loadEntries();
+    (function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const status = urlParams.get('status');
+        // Default to 'unread' if no status specified
+        document.getElementById('filter-status').value = status || 'unread';
+        loadEntries();
+    })();
 </script>
 {% endblock %}

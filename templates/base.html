@@ -351,7 +351,7 @@
             font-weight: bold;
         }
         .kb-help-close {
-            margin-top: 1rem;
+            margin-bottom: 1rem;
         }
         /* Selected entry highlight */
         .entry-item.selected {
@@ -475,10 +475,15 @@
             pendingTimeout: null,
             handlers: {},
             pageType: null,
+            helpItems: [],
 
             init: function(pageType) {
                 this.pageType = pageType;
                 document.addEventListener('keydown', this.handleKeyDown.bind(this));
+            },
+
+            setHelpItems: function(items) {
+                this.helpItems = items;
             },
 
             handleKeyDown: function(e) {
@@ -547,6 +552,7 @@
                 switch (combo) {
                     case 'g h': window.location.href = '/'; return true;
                     case 'g e': window.location.href = '/entries'; return true;
+                    case 'g s': window.location.href = '/search'; return true;
                 }
                 // Page-specific combo handlers
                 if (this.handlers.handleCombo) {
@@ -588,64 +594,39 @@
                 let html = '';
 
                 // Global shortcuts
-                html += '<h3>Global Navigation</h3><table>';
+                html += '<h3>Global</h3><table>';
                 html += '<tr><td>g h</td><td>Go to Home</td></tr>';
                 html += '<tr><td>g e</td><td>Go to Entries</td></tr>';
+                html += '<tr><td>g s</td><td>Go to Search</td></tr>';
                 html += '<tr><td>?</td><td>Toggle this help</td></tr>';
+                html += '<tr><td>Esc</td><td>Close help / Blur input</td></tr>';
                 html += '</table>';
 
-                // Page-specific shortcuts
-                if (this.pageType === 'list') {
-                    html += '<h3>List Navigation</h3><table>';
-                    html += '<tr><td>j</td><td>Next entry</td></tr>';
-                    html += '<tr><td>k</td><td>Previous entry</td></tr>';
-                    html += '<tr><td>g g</td><td>First entry</td></tr>';
-                    html += '<tr><td>G</td><td>Last entry</td></tr>';
-                    html += '<tr><td>n</td><td>Next unread entry</td></tr>';
-                    html += '<tr><td>N</td><td>Previous unread entry</td></tr>';
-                    html += '<tr><td>Enter / o</td><td>Open entry</td></tr>';
-                    html += '<tr><td>v</td><td>Open original in new tab</td></tr>';
-                    html += '<tr><td>m</td><td>Toggle read/unread</td></tr>';
-                    html += '<tr><td>s</td><td>Toggle star</td></tr>';
-                    html += '<tr><td>r</td><td>Refresh list</td></tr>';
-                    html += '<tr><td>x</td><td>Reset filters</td></tr>';
-                    html += '<tr><td>A</td><td>Mark above as read</td></tr>';
-                    html += '<tr><td>c</td><td>Filter by selected entry\'s category</td></tr>';
-                    html += '<tr><td>f</td><td>Filter by selected entry\'s feed</td></tr>';
-                    html += '<tr><td>S</td><td>Focus sort selector</td></tr>';
-                    html += '<tr><td>C</td><td>Focus category selector</td></tr>';
-                    html += '<tr><td>F</td><td>Focus feed selector</td></tr>';
-                    html += '<tr><td>Esc</td><td>Blur selector</td></tr>';
-                    html += '<tr><td>/</td><td>Focus search box</td></tr>';
-                    html += '</table>';
-                } else if (this.pageType === 'entry') {
-                    html += '<h3>Entry View</h3><table>';
-                    html += '<tr><td>j</td><td>Scroll down</td></tr>';
-                    html += '<tr><td>k</td><td>Scroll up</td></tr>';
-                    html += '<tr><td>g g</td><td>Scroll to top</td></tr>';
-                    html += '<tr><td>G</td><td>Scroll to bottom</td></tr>';
-                    html += '<tr><td>n</td><td>Next entry</td></tr>';
-                    html += '<tr><td>N</td><td>Next unread entry</td></tr>';
-                    html += '<tr><td>p</td><td>Previous entry</td></tr>';
-                    html += '<tr><td>P</td><td>Previous unread entry</td></tr>';
-                    html += '<tr><td>u</td><td>Mark as unread</td></tr>';
-                    html += '<tr><td>s</td><td>Toggle star</td></tr>';
-                    html += '<tr><td>v</td><td>Open original in new tab</td></tr>';
-                    html += '<tr><td>f</td><td>Toggle full content</td></tr>';
-                    html += '<tr><td>b</td><td>Save to bookmarks</td></tr>';
-                    html += '<tr><td>z</td><td>Toggle Kagi summary</td></tr>';
-                    html += '<tr><td>Esc / q</td><td>Back to list</td></tr>';
+                // Page-specific shortcuts from helpItems
+                if (this.helpItems.length > 0) {
+                    html += '<h3>Page Shortcuts</h3><table>';
+                    this.helpItems.forEach(function(item) {
+                        html += '<tr><td>' + item.key + '</td><td>' + item.desc + '</td></tr>';
+                    });
                     html += '</table>';
                 }
 
                 content.innerHTML = html;
-                document.getElementById('kb-help-overlay').classList.add('visible');
+                overlay.classList.add('visible');
+
+                // Focus on close button
+                const closeBtn = document.querySelector('.kb-help-close');
+                if (closeBtn) closeBtn.focus();
             },
 
             hideHelp: function() {
                 const overlay = document.getElementById('kb-help-overlay');
                 if (overlay) {
                     overlay.classList.remove('visible');
+                    // Remove focus
+                    if (document.activeElement) {
+                        document.activeElement.blur();
+                    }
                 }
             }
         };
@@ -656,11 +637,11 @@
     {% block flash %}{% endblock %}
     {% block content %}{% endblock %}
     <!-- Keyboard shortcut help modal -->
-    <div class="kb-help-overlay" id="kb-help-overlay" onclick="if(event.target===this)window.keyboard.hideHelp()">
+    <div class="kb-help-overlay" id="kb-help-overlay" onclick="if(event.target===this)window.keyboard.hideHelp()" onkeydown="if(event.key==='Escape')window.keyboard.hideHelp()">
         <div class="kb-help-modal">
             <h2>Keyboard Shortcuts [?]</h2>
-            <div id="kb-help-content"></div>
             <button class="kb-help-close" onclick="window.keyboard.hideHelp()">[Close]</button>
+            <div id="kb-help-content"></div>
         </div>
     </div>
 

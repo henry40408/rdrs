@@ -348,7 +348,7 @@
                 <td${hasError ? ' style="border-bottom:none;"' : ''}>${unreadCount > 0 ? `<strong>${unreadCount}</strong>` : '0'}</td>
                 <td${hasError ? ' style="border-bottom:none;"' : ''}>${fetchedAt ? `<span title="${fetchedAtTitle}">${fetchedAt}</span>` : 'Never'}</td>
                 <td class="actions"${hasError ? ' style="border-bottom:none;"' : ''}>
-                    <a href="/entries?feed=${feed.id}">[entries]</a>
+                    <a href="/feeds/${feed.id}/entries">[entries]</a>
                     <a href="#" onclick="refreshFeed(${feed.id}); return false;" id="refresh-${feed.id}">[refresh]</a>
                     <a href="#" onclick="editFeed(${feed.id}); return false;">[edit]</a>
                     <a href="#" onclick="deleteFeed(${feed.id}, '${escapeHtml(title).replace(/'/g, "\\'")}'); return false;">[delete]</a>

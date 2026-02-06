@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% import "macros.html" as macros %}
 
-{% block title %}Unread - RDRS{% endblock %}
+{% block title %}Search - RDRS{% endblock %}
 
 {% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
 
 {% block content %}
-{% call macros::nav("home", is_admin, is_masquerading, username) %}{% endcall %}
+{% call macros::nav("search", is_admin, is_masquerading, username) %}{% endcall %}
 
 <style>
 .entries-list-refreshing {
@@ -16,36 +16,27 @@
 }
 </style>
 
-<h1>Home</h1>
+<h1>Search</h1>
 
-<h2>Unread Entries</h2>
 <div class="filter-bar">
     <div class="form-group form-group-inline">
-        <label for="mark-read-age">Mark as Read</label>
-        <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;">
-            <option value="">Select...</option>
-            <option value="1">Older than 1 day</option>
-            <option value="7">Older than 1 week</option>
-            <option value="30">Older than 1 month</option>
-            <option value="365">Older than 1 year</option>
-            <option value="all">All entries</option>
-        </select>
+        <label for="filter-search">Query</label>
+        <input type="text" id="filter-search" placeholder="Enter search term..."
+               style="width:20em;" onkeydown="handleSearchKeydown(event)" autofocus>
     </div>
     <div>
-        <button type="button" onclick="loadEntries()">[Refresh]</button>
+        <button type="button" onclick="loadEntries()">[Search]</button>
     </div>
 </div>
 
+<hr>
+
 <div id="entries-list">
-    <p class="muted">Loading...</p>
+    <p class="muted">Enter a search term and press Enter to search.</p>
 </div>
 
 <div id="load-more" style="display:none; margin-top:1rem;">
     <button type="button" onclick="loadMore()">[Load More]</button>
-</div>
-
-<div id="mark-above-read" style="display:none; margin-top:1rem;">
-    <button type="button" onclick="markAboveAsRead()">[Mark Above as Read]</button>
 </div>
 
 <p id="entries-count" class="muted"></p>
@@ -56,11 +47,20 @@
     const limit = {{ entries_per_page }};
     let total = 0;
     let selectedIndex = -1;
+    let hasSearched = false;
 
     async function loadEntries(reset = true) {
+        const search = document.getElementById('filter-search').value.trim();
+        if (!search) {
+            document.getElementById('entries-list').innerHTML = '<p class="muted">Enter a search term and press Enter to search.</p>';
+            document.getElementById('entries-count').textContent = '';
+            document.getElementById('load-more').style.display = 'none';
+            return;
+        }
+
+        hasSearched = true;
         const container = document.getElementById('entries-list');
 
-        // Show refreshing state
         container.classList.add('entries-list-refreshing');
         if (window.loading) window.loading.start();
 
@@ -69,7 +69,12 @@
             entries = [];
         }
 
-        let url = `/api/entries?unread_only=true&limit=${limit}&offset=${currentOffset}`;
+        const params = new URLSearchParams();
+        params.set('limit', limit);
+        params.set('offset', currentOffset);
+        params.set('search', search);
+
+        const url = `/api/entries?${params.toString()}`;
 
         try {
             const response = await fetch(url);
@@ -87,8 +92,8 @@
 
             renderEntries();
             updateLoadMoreButton();
-            updateUnreadCount();
             updateEntriesCount();
+            updateURL();
         } catch (err) {
             document.getElementById('entries-list').innerHTML = '<p class="muted">[ERROR] Failed to load entries</p>';
         } finally {
@@ -99,10 +104,10 @@
 
     function renderEntries() {
         const container = document.getElementById('entries-list');
+        const search = document.getElementById('filter-search').value.trim();
 
         if (entries.length === 0) {
-            container.innerHTML = '<p class="muted">No unread entries.</p>';
-            updateMarkAboveButton();
+            container.innerHTML = '<p class="muted">No entries found.</p>';
             return;
         }
 
@@ -111,14 +116,15 @@
             const feedTitle = decodeHtml(entry.feed_title) || entry.feed_url;
             const date = entry.published_at ? formatDate(entry.published_at) : '';
             const dateTitle = entry.published_at ? formatDateTime(entry.published_at) : '';
+            const isRead = entry.read_at !== null;
             const isStarred = entry.starred_at !== null;
             const summaryStatus = entry.summary_status;
             const feedIconHtml = entry.feed_has_icon
                 ? `<img src="/api/feeds/${entry.feed_id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
                 : '';
             const isSelected = index === selectedIndex;
+            const titleHtml = search ? highlightText(title, search) : escapeHtml(title);
 
-            // Determine summary badge based on status
             let summaryBadgeHtml = '';
             if (summaryStatus === 'completed') {
                 summaryBadgeHtml = '<span title="Has Summary" class="summary-badge">[S]</span>';
@@ -130,26 +136,35 @@
                 summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">[F]</span>';
             }
 
+            let contentSnippetHtml = '';
+            if (search && entry.content) {
+                const snippet = getContentSnippet(entry.content, search);
+                if (snippet) {
+                    contentSnippetHtml = `<div class="muted" style="font-size:0.8rem; margin-top:0.4rem; font-style:italic;">${highlightText(snippet, search)}</div>`;
+                }
+            }
+
             return `
-            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}">
+            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}"${isRead ? ' style="opacity:0.6;"' : ''}>
                 <div>
-                    <a href="/entries/${entry.id}" class="entry-item-title" onclick="openEntry(${entry.id}); return false;" style="font-weight:bold;">${escapeHtml(title)}</a>
+                    <a href="/entries/${entry.id}" class="entry-item-title" style="font-weight:${isRead ? 'normal' : 'bold'};">${titleHtml}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
-                </div>
+                </div>${contentSnippetHtml}
                 <div class="muted entry-item-meta">
-                    ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
+                    ${feedIconHtml}<a href="/feeds/${entry.feed_id}/entries">${escapeHtml(feedTitle)}</a> &middot; <a href="/categories/${entry.category_id}/entries">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
                 </div>
                 <div class="entry-item-actions">
-                    <a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>
+                    ${isRead
+                        ? `<a href="#" onclick="markUnread(${entry.id}); return false;">[unread]</a>`
+                        : `<a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>`
+                    }
                     <a href="#" onclick="toggleStar(${entry.id}); return false;">[${isStarred ? 'unstar' : 'star'}]</a>
                     ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markRead(${entry.id})">[original]</a>` : ''}
                 </div>
             </div>
             `;
         }).join('');
-
-        updateMarkAboveButton();
     }
 
     function updateLoadMoreButton() {
@@ -161,6 +176,20 @@
         }
     }
 
+    function updateEntriesCount() {
+        if (hasSearched) {
+            document.getElementById('entries-count').textContent = `Showing ${entries.length} of ${total} entries`;
+        }
+    }
+
+    function updateURL() {
+        const search = document.getElementById('filter-search').value.trim();
+        const params = new URLSearchParams();
+        if (search) params.set('q', search);
+        const newURL = params.toString() ? `/search?${params.toString()}` : '/search';
+        history.replaceState(null, '', newURL);
+    }
+
     async function loadMore() {
         currentOffset += limit;
         await loadEntries(false);
@@ -169,15 +198,20 @@
     async function markRead(id) {
         try {
             const response = await fetch(`/api/entries/${id}/read`, { method: 'PUT' });
-            if (!response.ok) {
-                throw new Error('Failed to mark as read');
-            }
-            // Remove from list
-            entries = entries.filter(e => e.id !== id);
-            total--;
-            renderEntries();
-            updateLoadMoreButton();
-            updateUnreadCount();
+            if (!response.ok) throw new Error('Failed to mark as read');
+            const updated = await response.json();
+            updateEntryInList(id, updated);
+        } catch (err) {
+            flash.error(err.message);
+        }
+    }
+
+    async function markUnread(id) {
+        try {
+            const response = await fetch(`/api/entries/${id}/unread`, { method: 'PUT' });
+            if (!response.ok) throw new Error('Failed to mark as unread');
+            const updated = await response.json();
+            updateEntryInList(id, updated);
         } catch (err) {
             flash.error(err.message);
         }
@@ -186,100 +220,20 @@
     async function toggleStar(id) {
         try {
             const response = await fetch(`/api/entries/${id}/star`, { method: 'PUT' });
-            if (!response.ok) {
-                throw new Error('Failed to toggle star');
-            }
+            if (!response.ok) throw new Error('Failed to toggle star');
             const updated = await response.json();
-            // Update in list
-            const idx = entries.findIndex(e => e.id === id);
-            if (idx >= 0) {
-                entries[idx].starred_at = updated.starred_at;
-                renderEntries();
-            }
+            updateEntryInList(id, updated);
         } catch (err) {
             flash.error(err.message);
         }
     }
 
-    async function markAsRead(age) {
-        if (!age) return;
-
-        const ageLabels = {
-            '1': 'older than 1 day',
-            '7': 'older than 1 week',
-            '30': 'older than 1 month',
-            '365': 'older than 1 year',
-            'all': 'all'
-        };
-        const ageLabel = ageLabels[age] || age;
-
-        if (!confirm(`Mark ${ageLabel} entries as read?`)) {
-            return;
-        }
-
-        try {
-            const body = {};
-            if (age !== 'all') {
-                body.older_than_days = parseInt(age);
-            }
-
-            const response = await fetch('/api/entries/mark-all-read', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-            if (!response.ok) {
-                throw new Error('Failed to mark as read');
-            }
-            const result = await response.json();
-            flash.success(`Marked ${result.marked_count} entries as read.`);
-            loadEntries();
-        } catch (err) {
-            flash.error(err.message);
-        }
-    }
-
-    function updateUnreadCount() {
-        const el = document.getElementById('unread-count');
-        if (el) el.textContent = total;
-    }
-
-    function updateEntriesCount() {
-        document.getElementById('entries-count').textContent = `Showing ${entries.length} of ${total} entries`;
-    }
-
-    function updateMarkAboveButton() {
-        const btn = document.getElementById('mark-above-read');
-        if (entries.length > 0) {
-            btn.style.display = 'block';
-        } else {
-            btn.style.display = 'none';
-        }
-    }
-
-    async function markAboveAsRead() {
-        if (entries.length === 0) return;
-
-        if (!confirm(`Mark all ${entries.length} loaded entries as read?`)) {
-            return;
-        }
-
-        const entryIds = entries.map(e => e.id);
-
-        try {
-            const response = await fetch('/api/entries/mark-read-by-ids', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entry_ids: entryIds })
-            });
-            if (!response.ok) {
-                throw new Error('Failed to mark entries as read');
-            }
-            const result = await response.json();
-            flash.success(`Marked ${result.marked_count} entries as read.`);
-            loadEntries();
-        } catch (err) {
-            flash.error(err.message);
+    function updateEntryInList(id, updated) {
+        const idx = entries.findIndex(e => e.id === id);
+        if (idx >= 0) {
+            entries[idx].read_at = updated.read_at;
+            entries[idx].starred_at = updated.starred_at;
+            renderEntries();
         }
     }
 
@@ -290,7 +244,31 @@
         return div.innerHTML;
     }
 
-    // Decode HTML entities (e.g., &#x27; -> ')
+    function highlightText(text, search) {
+        if (!search || !text) return escapeHtml(text);
+        const escaped = escapeHtml(text);
+        const searchEscaped = escapeHtml(search);
+        const regex = new RegExp(`(${searchEscaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+        return escaped.replace(regex, '<span class="search-highlight">$1</span>');
+    }
+
+    function getContentSnippet(content, search, maxLen = 80) {
+        if (!content || !search) return null;
+        const text = content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        const lowerText = text.toLowerCase();
+        const lowerSearch = search.toLowerCase();
+        const idx = lowerText.indexOf(lowerSearch);
+        if (idx === -1) return null;
+
+        const contextBefore = 30;
+        const start = Math.max(0, idx - contextBefore);
+        const end = Math.min(text.length, idx + search.length + (maxLen - contextBefore));
+        let snippet = text.substring(start, end);
+        if (start > 0) snippet = '...' + snippet;
+        if (end < text.length) snippet = snippet + '...';
+        return snippet;
+    }
+
     function decodeHtml(html) {
         if (!html) return '';
         const textarea = document.createElement('textarea');
@@ -308,26 +286,23 @@
         return date.toLocaleString();
     }
 
-    document.getElementById('entries-list').addEventListener('click', function(e) {
-        if (e.target.matches('[data-feed-id]')) {
-            e.preventDefault();
-            window.location.href = `/feeds/${e.target.dataset.feedId}/entries`;
+    function handleSearchKeydown(event) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            loadEntries();
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            event.target.blur();
         }
-        if (e.target.matches('[data-category-id]')) {
-            e.preventDefault();
-            window.location.href = `/categories/${e.target.dataset.categoryId}/entries`;
-        }
-    });
+    }
 
-    // Keyboard navigation functions
+    // Keyboard navigation
     function selectEntry(index) {
         if (entries.length === 0) return;
 
-        // Clamp index to valid range
         if (index < 0) index = 0;
         if (index >= entries.length) index = entries.length - 1;
 
-        // Update selection
         const prevSelected = document.querySelector('.entry-item.selected');
         if (prevSelected) prevSelected.classList.remove('selected');
 
@@ -349,31 +324,22 @@
     function findNextUnread(direction) {
         if (entries.length === 0) return -1;
 
-        // In home page, all entries are unread, so just move in direction
         const start = selectedIndex < 0 ? (direction > 0 ? -1 : entries.length) : selectedIndex;
         let index = start + direction;
 
-        if (index >= 0 && index < entries.length) {
-            return index;
+        while (index >= 0 && index < entries.length) {
+            if (entries[index].read_at === null) {
+                return index;
+            }
+            index += direction;
         }
         return -1;
-    }
-
-    function openEntry(id) {
-        // Remove from list immediately so back button won't show it
-        entries = entries.filter(e => e.id !== id);
-        total--;
-        renderEntries();
-        updateLoadMoreButton();
-        updateUnreadCount();
-        // Navigate to entry page
-        window.location.href = `/entries/${id}`;
     }
 
     function openSelectedEntry() {
         const entry = getSelectedEntry();
         if (entry) {
-            openEntry(entry.id);
+            window.location.href = `/entries/${entry.id}`;
         }
     }
 
@@ -388,13 +354,10 @@
     async function toggleSelectedRead() {
         const entry = getSelectedEntry();
         if (entry) {
-            await markRead(entry.id);
-            // After marking read, adjust selection
-            if (selectedIndex >= entries.length) {
-                selectedIndex = entries.length - 1;
-            }
-            if (entries.length > 0 && selectedIndex >= 0) {
-                selectEntry(selectedIndex);
+            if (entry.read_at === null) {
+                await markRead(entry.id);
+            } else {
+                await markUnread(entry.id);
             }
         }
     }
@@ -406,7 +369,6 @@
         }
     }
 
-    // Register keyboard handlers
     window.keyboard.init('list');
     window.keyboard.setHelpItems([
         { key: 'j', desc: 'Next entry' },
@@ -417,12 +379,12 @@
         { key: 'N', desc: 'Previous unread entry' },
         { key: 'Enter / o', desc: 'Open entry' },
         { key: 'v', desc: 'Open original in new tab' },
-        { key: 'm', desc: 'Mark as read' },
+        { key: 'm', desc: 'Toggle read/unread' },
         { key: 's', desc: 'Toggle star' },
-        { key: 'r', desc: 'Refresh list' },
-        { key: 'A', desc: 'Mark above as read' },
-        { key: 'c', desc: 'Go to category page (requires selection)' },
-        { key: 'f', desc: 'Go to feed page (requires selection)' },
+        { key: 'r', desc: 'Re-run search' },
+        { key: '/', desc: 'Focus search box' },
+        { key: 'c', desc: 'Go to category page' },
+        { key: 'f', desc: 'Go to feed page' },
     ]);
     window.keyboard.registerHandlers({
         handleCombo: function(combo) {
@@ -467,8 +429,8 @@
                 case 'r':
                     loadEntries();
                     return true;
-                case 'A':
-                    markAboveAsRead();
+                case '/':
+                    document.getElementById('filter-search').focus();
                     return true;
                 case 'c':
                     const entryC = getSelectedEntry();
@@ -487,7 +449,14 @@
         }
     });
 
-    // Initialize
-    loadEntries();
+    // Initialize from URL
+    (function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const query = urlParams.get('q');
+        if (query) {
+            document.getElementById('filter-search').value = query;
+            loadEntries();
+        }
+    })();
 </script>
 {% endblock %}
