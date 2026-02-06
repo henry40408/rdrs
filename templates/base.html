@@ -351,7 +351,7 @@
             font-weight: bold;
         }
         .kb-help-close {
-            margin-top: 1rem;
+            margin-bottom: 1rem;
         }
         /* Selected entry highlight */
         .entry-item.selected {
@@ -640,8 +640,8 @@
     <div class="kb-help-overlay" id="kb-help-overlay" onclick="if(event.target===this)window.keyboard.hideHelp()" onkeydown="if(event.key==='Escape')window.keyboard.hideHelp()">
         <div class="kb-help-modal">
             <h2>Keyboard Shortcuts [?]</h2>
-            <div id="kb-help-content"></div>
             <button class="kb-help-close" onclick="window.keyboard.hideHelp()">[Close]</button>
+            <div id="kb-help-content"></div>
         </div>
     </div>
 
