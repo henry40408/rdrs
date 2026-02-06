@@ -9,8 +9,8 @@ use crate::config::DEFAULT_USER_AGENT;
 use crate::error::AppError;
 use crate::middleware::auth::{PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
-use crate::models::{category, entry, feed};
 use crate::models::user_settings;
+use crate::models::{category, entry, feed};
 use crate::AppState;
 
 #[derive(Template)]
@@ -703,8 +703,8 @@ pub async fn category_entries_page(
     let (entries_per_page, category_name) = state
         .db
         .user(move |c| {
-            let cat = category::find_by_id_and_user(c, id, user_id)?
-                .ok_or(AppError::CategoryNotFound)?;
+            let cat =
+                category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
             Ok::<_, AppError>((epp, cat.name))

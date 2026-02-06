@@ -90,7 +90,14 @@ pub async fn list_entries(
                 has_summary: query.has_summary,
             };
 
-            let entries = entry::list_by_user(conn, user_id, &filter, query.sort, query.limit, query.offset)?;
+            let entries = entry::list_by_user(
+                conn,
+                user_id,
+                &filter,
+                query.sort,
+                query.limit,
+                query.offset,
+            )?;
             let total = entry::count_by_user(conn, user_id, &filter)?;
 
             // Batch query summary statuses from DB
@@ -216,7 +223,14 @@ pub async fn list_feed_entries(
                 has_summary: query.has_summary,
             };
 
-            let entries = entry::list_by_user(conn, user_id, &filter, query.sort, query.limit, query.offset)?;
+            let entries = entry::list_by_user(
+                conn,
+                user_id,
+                &filter,
+                query.sort,
+                query.limit,
+                query.offset,
+            )?;
             let total = entry::count_by_user(conn, user_id, &filter)?;
 
             // Batch query summary statuses from DB
