@@ -366,6 +366,21 @@
         }
     }
 
+    function findNextUnread(direction) {
+        if (entries.length === 0) return -1;
+
+        const start = selectedIndex < 0 ? (direction > 0 ? -1 : entries.length) : selectedIndex;
+        let index = start + direction;
+
+        while (index >= 0 && index < entries.length) {
+            if (entries[index].read_at === null) {
+                return index;
+            }
+            index += direction;
+        }
+        return -1;
+    }
+
     window.keyboard.init('list');
     window.keyboard.registerHandlers({
         handleCombo: function(combo) {
@@ -385,6 +400,14 @@
                     return true;
                 case 'G':
                     if (entries.length > 0) selectEntry(entries.length - 1);
+                    return true;
+                case 'n':
+                    const nextUnread = findNextUnread(1);
+                    if (nextUnread >= 0) selectEntry(nextUnread);
+                    return true;
+                case 'N':
+                    const prevUnread = findNextUnread(-1);
+                    if (prevUnread >= 0) selectEntry(prevUnread);
                     return true;
                 case 'Enter':
                 case 'o':
