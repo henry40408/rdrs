@@ -99,7 +99,7 @@ async fn login(server: &TestServer, username: &str) {
 // ============================================================================
 
 #[tokio::test]
-async fn test_home_page_shows_unread_count() {
+async fn test_unread_page_shows_unread_count() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -138,7 +138,7 @@ async fn test_home_page_shows_unread_count() {
 }
 
 #[tokio::test]
-async fn test_home_page_while_masquerading() {
+async fn test_unread_page_while_masquerading() {
     let app = create_test_app(default_test_config());
     let (admin_id, user_id) = setup_users(&app.db).await;
 
@@ -470,7 +470,7 @@ async fn test_entry_page_shows_summarize_when_kagi_configured() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_regular_user_home_page_no_admin_link() {
+async fn test_regular_user_unread_page_no_admin_link() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
