@@ -343,12 +343,16 @@
   <button type="submit">[Save Preferences]</button>
 </form>
 <script>
-  // Preview theme immediately when changed (but don't save yet)
+  // Preview theme immediately when changed (without saving to localStorage)
   function previewTheme(theme) {
-      window.theme.set(theme);
+      if (theme === 'system' || !theme) {
+          document.documentElement.removeAttribute('data-theme');
+      } else {
+          document.documentElement.setAttribute('data-theme', theme);
+      }
   }
 
-  // Sync localStorage with server on page load
+  // Sync select with localStorage on page load
   document.addEventListener('DOMContentLoaded', function() {
       const select = document.getElementById('theme-select');
       const current = localStorage.getItem('rdrs-theme');
@@ -391,7 +395,8 @@
           return;
         }
 
-        // Save theme
+        // Save theme to localStorage and server
+        window.theme.set(theme);
         await window.theme.syncToServer(theme);
 
         flash.success("Preferences saved successfully.");
