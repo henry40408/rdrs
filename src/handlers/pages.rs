@@ -246,44 +246,50 @@ pub async fn user_settings_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, linkding_configured, linkding_api_url, kagi_configured, kagi_language, theme) =
-        state
-            .db
-            .user(move |c| {
-                let epp = user_settings::get_entries_per_page(c, user_id)
-                    .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+    let (
+        entries_per_page,
+        linkding_configured,
+        linkding_api_url,
+        kagi_configured,
+        kagi_language,
+        theme,
+    ) = state
+        .db
+        .user(move |c| {
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
 
-                let save_config =
-                    user_settings::get_save_services_config(c, user_id).unwrap_or_default();
+            let save_config =
+                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
 
-                let linkding = save_config.linkding.as_ref();
-                let linkding_configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
-                let api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
+            let linkding = save_config.linkding.as_ref();
+            let linkding_configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
+            let api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
 
-                let kagi = save_config.kagi.as_ref();
-                let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
-                let kagi_lang = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
+            let kagi = save_config.kagi.as_ref();
+            let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
+            let kagi_lang = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
 
-                let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
 
-                (
-                    epp,
-                    linkding_configured,
-                    api_url,
-                    kagi_configured,
-                    kagi_lang,
-                    theme,
-                )
-            })
-            .await
-            .unwrap_or((
-                user_settings::DEFAULT_ENTRIES_PER_PAGE,
-                false,
-                String::new(),
-                false,
-                String::new(),
-                None,
-            ));
+            (
+                epp,
+                linkding_configured,
+                api_url,
+                kagi_configured,
+                kagi_lang,
+                theme,
+            )
+        })
+        .await
+        .unwrap_or((
+            user_settings::DEFAULT_ENTRIES_PER_PAGE,
+            false,
+            String::new(),
+            false,
+            String::new(),
+            None,
+        ));
 
     (
         flash.clone(),

@@ -158,10 +158,7 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
     );
 
     // Migration: Add theme column if not exists
-    let _ = conn.execute(
-        "ALTER TABLE user_settings ADD COLUMN theme TEXT",
-        [],
-    );
+    let _ = conn.execute("ALTER TABLE user_settings ADD COLUMN theme TEXT", []);
 
     Ok(())
 }
