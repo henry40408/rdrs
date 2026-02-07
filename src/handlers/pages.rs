@@ -205,6 +205,7 @@ pub struct UserSettingsTemplate {
     pub linkding_api_url: String,
     pub kagi_configured: bool,
     pub kagi_language: String,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for UserSettingsTemplate {
@@ -229,7 +230,7 @@ pub async fn user_settings_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, linkding_configured, linkding_api_url, kagi_configured, kagi_language) =
+    let (entries_per_page, linkding_configured, linkding_api_url, kagi_configured, kagi_language, theme) =
         state
             .db
             .user(move |c| {
@@ -247,12 +248,15 @@ pub async fn user_settings_page(
                 let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
                 let kagi_lang = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
 
+                let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+
                 (
                     epp,
                     linkding_configured,
                     api_url,
                     kagi_configured,
                     kagi_lang,
+                    theme,
                 )
             })
             .await
@@ -262,6 +266,7 @@ pub async fn user_settings_page(
                 String::new(),
                 false,
                 String::new(),
+                None,
             ));
 
     (
@@ -282,6 +287,7 @@ pub async fn user_settings_page(
             linkding_api_url,
             kagi_configured,
             kagi_language,
+            theme,
         },
     )
 }

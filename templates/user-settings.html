@@ -325,6 +325,32 @@
 
 <h2>Display Preferences</h2>
 <div id="settings-error" class="error" style="display: none"></div>
+
+<div class="form-group">
+    <label for="theme-select">Theme</label>
+    <select id="theme-select" onchange="updateTheme(this.value)">
+        <option value="system" {% if theme.is_none() %}selected{% endif %}>System (auto)</option>
+        <option value="light" {% if theme == Some("light".to_string()) %}selected{% endif %}>Light</option>
+        <option value="dark" {% if theme == Some("dark".to_string()) %}selected{% endif %}>Dark</option>
+    </select>
+</div>
+
+<script>
+function updateTheme(theme) {
+    window.theme.set(theme);
+    window.theme.syncToServer(theme);
+}
+
+// Sync localStorage with server on page load
+document.addEventListener('DOMContentLoaded', function() {
+    const select = document.getElementById('theme-select');
+    const current = localStorage.getItem('rdrs-theme');
+    if (current) {
+        select.value = current;
+    }
+});
+</script>
+
 <form id="settings-form">
   <div class="form-group">
     <label for="entries-per-page">Entries per page</label>
@@ -382,7 +408,7 @@
   <a href="https://github.com/sissbruecker/linkding" target="_blank" rel="noopener noreferrer">Linkding</a>
   is a self-hosted bookmark manager.
   {% if linkding_configured %}
-  <span style="color: green;">[Configured]</span>
+  <span class="success-text">[Configured]</span>
   {% endif %}
 </p>
 <div id="linkding-error" class="error" style="display: none"></div>
@@ -479,7 +505,7 @@
   <a href="https://kagi.com/summarizer" target="_blank" rel="noopener noreferrer">Kagi Universal Summarizer</a>
   provides AI-powered article summaries.
   {% if kagi_configured %}
-  <span style="color: green;">[Configured]</span>
+  <span class="success-text">[Configured]</span>
   {% endif %}
 </p>
 <div id="kagi-error" class="error" style="display: none"></div>

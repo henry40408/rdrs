@@ -15,6 +15,7 @@ pub struct UserSettings {
     pub user_id: i64,
     pub entries_per_page: i64,
     pub save_services: Option<String>,
+    pub theme: Option<String>, // "dark", "light", or NULL (system)
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -45,14 +46,15 @@ fn parse_datetime(s: &str) -> DateTime<Utc> {
 }
 
 fn row_to_user_settings(row: &rusqlite::Row) -> rusqlite::Result<UserSettings> {
-    let created_at: String = row.get(4)?;
-    let updated_at: String = row.get(5)?;
+    let created_at: String = row.get(5)?;
+    let updated_at: String = row.get(6)?;
 
     Ok(UserSettings {
         id: row.get(0)?,
         user_id: row.get(1)?,
         entries_per_page: row.get(2)?,
         save_services: row.get(3)?,
+        theme: row.get(4)?,
         created_at: parse_datetime(&created_at),
         updated_at: parse_datetime(&updated_at),
     })
@@ -60,7 +62,7 @@ fn row_to_user_settings(row: &rusqlite::Row) -> rusqlite::Result<UserSettings> {
 
 pub fn find_by_user_id(conn: &Connection, user_id: i64) -> AppResult<Option<UserSettings>> {
     conn.query_row(
-        "SELECT id, user_id, entries_per_page, save_services, created_at, updated_at FROM user_settings WHERE user_id = ?1",
+        "SELECT id, user_id, entries_per_page, save_services, theme, created_at, updated_at FROM user_settings WHERE user_id = ?1",
         params![user_id],
         row_to_user_settings,
     )
@@ -135,6 +137,32 @@ pub fn update_save_services(
     find_by_user_id(conn, user_id)?.ok_or(AppError::Internal(
         "Failed to retrieve user settings after update".to_string(),
     ))
+}
+
+/// Get theme preference for a user
+pub fn get_theme(conn: &Connection, user_id: i64) -> AppResult<Option<String>> {
+    match find_by_user_id(conn, user_id)? {
+        Some(settings) => Ok(settings.theme),
+        None => Ok(None),
+    }
+}
+
+/// Update theme preference for a user
+pub fn update_theme(conn: &Connection, user_id: i64, theme: Option<String>) -> AppResult<()> {
+    // First ensure user_settings row exists
+    conn.execute(
+        "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)
+         ON CONFLICT(user_id) DO NOTHING",
+        params![user_id, DEFAULT_ENTRIES_PER_PAGE],
+    )?;
+
+    // Then update theme
+    conn.execute(
+        "UPDATE user_settings SET theme = ?1, updated_at = datetime('now') WHERE user_id = ?2",
+        params![theme, user_id],
+    )?;
+
+    Ok(())
 }
 
 #[cfg(test)]
