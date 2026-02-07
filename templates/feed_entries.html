@@ -409,7 +409,7 @@
         { key: 'm', desc: 'Mark read and next / Toggle unread' },
         { key: 's', desc: 'Toggle star' },
         { key: 'r', desc: 'Refresh list' },
-        { key: 'c', desc: 'Go to category page' },
+        { key: 'c / x', desc: 'Go to category page' },
         { key: 'f', desc: 'Refresh list (current feed)' },
     ]);
     window.keyboard.registerHandlers({
@@ -472,6 +472,7 @@
                     loadEntries();
                     return true;
                 case 'c':
+                case 'x':
                     window.location.href = `/categories/${categoryId}/entries`;
                     return true;
                 case 'f':
