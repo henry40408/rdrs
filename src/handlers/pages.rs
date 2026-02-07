@@ -101,6 +101,7 @@ pub struct HomeTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for HomeTemplate {
@@ -126,16 +127,17 @@ pub async fn home_page(
     };
 
     let user_id = auth_user.user.id;
-    let (unread_count, entries_per_page) = state
+    let (unread_count, entries_per_page, theme) = state
         .db
         .user(move |c| {
             let unread = entry::count_unread_by_user(c, user_id).unwrap_or(0);
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            (unread, epp)
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            (unread, epp, theme)
         })
         .await
-        .unwrap_or((0, user_settings::DEFAULT_ENTRIES_PER_PAGE));
+        .unwrap_or((0, user_settings::DEFAULT_ENTRIES_PER_PAGE, None));
 
     (
         flash.clone(),
@@ -152,6 +154,7 @@ pub async fn home_page(
             is_masquerading,
             flash_messages: flash.messages,
             entries_per_page,
+            theme,
         },
     )
 }
@@ -164,6 +167,7 @@ pub struct AdminTemplate {
     pub original_user_id: i64,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for AdminTemplate {
@@ -175,9 +179,20 @@ impl IntoResponse for AdminTemplate {
     }
 }
 
-pub async fn admin_page(admin: PageAdminUser, flash: Flash) -> (Flash, AdminTemplate) {
+pub async fn admin_page(
+    admin: PageAdminUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, AdminTemplate) {
     let is_masquerading = admin.session.is_masquerading();
     let original_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
+
+    let user_id = admin.user.id;
+    let theme = state
+        .db
+        .user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .await
+        .unwrap_or(None);
 
     (
         flash.clone(),
@@ -187,6 +202,7 @@ pub async fn admin_page(admin: PageAdminUser, flash: Flash) -> (Flash, AdminTemp
             original_user_id,
             is_masquerading,
             flash_messages: flash.messages,
+            theme,
         },
     )
 }
@@ -205,6 +221,7 @@ pub struct UserSettingsTemplate {
     pub linkding_api_url: String,
     pub kagi_configured: bool,
     pub kagi_language: String,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for UserSettingsTemplate {
@@ -229,40 +246,50 @@ pub async fn user_settings_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, linkding_configured, linkding_api_url, kagi_configured, kagi_language) =
-        state
-            .db
-            .user(move |c| {
-                let epp = user_settings::get_entries_per_page(c, user_id)
-                    .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+    let (
+        entries_per_page,
+        linkding_configured,
+        linkding_api_url,
+        kagi_configured,
+        kagi_language,
+        theme,
+    ) = state
+        .db
+        .user(move |c| {
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
 
-                let save_config =
-                    user_settings::get_save_services_config(c, user_id).unwrap_or_default();
+            let save_config =
+                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
 
-                let linkding = save_config.linkding.as_ref();
-                let linkding_configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
-                let api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
+            let linkding = save_config.linkding.as_ref();
+            let linkding_configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
+            let api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
 
-                let kagi = save_config.kagi.as_ref();
-                let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
-                let kagi_lang = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
+            let kagi = save_config.kagi.as_ref();
+            let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
+            let kagi_lang = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
 
-                (
-                    epp,
-                    linkding_configured,
-                    api_url,
-                    kagi_configured,
-                    kagi_lang,
-                )
-            })
-            .await
-            .unwrap_or((
-                user_settings::DEFAULT_ENTRIES_PER_PAGE,
-                false,
-                String::new(),
-                false,
-                String::new(),
-            ));
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+
+            (
+                epp,
+                linkding_configured,
+                api_url,
+                kagi_configured,
+                kagi_lang,
+                theme,
+            )
+        })
+        .await
+        .unwrap_or((
+            user_settings::DEFAULT_ENTRIES_PER_PAGE,
+            false,
+            String::new(),
+            false,
+            String::new(),
+            None,
+        ));
 
     (
         flash.clone(),
@@ -282,6 +309,7 @@ pub async fn user_settings_page(
             linkding_api_url,
             kagi_configured,
             kagi_language,
+            theme,
         },
     )
 }
@@ -293,6 +321,7 @@ pub struct CategoriesTemplate {
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for CategoriesTemplate {
@@ -304,13 +333,24 @@ impl IntoResponse for CategoriesTemplate {
     }
 }
 
-pub async fn categories_page(auth_user: PageAuthUser, flash: Flash) -> (Flash, CategoriesTemplate) {
+pub async fn categories_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, CategoriesTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
     let is_admin = if is_masquerading {
         auth_user.session.original_user_id.is_some()
     } else {
         auth_user.user.is_admin()
     };
+
+    let user_id = auth_user.user.id;
+    let theme = state
+        .db
+        .user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .await
+        .unwrap_or(None);
 
     (
         flash.clone(),
@@ -319,6 +359,7 @@ pub async fn categories_page(auth_user: PageAuthUser, flash: Flash) -> (Flash, C
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
+            theme,
         },
     )
 }
@@ -330,6 +371,7 @@ pub struct FeedsTemplate {
     pub is_admin: bool,
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for FeedsTemplate {
@@ -341,13 +383,24 @@ impl IntoResponse for FeedsTemplate {
     }
 }
 
-pub async fn feeds_page(auth_user: PageAuthUser, flash: Flash) -> (Flash, FeedsTemplate) {
+pub async fn feeds_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, FeedsTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
     let is_admin = if is_masquerading {
         auth_user.session.original_user_id.is_some()
     } else {
         auth_user.user.is_admin()
     };
+
+    let user_id = auth_user.user.id;
+    let theme = state
+        .db
+        .user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .await
+        .unwrap_or(None);
 
     (
         flash.clone(),
@@ -356,6 +409,7 @@ pub async fn feeds_page(auth_user: PageAuthUser, flash: Flash) -> (Flash, FeedsT
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
+            theme,
         },
     )
 }
@@ -368,6 +422,7 @@ pub struct EntriesTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for EntriesTemplate {
@@ -392,14 +447,16 @@ pub async fn entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let entries_per_page = state
+    let (entries_per_page, theme) = state
         .db
         .user(move |c| {
-            user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            (epp, theme)
         })
         .await
-        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, None));
 
     (
         flash.clone(),
@@ -409,6 +466,7 @@ pub async fn entries_page(
             is_masquerading,
             flash_messages: flash.messages,
             entries_per_page,
+            theme,
         },
     )
 }
@@ -423,6 +481,7 @@ pub struct EntryTemplate {
     pub flash_messages: Vec<FlashMessage>,
     pub has_save_services: bool,
     pub has_kagi_configured: bool,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for EntryTemplate {
@@ -448,7 +507,7 @@ pub async fn entry_page(
     };
 
     let user_id = auth_user.user.id;
-    let (has_save_services, has_kagi_configured) = state
+    let (has_save_services, has_kagi_configured, theme) = state
         .db
         .user(move |c| {
             let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
@@ -462,10 +521,12 @@ pub async fn entry_page(
                 .map(|c| c.is_configured())
                 .unwrap_or(false);
 
-            (save_services, kagi_configured)
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+
+            (save_services, kagi_configured, theme)
         })
         .await
-        .unwrap_or((false, false));
+        .unwrap_or((false, false, None));
 
     (
         flash.clone(),
@@ -477,6 +538,7 @@ pub async fn entry_page(
             flash_messages: flash.messages,
             has_save_services,
             has_kagi_configured,
+            theme,
         },
     )
 }
@@ -493,6 +555,7 @@ pub struct SettingsTemplate {
     pub user_agent_is_default: bool,
     pub signup_enabled: bool,
     pub multi_user_enabled: bool,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for SettingsTemplate {
@@ -518,6 +581,13 @@ pub async fn settings_page(
 
     let user_agent_is_default = state.config.user_agent == DEFAULT_USER_AGENT;
 
+    let user_id = auth_user.user.id;
+    let theme = state
+        .db
+        .user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .await
+        .unwrap_or(None);
+
     (
         flash.clone(),
         SettingsTemplate {
@@ -530,6 +600,7 @@ pub async fn settings_page(
             user_agent_is_default,
             signup_enabled: state.config.signup_enabled,
             multi_user_enabled: state.config.multi_user_enabled,
+            theme,
         },
     )
 }
@@ -545,6 +616,7 @@ pub struct ArchiveEntriesTemplate {
     pub entries_per_page: i64,
     pub page_mode: String,
     pub page_title: String,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for ArchiveEntriesTemplate {
@@ -569,14 +641,16 @@ pub async fn read_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let entries_per_page = state
+    let (entries_per_page, theme) = state
         .db
         .user(move |c| {
-            user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            (epp, theme)
         })
         .await
-        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, None));
 
     (
         flash.clone(),
@@ -588,6 +662,7 @@ pub async fn read_entries_page(
             entries_per_page,
             page_mode: "read".to_string(),
             page_title: "Read Entries".to_string(),
+            theme,
         },
     )
 }
@@ -605,14 +680,16 @@ pub async fn starred_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let entries_per_page = state
+    let (entries_per_page, theme) = state
         .db
         .user(move |c| {
-            user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            (epp, theme)
         })
         .await
-        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, None));
 
     (
         flash.clone(),
@@ -624,6 +701,7 @@ pub async fn starred_entries_page(
             entries_per_page,
             page_mode: "starred".to_string(),
             page_title: "Starred Entries".to_string(),
+            theme,
         },
     )
 }
@@ -641,14 +719,16 @@ pub async fn summarized_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let entries_per_page = state
+    let (entries_per_page, theme) = state
         .db
         .user(move |c| {
-            user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            (epp, theme)
         })
         .await
-        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, None));
 
     (
         flash.clone(),
@@ -660,6 +740,7 @@ pub async fn summarized_entries_page(
             entries_per_page,
             page_mode: "summarized".to_string(),
             page_title: "Summarized Entries".to_string(),
+            theme,
         },
     )
 }
@@ -675,6 +756,7 @@ pub struct CategoryEntriesTemplate {
     pub entries_per_page: i64,
     pub category_id: i64,
     pub category_name: String,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for CategoryEntriesTemplate {
@@ -700,14 +782,15 @@ pub async fn category_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, category_name) = state
+    let (entries_per_page, category_name, theme) = state
         .db
         .user(move |c| {
             let cat =
                 category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            Ok::<_, AppError>((epp, cat.name))
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            Ok::<_, AppError>((epp, cat.name, theme))
         })
         .await??;
 
@@ -721,6 +804,7 @@ pub async fn category_entries_page(
             entries_per_page,
             category_id: id,
             category_name,
+            theme,
         },
     ))
 }
@@ -734,6 +818,7 @@ pub struct SearchTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for SearchTemplate {
@@ -758,14 +843,16 @@ pub async fn search_page(
     };
 
     let user_id = auth_user.user.id;
-    let entries_per_page = state
+    let (entries_per_page, theme) = state
         .db
         .user(move |c| {
-            user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            (epp, theme)
         })
         .await
-        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, None));
 
     (
         flash.clone(),
@@ -775,6 +862,7 @@ pub async fn search_page(
             is_masquerading,
             flash_messages: flash.messages,
             entries_per_page,
+            theme,
         },
     )
 }
@@ -793,6 +881,7 @@ pub struct FeedEntriesTemplate {
     pub feed_has_icon: bool,
     pub category_id: i64,
     pub category_name: String,
+    pub theme: Option<String>,
 }
 
 impl IntoResponse for FeedEntriesTemplate {
@@ -818,7 +907,7 @@ pub async fn feed_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, feed_title, feed_has_icon, category_id, category_name) = state
+    let (entries_per_page, feed_title, feed_has_icon, category_id, category_name, theme) = state
         .db
         .user(move |c| {
             let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
@@ -836,7 +925,8 @@ pub async fn feed_entries_page(
                     |row| row.get(0),
                 )
                 .unwrap_or(0);
-            Ok::<_, AppError>((epp, feed_title, has_icon > 0, cat.id, cat.name))
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            Ok::<_, AppError>((epp, feed_title, has_icon > 0, cat.id, cat.name, theme))
         })
         .await??;
 
@@ -853,6 +943,7 @@ pub async fn feed_entries_page(
             feed_has_icon,
             category_id,
             category_name,
+            theme,
         },
     ))
 }

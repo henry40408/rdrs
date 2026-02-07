@@ -785,6 +785,116 @@ async fn test_update_kagi_settings_no_token() {
     response.assert_status_bad_request();
 }
 
+#[tokio::test]
+async fn test_get_theme_default() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server.get("/api/user/settings/theme").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["theme"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn test_get_theme_unauthorized() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/api/user/settings/theme").await;
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_update_theme_dark() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .put("/api/user/settings/theme")
+        .json(&json!({ "theme": "dark" }))
+        .await;
+
+    response.assert_status_ok();
+
+    // Verify the theme was saved
+    let response = server.get("/api/user/settings/theme").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["theme"], "dark");
+}
+
+#[tokio::test]
+async fn test_update_theme_light() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .put("/api/user/settings/theme")
+        .json(&json!({ "theme": "light" }))
+        .await;
+
+    response.assert_status_ok();
+
+    // Verify the theme was saved
+    let response = server.get("/api/user/settings/theme").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["theme"], "light");
+}
+
+#[tokio::test]
+async fn test_update_theme_system() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // First set a theme
+    server
+        .put("/api/user/settings/theme")
+        .json(&json!({ "theme": "dark" }))
+        .await
+        .assert_status_ok();
+
+    // Then reset to system (null)
+    let response = server
+        .put("/api/user/settings/theme")
+        .json(&json!({ "theme": null }))
+        .await;
+
+    response.assert_status_ok();
+
+    // Verify the theme was reset
+    let response = server.get("/api/user/settings/theme").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["theme"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn test_update_theme_invalid() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .put("/api/user/settings/theme")
+        .json(&json!({ "theme": "invalid-theme" }))
+        .await;
+
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn test_update_theme_unauthorized() {
+    let server = create_test_server(default_test_config());
+
+    let response = server
+        .put("/api/user/settings/theme")
+        .json(&json!({ "theme": "dark" }))
+        .await;
+
+    response.assert_status_unauthorized();
+}
+
 // ============================================================================
 // Page Handler Tests
 // ============================================================================

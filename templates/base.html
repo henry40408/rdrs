@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en"{% block html_attrs %}{% endblock %}>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -17,6 +17,58 @@
             --space-6: 1.5rem;    /* 24px */
             --space-8: 2rem;      /* 32px */
             --space-16: 4rem;     /* 64px */
+
+            /* Colors - Light theme */
+            --color-bg: #ffffff;
+            --color-bg-secondary: #f8f9fa;
+            --color-bg-tertiary: #f5f5f5;
+            --color-text: #111111;
+            --color-text-muted: #666666;
+            --color-border: #111111;
+            --color-border-light: #dddddd;
+            --color-accent: #0066cc;
+            --color-success: #22863a;
+            --color-error: #cc0000;
+            --color-button-bg: #111111;
+            --color-button-text: #ffffff;
+            --color-overlay: rgba(0, 0, 0, 0.5);
+            --color-highlight: #ffeb3b;
+        }
+
+        [data-theme="dark"] {
+            --color-bg: #1a1a1a;
+            --color-bg-secondary: #242424;
+            --color-bg-tertiary: #2d2d2d;
+            --color-text: #e5e5e5;
+            --color-text-muted: #a3a3a3;
+            --color-border: #404040;
+            --color-border-light: #333333;
+            --color-accent: #58a6ff;
+            --color-success: #3fb950;
+            --color-error: #f85149;
+            --color-button-bg: #e5e5e5;
+            --color-button-text: #1a1a1a;
+            --color-overlay: rgba(0, 0, 0, 0.7);
+            --color-highlight: #634d00;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme]) {
+                --color-bg: #1a1a1a;
+                --color-bg-secondary: #242424;
+                --color-bg-tertiary: #2d2d2d;
+                --color-text: #e5e5e5;
+                --color-text-muted: #a3a3a3;
+                --color-border: #404040;
+                --color-border-light: #333333;
+                --color-accent: #58a6ff;
+                --color-success: #3fb950;
+                --color-error: #f85149;
+                --color-button-bg: #e5e5e5;
+                --color-button-text: #1a1a1a;
+                --color-overlay: rgba(0, 0, 0, 0.7);
+                --color-highlight: #634d00;
+            }
         }
         * {
             box-sizing: border-box;
@@ -27,8 +79,8 @@
             font-family: "SF Mono", "Monaco", "Inconsolata", "Fira Mono", "Droid Sans Mono", "Source Code Pro", monospace;
             font-size: 14px;
             line-height: 1.6;
-            background-color: #fff;
-            color: #111;
+            background-color: var(--color-bg);
+            color: var(--color-text);
             padding: 2rem 4rem;
             max-width: 1200px;
             margin: 0 auto;
@@ -37,7 +89,7 @@
             font-size: 1rem;
             font-weight: normal;
             margin-bottom: 1.5rem;
-            border-bottom: 1px solid #111;
+            border-bottom: 1px solid var(--color-border);
             padding-bottom: 0.5rem;
         }
         h2 {
@@ -76,32 +128,34 @@
         input[type="number"] {
             width: 100%;
             padding: 0.5rem;
-            border: 1px solid #111;
+            border: 1px solid var(--color-border);
             font-family: inherit;
             font-size: inherit;
-            background: #fff;
+            background: var(--color-bg);
+            color: var(--color-text);
         }
         input:focus {
-            outline: 2px solid #111;
+            outline: 2px solid var(--color-border);
             outline-offset: 1px;
         }
         select {
             width: 100%;
             padding: 0.5rem;
-            border: 1px solid #111;
+            border: 1px solid var(--color-border);
             font-family: inherit;
             font-size: inherit;
-            background: #fff;
+            background: var(--color-bg);
+            color: var(--color-text);
         }
         select:focus {
-            outline: 2px solid #111;
+            outline: 2px solid var(--color-border);
             outline-offset: 1px;
         }
         button, .btn {
             padding: 0.5rem 1rem;
-            background: #111;
-            color: #fff;
-            border: 1px solid #111;
+            background: var(--color-button-bg);
+            color: var(--color-button-text);
+            border: 1px solid var(--color-border);
             font-family: inherit;
             font-size: inherit;
             cursor: pointer;
@@ -109,8 +163,8 @@
             text-decoration: none;
         }
         button:hover, .btn:hover {
-            background: #fff;
-            color: #111;
+            background: var(--color-bg);
+            color: var(--color-text);
         }
         .error {
             margin-bottom: 1rem;
@@ -119,11 +173,11 @@
             content: "[ERROR] ";
         }
         a {
-            color: #111;
+            color: var(--color-text);
         }
         a:hover {
-            background: #111;
-            color: #fff;
+            background: var(--color-text);
+            color: var(--color-bg);
         }
         .link {
             margin-top: 1.5rem;
@@ -150,12 +204,12 @@
             font-family: inherit;
             font-size: inherit;
             width: auto;
-            color: #666;
+            color: var(--color-text-muted);
             text-decoration: none;
         }
         .flash-close:hover {
             background: none;
-            color: #111;
+            color: var(--color-text);
             text-decoration: none;
         }
         .flash-right {
@@ -163,11 +217,11 @@
             white-space: nowrap;
         }
         .flash-time {
-            color: #666;
+            color: var(--color-text-muted);
         }
         hr {
             border: none;
-            border-top: 1px solid #111;
+            border-top: 1px solid var(--color-border);
             margin: 1.5rem 0;
         }
         table {
@@ -178,19 +232,19 @@
         th, td {
             text-align: left;
             padding: 0.25rem 0.5rem;
-            border-bottom: 1px solid #ddd;
+            border-bottom: 1px solid var(--color-border-light);
         }
         td input[type="text"] {
             padding: 0;
             margin: 0;
-            border: 1px solid #111;
+            border: 1px solid var(--color-border);
             font-family: inherit;
             font-size: inherit;
             line-height: inherit;
             height: auto;
         }
         th {
-            border-bottom: 1px solid #111;
+            border-bottom: 1px solid var(--color-border);
         }
         .actions {
             display: flex;
@@ -206,7 +260,13 @@
             font-size: 12px;
         }
         .muted {
-            color: #666;
+            color: var(--color-text-muted);
+        }
+        .success-text {
+            color: var(--color-success);
+        }
+        .error-text {
+            color: var(--color-error);
         }
         /* Filter bar */
         .filter-bar {
@@ -220,7 +280,7 @@
         .entry-item {
             margin-bottom: var(--space-5);
             padding-bottom: var(--space-4);
-            border-bottom: 1px solid #ccc;
+            border-bottom: 1px solid var(--color-border-light);
         }
         .entry-item-title {
             font-size: 1.1rem;
@@ -238,21 +298,21 @@
             display: none;
             position: fixed;
             inset: 0;
-            background: rgba(0,0,0,0.5);
+            background: var(--color-overlay);
             z-index: 1000;
         }
         .modal-content {
-            background: #fff;
+            background: var(--color-bg);
             max-width: 600px;
             margin: var(--space-8) auto;
             padding: var(--space-8);
-            border: 1px solid #111;
+            border: 1px solid var(--color-border);
         }
         .modal-title {
             font-size: 1rem;
             font-weight: normal;
             margin-bottom: var(--space-4);
-            border-bottom: 1px solid #111;
+            border-bottom: 1px solid var(--color-border);
             padding-bottom: var(--space-2);
         }
         .modal-actions {
@@ -275,7 +335,7 @@
         nav {
             margin-bottom: 1.5rem;
             padding-bottom: 0.5rem;
-            border-bottom: 1px solid #111;
+            border-bottom: 1px solid var(--color-border);
         }
         nav ul {
             list-style: none;
@@ -309,7 +369,7 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0, 0, 0, 0.5);
+            background: var(--color-overlay);
             z-index: 1000;
             justify-content: center;
             align-items: center;
@@ -318,8 +378,8 @@
             display: flex;
         }
         .kb-help-modal {
-            background: #fff;
-            border: 2px solid #111;
+            background: var(--color-bg);
+            border: 2px solid var(--color-border);
             padding: 1.5rem;
             max-width: 600px;
             max-height: 80vh;
@@ -329,13 +389,13 @@
         .kb-help-modal h2 {
             font-size: 1rem;
             margin-bottom: 1rem;
-            border-bottom: 1px solid #111;
+            border-bottom: 1px solid var(--color-border);
             padding-bottom: 0.5rem;
         }
         .kb-help-modal h3 {
             font-size: 0.9rem;
             margin: 1rem 0 0.5rem;
-            color: #666;
+            color: var(--color-text-muted);
         }
         .kb-help-modal table {
             width: 100%;
@@ -355,8 +415,8 @@
         }
         /* Selected entry highlight */
         .entry-item.selected {
-            background: #f5f5f5;
-            outline: 2px solid #111;
+            background: var(--color-bg-tertiary);
+            outline: 2px solid var(--color-border);
             outline-offset: -2px;
             margin-left: -0.5rem;
             margin-right: -0.5rem;
@@ -369,8 +429,8 @@
             position: fixed;
             bottom: 1rem;
             right: 1rem;
-            background: #111;
-            color: #fff;
+            background: var(--color-button-bg);
+            color: var(--color-button-text);
             padding: 0.5rem 1rem;
             font-family: monospace;
             font-size: 1rem;
@@ -381,30 +441,30 @@
         }
         /* Search highlight */
         .search-highlight {
-            background-color: #ffeb3b;
-            color: #111;
+            background-color: var(--color-highlight);
+            color: var(--color-text);
             padding: 0 2px;
             border-radius: 2px;
         }
         /* Summary badges */
         .summary-badge {
-            color: #0066cc;
+            color: var(--color-accent);
             font-weight: normal;
             margin-left: 0.25rem;
         }
         .summary-badge-pending {
-            color: #888;
+            color: var(--color-text-muted);
             font-weight: normal;
             margin-left: 0.25rem;
         }
         .summary-badge-processing {
-            color: #0066cc;
+            color: var(--color-accent);
             font-weight: normal;
             margin-left: 0.25rem;
             animation: blink 1s infinite;
         }
         .summary-badge-failed {
-            color: #cc0000;
+            color: var(--color-error);
             font-weight: normal;
             margin-left: 0.25rem;
         }
@@ -437,7 +497,7 @@
             left: -30%;
             width: 30%;
             height: 100%;
-            background: #0066cc;
+            background: var(--color-accent);
             animation: loading-slide 1.5s ease-in-out infinite;
         }
         @keyframes loading-slide {
@@ -446,6 +506,21 @@
             100% { left: -30%; }
         }
     </style>
+    <script>
+        // Theme controller
+        window.theme = {
+            // Save to server
+            syncToServer: async function(theme) {
+                try {
+                    await fetch('/api/user/settings/theme', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ theme: theme === 'system' ? null : theme })
+                    });
+                } catch (e) { /* silent fail */ }
+            }
+        };
+    </script>
     <script>
         // Global loading indicator
         window.loading = {

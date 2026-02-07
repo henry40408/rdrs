@@ -75,6 +75,11 @@ pub fn create_router(state: AppState) -> Router {
             "/api/user/settings/kagi",
             put(handlers::user::update_kagi_settings),
         )
+        .route("/api/user/settings/theme", get(handlers::user::get_theme))
+        .route(
+            "/api/user/settings/theme",
+            put(handlers::user::update_theme),
+        )
         .route("/api/admin/users", get(handlers::admin::list_users))
         .route("/api/admin/users/{id}", put(handlers::admin::update_user))
         .route(

@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% import "macros.html" as macros %}
 
+{% block html_attrs %}{% call macros::theme_attr(theme) %}{% endcall %}{% endblock %}
+
 {% block title %}Feeds - RDRS{% endblock %}
 
 {% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
@@ -34,17 +36,17 @@
 <hr>
 
 <style>
-.feed-row-syncing { background: #f8f9fa; }
+.feed-row-syncing { background: var(--color-bg-secondary); }
 #sync-status-bar {
     display: none;
     padding: var(--space-2) var(--space-4);
-    background: #f8f9fa;
-    border: 1px solid #e0e0e0;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-light);
     margin-bottom: var(--space-4);
 }
 #sync-status-bar.active { display: block; }
 #sync-status-text {
-    color: #0066cc;
+    color: var(--color-accent);
     animation: blink 1s infinite;
 }
 </style>
@@ -358,7 +360,7 @@
             if (hasError) {
                 rows += `
             <tr class="error-row">
-                <td colspan="5" style="color:red; font-size:0.875rem; padding-top:0;">
+                <td colspan="5" class="error-text" style="font-size:0.875rem; padding-top:0;">
                     [Error] ${escapeHtml(feed.fetch_error)}
                 </td>
             </tr>`;

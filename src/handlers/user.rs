@@ -285,3 +285,51 @@ pub async fn get_kagi_settings(
         language,
     }))
 }
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateThemeRequest {
+    pub theme: Option<String>, // "dark", "light", or null/missing for system
+}
+
+#[derive(Debug, Serialize)]
+pub struct GetThemeResponse {
+    pub theme: Option<String>,
+}
+
+pub async fn get_theme(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> AppResult<Json<GetThemeResponse>> {
+    let user_id = auth_user.user.id;
+
+    let theme = state
+        .db
+        .user(move |conn| user_settings::get_theme(conn, user_id))
+        .await??;
+
+    Ok(Json(GetThemeResponse { theme }))
+}
+
+pub async fn update_theme(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    Json(req): Json<UpdateThemeRequest>,
+) -> AppResult<StatusCode> {
+    let user_id = auth_user.user.id;
+
+    // Validate theme value
+    if let Some(ref theme) = req.theme {
+        if theme != "dark" && theme != "light" {
+            return Err(AppError::Validation(
+                "Theme must be 'dark', 'light', or null".to_string(),
+            ));
+        }
+    }
+
+    state
+        .db
+        .user(move |conn| user_settings::update_theme(conn, user_id, req.theme))
+        .await??;
+
+    Ok(StatusCode::OK)
+}
