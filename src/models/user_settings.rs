@@ -229,4 +229,54 @@ mod tests {
         let settings = upsert(&conn, user.id, MAX_ENTRIES_PER_PAGE).unwrap();
         assert_eq!(settings.entries_per_page, MAX_ENTRIES_PER_PAGE);
     }
+
+    #[test]
+    fn test_get_theme_default() {
+        let conn = setup_db();
+        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+
+        // No settings exist yet, should return None
+        let theme = get_theme(&conn, user.id).unwrap();
+        assert_eq!(theme, None);
+    }
+
+    #[test]
+    fn test_update_and_get_theme() {
+        let conn = setup_db();
+        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+
+        // Set dark theme
+        update_theme(&conn, user.id, Some("dark".to_string())).unwrap();
+        let theme = get_theme(&conn, user.id).unwrap();
+        assert_eq!(theme, Some("dark".to_string()));
+
+        // Set light theme
+        update_theme(&conn, user.id, Some("light".to_string())).unwrap();
+        let theme = get_theme(&conn, user.id).unwrap();
+        assert_eq!(theme, Some("light".to_string()));
+
+        // Set to system (None)
+        update_theme(&conn, user.id, None).unwrap();
+        let theme = get_theme(&conn, user.id).unwrap();
+        assert_eq!(theme, None);
+    }
+
+    #[test]
+    fn test_theme_with_existing_settings() {
+        let conn = setup_db();
+        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+
+        // Create settings first via upsert
+        upsert(&conn, user.id, 50).unwrap();
+
+        // Update theme should work on existing settings
+        update_theme(&conn, user.id, Some("dark".to_string())).unwrap();
+        let theme = get_theme(&conn, user.id).unwrap();
+        assert_eq!(theme, Some("dark".to_string()));
+
+        // Verify entries_per_page is preserved
+        let settings = find_by_user_id(&conn, user.id).unwrap().unwrap();
+        assert_eq!(settings.entries_per_page, 50);
+        assert_eq!(settings.theme, Some("dark".to_string()));
+    }
 }
