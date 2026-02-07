@@ -1,3 +1,5 @@
+{% macro theme_attr(theme) %}{% if let Some(t) = theme %} data-theme="{{ t }}"{% endif %}{% endmacro %}
+
 {% macro flash(messages) %}
 {% if !messages.is_empty() %}
 <div class="flash-container">

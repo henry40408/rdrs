@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% import "macros.html" as macros %}
 
+{% block html_attrs %}{% call macros::theme_attr(theme) %}{% endcall %}{% endblock %}
+
 {% block title %}User Settings - RDRS{% endblock %}
 
 {% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
@@ -343,7 +345,7 @@
   <button type="submit">[Save Preferences]</button>
 </form>
 <script>
-  // Preview theme immediately when changed (without saving to localStorage)
+  // Preview theme immediately when changed (without saving)
   function previewTheme(theme) {
       if (theme === 'system' || !theme) {
           document.documentElement.removeAttribute('data-theme');
@@ -351,15 +353,6 @@
           document.documentElement.setAttribute('data-theme', theme);
       }
   }
-
-  // Sync select with localStorage on page load
-  document.addEventListener('DOMContentLoaded', function() {
-      const select = document.getElementById('theme-select');
-      const current = localStorage.getItem('rdrs-theme');
-      if (current) {
-          select.value = current;
-      }
-  });
 
   document
     .getElementById("settings-form")
@@ -395,8 +388,7 @@
           return;
         }
 
-        // Save theme to localStorage and server
-        window.theme.set(theme);
+        // Save theme to server
         await window.theme.syncToServer(theme);
 
         flash.success("Preferences saved successfully.");

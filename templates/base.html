@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en"{% block html_attrs %}{% endblock %}>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -507,35 +507,9 @@
         }
     </style>
     <script>
-        // Theme controller - runs early to prevent flash
+        // Theme controller
         window.theme = {
-            storageKey: 'rdrs-theme',
-
-            init: function() {
-                const stored = localStorage.getItem(this.storageKey);
-                if (stored === 'dark' || stored === 'light') {
-                    document.documentElement.setAttribute('data-theme', stored);
-                }
-                // If no stored value, CSS @media handles system preference
-            },
-
-            get: function() {
-                const stored = localStorage.getItem(this.storageKey);
-                if (stored) return stored;
-                return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-            },
-
-            set: function(theme) {
-                if (theme === 'system' || !theme) {
-                    localStorage.removeItem(this.storageKey);
-                    document.documentElement.removeAttribute('data-theme');
-                } else {
-                    localStorage.setItem(this.storageKey, theme);
-                    document.documentElement.setAttribute('data-theme', theme);
-                }
-            },
-
-            // Sync to server
+            // Save to server
             syncToServer: async function(theme) {
                 try {
                     await fetch('/api/user/settings/theme', {
@@ -544,22 +518,8 @@
                         body: JSON.stringify({ theme: theme === 'system' ? null : theme })
                     });
                 } catch (e) { /* silent fail */ }
-            },
-
-            // Load from server
-            loadFromServer: async function() {
-                try {
-                    const res = await fetch('/api/user/settings/theme');
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (data.theme) {
-                            this.set(data.theme);
-                        }
-                    }
-                } catch (e) { /* use localStorage */ }
             }
         };
-        window.theme.init();
     </script>
     <script>
         // Global loading indicator
