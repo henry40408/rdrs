@@ -8,7 +8,7 @@
 {% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
 
 {% block content %}
-{% call macros::nav("home", is_admin, is_masquerading, username) %}{% endcall %}
+{% call macros::nav("unread", is_admin, is_masquerading, username) %}{% endcall %}
 
 <style>
 .entries-list-refreshing {
@@ -351,7 +351,7 @@
     function findNextUnread(direction) {
         if (entries.length === 0) return -1;
 
-        // In home page, all entries are unread, so just move in direction
+        // In unread page, all entries are unread, so just move in direction
         const start = selectedIndex < 0 ? (direction > 0 ? -1 : entries.length) : selectedIndex;
         let index = start + direction;
 

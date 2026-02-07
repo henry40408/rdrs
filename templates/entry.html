@@ -37,7 +37,7 @@
     }
 
     function getBackUrl() {
-        // If we have filters, go back to home page with filters; otherwise go to /entries
+        // If we have filters, go back to unread page with filters; otherwise go to /entries
         const filterQuery = getFilterQueryString();
         return filterQuery ? '/' + filterQuery : '/entries';
     }
