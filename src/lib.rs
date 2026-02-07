@@ -47,7 +47,7 @@ pub fn create_router(state: AppState) -> Router {
             "/apple-touch-icon.png",
             get(handlers::favicon::apple_touch_icon),
         )
-        .route("/", get(handlers::pages::home_page))
+        .route("/", get(handlers::pages::unread_page))
         .route("/login", get(handlers::pages::login_page))
         .route("/register", get(handlers::pages::register_page))
         .route("/user-settings", get(handlers::pages::user_settings_page))

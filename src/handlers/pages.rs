@@ -91,8 +91,8 @@ pub async fn register_page(
 }
 
 #[derive(Template)]
-#[template(path = "home.html")]
-pub struct HomeTemplate {
+#[template(path = "unread.html")]
+pub struct UnreadTemplate {
     pub username: String,
     pub role: String,
     pub sign_in_time: String,
@@ -104,7 +104,7 @@ pub struct HomeTemplate {
     pub theme: Option<String>,
 }
 
-impl IntoResponse for HomeTemplate {
+impl IntoResponse for UnreadTemplate {
     fn into_response(self) -> Response {
         match self.render() {
             Ok(html) => Html(html).into_response(),
@@ -113,11 +113,11 @@ impl IntoResponse for HomeTemplate {
     }
 }
 
-pub async fn home_page(
+pub async fn unread_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, HomeTemplate) {
+) -> (Flash, UnreadTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
     let is_admin = if is_masquerading {
         // When masquerading, check if original user is admin
@@ -141,7 +141,7 @@ pub async fn home_page(
 
     (
         flash.clone(),
-        HomeTemplate {
+        UnreadTemplate {
             username: auth_user.user.username.clone(),
             role: auth_user.user.role.as_str().to_string(),
             sign_in_time: auth_user

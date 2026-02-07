@@ -361,6 +361,10 @@
         if (entry) {
             if (entry.read_at === null) {
                 await markRead(entry.id);
+                // Move to next entry
+                if (selectedIndex < entries.length - 1) {
+                    selectEntry(selectedIndex + 1);
+                }
             } else {
                 await markUnread(entry.id);
             }
@@ -385,7 +389,7 @@
         { key: 'N', desc: 'Previous unread entry' },
         { key: 'Enter / o', desc: 'Open entry' },
         { key: 'v', desc: 'Open original in new tab' },
-        { key: 'm', desc: 'Toggle read/unread' },
+        { key: 'm', desc: 'Mark read and next / Toggle unread' },
         { key: 's', desc: 'Toggle star' },
         { key: 'r', desc: 'Refresh list' },
         { key: 'c', desc: 'Go to category page (requires selection)' },

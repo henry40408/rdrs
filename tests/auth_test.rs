@@ -799,7 +799,7 @@ async fn test_validation_empty_username() {
 }
 
 #[tokio::test]
-async fn test_home_page() {
+async fn test_unread_page() {
     let server = create_test_server(default_test_config());
 
     server
@@ -830,7 +830,7 @@ async fn test_home_page() {
 }
 
 #[tokio::test]
-async fn test_home_page_unauthorized() {
+async fn test_unread_page_unauthorized() {
     let server = create_test_server(default_test_config());
 
     let response = server.get("/").await;
@@ -912,7 +912,7 @@ async fn test_admin_page_unauthorized_without_login() {
 }
 
 #[tokio::test]
-async fn test_home_page_shows_admin_link_for_admin() {
+async fn test_unread_page_shows_admin_link_for_admin() {
     let server = create_test_server(default_test_config());
 
     server
@@ -941,7 +941,7 @@ async fn test_home_page_shows_admin_link_for_admin() {
 }
 
 #[tokio::test]
-async fn test_home_page_hides_admin_link_for_regular_user() {
+async fn test_unread_page_hides_admin_link_for_regular_user() {
     let server = create_test_server(default_test_config());
 
     server
@@ -1022,7 +1022,7 @@ async fn test_flash_message_cleared_after_display() {
 }
 
 #[tokio::test]
-async fn test_flash_message_on_home_page() {
+async fn test_flash_message_on_unread_page() {
     let server = create_test_server(default_test_config());
 
     server
@@ -1043,7 +1043,7 @@ async fn test_flash_message_on_home_page() {
         .await
         .assert_status_ok();
 
-    // Request home page with flash message
+    // Request unread page with flash message
     let response = server
         .get("/")
         .add_cookie(cookie::Cookie::new(

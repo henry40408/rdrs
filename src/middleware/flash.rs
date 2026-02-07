@@ -330,8 +330,8 @@ mod tests {
 
     #[test]
     fn test_flash_redirect_constructors() {
-        let success = FlashRedirect::success("/home", "Success!");
-        assert_eq!(success.location, "/home");
+        let success = FlashRedirect::success("/", "Success!");
+        assert_eq!(success.location, "/");
         assert_eq!(success.flash.messages[0].level, FlashLevel::Success);
 
         let error = FlashRedirect::error("/login", "Error!");

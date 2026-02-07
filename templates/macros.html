@@ -16,7 +16,7 @@
 {% macro nav(current, is_admin, is_masquerading, username) %}
 <nav>
     <ul>
-        <li><a href="/"{% if current == "home" %} class="active"{% endif %}>[Home]</a></li>
+        <li><a href="/"{% if current == "unread" %} class="active"{% endif %}>[Unread]</a></li>
         <li><a href="/entries"{% if current == "entries" %} class="active"{% endif %}>[Entries]</a></li>
         <li><a href="/feeds"{% if current == "feeds" %} class="active"{% endif %}>[Feeds]</a></li>
         <li><a href="/categories"{% if current == "categories" %} class="active"{% endif %}>[Categories]</a></li>
