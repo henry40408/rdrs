@@ -66,6 +66,10 @@
     <button type="button" onclick="loadMore()">[Load More]</button>
 </div>
 
+<div id="mark-above-read" style="display:none; margin-top:1rem;">
+    <button type="button" onclick="markAboveAsRead()">[Mark Above as Read]</button>
+</div>
+
 <p id="entries-count" class="muted"></p>
 
 <script>
@@ -148,6 +152,7 @@
 
         if (entries.length === 0) {
             container.innerHTML = '<p class="muted">No entries found.</p>';
+            updateMarkAboveButton();
             return;
         }
 
@@ -196,6 +201,43 @@
             </div>
             `;
         }).join('');
+
+        updateMarkAboveButton();
+    }
+
+    function updateMarkAboveButton() {
+        const btn = document.getElementById('mark-above-read');
+        if (entries.length > 0) {
+            btn.style.display = 'block';
+        } else {
+            btn.style.display = 'none';
+        }
+    }
+
+    async function markAboveAsRead() {
+        if (entries.length === 0) return;
+
+        if (!confirm(`Mark all ${entries.length} loaded entries as read?`)) {
+            return;
+        }
+
+        const entryIds = entries.map(e => e.id);
+
+        try {
+            const response = await fetch('/api/entries/mark-read-by-ids', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ entry_ids: entryIds })
+            });
+            if (!response.ok) {
+                throw new Error('Failed to mark entries as read');
+            }
+            const result = await response.json();
+            flash.success(`Marked ${result.marked_count} entries as read.`);
+            loadEntries();
+        } catch (err) {
+            flash.error(err.message);
+        }
     }
 
     function updateLoadMoreButton() {
@@ -412,6 +454,7 @@
         { key: 'm', desc: 'Mark read and next / Toggle unread' },
         { key: 's', desc: 'Toggle star' },
         { key: 'r', desc: 'Refresh list' },
+        { key: 'A', desc: 'Mark above as read' },
         { key: 'c', desc: 'Go to category page (current)' },
         { key: 'f', desc: 'Go to feed page (requires selection)' },
         { key: 'x', desc: 'Go to unread page' },
@@ -474,6 +517,9 @@
                     return true;
                 case 'r':
                     loadEntries();
+                    return true;
+                case 'A':
+                    markAboveAsRead();
                     return true;
                 case 'c':
                     // Already on category page, refresh
