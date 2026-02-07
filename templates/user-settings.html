@@ -326,32 +326,15 @@
 <h2>Display Preferences</h2>
 <div id="settings-error" class="error" style="display: none"></div>
 
-<div class="form-group">
-    <label for="theme-select">Theme</label>
-    <select id="theme-select" onchange="updateTheme(this.value)">
-        <option value="system" {% if theme.is_none() %}selected{% endif %}>System (auto)</option>
-        <option value="light" {% if theme == Some("light".to_string()) %}selected{% endif %}>Light</option>
-        <option value="dark" {% if theme == Some("dark".to_string()) %}selected{% endif %}>Dark</option>
-    </select>
-</div>
-
-<script>
-function updateTheme(theme) {
-    window.theme.set(theme);
-    window.theme.syncToServer(theme);
-}
-
-// Sync localStorage with server on page load
-document.addEventListener('DOMContentLoaded', function() {
-    const select = document.getElementById('theme-select');
-    const current = localStorage.getItem('rdrs-theme');
-    if (current) {
-        select.value = current;
-    }
-});
-</script>
-
 <form id="settings-form">
+  <div class="form-group">
+      <label for="theme-select">Theme</label>
+      <select id="theme-select" onchange="previewTheme(this.value)">
+          <option value="system" {% if theme.is_none() %}selected{% endif %}>System (auto)</option>
+          <option value="light" {% if theme == Some("light".to_string()) %}selected{% endif %}>Light</option>
+          <option value="dark" {% if theme == Some("dark".to_string()) %}selected{% endif %}>Dark</option>
+      </select>
+  </div>
   <div class="form-group">
     <label for="entries-per-page">Entries per page</label>
     <input type="number" id="entries-per-page" name="entries-per-page" value="{{ entries_per_page }}" min="10" max="100" required>
@@ -360,6 +343,20 @@ document.addEventListener('DOMContentLoaded', function() {
   <button type="submit">[Save Preferences]</button>
 </form>
 <script>
+  // Preview theme immediately when changed (but don't save yet)
+  function previewTheme(theme) {
+      window.theme.set(theme);
+  }
+
+  // Sync localStorage with server on page load
+  document.addEventListener('DOMContentLoaded', function() {
+      const select = document.getElementById('theme-select');
+      const current = localStorage.getItem('rdrs-theme');
+      if (current) {
+          select.value = current;
+      }
+  });
+
   document
     .getElementById("settings-form")
     .addEventListener("submit", async (e) => {
@@ -368,6 +365,8 @@ document.addEventListener('DOMContentLoaded', function() {
       errorDiv.style.display = "none";
 
       const entriesPerPage = parseInt(document.getElementById("entries-per-page").value);
+      const themeSelect = document.getElementById("theme-select");
+      const theme = themeSelect.value;
 
       if (entriesPerPage < 10 || entriesPerPage > 100) {
         errorDiv.textContent = "Entries per page must be between 10 and 100";
@@ -376,7 +375,8 @@ document.addEventListener('DOMContentLoaded', function() {
       }
 
       try {
-        const response = await fetch("/api/user/settings", {
+        // Save entries per page
+        const settingsResponse = await fetch("/api/user/settings", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -384,13 +384,17 @@ document.addEventListener('DOMContentLoaded', function() {
           }),
         });
 
-        if (response.ok) {
-          flash.success("Preferences saved successfully.");
-        } else {
-          const data = await response.json();
+        if (!settingsResponse.ok) {
+          const data = await settingsResponse.json();
           errorDiv.textContent = data.error || "Failed to save preferences";
           errorDiv.style.display = "block";
+          return;
         }
+
+        // Save theme
+        await window.theme.syncToServer(theme);
+
+        flash.success("Preferences saved successfully.");
       } catch (err) {
         errorDiv.textContent = "An error occurred. Please try again.";
         errorDiv.style.display = "block";
