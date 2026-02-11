@@ -57,7 +57,7 @@ time = "0.3"
 [build-dependencies]
 resvg = "0.45"
 image = "0.25"
-ico = "0.4"
+ico = "0.5"
 
 [dev-dependencies]
 axum-test = "18"
