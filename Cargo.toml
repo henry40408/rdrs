@@ -55,7 +55,7 @@ moka = { version = "0.12", features = ["sync"] }
 time = "0.3"
 
 [build-dependencies]
-resvg = "0.45"
+resvg = "0.46"
 image = "0.25"
 ico = "0.5"
 
