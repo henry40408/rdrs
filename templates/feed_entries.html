@@ -180,7 +180,7 @@
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}"${isRead ? ' style="opacity:0.6;"' : ''}>
                 <div>
-                    <a href="/entries/${entry.id}" class="entry-item-title" style="font-weight:${isRead ? 'normal' : 'bold'};">${escapeHtml(title)}</a>
+                    <a href="/entries/${entry.id}?feed=${feedId}&origin=feed" class="entry-item-title" style="font-weight:${isRead ? 'normal' : 'bold'};">${escapeHtml(title)}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>
@@ -400,7 +400,7 @@
     function openSelectedEntry() {
         const entry = getSelectedEntry();
         if (entry) {
-            window.location.href = `/entries/${entry.id}`;
+            window.location.href = `/entries/${entry.id}?feed=${feedId}&origin=feed`;
         }
     }
 

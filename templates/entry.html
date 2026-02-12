@@ -27,24 +27,46 @@
     const urlParams = new URLSearchParams(window.location.search);
     const filterFeedId = urlParams.get('feed');
     const filterCategoryId = urlParams.get('category');
+    const filterOrigin = urlParams.get('origin');
 
     function getFilterQueryString() {
         const params = new URLSearchParams();
         if (filterFeedId) params.set('feed', filterFeedId);
         if (filterCategoryId) params.set('category', filterCategoryId);
+        if (filterOrigin) params.set('origin', filterOrigin);
         const str = params.toString();
         return str ? '?' + str : '';
     }
 
     function getBackUrl() {
-        // If we have filters, go back to unread page with filters; otherwise go to /entries
-        const filterQuery = getFilterQueryString();
-        return filterQuery ? '/' + filterQuery : '/entries';
+        if (filterOrigin === 'feed' && filterFeedId) return `/feeds/${filterFeedId}/entries`;
+        if (filterOrigin === 'category' && filterCategoryId) return `/categories/${filterCategoryId}/entries`;
+        if (filterOrigin === 'entries') return '/entries';
+        if (filterOrigin === 'read') return '/entries/read';
+        if (filterOrigin === 'starred') return '/entries/starred';
+        if (filterOrigin === 'summarized') return '/entries/summarized';
+        return '/';
+    }
+
+    function getBackLabel() {
+        if (filterOrigin === 'feed') return 'Back to Feed';
+        if (filterOrigin === 'category') return 'Back to Category';
+        if (filterOrigin === 'read') return 'Back to Read';
+        if (filterOrigin === 'starred') return 'Back to Starred';
+        if (filterOrigin === 'summarized') return 'Back to Summarized';
+        if (filterOrigin === 'entries') return 'Back to All Entries';
+        return 'Back to Unread';
     }
 
     async function loadNeighbors() {
         try {
-            const response = await fetch(`/api/entries/${entryId}/neighbors`);
+            let url = `/api/entries/${entryId}/neighbors`;
+            const params = new URLSearchParams();
+            if (filterFeedId) params.set('feed_id', filterFeedId);
+            if (filterCategoryId) params.set('category_id', filterCategoryId);
+            const qs = params.toString();
+            if (qs) url += '?' + qs;
+            const response = await fetch(url);
             if (response.ok) {
                 neighbors = await response.json();
                 updateNeighborLinks();
@@ -253,7 +275,7 @@
 
         document.getElementById('entry-container').innerHTML = `
             <div class="entry-nav">
-                <a href="${getBackUrl()}">&larr; Back to Entries</a>
+                <a href="${getBackUrl()}">&larr; ${getBackLabel()}</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="prev-entry-link" class="disabled">&larr; Previous</a>
                 <span class="entry-nav-sep">&middot;</span>
@@ -304,7 +326,7 @@
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="prev-unread-link-bottom" class="disabled">&larr; Previous Unread</a>
                 <span class="entry-nav-sep">&middot;</span>
-                <a href="${getBackUrl()}">Back to Entries</a>
+                <a href="${getBackUrl()}">${getBackLabel()}</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="next-unread-link-bottom" class="disabled">Next Unread &rarr;</a>
                 <span class="entry-nav-sep">&middot;</span>
