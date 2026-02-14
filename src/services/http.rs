@@ -13,6 +13,15 @@ pub const ICON_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for external API calls like Linkding, Kagi (60s)
 pub const EXTERNAL_API_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Global request timeout for the HTTP server (120s)
+pub const SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Per-feed sync timeout (90s), covering HTTP fetch + retries + icon + DB writes
+pub const FEED_SYNC_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Timeout for enqueuing background jobs from HTTP handlers (5s)
+pub const JOB_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Configuration for retry behavior
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
@@ -337,6 +346,9 @@ mod tests {
         assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(30));
         assert_eq!(ICON_TIMEOUT, Duration::from_secs(10));
         assert_eq!(EXTERNAL_API_TIMEOUT, Duration::from_secs(60));
+        assert_eq!(SERVER_REQUEST_TIMEOUT, Duration::from_secs(120));
+        assert_eq!(FEED_SYNC_TIMEOUT, Duration::from_secs(90));
+        assert_eq!(JOB_QUEUE_TIMEOUT, Duration::from_secs(5));
     }
 
     #[tokio::test]

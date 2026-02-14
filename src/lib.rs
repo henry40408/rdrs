@@ -5,7 +5,10 @@ use axum::{
     Router,
 };
 use tokio::sync::mpsc;
+use tower_http::timeout::TimeoutLayer;
 use webauthn_rs::prelude::Webauthn;
+
+use services::http::SERVER_REQUEST_TIMEOUT;
 
 pub mod auth;
 pub mod config;
@@ -232,4 +235,8 @@ pub fn create_router(state: AppState) -> Router {
             delete(handlers::passkey::delete_passkey),
         )
         .with_state(state)
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            SERVER_REQUEST_TIMEOUT,
+        ))
 }

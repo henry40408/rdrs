@@ -165,7 +165,15 @@ impl IntoResponse for AppError {
                 return (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response()
             }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
-            AppError::DbPool(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error"),
+            AppError::DbPool(ref e) => match e {
+                crate::db::DbError::Timeout => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Database busy, please retry",
+                ),
+                crate::db::DbError::ActorStopped => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, "Database error")
+                }
+            },
         };
 
         (status, Json(json!({ "error": message }))).into_response()
@@ -480,6 +488,24 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = get_response_body(response).await;
         assert!(body.contains("Challenge not found"));
+    }
+
+    #[tokio::test]
+    async fn test_dbpool_timeout_response() {
+        let err = AppError::DbPool(crate::db::DbError::Timeout);
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Database busy"));
+    }
+
+    #[tokio::test]
+    async fn test_dbpool_actor_stopped_response() {
+        let err = AppError::DbPool(crate::db::DbError::ActorStopped);
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Database error"));
     }
 
     #[test]
