@@ -37,7 +37,7 @@
     <p class="muted">Enter a search term and press Enter to search.</p>
 </div>
 
-<div id="load-more" style="display:none; margin-top:1rem;">
+<div id="load-more" class="hidden-mt4">
     <button type="button" onclick="loadMore()">Load More</button>
 </div>
 
@@ -142,14 +142,14 @@
             if (search && entry.content) {
                 const snippet = getContentSnippet(entry.content, search);
                 if (snippet) {
-                    contentSnippetHtml = `<div class="muted" style="font-size:0.8rem; margin-top:0.4rem; font-style:italic;">${highlightText(snippet, search)}</div>`;
+                    contentSnippetHtml = `<div class="muted content-snippet">${highlightText(snippet, search)}</div>`;
                 }
             }
 
             return `
-            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}"${isRead ? ' style="opacity:0.6;"' : ''}>
+            <div class="entry-item${isSelected ? ' selected' : ''}${isRead ? ' entry-read' : ''}" id="entry-${entry.id}" data-index="${index}">
                 <div>
-                    <a href="/entries/${entry.id}" class="entry-item-title" style="font-weight:${isRead ? 'normal' : 'bold'};">${titleHtml}</a>
+                    <a href="/entries/${entry.id}" class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}">${titleHtml}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>${contentSnippetHtml}

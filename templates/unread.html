@@ -42,11 +42,11 @@
     <p class="muted">Loading...</p>
 </div>
 
-<div id="load-more" style="display:none; margin-top:1rem;">
+<div id="load-more" class="hidden-mt4">
     <button type="button" onclick="loadMore()">Load More</button>
 </div>
 
-<div id="mark-above-read" style="display:none; margin-top:1rem;">
+<div id="mark-above-read" class="hidden-mt4">
     <button type="button" onclick="markAboveAsRead()">Mark Above as Read</button>
 </div>
 
@@ -135,7 +135,7 @@
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}">
                 <div>
-                    <a href="/entries/${entry.id}" class="entry-item-title" onclick="openEntry(${entry.id}); return false;" style="font-weight:bold;">${escapeHtml(title)}</a>
+                    <a href="/entries/${entry.id}" class="entry-item-title entry-title-bold" onclick="openEntry(${entry.id}); return false;">${escapeHtml(title)}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>

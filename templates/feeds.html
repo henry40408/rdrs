@@ -12,7 +12,7 @@
 
 <h1>Feeds</h1>
 
-<div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center; margin-bottom:1rem;">
+<div class="feeds-toolbar">
     <a href="/api/opml/export" class="btn">Export OPML</a>
     <button type="button" onclick="showImportModal()">Import OPML</button>
 </div>
@@ -125,9 +125,9 @@
             <input type="hidden" id="edit-id">
             <div class="form-group">
                 <label for="edit-url">Feed URL</label>
-                <div style="display:flex; gap:0.5rem;">
-                    <input type="text" id="edit-url" name="url" required style="flex:1;">
-                    <button type="button" onclick="fetchMetadata()" style="margin:0; white-space:nowrap;">Fetch</button>
+                <div class="feed-edit-url-row">
+                    <input type="text" id="edit-url" name="url" required>
+                    <button type="button" onclick="fetchMetadata()">Fetch</button>
                 </div>
             </div>
             <div class="form-group">
@@ -147,9 +147,9 @@
                 <select id="edit-category" name="category" required>
                 </select>
             </div>
-            <details style="margin-top:1rem; border:1px solid #ccc; padding:0.5rem;">
+            <details class="feed-http-settings">
                 <summary style="cursor:pointer; font-weight:normal;">HTTP Settings</summary>
-                <div style="margin-top:0.5rem;">
+                <div class="feed-http-settings-body">
                     <div class="form-group">
                         <label for="edit-custom-user-agent">Custom User Agent</label>
                         <input type="text" id="edit-custom-user-agent" name="custom_user_agent" placeholder="Leave empty to use global default">
@@ -159,7 +159,7 @@
                             <input type="checkbox" id="edit-http2-disabled" name="http2_disabled">
                             Disable HTTP/2
                         </label>
-                        <div style="font-size:0.75rem; color:#666;">Enable this if the feed server has HTTP/2 compatibility issues</div>
+                        <div class="feed-http-hint">Enable this if the feed server has HTTP/2 compatibility issues</div>
                     </div>
                 </div>
             </details>
@@ -344,12 +344,12 @@
             const unreadCount = unreadStats.by_feed[feed.id] || 0;
 
             let rows = `
-            <tr id="row-${feed.id}"${hasError ? ' style="border-bottom:none;"' : ''}>
-                <td${hasError ? ' style="border-bottom:none;"' : ''}>${iconHtml}<span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
-                <td${hasError ? ' style="border-bottom:none;"' : ''}>${escapeHtml(categoryName)}</td>
-                <td${hasError ? ' style="border-bottom:none;"' : ''}>${unreadCount > 0 ? `<strong>${unreadCount}</strong>` : '0'}</td>
-                <td${hasError ? ' style="border-bottom:none;"' : ''}>${fetchedAt ? `<span title="${fetchedAtTitle}">${fetchedAt}</span>` : 'Never'}</td>
-                <td class="actions"${hasError ? ' style="border-bottom:none;"' : ''}>
+            <tr id="row-${feed.id}"${hasError ? ' class="feed-error-no-border"' : ''}>
+                <td${hasError ? ' class="feed-error-no-border"' : ''}>${iconHtml}<span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
+                <td${hasError ? ' class="feed-error-no-border"' : ''}>${escapeHtml(categoryName)}</td>
+                <td${hasError ? ' class="feed-error-no-border"' : ''}>${unreadCount > 0 ? `<strong>${unreadCount}</strong>` : '0'}</td>
+                <td${hasError ? ' class="feed-error-no-border"' : ''}>${fetchedAt ? `<span title="${fetchedAtTitle}">${fetchedAt}</span>` : 'Never'}</td>
+                <td class="actions${hasError ? ' feed-error-no-border' : ''}">
                     <a href="/feeds/${feed.id}/entries">entries</a>
                     <a href="#" onclick="refreshFeed(${feed.id}); return false;" id="refresh-${feed.id}">refresh</a>
                     <a href="#" onclick="editFeed(${feed.id}); return false;">edit</a>
@@ -360,7 +360,7 @@
             if (hasError) {
                 rows += `
             <tr class="error-row">
-                <td colspan="5" class="error-text" style="font-size:0.875rem; padding-top:0;">
+                <td colspan="5" class="error-text feed-error-cell">
                     Error: ${escapeHtml(feed.fetch_error)}
                 </td>
             </tr>`;

@@ -48,7 +48,7 @@
     <p class="muted">Loading...</p>
 </div>
 
-<div id="load-more" style="display:none; margin-top:1rem;">
+<div id="load-more" class="hidden-mt4">
     <button type="button" onclick="loadMore()">Load More</button>
 </div>
 
@@ -151,9 +151,9 @@
             }
 
             return `
-            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}"${isRead ? ' style="opacity:0.6;"' : ''}>
+            <div class="entry-item${isSelected ? ' selected' : ''}${isRead ? ' entry-read' : ''}" id="entry-${entry.id}" data-index="${index}">
                 <div>
-                    <a href="/entries/${entry.id}?origin=${pageMode}" class="entry-item-title" style="font-weight:${isRead ? 'normal' : 'bold'};">${escapeHtml(title)}</a>
+                    <a href="/entries/${entry.id}?origin=${pageMode}" class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}">${escapeHtml(title)}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>
