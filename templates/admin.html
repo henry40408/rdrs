@@ -44,7 +44,7 @@
             renderUsers(users);
         } catch (err) {
             document.getElementById('users-table').innerHTML =
-                '<tr><td colspan="6">[ERROR] Failed to load users</td></tr>';
+                '<tr><td colspan="6">Failed to load users</td></tr>';
         }
     }
 
@@ -65,10 +65,10 @@
                     <td>${formatDate(user.created_at)}</td>
                     <td class="actions">
                         ${!isSelf ? `
-                            <a href="#" onclick="toggleRole(${user.id}, '${user.role}'); return false;">[${user.role === 'admin' ? 'demote' : 'promote'}]</a>
-                            <a href="#" onclick="toggleDisabled(${user.id}, ${isDisabled}); return false;">[${isDisabled ? 'enable' : 'disable'}]</a>
-                            <a href="#" onclick="masquerade(${user.id}); return false;">[view as]</a>
-                            <a href="#" onclick="deleteUser(${user.id}, '${escapeHtml(user.username)}'); return false;">[delete]</a>
+                            <a href="#" onclick="toggleRole(${user.id}, '${user.role}'); return false;">${user.role === 'admin' ? 'demote' : 'promote'}</a>
+                            <a href="#" onclick="toggleDisabled(${user.id}, ${isDisabled}); return false;">${isDisabled ? 'enable' : 'disable'}</a>
+                            <a href="#" onclick="masquerade(${user.id}); return false;">view as</a>
+                            <a href="#" onclick="deleteUser(${user.id}, '${escapeHtml(user.username)}'); return false;">delete</a>
                         ` : '<span class="muted">(you)</span>'}
                     </td>
                 </tr>

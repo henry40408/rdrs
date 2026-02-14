@@ -156,7 +156,7 @@ async fn test_unread_page_while_masquerading() {
     // Should show the masqueraded user's name
     assert!(body.contains("user"));
     // Should still show admin link (because original user is admin)
-    assert!(body.contains("[Admin]") || body.contains("admin"));
+    assert!(body.contains(">Admin</a>"));
 
     // Verify current user API returns masqueraded user
     let response = app.server.get("/api/user").await;
@@ -483,7 +483,7 @@ async fn test_regular_user_unread_page_no_admin_link() {
     // Should show username
     assert!(body.contains("user"));
     // Should NOT show admin link
-    assert!(!body.contains("[Admin]"));
+    assert!(!body.contains(">Admin</a>"));
 }
 
 #[tokio::test]

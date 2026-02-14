@@ -216,7 +216,7 @@
                 handleSummaryStatus(data.summary_status);
             }
         } catch (err) {
-            document.getElementById('entry-container').innerHTML = '<p class="muted">[ERROR] Failed to load entry</p>';
+            document.getElementById('entry-container').innerHTML = '<p class="muted">Failed to load entry</p>';
         }
     }
 
@@ -228,7 +228,7 @@
             // Summary is being generated, start polling
             const btn = document.getElementById('summarize-btn');
             if (btn) {
-                btn.textContent = '[Summarizing...]';
+                btn.textContent = 'Summarizing...';
                 btn.disabled = true;
             }
             startSummaryPolling();
@@ -250,7 +250,7 @@
                     // Still processing, start polling
                     const btn = document.getElementById('summarize-btn');
                     if (btn) {
-                        btn.textContent = '[Summarizing...]';
+                        btn.textContent = 'Summarizing...';
                         btn.disabled = true;
                     }
                     startSummaryPolling();
@@ -295,19 +295,19 @@
             </div>
 
             <div class="entry-actions">
-                <button type="button" onclick="toggleStar()" id="star-btn">[${isStarred ? 'Unstar' : 'Star'}]</button>
-                <button type="button" onclick="markUnread()">[Mark Unread]</button>
-                ${data.link ? `<button type="button" onclick="fetchFullContent()" id="fetch-content-btn">[Fetch Full Content]</button>` : ''}
-                ${hasKagiConfigured && data.link ? `<button type="button" onclick="summarizeEntry()" id="summarize-btn">[Summarize]</button>` : ''}
-                ${hasSaveServices && data.link ? `<button type="button" onclick="saveEntry()" id="save-btn">[Save]</button>` : ''}
-                ${data.link ? `<a href="${escapeHtml(data.link)}" target="_blank" rel="noopener noreferrer" class="btn">[View Original]</a>` : ''}
+                <button type="button" onclick="toggleStar()" id="star-btn">${isStarred ? 'Unstar' : 'Star'}</button>
+                <button type="button" onclick="markUnread()">Mark Unread</button>
+                ${data.link ? `<button type="button" onclick="fetchFullContent()" id="fetch-content-btn">Fetch Full Content</button>` : ''}
+                ${hasKagiConfigured && data.link ? `<button type="button" onclick="summarizeEntry()" id="summarize-btn">Summarize</button>` : ''}
+                ${hasSaveServices && data.link ? `<button type="button" onclick="saveEntry()" id="save-btn">Save</button>` : ''}
+                ${data.link ? `<a href="${escapeHtml(data.link)}" target="_blank" rel="noopener noreferrer" class="btn">View Original</a>` : ''}
             </div>
 
             <div id="summary-container" style="display: none;">
                 <div class="summary-box">
                     <div class="summary-actions">
-                        <button type="button" onclick="copySummary()" id="copy-summary-btn">[Copy]</button>
-                        <button type="button" onclick="dismissSummary()">[Dismiss]</button>
+                        <button type="button" onclick="copySummary()" id="copy-summary-btn">Copy</button>
+                        <button type="button" onclick="dismissSummary()">Dismiss</button>
                     </div>
                     <blockquote id="summary-content"></blockquote>
                 </div>
@@ -341,7 +341,7 @@
             if (!response.ok) throw new Error('Failed to toggle star');
             const updated = await response.json();
             const btn = document.getElementById('star-btn');
-            btn.textContent = updated.starred_at ? '[Unstar]' : '[Star]';
+            btn.textContent = updated.starred_at ? 'Unstar' : 'Star';
         } catch (err) {
             flash.error(err.message);
         }
@@ -363,7 +363,7 @@
         const btn = document.getElementById('summarize-btn');
         if (!btn) return;
 
-        btn.textContent = '[Summarizing...]';
+        btn.textContent = 'Summarizing...';
         btn.disabled = true;
 
         try {
@@ -382,7 +382,7 @@
                 // Already cached
                 currentSummary = data.summary_text;
                 showSummary(data.summary_text);
-                btn.textContent = '[Summarize]';
+                btn.textContent = 'Summarize';
                 btn.disabled = false;
             } else if (data.status === 'pending' || data.status === 'processing') {
                 // Start polling
@@ -394,7 +394,7 @@
             }
         } catch (err) {
             flash.error(err.message);
-            btn.textContent = '[Summarize]';
+            btn.textContent = 'Summarize';
             btn.disabled = false;
         }
     }
@@ -411,7 +411,7 @@
                     stopSummaryPolling();
                     const btn = document.getElementById('summarize-btn');
                     if (btn) {
-                        btn.textContent = '[Summarize]';
+                        btn.textContent = 'Summarize';
                         btn.disabled = false;
                     }
                     return;
@@ -429,7 +429,7 @@
                     showSummary(data.summary_text);
                     const btn = document.getElementById('summarize-btn');
                     if (btn) {
-                        btn.textContent = '[Summarize]';
+                        btn.textContent = 'Summarize';
                         btn.disabled = false;
                     }
                 } else if (data.status === 'failed') {
@@ -437,7 +437,7 @@
                     flash.error(data.error || 'Summarization failed');
                     const btn = document.getElementById('summarize-btn');
                     if (btn) {
-                        btn.textContent = '[Summarize]';
+                        btn.textContent = 'Summarize';
                         btn.disabled = false;
                     }
                 }
@@ -447,7 +447,7 @@
                 flash.error(err.message);
                 const btn = document.getElementById('summarize-btn');
                 if (btn) {
-                    btn.textContent = '[Summarize]';
+                    btn.textContent = 'Summarize';
                     btn.disabled = false;
                 }
             }
@@ -518,9 +518,9 @@
             await navigator.clipboard.writeText(formattedText);
             const btn = document.getElementById('copy-summary-btn');
             if (btn) {
-                btn.textContent = '[Copied!]';
+                btn.textContent = 'Copied!';
                 setTimeout(() => {
-                    btn.textContent = '[Copy]';
+                    btn.textContent = 'Copy';
                 }, 2000);
             }
         } catch (err) {
@@ -532,7 +532,7 @@
         const btn = document.getElementById('save-btn');
         if (!btn) return;
 
-        btn.textContent = '[Saving...]';
+        btn.textContent = 'Saving...';
         btn.disabled = true;
 
         try {
@@ -549,10 +549,10 @@
             if (data.all_success) {
                 const count = data.results.length;
                 flash.success(`Saved to ${count} service${count > 1 ? 's' : ''}`);
-                btn.textContent = '[Saved!]';
+                btn.textContent = 'Saved!';
                 // Reset button after a delay
                 setTimeout(() => {
-                    btn.textContent = '[Save]';
+                    btn.textContent = 'Save';
                 }, 2000);
             } else {
                 // Partial success or all failed
@@ -565,11 +565,11 @@
                 if (failed.length > 0) {
                     flash.error(`Failed: ${failed.map(r => `${r.service} (${r.message})`).join(', ')}`);
                 }
-                btn.textContent = '[Save]';
+                btn.textContent = 'Save';
             }
         } catch (err) {
             flash.error(err.message);
-            btn.textContent = '[Save]';
+            btn.textContent = 'Save';
         } finally {
             btn.disabled = false;
         }
@@ -581,7 +581,7 @@
 
     async function fetchFullContent() {
         const btn = document.getElementById('fetch-content-btn');
-        btn.textContent = '[Fetching...]';
+        btn.textContent = 'Fetching...';
         btn.disabled = true;
 
         try {
@@ -613,13 +613,13 @@
             // Add toggle button if not exists
             if (!document.getElementById('toggle-content-btn')) {
                 btn.insertAdjacentHTML('afterend',
-                    ' <button type="button" onclick="toggleContent()" id="toggle-content-btn">[Show Original]</button>');
+                    ' <button type="button" onclick="toggleContent()" id="toggle-content-btn">Show Original</button>');
             } else {
-                document.getElementById('toggle-content-btn').textContent = '[Show Original]';
+                document.getElementById('toggle-content-btn').textContent = 'Show Original';
             }
         } catch (err) {
             flash.error(err.message);
-            btn.textContent = '[Fetch Full Content]';
+            btn.textContent = 'Fetch Full Content';
         } finally {
             btn.disabled = false;
         }
@@ -631,10 +631,10 @@
 
         if (showingFullContent) {
             contentEl.innerHTML = originalContent;
-            toggleBtn.textContent = '[Show Full Content]';
+            toggleBtn.textContent = 'Show Full Content';
         } else {
             contentEl.innerHTML = fullContent;
-            toggleBtn.textContent = '[Show Original]';
+            toggleBtn.textContent = 'Show Original';
         }
         showingFullContent = !showingFullContent;
     }
@@ -855,7 +855,7 @@
     .entry-content h4,
     .entry-content h5,
     .entry-content h6 {
-        font-family: "SF Mono", "Monaco", "Inconsolata", monospace;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         margin-top: var(--space-8);
         margin-bottom: var(--space-4);
         line-height: 1.3;

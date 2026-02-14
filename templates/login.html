@@ -11,7 +11,7 @@
 
 <div id="passkey-section" style="display: none;">
     <button type="button" id="passkey-login-btn" class="btn-primary" style="width: 100%; margin-bottom: 1rem;">
-        [Login with Passkey]
+        Login with Passkey
     </button>
     <p class="muted" style="text-align: center; margin-bottom: 1rem;">or use password</p>
 </div>
@@ -25,7 +25,7 @@
         <label for="password">Password</label>
         <input type="password" id="password" name="password" required autocomplete="current-password">
     </div>
-    <button type="submit">[Submit]</button>
+    <button type="submit">Submit</button>
 </form>
 {% if signup_enabled %}
 <div class="link">
@@ -98,7 +98,7 @@
 
         try {
             btn.disabled = true;
-            btn.textContent = '[Authenticating...]';
+            btn.textContent = 'Authenticating...';
 
             // Start authentication
             const startResponse = await fetch('/api/passkey/auth/start', {
@@ -161,7 +161,7 @@
             errorDiv.style.display = 'block';
         } finally {
             btn.disabled = false;
-            btn.textContent = '[Login with Passkey]';
+            btn.textContent = 'Login with Passkey';
         }
     });
 </script>

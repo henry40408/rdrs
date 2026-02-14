@@ -76,9 +76,9 @@
             padding: 0;
         }
         body {
-            font-family: "SF Mono", "Monaco", "Inconsolata", "Fira Mono", "Droid Sans Mono", "Source Code Pro", monospace;
-            font-size: 14px;
-            line-height: 1.6;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-size: 15px;
+            line-height: 1.5;
             background-color: var(--color-bg);
             color: var(--color-text);
             padding: 2rem 4rem;
@@ -153,6 +153,7 @@
         }
         button, .btn {
             padding: 0.5rem 1rem;
+            border-radius: 4px;
             background: var(--color-button-bg);
             color: var(--color-button-text);
             border: 1px solid var(--color-border);
@@ -166,11 +167,38 @@
             background: var(--color-bg);
             color: var(--color-text);
         }
+        .btn-primary {
+            background: var(--color-accent);
+            color: #ffffff;
+            border-color: var(--color-accent);
+        }
+        .btn-primary:hover {
+            background: transparent;
+            color: var(--color-accent);
+        }
+        .btn-secondary {
+            background: transparent;
+            color: var(--color-text);
+            border-color: var(--color-text);
+        }
+        .btn-secondary:hover {
+            background: var(--color-text);
+            color: var(--color-bg);
+        }
+        .btn-danger {
+            background: var(--color-error);
+            color: #ffffff;
+            border-color: var(--color-error);
+        }
+        .btn-danger:hover {
+            background: transparent;
+            color: var(--color-error);
+        }
         .error {
             margin-bottom: 1rem;
         }
         .error::before {
-            content: "[ERROR] ";
+            content: "ERROR — ";
         }
         a {
             color: var(--color-text);
@@ -191,10 +219,10 @@
             align-items: center;
             gap: 1rem;
         }
-        .flash-success::before { content: "[OK] "; }
-        .flash-error::before { content: "[ERROR] "; }
-        .flash-info::before { content: "[INFO] "; }
-        .flash-warning::before { content: "[WARN] "; }
+        .flash-success::before { content: "OK — "; }
+        .flash-error::before { content: "ERROR — "; }
+        .flash-info::before { content: "INFO — "; }
+        .flash-warning::before { content: "WARN — "; }
         .flash-close {
             background: none;
             border: none;
@@ -256,6 +284,24 @@
             margin: 0;
             font-size: 12px;
         }
+        .actions a {
+            color: var(--color-accent);
+            text-decoration: none;
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+        .actions a:hover {
+            background: var(--color-accent);
+            color: #ffffff;
+        }
+        .actions a[onclick*="delete"] {
+            color: var(--color-error);
+        }
+        .actions a[onclick*="delete"]:hover {
+            background: var(--color-error);
+            color: #ffffff;
+        }
         .badge {
             font-size: 12px;
         }
@@ -278,8 +324,8 @@
         }
         /* Entry item */
         .entry-item {
-            margin-bottom: var(--space-5);
-            padding-bottom: var(--space-4);
+            margin-bottom: var(--space-3);
+            padding-bottom: var(--space-3);
             border-bottom: 1px solid var(--color-border-light);
         }
         .entry-item-title {
@@ -292,6 +338,16 @@
         .entry-item-actions {
             margin-top: var(--space-2);
             font-size: 0.85rem;
+        }
+        .entry-item-actions a {
+            color: var(--color-accent);
+            text-decoration: none;
+            padding: 0.1rem 0.3rem;
+            border-radius: 3px;
+        }
+        .entry-item-actions a:hover {
+            background: var(--color-accent);
+            color: #ffffff;
         }
         /* Modal */
         .modal-overlay {
@@ -352,6 +408,20 @@
         @media (max-width: 768px) {
             body {
                 padding: 1rem;
+            }
+            .entry-item {
+                margin-bottom: var(--space-3);
+                padding-bottom: var(--space-2);
+            }
+            .entry-item-title {
+                font-size: 1rem;
+            }
+            .entry-item-meta {
+                font-size: 0.8rem;
+            }
+            .entry-item-actions {
+                margin-top: var(--space-1);
+                font-size: 0.8rem;
             }
         }
         .feed-icon {
@@ -714,8 +784,8 @@
     <!-- Keyboard shortcut help modal -->
     <div class="kb-help-overlay" id="kb-help-overlay" onclick="if(event.target===this)window.keyboard.hideHelp()" onkeydown="if(event.key==='Escape')window.keyboard.hideHelp()">
         <div class="kb-help-modal">
-            <h2>Keyboard Shortcuts [?]</h2>
-            <button class="kb-help-close" onclick="window.keyboard.hideHelp()">[Close]</button>
+            <h2>Keyboard Shortcuts</h2>
+            <button class="kb-help-close" onclick="window.keyboard.hideHelp()">Close</button>
             <div id="kb-help-content"></div>
         </div>
     </div>
@@ -755,7 +825,7 @@
                 const div = document.createElement('div');
                 div.className = 'flash ' + levelClass;
                 const timestamp = this.formatTime(new Date());
-                div.innerHTML = '<span>' + this.escapeHtml(message) + '</span><span class="flash-right"><span class="flash-time">' + timestamp + '</span> <a href="#" class="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">[x]</a></span>';
+                div.innerHTML = '<span>' + this.escapeHtml(message) + '</span><span class="flash-right"><span class="flash-time">' + timestamp + '</span> <a href="#" class="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">×</a></span>';
                 container.appendChild(div);
             },
             escapeHtml: function(text) {

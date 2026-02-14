@@ -27,7 +27,7 @@
                style="width:20em;" onkeydown="handleSearchKeydown(event)" autofocus>
     </div>
     <div>
-        <button type="button" onclick="loadEntries()">[Search]</button>
+        <button type="button" onclick="loadEntries()">Search</button>
     </div>
 </div>
 
@@ -38,7 +38,7 @@
 </div>
 
 <div id="load-more" style="display:none; margin-top:1rem;">
-    <button type="button" onclick="loadMore()">[Load More]</button>
+    <button type="button" onclick="loadMore()">Load More</button>
 </div>
 
 <p id="entries-count" class="muted"></p>
@@ -97,7 +97,7 @@
             updateEntriesCount();
             updateURL();
         } catch (err) {
-            document.getElementById('entries-list').innerHTML = '<p class="muted">[ERROR] Failed to load entries</p>';
+            document.getElementById('entries-list').innerHTML = '<p class="muted">Failed to load entries</p>';
         } finally {
             container.classList.remove('entries-list-refreshing');
             if (window.loading) window.loading.stop();
@@ -129,13 +129,13 @@
 
             let summaryBadgeHtml = '';
             if (summaryStatus === 'completed') {
-                summaryBadgeHtml = '<span title="Has Summary" class="summary-badge">[S]</span>';
+                summaryBadgeHtml = '<span title="Has Summary" class="summary-badge">S</span>';
             } else if (summaryStatus === 'pending') {
-                summaryBadgeHtml = '<span title="Pending" class="summary-badge-pending">[P]</span>';
+                summaryBadgeHtml = '<span title="Pending" class="summary-badge-pending">P</span>';
             } else if (summaryStatus === 'processing') {
-                summaryBadgeHtml = '<span title="Processing" class="summary-badge-processing">[...]</span>';
+                summaryBadgeHtml = '<span title="Processing" class="summary-badge-processing">…</span>';
             } else if (summaryStatus === 'failed') {
-                summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">[F]</span>';
+                summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">F</span>';
             }
 
             let contentSnippetHtml = '';
@@ -158,11 +158,11 @@
                 </div>
                 <div class="entry-item-actions">
                     ${isRead
-                        ? `<a href="#" onclick="markUnread(${entry.id}); return false;">[unread]</a>`
-                        : `<a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>`
+                        ? `<a href="#" onclick="markUnread(${entry.id}); return false;">unread</a>`
+                        : `<a href="#" onclick="markRead(${entry.id}); return false;">read</a>`
                     }
-                    <a href="#" onclick="toggleStar(${entry.id}); return false;">[${isStarred ? 'unstar' : 'star'}]</a>
-                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markRead(${entry.id})">[original]</a>` : ''}
+                    <a href="#" onclick="toggleStar(${entry.id}); return false;">${isStarred ? 'unstar' : 'star'}</a>
+                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markRead(${entry.id})">original</a>` : ''}
                 </div>
             </div>
             `;
