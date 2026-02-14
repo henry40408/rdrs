@@ -167,6 +167,33 @@
             background: var(--color-bg);
             color: var(--color-text);
         }
+        .btn-primary {
+            background: var(--color-accent);
+            color: #ffffff;
+            border-color: var(--color-accent);
+        }
+        .btn-primary:hover {
+            background: transparent;
+            color: var(--color-accent);
+        }
+        .btn-secondary {
+            background: transparent;
+            color: var(--color-text);
+            border-color: var(--color-text);
+        }
+        .btn-secondary:hover {
+            background: var(--color-text);
+            color: var(--color-bg);
+        }
+        .btn-danger {
+            background: var(--color-error);
+            color: #ffffff;
+            border-color: var(--color-error);
+        }
+        .btn-danger:hover {
+            background: transparent;
+            color: var(--color-error);
+        }
         .error {
             margin-bottom: 1rem;
         }
@@ -257,6 +284,24 @@
             margin: 0;
             font-size: 12px;
         }
+        .actions a {
+            color: var(--color-accent);
+            text-decoration: none;
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+        .actions a:hover {
+            background: var(--color-accent);
+            color: #ffffff;
+        }
+        .actions a[onclick*="delete"] {
+            color: var(--color-error);
+        }
+        .actions a[onclick*="delete"]:hover {
+            background: var(--color-error);
+            color: #ffffff;
+        }
         .badge {
             font-size: 12px;
         }
@@ -293,6 +338,16 @@
         .entry-item-actions {
             margin-top: var(--space-2);
             font-size: 0.85rem;
+        }
+        .entry-item-actions a {
+            color: var(--color-accent);
+            text-decoration: none;
+            padding: 0.1rem 0.3rem;
+            border-radius: 3px;
+        }
+        .entry-item-actions a:hover {
+            background: var(--color-accent);
+            color: #ffffff;
         }
         /* Modal */
         .modal-overlay {
@@ -353,6 +408,20 @@
         @media (max-width: 768px) {
             body {
                 padding: 1rem;
+            }
+            .entry-item {
+                margin-bottom: var(--space-3);
+                padding-bottom: var(--space-2);
+            }
+            .entry-item-title {
+                font-size: 1rem;
+            }
+            .entry-item-meta {
+                font-size: 0.8rem;
+            }
+            .entry-item-actions {
+                margin-top: var(--space-1);
+                font-size: 0.8rem;
             }
         }
         .feed-icon {
