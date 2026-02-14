@@ -171,7 +171,7 @@
             margin-bottom: 1rem;
         }
         .error::before {
-            content: "[ERROR] ";
+            content: "ERROR — ";
         }
         a {
             color: var(--color-text);
@@ -192,10 +192,10 @@
             align-items: center;
             gap: 1rem;
         }
-        .flash-success::before { content: "[OK] "; }
-        .flash-error::before { content: "[ERROR] "; }
-        .flash-info::before { content: "[INFO] "; }
-        .flash-warning::before { content: "[WARN] "; }
+        .flash-success::before { content: "OK — "; }
+        .flash-error::before { content: "ERROR — "; }
+        .flash-info::before { content: "INFO — "; }
+        .flash-warning::before { content: "WARN — "; }
         .flash-close {
             background: none;
             border: none;
@@ -715,7 +715,7 @@
     <!-- Keyboard shortcut help modal -->
     <div class="kb-help-overlay" id="kb-help-overlay" onclick="if(event.target===this)window.keyboard.hideHelp()" onkeydown="if(event.key==='Escape')window.keyboard.hideHelp()">
         <div class="kb-help-modal">
-            <h2>Keyboard Shortcuts [?]</h2>
+            <h2>Keyboard Shortcuts</h2>
             <button class="kb-help-close" onclick="window.keyboard.hideHelp()">Close</button>
             <div id="kb-help-content"></div>
         </div>
@@ -756,7 +756,7 @@
                 const div = document.createElement('div');
                 div.className = 'flash ' + levelClass;
                 const timestamp = this.formatTime(new Date());
-                div.innerHTML = '<span>' + this.escapeHtml(message) + '</span><span class="flash-right"><span class="flash-time">' + timestamp + '</span> <a href="#" class="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">[x]</a></span>';
+                div.innerHTML = '<span>' + this.escapeHtml(message) + '</span><span class="flash-right"><span class="flash-time">' + timestamp + '</span> <a href="#" class="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">×</a></span>';
                 container.appendChild(div);
             },
             escapeHtml: function(text) {

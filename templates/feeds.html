@@ -252,7 +252,7 @@
             renderFeeds();
         } catch (err) {
             document.getElementById('feeds-table').innerHTML =
-                '<tr><td colspan="5">[ERROR] Failed to load feeds</td></tr>';
+                '<tr><td colspan="5">Failed to load feeds</td></tr>';
         }
     }
 
@@ -361,7 +361,7 @@
                 rows += `
             <tr class="error-row">
                 <td colspan="5" class="error-text" style="font-size:0.875rem; padding-top:0;">
-                    [Error] ${escapeHtml(feed.fetch_error)}
+                    Error: ${escapeHtml(feed.fetch_error)}
                 </td>
             </tr>`;
             }

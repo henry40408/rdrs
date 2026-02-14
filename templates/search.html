@@ -97,7 +97,7 @@
             updateEntriesCount();
             updateURL();
         } catch (err) {
-            document.getElementById('entries-list').innerHTML = '<p class="muted">[ERROR] Failed to load entries</p>';
+            document.getElementById('entries-list').innerHTML = '<p class="muted">Failed to load entries</p>';
         } finally {
             container.classList.remove('entries-list-refreshing');
             if (window.loading) window.loading.stop();
@@ -129,13 +129,13 @@
 
             let summaryBadgeHtml = '';
             if (summaryStatus === 'completed') {
-                summaryBadgeHtml = '<span title="Has Summary" class="summary-badge">[S]</span>';
+                summaryBadgeHtml = '<span title="Has Summary" class="summary-badge">S</span>';
             } else if (summaryStatus === 'pending') {
-                summaryBadgeHtml = '<span title="Pending" class="summary-badge-pending">[P]</span>';
+                summaryBadgeHtml = '<span title="Pending" class="summary-badge-pending">P</span>';
             } else if (summaryStatus === 'processing') {
-                summaryBadgeHtml = '<span title="Processing" class="summary-badge-processing">[...]</span>';
+                summaryBadgeHtml = '<span title="Processing" class="summary-badge-processing">…</span>';
             } else if (summaryStatus === 'failed') {
-                summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">[F]</span>';
+                summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">F</span>';
             }
 
             let contentSnippetHtml = '';

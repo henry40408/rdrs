@@ -6,7 +6,7 @@
     {% for msg in messages %}
     <div class="flash {{ msg.level_class() }}">
         <span>{{ msg.message }}</span>
-        <span class="flash-right"><span class="flash-time">{{ msg.formatted_time() }}</span> <a href="#" class="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">[x]</a></span>
+        <span class="flash-right"><span class="flash-time">{{ msg.formatted_time() }}</span> <a href="#" class="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">×</a></span>
     </div>
     {% endfor %}
 </div>
@@ -16,22 +16,22 @@
 {% macro nav(current, is_admin, is_masquerading, username) %}
 <nav>
     <ul>
-        <li><a href="/"{% if current == "unread" %} class="active"{% endif %}>[Unread]</a></li>
-        <li><a href="/entries"{% if current == "entries" %} class="active"{% endif %}>[Entries]</a></li>
-        <li><a href="/feeds"{% if current == "feeds" %} class="active"{% endif %}>[Feeds]</a></li>
-        <li><a href="/categories"{% if current == "categories" %} class="active"{% endif %}>[Categories]</a></li>
-        <li><a href="/search"{% if current == "search" %} class="active"{% endif %}>[Search]</a></li>
-        <li><a href="/user-settings"{% if current == "user-settings" %} class="active"{% endif %}>[Settings]</a></li>
-        <li><a href="/settings"{% if current == "settings" %} class="active"{% endif %}>[App]</a></li>
+        <li><a href="/"{% if current == "unread" %} class="active"{% endif %}>Unread</a></li>
+        <li><a href="/entries"{% if current == "entries" %} class="active"{% endif %}>Entries</a></li>
+        <li><a href="/feeds"{% if current == "feeds" %} class="active"{% endif %}>Feeds</a></li>
+        <li><a href="/categories"{% if current == "categories" %} class="active"{% endif %}>Categories</a></li>
+        <li><a href="/search"{% if current == "search" %} class="active"{% endif %}>Search</a></li>
+        <li><a href="/user-settings"{% if current == "user-settings" %} class="active"{% endif %}>Settings</a></li>
+        <li><a href="/settings"{% if current == "settings" %} class="active"{% endif %}>App</a></li>
         {% if is_admin %}
-        <li><a href="/admin"{% if current == "admin" %} class="active"{% endif %}>[Admin]</a></li>
+        <li><a href="/admin"{% if current == "admin" %} class="active"{% endif %}>Admin</a></li>
         {% endif %}
-        <li class="ml-auto"><span class="muted">{{ username }}</span> <a href="#" onclick="logout(); return false;">[Sign Out]</a></li>
+        <li class="ml-auto"><span class="muted">{{ username }}</span> <a href="#" onclick="logout(); return false;">Sign Out</a></li>
     </ul>
 </nav>
 {% if is_masquerading %}
 <div class="flash flash-warning">
-    [MASQUERADE] You are viewing as another user. <a href="#" onclick="stopMasquerade(); return false;">[Stop]</a>
+    MASQUERADE: You are viewing as another user. <a href="#" onclick="stopMasquerade(); return false;">Stop</a>
 </div>
 {% endif %}
 <script>
