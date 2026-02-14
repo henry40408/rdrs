@@ -13,8 +13,8 @@
 <h1>Feeds</h1>
 
 <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center; margin-bottom:1rem;">
-    <a href="/api/opml/export" class="btn">[Export OPML]</a>
-    <button type="button" onclick="showImportModal()">[Import OPML]</button>
+    <a href="/api/opml/export" class="btn">Export OPML</a>
+    <button type="button" onclick="showImportModal()">Import OPML</button>
 </div>
 
 <hr>
@@ -30,7 +30,7 @@
             <option value="">Loading categories...</option>
         </select>
     </div>
-    <button type="submit" id="add-btn">[Add Feed]</button>
+    <button type="submit" id="add-btn">Add Feed</button>
 </form>
 
 <hr>
@@ -110,8 +110,8 @@
                 <textarea id="import-content" rows="10" style="width:100%; font-family:monospace; font-size:0.875rem;" placeholder="<?xml version=&quot;1.0&quot;?>&#10;<opml version=&quot;2.0&quot;>&#10;  ...&#10;</opml>"></textarea>
             </div>
             <div class="modal-actions">
-                <button type="submit" id="import-btn">[Import]</button>
-                <button type="button" onclick="closeImportModal()">[Cancel]</button>
+                <button type="submit" id="import-btn">Import</button>
+                <button type="button" onclick="closeImportModal()">Cancel</button>
             </div>
         </form>
     </div>
@@ -127,7 +127,7 @@
                 <label for="edit-url">Feed URL</label>
                 <div style="display:flex; gap:0.5rem;">
                     <input type="text" id="edit-url" name="url" required style="flex:1;">
-                    <button type="button" onclick="fetchMetadata()" style="margin:0; white-space:nowrap;">[Fetch]</button>
+                    <button type="button" onclick="fetchMetadata()" style="margin:0; white-space:nowrap;">Fetch</button>
                 </div>
             </div>
             <div class="form-group">
@@ -164,8 +164,8 @@
                 </div>
             </details>
             <div class="modal-actions">
-                <button type="submit">[Save]</button>
-                <button type="button" onclick="closeEditModal()">[Cancel]</button>
+                <button type="submit">Save</button>
+                <button type="button" onclick="closeEditModal()">Cancel</button>
             </div>
         </form>
     </div>
@@ -185,8 +185,8 @@
         if (activeSyncs.size > 0) {
             bar.classList.add('active');
             text.textContent = activeSyncs.size === 1
-                ? '[Syncing 1 feed...]'
-                : `[Syncing ${activeSyncs.size} feeds...]`;
+                ? 'Syncing 1 feed...'
+                : `Syncing ${activeSyncs.size} feeds...`;
         } else {
             bar.classList.remove('active');
         }
@@ -350,10 +350,10 @@
                 <td${hasError ? ' style="border-bottom:none;"' : ''}>${unreadCount > 0 ? `<strong>${unreadCount}</strong>` : '0'}</td>
                 <td${hasError ? ' style="border-bottom:none;"' : ''}>${fetchedAt ? `<span title="${fetchedAtTitle}">${fetchedAt}</span>` : 'Never'}</td>
                 <td class="actions"${hasError ? ' style="border-bottom:none;"' : ''}>
-                    <a href="/feeds/${feed.id}/entries">[entries]</a>
-                    <a href="#" onclick="refreshFeed(${feed.id}); return false;" id="refresh-${feed.id}">[refresh]</a>
-                    <a href="#" onclick="editFeed(${feed.id}); return false;">[edit]</a>
-                    <a href="#" onclick="deleteFeed(${feed.id}, '${escapeHtml(title).replace(/'/g, "\\'")}'); return false;">[delete]</a>
+                    <a href="/feeds/${feed.id}/entries">entries</a>
+                    <a href="#" onclick="refreshFeed(${feed.id}); return false;" id="refresh-${feed.id}">refresh</a>
+                    <a href="#" onclick="editFeed(${feed.id}); return false;">edit</a>
+                    <a href="#" onclick="deleteFeed(${feed.id}, '${escapeHtml(title).replace(/'/g, "\\'")}'); return false;">delete</a>
                 </td>
             </tr>`;
 
@@ -406,7 +406,7 @@
             return;
         }
 
-        addBtn.textContent = '[Adding...]';
+        addBtn.textContent = 'Adding...';
         addBtn.disabled = true;
 
         try {
@@ -427,7 +427,7 @@
         } catch (err) {
             flash.error(err.message);
         } finally {
-            addBtn.textContent = '[Add Feed]';
+            addBtn.textContent = 'Add Feed';
             addBtn.disabled = false;
         }
     }
@@ -572,7 +572,7 @@
         const row = document.getElementById(`row-${id}`);
         const originalText = btn.textContent;
 
-        btn.textContent = '[...]';
+        btn.textContent = '...';
         row?.classList.add('feed-row-syncing');
         activeSyncs.add(id);
         updateSyncStatus();
@@ -640,7 +640,7 @@
         }
 
         const importBtn = document.getElementById('import-btn');
-        importBtn.textContent = '[Importing...]';
+        importBtn.textContent = 'Importing...';
         importBtn.disabled = true;
 
         try {
@@ -665,7 +665,7 @@
         } catch (err) {
             flash.error(err.message);
         } finally {
-            importBtn.textContent = '[Import]';
+            importBtn.textContent = 'Import';
             importBtn.disabled = false;
         }
     }

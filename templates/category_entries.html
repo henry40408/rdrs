@@ -25,7 +25,7 @@
 </style>
 
 <div class="breadcrumb">
-    <a href="/categories">[Categories]</a> / {{ category_name }}
+    <a href="/categories">Categories</a> / {{ category_name }}
 </div>
 
 <h1>{{ category_name }}</h1>
@@ -52,7 +52,7 @@
         </select>
     </div>
     <div>
-        <button type="button" onclick="loadEntries()">[Refresh]</button>
+        <button type="button" onclick="loadEntries()">Refresh</button>
     </div>
 </div>
 
@@ -63,11 +63,11 @@
 </div>
 
 <div id="load-more" style="display:none; margin-top:1rem;">
-    <button type="button" onclick="loadMore()">[Load More]</button>
+    <button type="button" onclick="loadMore()">Load More</button>
 </div>
 
 <div id="mark-above-read" style="display:none; margin-top:1rem;">
-    <button type="button" onclick="markAboveAsRead()">[Mark Above as Read]</button>
+    <button type="button" onclick="markAboveAsRead()">Mark Above as Read</button>
 </div>
 
 <p id="entries-count" class="muted"></p>
@@ -192,11 +192,11 @@
                 </div>
                 <div class="entry-item-actions">
                     ${isRead
-                        ? `<a href="#" onclick="markEntryUnread(${entry.id}); return false;">[unread]</a>`
-                        : `<a href="#" onclick="markEntryRead(${entry.id}); return false;">[read]</a>`
+                        ? `<a href="#" onclick="markEntryUnread(${entry.id}); return false;">unread</a>`
+                        : `<a href="#" onclick="markEntryRead(${entry.id}); return false;">read</a>`
                     }
-                    <a href="#" onclick="toggleStar(${entry.id}); return false;">[${isStarred ? 'unstar' : 'star'}]</a>
-                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markEntryRead(${entry.id})">[original]</a>` : ''}
+                    <a href="#" onclick="toggleStar(${entry.id}); return false;">${isStarred ? 'unstar' : 'star'}</a>
+                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markEntryRead(${entry.id})">original</a>` : ''}
                 </div>
             </div>
             `;

@@ -27,7 +27,7 @@
                style="width:20em;" onkeydown="handleSearchKeydown(event)" autofocus>
     </div>
     <div>
-        <button type="button" onclick="loadEntries()">[Search]</button>
+        <button type="button" onclick="loadEntries()">Search</button>
     </div>
 </div>
 
@@ -38,7 +38,7 @@
 </div>
 
 <div id="load-more" style="display:none; margin-top:1rem;">
-    <button type="button" onclick="loadMore()">[Load More]</button>
+    <button type="button" onclick="loadMore()">Load More</button>
 </div>
 
 <p id="entries-count" class="muted"></p>
@@ -158,11 +158,11 @@
                 </div>
                 <div class="entry-item-actions">
                     ${isRead
-                        ? `<a href="#" onclick="markUnread(${entry.id}); return false;">[unread]</a>`
-                        : `<a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>`
+                        ? `<a href="#" onclick="markUnread(${entry.id}); return false;">unread</a>`
+                        : `<a href="#" onclick="markRead(${entry.id}); return false;">read</a>`
                     }
-                    <a href="#" onclick="toggleStar(${entry.id}); return false;">[${isStarred ? 'unstar' : 'star'}]</a>
-                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markRead(${entry.id})">[original]</a>` : ''}
+                    <a href="#" onclick="toggleStar(${entry.id}); return false;">${isStarred ? 'unstar' : 'star'}</a>
+                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markRead(${entry.id})">original</a>` : ''}
                 </div>
             </div>
             `;

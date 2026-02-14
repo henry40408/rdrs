@@ -30,10 +30,10 @@
 <h1>Entries</h1>
 
 <div class="tab-bar">
-    <a href="/entries" class="active">[All]</a>
-    <a href="/entries/read">[Read]</a>
-    <a href="/entries/starred">[Starred]</a>
-    <a href="/entries/summarized">[Summarized]</a>
+    <a href="/entries" class="active">All</a>
+    <a href="/entries/read">Read</a>
+    <a href="/entries/starred">Starred</a>
+    <a href="/entries/summarized">Summarized</a>
 </div>
 
 <div class="filter-bar">
@@ -49,7 +49,7 @@
         </select>
     </div>
     <div>
-        <button type="button" onclick="loadEntries()">[Refresh]</button>
+        <button type="button" onclick="loadEntries()">Refresh</button>
     </div>
 </div>
 
@@ -60,7 +60,7 @@
 </div>
 
 <div id="load-more" style="display:none; margin-top:1rem;">
-    <button type="button" onclick="loadMore()">[Load More]</button>
+    <button type="button" onclick="loadMore()">Load More</button>
 </div>
 
 <p id="entries-count" class="muted"></p>
@@ -156,11 +156,11 @@
                 </div>
                 <div class="entry-item-actions">
                     ${isRead
-                        ? `<a href="#" onclick="markUnread(${entry.id}); return false;">[unread]</a>`
-                        : `<a href="#" onclick="markRead(${entry.id}); return false;">[read]</a>`
+                        ? `<a href="#" onclick="markUnread(${entry.id}); return false;">unread</a>`
+                        : `<a href="#" onclick="markRead(${entry.id}); return false;">read</a>`
                     }
-                    <a href="#" onclick="toggleStar(${entry.id}); return false;">[${isStarred ? 'unstar' : 'star'}]</a>
-                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markRead(${entry.id})">[original]</a>` : ''}
+                    <a href="#" onclick="toggleStar(${entry.id}); return false;">${isStarred ? 'unstar' : 'star'}</a>
+                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markRead(${entry.id})">original</a>` : ''}
                 </div>
             </div>
             `;

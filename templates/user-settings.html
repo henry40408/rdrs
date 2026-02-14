@@ -45,7 +45,7 @@
     <label for="confirm-password">Confirm New Password</label>
     <input type="password" id="confirm-password" name="confirm-password" required minlength="6" autocomplete="new-password">
   </div>
-  <button type="submit">[Change Password]</button>
+  <button type="submit">Change Password</button>
 </form>
 <script>
   document
@@ -112,7 +112,7 @@
             <label for="passkey-name">Passkey Name</label>
             <input type="text" id="passkey-name" name="passkey-name" required placeholder="e.g., MacBook Touch ID">
         </div>
-        <button type="submit" id="register-passkey-btn">[Register Passkey]</button>
+        <button type="submit" id="register-passkey-btn">Register Passkey</button>
     </form>
 </div>
 
@@ -163,8 +163,8 @@
                             <td>${p.created_at}</td>
                             <td>${p.last_used_at || 'Never'}</td>
                             <td>
-                                <a href="#" onclick="renamePasskey(${p.id}); return false;">[Rename]</a>
-                                <a href="#" onclick="deletePasskey(${p.id}); return false;">[Delete]</a>
+                                <a href="#" onclick="renamePasskey(${p.id}); return false;">Rename</a>
+                                <a href="#" onclick="deletePasskey(${p.id}); return false;">Delete</a>
                             </td>
                         </tr>
                     `).join('') +
@@ -241,7 +241,7 @@
 
         try {
             btn.disabled = true;
-            btn.textContent = '[Registering...]';
+            btn.textContent = 'Registering...';
 
             // Start registration
             const startResponse = await fetch('/api/passkey/register/start', {
@@ -318,7 +318,7 @@
             errorDiv.style.display = 'block';
         } finally {
             btn.disabled = false;
-            btn.textContent = '[Register Passkey]';
+            btn.textContent = 'Register Passkey';
         }
     });
 </script>
@@ -342,7 +342,7 @@
     <input type="number" id="entries-per-page" name="entries-per-page" value="{{ entries_per_page }}" min="10" max="100" required>
     <span class="muted">(10-100)</span>
   </div>
-  <button type="submit">[Save Preferences]</button>
+  <button type="submit">Save Preferences</button>
 </form>
 <script>
   // Preview theme immediately when changed (without saving)
@@ -424,9 +424,9 @@
     <input type="password" id="linkding-api-token" name="linkding-api-token" placeholder="{% if linkding_configured %}(unchanged){% else %}Enter your API token{% endif %}">
     <span class="muted">(Settings &rarr; Integrations &rarr; REST API)</span>
   </div>
-  <button type="submit">[Save Linkding Settings]</button>
+  <button type="submit">Save Linkding Settings</button>
   {% if linkding_configured %}
-  <button type="button" onclick="clearLinkding()" class="btn-secondary">[Clear]</button>
+  <button type="button" onclick="clearLinkding()" class="btn-secondary">Clear</button>
   {% endif %}
 </form>
 <script>
@@ -532,9 +532,9 @@
     </select>
     <span class="muted">(Optional: translate summary to this language)</span>
   </div>
-  <button type="submit">[Save Kagi Settings]</button>
+  <button type="submit">Save Kagi Settings</button>
   {% if kagi_configured %}
-  <button type="button" onclick="clearKagi()" class="btn-secondary">[Clear]</button>
+  <button type="button" onclick="clearKagi()" class="btn-secondary">Clear</button>
   {% endif %}
 </form>
 <script>
