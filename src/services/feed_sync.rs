@@ -6,7 +6,7 @@ use tracing::{debug, error, info, warn};
 use crate::db::DbPool;
 use crate::error::{AppError, AppResult};
 use crate::models::{entry, feed, image};
-use crate::services::http::{send_with_retry, RetryConfig, DEFAULT_TIMEOUT};
+use crate::services::http::{send_with_retry, RetryConfig, DEFAULT_TIMEOUT, FEED_SYNC_TIMEOUT};
 use crate::services::icon_fetcher;
 
 /// Parse Chinese month names to month number
@@ -477,7 +477,24 @@ pub async fn refresh_bucket(
     let mut results = Vec::new();
 
     for feed_data in feeds {
-        let result = refresh_feed(db.clone(), feed_data.id, user_agent).await;
+        let result = match tokio::time::timeout(
+            FEED_SYNC_TIMEOUT,
+            refresh_feed(db.clone(), feed_data.id, user_agent),
+        )
+        .await
+        {
+            Ok(inner) => inner,
+            Err(_) => {
+                warn!(
+                    "Feed {} sync timed out after {:?}",
+                    feed_data.id, FEED_SYNC_TIMEOUT
+                );
+                Err(AppError::FetchError(format!(
+                    "Feed sync timed out after {}s",
+                    FEED_SYNC_TIMEOUT.as_secs()
+                )))
+            }
+        };
         match &result {
             Ok(sync) => {
                 debug!(

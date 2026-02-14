@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
 use crate::models::{category, entry, entry_summary, feed, user_settings, SummaryStatus};
+use crate::services::http::JOB_QUEUE_TIMEOUT;
 use crate::services::save::{linkding, BookmarkData, SaveResult};
 use crate::services::{fetch_and_extract, refresh_feed, sanitize_html, SummaryJob, SyncResult};
 use crate::AppState;
@@ -654,10 +655,11 @@ pub async fn summarize_entry(
         entry_link: link,
     };
 
-    state
-        .summary_tx
-        .send(job)
+    tokio::time::timeout(JOB_QUEUE_TIMEOUT, state.summary_tx.send(job))
         .await
+        .map_err(|_| {
+            AppError::Internal("Summary queue is full, please try again later".to_string())
+        })?
         .map_err(|e| AppError::Internal(format!("Failed to queue summary job: {}", e)))?;
 
     // Return pending status

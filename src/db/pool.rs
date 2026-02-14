@@ -1,9 +1,13 @@
 use std::fmt;
+use std::time::Duration;
 
 use rusqlite::Connection;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
+
+/// Timeout for waiting on the database actor to respond (30s)
+const DB_EXECUTE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Priority level for database operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,12 +23,15 @@ pub enum DbPriority {
 pub enum DbError {
     /// The actor task has stopped; the connection is no longer available.
     ActorStopped,
+    /// Timed out waiting for the database actor to respond.
+    Timeout,
 }
 
 impl fmt::Display for DbError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DbError::ActorStopped => write!(f, "Database actor has stopped"),
+            DbError::Timeout => write!(f, "Database operation timed out"),
         }
     }
 }
@@ -113,7 +120,10 @@ impl DbPool {
 
         tx.send(msg).await.map_err(|_| DbError::ActorStopped)?;
 
-        let boxed = resp_rx.await.map_err(|_| DbError::ActorStopped)?;
+        let boxed = tokio::time::timeout(DB_EXECUTE_TIMEOUT, resp_rx)
+            .await
+            .map_err(|_| DbError::Timeout)?
+            .map_err(|_| DbError::ActorStopped)?;
 
         // Downcast back to T
         Ok(*boxed.downcast::<T>().expect("DbPool type mismatch"))
@@ -351,6 +361,9 @@ mod tests {
     fn test_dberror_display() {
         let err = DbError::ActorStopped;
         assert_eq!(format!("{}", err), "Database actor has stopped");
+
+        let err = DbError::Timeout;
+        assert_eq!(format!("{}", err), "Database operation timed out");
     }
 
     #[test]
