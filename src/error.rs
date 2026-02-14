@@ -166,9 +166,10 @@ impl IntoResponse for AppError {
             }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
             AppError::DbPool(ref e) => match e {
-                crate::db::DbError::Timeout => {
-                    (StatusCode::SERVICE_UNAVAILABLE, "Database busy, please retry")
-                }
+                crate::db::DbError::Timeout => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Database busy, please retry",
+                ),
                 crate::db::DbError::ActorStopped => {
                     (StatusCode::INTERNAL_SERVER_ERROR, "Database error")
                 }
