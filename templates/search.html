@@ -149,7 +149,7 @@
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}${isRead ? ' entry-read' : ''}" id="entry-${entry.id}" data-index="${index}">
                 <div>
-                    <a href="/entries/${entry.id}" class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}">${titleHtml}</a>
+                    <a href="/entries/${entry.id}?origin=search" class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}">${titleHtml}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>${contentSnippetHtml}
@@ -341,8 +341,8 @@
     function openSelectedEntry() {
         const entry = getSelectedEntry();
         if (entry) {
-            if (selectedIndex >= 0) window._resumeIndex = selectedIndex + 1;
-            window.location.href = `/entries/${entry.id}`;
+            if (selectedIndex >= 0) window._resumeIndex = selectedIndex;
+            window.location.href = `/entries/${entry.id}?origin=search`;
         }
     }
 
@@ -453,14 +453,7 @@
     });
 
     // Refresh list when restored from bfcache
-    window.onPersistedPageShow = async function() {
-        var idx = window._resumeIndex;
-        window._resumeIndex = undefined;
-        await loadEntries();
-        if (idx !== undefined && entries.length > 0) {
-            selectEntry(Math.min(idx, entries.length - 1));
-        }
-    };
+    window.setupPersistedRestore(loadEntries, () => entries, selectEntry);
 
     // Initialize from URL
     (function() {

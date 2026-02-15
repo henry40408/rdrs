@@ -400,7 +400,7 @@
     function openSelectedEntry() {
         const entry = getSelectedEntry();
         if (entry) {
-            if (selectedIndex >= 0) window._resumeIndex = selectedIndex + 1;
+            if (selectedIndex >= 0) window._resumeIndex = selectedIndex;
             window.location.href = `/entries/${entry.id}?feed=${feedId}&origin=feed`;
         }
     }
@@ -532,14 +532,7 @@
     });
 
     // Refresh list when restored from bfcache
-    window.onPersistedPageShow = async function() {
-        var idx = window._resumeIndex;
-        window._resumeIndex = undefined;
-        await loadEntries();
-        if (idx !== undefined && entries.length > 0) {
-            selectEntry(Math.min(idx, entries.length - 1));
-        }
-    };
+    window.setupPersistedRestore(loadEntries, () => entries, selectEntry);
 
     // Initialize
     (function() {

@@ -844,6 +844,20 @@
                 }
             }
         };
+
+        // Helper for pages to set up bfcache restore behavior.
+        // Defined in <head> so child templates can call it during their script execution.
+        window.setupPersistedRestore = function(loadFn, getEntries, selectFn) {
+            window.onPersistedPageShow = async function() {
+                const idx = window._resumeIndex;
+                window._resumeIndex = undefined;
+                await loadFn();
+                const items = getEntries();
+                if (idx !== undefined && items.length > 0) {
+                    selectFn(Math.min(idx, items.length - 1));
+                }
+            };
+        };
     </script>
     {% block head %}{% endblock %}
 </head>
