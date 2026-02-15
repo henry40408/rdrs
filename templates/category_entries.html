@@ -539,6 +539,9 @@
         }
     });
 
+    // Refresh list when restored from bfcache
+    window.onPersistedPageShow = loadEntries;
+
     // Initialize
     (function() {
         const urlParams = new URLSearchParams(window.location.search);

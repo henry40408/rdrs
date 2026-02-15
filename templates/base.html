@@ -866,6 +866,13 @@
         // Initialize global loading indicator
         if (window.loading) window.loading.init();
 
+        // Refresh page content when restored from bfcache
+        window.addEventListener('pageshow', function(event) {
+            if (event.persisted && typeof window.onPersistedPageShow === 'function') {
+                window.onPersistedPageShow();
+            }
+        });
+
         // Flash message helper functions
         window.flash = {
             maxMessages: 3,
