@@ -24,7 +24,7 @@ pub use config::Config;
 pub use db::DbPool;
 pub use middleware::auth::SESSION_COOKIE_NAME;
 pub use models::{Role, User};
-pub use version::{GIT_VERSION, PKG_VERSION};
+pub use version::GIT_VERSION;
 
 use services::{SummaryCache, SummaryJob};
 

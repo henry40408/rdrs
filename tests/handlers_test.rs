@@ -2166,7 +2166,6 @@ async fn test_health_check() {
 
     let body: serde_json::Value = response.json();
     assert_eq!(body["status"], "ok");
-    assert!(body["version"].is_string());
     assert!(body["git_version"].is_string());
 }
 
