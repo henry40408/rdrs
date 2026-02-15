@@ -844,6 +844,20 @@
                 }
             }
         };
+
+        // Helper for pages to set up bfcache restore behavior.
+        // Defined in <head> so child templates can call it during their script execution.
+        window.setupPersistedRestore = function(loadFn, getEntries, selectFn) {
+            window.onPersistedPageShow = async function() {
+                const idx = window._resumeIndex;
+                window._resumeIndex = undefined;
+                await loadFn();
+                const items = getEntries();
+                if (idx !== undefined && items.length > 0) {
+                    selectFn(Math.min(idx, items.length - 1));
+                }
+            };
+        };
     </script>
     {% block head %}{% endblock %}
 </head>
@@ -865,6 +879,13 @@
     <script>
         // Initialize global loading indicator
         if (window.loading) window.loading.init();
+
+        // Refresh page content when restored from bfcache
+        window.addEventListener('pageshow', function(event) {
+            if (event.persisted && typeof window.onPersistedPageShow === 'function') {
+                window.onPersistedPageShow();
+            }
+        });
 
         // Flash message helper functions
         window.flash = {

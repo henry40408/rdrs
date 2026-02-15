@@ -45,6 +45,7 @@
         if (filterOrigin === 'read') return '/entries/read';
         if (filterOrigin === 'starred') return '/entries/starred';
         if (filterOrigin === 'summarized') return '/entries/summarized';
+        if (filterOrigin === 'search') return '/search';
         return '/';
     }
 
@@ -55,6 +56,7 @@
         if (filterOrigin === 'starred') return 'Back to Starred';
         if (filterOrigin === 'summarized') return 'Back to Summarized';
         if (filterOrigin === 'entries') return 'Back to All Entries';
+        if (filterOrigin === 'search') return 'Back to Search';
         return 'Back to Unread';
     }
 

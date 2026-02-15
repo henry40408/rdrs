@@ -123,7 +123,7 @@
         const url = `/api/entries?${getApiParams()}`;
 
         try {
-            const response = await fetch(url);
+            const response = await fetch(url, { cache: 'no-store' });
             if (!response.ok) {
                 throw new Error('Failed to load entries');
             }
@@ -403,6 +403,7 @@
     function openSelectedEntry() {
         const entry = getSelectedEntry();
         if (entry) {
+            if (selectedIndex >= 0) window._resumeIndex = selectedIndex;
             window.location.href = `/entries/${entry.id}?category=${categoryId}&origin=category`;
         }
     }
@@ -538,6 +539,9 @@
             return false;
         }
     });
+
+    // Refresh list when restored from bfcache
+    window.setupPersistedRestore(loadEntries, () => entries, selectEntry);
 
     // Initialize
     (function() {

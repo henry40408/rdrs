@@ -79,7 +79,7 @@
         const url = `/api/entries?${params.toString()}`;
 
         try {
-            const response = await fetch(url);
+            const response = await fetch(url, { cache: 'no-store' });
             if (!response.ok) {
                 throw new Error('Failed to load entries');
             }
@@ -149,7 +149,7 @@
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}${isRead ? ' entry-read' : ''}" id="entry-${entry.id}" data-index="${index}">
                 <div>
-                    <a href="/entries/${entry.id}" class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}">${titleHtml}</a>
+                    <a href="/entries/${entry.id}?origin=search" class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}">${titleHtml}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>${contentSnippetHtml}
@@ -341,7 +341,8 @@
     function openSelectedEntry() {
         const entry = getSelectedEntry();
         if (entry) {
-            window.location.href = `/entries/${entry.id}`;
+            if (selectedIndex >= 0) window._resumeIndex = selectedIndex;
+            window.location.href = `/entries/${entry.id}?origin=search`;
         }
     }
 
@@ -450,6 +451,9 @@
             return false;
         }
     });
+
+    // Refresh list when restored from bfcache
+    window.setupPersistedRestore(loadEntries, () => entries, selectEntry);
 
     // Initialize from URL
     (function() {
