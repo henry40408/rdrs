@@ -361,6 +361,8 @@
     }
 
     function openEntry(id) {
+        // Remember position so bfcache restore can select the next entry
+        if (selectedIndex >= 0) window._resumeIndex = selectedIndex;
         // Remove from list immediately so back button won't show it
         entries = entries.filter(e => e.id !== id);
         total--;
@@ -489,7 +491,14 @@
     });
 
     // Refresh list when restored from bfcache
-    window.onPersistedPageShow = loadEntries;
+    window.onPersistedPageShow = async function() {
+        var idx = window._resumeIndex;
+        window._resumeIndex = undefined;
+        await loadEntries();
+        if (idx !== undefined && entries.length > 0) {
+            selectEntry(Math.min(idx, entries.length - 1));
+        }
+    };
 
     // Initialize
     loadEntries();
