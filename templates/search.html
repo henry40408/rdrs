@@ -79,7 +79,7 @@
         const url = `/api/entries?${params.toString()}`;
 
         try {
-            const response = await fetch(url);
+            const response = await fetch(url, { cache: 'no-store' });
             if (!response.ok) {
                 throw new Error('Failed to load entries');
             }
