@@ -10,21 +10,21 @@
 {% if let Some(err) = error %}
 <div class="error">{{ err }}</div>
 {% else %}
-<div id="error" class="error" style="display: none;"></div>
-<form id="register-form">
+<div id="error" class="error" style="display: none;" data-testid="register-error"></div>
+<form id="register-form" data-testid="register-form">
     <div class="form-group">
         <label for="username">Username</label>
-        <input type="text" id="username" name="username" required autocomplete="username">
+        <input type="text" id="username" name="username" required autocomplete="username" data-testid="register-username">
     </div>
     <div class="form-group">
         <label for="password">Password</label>
-        <input type="password" id="password" name="password" required minlength="6" autocomplete="new-password">
+        <input type="password" id="password" name="password" required minlength="6" autocomplete="new-password" data-testid="register-password">
     </div>
     <div class="form-group">
         <label for="confirm-password">Confirm Password</label>
-        <input type="password" id="confirm-password" name="confirm-password" required minlength="6" autocomplete="new-password">
+        <input type="password" id="confirm-password" name="confirm-password" required minlength="6" autocomplete="new-password" data-testid="register-confirm-password">
     </div>
-    <button type="submit">Submit</button>
+    <button type="submit" data-testid="register-submit">Submit</button>
 </form>
 {% endif %}
 <div class="link">

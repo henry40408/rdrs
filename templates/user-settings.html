@@ -331,7 +331,7 @@
 <form id="settings-form">
   <div class="form-group">
       <label for="theme-select">Theme</label>
-      <select id="theme-select" onchange="previewTheme(this.value)">
+      <select id="theme-select" data-testid="theme-select" onchange="previewTheme(this.value)">
           <option value="system" {% if theme.is_none() %}selected{% endif %}>System (auto)</option>
           <option value="light" {% if theme == Some("light".to_string()) %}selected{% endif %}>Light</option>
           <option value="dark" {% if theme == Some("dark".to_string()) %}selected{% endif %}>Dark</option>

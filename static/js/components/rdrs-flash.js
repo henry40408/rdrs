@@ -47,8 +47,9 @@ class RdrsFlash extends HTMLElement {
 
         const div = document.createElement('div');
         div.className = `flash flash-${level}`;
+        div.setAttribute('data-testid', 'flash-message');
         const timestamp = this._formatTime(new Date());
-        div.innerHTML = `<span>${this._escapeHtml(message)}</span><span class="flash-right"><span class="flash-time">${timestamp}</span> <a href="#" class="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">\u00d7</a></span>`;
+        div.innerHTML = `<span>${this._escapeHtml(message)}</span><span class="flash-right"><span class="flash-time">${timestamp}</span> <a href="#" class="flash-close" data-testid="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">\u00d7</a></span>`;
         this.appendChild(div);
     }
 

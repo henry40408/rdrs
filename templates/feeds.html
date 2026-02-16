@@ -22,15 +22,15 @@
 <form id="add-form" onsubmit="addFeed(event)">
     <div class="form-group">
         <label for="url">Feed URL</label>
-        <input type="text" id="url" name="url" placeholder="https://example.com/feed.xml or https://example.com" required>
+        <input type="text" id="url" name="url" placeholder="https://example.com/feed.xml or https://example.com" required data-testid="feed-url-input">
     </div>
     <div class="form-group">
         <label for="category">Category</label>
-        <select id="category" name="category" required>
+        <select id="category" name="category" required data-testid="feed-category-select">
             <option value="">Loading categories...</option>
         </select>
     </div>
-    <button type="submit" id="add-btn">Add Feed</button>
+    <button type="submit" id="add-btn" data-testid="add-feed-btn">Add Feed</button>
 </form>
 
 <hr>
@@ -89,7 +89,7 @@
             <th>Actions</th>
         </tr>
     </thead>
-    <tbody id="feeds-table">
+    <tbody id="feeds-table" data-testid="feeds-table">
         <tr>
             <td colspan="5">Loading...</td>
         </tr>

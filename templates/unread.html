@@ -15,7 +15,7 @@
 <div class="filter-bar">
     <div class="form-group form-group-inline">
         <label for="mark-read-age">Mark as Read</label>
-        <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;">
+        <select id="mark-read-age" data-testid="mark-read-select" onchange="markAsRead(this.value); this.selectedIndex=0;">
             <option value="">Select...</option>
             <option value="1">Older than 1 day</option>
             <option value="7">Older than 1 week</option>
@@ -25,7 +25,7 @@
         </select>
     </div>
     <div>
-        <button type="button" onclick="document.querySelector('rdrs-entry-list').loadEntries()">Refresh</button>
+        <button type="button" data-testid="refresh-btn" onclick="document.querySelector('rdrs-entry-list').loadEntries()">Refresh</button>
     </div>
 </div>
 

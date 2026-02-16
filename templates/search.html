@@ -16,10 +16,10 @@
     <div class="form-group form-group-inline">
         <label for="filter-search">Query</label>
         <input type="text" id="filter-search" placeholder="Enter search term..."
-               style="width:20em;" autofocus>
+               style="width:20em;" autofocus data-testid="search-input">
     </div>
     <div>
-        <button type="button" onclick="doSearch()">Search</button>
+        <button type="button" onclick="doSearch()" data-testid="search-btn">Search</button>
     </div>
 </div>
 

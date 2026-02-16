@@ -47,16 +47,16 @@ class RdrsEntryList extends HTMLElement {
     pointer-events: none;
 }
 </style>
-<div id="entries-list">
+<div id="entries-list" data-testid="entries-list">
     <p class="muted">Loading...</p>
 </div>
 <div id="load-more" class="hidden-mt4">
-    <button type="button">Load More</button>
+    <button type="button" data-testid="load-more-btn">Load More</button>
 </div>
 ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
-    <button type="button">Mark Above as Read</button>
+    <button type="button" data-testid="mark-above-btn">Mark Above as Read</button>
 </div>` : ''}
-<p id="entries-count" class="muted"></p>
+<p id="entries-count" class="muted" data-testid="entries-count"></p>
         `;
 
         // Load more button
@@ -262,21 +262,21 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             // Actions
             let readAction;
             if (this.isUnreadMode) {
-                readAction = `<a href="#" data-action="mark-read" data-entry-id="${entry.id}">read</a>`;
+                readAction = `<a href="#" data-action="mark-read" data-entry-id="${entry.id}" data-testid="entry-read-action">read</a>`;
             } else {
                 readAction = isRead
-                    ? `<a href="#" data-action="mark-unread" data-entry-id="${entry.id}">unread</a>`
-                    : `<a href="#" data-action="mark-read" data-entry-id="${entry.id}">read</a>`;
+                    ? `<a href="#" data-action="mark-unread" data-entry-id="${entry.id}" data-testid="entry-read-action">unread</a>`
+                    : `<a href="#" data-action="mark-read" data-entry-id="${entry.id}" data-testid="entry-read-action">read</a>`;
             }
-            const starAction = `<a href="#" data-action="toggle-star" data-entry-id="${entry.id}">${isStarred ? 'unstar' : 'star'}</a>`;
+            const starAction = `<a href="#" data-action="toggle-star" data-entry-id="${entry.id}" data-testid="entry-star-action">${isStarred ? 'unstar' : 'star'}</a>`;
             const originalLink = entry.link
-                ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" data-action="open-original" data-entry-id="${entry.id}">original</a>`
+                ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" data-action="open-original" data-entry-id="${entry.id}" data-testid="entry-original-link">original</a>`
                 : '';
 
             return `
-            <div class="entry-item${isSelected ? ' selected' : ''}${isRead ? ' entry-read' : ''}" id="entry-${entry.id}" data-index="${index}">
+            <div class="entry-item${isSelected ? ' selected' : ''}${isRead ? ' entry-read' : ''}" id="entry-${entry.id}" data-index="${index}" data-testid="entry-item">
                 <div>
-                    <a href="/entries/${entry.id}${originQuery}" class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}">${titleHtml}</a>
+                    <a href="/entries/${entry.id}${originQuery}" class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}" data-testid="entry-title-link">${titleHtml}</a>
                     ${isStarred ? '<span title="Starred">*</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>${contentSnippetHtml}

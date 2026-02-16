@@ -277,18 +277,18 @@
 
         document.getElementById('entry-container').innerHTML = `
             <div class="entry-nav">
-                <a href="${getBackUrl()}">&larr; ${getBackLabel()}</a>
+                <a href="${getBackUrl()}" data-testid="back-link">&larr; ${getBackLabel()}</a>
                 <span class="entry-nav-sep">&middot;</span>
-                <a href="#" id="prev-entry-link" class="disabled">&larr; Previous</a>
+                <a href="#" id="prev-entry-link" data-testid="prev-entry" class="disabled">&larr; Previous</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="prev-unread-link" class="disabled">&larr; Previous Unread</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="next-unread-link" class="disabled">Next Unread &rarr;</a>
                 <span class="entry-nav-sep">&middot;</span>
-                <a href="#" id="next-entry-link" class="disabled">Next &rarr;</a>
+                <a href="#" id="next-entry-link" data-testid="next-entry" class="disabled">Next &rarr;</a>
             </div>
 
-            <h1 class="entry-title">${escapeHtml(title)}</h1>
+            <h1 class="entry-title" data-testid="entry-title">${escapeHtml(title)}</h1>
 
             <div class="entry-meta">
                 ${feedIconHtml}<span>${escapeHtml(feedTitle)}</span>
@@ -297,8 +297,8 @@
             </div>
 
             <div class="entry-actions">
-                <button type="button" onclick="toggleStar()" id="star-btn">${isStarred ? 'Unstar' : 'Star'}</button>
-                <button type="button" onclick="markUnread()">Mark Unread</button>
+                <button type="button" onclick="toggleStar()" id="star-btn" data-testid="star-btn">${isStarred ? 'Unstar' : 'Star'}</button>
+                <button type="button" onclick="markUnread()" data-testid="mark-unread-btn">Mark Unread</button>
                 ${data.link ? `<button type="button" onclick="fetchFullContent()" id="fetch-content-btn">Fetch Full Content</button>` : ''}
                 ${hasKagiConfigured && data.link ? `<button type="button" onclick="summarizeEntry()" id="summarize-btn">Summarize</button>` : ''}
                 ${hasSaveServices && data.link ? `<button type="button" onclick="saveEntry()" id="save-btn">Save</button>` : ''}
@@ -317,7 +317,7 @@
 
             <hr>
 
-            <article class="entry-content">
+            <article class="entry-content" data-testid="entry-content">
                 ${content}
             </article>
 
