@@ -4,11 +4,11 @@ import path from "path";
 
 export default function globalSetup() {
   const projectRoot = path.resolve(__dirname, "..");
-  const binaryPath = path.join(projectRoot, "target", "release", "rdrs");
+  const binaryPath = path.join(projectRoot, "target", "debug", "rdrs");
 
   if (!existsSync(binaryPath)) {
-    console.log("Building rdrs binary (release mode)...");
-    execSync("cargo build --release", {
+    console.log("Building rdrs binary (debug mode)...");
+    execSync("cargo build", {
       cwd: projectRoot,
       stdio: "inherit",
     });

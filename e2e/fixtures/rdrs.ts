@@ -70,7 +70,7 @@ export const test = base.extend<{}, WorkerFixtures>({
   serverUrl: [
     async ({}, use) => {
       const projectRoot = path.resolve(__dirname, "..", "..");
-      const binaryPath = path.join(projectRoot, "target", "release", "rdrs");
+      const binaryPath = path.join(projectRoot, "target", "debug", "rdrs");
       const tempDir = mkdtempSync(path.join(tmpdir(), "rdrs-e2e-"));
       const dbPath = path.join(tempDir, "test.sqlite3");
       const port = await findAvailablePort();
