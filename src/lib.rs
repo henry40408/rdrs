@@ -5,6 +5,7 @@ use axum::{
     Router,
 };
 use tokio::sync::mpsc;
+use tower_http::services::ServeDir;
 use tower_http::timeout::TimeoutLayer;
 use webauthn_rs::prelude::Webauthn;
 
@@ -234,6 +235,7 @@ pub fn create_router(state: AppState) -> Router {
             "/api/passkeys/{id}",
             delete(handlers::passkey::delete_passkey),
         )
+        .nest_service("/static", ServeDir::new("static"))
         .with_state(state)
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
