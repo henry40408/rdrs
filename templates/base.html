@@ -500,58 +500,6 @@
             border-radius: var(--radius-sm);
             background: #ffffff;
         }
-        /* Keyboard shortcut help modal */
-        .kb-help-overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: var(--color-overlay);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-        }
-        .kb-help-overlay.visible {
-            display: flex;
-        }
-        .kb-help-modal {
-            background: var(--color-bg);
-            border: 2px solid var(--color-border);
-            padding: var(--space-6);
-            max-width: 600px;
-            max-height: 80vh;
-            overflow-y: auto;
-            font-size: 0.9rem;
-        }
-        .kb-help-modal h2 {
-            font-size: var(--font-base);
-            margin-bottom: var(--space-4);
-            border-bottom: 1px solid var(--color-border);
-            padding-bottom: var(--space-2);
-        }
-        .kb-help-modal h3 {
-            font-size: 0.9rem;
-            margin: var(--space-4) 0 var(--space-2);
-            color: var(--color-text-muted);
-        }
-        .kb-help-modal table {
-            width: 100%;
-            margin-bottom: var(--space-4);
-        }
-        .kb-help-modal td {
-            padding: var(--space-1) 0;
-            border: none;
-        }
-        .kb-help-modal td:first-child {
-            width: 80px;
-            font-family: monospace;
-            font-weight: bold;
-        }
-        .kb-help-close {
-            margin-bottom: var(--space-4);
-        }
         /* Selected entry highlight */
         .entry-item.selected {
             background: var(--color-bg-tertiary);
@@ -561,22 +509,6 @@
             margin-right: calc(-1 * var(--space-2));
             padding-left: var(--space-2);
             padding-right: var(--space-2);
-        }
-        /* Pending key indicator */
-        .kb-pending-indicator {
-            display: none;
-            position: fixed;
-            bottom: var(--space-4);
-            right: var(--space-4);
-            background: var(--color-button-bg);
-            color: var(--color-button-text);
-            padding: var(--space-2) var(--space-4);
-            font-family: monospace;
-            font-size: var(--font-base);
-            z-index: 999;
-        }
-        .kb-pending-indicator.visible {
-            display: block;
         }
         /* Search highlight */
         .search-highlight {
@@ -615,35 +547,6 @@
         #entries-count {
             margin-top: var(--space-4); /* 1rem / 16px */
         }
-        /* Global loading indicator */
-        .global-loading-bar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 3px;
-            background: transparent;
-            z-index: 1001;
-            overflow: hidden;
-            opacity: 0;
-            transition: opacity 0.2s ease;
-        }
-        .global-loading-bar.active { opacity: 1; }
-        .global-loading-bar::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -30%;
-            width: 30%;
-            height: 100%;
-            background: var(--color-accent);
-            animation: loading-slide 1.5s ease-in-out infinite;
-        }
-        @keyframes loading-slide {
-            0% { left: -30%; }
-            50% { left: 100%; }
-            100% { left: -30%; }
-        }
     </style>
     <script>
         // Theme controller
@@ -657,191 +560,6 @@
                         body: JSON.stringify({ theme: theme === 'system' ? null : theme })
                     });
                 } catch (e) { /* silent fail */ }
-            }
-        };
-    </script>
-    <script>
-        // Global loading indicator
-        window.loading = {
-            count: 0,
-            element: null,
-            init: function() {
-                this.element = document.createElement('div');
-                this.element.className = 'global-loading-bar';
-                this.element.id = 'global-loading-bar';
-                document.body.insertBefore(this.element, document.body.firstChild);
-            },
-            start: function() {
-                this.count++;
-                if (this.element) this.element.classList.add('active');
-            },
-            stop: function() {
-                this.count = Math.max(0, this.count - 1);
-                if (this.count === 0 && this.element) {
-                    this.element.classList.remove('active');
-                }
-            }
-        };
-
-        // Global keyboard shortcut handler (defined early so child templates can use it)
-        window.keyboard = {
-            pendingKey: null,
-            pendingTimeout: null,
-            handlers: {},
-            pageType: null,
-            helpItems: [],
-
-            init: function(pageType) {
-                this.pageType = pageType;
-                document.addEventListener('keydown', this.handleKeyDown.bind(this));
-            },
-
-            setHelpItems: function(items) {
-                this.helpItems = items;
-            },
-
-            handleKeyDown: function(e) {
-                // Ignore when typing in inputs
-                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
-                    return;
-                }
-
-                // Ignore if modifier keys are pressed (except shift)
-                if (e.ctrlKey || e.altKey || e.metaKey) {
-                    return;
-                }
-
-                const key = e.key;
-
-                // Handle pending key combinations (like 'g h')
-                if (this.pendingKey) {
-                    const combo = this.pendingKey + ' ' + key;
-                    this.clearPending();
-                    if (this.handleCombo(combo)) {
-                        e.preventDefault();
-                        return;
-                    }
-                }
-
-                // Check for keys that start combinations
-                if (key === 'g') {
-                    this.setPending('g');
-                    e.preventDefault();
-                    return;
-                }
-
-                // Handle single key shortcuts
-                if (this.handleSingleKey(key, e.shiftKey)) {
-                    e.preventDefault();
-                }
-            },
-
-            setPending: function(key) {
-                this.pendingKey = key;
-                const indicator = document.getElementById('kb-pending-indicator');
-                if (indicator) {
-                    indicator.textContent = key + '-';
-                    indicator.classList.add('visible');
-                }
-                // Clear pending after timeout
-                this.pendingTimeout = setTimeout(() => {
-                    this.clearPending();
-                }, 1500);
-            },
-
-            clearPending: function() {
-                this.pendingKey = null;
-                if (this.pendingTimeout) {
-                    clearTimeout(this.pendingTimeout);
-                    this.pendingTimeout = null;
-                }
-                const indicator = document.getElementById('kb-pending-indicator');
-                if (indicator) {
-                    indicator.classList.remove('visible');
-                }
-            },
-
-            handleCombo: function(combo) {
-                // Global navigation shortcuts
-                switch (combo) {
-                    case 'g h': window.location.href = '/'; return true;
-                    case 'g e': window.location.href = '/entries'; return true;
-                    case 'g s': window.location.href = '/search'; return true;
-                }
-                // Page-specific combo handlers
-                if (this.handlers.handleCombo) {
-                    return this.handlers.handleCombo(combo);
-                }
-                return false;
-            },
-
-            handleSingleKey: function(key, shiftKey) {
-                // Show help
-                if (key === '?') {
-                    this.toggleHelp();
-                    return true;
-                }
-
-                // Page-specific handlers
-                if (this.handlers.handleKey) {
-                    return this.handlers.handleKey(key, shiftKey);
-                }
-
-                return false;
-            },
-
-            registerHandlers: function(handlers) {
-                this.handlers = handlers;
-            },
-
-            toggleHelp: function() {
-                const overlay = document.getElementById('kb-help-overlay');
-                if (!overlay) return;
-
-                if (overlay.classList.contains('visible')) {
-                    this.hideHelp();
-                    return;
-                }
-
-                const content = document.getElementById('kb-help-content');
-                if (!content) return;
-                let html = '';
-
-                // Global shortcuts
-                html += '<h3>Global</h3><table>';
-                html += '<tr><td>g h</td><td>Go to Unread</td></tr>';
-                html += '<tr><td>g e</td><td>Go to Entries</td></tr>';
-                html += '<tr><td>g s</td><td>Go to Search</td></tr>';
-                html += '<tr><td>?</td><td>Toggle this help</td></tr>';
-                html += '<tr><td>Esc</td><td>Close help / Blur input</td></tr>';
-                html += '</table>';
-
-                // Page-specific shortcuts from helpItems
-                if (this.helpItems.length > 0) {
-                    html += '<h3>Page Shortcuts</h3><table>';
-                    this.helpItems.forEach(function(item) {
-                        html += '<tr><td>' + item.key + '</td><td>' + item.desc + '</td></tr>';
-                    });
-                    html += '</table>';
-                }
-
-                content.innerHTML = html;
-                overlay.classList.add('visible');
-
-                // Focus on close button
-                const closeBtn = document.querySelector('.kb-help-close');
-                if (closeBtn) closeBtn.focus();
-            },
-
-            hideHelp: function() {
-                const overlay = document.getElementById('kb-help-overlay');
-                if (overlay) {
-                    overlay.classList.remove('visible');
-                    // Remove focus
-                    if (document.activeElement) {
-                        document.activeElement.blur();
-                    }
-                }
             }
         };
 
@@ -859,79 +577,28 @@
             };
         };
     </script>
+    <script type="module" src="/static/js/components/rdrs-loading-bar.js?v={{ git_version }}"></script>
+    <script type="module" src="/static/js/components/rdrs-kb-pending.js?v={{ git_version }}"></script>
+    <script type="module" src="/static/js/components/rdrs-flash.js?v={{ git_version }}"></script>
+    <script type="module" src="/static/js/components/rdrs-kb-help.js?v={{ git_version }}"></script>
+    <script type="module" src="/static/js/components/rdrs-modal.js?v={{ git_version }}"></script>
+    <script type="module" src="/static/js/keyboard.js?v={{ git_version }}"></script>
+    <script type="module" src="/static/js/components/rdrs-entry-list.js?v={{ git_version }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
+    <rdrs-loading-bar></rdrs-loading-bar>
     {% block flash %}{% endblock %}
     {% block content %}{% endblock %}
-    <!-- Keyboard shortcut help modal -->
-    <div class="kb-help-overlay" id="kb-help-overlay" onclick="if(event.target===this)window.keyboard.hideHelp()" onkeydown="if(event.key==='Escape')window.keyboard.hideHelp()">
-        <div class="kb-help-modal">
-            <h2>Keyboard Shortcuts</h2>
-            <button class="kb-help-close" onclick="window.keyboard.hideHelp()">Close</button>
-            <div id="kb-help-content"></div>
-        </div>
-    </div>
-
-    <!-- Pending key indicator -->
-    <div class="kb-pending-indicator" id="kb-pending-indicator"></div>
-
+    <rdrs-kb-help></rdrs-kb-help>
+    <rdrs-kb-pending></rdrs-kb-pending>
     <script>
-        // Initialize global loading indicator
-        if (window.loading) window.loading.init();
-
         // Refresh page content when restored from bfcache
         window.addEventListener('pageshow', function(event) {
             if (event.persisted && typeof window.onPersistedPageShow === 'function') {
                 window.onPersistedPageShow();
             }
         });
-
-        // Flash message helper functions
-        window.flash = {
-            maxMessages: 3,
-            set: function(level, message) {
-                const messages = [{ level: level, message: message }];
-                document.cookie = 'flash=' + encodeURIComponent(JSON.stringify(messages)) + '; path=/; SameSite=Lax';
-            },
-            formatTime: function(date) {
-                return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            },
-            show: function(level, message) {
-                let container = document.querySelector('.flash-container');
-                if (!container) {
-                    container = document.createElement('div');
-                    container.className = 'flash-container';
-                    document.body.insertBefore(container, document.body.firstChild);
-                }
-                // Remove oldest messages if we have too many
-                const existing = container.querySelectorAll('.flash');
-                if (existing.length >= this.maxMessages) {
-                    for (let i = 0; i <= existing.length - this.maxMessages; i++) {
-                        existing[i].remove();
-                    }
-                }
-                const levelClass = 'flash-' + level;
-                const div = document.createElement('div');
-                div.className = 'flash ' + levelClass;
-                const timestamp = this.formatTime(new Date());
-                div.innerHTML = '<span>' + this.escapeHtml(message) + '</span><span class="flash-right"><span class="flash-time">' + timestamp + '</span> <a href="#" class="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">×</a></span>';
-                container.appendChild(div);
-            },
-            escapeHtml: function(text) {
-                const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
-            },
-            success: function(message) { this.show('success', message); },
-            error: function(message) { this.show('error', message); },
-            info: function(message) { this.show('info', message); },
-            warning: function(message) { this.show('warning', message); },
-            redirect: function(url, level, message) {
-                this.set(level, message);
-                window.location.href = url;
-            }
-        };
     </script>
 </body>
 </html>

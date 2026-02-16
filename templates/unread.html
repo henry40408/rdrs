@@ -10,20 +10,12 @@
 {% block content %}
 {% call macros::nav("unread", is_admin, is_masquerading, username) %}{% endcall %}
 
-<style>
-.entries-list-refreshing {
-    position: relative;
-    opacity: 0.5;
-    pointer-events: none;
-}
-</style>
-
 <h1>Unread</h1>
 
 <div class="filter-bar">
     <div class="form-group form-group-inline">
         <label for="mark-read-age">Mark as Read</label>
-        <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;">
+        <select id="mark-read-age" data-testid="mark-read-select" onchange="markAsRead(this.value); this.selectedIndex=0;">
             <option value="">Select...</option>
             <option value="1">Older than 1 day</option>
             <option value="7">Older than 1 week</option>
@@ -33,175 +25,22 @@
         </select>
     </div>
     <div>
-        <button type="button" onclick="loadEntries()">Refresh</button>
+        <button type="button" data-testid="refresh-btn" onclick="document.querySelector('rdrs-entry-list').loadEntries()">Refresh</button>
     </div>
 </div>
 
-<div id="entries-list">
-    <p class="muted">Loading...</p>
-</div>
-
-<div id="load-more" class="hidden-mt4">
-    <button type="button" onclick="loadMore()">Load More</button>
-</div>
-
-<div id="mark-above-read" class="hidden-mt4">
-    <button type="button" onclick="markAboveAsRead()">Mark Above as Read</button>
-</div>
-
-<p id="entries-count" class="muted"></p>
+<rdrs-entry-list
+    api-url="/api/entries"
+    api-params='{"unread_only": "true"}'
+    entries-per-page="{{ entries_per_page }}"
+    origin="unread"
+    show-feed
+    show-category
+    show-mark-above
+    empty-message="No unread entries."
+></rdrs-entry-list>
 
 <script>
-    let entries = [];
-    let currentOffset = 0;
-    const limit = {{ entries_per_page }};
-    let total = 0;
-    let selectedIndex = -1;
-
-    async function loadEntries(reset = true) {
-        const container = document.getElementById('entries-list');
-
-        // Show refreshing state
-        container.classList.add('entries-list-refreshing');
-        if (window.loading) window.loading.start();
-
-        if (reset) {
-            currentOffset = 0;
-            entries = [];
-        }
-
-        let url = `/api/entries?unread_only=true&limit=${limit}&offset=${currentOffset}`;
-
-        try {
-            const response = await fetch(url, { cache: 'no-store' });
-            if (!response.ok) {
-                throw new Error('Failed to load entries');
-            }
-            const data = await response.json();
-
-            if (reset) {
-                entries = data.entries;
-            } else {
-                entries = entries.concat(data.entries);
-            }
-            total = data.total;
-
-            renderEntries();
-            updateLoadMoreButton();
-            updateUnreadCount();
-            updateEntriesCount();
-        } catch (err) {
-            document.getElementById('entries-list').innerHTML = '<p class="muted">Failed to load entries</p>';
-        } finally {
-            container.classList.remove('entries-list-refreshing');
-            if (window.loading) window.loading.stop();
-        }
-    }
-
-    function renderEntries() {
-        const container = document.getElementById('entries-list');
-
-        if (entries.length === 0) {
-            container.innerHTML = '<p class="muted">No unread entries.</p>';
-            updateMarkAboveButton();
-            return;
-        }
-
-        container.innerHTML = entries.map((entry, index) => {
-            const title = decodeHtml(entry.title) || 'Untitled';
-            const feedTitle = decodeHtml(entry.feed_title) || entry.feed_url;
-            const date = entry.published_at ? formatDate(entry.published_at) : '';
-            const dateTitle = entry.published_at ? formatDateTime(entry.published_at) : '';
-            const isStarred = entry.starred_at !== null;
-            const summaryStatus = entry.summary_status;
-            const feedIconHtml = entry.feed_has_icon
-                ? `<img src="/api/feeds/${entry.feed_id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
-                : '';
-            const isSelected = index === selectedIndex;
-
-            // Determine summary badge based on status
-            let summaryBadgeHtml = '';
-            if (summaryStatus === 'completed') {
-                summaryBadgeHtml = '<span title="Has Summary" class="summary-badge">S</span>';
-            } else if (summaryStatus === 'pending') {
-                summaryBadgeHtml = '<span title="Pending" class="summary-badge-pending">P</span>';
-            } else if (summaryStatus === 'processing') {
-                summaryBadgeHtml = '<span title="Processing" class="summary-badge-processing">…</span>';
-            } else if (summaryStatus === 'failed') {
-                summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">F</span>';
-            }
-
-            return `
-            <div class="entry-item${isSelected ? ' selected' : ''}" id="entry-${entry.id}" data-index="${index}">
-                <div>
-                    <a href="/entries/${entry.id}" class="entry-item-title entry-title-bold">${escapeHtml(title)}</a>
-                    ${isStarred ? '<span title="Starred">*</span>' : ''}
-                    ${summaryBadgeHtml}
-                </div>
-                <div class="muted entry-item-meta">
-                    ${feedIconHtml}<a href="#" data-feed-id="${entry.feed_id}">${escapeHtml(feedTitle)}</a> &middot; <a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>${date ? ` &middot; <span title="${dateTitle}">${date}</span>` : ''}
-                </div>
-                <div class="entry-item-actions">
-                    <a href="#" onclick="markRead(${entry.id}); return false;">read</a>
-                    <a href="#" onclick="toggleStar(${entry.id}); return false;">${isStarred ? 'unstar' : 'star'}</a>
-                    ${entry.link ? `<a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener noreferrer" onclick="markRead(${entry.id})">original</a>` : ''}
-                </div>
-            </div>
-            `;
-        }).join('');
-
-        updateMarkAboveButton();
-    }
-
-    function updateLoadMoreButton() {
-        const btn = document.getElementById('load-more');
-        if (entries.length < total) {
-            btn.style.display = 'block';
-        } else {
-            btn.style.display = 'none';
-        }
-    }
-
-    async function loadMore() {
-        currentOffset += limit;
-        await loadEntries(false);
-    }
-
-    async function markRead(id) {
-        try {
-            const response = await fetch(`/api/entries/${id}/read`, { method: 'PUT' });
-            if (!response.ok) {
-                throw new Error('Failed to mark as read');
-            }
-            // Remove from list
-            entries = entries.filter(e => e.id !== id);
-            total--;
-            renderEntries();
-            updateLoadMoreButton();
-            updateUnreadCount();
-        } catch (err) {
-            flash.error(err.message);
-        }
-    }
-
-    async function toggleStar(id) {
-        try {
-            const response = await fetch(`/api/entries/${id}/star`, { method: 'PUT' });
-            if (!response.ok) {
-                throw new Error('Failed to toggle star');
-            }
-            const updated = await response.json();
-            // Update in list
-            const idx = entries.findIndex(e => e.id === id);
-            if (idx >= 0) {
-                entries[idx].starred_at = updated.starred_at;
-                renderEntries();
-            }
-        } catch (err) {
-            flash.error(err.message);
-        }
-    }
-
     async function markAsRead(age) {
         if (!age) return;
 
@@ -214,9 +53,7 @@
         };
         const ageLabel = ageLabels[age] || age;
 
-        if (!confirm(`Mark ${ageLabel} entries as read?`)) {
-            return;
-        }
+        if (!confirm('Mark ' + ageLabel + ' entries as read?')) return;
 
         try {
             const body = {};
@@ -229,259 +66,30 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
             });
-            if (!response.ok) {
-                throw new Error('Failed to mark as read');
-            }
+            if (!response.ok) throw new Error('Failed to mark as read');
             const result = await response.json();
-            flash.success(`Marked ${result.marked_count} entries as read.`);
-            loadEntries();
+            flash.success('Marked ' + result.marked_count + ' entries as read.');
+            document.querySelector('rdrs-entry-list').loadEntries();
         } catch (err) {
             flash.error(err.message);
         }
     }
 
-    function updateUnreadCount() {
-        const el = document.getElementById('unread-count');
-        if (el) el.textContent = total;
-    }
-
-    function updateEntriesCount() {
-        document.getElementById('entries-count').textContent = `Showing ${entries.length} of ${total} entries`;
-    }
-
-    function updateMarkAboveButton() {
-        const btn = document.getElementById('mark-above-read');
-        if (entries.length > 0) {
-            btn.style.display = 'block';
-        } else {
-            btn.style.display = 'none';
-        }
-    }
-
-    async function markAboveAsRead() {
-        if (entries.length === 0) return;
-
-        if (!confirm(`Mark all ${entries.length} loaded entries as read?`)) {
-            return;
-        }
-
-        const entryIds = entries.map(e => e.id);
-
-        try {
-            const response = await fetch('/api/entries/mark-read-by-ids', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entry_ids: entryIds })
-            });
-            if (!response.ok) {
-                throw new Error('Failed to mark entries as read');
+    // Register keyboard handlers after component is ready
+    customElements.whenDefined('rdrs-entry-list').then(() => {
+        const list = document.querySelector('rdrs-entry-list');
+        list.registerKeyboardHandlers({
+            helpItems: [
+                { key: 'A', desc: 'Mark above as read' },
+            ],
+            handleKey(key, shiftKey) {
+                if (key === 'A') {
+                    list.markAboveAsRead();
+                    return true;
+                }
+                return false;
             }
-            const result = await response.json();
-            flash.success(`Marked ${result.marked_count} entries as read.`);
-            loadEntries();
-        } catch (err) {
-            flash.error(err.message);
-        }
-    }
-
-    function escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    // Decode HTML entities (e.g., &#x27; -> ')
-    function decodeHtml(html) {
-        if (!html) return '';
-        const textarea = document.createElement('textarea');
-        textarea.innerHTML = html;
-        return textarea.value;
-    }
-
-    function formatDate(isoString) {
-        const date = new Date(isoString);
-        return date.toLocaleDateString();
-    }
-
-    function formatDateTime(isoString) {
-        const date = new Date(isoString);
-        return date.toLocaleString();
-    }
-
-    document.getElementById('entries-list').addEventListener('click', function(e) {
-        if (e.target.matches('[data-feed-id]')) {
-            e.preventDefault();
-            window.location.href = `/feeds/${e.target.dataset.feedId}/entries`;
-        }
-        if (e.target.matches('[data-category-id]')) {
-            e.preventDefault();
-            window.location.href = `/categories/${e.target.dataset.categoryId}/entries`;
-        }
+        });
     });
-
-    // Keyboard navigation functions
-    function selectEntry(index) {
-        if (entries.length === 0) return;
-
-        // Clamp index to valid range
-        if (index < 0) index = 0;
-        if (index >= entries.length) index = entries.length - 1;
-
-        // Update selection
-        const prevSelected = document.querySelector('.entry-item.selected');
-        if (prevSelected) prevSelected.classList.remove('selected');
-
-        selectedIndex = index;
-        const newSelected = document.querySelector(`.entry-item[data-index="${index}"]`);
-        if (newSelected) {
-            newSelected.classList.add('selected');
-            newSelected.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        }
-    }
-
-    function getSelectedEntry() {
-        if (selectedIndex >= 0 && selectedIndex < entries.length) {
-            return entries[selectedIndex];
-        }
-        return null;
-    }
-
-    function findNextUnread(direction) {
-        if (entries.length === 0) return -1;
-
-        // In unread page, all entries are unread, so just move in direction
-        const start = selectedIndex < 0 ? (direction > 0 ? -1 : entries.length) : selectedIndex;
-        let index = start + direction;
-
-        if (index >= 0 && index < entries.length) {
-            return index;
-        }
-        return -1;
-    }
-
-    function openSelectedEntry() {
-        const entry = getSelectedEntry();
-        if (entry) {
-            if (selectedIndex >= 0) window._resumeIndex = selectedIndex;
-            window.location.href = `/entries/${entry.id}`;
-        }
-    }
-
-    function openOriginalLink() {
-        const entry = getSelectedEntry();
-        if (entry && entry.link) {
-            markRead(entry.id);
-            window.open(entry.link, '_blank', 'noopener,noreferrer');
-        }
-    }
-
-    async function toggleSelectedRead() {
-        const entry = getSelectedEntry();
-        if (entry) {
-            await markRead(entry.id);
-            // After marking read, adjust selection
-            if (selectedIndex >= entries.length) {
-                selectedIndex = entries.length - 1;
-            }
-            if (entries.length > 0 && selectedIndex >= 0) {
-                selectEntry(selectedIndex);
-            }
-        }
-    }
-
-    async function toggleSelectedStar() {
-        const entry = getSelectedEntry();
-        if (entry) {
-            await toggleStar(entry.id);
-        }
-    }
-
-    // Register keyboard handlers
-    window.keyboard.init('list');
-    window.keyboard.setHelpItems([
-        { key: 'j', desc: 'Next entry' },
-        { key: 'k', desc: 'Previous entry' },
-        { key: 'g g', desc: 'First entry' },
-        { key: 'G', desc: 'Last entry' },
-        { key: 'n', desc: 'Next unread entry' },
-        { key: 'N', desc: 'Previous unread entry' },
-        { key: 'Enter / o', desc: 'Open entry' },
-        { key: 'v', desc: 'Open original in new tab' },
-        { key: 'm', desc: 'Mark as read' },
-        { key: 's', desc: 'Toggle star' },
-        { key: 'r', desc: 'Refresh list' },
-        { key: 'A', desc: 'Mark above as read' },
-        { key: 'c', desc: 'Go to category page (requires selection)' },
-        { key: 'f', desc: 'Go to feed page (requires selection)' },
-    ]);
-    window.keyboard.registerHandlers({
-        handleCombo: function(combo) {
-            if (combo === 'g g') {
-                selectEntry(0);
-                return true;
-            }
-            return false;
-        },
-        handleKey: function(key, shiftKey) {
-            switch (key) {
-                case 'j':
-                    selectEntry(selectedIndex + 1);
-                    return true;
-                case 'k':
-                    selectEntry(selectedIndex - 1);
-                    return true;
-                case 'G':
-                    if (entries.length > 0) selectEntry(entries.length - 1);
-                    return true;
-                case 'n':
-                    const nextUnread = findNextUnread(1);
-                    if (nextUnread >= 0) selectEntry(nextUnread);
-                    return true;
-                case 'N':
-                    const prevUnread = findNextUnread(-1);
-                    if (prevUnread >= 0) selectEntry(prevUnread);
-                    return true;
-                case 'Enter':
-                case 'o':
-                    openSelectedEntry();
-                    return true;
-                case 'v':
-                    openOriginalLink();
-                    return true;
-                case 'm':
-                    toggleSelectedRead();
-                    return true;
-                case 's':
-                    toggleSelectedStar();
-                    return true;
-                case 'r':
-                    loadEntries();
-                    return true;
-                case 'A':
-                    markAboveAsRead();
-                    return true;
-                case 'c':
-                    const entryC = getSelectedEntry();
-                    if (entryC) {
-                        window.location.href = `/categories/${entryC.category_id}/entries`;
-                    }
-                    return true;
-                case 'f':
-                    const entryF = getSelectedEntry();
-                    if (entryF) {
-                        window.location.href = `/feeds/${entryF.feed_id}/entries`;
-                    }
-                    return true;
-            }
-            return false;
-        }
-    });
-
-    // Refresh list when restored from bfcache
-    window.setupPersistedRestore(loadEntries, () => entries, selectEntry);
-
-    // Initialize
-    loadEntries();
 </script>
 {% endblock %}

@@ -18,6 +18,7 @@ use crate::AppState;
 pub struct LoginTemplate {
     pub signup_enabled: bool,
     pub flash_messages: Vec<FlashMessage>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for LoginTemplate {
@@ -44,6 +45,7 @@ pub async fn login_page(State(state): State<AppState>, flash: Flash) -> (Flash, 
         LoginTemplate {
             signup_enabled,
             flash_messages: flash.messages,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -53,6 +55,7 @@ pub async fn login_page(State(state): State<AppState>, flash: Flash) -> (Flash, 
 pub struct RegisterTemplate {
     pub error: Option<String>,
     pub flash_messages: Vec<FlashMessage>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for RegisterTemplate {
@@ -86,6 +89,7 @@ pub async fn register_page(
                 None
             },
             flash_messages: flash.messages,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -102,6 +106,7 @@ pub struct UnreadTemplate {
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
     pub theme: Option<String>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for UnreadTemplate {
@@ -155,6 +160,7 @@ pub async fn unread_page(
             flash_messages: flash.messages,
             entries_per_page,
             theme,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -168,6 +174,7 @@ pub struct AdminTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub theme: Option<String>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for AdminTemplate {
@@ -203,6 +210,7 @@ pub async fn admin_page(
             is_masquerading,
             flash_messages: flash.messages,
             theme,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -222,6 +230,7 @@ pub struct UserSettingsTemplate {
     pub kagi_configured: bool,
     pub kagi_language: String,
     pub theme: Option<String>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for UserSettingsTemplate {
@@ -310,6 +319,7 @@ pub async fn user_settings_page(
             kagi_configured,
             kagi_language,
             theme,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -322,6 +332,7 @@ pub struct CategoriesTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub theme: Option<String>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for CategoriesTemplate {
@@ -360,6 +371,7 @@ pub async fn categories_page(
             is_masquerading,
             flash_messages: flash.messages,
             theme,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -372,6 +384,7 @@ pub struct FeedsTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub theme: Option<String>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for FeedsTemplate {
@@ -410,6 +423,7 @@ pub async fn feeds_page(
             is_masquerading,
             flash_messages: flash.messages,
             theme,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -423,6 +437,7 @@ pub struct EntriesTemplate {
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
     pub theme: Option<String>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for EntriesTemplate {
@@ -467,6 +482,7 @@ pub async fn entries_page(
             flash_messages: flash.messages,
             entries_per_page,
             theme,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -482,6 +498,7 @@ pub struct EntryTemplate {
     pub has_save_services: bool,
     pub has_kagi_configured: bool,
     pub theme: Option<String>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for EntryTemplate {
@@ -539,6 +556,7 @@ pub async fn entry_page(
             has_save_services,
             has_kagi_configured,
             theme,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -617,6 +635,7 @@ pub struct ArchiveEntriesTemplate {
     pub page_mode: String,
     pub page_title: String,
     pub theme: Option<String>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for ArchiveEntriesTemplate {
@@ -663,6 +682,7 @@ pub async fn read_entries_page(
             page_mode: "read".to_string(),
             page_title: "Read Entries".to_string(),
             theme,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -702,6 +722,7 @@ pub async fn starred_entries_page(
             page_mode: "starred".to_string(),
             page_title: "Starred Entries".to_string(),
             theme,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -741,6 +762,7 @@ pub async fn summarized_entries_page(
             page_mode: "summarized".to_string(),
             page_title: "Summarized Entries".to_string(),
             theme,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -757,6 +779,7 @@ pub struct CategoryEntriesTemplate {
     pub category_id: i64,
     pub category_name: String,
     pub theme: Option<String>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for CategoryEntriesTemplate {
@@ -805,6 +828,7 @@ pub async fn category_entries_page(
             category_id: id,
             category_name,
             theme,
+            git_version: crate::GIT_VERSION,
         },
     ))
 }
@@ -819,6 +843,7 @@ pub struct SearchTemplate {
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
     pub theme: Option<String>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for SearchTemplate {
@@ -863,6 +888,7 @@ pub async fn search_page(
             flash_messages: flash.messages,
             entries_per_page,
             theme,
+            git_version: crate::GIT_VERSION,
         },
     )
 }
@@ -882,6 +908,7 @@ pub struct FeedEntriesTemplate {
     pub category_id: i64,
     pub category_name: String,
     pub theme: Option<String>,
+    pub git_version: &'static str,
 }
 
 impl IntoResponse for FeedEntriesTemplate {
@@ -944,6 +971,7 @@ pub async fn feed_entries_page(
             category_id,
             category_name,
             theme,
+            git_version: crate::GIT_VERSION,
         },
     ))
 }

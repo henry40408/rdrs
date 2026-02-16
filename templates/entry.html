@@ -277,18 +277,18 @@
 
         document.getElementById('entry-container').innerHTML = `
             <div class="entry-nav">
-                <a href="${getBackUrl()}">&larr; ${getBackLabel()}</a>
+                <a href="${getBackUrl()}" data-testid="back-link">&larr; ${getBackLabel()}</a>
                 <span class="entry-nav-sep">&middot;</span>
-                <a href="#" id="prev-entry-link" class="disabled">&larr; Previous</a>
+                <a href="#" id="prev-entry-link" data-testid="prev-entry" class="disabled">&larr; Previous</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="prev-unread-link" class="disabled">&larr; Previous Unread</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="next-unread-link" class="disabled">Next Unread &rarr;</a>
                 <span class="entry-nav-sep">&middot;</span>
-                <a href="#" id="next-entry-link" class="disabled">Next &rarr;</a>
+                <a href="#" id="next-entry-link" data-testid="next-entry" class="disabled">Next &rarr;</a>
             </div>
 
-            <h1 class="entry-title">${escapeHtml(title)}</h1>
+            <h1 class="entry-title" data-testid="entry-title">${escapeHtml(title)}</h1>
 
             <div class="entry-meta">
                 ${feedIconHtml}<span>${escapeHtml(feedTitle)}</span>
@@ -297,8 +297,8 @@
             </div>
 
             <div class="entry-actions">
-                <button type="button" onclick="toggleStar()" id="star-btn">${isStarred ? 'Unstar' : 'Star'}</button>
-                <button type="button" onclick="markUnread()">Mark Unread</button>
+                <button type="button" onclick="toggleStar()" id="star-btn" data-testid="star-btn">${isStarred ? 'Unstar' : 'Star'}</button>
+                <button type="button" onclick="markUnread()" data-testid="mark-unread-btn">Mark Unread</button>
                 ${data.link ? `<button type="button" onclick="fetchFullContent()" id="fetch-content-btn">Fetch Full Content</button>` : ''}
                 ${hasKagiConfigured && data.link ? `<button type="button" onclick="summarizeEntry()" id="summarize-btn">Summarize</button>` : ''}
                 ${hasSaveServices && data.link ? `<button type="button" onclick="saveEntry()" id="save-btn">Save</button>` : ''}
@@ -317,7 +317,7 @@
 
             <hr>
 
-            <article class="entry-content">
+            <article class="entry-content" data-testid="entry-content">
                 ${content}
             </article>
 
@@ -675,9 +675,8 @@
         }
     }
 
-    // Register keyboard handlers
-    window.keyboard.init('entry');
-    window.keyboard.setHelpItems([
+    // Keyboard handlers — stored on window so the module script below can access them
+    window._entryKeyboardHelpItems = [
         { key: 'j', desc: 'Scroll down' },
         { key: 'k', desc: 'Scroll up' },
         { key: 'g g', desc: 'Scroll to top' },
@@ -693,16 +692,16 @@
         { key: 'b', desc: 'Save to bookmarks' },
         { key: 'z', desc: 'Toggle Kagi summary' },
         { key: 'q', desc: 'Back to list' },
-    ]);
-    window.keyboard.registerHandlers({
-        handleCombo: function(combo) {
+    ];
+    window._entryKeyboardHandlers = {
+        handleCombo(combo) {
             if (combo === 'g g') {
                 window.scrollTo({ top: 0, behavior: 'smooth' });
                 return true;
             }
             return false;
         },
-        handleKey: function(key, shiftKey) {
+        handleKey(key, shiftKey) {
             switch (key) {
                 case 'j':
                     scrollContent(1);
@@ -735,11 +734,9 @@
                     openOriginalLink();
                     return true;
                 case 'f':
-                    // If full content already fetched, toggle between original and full
                     if (fullContent) {
                         toggleContent();
                     } else {
-                        // Otherwise fetch full content
                         const fetchBtn = document.getElementById('fetch-content-btn');
                         if (fetchBtn && !fetchBtn.disabled) {
                             fetchFullContent();
@@ -747,7 +744,6 @@
                     }
                     return true;
                 case 'b':
-                    // Save to bookmark services
                     if (hasSaveServices && entryData && entryData.link) {
                         const saveBtn = document.getElementById('save-btn');
                         if (saveBtn && !saveBtn.disabled) {
@@ -756,7 +752,6 @@
                     }
                     return true;
                 case 'z':
-                    // Toggle summary - dismiss if shown, otherwise summarize with Kagi
                     if (currentSummary) {
                         dismissSummary();
                     } else if (hasKagiConfigured && entryData && entryData.link) {
@@ -773,10 +768,16 @@
             }
             return false;
         }
-    });
+    };
 
     // Initialize
     loadEntry();
+</script>
+<script type="module">
+    // keyboard.js is an ES module, so window.keyboard is only available in module context
+    window.keyboard.init('entry');
+    window.keyboard.setHelpItems(window._entryKeyboardHelpItems);
+    window.keyboard.registerHandlers(window._entryKeyboardHandlers);
 </script>
 
 <style>

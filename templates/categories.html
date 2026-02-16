@@ -15,9 +15,9 @@
 <form id="add-form" onsubmit="addCategory(event)">
     <div class="form-group">
         <label for="name">New Category</label>
-        <input type="text" id="name" name="name" placeholder="Category name" required maxlength="100">
+        <input type="text" id="name" name="name" placeholder="Category name" required maxlength="100" data-testid="category-name-input">
     </div>
-    <button type="submit">Add Category</button>
+    <button type="submit" data-testid="add-category-btn">Add Category</button>
 </form>
 
 <hr>
@@ -31,7 +31,7 @@
             <th>Actions</th>
         </tr>
     </thead>
-    <tbody id="categories-table">
+    <tbody id="categories-table" data-testid="categories-table">
         <tr>
             <td colspan="4">Loading...</td>
         </tr>
