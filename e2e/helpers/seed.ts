@@ -22,7 +22,7 @@ export class SeedHelper {
 
     try {
       const stmt = db.prepare(
-        `INSERT INTO entry (feed_id, guid, title, link, content, summary, published_at)
+        `INSERT OR IGNORE INTO entry (feed_id, guid, title, link, content, summary, published_at)
          VALUES (?, ?, ?, ?, ?, ?, datetime('now', ?))`
       );
 
@@ -63,29 +63,33 @@ export class SeedHelper {
     }
   }
 
-  /** Insert a category directly into SQLite. Returns the category id. */
+  /** Insert or find a category directly into SQLite. Returns the category id. */
   createCategory(userId: number, name: string): number {
     const db = new Database(this.dbPath);
     try {
-      const result = db
-        .prepare(`INSERT INTO category (user_id, name) VALUES (?, ?)`)
-        .run(userId, name);
-      return Number(result.lastInsertRowid);
+      db.prepare(
+        `INSERT OR IGNORE INTO category (user_id, name) VALUES (?, ?)`
+      ).run(userId, name);
+      const row = db
+        .prepare(`SELECT id FROM category WHERE user_id = ? AND name = ?`)
+        .get(userId, name) as { id: number };
+      return row.id;
     } finally {
       db.close();
     }
   }
 
-  /** Insert a feed directly into SQLite (bypasses URL fetch). Returns the feed id. */
+  /** Insert or find a feed directly into SQLite (bypasses URL fetch). Returns the feed id. */
   createFeed(categoryId: number, url: string, title?: string): number {
     const db = new Database(this.dbPath);
     try {
-      const result = db
-        .prepare(
-          `INSERT INTO feed (category_id, url, title) VALUES (?, ?, ?)`
-        )
-        .run(categoryId, url, title ?? url);
-      return Number(result.lastInsertRowid);
+      db.prepare(
+        `INSERT OR IGNORE INTO feed (category_id, url, title) VALUES (?, ?, ?)`
+      ).run(categoryId, url, title ?? url);
+      const row = db
+        .prepare(`SELECT id FROM feed WHERE url = ?`)
+        .get(url) as { id: number };
+      return row.id;
     } finally {
       db.close();
     }

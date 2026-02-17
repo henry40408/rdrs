@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use axum::http::StatusCode;
+use axum::http::{header, HeaderValue, StatusCode};
 use axum_test::TestServer;
 use rdrs::{auth, create_router, db, services, AppState, Config, DbPool, Role};
 use rusqlite::Connection;
@@ -2271,4 +2271,465 @@ async fn test_health_check_no_auth_required() {
     // Health check should work without authentication
     let response = server.get("/health").await;
     response.assert_status_ok();
+}
+
+// ============================================================================
+// Subscription Handler Coverage Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_subscription_list_with_feeds() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // Import a feed via OPML
+    let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+    <body>
+        <outline text="SubListCat">
+            <outline type="rss" text="SubList Feed" xmlUrl="https://sublist.example.com/feed.xml" htmlUrl="https://sublist.example.com"/>
+        </outline>
+    </body>
+</opml>"#;
+
+    let response = server
+        .post("/reader/api/0/subscription/import")
+        .text(opml_content)
+        .await;
+    response.assert_status_ok();
+
+    // GET subscription/list and verify response structure
+    let response = server.get("/reader/api/0/subscription/list").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let subscriptions = body["subscriptions"].as_array().unwrap();
+    assert_eq!(subscriptions.len(), 1);
+
+    let sub = &subscriptions[0];
+    // Verify all expected fields exist
+    assert_eq!(sub["id"], "feed/https://sublist.example.com/feed.xml");
+    assert!(sub["title"].is_string(), "title should be a string");
+    assert!(
+        sub["categories"].is_array(),
+        "categories should be an array"
+    );
+    assert!(sub["sortid"].is_string(), "sortid should be a string");
+    assert_eq!(sub["url"], "https://sublist.example.com/feed.xml");
+    assert!(
+        sub.get("iconUrl").is_some(),
+        "iconUrl field should be present"
+    );
+
+    // Verify category structure
+    let categories = sub["categories"].as_array().unwrap();
+    assert_eq!(categories.len(), 1);
+    assert_eq!(categories[0]["label"], "SubListCat");
+    assert!(
+        categories[0]["id"].as_str().unwrap().contains("SubListCat"),
+        "category id should contain the label name"
+    );
+}
+
+#[tokio::test]
+async fn test_subscription_edit_subscribe_unreachable_url() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // subscription/edit ac=subscribe performs feed discovery before inserting.
+    // An unreachable URL should result in a BAD_GATEWAY (502) error from discovery.
+    let form: Vec<(&str, &str)> = vec![
+        ("ac", "subscribe"),
+        ("s", "feed/https://unreachable.example.com/feed.xml"),
+    ];
+    let response = server
+        .post("/reader/api/0/subscription/edit")
+        .form(&form)
+        .await;
+    response.assert_status(StatusCode::BAD_GATEWAY);
+}
+
+#[tokio::test]
+async fn test_subscription_edit_unknown_action() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let form: Vec<(&str, &str)> = vec![
+        ("ac", "invalid"),
+        ("s", "feed/https://example.com/feed.xml"),
+    ];
+    let response = server
+        .post("/reader/api/0/subscription/edit")
+        .form(&form)
+        .await;
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn test_quickadd_empty_url() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let form: Vec<(&str, &str)> = vec![("quickadd", "")];
+    let response = server
+        .post("/reader/api/0/subscription/quickadd")
+        .form(&form)
+        .await;
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn test_subscribed_true() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // Import a feed via OPML
+    let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+    <body>
+        <outline text="SubdTrueCat">
+            <outline type="rss" text="SubdTrue Feed" xmlUrl="https://subdtrue.example.com/feed.xml"/>
+        </outline>
+    </body>
+</opml>"#;
+
+    server
+        .post("/reader/api/0/subscription/import")
+        .text(opml_content)
+        .await
+        .assert_status_ok();
+
+    // Check subscribed → "true"
+    let response = server
+        .get("/reader/api/0/subscribed?s=feed/https://subdtrue.example.com/feed.xml")
+        .await;
+    response.assert_status_ok();
+    assert_eq!(response.text(), "true");
+}
+
+#[tokio::test]
+async fn test_subscribed_false() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .get("/reader/api/0/subscribed?s=feed/https://nonexistent.com/feed.xml")
+        .await;
+    response.assert_status_ok();
+    assert_eq!(response.text(), "false");
+}
+
+#[tokio::test]
+async fn test_subscribed_invalid_stream() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // "invalid" does not start with "feed/" so should fail validation
+    let response = server.get("/reader/api/0/subscribed?s=invalid").await;
+    response.assert_status_bad_request();
+}
+
+#[tokio::test]
+async fn test_export_opml_content_type() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server.get("/reader/api/0/subscription/export").await;
+    response.assert_status_ok();
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(
+        content_type.contains("application/xml"),
+        "Content-Type should be application/xml, got: {}",
+        content_type
+    );
+
+    let content_disposition = response
+        .headers()
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(
+        content_disposition.contains("attachment"),
+        "Content-Disposition should contain 'attachment', got: {}",
+        content_disposition
+    );
+    assert!(
+        content_disposition.contains("subscriptions.opml"),
+        "Content-Disposition should contain 'subscriptions.opml', got: {}",
+        content_disposition
+    );
+}
+
+#[tokio::test]
+async fn test_import_opml_with_existing_category() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // Pre-create a category via rename-tag
+    create_category(&server, "PreExistingCat").await;
+
+    // Import OPML with a feed in the same category name
+    let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+    <body>
+        <outline text="PreExistingCat">
+            <outline type="rss" text="Existing Cat Feed" xmlUrl="https://existingcat.example.com/feed.xml"/>
+        </outline>
+    </body>
+</opml>"#;
+
+    let response = server
+        .post("/reader/api/0/subscription/import")
+        .text(opml_content)
+        .await;
+    response.assert_status_ok();
+
+    // Verify no duplicate category was created (still exactly 1 folder tag with this name)
+    let names = get_folder_tag_names(&server).await;
+    let matching: Vec<&String> = names.iter().filter(|n| *n == "PreExistingCat").collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "Should have exactly 1 'PreExistingCat' category, got {}",
+        matching.len()
+    );
+
+    // Verify the feed was created under the existing category
+    let response = server.get("/reader/api/0/subscription/list").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let subscriptions = body["subscriptions"].as_array().unwrap();
+    assert_eq!(subscriptions.len(), 1);
+    assert_eq!(subscriptions[0]["categories"][0]["label"], "PreExistingCat");
+}
+
+#[tokio::test]
+async fn test_subscription_edit_edit_title() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // Import a feed via OPML
+    let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+    <body>
+        <outline text="EditTitleCat">
+            <outline type="rss" text="Original Title" xmlUrl="https://edittitle.example.com/feed.xml"/>
+        </outline>
+    </body>
+</opml>"#;
+
+    server
+        .post("/reader/api/0/subscription/import")
+        .text(opml_content)
+        .await
+        .assert_status_ok();
+
+    // Edit the feed's title via subscription/edit ac=edit
+    let form: Vec<(&str, &str)> = vec![
+        ("ac", "edit"),
+        ("s", "feed/https://edittitle.example.com/feed.xml"),
+        ("t", "NewTitle"),
+    ];
+    let response = server
+        .post("/reader/api/0/subscription/edit")
+        .form(&form)
+        .await;
+    response.assert_status_ok();
+
+    // Verify the title was changed via subscription/list
+    let response = server.get("/reader/api/0/subscription/list").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let subscriptions = body["subscriptions"].as_array().unwrap();
+    assert_eq!(subscriptions.len(), 1);
+    assert_eq!(subscriptions[0]["title"], "NewTitle");
+}
+
+// ============================================================================
+// Auth Handler Coverage Tests (ClientLogin, token, preference, friend)
+// ============================================================================
+
+#[tokio::test]
+async fn test_client_login_success() {
+    let server = create_test_server(default_test_config());
+
+    // Register a user first
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "testuser",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    // ClientLogin with correct credentials
+    let form: Vec<(&str, &str)> = vec![("Email", "testuser"), ("Passwd", "password123")];
+    let response = server.post("/accounts/ClientLogin").form(&form).await;
+    response.assert_status_ok();
+
+    let body = response.text();
+    assert!(
+        body.contains("Auth="),
+        "Response should contain Auth= token, got: {}",
+        body
+    );
+    assert!(
+        body.contains("SID="),
+        "Response should contain SID=, got: {}",
+        body
+    );
+    assert!(
+        body.contains("LSID="),
+        "Response should contain LSID=, got: {}",
+        body
+    );
+}
+
+#[tokio::test]
+async fn test_client_login_wrong_password() {
+    let server = create_test_server(default_test_config());
+
+    // Register a user
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "testuser",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    // ClientLogin with wrong password → 401
+    let form: Vec<(&str, &str)> = vec![("Email", "testuser"), ("Passwd", "wrongpassword")];
+    let response = server.post("/accounts/ClientLogin").form(&form).await;
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_client_login_nonexistent_user() {
+    let server = create_test_server(default_test_config());
+
+    // ClientLogin with non-existent user → 401
+    let form: Vec<(&str, &str)> = vec![("Email", "nouser"), ("Passwd", "password123")];
+    let response = server.post("/accounts/ClientLogin").form(&form).await;
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_greader_auth_header() {
+    let server = create_test_server(default_test_config());
+
+    // Register user
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "testuser",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    // Get auth token via ClientLogin
+    let form: Vec<(&str, &str)> = vec![("Email", "testuser"), ("Passwd", "password123")];
+    let response = server.post("/accounts/ClientLogin").form(&form).await;
+    response.assert_status_ok();
+
+    let body = response.text();
+    let auth_token = body
+        .lines()
+        .find(|line| line.starts_with("Auth="))
+        .unwrap()
+        .strip_prefix("Auth=")
+        .unwrap();
+
+    // Use the auth token in Authorization header to call user-info
+    let auth_header_value = format!("GoogleLogin auth={}", auth_token);
+    let response = server
+        .get("/reader/api/0/user-info")
+        .add_header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&auth_header_value).unwrap(),
+        )
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["userName"], "testuser");
+}
+
+#[tokio::test]
+async fn test_greader_invalid_auth_header() {
+    let server = create_test_server(default_test_config());
+
+    // Use an invalid auth token in Authorization header → 401
+    let response = server
+        .get("/reader/api/0/user-info")
+        .add_header(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("GoogleLogin auth=invalidtoken"),
+        )
+        .await;
+    response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_get_post_token() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server.get("/reader/api/0/token").await;
+    response.assert_status_ok();
+
+    let token = response.text();
+    assert!(!token.is_empty(), "POST token should be a non-empty string");
+    // Token format is "<timestamp>/<hmac_hex>"
+    assert!(
+        token.contains('/'),
+        "POST token should contain '/' separator, got: {}",
+        token
+    );
+}
+
+#[tokio::test]
+async fn test_preference_list() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server.get("/reader/api/0/preference/list").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body, json!({ "prefs": [] }));
+}
+
+#[tokio::test]
+async fn test_preference_stream_list() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server.get("/reader/api/0/preference/stream/list").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body, json!({ "streamprefs": {} }));
+}
+
+#[tokio::test]
+async fn test_friend_list() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server.get("/reader/api/0/friend/list").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body, json!({ "friends": [] }));
 }

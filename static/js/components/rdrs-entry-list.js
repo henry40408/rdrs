@@ -153,6 +153,11 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             params.set(k, v);
         }
 
+        // Search query
+        if (this._search) {
+            params.set('q', this._search);
+        }
+
         const fullUrl = `${url}?${params.toString()}`;
 
         try {

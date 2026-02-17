@@ -32,6 +32,8 @@ pub struct StreamContentsQuery {
     pub nt: Option<i64>,
     /// Sort order: `o` for oldest first
     pub r: Option<String>,
+    /// Search query (RDRS extension, not part of standard GReader API)
+    pub q: Option<String>,
 }
 
 /// `GET /reader/api/0/stream/contents/*stream`
@@ -344,7 +346,10 @@ fn build_entry_filter(
     stream_id: &StreamId,
     query: &StreamContentsQuery,
 ) -> AppResult<entry::EntryFilter> {
-    build_entry_filter_from_params(stream_id, query.xt.as_deref(), query.it.as_deref())
+    let mut filter =
+        build_entry_filter_from_params(stream_id, query.xt.as_deref(), query.it.as_deref())?;
+    filter.search = query.q.clone();
+    Ok(filter)
 }
 
 fn build_entry_filter_from_params(

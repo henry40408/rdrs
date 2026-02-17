@@ -1747,6 +1747,530 @@ async fn test_save_entry_no_services_config() {
 }
 
 // ============================================================================
+// Stream Item IDs Tests (item.rs coverage)
+// ============================================================================
+
+#[tokio::test]
+async fn test_stream_item_ids() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    let response = app
+        .server
+        .get("/reader/api/0/stream/items/ids?s=user/-/state/com.google/reading-list")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let item_refs = body["itemRefs"].as_array().unwrap();
+    assert_eq!(item_refs.len(), 5);
+    // Each itemRef should have id and timestampUsec fields
+    for item_ref in item_refs {
+        assert!(item_ref["id"].is_string());
+        assert!(item_ref["timestampUsec"].is_string());
+    }
+}
+
+#[tokio::test]
+async fn test_stream_item_ids_with_count() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    let response = app
+        .server
+        .get("/reader/api/0/stream/items/ids?s=user/-/state/com.google/reading-list&n=2")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let item_refs = body["itemRefs"].as_array().unwrap();
+    assert_eq!(item_refs.len(), 2);
+    // Should have continuation since there are more entries
+    assert!(body["continuation"].is_string());
+}
+
+#[tokio::test]
+async fn test_stream_item_count() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    let response = app.server.get("/reader/api/0/stream/items/count").await;
+    response.assert_status_ok();
+
+    let text = response.text();
+    assert_eq!(text, "5");
+}
+
+#[tokio::test]
+async fn test_stream_item_count_by_feed() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    let response = app
+        .server
+        .get("/reader/api/0/stream/items/count?s=feed/https://example.com/feed.xml")
+        .await;
+    response.assert_status_ok();
+
+    let text = response.text();
+    assert_eq!(text, "5");
+}
+
+#[tokio::test]
+async fn test_stream_item_count_starred() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    let response = app
+        .server
+        .get("/reader/api/0/stream/items/count?s=user/-/state/com.google/starred")
+        .await;
+    response.assert_status_ok();
+
+    let text = response.text();
+    assert_eq!(text, "0");
+}
+
+#[tokio::test]
+async fn test_stream_contents_oldest_first() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    let response = app
+        .server
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?r=o")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 5);
+
+    // The first item should have the earliest published timestamp (oldest first)
+    let first_published = items[0]["published"].as_i64().unwrap();
+    let last_published = items[4]["published"].as_i64().unwrap();
+    assert!(
+        first_published <= last_published,
+        "First item should be oldest: first={}, last={}",
+        first_published,
+        last_published
+    );
+}
+
+#[tokio::test]
+async fn test_stream_contents_with_count() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    let response = app
+        .server
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    // Should have a continuation token since there are 5 total entries
+    assert!(
+        body["continuation"].is_string(),
+        "Expected continuation token when there are more items"
+    );
+}
+
+#[tokio::test]
+async fn test_stream_contents_with_continuation() {
+    let app = create_test_app(default_test_config());
+    // Use custom setup to ensure IDs correlate with timestamps (needed for continuation)
+    let (_user_id, _cat_id, _feed_id) = app
+        .db
+        .user(move |conn| {
+            let password_hash = rdrs::auth::hash_password("password123").unwrap();
+            conn.execute(
+                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["testuser", password_hash, Role::Admin.as_str()],
+            )
+            .unwrap();
+            let user_id = conn.last_insert_rowid();
+
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![user_id, "Test Category"],
+            )
+            .unwrap();
+            let category_id = conn.last_insert_rowid();
+
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![category_id, "https://example.com/feed.xml", "Test Feed"],
+            )
+            .unwrap();
+            let feed_id = conn.last_insert_rowid();
+
+            // Insert entries so that lower IDs have older published_at
+            for i in 1..=5 {
+                conn.execute(
+                    "INSERT INTO entry (feed_id, guid, title, link, content, published_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, datetime('now', ?6))",
+                    rusqlite::params![
+                        feed_id,
+                        format!("guid-{}", i),
+                        format!("Entry Title {}", i),
+                        format!("https://example.com/entry/{}", i),
+                        format!("<p>Entry content {}</p>", i),
+                        format!("-{} hours", 6 - i) // entry 1=-5h, entry 5=-1h
+                    ],
+                )
+                .unwrap();
+            }
+
+            (user_id, category_id, feed_id)
+        })
+        .await
+        .unwrap();
+
+    login(&app.server).await;
+
+    // First page: get 2 items
+    let response = app
+        .server
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let first_page_items = body["items"].as_array().unwrap();
+    assert_eq!(first_page_items.len(), 2);
+    let continuation = body["continuation"].as_str().unwrap();
+
+    // Second page using continuation token
+    let response = app
+        .server
+        .get(&format!(
+            "/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2&c={}",
+            continuation
+        ))
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let second_page_items = body["items"].as_array().unwrap();
+    assert_eq!(second_page_items.len(), 2);
+
+    // Entries from second page should be different from first page
+    let first_ids: Vec<i64> = first_page_items
+        .iter()
+        .map(|i| i["_entryId"].as_i64().unwrap())
+        .collect();
+    let second_ids: Vec<i64> = second_page_items
+        .iter()
+        .map(|i| i["_entryId"].as_i64().unwrap())
+        .collect();
+    for id in &second_ids {
+        assert!(
+            !first_ids.contains(id),
+            "Second page should not contain items from first page"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_stream_items_contents_post() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    let form_data: Vec<(&str, String)> = vec![("i", entry_ids[0].to_string())];
+
+    let response = app
+        .server
+        .post("/reader/api/0/stream/items/contents")
+        .form(&form_data)
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["_entryId"], entry_ids[0]);
+    assert!(items[0]["title"].as_str().unwrap().contains("Entry Title"));
+}
+
+#[tokio::test]
+async fn test_stream_items_contents_empty() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    // GET with no i= params
+    let response = app.server.get("/reader/api/0/stream/items/contents").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 0);
+}
+
+#[tokio::test]
+async fn test_stream_contents_exclude_read() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    // Mark one entry as read
+    mark_read(&app.server, &[entry_ids[0]]).await;
+
+    // Get stream contents excluding read entries
+    let response = app
+        .server
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?xt=user/-/state/com.google/read")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 4);
+
+    // The read entry should not be in the results
+    let returned_ids: Vec<i64> = items
+        .iter()
+        .map(|i| i["_entryId"].as_i64().unwrap())
+        .collect();
+    assert!(
+        !returned_ids.contains(&entry_ids[0]),
+        "Read entry should be excluded from results"
+    );
+}
+
+#[tokio::test]
+async fn test_stream_contents_include_starred() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    // Star one entry
+    star_entry(&app.server, &[entry_ids[2]]).await;
+
+    // Get stream contents with include tag for starred
+    let response = app
+        .server
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?it=user/-/state/com.google/starred")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["_entryId"], entry_ids[2]);
+}
+
+#[tokio::test]
+async fn test_stream_item_ids_default_stream() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    // GET stream/items/ids without s= parameter — should default to reading-list
+    let response = app.server.get("/reader/api/0/stream/items/ids").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let item_refs = body["itemRefs"].as_array().unwrap();
+    assert_eq!(item_refs.len(), 5);
+}
+
+// ============================================================================
+// User Info Tests (user.rs coverage)
+// ============================================================================
+
+#[tokio::test]
+async fn test_user_info() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    let response = app.server.get("/reader/api/0/user-info").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert!(body["userId"].is_string());
+    assert_eq!(body["userName"], "testuser");
+    assert!(body["userProfileId"].is_string());
+    assert!(body["userEmail"].is_string());
+    // userEmail should follow the pattern <username>@localhost
+    assert_eq!(body["userEmail"], "testuser@localhost");
+}
+
+#[tokio::test]
+async fn test_unread_count_with_data() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    let response = app.server.get("/reader/api/0/unread-count").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["max"], 1000);
+
+    let unreadcounts = body["unreadcounts"].as_array().unwrap();
+
+    // Should have feed, category, and reading-list counts
+    let feed_count = unreadcounts
+        .iter()
+        .find(|c| c["id"] == "feed/https://example.com/feed.xml")
+        .unwrap();
+    assert!(feed_count["count"].as_i64().unwrap() > 0);
+
+    let cat_count = unreadcounts
+        .iter()
+        .find(|c| c["id"] == "user/-/label/Test Category")
+        .unwrap();
+    assert!(cat_count["count"].as_i64().unwrap() > 0);
+
+    let total_count = unreadcounts
+        .iter()
+        .find(|c| c["id"] == "user/-/state/com.google/reading-list")
+        .unwrap();
+    assert_eq!(total_count["count"], 5);
+    assert!(total_count["newestItemTimestampUsec"].is_string());
+}
+
+#[tokio::test]
+async fn test_unread_count_after_read() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    // Mark 3 entries as read
+    mark_read(&app.server, &[entry_ids[0], entry_ids[1], entry_ids[2]]).await;
+
+    let response = app.server.get("/reader/api/0/unread-count").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let unreadcounts = body["unreadcounts"].as_array().unwrap();
+
+    let feed_count = unreadcounts
+        .iter()
+        .find(|c| c["id"] == "feed/https://example.com/feed.xml")
+        .unwrap();
+    assert_eq!(feed_count["count"], 2);
+
+    let total_count = unreadcounts
+        .iter()
+        .find(|c| c["id"] == "user/-/state/com.google/reading-list")
+        .unwrap();
+    assert_eq!(total_count["count"], 2);
+}
+
+// ============================================================================
+// Star/Unstar via Stream Tests (models/entry.rs coverage)
+// ============================================================================
+
+#[tokio::test]
+async fn test_star_and_unstar_entry() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    // Star an entry via edit-tag
+    star_entry(&app.server, &[entry_ids[1]]).await;
+
+    // Verify it appears in the starred stream
+    let response = app
+        .server
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/starred")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["_entryId"], entry_ids[1]);
+
+    // Unstar the entry
+    unstar_entry(&app.server, &[entry_ids[1]]).await;
+
+    // Verify it's no longer in the starred stream
+    let response = app
+        .server
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/starred")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 0);
+}
+
+#[tokio::test]
+async fn test_find_by_ids_with_feed_empty() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    // GET stream/items/contents with no valid IDs (nonexistent IDs)
+    let response = app
+        .server
+        .get("/reader/api/0/stream/items/contents?i=999999&i=999998")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 0);
+}
+
+#[tokio::test]
+async fn test_stream_contents_time_filter() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    // Entries are created at now-1h, now-2h, now-3h, now-4h, now-5h.
+    // Use ot (oldest timestamp) to filter: only entries newer than 3.5 hours ago.
+    // This should return entries at now-1h, now-2h, now-3h (3 entries).
+    let ot = chrono::Utc::now().timestamp() - (3 * 3600 + 1800); // 3.5 hours ago in seconds
+
+    let response = app
+        .server
+        .get(&format!(
+            "/reader/api/0/stream/contents/user/-/state/com.google/reading-list?ot={}",
+            ot
+        ))
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    // Should return entries within the time window (newer than ot)
+    assert!(
+        items.len() >= 2 && items.len() <= 4,
+        "Expected 2-4 items with time filter, got {}",
+        items.len()
+    );
+
+    // All returned items should have published timestamps >= ot
+    for item in items {
+        let published = item["published"].as_i64().unwrap();
+        assert!(
+            published >= ot,
+            "Item published timestamp {} should be >= ot {}",
+            published,
+            ot
+        );
+    }
+}
+
+// ============================================================================
 // Entry Summary Tests (RDRS-specific, kept as-is)
 // ============================================================================
 
