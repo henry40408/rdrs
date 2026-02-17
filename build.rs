@@ -7,6 +7,9 @@ fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/index");
 
+    // Re-run when static assets are added/removed/modified
+    println!("cargo:rerun-if-changed=static");
+
     let git_version = get_git_version();
     println!("cargo:rustc-env=GIT_VERSION={}", git_version);
 

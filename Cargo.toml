@@ -20,7 +20,7 @@ rusqlite = { version = "0.38", features = ["bundled"] }
 askama = "0.15"
 argon2 = "0.5"
 rand = "0.8"
-tower-http = { version = "0.6", features = ["fs", "timeout", "trace"] }
+tower-http = { version = "0.6", features = ["timeout", "trace"] }
 tower = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

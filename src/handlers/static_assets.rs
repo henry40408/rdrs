@@ -1,0 +1,53 @@
+use axum::{
+    extract::Path,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
+};
+
+// Embed all static JS files at compile time for single-binary deployment
+const FILES: &[(&str, &str)] = &[
+    ("js/utils.js", include_str!("../../static/js/utils.js")),
+    (
+        "js/keyboard.js",
+        include_str!("../../static/js/keyboard.js"),
+    ),
+    (
+        "js/components/rdrs-entry-list.js",
+        include_str!("../../static/js/components/rdrs-entry-list.js"),
+    ),
+    (
+        "js/components/rdrs-flash.js",
+        include_str!("../../static/js/components/rdrs-flash.js"),
+    ),
+    (
+        "js/components/rdrs-kb-help.js",
+        include_str!("../../static/js/components/rdrs-kb-help.js"),
+    ),
+    (
+        "js/components/rdrs-kb-pending.js",
+        include_str!("../../static/js/components/rdrs-kb-pending.js"),
+    ),
+    (
+        "js/components/rdrs-loading-bar.js",
+        include_str!("../../static/js/components/rdrs-loading-bar.js"),
+    ),
+    (
+        "js/components/rdrs-modal.js",
+        include_str!("../../static/js/components/rdrs-modal.js"),
+    ),
+];
+
+pub async fn serve(Path(path): Path<String>) -> Response {
+    match FILES.iter().find(|(name, _)| *name == path) {
+        Some((_, content)) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "application/javascript"),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            ],
+            *content,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}

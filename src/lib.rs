@@ -5,7 +5,6 @@ use axum::{
     Router,
 };
 use tokio::sync::mpsc;
-use tower_http::services::ServeDir;
 use tower_http::timeout::TimeoutLayer;
 use webauthn_rs::prelude::Webauthn;
 
@@ -184,7 +183,7 @@ pub fn create_router(state: AppState) -> Router {
         // Google Reader API (standard paths + FreshRSS-compatible /api/greader.php prefix)
         .merge(handlers::greader::greader_routes())
         .nest("/api/greader.php", handlers::greader::greader_routes())
-        .nest_service("/static", ServeDir::new("static"))
+        .route("/static/{*path}", get(handlers::static_assets::serve))
         .with_state(state)
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
