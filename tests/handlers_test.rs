@@ -2249,6 +2249,61 @@ async fn test_apple_touch_icon() {
 }
 
 // ============================================================================
+// Static Assets Handler Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_static_js_serves_known_file() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/static/js/utils.js").await;
+    response.assert_status_ok();
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(content_type, "application/javascript");
+
+    let cache_control = response
+        .headers()
+        .get("cache-control")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(cache_control, "public, max-age=31536000, immutable");
+
+    let body = response.text();
+    assert!(!body.is_empty(), "JS file should not be empty");
+}
+
+#[tokio::test]
+async fn test_static_js_serves_component_file() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/static/js/components/rdrs-entry-list.js").await;
+    response.assert_status_ok();
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(content_type, "application/javascript");
+}
+
+#[tokio::test]
+async fn test_static_js_not_found() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/static/js/nonexistent.js").await;
+    response.assert_status_not_found();
+}
+
+// ============================================================================
 // Health Check Tests
 // ============================================================================
 
