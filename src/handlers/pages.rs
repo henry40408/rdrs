@@ -903,6 +903,7 @@ pub struct FeedEntriesTemplate {
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
     pub feed_id: i64,
+    pub feed_url: String,
     pub feed_title: String,
     pub feed_has_icon: bool,
     pub category_id: i64,
@@ -934,28 +935,31 @@ pub async fn feed_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, feed_title, feed_has_icon, category_id, category_name, theme) = state
-        .db
-        .user(move |c| {
-            let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
-            let cat = category::find_by_id(c, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
-            if cat.user_id != user_id {
-                return Err(AppError::FeedNotFound);
-            }
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let feed_title = f.title.unwrap_or_else(|| f.url.clone());
-            let has_icon: i64 = c
-                .query_row(
-                    "SELECT COUNT(*) FROM image WHERE entity_type = 'feed' AND entity_id = ?1",
-                    [id],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0);
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            Ok::<_, AppError>((epp, feed_title, has_icon > 0, cat.id, cat.name, theme))
-        })
-        .await??;
+    let (entries_per_page, feed_url, feed_title, feed_has_icon, category_id, category_name, theme) =
+        state
+            .db
+            .user(move |c| {
+                let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
+                let cat =
+                    category::find_by_id(c, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
+                if cat.user_id != user_id {
+                    return Err(AppError::FeedNotFound);
+                }
+                let epp = user_settings::get_entries_per_page(c, user_id)
+                    .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+                let feed_url = f.url.clone();
+                let feed_title = f.title.unwrap_or_else(|| f.url.clone());
+                let has_icon: i64 = c
+                    .query_row(
+                        "SELECT COUNT(*) FROM image WHERE entity_type = 'feed' AND entity_id = ?1",
+                        [id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+                let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+                Ok::<_, AppError>((epp, feed_url, feed_title, has_icon > 0, cat.id, cat.name, theme))
+            })
+            .await??;
 
     Ok((
         flash.clone(),
@@ -966,6 +970,7 @@ pub async fn feed_entries_page(
             flash_messages: flash.messages,
             entries_per_page,
             feed_id: id,
+            feed_url,
             feed_title,
             feed_has_icon,
             category_id,

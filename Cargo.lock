@@ -2789,6 +2789,7 @@ dependencies = [
  "cookie",
  "dateparser",
  "feed-rs",
+ "hex",
  "hmac",
  "http-body-util",
  "ico",

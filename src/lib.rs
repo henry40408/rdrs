@@ -98,38 +98,9 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/unmasquerade",
             post(handlers::admin::stop_masquerade),
         )
-        // Category routes
+        // Page routes
         .route("/categories", get(handlers::pages::categories_page))
-        .route("/api/categories", get(handlers::category::list_categories))
-        .route("/api/categories", post(handlers::category::create_category))
-        .route(
-            "/api/categories/{id}",
-            get(handlers::category::get_category),
-        )
-        .route(
-            "/api/categories/{id}",
-            put(handlers::category::update_category),
-        )
-        .route(
-            "/api/categories/{id}",
-            delete(handlers::category::delete_category),
-        )
-        // Feed routes
         .route("/feeds", get(handlers::pages::feeds_page))
-        .route("/api/feeds", get(handlers::feed::list_feeds))
-        .route("/api/feeds", post(handlers::feed::create_feed))
-        .route(
-            "/api/feeds/fetch-metadata",
-            post(handlers::feed::fetch_metadata),
-        )
-        .route("/api/feeds/{id}", get(handlers::feed::get_feed))
-        .route("/api/feeds/{id}", put(handlers::feed::update_feed))
-        .route("/api/feeds/{id}", delete(handlers::feed::delete_feed))
-        .route("/api/feeds/{id}/icon", get(handlers::feed::get_feed_icon))
-        // OPML routes
-        .route("/api/opml/export", get(handlers::feed::export_opml))
-        .route("/api/opml/import", post(handlers::feed::import_opml))
-        // Entry routes
         .route("/entries", get(handlers::pages::entries_page))
         .route("/entries/read", get(handlers::pages::read_entries_page))
         .route(
@@ -142,30 +113,25 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/entries/{id}", get(handlers::pages::entry_page))
         .route("/search", get(handlers::pages::search_page))
-        // Category entries page
         .route(
             "/categories/{id}/entries",
             get(handlers::pages::category_entries_page),
         )
-        // Feed entries page
         .route(
             "/feeds/{id}/entries",
             get(handlers::pages::feed_entries_page),
         )
-        .route("/api/entries", get(handlers::entry::list_entries))
-        .route("/api/entries/{id}", get(handlers::entry::get_entry))
+        // RDRS-specific feed endpoints (not replaced by GReader API)
         .route(
-            "/api/entries/{id}/read",
-            put(handlers::entry::mark_entry_read),
+            "/api/feeds/fetch-metadata",
+            post(handlers::feed::fetch_metadata),
         )
+        .route("/api/feeds/{id}/icon", get(handlers::feed::get_feed_icon))
         .route(
-            "/api/entries/{id}/unread",
-            put(handlers::entry::mark_entry_unread),
+            "/api/feeds/{id}/refresh",
+            post(handlers::entry::refresh_feed_handler),
         )
-        .route(
-            "/api/entries/{id}/star",
-            put(handlers::entry::toggle_entry_star),
-        )
+        // RDRS-specific entry endpoints (not replaced by GReader API)
         .route(
             "/api/entries/{id}/fetch-full-content",
             post(handlers::entry::fetch_full_content),
@@ -189,26 +155,6 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/entries/{id}/neighbors",
             get(handlers::entry::get_entry_neighbors),
-        )
-        .route(
-            "/api/entries/mark-all-read",
-            put(handlers::entry::mark_all_read),
-        )
-        .route(
-            "/api/entries/mark-read-by-ids",
-            put(handlers::entry::mark_read_by_ids),
-        )
-        .route(
-            "/api/entries/unread-stats",
-            get(handlers::entry::get_unread_stats),
-        )
-        .route(
-            "/api/feeds/{id}/entries",
-            get(handlers::entry::list_feed_entries),
-        )
-        .route(
-            "/api/feeds/{id}/refresh",
-            post(handlers::entry::refresh_feed_handler),
         )
         // Proxy routes
         .route("/api/proxy/image", get(handlers::proxy::proxy_image))
@@ -235,6 +181,9 @@ pub fn create_router(state: AppState) -> Router {
             "/api/passkeys/{id}",
             delete(handlers::passkey::delete_passkey),
         )
+        // Google Reader API (standard paths + FreshRSS-compatible /api/greader.php prefix)
+        .merge(handlers::greader::greader_routes())
+        .nest("/api/greader.php", handlers::greader::greader_routes())
         .nest_service("/static", ServeDir::new("static"))
         .with_state(state)
         .layer(TimeoutLayer::with_status_code(

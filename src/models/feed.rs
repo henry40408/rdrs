@@ -167,6 +167,33 @@ pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Feed>> {
     Ok(feeds)
 }
 
+/// Find a feed by URL across all categories for a given user.
+pub fn find_by_url_for_user(
+    conn: &Connection,
+    url: &str,
+    user_id: i64,
+) -> AppResult<Option<Feed>> {
+    conn.query_row(
+        &format!(
+            r#"
+            SELECT {}
+            FROM feed f
+            INNER JOIN category c ON f.category_id = c.id
+            WHERE f.url = ?1 AND c.user_id = ?2
+            "#,
+            SELECT_COLUMNS
+                .split(", ")
+                .map(|col| format!("f.{}", col))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        params![url, user_id],
+        row_to_feed,
+    )
+    .optional()
+    .map_err(AppError::Database)
+}
+
 pub fn list_by_category(conn: &Connection, category_id: i64) -> AppResult<Vec<Feed>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {} FROM feed WHERE category_id = ?1 ORDER BY title ASC",

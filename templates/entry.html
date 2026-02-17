@@ -191,7 +191,14 @@
 
     async function loadEntry() {
         try {
-            const response = await fetch(`/api/entries/${entryId}`);
+            // Fetch entry via GReader stream/items/contents
+            const body = new URLSearchParams();
+            body.set('i', entryId.toString());
+
+            const response = await fetch('/reader/api/0/stream/items/contents', {
+                method: 'POST',
+                body: body
+            });
             if (!response.ok) {
                 if (response.status === 404) {
                     document.getElementById('entry-container').innerHTML = '<p class="muted">Entry not found.</p>';
@@ -199,13 +206,42 @@
                 }
                 throw new Error('Failed to load entry');
             }
-            const data = await response.json();
+            const result = await response.json();
+            if (!result.items || result.items.length === 0) {
+                document.getElementById('entry-container').innerHTML = '<p class="muted">Entry not found.</p>';
+                return;
+            }
+
+            // Transform GReader item to internal format
+            const item = result.items[0];
+            const data = {
+                id: item._entryId,
+                feed_id: item._feedId,
+                category_id: item._categoryId,
+                category_name: item._categoryName,
+                feed_title: item.origin?.title || '',
+                feed_url: item.origin?.htmlUrl || '',
+                feed_has_icon: item._feedHasIcon || false,
+                title: item.title || '',
+                link: item.canonical?.[0]?.href || item.alternate?.[0]?.href || '',
+                sanitized_content: item._content || null,
+                summary: item.summary?.content || '',
+                author: item.author || '',
+                published_at: item._publishedAt || null,
+                read_at: item._readAt || null,
+                starred_at: item._starredAt || null,
+                summary_status: null,
+            };
+
             entryData = data;
             renderEntry(data);
 
-            // Auto-mark as read
+            // Auto-mark as read via edit-tag
             if (data.read_at === null) {
-                await fetch(`/api/entries/${entryId}/read`, { method: 'PUT' });
+                const markBody = new URLSearchParams();
+                markBody.set('i', entryId.toString());
+                markBody.set('a', 'user/-/state/com.google/read');
+                await fetch('/reader/api/0/edit-tag', { method: 'POST', body: markBody });
             }
 
             // Load neighbors for n/p navigation
@@ -339,11 +375,29 @@
 
     async function toggleStar() {
         try {
-            const response = await fetch(`/api/entries/${entryId}/star`, { method: 'PUT' });
+            const isCurrentlyStarred = entryData && entryData.starred_at !== null;
+            const body = new URLSearchParams();
+            body.set('i', entryId.toString());
+            if (isCurrentlyStarred) {
+                body.set('r', 'user/-/state/com.google/starred');
+            } else {
+                body.set('a', 'user/-/state/com.google/starred');
+            }
+
+            const response = await fetch('/reader/api/0/edit-tag', {
+                method: 'POST',
+                body: body
+            });
             if (!response.ok) throw new Error('Failed to toggle star');
-            const updated = await response.json();
+
+            // Update local state
+            if (isCurrentlyStarred) {
+                entryData.starred_at = null;
+            } else {
+                entryData.starred_at = new Date().toISOString();
+            }
             const btn = document.getElementById('star-btn');
-            btn.textContent = updated.starred_at ? 'Unstar' : 'Star';
+            btn.textContent = entryData.starred_at ? 'Unstar' : 'Star';
         } catch (err) {
             flash.error(err.message);
         }
@@ -351,7 +405,14 @@
 
     async function markUnread() {
         try {
-            const response = await fetch(`/api/entries/${entryId}/unread`, { method: 'PUT' });
+            const body = new URLSearchParams();
+            body.set('i', entryId.toString());
+            body.set('r', 'user/-/state/com.google/read');
+
+            const response = await fetch('/reader/api/0/edit-tag', {
+                method: 'POST',
+                body: body
+            });
             if (!response.ok) throw new Error('Failed to mark as unread');
             flash.success('Marked as unread.');
         } catch (err) {

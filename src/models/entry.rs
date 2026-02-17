@@ -136,6 +136,18 @@ pub struct EntryFilter {
     pub has_summary: Option<bool>,
 }
 
+/// Parameters for continuation-based pagination (Google Reader style).
+#[derive(Debug, Clone, Default)]
+pub struct ContinuationParams {
+    pub oldest_first: bool,
+    pub limit: i64,
+    pub continuation_id: Option<i64>,
+    /// Oldest timestamp (seconds since epoch)
+    pub ot: Option<i64>,
+    /// Newest timestamp (seconds since epoch)
+    pub nt: Option<i64>,
+}
+
 fn parse_datetime(s: &str) -> DateTime<Utc> {
     // Try RFC 3339 first (standard format)
     DateTime::parse_from_rfc3339(s)
@@ -612,6 +624,34 @@ pub fn mark_as_unread(conn: &Connection, id: i64) -> AppResult<Entry> {
     find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
 }
 
+/// Explicitly star an entry (set starred_at if not already set).
+pub fn star_entry(conn: &Connection, id: i64) -> AppResult<Entry> {
+    let rows = conn.execute(
+        "UPDATE entry SET starred_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1 AND starred_at IS NULL",
+        params![id],
+    )?;
+
+    if rows == 0 && find_by_id(conn, id)?.is_none() {
+        return Err(AppError::EntryNotFound);
+    }
+
+    find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
+}
+
+/// Explicitly unstar an entry (clear starred_at).
+pub fn unstar_entry(conn: &Connection, id: i64) -> AppResult<Entry> {
+    let rows = conn.execute(
+        "UPDATE entry SET starred_at = NULL, updated_at = datetime('now') WHERE id = ?1",
+        params![id],
+    )?;
+
+    if rows == 0 {
+        return Err(AppError::EntryNotFound);
+    }
+
+    find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
+}
+
 pub fn toggle_star(conn: &Connection, id: i64) -> AppResult<Entry> {
     let entry = find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)?;
 
@@ -628,6 +668,250 @@ pub fn toggle_star(conn: &Connection, id: i64) -> AppResult<Entry> {
     }
 
     find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
+}
+
+/// Batch query entries by IDs with feed info, verifying user ownership.
+pub fn find_by_ids_with_feed(
+    conn: &Connection,
+    user_id: i64,
+    ids: &[i64],
+) -> AppResult<Vec<EntryWithFeed>> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let placeholders: Vec<String> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect();
+    let in_clause = placeholders.join(", ");
+
+    let sql = format!(
+        r#"
+        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
+               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
+               f.title, f.url, c.id, c.name,
+               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon
+        FROM entry e
+        INNER JOIN feed f ON e.feed_id = f.id
+        INNER JOIN category c ON f.category_id = c.id
+        WHERE c.user_id = ?1 AND e.id IN ({})
+        "#,
+        in_clause
+    );
+
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+    for id in ids {
+        params_vec.push(Box::new(*id));
+    }
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+    let mut stmt = conn.prepare(&sql)?;
+    let entries = stmt
+        .query_map(params_refs.as_slice(), row_to_entry_with_feed)?
+        .filter_map(Result::ok)
+        .collect();
+
+    Ok(entries)
+}
+
+/// List entry IDs with timestamps for a user, using continuation-based pagination.
+/// Returns Vec<(entry_id, timestamp_usec)>.
+pub fn list_ids_by_user(
+    conn: &Connection,
+    user_id: i64,
+    filter: &EntryFilter,
+    pagination: &ContinuationParams,
+) -> AppResult<Vec<(i64, i64)>> {
+    let mut conditions = vec!["c.user_id = ?1".to_string()];
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+
+    apply_filter_conditions(&mut conditions, &mut params_vec, filter);
+    apply_time_conditions(&mut conditions, &mut params_vec, pagination.ot, pagination.nt);
+    apply_continuation_condition(&mut conditions, &mut params_vec, pagination.continuation_id, pagination.oldest_first);
+
+    let where_clause = conditions.join(" AND ");
+    let order = if pagination.oldest_first {
+        "COALESCE(e.published_at, e.created_at) ASC, e.id ASC"
+    } else {
+        "COALESCE(e.published_at, e.created_at) DESC, e.id DESC"
+    };
+
+    let sql = format!(
+        r#"
+        SELECT e.id, CAST(strftime('%s', COALESCE(e.published_at, e.created_at)) AS INTEGER) * 1000000
+        FROM entry e
+        INNER JOIN feed f ON e.feed_id = f.id
+        INNER JOIN category c ON f.category_id = c.id
+        WHERE {}
+        ORDER BY {}
+        LIMIT ?{}
+        "#,
+        where_clause,
+        order,
+        params_vec.len() + 1
+    );
+
+    params_vec.push(Box::new(pagination.limit));
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(params_refs.as_slice(), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .filter_map(Result::ok)
+        .collect();
+
+    Ok(rows)
+}
+
+/// List entries with continuation-based pagination (for Google Reader stream/contents).
+pub fn list_by_user_with_continuation(
+    conn: &Connection,
+    user_id: i64,
+    filter: &EntryFilter,
+    pagination: &ContinuationParams,
+) -> AppResult<Vec<EntryWithFeed>> {
+    let mut conditions = vec!["c.user_id = ?1".to_string()];
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+
+    apply_filter_conditions(&mut conditions, &mut params_vec, filter);
+    apply_time_conditions(&mut conditions, &mut params_vec, pagination.ot, pagination.nt);
+    apply_continuation_condition(&mut conditions, &mut params_vec, pagination.continuation_id, pagination.oldest_first);
+
+    let where_clause = conditions.join(" AND ");
+    let order = if pagination.oldest_first {
+        "COALESCE(e.published_at, e.created_at) ASC, e.id ASC"
+    } else {
+        "COALESCE(e.published_at, e.created_at) DESC, e.id DESC"
+    };
+
+    let sql = format!(
+        r#"
+        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
+               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
+               f.title, f.url, c.id, c.name,
+               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon
+        FROM entry e
+        INNER JOIN feed f ON e.feed_id = f.id
+        INNER JOIN category c ON f.category_id = c.id
+        WHERE {}
+        ORDER BY {}
+        LIMIT ?{}
+        "#,
+        where_clause,
+        order,
+        params_vec.len() + 1
+    );
+
+    params_vec.push(Box::new(pagination.limit));
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+    let mut stmt = conn.prepare(&sql)?;
+    let entries = stmt
+        .query_map(params_refs.as_slice(), row_to_entry_with_feed)?
+        .filter_map(Result::ok)
+        .collect();
+
+    Ok(entries)
+}
+
+/// Apply common filter conditions to query builder.
+fn apply_filter_conditions(
+    conditions: &mut Vec<String>,
+    params_vec: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    filter: &EntryFilter,
+) {
+    if let Some(feed_id) = filter.feed_id {
+        conditions.push(format!("e.feed_id = ?{}", params_vec.len() + 1));
+        params_vec.push(Box::new(feed_id));
+    }
+
+    if let Some(category_id) = filter.category_id {
+        conditions.push(format!("c.id = ?{}", params_vec.len() + 1));
+        params_vec.push(Box::new(category_id));
+    }
+
+    if filter.unread_only {
+        conditions.push("e.read_at IS NULL".to_string());
+    }
+
+    if filter.starred_only {
+        conditions.push("e.starred_at IS NOT NULL".to_string());
+    }
+
+    if filter.read_only {
+        conditions.push("e.read_at IS NOT NULL".to_string());
+    }
+
+    if let Some(ref search) = filter.search {
+        let search_pattern = format!("%{}%", search);
+        let param_idx = params_vec.len() + 1;
+        conditions.push(format!(
+            "(e.title LIKE ?{} COLLATE NOCASE OR e.content LIKE ?{} COLLATE NOCASE)",
+            param_idx, param_idx
+        ));
+        params_vec.push(Box::new(search_pattern));
+    }
+
+    if let Some(has_summary) = filter.has_summary {
+        if has_summary {
+            conditions.push(
+                "EXISTS (SELECT 1 FROM entry_summary es WHERE es.user_id = ?1 AND es.entry_id = e.id)".to_string()
+            );
+        } else {
+            conditions.push(
+                "NOT EXISTS (SELECT 1 FROM entry_summary es WHERE es.user_id = ?1 AND es.entry_id = e.id)".to_string()
+            );
+        }
+    }
+}
+
+/// Apply time range conditions (ot = oldest timestamp, nt = newest timestamp, in seconds).
+fn apply_time_conditions(
+    conditions: &mut Vec<String>,
+    params_vec: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    ot: Option<i64>,
+    nt: Option<i64>,
+) {
+    if let Some(oldest_ts) = ot {
+        let param_idx = params_vec.len() + 1;
+        conditions.push(format!(
+            "CAST(strftime('%s', COALESCE(e.published_at, e.created_at)) AS INTEGER) >= ?{}",
+            param_idx
+        ));
+        params_vec.push(Box::new(oldest_ts));
+    }
+
+    if let Some(newest_ts) = nt {
+        let param_idx = params_vec.len() + 1;
+        conditions.push(format!(
+            "CAST(strftime('%s', COALESCE(e.published_at, e.created_at)) AS INTEGER) <= ?{}",
+            param_idx
+        ));
+        params_vec.push(Box::new(newest_ts));
+    }
+}
+
+/// Apply continuation-based pagination condition.
+fn apply_continuation_condition(
+    conditions: &mut Vec<String>,
+    params_vec: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    continuation_id: Option<i64>,
+    oldest_first: bool,
+) {
+    if let Some(cont_id) = continuation_id {
+        let param_idx = params_vec.len() + 1;
+        if oldest_first {
+            conditions.push(format!("e.id > ?{}", param_idx));
+        } else {
+            conditions.push(format!("e.id < ?{}", param_idx));
+        }
+        params_vec.push(Box::new(cont_id));
+    }
 }
 
 pub fn mark_all_read_by_feed(

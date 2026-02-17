@@ -13,7 +13,7 @@
 <h1>Feeds</h1>
 
 <div class="feeds-toolbar">
-    <a href="/api/opml/export" class="btn">Export OPML</a>
+    <a href="/reader/api/0/subscription/export" class="btn">Export OPML</a>
     <button type="button" onclick="showImportModal()">Import OPML</button>
 </div>
 
@@ -194,11 +194,19 @@
 
     async function loadCategories() {
         try {
-            const response = await fetch('/api/categories');
+            const response = await fetch('/reader/api/0/tag/list');
             if (!response.ok) {
                 throw new Error('Failed to load categories');
             }
-            categories = await response.json();
+            const data = await response.json();
+            // Transform GReader tags to category objects
+            // Tags are like "user/-/label/CategoryName" — extract label tags only
+            categories = data.tags
+                .filter(tag => tag.id.includes('/label/'))
+                .map(tag => {
+                    const name = tag.id.split('/label/').pop();
+                    return { id: tag.id, name: name };
+                });
             updateCategoryDropdowns();
         } catch (err) {
             flash.error(err.message);
@@ -214,7 +222,7 @@
             addSelect.innerHTML = '<option value="">No categories available</option>';
         } else {
             addSelect.innerHTML = categories.map(cat =>
-                `<option value="${cat.id}">${escapeHtml(cat.name)}</option>`
+                `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.name)}</option>`
             ).join('');
         }
 
@@ -223,7 +231,7 @@
 
         // Edit dropdown
         editSelect.innerHTML = categories.map(cat =>
-            `<option value="${cat.id}">${escapeHtml(cat.name)}</option>`
+            `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.name)}</option>`
         ).join('');
     }
 
@@ -234,7 +242,7 @@
         filterSelect.innerHTML = `<option value="">All Categories (${feeds.length})</option>` +
             categories.map(cat => {
                 const count = feeds.filter(f => f.category_id === cat.id).length;
-                return `<option value="${cat.id}">${escapeHtml(cat.name)} (${count})</option>`;
+                return `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.name)} (${count})</option>`;
             }).join('');
 
         // Restore selection
@@ -243,11 +251,28 @@
 
     async function loadFeeds() {
         try {
-            const response = await fetch('/api/feeds');
+            const response = await fetch('/reader/api/0/subscription/list');
             if (!response.ok) {
                 throw new Error('Failed to load feeds');
             }
-            feeds = await response.json();
+            const data = await response.json();
+            // Transform GReader subscriptions to feed objects
+            feeds = data.subscriptions.map(sub => {
+                const catId = sub.categories.length > 0 ? sub.categories[0].id : '';
+                return {
+                    id: sub.id,              // "feed/<url>"
+                    url: sub.url,
+                    title: sub.title,
+                    site_url: sub.htmlUrl,
+                    category_id: catId,       // "user/-/label/<name>"
+                    has_icon: sub.iconUrl !== '',
+                    icon_url: sub.iconUrl,
+                    fetch_error: null,        // Not available in GReader API
+                    fetched_at: null,         // Not available in GReader API
+                    // Keep numeric feed ID extracted from icon URL for RDRS-specific endpoints
+                    _feedId: sub.iconUrl ? sub.iconUrl.match(/\/api\/feeds\/(\d+)\//)?.[1] : null,
+                };
+            });
             updateFilterDropdown();
             renderFeeds();
         } catch (err) {
@@ -258,9 +283,19 @@
 
     async function loadUnreadStats() {
         try {
-            const response = await fetch('/api/entries/unread-stats');
+            const response = await fetch('/reader/api/0/unread-count');
             if (!response.ok) throw new Error('Failed to load unread stats');
-            unreadStats = await response.json();
+            const data = await response.json();
+            // Transform GReader unread counts to our format
+            // unreadcounts has entries like { id: "feed/<url>", count: N } and { id: "user/-/label/<name>", count: N }
+            unreadStats = { by_feed: {}, by_category: {} };
+            for (const uc of data.unreadcounts || []) {
+                if (uc.id.startsWith('feed/')) {
+                    unreadStats.by_feed[uc.id] = uc.count;
+                } else if (uc.id.includes('/label/')) {
+                    unreadStats.by_category[uc.id] = uc.count;
+                }
+            }
             renderFeeds();
         } catch (err) {
             console.error(err);
@@ -294,7 +329,7 @@
 
         let filteredFeeds = feeds.slice(); // Create a copy
         if (filterCategory) {
-            filteredFeeds = filteredFeeds.filter(f => f.category_id == filterCategory);
+            filteredFeeds = filteredFeeds.filter(f => f.category_id === filterCategory);
         }
         if (filterErrors) {
             filteredFeeds = filteredFeeds.filter(f => f.fetch_error !== null);
@@ -308,9 +343,8 @@
                     const unreadB = unreadStats.by_feed[b.id] || 0;
                     return unreadB - unreadA; // Descending
                 case 'fetched':
-                    const dateA = a.fetched_at ? new Date(a.fetched_at) : new Date(0);
-                    const dateB = b.fetched_at ? new Date(b.fetched_at) : new Date(0);
-                    return dateB - dateA; // Most recent first
+                    // fetched_at not available from GReader API, fallback to title sort
+                    return (a.title || a.url).toLowerCase().localeCompare((b.title || b.url).toLowerCase());
                 case 'category':
                     const catA = categories.find(c => c.id === a.category_id);
                     const catB = categories.find(c => c.id === b.category_id);
@@ -335,25 +369,28 @@
             const category = categories.find(c => c.id === feed.category_id);
             const categoryName = category ? category.name : 'Unknown';
             const title = feed.title || feed.url;
-            const fetchedAt = feed.fetched_at ? formatDate(feed.fetched_at) : '';
-            const fetchedAtTitle = feed.fetched_at ? formatDateTime(feed.fetched_at) : '';
             const hasError = feed.fetch_error !== null;
-            const iconHtml = feed.has_icon
-                ? `<img src="/api/feeds/${feed.id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
+            const feedNumericId = feed._feedId;
+            const iconHtml = feed.has_icon && feed.icon_url
+                ? `<img src="${escapeHtml(feed.icon_url)}" alt="" class="feed-icon" onerror="this.style.display='none'">`
                 : '';
             const unreadCount = unreadStats.by_feed[feed.id] || 0;
+            const feedIdAttr = escapeHtml(feed.id);
+
+            // Use numeric feed ID for RDRS-specific endpoints (entries, refresh, edit)
+            const entriesHref = feedNumericId ? `/feeds/${feedNumericId}/entries` : '#';
 
             let rows = `
-            <tr id="row-${feed.id}"${hasError ? ' class="feed-error-no-border"' : ''}>
+            <tr id="row-${feedIdAttr}"${hasError ? ' class="feed-error-no-border"' : ''}>
                 <td${hasError ? ' class="feed-error-no-border"' : ''}>${iconHtml}<span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
                 <td${hasError ? ' class="feed-error-no-border"' : ''}>${escapeHtml(categoryName)}</td>
                 <td${hasError ? ' class="feed-error-no-border"' : ''}>${unreadCount > 0 ? `<strong>${unreadCount}</strong>` : '0'}</td>
-                <td${hasError ? ' class="feed-error-no-border"' : ''}>${fetchedAt ? `<span title="${fetchedAtTitle}">${fetchedAt}</span>` : 'Never'}</td>
+                <td${hasError ? ' class="feed-error-no-border"' : ''}></td>
                 <td class="actions${hasError ? ' feed-error-no-border' : ''}">
-                    <a href="/feeds/${feed.id}/entries">entries</a>
-                    <a href="#" onclick="refreshFeed(${feed.id}); return false;" id="refresh-${feed.id}">refresh</a>
-                    <a href="#" onclick="editFeed(${feed.id}); return false;">edit</a>
-                    <a href="#" onclick="deleteFeed(${feed.id}, '${escapeHtml(title).replace(/'/g, "\\'")}'); return false;">delete</a>
+                    <a href="${entriesHref}">entries</a>
+                    ${feedNumericId ? `<a href="#" onclick="refreshFeed('${feedNumericId}'); return false;" id="refresh-${feedNumericId}">refresh</a>` : ''}
+                    <a href="#" onclick="editFeed('${feedIdAttr}'); return false;">edit</a>
+                    <a href="#" onclick="deleteFeed('${feedIdAttr}', '${escapeHtml(title).replace(/'/g, "\\'")}'); return false;">delete</a>
                 </td>
             </tr>`;
 
@@ -394,14 +431,14 @@
         const addBtn = document.getElementById('add-btn');
 
         const url = urlInput.value.trim();
-        const categoryId = parseInt(categorySelect.value);
+        const categoryLabel = categorySelect.value; // "user/-/label/<name>"
 
         if (!url) {
             flash.error('URL cannot be empty');
             return;
         }
 
-        if (!categoryId) {
+        if (!categoryLabel) {
             flash.error('Please select a category');
             return;
         }
@@ -410,15 +447,20 @@
         addBtn.disabled = true;
 
         try {
-            const response = await fetch('/api/feeds', {
+            // Use subscription/edit with ac=subscribe to add feed with category
+            const body = new URLSearchParams();
+            body.set('ac', 'subscribe');
+            body.set('s', `feed/${url}`);
+            body.set('a', categoryLabel);
+
+            const response = await fetch('/reader/api/0/subscription/edit', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, category_id: categoryId })
+                body: body
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to add feed');
+                const text = await response.text();
+                throw new Error(text || 'Failed to add feed');
             }
 
             urlInput.value = '';
@@ -439,11 +481,11 @@
         document.getElementById('edit-id').value = feed.id;
         document.getElementById('edit-url').value = feed.url;
         document.getElementById('edit-title').value = feed.title || '';
-        document.getElementById('edit-description').value = feed.description || '';
+        document.getElementById('edit-description').value = '';
         document.getElementById('edit-site-url').value = feed.site_url || '';
         document.getElementById('edit-category').value = feed.category_id;
-        document.getElementById('edit-custom-user-agent').value = feed.custom_user_agent || '';
-        document.getElementById('edit-http2-disabled').checked = feed.http2_disabled || false;
+        document.getElementById('edit-custom-user-agent').value = '';
+        document.getElementById('edit-http2-disabled').checked = false;
 
         document.getElementById('edit-modal').style.display = 'block';
     }
@@ -503,14 +545,10 @@
     async function saveFeed(event) {
         event.preventDefault();
 
-        const id = parseInt(document.getElementById('edit-id').value);
+        const streamId = document.getElementById('edit-id').value; // "feed/<url>"
         const url = document.getElementById('edit-url').value.trim();
         const title = document.getElementById('edit-title').value.trim() || null;
-        const description = document.getElementById('edit-description').value.trim() || null;
-        const siteUrl = document.getElementById('edit-site-url').value.trim() || null;
-        const categoryId = parseInt(document.getElementById('edit-category').value);
-        const customUserAgent = document.getElementById('edit-custom-user-agent').value.trim() || null;
-        const http2Disabled = document.getElementById('edit-http2-disabled').checked;
+        const categoryLabel = document.getElementById('edit-category').value; // "user/-/label/<name>"
 
         if (!url) {
             flash.error('URL cannot be empty');
@@ -518,23 +556,20 @@
         }
 
         try {
-            const response = await fetch(`/api/feeds/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    url,
-                    title,
-                    description,
-                    site_url: siteUrl,
-                    category_id: categoryId,
-                    custom_user_agent: customUserAgent,
-                    http2_disabled: http2Disabled
-                })
+            const body = new URLSearchParams();
+            body.set('ac', 'edit');
+            body.set('s', streamId);
+            if (title) body.set('t', title);
+            if (categoryLabel) body.set('a', categoryLabel);
+
+            const response = await fetch('/reader/api/0/subscription/edit', {
+                method: 'POST',
+                body: body
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to update feed');
+                const text = await response.text();
+                throw new Error(text || 'Failed to update feed');
             }
 
             closeEditModal();
@@ -545,19 +580,24 @@
         }
     }
 
-    async function deleteFeed(id, title) {
+    async function deleteFeed(streamId, title) {
         if (!confirm(`Delete feed "${title}"? This cannot be undone.`)) {
             return;
         }
 
         try {
-            const response = await fetch(`/api/feeds/${id}`, {
-                method: 'DELETE'
+            const body = new URLSearchParams();
+            body.set('ac', 'unsubscribe');
+            body.set('s', streamId);
+
+            const response = await fetch('/reader/api/0/subscription/edit', {
+                method: 'POST',
+                body: body
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to delete feed');
+                const text = await response.text();
+                throw new Error(text || 'Failed to delete feed');
             }
 
             flash.success(`Feed "${title}" deleted.`);
@@ -567,10 +607,11 @@
         }
     }
 
-    async function refreshFeed(id) {
+    async function refreshFeed(feedNumericId) {
+        const id = feedNumericId;
         const btn = document.getElementById(`refresh-${id}`);
-        const row = document.getElementById(`row-${id}`);
-        const originalText = btn.textContent;
+        const row = btn ? btn.closest('tr') : null;
+        const originalText = btn ? btn.textContent : '';
 
         btn.textContent = '...';
         row?.classList.add('feed-row-syncing');
@@ -644,20 +685,19 @@
         importBtn.disabled = true;
 
         try {
-            const response = await fetch('/api/opml/import', {
+            const response = await fetch('/reader/api/0/subscription/import', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content })
+                headers: { 'Content-Type': 'application/xml' },
+                body: content
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to import OPML');
+                const text = await response.text();
+                throw new Error(text || 'Failed to import OPML');
             }
 
-            const result = await response.json();
             closeImportModal();
-            flash.success(`Imported: ${result.categories_created} categories, ${result.feeds_created} feeds created, ${result.feeds_skipped} feeds skipped.`);
+            flash.success('OPML imported successfully.');
 
             // Reload data
             await loadCategories();
