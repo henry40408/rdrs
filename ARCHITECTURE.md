@@ -54,7 +54,8 @@ src/
 │   ├── category.rs      # Category CRUD
 │   ├── feed.rs          # Feed CRUD
 │   ├── entry.rs         # Entry operations
-│   ├── favicon.rs       # Favicon serving
+│   ├── favicon.rs       # Favicon serving (embedded at compile time)
+│   ├── static_assets.rs # Static JS assets (embedded at compile time)
 │   └── proxy.rs         # Image proxy
 │
 ├── services/            # Business logic
@@ -96,7 +97,7 @@ Initializes configuration, database connection, background tasks, and starts the
 ### Router (`lib.rs`)
 
 Defines all HTTP routes and builds the Axum application with:
-- Static file serving
+- Embedded static asset serving (compiled into binary via `include_str!`/`include_bytes!`)
 - Cookie layer for sessions
 - Database connection pool as state
 

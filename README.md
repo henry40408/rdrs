@@ -19,7 +19,7 @@ A self-hosted RSS/Atom feed reader built with Rust. Privacy-focused, lightweight
 - **WebAuthn/Passkey** - Passwordless authentication with passkey support
 - **External Services** - Save entries to Linkding bookmark manager
 - **Multi-User Support** - Role-based access control with admin panel
-- **Docker Ready** - Multi-platform container images with minimal footprint
+- **Docker Ready** - Single-binary deployment with all assets embedded, multi-platform container images
 
 ## Quick Start
 
