@@ -43,7 +43,7 @@ pub async fn serve(Path(path): Path<String>) -> Response {
             StatusCode::OK,
             [
                 (header::CONTENT_TYPE, "application/javascript"),
-                (header::CACHE_CONTROL, "public, max-age=3600"),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
             ],
             *content,
         )
