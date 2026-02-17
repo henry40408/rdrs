@@ -30,8 +30,8 @@
 </div>
 
 <rdrs-entry-list
-    api-url="/api/entries"
-    api-params='{"unread_only": "true"}'
+    stream-id="user/-/state/com.google/reading-list"
+    api-params='{"xt":"user/-/state/com.google/read"}'
     entries-per-page="{{ entries_per_page }}"
     origin="unread"
     show-feed
@@ -56,19 +56,20 @@
         if (!confirm('Mark ' + ageLabel + ' entries as read?')) return;
 
         try {
-            const body = {};
+            const body = new URLSearchParams();
+            body.set('s', 'user/-/state/com.google/reading-list');
             if (age !== 'all') {
-                body.older_than_days = parseInt(age);
+                const days = parseInt(age);
+                const tsUsec = (Math.floor(Date.now() / 1000) - days * 86400) * 1000000;
+                body.set('ts', tsUsec.toString());
             }
 
-            const response = await fetch('/api/entries/mark-all-read', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
+            const response = await fetch('/reader/api/0/mark-all-as-read', {
+                method: 'POST',
+                body: body
             });
             if (!response.ok) throw new Error('Failed to mark as read');
-            const result = await response.json();
-            flash.success('Marked ' + result.marked_count + ' entries as read.');
+            flash.success('Marked entries as read.');
             document.querySelector('rdrs-entry-list').loadEntries();
         } catch (err) {
             flash.error(err.message);

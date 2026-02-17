@@ -1,12 +1,13 @@
 // <rdrs-entry-list> — Paginated entry list with keyboard navigation (Light DOM)
+// Uses Google Reader API for data fetching and entry actions.
 import { escapeHtml, decodeHtml, formatDate, formatDateTime, highlightText, getContentSnippet } from '/static/js/utils.js';
 
 class RdrsEntryList extends HTMLElement {
     constructor() {
         super();
         this.entries = [];
-        this.currentOffset = 0;
-        this.total = 0;
+        this.continuation = null;
+        this.total = -1; // unknown until first count
         this.selectedIndex = -1;
         this._search = '';
     }
@@ -22,7 +23,8 @@ class RdrsEntryList extends HTMLElement {
     }
 
     // --- Attributes ---
-    get apiUrl() { return this.getAttribute('api-url') || '/api/entries'; }
+    /** Google Reader stream ID, e.g. "user/-/state/com.google/reading-list" */
+    get streamId() { return this.getAttribute('stream-id') || 'user/-/state/com.google/reading-list'; }
     get apiParams() {
         try { return JSON.parse(this.getAttribute('api-params') || '{}'); }
         catch { return {}; }
@@ -125,45 +127,54 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         );
     }
 
-    // --- Data loading ---
+    // --- Data loading (Google Reader stream/contents) ---
     async loadEntries(reset = true) {
         const container = this.querySelector('#entries-list');
         container.classList.add('entries-list-refreshing');
         if (window.loading) window.loading.start();
 
         if (reset) {
-            this.currentOffset = 0;
+            this.continuation = null;
             this.entries = [];
         }
 
+        const streamId = this.streamId;
+        const url = `/reader/api/0/stream/contents/${encodeURIComponent(streamId)}`;
         const params = new URLSearchParams();
-        params.set('limit', this.entriesPerPage);
-        params.set('offset', this.currentOffset);
+        params.set('n', this.entriesPerPage);
 
-        // Merge in configured API params
+        if (this.continuation) {
+            params.set('c', this.continuation);
+        }
+
+        // Merge in configured API params (xt, it, ot, nt, r)
         const extra = this.apiParams;
         for (const [k, v] of Object.entries(extra)) {
             params.set(k, v);
         }
 
-        // Search term
+        // Search query
         if (this._search) {
-            params.set('search', this._search);
+            params.set('q', this._search);
         }
 
-        const url = `${this.apiUrl}?${params.toString()}`;
+        const fullUrl = `${url}?${params.toString()}`;
 
         try {
-            const response = await fetch(url, { cache: 'no-store' });
+            const response = await fetch(fullUrl, { cache: 'no-store' });
             if (!response.ok) throw new Error('Failed to load entries');
             const data = await response.json();
 
+            // Transform GReader items to internal entry format
+            const newEntries = (data.items || []).map(item => this._transformItem(item));
+
             if (reset) {
-                this.entries = data.entries;
+                this.entries = newEntries;
             } else {
-                this.entries = this.entries.concat(data.entries);
+                this.entries = this.entries.concat(newEntries);
             }
-            this.total = data.total;
+
+            this.continuation = data.continuation || null;
 
             this.renderEntries();
             this._updateLoadMore();
@@ -181,8 +192,28 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         }
     }
 
+    /** Transform a GReader item to the internal entry format used by rendering. */
+    _transformItem(item) {
+        return {
+            id: item._entryId,
+            feed_id: item._feedId,
+            category_id: item._categoryId,
+            category_name: item._categoryName,
+            feed_title: item.origin?.title || '',
+            feed_url: item.origin?.htmlUrl || '',
+            feed_has_icon: item._feedHasIcon || false,
+            title: item.title || '',
+            link: item.canonical?.[0]?.href || item.alternate?.[0]?.href || '',
+            content: item._content || item.summary?.content || '',
+            author: item.author || '',
+            published_at: item._publishedAt || null,
+            read_at: item._readAt || null,
+            starred_at: item._starredAt || null,
+            summary_status: null, // Not available in GReader; entry page fetches separately
+        };
+    }
+
     async loadMore() {
-        this.currentOffset += this.entriesPerPage;
         await this.loadEntries(false);
     }
 
@@ -295,13 +326,14 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     // --- UI updates ---
     _updateLoadMore() {
         const btn = this.querySelector('#load-more');
-        btn.style.display = this.entries.length < this.total ? 'block' : 'none';
+        // Show "Load More" if there's a continuation token
+        btn.style.display = this.continuation ? 'block' : 'none';
     }
 
     _updateEntriesCount() {
         const el = this.querySelector('#entries-count');
-        if (this.entries.length > 0 || this.total > 0) {
-            el.textContent = `Showing ${this.entries.length} of ${this.total} entries`;
+        if (this.entries.length > 0) {
+            el.textContent = `Showing ${this.entries.length} entries`;
         } else {
             el.textContent = '';
         }
@@ -315,21 +347,32 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     }
 
     _updateUnreadCount() {
-        const el = document.getElementById('unread-count');
-        if (el) el.textContent = this.total;
+        // Fetch the actual unread count from GReader API
+        fetch('/reader/api/0/unread-count')
+            .then(r => r.json())
+            .then(data => {
+                const total = data.unreadcounts?.find(u => u.id === 'user/-/state/com.google/reading-list');
+                const el = document.getElementById('unread-count');
+                if (el && total) el.textContent = total.count;
+            })
+            .catch(() => {});
     }
 
-    // --- Entry actions ---
+    // --- Entry actions (via Google Reader edit-tag) ---
     async markRead(id) {
         try {
-            const response = await fetch(`/api/entries/${id}/read`, { method: 'PUT' });
+            const body = new URLSearchParams();
+            body.set('i', id.toString());
+            body.set('a', 'user/-/state/com.google/read');
+            const response = await fetch('/reader/api/0/edit-tag', {
+                method: 'POST',
+                body: body,
+            });
             if (!response.ok) throw new Error('Failed to mark as read');
-            const updated = await response.json();
 
             if (this.isUnreadMode) {
                 // Remove from list in unread mode
                 this.entries = this.entries.filter(e => e.id !== id);
-                this.total--;
                 this.renderEntries();
                 this._updateLoadMore();
                 this._updateUnreadCount();
@@ -342,7 +385,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                     this.selectEntry(this.selectedIndex);
                 }
             } else {
-                this._updateEntryInList(id, updated);
+                this._updateEntryField(id, 'read_at', new Date().toISOString());
             }
         } catch (err) {
             window.flash.error(err.message);
@@ -351,31 +394,49 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
 
     async markUnread(id) {
         try {
-            const response = await fetch(`/api/entries/${id}/unread`, { method: 'PUT' });
+            const body = new URLSearchParams();
+            body.set('i', id.toString());
+            body.set('r', 'user/-/state/com.google/read');
+            const response = await fetch('/reader/api/0/edit-tag', {
+                method: 'POST',
+                body: body,
+            });
             if (!response.ok) throw new Error('Failed to mark as unread');
-            const updated = await response.json();
-            this._updateEntryInList(id, updated);
+            this._updateEntryField(id, 'read_at', null);
         } catch (err) {
             window.flash.error(err.message);
         }
     }
 
     async toggleStar(id) {
+        const entry = this.entries.find(e => e.id === id);
+        if (!entry) return;
+
+        const isCurrentlyStarred = entry.starred_at !== null;
+
         try {
-            const response = await fetch(`/api/entries/${id}/star`, { method: 'PUT' });
+            const body = new URLSearchParams();
+            body.set('i', id.toString());
+            if (isCurrentlyStarred) {
+                body.set('r', 'user/-/state/com.google/starred');
+            } else {
+                body.set('a', 'user/-/state/com.google/starred');
+            }
+            const response = await fetch('/reader/api/0/edit-tag', {
+                method: 'POST',
+                body: body,
+            });
             if (!response.ok) throw new Error('Failed to toggle star');
-            const updated = await response.json();
-            this._updateEntryInList(id, updated);
+            this._updateEntryField(id, 'starred_at', isCurrentlyStarred ? null : new Date().toISOString());
         } catch (err) {
             window.flash.error(err.message);
         }
     }
 
-    _updateEntryInList(id, updated) {
+    _updateEntryField(id, field, value) {
         const idx = this.entries.findIndex(e => e.id === id);
         if (idx >= 0) {
-            this.entries[idx].read_at = updated.read_at;
-            this.entries[idx].starred_at = updated.starred_at;
+            this.entries[idx][field] = value;
             this.renderEntries();
         }
     }
@@ -385,17 +446,20 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
 
         if (!confirm(`Mark all ${this.entries.length} loaded entries as read?`)) return;
 
-        const entryIds = this.entries.map(e => e.id);
-
         try {
-            const response = await fetch('/api/entries/mark-read-by-ids', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entry_ids: entryIds })
+            // Use edit-tag with multiple i= parameters
+            const body = new URLSearchParams();
+            for (const entry of this.entries) {
+                body.append('i', entry.id.toString());
+            }
+            body.set('a', 'user/-/state/com.google/read');
+
+            const response = await fetch('/reader/api/0/edit-tag', {
+                method: 'POST',
+                body: body,
             });
             if (!response.ok) throw new Error('Failed to mark entries as read');
-            const result = await response.json();
-            window.flash.success(`Marked ${result.marked_count} entries as read.`);
+            window.flash.success(`Marked ${this.entries.length} entries as read.`);
             this.loadEntries();
         } catch (err) {
             window.flash.error(err.message);
@@ -607,7 +671,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     /** Show an empty/placeholder message without loading data. */
     showEmpty(message) {
         this.entries = [];
-        this.total = 0;
+        this.continuation = null;
         this.selectedIndex = -1;
         const container = this.querySelector('#entries-list');
         if (container) {

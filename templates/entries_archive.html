@@ -41,8 +41,8 @@
 
 <rdrs-entry-list
     id="entry-list"
-    api-url="/api/entries"
-    api-params='{% if page_mode == "read" %}{"read_only":"true","sort":"read_at"}{% elif page_mode == "starred" %}{"starred_only":"true","sort":"starred_at"}{% elif page_mode == "summarized" %}{"has_summary":"true"}{% else %}{}{% endif %}'
+    stream-id="{% if page_mode == "read" %}user/-/state/com.google/read{% elif page_mode == "starred" %}user/-/state/com.google/starred{% else %}user/-/state/com.google/reading-list{% endif %}"
+    api-params='{% if page_mode == "summarized" %}{"has_summary":"true"}{% else %}{}{% endif %}'
     entries-per-page="{{ entries_per_page }}"
     origin="{{ page_mode }}"
     show-feed

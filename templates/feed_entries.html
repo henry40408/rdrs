@@ -54,7 +54,7 @@
 <hr>
 
 <rdrs-entry-list
-    api-url="/api/entries"
+    stream-id="feed/{{ feed_url }}"
     entries-per-page="{{ entries_per_page }}"
     origin="feed"
     show-mark-above
@@ -66,11 +66,11 @@
     const categoryId = {{ category_id }};
 
     function getFilterParams() {
-        const params = { feed_id: String(feedId) };
+        const params = {};
         const status = document.getElementById('filter-status').value;
-        if (status === 'unread') params.unread_only = 'true';
-        else if (status === 'read') params.read_only = 'true';
-        else if (status === 'starred') params.starred_only = 'true';
+        if (status === 'unread') params.xt = 'user/-/state/com.google/read';
+        else if (status === 'read') params.it = 'user/-/state/com.google/read';
+        else if (status === 'starred') params.it = 'user/-/state/com.google/starred';
         return params;
     }
 
@@ -103,19 +103,20 @@
         if (!confirm('Mark ' + ageLabel + ' entries in this feed as read?')) return;
 
         try {
-            const body = { feed_id: feedId };
+            const body = new URLSearchParams();
+            body.set('s', 'feed/{{ feed_url }}');
             if (age !== 'all') {
-                body.older_than_days = parseInt(age);
+                const days = parseInt(age);
+                const tsUsec = (Math.floor(Date.now() / 1000) - days * 86400) * 1000000;
+                body.set('ts', tsUsec.toString());
             }
 
-            const response = await fetch('/api/entries/mark-all-read', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
+            const response = await fetch('/reader/api/0/mark-all-as-read', {
+                method: 'POST',
+                body: body
             });
             if (!response.ok) throw new Error('Failed to mark as read');
-            const result = await response.json();
-            flash.success('Marked ' + result.marked_count + ' entries as read.');
+            flash.success('Marked entries as read.');
             document.querySelector('rdrs-entry-list').loadEntries();
         } catch (err) {
             flash.error(err.message);

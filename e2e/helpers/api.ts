@@ -2,7 +2,7 @@
 export class ApiHelper {
   constructor(private baseUrl: string) {}
 
-  /** Register a new user. Returns the session cookie. */
+  /** Register a new user. Idempotent: ignores 409 (already exists). */
   async register(
     username: string,
     password: string
@@ -12,7 +12,7 @@ export class ApiHelper {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
     });
-    if (!res.ok) {
+    if (!res.ok && res.status !== 409) {
       const body = await res.text();
       throw new Error(`Register failed (${res.status}): ${body}`);
     }
@@ -41,43 +41,4 @@ export class ApiHelper {
     return { cookie };
   }
 
-  /** Create a category. Returns its id. */
-  async createCategory(cookie: string, name: string): Promise<number> {
-    const res = await fetch(`${this.baseUrl}/api/categories`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Cookie: cookie,
-      },
-      body: JSON.stringify({ name }),
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Create category failed (${res.status}): ${body}`);
-    }
-    const data = (await res.json()) as { id: number };
-    return data.id;
-  }
-
-  /** Create a feed. Returns its id. */
-  async createFeed(
-    cookie: string,
-    url: string,
-    categoryId: number
-  ): Promise<number> {
-    const res = await fetch(`${this.baseUrl}/api/feeds`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Cookie: cookie,
-      },
-      body: JSON.stringify({ url, category_id: categoryId }),
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Create feed failed (${res.status}): ${body}`);
-    }
-    const data = (await res.json()) as { id: number };
-    return data.id;
-  }
 }

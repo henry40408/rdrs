@@ -44,14 +44,31 @@
     async function loadCategories() {
         try {
             const [catResponse, feedResponse] = await Promise.all([
-                fetch('/api/categories'),
-                fetch('/api/feeds')
+                fetch('/reader/api/0/tag/list'),
+                fetch('/reader/api/0/subscription/list')
             ]);
             if (!catResponse.ok) {
                 throw new Error('Failed to load categories');
             }
-            const categories = await catResponse.json();
-            feeds = feedResponse.ok ? await feedResponse.json() : [];
+            const catData = await catResponse.json();
+            // Transform GReader tags to category objects — only label tags
+            const categories = catData.tags
+                .filter(tag => tag.id.includes('/label/'))
+                .map(tag => {
+                    const name = tag.id.split('/label/').pop();
+                    return { id: tag.id, name: name };
+                });
+
+            if (feedResponse.ok) {
+                const feedData = await feedResponse.json();
+                feeds = feedData.subscriptions.map(sub => {
+                    const catId = sub.categories.length > 0 ? sub.categories[0].id : '';
+                    return { category_id: catId };
+                });
+            } else {
+                feeds = [];
+            }
+
             renderCategories(categories);
         } catch (err) {
             document.getElementById('categories-table').innerHTML =
@@ -65,23 +82,23 @@
             tbody.innerHTML = '<tr><td colspan="4" class="muted">No categories yet.</td></tr>';
             return;
         }
-        tbody.innerHTML = categories.map(cat => {
+        tbody.innerHTML = categories.map((cat, index) => {
             const feedCount = feeds.filter(f => f.category_id === cat.id).length;
+            const safeId = escapeHtml(cat.id);
             return `
-            <tr id="row-${cat.id}">
+            <tr id="row-${index}" data-tag-id="${safeId}">
                 <td>
                     <span class="cat-name">${escapeHtml(cat.name)}</span>
                     <input type="text" class="cat-edit-input" value="${escapeHtml(cat.name)}" style="display:none;" maxlength="100">
                 </td>
                 <td>${feedCount}</td>
-                <td><span title="${formatDateTime(cat.created_at)}">${formatDate(cat.created_at)}</span></td>
+                <td></td>
                 <td class="actions">
-                    <a href="/feeds?category=${cat.id}">feeds</a>
-                    <a href="/categories/${cat.id}/entries">entries</a>
-                    <a href="#" class="edit-btn" onclick="startEdit(${cat.id}); return false;">rename</a>
-                    <a href="#" class="save-btn" onclick="saveEdit(${cat.id}); return false;" style="display:none;">save</a>
-                    <a href="#" class="cancel-btn" onclick="cancelEdit(${cat.id}); return false;" style="display:none;">cancel</a>
-                    <a href="#" onclick="deleteCategory(${cat.id}, '${escapeHtml(cat.name)}'); return false;">delete</a>
+                    <a href="/feeds?category=${encodeURIComponent(cat.id)}">feeds</a>
+                    <a href="#" class="edit-btn" onclick="startEdit(${index}); return false;">rename</a>
+                    <a href="#" class="save-btn" onclick="saveEdit(${index}); return false;" style="display:none;">save</a>
+                    <a href="#" class="cancel-btn" onclick="cancelEdit(${index}); return false;" style="display:none;">cancel</a>
+                    <a href="#" onclick="deleteCategory('${safeId}', '${escapeHtml(cat.name).replace(/'/g, "\\'")}'); return false;">delete</a>
                 </td>
             </tr>
         `}).join('');
@@ -114,15 +131,20 @@
         }
 
         try {
-            const response = await fetch('/api/categories', {
+            // Use rename-tag with same source and dest to create category
+            const tagId = `user/-/label/${name}`;
+            const body = new URLSearchParams();
+            body.set('s', tagId);
+            body.set('dest', tagId);
+
+            const response = await fetch('/reader/api/0/rename-tag', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name })
+                body: body
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to create category');
+                const text = await response.text();
+                throw new Error(text || 'Failed to create category');
             }
 
             nameInput.value = '';
@@ -133,8 +155,8 @@
         }
     }
 
-    function startEdit(id) {
-        const row = document.getElementById(`row-${id}`);
+    function startEdit(index) {
+        const row = document.getElementById(`row-${index}`);
         row.querySelector('.cat-name').style.display = 'none';
         row.querySelector('.cat-edit-input').style.display = 'inline';
         row.querySelector('.edit-btn').style.display = 'none';
@@ -143,8 +165,8 @@
         row.querySelector('.cat-edit-input').focus();
     }
 
-    function cancelEdit(id) {
-        const row = document.getElementById(`row-${id}`);
+    function cancelEdit(index) {
+        const row = document.getElementById(`row-${index}`);
         const nameSpan = row.querySelector('.cat-name');
         const input = row.querySelector('.cat-edit-input');
         input.value = nameSpan.textContent;
@@ -155,8 +177,9 @@
         row.querySelector('.cancel-btn').style.display = 'none';
     }
 
-    async function saveEdit(id) {
-        const row = document.getElementById(`row-${id}`);
+    async function saveEdit(index) {
+        const row = document.getElementById(`row-${index}`);
+        const tagId = row.dataset.tagId;
         const input = row.querySelector('.cat-edit-input');
         const newName = input.value.trim();
 
@@ -166,15 +189,18 @@
         }
 
         try {
-            const response = await fetch(`/api/categories/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: newName })
+            const body = new URLSearchParams();
+            body.set('s', tagId);
+            body.set('dest', `user/-/label/${newName}`);
+
+            const response = await fetch('/reader/api/0/rename-tag', {
+                method: 'POST',
+                body: body
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to update category');
+                const text = await response.text();
+                throw new Error(text || 'Failed to update category');
             }
 
             flash.success('Category renamed.');
@@ -184,8 +210,8 @@
         }
     }
 
-    async function deleteCategory(id, name) {
-        const feedCount = feeds.filter(f => f.category_id === id).length;
+    async function deleteCategory(tagId, name) {
+        const feedCount = feeds.filter(f => f.category_id === tagId).length;
         let message = `Delete category "${name}"?`;
         if (feedCount > 0) {
             message += ` This will also delete ${feedCount} feed${feedCount > 1 ? 's' : ''}.`;
@@ -196,13 +222,17 @@
         }
 
         try {
-            const response = await fetch(`/api/categories/${id}`, {
-                method: 'DELETE'
+            const body = new URLSearchParams();
+            body.set('s', tagId);
+
+            const response = await fetch('/reader/api/0/disable-tag', {
+                method: 'POST',
+                body: body
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to delete category');
+                const text = await response.text();
+                throw new Error(text || 'Failed to delete category');
             }
 
             flash.success(`Category "${name}" deleted.`);

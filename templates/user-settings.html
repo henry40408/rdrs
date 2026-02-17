@@ -26,7 +26,36 @@
     <th class="settings-th">Registered</th>
     <td>{{ created_at }}</td>
   </tr>
+  <tr>
+    <th class="settings-th">Logged In</th>
+    <td>{{ logged_in_at }}</td>
+  </tr>
 </table>
+
+<h2>RSS Client (Google Reader API)</h2>
+<p class="muted">Connect any RSS reader that supports the Google Reader API (e.g., Reeder, NetNewsWire, FeedMe, Read You, FreshRSS).</p>
+<table>
+  <tr>
+    <th class="settings-th">Server URL</th>
+    <td><code id="greader-server-url"></code></td>
+  </tr>
+  <tr>
+    <th class="settings-th">Username</th>
+    <td><code>{{ username }}</code></td>
+  </tr>
+  <tr>
+    <th class="settings-th">Password</th>
+    <td class="muted">Your RDRS password</td>
+  </tr>
+</table>
+<p class="muted">
+  In your RSS client, choose "Google Reader" or "FreshRSS" as the account type and enter the server URL above with your credentials.
+  Some clients may require the FreshRSS-compatible URL: <code id="greader-freshrss-url"></code>
+</p>
+<script>
+  document.getElementById('greader-server-url').textContent = window.location.origin;
+  document.getElementById('greader-freshrss-url').textContent = window.location.origin + '/api/greader.php';
+</script>
 
 <hr>
 
