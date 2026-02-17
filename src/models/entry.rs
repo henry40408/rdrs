@@ -729,8 +729,18 @@ pub fn list_ids_by_user(
     let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
 
     apply_filter_conditions(&mut conditions, &mut params_vec, filter);
-    apply_time_conditions(&mut conditions, &mut params_vec, pagination.ot, pagination.nt);
-    apply_continuation_condition(&mut conditions, &mut params_vec, pagination.continuation_id, pagination.oldest_first);
+    apply_time_conditions(
+        &mut conditions,
+        &mut params_vec,
+        pagination.ot,
+        pagination.nt,
+    );
+    apply_continuation_condition(
+        &mut conditions,
+        &mut params_vec,
+        pagination.continuation_id,
+        pagination.oldest_first,
+    );
 
     let where_clause = conditions.join(" AND ");
     let order = if pagination.oldest_first {
@@ -779,8 +789,18 @@ pub fn list_by_user_with_continuation(
     let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
 
     apply_filter_conditions(&mut conditions, &mut params_vec, filter);
-    apply_time_conditions(&mut conditions, &mut params_vec, pagination.ot, pagination.nt);
-    apply_continuation_condition(&mut conditions, &mut params_vec, pagination.continuation_id, pagination.oldest_first);
+    apply_time_conditions(
+        &mut conditions,
+        &mut params_vec,
+        pagination.ot,
+        pagination.nt,
+    );
+    apply_continuation_condition(
+        &mut conditions,
+        &mut params_vec,
+        pagination.continuation_id,
+        pagination.oldest_first,
+    );
 
     let where_clause = conditions.join(" AND ");
     let order = if pagination.oldest_first {

@@ -40,16 +40,10 @@ impl StreamId {
             } else if let Some(pos) = after_user.find('/') {
                 &after_user[pos + 1..]
             } else {
-                return Err(AppError::Validation(format!(
-                    "Invalid stream ID: {}",
-                    s
-                )));
+                return Err(AppError::Validation(format!("Invalid stream ID: {}", s)));
             }
         } else {
-            return Err(AppError::Validation(format!(
-                "Invalid stream ID: {}",
-                s
-            )));
+            return Err(AppError::Validation(format!("Invalid stream ID: {}", s)));
         };
 
         match normalized {
@@ -64,10 +58,7 @@ impl StreamId {
                 }
                 Ok(StreamId::Label(name.to_string()))
             }
-            _ => Err(AppError::Validation(format!(
-                "Unknown stream ID: {}",
-                s
-            ))),
+            _ => Err(AppError::Validation(format!("Unknown stream ID: {}", s))),
         }
     }
 }

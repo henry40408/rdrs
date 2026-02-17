@@ -150,11 +150,8 @@ pub async fn stream_item_ids(
     let user_id = auth.user.id;
     let count = query.n.unwrap_or(20).min(10000);
 
-    let filter = build_entry_filter_from_params(
-        &stream_id,
-        query.xt.as_deref(),
-        query.it.as_deref(),
-    )?;
+    let filter =
+        build_entry_filter_from_params(&stream_id, query.xt.as_deref(), query.it.as_deref())?;
     let pagination = entry::ContinuationParams {
         oldest_first: query.r.as_deref() == Some("o"),
         limit: count + 1,
@@ -180,12 +177,7 @@ pub async fn stream_item_ids(
                 effective_filter.category_id = Some(cat.id);
             }
 
-            let entries = entry::list_ids_by_user(
-                conn,
-                user_id,
-                &effective_filter,
-                &pagination,
-            )?;
+            let entries = entry::list_ids_by_user(conn, user_id, &effective_filter, &pagination)?;
 
             let has_more = entries.len() as i64 > count;
             let entries: Vec<_> = entries.into_iter().take(count as usize).collect();
@@ -414,10 +406,7 @@ fn entry_with_feed_to_greader_item(ewf: &entry::EntryWithFeed) -> GReaderItem {
 
     categories.push(format!("user/-/label/{}", ewf.category_name));
 
-    let published = e
-        .published_at
-        .unwrap_or(e.created_at)
-        .timestamp();
+    let published = e.published_at.unwrap_or(e.created_at).timestamp();
     let updated = e.updated_at.timestamp();
     let crawl_time_msec = (e.created_at.timestamp_millis()).to_string();
     let timestamp_usec = (published * 1_000_000).to_string();

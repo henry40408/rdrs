@@ -108,22 +108,16 @@ pub async fn edit_tag(
     let user_id = auth.user.id;
 
     // Determine the operation based on add/remove tags
-    let add_stream = add_tag
-        .as_deref()
-        .map(StreamId::parse)
-        .transpose()?;
-    let remove_stream = remove_tag
-        .as_deref()
-        .map(StreamId::parse)
-        .transpose()?;
+    let add_stream = add_tag.as_deref().map(StreamId::parse).transpose()?;
+    let remove_stream = remove_tag.as_deref().map(StreamId::parse).transpose()?;
 
     state
         .db
         .user(move |conn| {
             for entry_id in &entry_ids {
                 // Verify ownership
-                let ewf = entry::find_by_id_with_feed(conn, *entry_id)?
-                    .ok_or(AppError::EntryNotFound)?;
+                let ewf =
+                    entry::find_by_id_with_feed(conn, *entry_id)?.ok_or(AppError::EntryNotFound)?;
                 category::find_by_id_and_user(conn, ewf.category_id, user_id)?
                     .ok_or(AppError::EntryNotFound)?;
 
@@ -248,18 +242,15 @@ pub async fn disable_tag(
     State(state): State<AppState>,
     Form(form): Form<DisableTagForm>,
 ) -> AppResult<String> {
-    let tag_str = form.s.or(form.t).ok_or_else(|| {
-        AppError::Validation("Missing tag parameter (s or t)".into())
-    })?;
+    let tag_str = form
+        .s
+        .or(form.t)
+        .ok_or_else(|| AppError::Validation("Missing tag parameter (s or t)".into()))?;
 
     let stream_id = StreamId::parse(&tag_str)?;
     let label_name = match stream_id {
         StreamId::Label(name) => name,
-        _ => {
-            return Err(AppError::Validation(
-                "Can only disable label tags".into(),
-            ))
-        }
+        _ => return Err(AppError::Validation("Can only disable label tags".into())),
     };
 
     let user_id = auth.user.id;
@@ -297,12 +288,13 @@ pub async fn rename_tag(
     State(state): State<AppState>,
     Form(form): Form<RenameTagForm>,
 ) -> AppResult<String> {
-    let source_str = form.s.or(form.t).ok_or_else(|| {
-        AppError::Validation("Missing source tag (s or t)".into())
-    })?;
-    let dest_str = form.dest.ok_or_else(|| {
-        AppError::Validation("Missing destination tag (dest)".into())
-    })?;
+    let source_str = form
+        .s
+        .or(form.t)
+        .ok_or_else(|| AppError::Validation("Missing source tag (s or t)".into()))?;
+    let dest_str = form
+        .dest
+        .ok_or_else(|| AppError::Validation("Missing destination tag (dest)".into()))?;
 
     let source = StreamId::parse(&source_str)?;
     let dest = StreamId::parse(&dest_str)?;

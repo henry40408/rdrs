@@ -168,11 +168,7 @@ pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Feed>> {
 }
 
 /// Find a feed by URL across all categories for a given user.
-pub fn find_by_url_for_user(
-    conn: &Connection,
-    url: &str,
-    user_id: i64,
-) -> AppResult<Option<Feed>> {
+pub fn find_by_url_for_user(conn: &Connection, url: &str, user_id: i64) -> AppResult<Option<Feed>> {
     conn.query_row(
         &format!(
             r#"

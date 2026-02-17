@@ -33,8 +33,7 @@ pub async fn subscription_list(
                     let cat_name = cat.map(|c| c.name.as_str()).unwrap_or("Uncategorized");
                     let cat_id = cat.map(|c| c.id).unwrap_or(0);
 
-                    let has_icon =
-                        image::exists(conn, image::ENTITY_FEED, f.id).unwrap_or(false);
+                    let has_icon = image::exists(conn, image::ENTITY_FEED, f.id).unwrap_or(false);
                     let icon_url = if has_icon {
                         format!("/api/feeds/{}/icon", f.id)
                     } else {
@@ -94,9 +93,10 @@ pub async fn subscription_edit(
 
     match form.ac.as_str() {
         "subscribe" => {
-            let stream_id = form.s.as_deref().ok_or_else(|| {
-                AppError::Validation("Missing stream ID (s parameter)".into())
-            })?;
+            let stream_id = form
+                .s
+                .as_deref()
+                .ok_or_else(|| AppError::Validation("Missing stream ID (s parameter)".into()))?;
             let feed_url = stream_id
                 .strip_prefix("feed/")
                 .ok_or_else(|| AppError::Validation("Stream ID must start with feed/".into()))?
@@ -143,9 +143,7 @@ pub async fn subscription_edit(
                         conn,
                         category_id,
                         &discovered.feed_url,
-                        title
-                            .as_deref()
-                            .or(discovered.title.as_deref()),
+                        title.as_deref().or(discovered.title.as_deref()),
                         discovered.description.as_deref(),
                         discovered.site_url.as_deref(),
                         None,
@@ -159,9 +157,10 @@ pub async fn subscription_edit(
             Ok("OK".to_string())
         }
         "edit" => {
-            let stream_id = form.s.as_deref().ok_or_else(|| {
-                AppError::Validation("Missing stream ID (s parameter)".into())
-            })?;
+            let stream_id = form
+                .s
+                .as_deref()
+                .ok_or_else(|| AppError::Validation("Missing stream ID (s parameter)".into()))?;
             let feed_url = stream_id
                 .strip_prefix("feed/")
                 .ok_or_else(|| AppError::Validation("Stream ID must start with feed/".into()))?
@@ -207,9 +206,10 @@ pub async fn subscription_edit(
             Ok("OK".to_string())
         }
         "unsubscribe" => {
-            let stream_id = form.s.as_deref().ok_or_else(|| {
-                AppError::Validation("Missing stream ID (s parameter)".into())
-            })?;
+            let stream_id = form
+                .s
+                .as_deref()
+                .ok_or_else(|| AppError::Validation("Missing stream ID (s parameter)".into()))?;
             let feed_url = stream_id
                 .strip_prefix("feed/")
                 .ok_or_else(|| AppError::Validation("Stream ID must start with feed/".into()))?
@@ -227,10 +227,7 @@ pub async fn subscription_edit(
 
             Ok("OK".to_string())
         }
-        _ => Err(AppError::Validation(format!(
-            "Unknown action: {}",
-            form.ac
-        ))),
+        _ => Err(AppError::Validation(format!("Unknown action: {}", form.ac))),
     }
 }
 
@@ -363,9 +360,7 @@ pub async fn import(
                 let cat =
                     match category::find_by_name_and_user(conn, &outline.category_name, user_id)? {
                         Some(cat) => cat,
-                        None => {
-                            category::create_category(conn, user_id, &outline.category_name)?
-                        }
+                        None => category::create_category(conn, user_id, &outline.category_name)?,
                     };
 
                 for opml_feed in outline.feeds {

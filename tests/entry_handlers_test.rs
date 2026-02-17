@@ -204,60 +204,40 @@ async fn setup_entry_without_link(db: &DbPool, feed_id: i64) -> i64 {
 
 /// Mark entries as read via edit-tag endpoint.
 async fn mark_read(server: &TestServer, entry_ids: &[i64]) {
-    let mut form_data: Vec<(&str, String)> = entry_ids
-        .iter()
-        .map(|id| ("i", id.to_string()))
-        .collect();
+    let mut form_data: Vec<(&str, String)> =
+        entry_ids.iter().map(|id| ("i", id.to_string())).collect();
     form_data.push(("a", "user/-/state/com.google/read".to_string()));
-    let response = server
-        .post("/reader/api/0/edit-tag")
-        .form(&form_data)
-        .await;
+    let response = server.post("/reader/api/0/edit-tag").form(&form_data).await;
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 }
 
 /// Mark entries as unread via edit-tag endpoint.
 async fn mark_unread(server: &TestServer, entry_ids: &[i64]) {
-    let mut form_data: Vec<(&str, String)> = entry_ids
-        .iter()
-        .map(|id| ("i", id.to_string()))
-        .collect();
+    let mut form_data: Vec<(&str, String)> =
+        entry_ids.iter().map(|id| ("i", id.to_string())).collect();
     form_data.push(("r", "user/-/state/com.google/read".to_string()));
-    let response = server
-        .post("/reader/api/0/edit-tag")
-        .form(&form_data)
-        .await;
+    let response = server.post("/reader/api/0/edit-tag").form(&form_data).await;
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 }
 
 /// Star entries via edit-tag endpoint.
 async fn star_entry(server: &TestServer, entry_ids: &[i64]) {
-    let mut form_data: Vec<(&str, String)> = entry_ids
-        .iter()
-        .map(|id| ("i", id.to_string()))
-        .collect();
+    let mut form_data: Vec<(&str, String)> =
+        entry_ids.iter().map(|id| ("i", id.to_string())).collect();
     form_data.push(("a", "user/-/state/com.google/starred".to_string()));
-    let response = server
-        .post("/reader/api/0/edit-tag")
-        .form(&form_data)
-        .await;
+    let response = server.post("/reader/api/0/edit-tag").form(&form_data).await;
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 }
 
 /// Unstar entries via edit-tag endpoint.
 async fn unstar_entry(server: &TestServer, entry_ids: &[i64]) {
-    let mut form_data: Vec<(&str, String)> = entry_ids
-        .iter()
-        .map(|id| ("i", id.to_string()))
-        .collect();
+    let mut form_data: Vec<(&str, String)> =
+        entry_ids.iter().map(|id| ("i", id.to_string())).collect();
     form_data.push(("r", "user/-/state/com.google/starred".to_string()));
-    let response = server
-        .post("/reader/api/0/edit-tag")
-        .form(&form_data)
-        .await;
+    let response = server.post("/reader/api/0/edit-tag").form(&form_data).await;
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 }
@@ -308,45 +288,53 @@ async fn test_list_entries_with_continuation() {
     // Create entries where IDs correlate with published_at in ascending order.
     // This is needed because continuation pagination uses `e.id < c` (newest-first)
     // or `e.id > c` (oldest-first), so ID order must match timestamp order.
-    let (_user_id, _cat_id, _feed_id) = app.db.user(move |conn| {
-        let password_hash = rdrs::auth::hash_password("password123").unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            rusqlite::params!["testuser", password_hash, Role::Admin.as_str()],
-        ).unwrap();
-        let user_id = conn.last_insert_rowid();
-
-        conn.execute(
-            "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-            rusqlite::params![user_id, "Test Category"],
-        ).unwrap();
-        let category_id = conn.last_insert_rowid();
-
-        conn.execute(
-            "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-            rusqlite::params![category_id, "https://example.com/feed.xml", "Test Feed"],
-        ).unwrap();
-        let feed_id = conn.last_insert_rowid();
-
-        // Insert entries so that lower IDs have older published_at
-        // (entry 1 = 5h ago, entry 5 = 1h ago)
-        for i in 1..=5 {
+    let (_user_id, _cat_id, _feed_id) = app
+        .db
+        .user(move |conn| {
+            let password_hash = rdrs::auth::hash_password("password123").unwrap();
             conn.execute(
-                "INSERT INTO entry (feed_id, guid, title, link, content, published_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, datetime('now', ?6))",
-                rusqlite::params![
-                    feed_id,
-                    format!("guid-{}", i),
-                    format!("Entry Title {}", i),
-                    format!("https://example.com/entry/{}", i),
-                    format!("<p>Entry content {}</p>", i),
-                    format!("-{} hours", 6 - i)  // entry 1=-5h, entry 5=-1h
-                ],
-            ).unwrap();
-        }
+                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
+                rusqlite::params!["testuser", password_hash, Role::Admin.as_str()],
+            )
+            .unwrap();
+            let user_id = conn.last_insert_rowid();
 
-        (user_id, category_id, feed_id)
-    }).await.unwrap();
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![user_id, "Test Category"],
+            )
+            .unwrap();
+            let category_id = conn.last_insert_rowid();
+
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![category_id, "https://example.com/feed.xml", "Test Feed"],
+            )
+            .unwrap();
+            let feed_id = conn.last_insert_rowid();
+
+            // Insert entries so that lower IDs have older published_at
+            // (entry 1 = 5h ago, entry 5 = 1h ago)
+            for i in 1..=5 {
+                conn.execute(
+                    "INSERT INTO entry (feed_id, guid, title, link, content, published_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, datetime('now', ?6))",
+                    rusqlite::params![
+                        feed_id,
+                        format!("guid-{}", i),
+                        format!("Entry Title {}", i),
+                        format!("https://example.com/entry/{}", i),
+                        format!("<p>Entry content {}</p>", i),
+                        format!("-{} hours", 6 - i) // entry 1=-5h, entry 5=-1h
+                    ],
+                )
+                .unwrap();
+            }
+
+            (user_id, category_id, feed_id)
+        })
+        .await
+        .unwrap();
 
     login(&app.server).await;
 
@@ -708,8 +696,7 @@ async fn test_mark_all_read() {
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
-    let form_data: Vec<(&str, &str)> =
-        vec![("s", "user/-/state/com.google/reading-list")];
+    let form_data: Vec<(&str, &str)> = vec![("s", "user/-/state/com.google/reading-list")];
     let response = app
         .server
         .post("/reader/api/0/mark-all-as-read")
@@ -735,8 +722,7 @@ async fn test_mark_all_read_by_category() {
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
-    let form_data: Vec<(&str, &str)> =
-        vec![("s", "user/-/label/Test Category")];
+    let form_data: Vec<(&str, &str)> = vec![("s", "user/-/label/Test Category")];
     let response = app
         .server
         .post("/reader/api/0/mark-all-as-read")
@@ -762,8 +748,7 @@ async fn test_mark_all_read_by_feed() {
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
-    let form_data: Vec<(&str, &str)> =
-        vec![("s", "feed/https://example.com/feed.xml")];
+    let form_data: Vec<(&str, &str)> = vec![("s", "feed/https://example.com/feed.xml")];
     let response = app
         .server
         .post("/reader/api/0/mark-all-as-read")
@@ -810,8 +795,7 @@ async fn test_edit_tag_no_items_returns_error() {
     login(&app.server).await;
 
     // Send edit-tag with no i= params — should return 400
-    let form_data: Vec<(&str, &str)> =
-        vec![("a", "user/-/state/com.google/read")];
+    let form_data: Vec<(&str, &str)> = vec![("a", "user/-/state/com.google/read")];
     let response = app
         .server
         .post("/reader/api/0/edit-tag")
@@ -1012,20 +996,14 @@ async fn test_subscription_list() {
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
-    let response = app
-        .server
-        .get("/reader/api/0/subscription/list")
-        .await;
+    let response = app.server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
 
     let body: serde_json::Value = response.json();
     let subscriptions = body["subscriptions"].as_array().unwrap();
     assert_eq!(subscriptions.len(), 1);
     assert_eq!(subscriptions[0]["title"], "Test Feed");
-    assert_eq!(
-        subscriptions[0]["id"],
-        "feed/https://example.com/feed.xml"
-    );
+    assert_eq!(subscriptions[0]["id"], "feed/https://example.com/feed.xml");
     // Check category info
     let categories = subscriptions[0]["categories"].as_array().unwrap();
     assert_eq!(categories.len(), 1);
@@ -1053,10 +1031,7 @@ async fn test_subscription_edit_update_title() {
     assert_eq!(response.text(), "OK");
 
     // Verify title was updated via subscription list
-    let response = app
-        .server
-        .get("/reader/api/0/subscription/list")
-        .await;
+    let response = app.server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
 
     let body: serde_json::Value = response.json();
@@ -1082,10 +1057,7 @@ async fn test_subscription_unsubscribe() {
     assert_eq!(response.text(), "OK");
 
     // Verify feed is gone
-    let response = app
-        .server
-        .get("/reader/api/0/subscription/list")
-        .await;
+    let response = app.server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
 
     let body: serde_json::Value = response.json();
@@ -1151,8 +1123,7 @@ async fn test_disable_tag() {
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
-    let form_data: Vec<(&str, &str)> =
-        vec![("s", "user/-/label/Test Category")];
+    let form_data: Vec<(&str, &str)> = vec![("s", "user/-/label/Test Category")];
     let response = app
         .server
         .post("/reader/api/0/disable-tag")
@@ -1452,8 +1423,7 @@ async fn test_cannot_mark_all_read_other_user_feed() {
     login(&app.server).await;
 
     // Try to mark all read by other user's feed — should return 404
-    let form_data: Vec<(&str, &str)> =
-        vec![("s", "feed/https://other.com/feed.xml")];
+    let form_data: Vec<(&str, &str)> = vec![("s", "feed/https://other.com/feed.xml")];
     let response = app
         .server
         .post("/reader/api/0/mark-all-as-read")
@@ -1471,8 +1441,7 @@ async fn test_cannot_mark_all_read_other_user_category() {
     login(&app.server).await;
 
     // Try to mark all read by other user's category — should return 404
-    let form_data: Vec<(&str, &str)> =
-        vec![("s", "user/-/label/Other User Category")];
+    let form_data: Vec<(&str, &str)> = vec![("s", "user/-/label/Other User Category")];
     let response = app
         .server
         .post("/reader/api/0/mark-all-as-read")
@@ -1549,8 +1518,7 @@ async fn test_cannot_disable_other_user_category() {
     login(&app.server).await;
 
     // Try to disable other user's category — should return 404
-    let form_data: Vec<(&str, &str)> =
-        vec![("s", "user/-/label/Other User Category")];
+    let form_data: Vec<(&str, &str)> = vec![("s", "user/-/label/Other User Category")];
     let response = app
         .server
         .post("/reader/api/0/disable-tag")

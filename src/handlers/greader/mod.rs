@@ -46,10 +46,7 @@ pub fn greader_routes() -> Router<AppState> {
             "/reader/api/0/stream/contents/{*stream}",
             get(item::stream_contents),
         )
-        .route(
-            "/reader/api/0/stream/items/ids",
-            get(item::stream_item_ids),
-        )
+        .route("/reader/api/0/stream/items/ids", get(item::stream_item_ids))
         .route(
             "/reader/api/0/stream/items/count",
             get(item::stream_item_count),
@@ -70,10 +67,7 @@ pub fn greader_routes() -> Router<AppState> {
         // User info & misc
         .route("/reader/api/0/user-info", get(user::user_info))
         .route("/reader/api/0/unread-count", get(user::unread_count))
-        .route(
-            "/reader/api/0/preference/list",
-            get(user::preference_list),
-        )
+        .route("/reader/api/0/preference/list", get(user::preference_list))
         .route(
             "/reader/api/0/preference/stream/list",
             get(user::preference_stream_list),

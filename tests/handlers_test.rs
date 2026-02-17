@@ -891,10 +891,7 @@ async fn test_mark_entry_read_not_found() {
         ("i", "9999".to_string()),
         ("a", "user/-/state/com.google/read".to_string()),
     ];
-    let response = server
-        .post("/reader/api/0/edit-tag")
-        .form(&form_data)
-        .await;
+    let response = server.post("/reader/api/0/edit-tag").form(&form_data).await;
     response.assert_status_not_found();
 }
 
@@ -907,10 +904,7 @@ async fn test_mark_entry_unread_not_found() {
         ("i", "9999".to_string()),
         ("r", "user/-/state/com.google/read".to_string()),
     ];
-    let response = server
-        .post("/reader/api/0/edit-tag")
-        .form(&form_data)
-        .await;
+    let response = server.post("/reader/api/0/edit-tag").form(&form_data).await;
     response.assert_status_not_found();
 }
 
@@ -923,10 +917,7 @@ async fn test_toggle_entry_star_not_found() {
         ("i", "9999".to_string()),
         ("a", "user/-/state/com.google/starred".to_string()),
     ];
-    let response = server
-        .post("/reader/api/0/edit-tag")
-        .form(&form_data)
-        .await;
+    let response = server.post("/reader/api/0/edit-tag").form(&form_data).await;
     response.assert_status_not_found();
 }
 

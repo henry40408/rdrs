@@ -167,15 +167,17 @@ pub async fn client_login(
 /// Returns a short-lived POST token for CSRF protection.
 /// The token is HMAC(secret, session_token + timestamp).
 pub async fn get_post_token(auth: GReaderUser, State(state): State<AppState>) -> AppResult<String> {
-    let token = generate_post_token(&state.config.image_proxy_secret, &auth.session.session_token);
+    let token = generate_post_token(
+        &state.config.image_proxy_secret,
+        &auth.session.session_token,
+    );
     Ok(token)
 }
 
 /// Generate a POST token: `<timestamp>/<hmac_hex>`.
 pub fn generate_post_token(secret: &[u8], session_token: &str) -> String {
     let timestamp = Utc::now().timestamp();
-    let mut mac =
-        HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
     mac.update(session_token.as_bytes());
     mac.update(timestamp.to_string().as_bytes());
     let result = mac.finalize();
@@ -184,19 +186,13 @@ pub fn generate_post_token(secret: &[u8], session_token: &str) -> String {
 }
 
 /// Verify a POST token. Returns `Ok(())` if valid, `Err` if invalid or expired.
-pub fn verify_post_token(
-    secret: &[u8],
-    session_token: &str,
-    post_token: &str,
-) -> AppResult<()> {
+pub fn verify_post_token(secret: &[u8], session_token: &str, post_token: &str) -> AppResult<()> {
     let parts: Vec<&str> = post_token.splitn(2, '/').collect();
     if parts.len() != 2 {
         return Err(AppError::Unauthorized);
     }
 
-    let timestamp: i64 = parts[0]
-        .parse()
-        .map_err(|_| AppError::Unauthorized)?;
+    let timestamp: i64 = parts[0].parse().map_err(|_| AppError::Unauthorized)?;
 
     let now = Utc::now().timestamp();
     if now - timestamp > POST_TOKEN_VALIDITY_SECS {
@@ -204,8 +200,7 @@ pub fn verify_post_token(
     }
 
     // Recompute HMAC
-    let mut mac =
-        HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
     mac.update(session_token.as_bytes());
     mac.update(timestamp.to_string().as_bytes());
 
