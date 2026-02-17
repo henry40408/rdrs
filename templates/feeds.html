@@ -67,7 +67,6 @@
         <select id="sort-by" onchange="handleFilterChange()">
             <option value="title">Title</option>
             <option value="unread">Unread Count</option>
-            <option value="fetched">Last Fetched</option>
             <option value="category">Category</option>
         </select>
     </div>
@@ -85,13 +84,12 @@
             <th>Title</th>
             <th>Category</th>
             <th>Unread</th>
-            <th>Last Fetched</th>
             <th>Actions</th>
         </tr>
     </thead>
     <tbody id="feeds-table" data-testid="feeds-table">
         <tr>
-            <td colspan="5">Loading...</td>
+            <td colspan="4">Loading...</td>
         </tr>
     </tbody>
 </table>
@@ -268,7 +266,6 @@
                     has_icon: sub.iconUrl !== '',
                     icon_url: sub.iconUrl,
                     fetch_error: null,        // Not available in GReader API
-                    fetched_at: null,         // Not available in GReader API
                     // Keep numeric feed ID extracted from icon URL for RDRS-specific endpoints
                     _feedId: sub.iconUrl ? sub.iconUrl.match(/\/api\/feeds\/(\d+)\//)?.[1] : null,
                 };
@@ -342,9 +339,6 @@
                     const unreadA = unreadStats.by_feed[a.id] || 0;
                     const unreadB = unreadStats.by_feed[b.id] || 0;
                     return unreadB - unreadA; // Descending
-                case 'fetched':
-                    // fetched_at not available from GReader API, fallback to title sort
-                    return (a.title || a.url).toLowerCase().localeCompare((b.title || b.url).toLowerCase());
                 case 'category':
                     const catA = categories.find(c => c.id === a.category_id);
                     const catB = categories.find(c => c.id === b.category_id);
@@ -361,7 +355,7 @@
 
         if (filteredFeeds.length === 0) {
             const msg = filterErrors ? 'No feeds with errors.' : 'No feeds yet.';
-            tbody.innerHTML = `<tr><td colspan="5" class="muted">${msg}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="4" class="muted">${msg}</td></tr>`;
             return;
         }
 
@@ -385,7 +379,6 @@
                 <td${hasError ? ' class="feed-error-no-border"' : ''}>${iconHtml}<span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
                 <td${hasError ? ' class="feed-error-no-border"' : ''}>${escapeHtml(categoryName)}</td>
                 <td${hasError ? ' class="feed-error-no-border"' : ''}>${unreadCount > 0 ? `<strong>${unreadCount}</strong>` : '0'}</td>
-                <td${hasError ? ' class="feed-error-no-border"' : ''}></td>
                 <td class="actions${hasError ? ' feed-error-no-border' : ''}">
                     <a href="${entriesHref}">entries</a>
                     ${feedNumericId ? `<a href="#" onclick="refreshFeed('${feedNumericId}'); return false;" id="refresh-${feedNumericId}">refresh</a>` : ''}
@@ -397,7 +390,7 @@
             if (hasError) {
                 rows += `
             <tr class="error-row">
-                <td colspan="5" class="error-text feed-error-cell">
+                <td colspan="4" class="error-text feed-error-cell">
                     Error: ${escapeHtml(feed.fetch_error)}
                 </td>
             </tr>`;
@@ -412,16 +405,6 @@
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
-    }
-
-    function formatDate(dateStr) {
-        const date = new Date(dateStr);
-        return date.toLocaleDateString();
-    }
-
-    function formatDateTime(dateStr) {
-        const date = new Date(dateStr);
-        return date.toLocaleString();
     }
 
     async function addFeed(event) {

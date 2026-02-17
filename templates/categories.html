@@ -27,13 +27,12 @@
         <tr>
             <th>Name</th>
             <th>Feeds</th>
-            <th>Created</th>
             <th>Actions</th>
         </tr>
     </thead>
     <tbody id="categories-table" data-testid="categories-table">
         <tr>
-            <td colspan="4">Loading...</td>
+            <td colspan="3">Loading...</td>
         </tr>
     </tbody>
 </table>
@@ -72,14 +71,14 @@
             renderCategories(categories);
         } catch (err) {
             document.getElementById('categories-table').innerHTML =
-                '<tr><td colspan="4">Failed to load categories</td></tr>';
+                '<tr><td colspan="3">Failed to load categories</td></tr>';
         }
     }
 
     function renderCategories(categories) {
         const tbody = document.getElementById('categories-table');
         if (categories.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="muted">No categories yet.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="3" class="muted">No categories yet.</td></tr>';
             return;
         }
         tbody.innerHTML = categories.map((cat, index) => {
@@ -92,7 +91,6 @@
                     <input type="text" class="cat-edit-input" value="${escapeHtml(cat.name)}" style="display:none;" maxlength="100">
                 </td>
                 <td>${feedCount}</td>
-                <td></td>
                 <td class="actions">
                     <a href="/feeds?category=${encodeURIComponent(cat.id)}">feeds</a>
                     <a href="#" class="edit-btn" onclick="startEdit(${index}); return false;">rename</a>
@@ -108,16 +106,6 @@
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
-    }
-
-    function formatDate(dateStr) {
-        const date = new Date(dateStr);
-        return date.toLocaleDateString();
-    }
-
-    function formatDateTime(dateStr) {
-        const date = new Date(dateStr);
-        return date.toLocaleString();
     }
 
     async function addCategory(event) {
