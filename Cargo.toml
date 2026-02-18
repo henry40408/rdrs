@@ -63,6 +63,6 @@ ico = "0.5"
 [dev-dependencies]
 axum-test = "18"
 cookie = "0.18"
-tempfile = "3.24.0"
+tempfile = "3.25.0"
 http-body-util = "0.1"
 wiremock = "0.6"
