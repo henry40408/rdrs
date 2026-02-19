@@ -4,8 +4,10 @@ use axum::{
 };
 use serde::Deserialize;
 
+use std::collections::HashMap;
+
 use crate::error::{AppError, AppResult};
-use crate::models::{category, entry, feed};
+use crate::models::{category, entry, entry_summary, feed};
 use crate::AppState;
 
 use super::auth::GReaderUser;
@@ -34,6 +36,8 @@ pub struct StreamContentsQuery {
     pub r: Option<String>,
     /// Search query (RDRS extension, not part of standard GReader API)
     pub q: Option<String>,
+    /// Filter to entries with/without summary (RDRS extension)
+    pub has_summary: Option<String>,
 }
 
 /// `GET /reader/api/0/stream/contents/*stream`
@@ -57,7 +61,9 @@ pub async fn stream_contents(
         nt: query.nt,
     };
 
-    let response = state
+    let summary_cache = state.summary_cache.clone();
+
+    let (entries, continuation, stream_id_str, db_statuses) = state
         .db
         .user(move |conn| {
             // Resolve stream-specific constraints
@@ -94,26 +100,39 @@ pub async fn stream_contents(
                 None
             };
 
-            let items: Vec<GReaderItem> = entries
-                .iter()
-                .map(entry_with_feed_to_greader_item)
-                .collect();
+            // Batch-query summary statuses from DB
+            let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
+            let db_statuses = entry_summary::get_statuses_for_entries(conn, user_id, &entry_ids)?;
 
-            let updated = entries
-                .first()
-                .map(|e| e.entry.updated_at.timestamp())
-                .unwrap_or(0);
-
-            Ok::<_, AppError>(StreamContentsResponse {
-                id: stream_id.to_string(),
-                updated,
-                continuation,
-                items,
-            })
+            let sid = stream_id.to_string();
+            Ok::<_, AppError>((entries, continuation, sid, db_statuses))
         })
         .await??;
 
-    Ok(Json(response))
+    // Merge in-flight cache statuses (cache takes priority over DB)
+    let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
+
+    let items: Vec<GReaderItem> = entries
+        .iter()
+        .map(|ewf| {
+            let status = summary_statuses
+                .get(&ewf.entry.id)
+                .map(|s| s.as_str().to_string());
+            entry_with_feed_to_greader_item(ewf, status)
+        })
+        .collect();
+
+    let updated = entries
+        .first()
+        .map(|e| e.entry.updated_at.timestamp())
+        .unwrap_or(0);
+
+    Ok(Json(StreamContentsResponse {
+        id: stream_id_str,
+        updated,
+        continuation,
+        items,
+    }))
 }
 
 // --- stream/items/ids ---
@@ -312,31 +331,45 @@ async fn fetch_items_by_ids(
         .map(|s| item_id_to_entry_id(s))
         .collect::<AppResult<Vec<_>>>()?;
 
-    let response = state
+    let summary_cache = state.summary_cache.clone();
+
+    let (entries, db_statuses) = state
         .db
         .user(move |conn| {
             let entries = entry::find_by_ids_with_feed(conn, user_id, &entry_ids)?;
 
-            let items: Vec<GReaderItem> = entries
-                .iter()
-                .map(entry_with_feed_to_greader_item)
-                .collect();
+            // Batch-query summary statuses from DB
+            let ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
+            let db_statuses = entry_summary::get_statuses_for_entries(conn, user_id, &ids)?;
 
-            let updated = entries
-                .first()
-                .map(|e| e.entry.updated_at.timestamp())
-                .unwrap_or(0);
-
-            Ok::<_, AppError>(StreamContentsResponse {
-                id: "user/-/state/com.google/reading-list".to_string(),
-                updated,
-                continuation: None,
-                items,
-            })
+            Ok::<_, AppError>((entries, db_statuses))
         })
         .await??;
 
-    Ok(Json(response))
+    // Merge in-flight cache statuses (cache takes priority over DB)
+    let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
+
+    let items: Vec<GReaderItem> = entries
+        .iter()
+        .map(|ewf| {
+            let status = summary_statuses
+                .get(&ewf.entry.id)
+                .map(|s| s.as_str().to_string());
+            entry_with_feed_to_greader_item(ewf, status)
+        })
+        .collect();
+
+    let updated = entries
+        .first()
+        .map(|e| e.entry.updated_at.timestamp())
+        .unwrap_or(0);
+
+    Ok(Json(StreamContentsResponse {
+        id: "user/-/state/com.google/reading-list".to_string(),
+        updated,
+        continuation: None,
+        items,
+    }))
 }
 
 // --- Helpers ---
@@ -349,6 +382,7 @@ fn build_entry_filter(
     let mut filter =
         build_entry_filter_from_params(stream_id, query.xt.as_deref(), query.it.as_deref())?;
     filter.search = query.q.clone();
+    filter.has_summary = query.has_summary.as_deref().map(|v| v == "true");
     Ok(filter)
 }
 
@@ -394,8 +428,28 @@ fn build_entry_filter_from_params(
     Ok(filter)
 }
 
+/// Merge DB summary statuses with in-flight cache statuses.
+/// Cache takes priority (it has the most up-to-date in-flight state).
+fn merge_summary_statuses(
+    db_statuses: &HashMap<i64, entry_summary::SummaryStatus>,
+    summary_cache: &crate::services::summary_cache::SummaryCache,
+    user_id: i64,
+    entries: &[entry::EntryWithFeed],
+) -> HashMap<i64, entry_summary::SummaryStatus> {
+    let mut merged = db_statuses.clone();
+    for ewf in entries {
+        if let Some(cached_status) = summary_cache.get_status(user_id, ewf.entry.id) {
+            merged.insert(ewf.entry.id, cached_status);
+        }
+    }
+    merged
+}
+
 /// Convert an `EntryWithFeed` to a Google Reader `GReaderItem`.
-fn entry_with_feed_to_greader_item(ewf: &entry::EntryWithFeed) -> GReaderItem {
+fn entry_with_feed_to_greader_item(
+    ewf: &entry::EntryWithFeed,
+    summary_status: Option<String>,
+) -> GReaderItem {
     let e = &ewf.entry;
 
     // Build categories array
@@ -453,5 +507,6 @@ fn entry_with_feed_to_greader_item(ewf: &entry::EntryWithFeed) -> GReaderItem {
         starred_at: e.starred_at.map(|dt| dt.to_rfc3339()),
         published_at: e.published_at.map(|dt| dt.to_rfc3339()),
         content: e.content.clone(),
+        summary_status,
     }
 }

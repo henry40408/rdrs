@@ -209,7 +209,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             published_at: item._publishedAt || null,
             read_at: item._readAt || null,
             starred_at: item._starredAt || null,
-            summary_status: null, // Not available in GReader; entry page fetches separately
+            summary_status: item._summaryStatus || null,
         };
     }
 

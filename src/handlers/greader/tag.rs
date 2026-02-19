@@ -114,6 +114,18 @@ pub async fn edit_tag(
     state
         .db
         .user(move |conn| {
+            // Batch mark-as-read: verify ownership, then use efficient bulk operation
+            if matches!(add_stream, Some(StreamId::Read)) {
+                // Verify all entries belong to the user
+                let found = entry::find_by_ids_with_feed(conn, user_id, &entry_ids)?;
+                if found.len() != entry_ids.len() {
+                    return Err(AppError::EntryNotFound);
+                }
+                entry::mark_read_by_ids(conn, user_id, &entry_ids)?;
+                return Ok(());
+            }
+
+            // Other operations: process individually (no bulk functions available)
             for entry_id in &entry_ids {
                 // Verify ownership
                 let ewf =
@@ -124,9 +136,6 @@ pub async fn edit_tag(
                 // Apply add tag
                 if let Some(ref stream) = add_stream {
                     match stream {
-                        StreamId::Read => {
-                            entry::mark_as_read(conn, *entry_id)?;
-                        }
                         StreamId::Starred => {
                             entry::star_entry(conn, *entry_id)?;
                         }

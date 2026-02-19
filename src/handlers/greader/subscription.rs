@@ -48,9 +48,15 @@ pub async fn subscription_list(
                             label: cat_name.to_string(),
                         }],
                         sort_id: format!("{:08x}", cat_id),
-                        html_url: f.site_url.unwrap_or_default(),
+                        html_url: f.site_url.clone().unwrap_or_default(),
                         url: f.url,
                         icon_url,
+                        // RDRS extensions
+                        feed_id: f.id,
+                        fetch_error: f.fetch_error,
+                        description: f.description,
+                        custom_user_agent: f.custom_user_agent,
+                        http2_disabled: f.http2_disabled,
                     }
                 })
                 .collect();
@@ -79,6 +85,11 @@ pub struct SubscriptionEditForm {
     /// POST token (optional, skipped for cookie auth)
     #[serde(rename = "T")]
     pub token: Option<String>,
+    // RDRS extension fields (optional, ignored by standard GReader clients)
+    pub description: Option<String>,
+    pub site_url: Option<String>,
+    pub custom_user_agent: Option<String>,
+    pub http2_disabled: Option<bool>,
 }
 
 /// `POST /reader/api/0/subscription/edit`
@@ -169,6 +180,10 @@ pub async fn subscription_edit(
             let title = form.t.clone();
             let add_label = extract_label_name(form.a.as_deref());
             let _remove_label = extract_label_name(form.r.as_deref());
+            let description = form.description.clone();
+            let site_url = form.site_url.clone();
+            let custom_user_agent = form.custom_user_agent.clone();
+            let http2_disabled = form.http2_disabled;
 
             state
                 .db
@@ -186,6 +201,14 @@ pub async fn subscription_edit(
                         f.category_id
                     };
 
+                    // Use new values if provided, otherwise keep existing
+                    let effective_description = description.as_deref().or(f.description.as_deref());
+                    let effective_site_url = site_url.as_deref().or(f.site_url.as_deref());
+                    let effective_user_agent = custom_user_agent
+                        .as_deref()
+                        .or(f.custom_user_agent.as_deref());
+                    let effective_http2_disabled = http2_disabled.unwrap_or(f.http2_disabled);
+
                     feed::update_feed(
                         conn,
                         f.id,
@@ -193,10 +216,10 @@ pub async fn subscription_edit(
                         new_category_id,
                         &f.url,
                         title.as_deref().or(f.title.as_deref()),
-                        f.description.as_deref(),
-                        f.site_url.as_deref(),
-                        f.custom_user_agent.as_deref(),
-                        f.http2_disabled,
+                        effective_description,
+                        effective_site_url,
+                        effective_user_agent,
+                        effective_http2_disabled,
                     )?;
 
                     Ok::<_, AppError>(())
