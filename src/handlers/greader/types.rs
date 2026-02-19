@@ -144,6 +144,8 @@ pub struct GReaderItem {
     pub published_at: Option<String>,
     #[serde(rename = "_content")]
     pub content: Option<String>,
+    #[serde(rename = "_summaryStatus", skip_serializing_if = "Option::is_none")]
+    pub summary_status: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -231,6 +233,18 @@ pub struct Subscription {
     pub url: String,
     #[serde(rename = "iconUrl")]
     pub icon_url: String,
+
+    // RDRS extension fields (GReader clients ignore these)
+    #[serde(rename = "_feedId")]
+    pub feed_id: i64,
+    #[serde(rename = "_fetchError", skip_serializing_if = "Option::is_none")]
+    pub fetch_error: Option<String>,
+    #[serde(rename = "_description", skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(rename = "_customUserAgent", skip_serializing_if = "Option::is_none")]
+    pub custom_user_agent: Option<String>,
+    #[serde(rename = "_http2Disabled")]
+    pub http2_disabled: bool,
 }
 
 #[derive(Debug, Serialize)]

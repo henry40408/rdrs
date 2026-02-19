@@ -265,9 +265,11 @@
                     category_id: catId,       // "user/-/label/<name>"
                     has_icon: sub.iconUrl !== '',
                     icon_url: sub.iconUrl,
-                    fetch_error: null,        // Not available in GReader API
-                    // Keep numeric feed ID extracted from icon URL for RDRS-specific endpoints
-                    _feedId: sub.iconUrl ? sub.iconUrl.match(/\/api\/feeds\/(\d+)\//)?.[1] : null,
+                    fetch_error: sub._fetchError || null,
+                    description: sub._description || null,
+                    custom_user_agent: sub._customUserAgent || null,
+                    http2_disabled: sub._http2Disabled || false,
+                    _feedId: sub._feedId ? String(sub._feedId) : null,
                 };
             });
             updateFilterDropdown();
@@ -464,11 +466,11 @@
         document.getElementById('edit-id').value = feed.id;
         document.getElementById('edit-url').value = feed.url;
         document.getElementById('edit-title').value = feed.title || '';
-        document.getElementById('edit-description').value = '';
+        document.getElementById('edit-description').value = feed.description || '';
         document.getElementById('edit-site-url').value = feed.site_url || '';
         document.getElementById('edit-category').value = feed.category_id;
-        document.getElementById('edit-custom-user-agent').value = '';
-        document.getElementById('edit-http2-disabled').checked = false;
+        document.getElementById('edit-custom-user-agent').value = feed.custom_user_agent || '';
+        document.getElementById('edit-http2-disabled').checked = feed.http2_disabled;
 
         document.getElementById('edit-modal').style.display = 'block';
     }
@@ -531,7 +533,11 @@
         const streamId = document.getElementById('edit-id').value; // "feed/<url>"
         const url = document.getElementById('edit-url').value.trim();
         const title = document.getElementById('edit-title').value.trim() || null;
+        const description = document.getElementById('edit-description').value.trim();
+        const siteUrl = document.getElementById('edit-site-url').value.trim();
         const categoryLabel = document.getElementById('edit-category').value; // "user/-/label/<name>"
+        const customUserAgent = document.getElementById('edit-custom-user-agent').value.trim();
+        const http2Disabled = document.getElementById('edit-http2-disabled').checked;
 
         if (!url) {
             flash.error('URL cannot be empty');
@@ -544,6 +550,10 @@
             body.set('s', streamId);
             if (title) body.set('t', title);
             if (categoryLabel) body.set('a', categoryLabel);
+            body.set('description', description);
+            body.set('site_url', siteUrl);
+            body.set('custom_user_agent', customUserAgent);
+            body.set('http2_disabled', http2Disabled ? 'true' : 'false');
 
             const response = await fetch('/reader/api/0/subscription/edit', {
                 method: 'POST',
