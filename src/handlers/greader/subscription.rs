@@ -204,8 +204,9 @@ pub async fn subscription_edit(
                     // Use new values if provided, otherwise keep existing
                     let effective_description = description.as_deref().or(f.description.as_deref());
                     let effective_site_url = site_url.as_deref().or(f.site_url.as_deref());
-                    let effective_user_agent =
-                        custom_user_agent.as_deref().or(f.custom_user_agent.as_deref());
+                    let effective_user_agent = custom_user_agent
+                        .as_deref()
+                        .or(f.custom_user_agent.as_deref());
                     let effective_http2_disabled = http2_disabled.unwrap_or(f.http2_disabled);
 
                     feed::update_feed(

@@ -102,8 +102,7 @@ pub async fn stream_contents(
 
             // Batch-query summary statuses from DB
             let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
-            let db_statuses =
-                entry_summary::get_statuses_for_entries(conn, user_id, &entry_ids)?;
+            let db_statuses = entry_summary::get_statuses_for_entries(conn, user_id, &entry_ids)?;
 
             let sid = stream_id.to_string();
             Ok::<_, AppError>((entries, continuation, sid, db_statuses))
@@ -111,8 +110,7 @@ pub async fn stream_contents(
         .await??;
 
     // Merge in-flight cache statuses (cache takes priority over DB)
-    let summary_statuses =
-        merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
+    let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
 
     let items: Vec<GReaderItem> = entries
         .iter()
@@ -349,8 +347,7 @@ async fn fetch_items_by_ids(
         .await??;
 
     // Merge in-flight cache statuses (cache takes priority over DB)
-    let summary_statuses =
-        merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
+    let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
 
     let items: Vec<GReaderItem> = entries
         .iter()
