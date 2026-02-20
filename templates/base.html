@@ -163,6 +163,10 @@
             outline-offset: 1px;
         }
         button, .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
             padding: var(--space-2) var(--space-4);
             border-radius: var(--radius-md);
             background: var(--color-button-bg);
@@ -170,8 +174,8 @@
             border: 1px solid var(--color-border);
             font-family: inherit;
             font-size: inherit;
+            line-height: 1;
             cursor: pointer;
-            margin-top: var(--space-4);
             text-decoration: none;
         }
         button:hover, .btn:hover {
@@ -292,7 +296,6 @@
         }
         .actions button, .actions .btn {
             padding: var(--space-1) var(--space-2);
-            margin: 0;
             font-size: var(--font-xs);
         }
         .actions a {
@@ -362,20 +365,20 @@
             color: #ffffff;
             box-shadow: 0 0 0 3px var(--color-accent);
         }
-        /* Modal */
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: var(--color-overlay);
-            z-index: 1000;
-        }
-        .modal-content {
+        /* Dialog (native modal) */
+        dialog {
+            margin: auto;
             background: var(--color-bg);
+            color: var(--color-text);
             max-width: 600px;
-            margin: var(--space-8) auto;
+            width: calc(100% - var(--space-8));
             padding: var(--space-8);
             border: 1px solid var(--color-border);
+            font-family: inherit;
+            font-size: inherit;
+        }
+        dialog::backdrop {
+            background: var(--color-overlay);
         }
         .modal-title {
             font-size: 1rem;
@@ -434,7 +437,6 @@
             flex: 1;
         }
         .feed-edit-url-row button {
-            margin: 0;
             white-space: nowrap;
         }
         .feed-http-settings {
@@ -577,17 +579,14 @@
             };
         };
     </script>
-    <script type="module" src="/static/js/components/rdrs-loading-bar.js?v={{ git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-kb-pending.js?v={{ git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-flash.js?v={{ git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-kb-help.js?v={{ git_version }}"></script>
-    <script type="module" src="/static/js/components/rdrs-modal.js?v={{ git_version }}"></script>
     <script type="module" src="/static/js/keyboard.js?v={{ git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-entry-list.js?v={{ git_version }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
-    <rdrs-loading-bar></rdrs-loading-bar>
     {% block flash %}{% endblock %}
     {% block content %}{% endblock %}
     <rdrs-kb-help></rdrs-kb-help>
