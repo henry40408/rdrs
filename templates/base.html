@@ -362,20 +362,19 @@
             color: #ffffff;
             box-shadow: 0 0 0 3px var(--color-accent);
         }
-        /* Modal */
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: var(--color-overlay);
-            z-index: 1000;
-        }
-        .modal-content {
+        /* Dialog (native modal) */
+        dialog {
             background: var(--color-bg);
+            color: var(--color-text);
             max-width: 600px;
-            margin: var(--space-8) auto;
+            width: calc(100% - var(--space-8));
             padding: var(--space-8);
             border: 1px solid var(--color-border);
+            font-family: inherit;
+            font-size: inherit;
+        }
+        dialog::backdrop {
+            background: var(--color-overlay);
         }
         .modal-title {
             font-size: 1rem;

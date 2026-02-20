@@ -95,79 +95,75 @@
 </table>
 
 <!-- Import Modal -->
-<div id="import-modal" class="modal-overlay">
-    <div class="modal-content">
-        <h2 class="modal-title">Import OPML</h2>
-        <form id="import-form" onsubmit="importOpml(event)">
-            <div class="form-group">
-                <label for="import-file">Upload .opml file</label>
-                <input type="file" id="import-file" accept=".opml,.xml" onchange="loadOpmlFile(this)">
-            </div>
-            <div class="form-group">
-                <label for="import-content">Or paste OPML content</label>
-                <textarea id="import-content" rows="10" style="width:100%; font-family:monospace; font-size:0.875rem;" placeholder="<?xml version=&quot;1.0&quot;?>&#10;<opml version=&quot;2.0&quot;>&#10;  ...&#10;</opml>"></textarea>
-            </div>
-            <div class="modal-actions">
-                <button type="submit" id="import-btn">Import</button>
-                <button type="button" onclick="closeImportModal()">Cancel</button>
-            </div>
-        </form>
-    </div>
-</div>
+<dialog id="import-modal">
+    <h2 class="modal-title">Import OPML</h2>
+    <form id="import-form" onsubmit="importOpml(event)">
+        <div class="form-group">
+            <label for="import-file">Upload .opml file</label>
+            <input type="file" id="import-file" accept=".opml,.xml" onchange="loadOpmlFile(this)">
+        </div>
+        <div class="form-group">
+            <label for="import-content">Or paste OPML content</label>
+            <textarea id="import-content" rows="10" style="width:100%; font-family:monospace; font-size:0.875rem;" placeholder="<?xml version=&quot;1.0&quot;?>&#10;<opml version=&quot;2.0&quot;>&#10;  ...&#10;</opml>"></textarea>
+        </div>
+        <div class="modal-actions">
+            <button type="submit" id="import-btn">Import</button>
+            <button type="button" onclick="closeImportModal()">Cancel</button>
+        </div>
+    </form>
+</dialog>
 
 <!-- Edit Modal -->
-<div id="edit-modal" class="modal-overlay">
-    <div class="modal-content">
-        <h2 class="modal-title">Edit Feed</h2>
-        <form id="edit-form" onsubmit="saveFeed(event)">
-            <input type="hidden" id="edit-id">
-            <div class="form-group">
-                <label for="edit-url">Feed URL</label>
-                <div class="feed-edit-url-row">
-                    <input type="text" id="edit-url" name="url" required>
-                    <button type="button" onclick="fetchMetadata()">Fetch</button>
+<dialog id="edit-modal">
+    <h2 class="modal-title">Edit Feed</h2>
+    <form id="edit-form" onsubmit="saveFeed(event)">
+        <input type="hidden" id="edit-id">
+        <div class="form-group">
+            <label for="edit-url">Feed URL</label>
+            <div class="feed-edit-url-row">
+                <input type="text" id="edit-url" name="url" required>
+                <button type="button" onclick="fetchMetadata()">Fetch</button>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="edit-title">Title</label>
+            <input type="text" id="edit-title" name="title">
+        </div>
+        <div class="form-group">
+            <label for="edit-description">Description</label>
+            <input type="text" id="edit-description" name="description">
+        </div>
+        <div class="form-group">
+            <label for="edit-site-url">Site URL</label>
+            <input type="text" id="edit-site-url" name="site_url">
+        </div>
+        <div class="form-group">
+            <label for="edit-category">Category</label>
+            <select id="edit-category" name="category" required>
+            </select>
+        </div>
+        <details class="feed-http-settings">
+            <summary style="cursor:pointer; font-weight:normal;">HTTP Settings</summary>
+            <div class="feed-http-settings-body">
+                <div class="form-group">
+                    <label for="edit-custom-user-agent">Custom User Agent</label>
+                    <input type="text" id="edit-custom-user-agent" name="custom_user_agent" placeholder="Leave empty to use global default">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="edit-http2-disabled" name="http2_disabled">
+                        Disable HTTP/2
+                    </label>
+                    <div class="feed-http-hint">Enable this if the feed server has HTTP/2 compatibility issues</div>
                 </div>
             </div>
-            <div class="form-group">
-                <label for="edit-title">Title</label>
-                <input type="text" id="edit-title" name="title">
-            </div>
-            <div class="form-group">
-                <label for="edit-description">Description</label>
-                <input type="text" id="edit-description" name="description">
-            </div>
-            <div class="form-group">
-                <label for="edit-site-url">Site URL</label>
-                <input type="text" id="edit-site-url" name="site_url">
-            </div>
-            <div class="form-group">
-                <label for="edit-category">Category</label>
-                <select id="edit-category" name="category" required>
-                </select>
-            </div>
-            <details class="feed-http-settings">
-                <summary style="cursor:pointer; font-weight:normal;">HTTP Settings</summary>
-                <div class="feed-http-settings-body">
-                    <div class="form-group">
-                        <label for="edit-custom-user-agent">Custom User Agent</label>
-                        <input type="text" id="edit-custom-user-agent" name="custom_user_agent" placeholder="Leave empty to use global default">
-                    </div>
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="edit-http2-disabled" name="http2_disabled">
-                            Disable HTTP/2
-                        </label>
-                        <div class="feed-http-hint">Enable this if the feed server has HTTP/2 compatibility issues</div>
-                    </div>
-                </div>
-            </details>
-            <div class="modal-actions">
-                <button type="submit">Save</button>
-                <button type="button" onclick="closeEditModal()">Cancel</button>
-            </div>
-        </form>
-    </div>
-</div>
+        </details>
+        <div class="modal-actions">
+            <button type="submit">Save</button>
+            <button type="button" onclick="closeEditModal()">Cancel</button>
+        </div>
+    </form>
+</dialog>
 
 <script>
     let categories = [];
@@ -472,21 +468,21 @@
         document.getElementById('edit-custom-user-agent').value = feed.custom_user_agent || '';
         document.getElementById('edit-http2-disabled').checked = feed.http2_disabled;
 
-        document.getElementById('edit-modal').style.display = 'block';
+        document.getElementById('edit-modal').showModal();
     }
 
     function closeEditModal() {
-        document.getElementById('edit-modal').style.display = 'none';
+        document.getElementById('edit-modal').close();
     }
 
     function showImportModal() {
         document.getElementById('import-content').value = '';
         document.getElementById('import-file').value = '';
-        document.getElementById('import-modal').style.display = 'block';
+        document.getElementById('import-modal').showModal();
     }
 
     function closeImportModal() {
-        document.getElementById('import-modal').style.display = 'none';
+        document.getElementById('import-modal').close();
     }
 
     async function fetchMetadata() {
@@ -610,7 +606,6 @@
         row?.classList.add('feed-row-syncing');
         activeSyncs.add(id);
         updateSyncStatus();
-        if (window.loading) window.loading.start();
 
         try {
             const response = await fetch(`/api/feeds/${id}/refresh`, {
@@ -633,20 +628,19 @@
             row?.classList.remove('feed-row-syncing');
             activeSyncs.delete(id);
             updateSyncStatus();
-            if (window.loading) window.loading.stop();
         }
     }
 
-    // Close modal when clicking outside
+    // Close dialog when clicking on backdrop
     document.getElementById('edit-modal').addEventListener('click', function(e) {
         if (e.target === this) {
-            closeEditModal();
+            this.close();
         }
     });
 
     document.getElementById('import-modal').addEventListener('click', function(e) {
         if (e.target === this) {
-            closeImportModal();
+            this.close();
         }
     });
 
