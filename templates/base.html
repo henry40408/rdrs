@@ -163,6 +163,10 @@
             outline-offset: 1px;
         }
         button, .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
             padding: var(--space-2) var(--space-4);
             border-radius: var(--radius-md);
             background: var(--color-button-bg);
@@ -170,8 +174,8 @@
             border: 1px solid var(--color-border);
             font-family: inherit;
             font-size: inherit;
+            line-height: 1;
             cursor: pointer;
-            margin-top: var(--space-4);
             text-decoration: none;
         }
         button:hover, .btn:hover {
@@ -292,7 +296,6 @@
         }
         .actions button, .actions .btn {
             padding: var(--space-1) var(--space-2);
-            margin: 0;
             font-size: var(--font-xs);
         }
         .actions a {
@@ -433,7 +436,6 @@
             flex: 1;
         }
         .feed-edit-url-row button {
-            margin: 0;
             white-space: nowrap;
         }
         .feed-http-settings {
