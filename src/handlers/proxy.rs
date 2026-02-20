@@ -12,7 +12,7 @@ use crate::{
     error::{AppError, AppResult},
     middleware::auth::AuthUser,
     services::http::{send_with_retry, RetryConfig, DEFAULT_TIMEOUT},
-    services::verify_signature,
+    services::{verify_signature, verify_signature_with_referrer},
     AppState,
 };
 
@@ -22,6 +22,7 @@ const MAX_IMAGE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 pub struct ProxyQuery {
     url: String,
     s: String,
+    r: Option<String>,
 }
 
 pub async fn proxy_image(
@@ -35,8 +36,28 @@ pub async fn proxy_image(
         .map_err(|_| AppError::InvalidImageUrl)?;
     let url_str = String::from_utf8(url_bytes).map_err(|_| AppError::InvalidImageUrl)?;
 
-    // Verify signature
-    if !verify_signature(&url_str, &query.s, &state.config.image_proxy_secret) {
+    // Decode and verify referrer if present
+    let referrer = if let Some(ref r_encoded) = query.r {
+        let r_bytes = URL_SAFE_NO_PAD
+            .decode(r_encoded)
+            .map_err(|_| AppError::InvalidImageUrl)?;
+        Some(String::from_utf8(r_bytes).map_err(|_| AppError::InvalidImageUrl)?)
+    } else {
+        None
+    };
+
+    // Verify signature (with or without referrer)
+    let valid = if let Some(ref referrer) = referrer {
+        verify_signature_with_referrer(
+            &url_str,
+            referrer,
+            &query.s,
+            &state.config.image_proxy_secret,
+        )
+    } else {
+        verify_signature(&url_str, &query.s, &state.config.image_proxy_secret)
+    };
+    if !valid {
         return Err(AppError::InvalidSignature);
     }
 
@@ -53,7 +74,11 @@ pub async fn proxy_image(
     let url_str = url.to_string();
     let user_agent = state.config.user_agent.clone();
     let response = send_with_retry(&RetryConfig::default(), || {
-        client.get(&url_str).header("User-Agent", &user_agent)
+        let mut req = client.get(&url_str).header("User-Agent", &user_agent);
+        if let Some(ref referrer) = referrer {
+            req = req.header("Referer", referrer.as_str());
+        }
+        req
     })
     .await
     .map_err(|e| AppError::ImageFetchError(e.to_string()))?;

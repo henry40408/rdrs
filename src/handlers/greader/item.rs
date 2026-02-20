@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use crate::error::{AppError, AppResult};
 use crate::models::{category, entry, entry_summary, feed};
+use crate::services::sanitize_html;
 use crate::AppState;
 
 use super::auth::GReaderUser;
@@ -112,13 +113,14 @@ pub async fn stream_contents(
     // Merge in-flight cache statuses (cache takes priority over DB)
     let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
 
+    let secret = &state.config.image_proxy_secret;
     let items: Vec<GReaderItem> = entries
         .iter()
         .map(|ewf| {
             let status = summary_statuses
                 .get(&ewf.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status)
+            entry_with_feed_to_greader_item(ewf, status, secret)
         })
         .collect();
 
@@ -349,13 +351,14 @@ async fn fetch_items_by_ids(
     // Merge in-flight cache statuses (cache takes priority over DB)
     let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
 
+    let secret = &state.config.image_proxy_secret;
     let items: Vec<GReaderItem> = entries
         .iter()
         .map(|ewf| {
             let status = summary_statuses
                 .get(&ewf.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status)
+            entry_with_feed_to_greader_item(ewf, status, secret)
         })
         .collect();
 
@@ -446,9 +449,11 @@ fn merge_summary_statuses(
 }
 
 /// Convert an `EntryWithFeed` to a Google Reader `GReaderItem`.
+/// The `secret` is the image proxy secret used to sign proxy URLs.
 fn entry_with_feed_to_greader_item(
     ewf: &entry::EntryWithFeed,
     summary_status: Option<String>,
+    secret: &[u8],
 ) -> GReaderItem {
     let e = &ewf.entry;
 
@@ -471,7 +476,15 @@ fn entry_with_feed_to_greader_item(
     let timestamp_usec = (published * 1_000_000).to_string();
 
     let link = e.link.as_deref().unwrap_or("");
-    let content = e.content.as_deref().or(e.summary.as_deref()).unwrap_or("");
+    let raw_content = e.content.as_deref().or(e.summary.as_deref()).unwrap_or("");
+
+    // Sanitize content: rewrite image URLs to go through the image proxy
+    let sanitized_content = sanitize_html(
+        raw_content,
+        secret,
+        if link.is_empty() { None } else { Some(link) },
+        ewf.custom_referrer.as_deref(),
+    );
 
     GReaderItem {
         id: entry_id_to_item_id(e.id),
@@ -482,7 +495,7 @@ fn entry_with_feed_to_greader_item(
         title: e.title.clone().unwrap_or_default(),
         categories,
         summary: GReaderContent {
-            content: content.to_string(),
+            content: sanitized_content,
         },
         canonical: vec![GReaderLink {
             href: link.to_string(),
@@ -506,7 +519,14 @@ fn entry_with_feed_to_greader_item(
         read_at: e.read_at.map(|dt| dt.to_rfc3339()),
         starred_at: e.starred_at.map(|dt| dt.to_rfc3339()),
         published_at: e.published_at.map(|dt| dt.to_rfc3339()),
-        content: e.content.clone(),
+        content: e.content.as_ref().map(|c| {
+            sanitize_html(
+                c,
+                secret,
+                if link.is_empty() { None } else { Some(link) },
+                ewf.custom_referrer.as_deref(),
+            )
+        }),
         summary_status,
     }
 }

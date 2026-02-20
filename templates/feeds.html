@@ -150,6 +150,11 @@
                     <input type="text" id="edit-custom-user-agent" name="custom_user_agent" placeholder="Leave empty to use global default">
                 </div>
                 <div class="form-group">
+                    <label for="edit-custom-referrer">Custom Referrer</label>
+                    <input type="text" id="edit-custom-referrer" name="custom_referrer" placeholder="Leave empty to not send Referer header">
+                    <div class="feed-http-hint">Some image servers require a specific Referer header to serve images</div>
+                </div>
+                <div class="form-group">
                     <label>
                         <input type="checkbox" id="edit-http2-disabled" name="http2_disabled">
                         Disable HTTP/2
@@ -265,6 +270,7 @@
                     description: sub._description || null,
                     custom_user_agent: sub._customUserAgent || null,
                     http2_disabled: sub._http2Disabled || false,
+                    custom_referrer: sub._customReferrer || null,
                     _feedId: sub._feedId ? String(sub._feedId) : null,
                 };
             });
@@ -466,6 +472,7 @@
         document.getElementById('edit-site-url').value = feed.site_url || '';
         document.getElementById('edit-category').value = feed.category_id;
         document.getElementById('edit-custom-user-agent').value = feed.custom_user_agent || '';
+        document.getElementById('edit-custom-referrer').value = feed.custom_referrer || '';
         document.getElementById('edit-http2-disabled').checked = feed.http2_disabled;
 
         document.getElementById('edit-modal').showModal();
@@ -533,6 +540,7 @@
         const siteUrl = document.getElementById('edit-site-url').value.trim();
         const categoryLabel = document.getElementById('edit-category').value; // "user/-/label/<name>"
         const customUserAgent = document.getElementById('edit-custom-user-agent').value.trim();
+        const customReferrer = document.getElementById('edit-custom-referrer').value.trim();
         const http2Disabled = document.getElementById('edit-http2-disabled').checked;
 
         if (!url) {
@@ -549,6 +557,7 @@
             body.set('description', description);
             body.set('site_url', siteUrl);
             body.set('custom_user_agent', customUserAgent);
+            body.set('custom_referrer', customReferrer);
             body.set('http2_disabled', http2Disabled ? 'true' : 'false');
 
             const response = await fetch('/reader/api/0/subscription/edit', {

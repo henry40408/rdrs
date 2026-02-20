@@ -23,6 +23,7 @@ pub struct Feed {
     pub last_modified: Option<String>,
     pub custom_user_agent: Option<String>,
     pub http2_disabled: bool,
+    pub custom_referrer: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -47,8 +48,8 @@ fn row_to_feed(row: &rusqlite::Row) -> rusqlite::Result<Feed> {
     let feed_updated_at: Option<String> = row.get(6)?;
     let fetched_at: Option<String> = row.get(7)?;
     let http2_disabled: i64 = row.get(12)?;
-    let created_at: String = row.get(13)?;
-    let updated_at: String = row.get(14)?;
+    let created_at: String = row.get(14)?;
+    let updated_at: String = row.get(15)?;
 
     Ok(Feed {
         id: row.get(0)?,
@@ -64,6 +65,7 @@ fn row_to_feed(row: &rusqlite::Row) -> rusqlite::Result<Feed> {
         last_modified: row.get(10)?,
         custom_user_agent: row.get(11)?,
         http2_disabled: http2_disabled != 0,
+        custom_referrer: row.get(13)?,
         created_at: parse_datetime(&created_at),
         updated_at: parse_datetime(&updated_at),
     })
@@ -79,11 +81,12 @@ pub fn create_feed(
     site_url: Option<&str>,
     custom_user_agent: Option<&str>,
     http2_disabled: Option<bool>,
+    custom_referrer: Option<&str>,
 ) -> AppResult<Feed> {
     let http2_disabled_int = http2_disabled.unwrap_or(false) as i64;
     let result = conn.execute(
-        "INSERT INTO feed (category_id, url, title, description, site_url, custom_user_agent, http2_disabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![category_id, url, title, description, site_url, custom_user_agent, http2_disabled_int],
+        "INSERT INTO feed (category_id, url, title, description, site_url, custom_user_agent, http2_disabled, custom_referrer) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![category_id, url, title, description, site_url, custom_user_agent, http2_disabled_int, custom_referrer],
     );
 
     match result {
@@ -100,7 +103,7 @@ pub fn create_feed(
     }
 }
 
-const SELECT_COLUMNS: &str = "id, category_id, url, title, description, site_url, feed_updated_at, fetched_at, fetch_error, etag, last_modified, custom_user_agent, http2_disabled, created_at, updated_at";
+const SELECT_COLUMNS: &str = "id, category_id, url, title, description, site_url, feed_updated_at, fetched_at, fetch_error, etag, last_modified, custom_user_agent, http2_disabled, custom_referrer, created_at, updated_at";
 
 pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Feed>> {
     conn.query_row(
@@ -151,7 +154,7 @@ pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Feed>> {
         r#"
         SELECT f.id, f.category_id, f.url, f.title, f.description, f.site_url,
                f.feed_updated_at, f.fetched_at, f.fetch_error, f.etag, f.last_modified,
-               f.custom_user_agent, f.http2_disabled, f.created_at, f.updated_at
+               f.custom_user_agent, f.http2_disabled, f.custom_referrer, f.created_at, f.updated_at
         FROM feed f
         INNER JOIN category c ON f.category_id = c.id
         WHERE c.user_id = ?1
@@ -216,15 +219,16 @@ pub fn update_feed(
     site_url: Option<&str>,
     custom_user_agent: Option<&str>,
     http2_disabled: bool,
+    custom_referrer: Option<&str>,
 ) -> AppResult<Feed> {
     let http2_disabled_int = http2_disabled as i64;
     let result = conn.execute(
         r#"
         UPDATE feed
-        SET category_id = ?1, url = ?2, title = ?3, description = ?4, site_url = ?5, custom_user_agent = ?6, http2_disabled = ?7, updated_at = datetime('now')
-        WHERE id = ?8 AND category_id = ?9
+        SET category_id = ?1, url = ?2, title = ?3, description = ?4, site_url = ?5, custom_user_agent = ?6, http2_disabled = ?7, custom_referrer = ?8, updated_at = datetime('now')
+        WHERE id = ?9 AND category_id = ?10
         "#,
-        params![new_category_id, url, title, description, site_url, custom_user_agent, http2_disabled_int, id, category_id],
+        params![new_category_id, url, title, description, site_url, custom_user_agent, http2_disabled_int, custom_referrer, id, category_id],
     );
 
     match result {
@@ -325,6 +329,7 @@ mod tests {
             Some("https://example.com"),
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -333,6 +338,7 @@ mod tests {
         assert_eq!(feed.category_id, category_id);
         assert_eq!(feed.custom_user_agent, None);
         assert!(!feed.http2_disabled);
+        assert_eq!(feed.custom_referrer, None);
 
         let found = find_by_id(&conn, feed.id).unwrap().unwrap();
         assert_eq!(found.url, feed.url);
@@ -353,12 +359,14 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         let result = create_feed(
             &conn,
             category_id,
             "https://example.com/feed.xml",
+            None,
             None,
             None,
             None,
@@ -384,12 +392,14 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         let result = create_feed(
             &conn,
             cat2,
             "https://example.com/feed.xml",
+            None,
             None,
             None,
             None,
@@ -416,6 +426,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         create_feed(
@@ -423,6 +434,7 @@ mod tests {
             cat2,
             "https://example2.com/feed.xml",
             Some("Feed 2"),
+            None,
             None,
             None,
             None,
@@ -455,6 +467,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         create_feed(
@@ -466,12 +479,14 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         create_feed(
             &conn,
             cat2,
             "https://example3.com/feed.xml",
+            None,
             None,
             None,
             None,
@@ -502,6 +517,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -516,6 +532,7 @@ mod tests {
             Some("https://example.com"),
             Some("Custom UA"),
             true,
+            Some("https://example.com"),
         )
         .unwrap();
 
@@ -524,6 +541,10 @@ mod tests {
         assert_eq!(updated.description, Some("New Description".to_string()));
         assert_eq!(updated.custom_user_agent, Some("Custom UA".to_string()));
         assert!(updated.http2_disabled);
+        assert_eq!(
+            updated.custom_referrer,
+            Some("https://example.com".to_string())
+        );
     }
 
     #[test]
@@ -536,6 +557,7 @@ mod tests {
             &conn,
             category_id,
             "https://example.com/feed.xml",
+            None,
             None,
             None,
             None,
@@ -558,6 +580,7 @@ mod tests {
             &conn,
             category_id,
             "https://example.com/feed.xml",
+            None,
             None,
             None,
             None,

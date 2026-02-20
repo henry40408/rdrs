@@ -123,6 +123,7 @@ pub struct EntryWithFeed {
     pub category_id: i64,
     pub category_name: String,
     pub feed_has_icon: bool,
+    pub custom_referrer: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -216,6 +217,7 @@ fn row_to_entry_with_feed(row: &rusqlite::Row) -> rusqlite::Result<EntryWithFeed
         category_id: row.get(15)?,
         category_name: row.get(16)?,
         feed_has_icon: has_icon > 0,
+        custom_referrer: row.get(18)?,
     })
 }
 
@@ -237,7 +239,8 @@ pub fn find_by_id_with_feed(conn: &Connection, id: i64) -> AppResult<Option<Entr
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
                f.title, f.url, c.id, c.name,
-               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon
+               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon,
+               f.custom_referrer
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
@@ -356,7 +359,8 @@ pub fn list_by_user(
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
                f.title, f.url, c.id, c.name,
-               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon
+               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon,
+               f.custom_referrer
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
@@ -692,7 +696,8 @@ pub fn find_by_ids_with_feed(
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
                f.title, f.url, c.id, c.name,
-               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon
+               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon,
+               f.custom_referrer
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
@@ -814,7 +819,8 @@ pub fn list_by_user_with_continuation(
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
                f.title, f.url, c.id, c.name,
-               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon
+               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon,
+               f.custom_referrer
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
@@ -1199,6 +1205,7 @@ mod tests {
             category_id,
             url,
             Some("Test Feed"),
+            None,
             None,
             None,
             None,
