@@ -27,14 +27,6 @@ const FILES: &[(&str, &str)] = &[
         "js/components/rdrs-kb-pending.js",
         include_str!("../../static/js/components/rdrs-kb-pending.js"),
     ),
-    (
-        "js/components/rdrs-loading-bar.js",
-        include_str!("../../static/js/components/rdrs-loading-bar.js"),
-    ),
-    (
-        "js/components/rdrs-modal.js",
-        include_str!("../../static/js/components/rdrs-modal.js"),
-    ),
 ];
 
 pub async fn serve(Path(path): Path<String>) -> Response {

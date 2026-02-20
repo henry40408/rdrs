@@ -579,7 +579,6 @@
             };
         };
     </script>
-    <script type="module" src="/static/js/components/rdrs-loading-bar.js?v={{ git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-kb-pending.js?v={{ git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-flash.js?v={{ git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-kb-help.js?v={{ git_version }}"></script>
@@ -588,7 +587,6 @@
     {% block head %}{% endblock %}
 </head>
 <body>
-    <rdrs-loading-bar></rdrs-loading-bar>
     {% block flash %}{% endblock %}
     {% block content %}{% endblock %}
     <rdrs-kb-help></rdrs-kb-help>

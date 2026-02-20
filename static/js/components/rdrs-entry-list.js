@@ -132,7 +132,6 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     async loadEntries(reset = true) {
         const container = this.querySelector('#entries-list');
         container.classList.add('entries-list-refreshing');
-        if (window.loading) window.loading.start();
 
         if (reset) {
             this.continuation = null;
@@ -189,7 +188,6 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             container.innerHTML = '<p class="muted">Failed to load entries</p>';
         } finally {
             container.classList.remove('entries-list-refreshing');
-            if (window.loading) window.loading.stop();
         }
     }
 
