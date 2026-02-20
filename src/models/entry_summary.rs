@@ -344,6 +344,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap()
         .id;
@@ -460,6 +461,7 @@ mod tests {
             category_id,
             "https://example.com/feed.xml",
             Some("Test Feed"),
+            None,
             None,
             None,
             None,

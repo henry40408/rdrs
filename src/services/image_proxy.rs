@@ -28,6 +28,38 @@ pub fn create_proxy_url(original_url: &str, secret: &[u8]) -> String {
     format!("/api/proxy/image?url={}&s={}", encoded, signature)
 }
 
+/// Signs a URL combined with a referrer using HMAC-SHA256.
+/// The message is `url|referrer` to bind both values together.
+pub fn sign_url_with_referrer(url: &str, referrer: &str, secret: &[u8]) -> String {
+    let message = format!("{}|{}", url, referrer);
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
+    mac.update(message.as_bytes());
+    let result = mac.finalize().into_bytes();
+    URL_SAFE_NO_PAD.encode(&result[..8])
+}
+
+/// Verifies a signature for a given URL and referrer pair.
+pub fn verify_signature_with_referrer(
+    url: &str,
+    referrer: &str,
+    signature: &str,
+    secret: &[u8],
+) -> bool {
+    let expected = sign_url_with_referrer(url, referrer, secret);
+    constant_time_eq(expected.as_bytes(), signature.as_bytes())
+}
+
+/// Creates a proxy URL with signature for an image URL, including a referrer parameter.
+pub fn create_proxy_url_with_referrer(original_url: &str, referrer: &str, secret: &[u8]) -> String {
+    let encoded_url = URL_SAFE_NO_PAD.encode(original_url);
+    let encoded_referrer = URL_SAFE_NO_PAD.encode(referrer);
+    let signature = sign_url_with_referrer(original_url, referrer, secret);
+    format!(
+        "/api/proxy/image?url={}&s={}&r={}",
+        encoded_url, signature, encoded_referrer
+    )
+}
+
 /// Constant-time equality comparison to prevent timing attacks.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -106,6 +138,71 @@ mod tests {
         assert_eq!(parts.len(), 2);
         let signature = parts[1];
         assert!(verify_signature(url, signature, secret));
+    }
+
+    #[test]
+    fn test_sign_url_with_referrer() {
+        let secret = b"test_secret_key_32_bytes_long!!!";
+        let url = "https://example.com/image.jpg";
+        let referrer = "https://example.com";
+
+        let sig = sign_url_with_referrer(url, referrer, secret);
+        assert_eq!(sig.len(), 11);
+
+        // Different referrer should produce different signature
+        let sig2 = sign_url_with_referrer(url, "https://other.com", secret);
+        assert_ne!(sig, sig2);
+
+        // Should differ from sign_url without referrer
+        let sig_no_ref = sign_url(url, secret);
+        assert_ne!(sig, sig_no_ref);
+    }
+
+    #[test]
+    fn test_verify_signature_with_referrer_valid() {
+        let secret = b"test_secret_key_32_bytes_long!!!";
+        let url = "https://example.com/image.jpg";
+        let referrer = "https://example.com";
+
+        let sig = sign_url_with_referrer(url, referrer, secret);
+        assert!(verify_signature_with_referrer(url, referrer, &sig, secret));
+    }
+
+    #[test]
+    fn test_verify_signature_with_referrer_wrong_referrer() {
+        let secret = b"test_secret_key_32_bytes_long!!!";
+        let url = "https://example.com/image.jpg";
+        let referrer = "https://example.com";
+
+        let sig = sign_url_with_referrer(url, referrer, secret);
+        assert!(!verify_signature_with_referrer(
+            url,
+            "https://other.com",
+            &sig,
+            secret
+        ));
+    }
+
+    #[test]
+    fn test_create_proxy_url_with_referrer() {
+        let secret = b"test_secret_key_32_bytes_long!!!";
+        let url = "https://example.com/image.jpg";
+        let referrer = "https://example.com";
+
+        let proxy_url = create_proxy_url_with_referrer(url, referrer, secret);
+
+        assert!(proxy_url.starts_with("/api/proxy/image?url="));
+        assert!(proxy_url.contains("&s="));
+        assert!(proxy_url.contains("&r="));
+
+        // Verify the encoded referrer
+        let encoded_referrer = URL_SAFE_NO_PAD.encode(referrer);
+        assert!(proxy_url.contains(&format!("&r={}", encoded_referrer)));
+
+        // Verify the signature
+        let parts: Vec<&str> = proxy_url.split('&').collect();
+        let sig = parts[1].strip_prefix("s=").unwrap();
+        assert!(verify_signature_with_referrer(url, referrer, sig, secret));
     }
 
     #[test]

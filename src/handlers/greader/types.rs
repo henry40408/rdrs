@@ -245,6 +245,8 @@ pub struct Subscription {
     pub custom_user_agent: Option<String>,
     #[serde(rename = "_http2Disabled")]
     pub http2_disabled: bool,
+    #[serde(rename = "_customReferrer", skip_serializing_if = "Option::is_none")]
+    pub custom_referrer: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

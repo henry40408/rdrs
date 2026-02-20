@@ -91,7 +91,7 @@ pub async fn fetch_full_content(
 ) -> AppResult<Json<FetchFullContentResponse>> {
     // Verify entry exists and belongs to user
     let user_id = auth_user.user.id;
-    let link = state
+    let (link, custom_referrer) = state
         .db
         .user(move |conn| {
             let entry_with_feed =
@@ -104,10 +104,12 @@ pub async fn fetch_full_content(
             }
 
             // Check if entry has a link
-            entry_with_feed
+            let link = entry_with_feed
                 .entry
                 .link
-                .ok_or_else(|| AppError::Validation("Entry has no link".to_string()))
+                .ok_or_else(|| AppError::Validation("Entry has no link".to_string()))?;
+
+            Ok((link, entry_with_feed.custom_referrer))
         })
         .await??;
 
@@ -119,6 +121,7 @@ pub async fn fetch_full_content(
         &extracted.content,
         &state.config.image_proxy_secret,
         Some(&link),
+        custom_referrer.as_deref(),
     );
 
     Ok(Json(FetchFullContentResponse {

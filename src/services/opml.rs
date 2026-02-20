@@ -351,6 +351,7 @@ mod tests {
             last_modified: None,
             custom_user_agent: None,
             http2_disabled: false,
+            custom_referrer: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];

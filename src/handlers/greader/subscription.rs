@@ -57,6 +57,7 @@ pub async fn subscription_list(
                         description: f.description,
                         custom_user_agent: f.custom_user_agent,
                         http2_disabled: f.http2_disabled,
+                        custom_referrer: f.custom_referrer,
                     }
                 })
                 .collect();
@@ -90,6 +91,7 @@ pub struct SubscriptionEditForm {
     pub site_url: Option<String>,
     pub custom_user_agent: Option<String>,
     pub http2_disabled: Option<bool>,
+    pub custom_referrer: Option<String>,
 }
 
 /// `POST /reader/api/0/subscription/edit`
@@ -159,6 +161,7 @@ pub async fn subscription_edit(
                         discovered.site_url.as_deref(),
                         None,
                         None,
+                        None,
                     )?;
 
                     Ok::<_, AppError>(())
@@ -184,6 +187,12 @@ pub async fn subscription_edit(
             let site_url = form.site_url.clone();
             let custom_user_agent = form.custom_user_agent.clone();
             let http2_disabled = form.http2_disabled;
+            let custom_referrer_provided = form.custom_referrer.is_some();
+            let custom_referrer = form
+                .custom_referrer
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(String::from);
 
             state
                 .db
@@ -208,6 +217,11 @@ pub async fn subscription_edit(
                         .as_deref()
                         .or(f.custom_user_agent.as_deref());
                     let effective_http2_disabled = http2_disabled.unwrap_or(f.http2_disabled);
+                    let effective_referrer = if custom_referrer_provided {
+                        custom_referrer.as_deref()
+                    } else {
+                        f.custom_referrer.as_deref()
+                    };
 
                     feed::update_feed(
                         conn,
@@ -220,6 +234,7 @@ pub async fn subscription_edit(
                         effective_site_url,
                         effective_user_agent,
                         effective_http2_disabled,
+                        effective_referrer,
                     )?;
 
                     Ok::<_, AppError>(())
@@ -320,6 +335,7 @@ pub async fn quickadd(
                 discovered.site_url.as_deref(),
                 None,
                 None,
+                None,
             )?;
 
             Ok::<_, AppError>(())
@@ -398,6 +414,7 @@ pub async fn import(
                         opml_feed.title.as_deref(),
                         None,
                         opml_feed.html_url.as_deref(),
+                        None,
                         None,
                         None,
                     );
