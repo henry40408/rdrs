@@ -109,11 +109,7 @@ pub async fn fetch_full_content(
                 .link
                 .ok_or_else(|| AppError::Validation("Entry has no link".to_string()))?;
 
-            // Get the feed's custom_referrer
-            let feed = feed::find_by_id(conn, entry_with_feed.entry.feed_id)?
-                .ok_or(AppError::FeedNotFound)?;
-
-            Ok((link, feed.custom_referrer))
+            Ok((link, entry_with_feed.custom_referrer))
         })
         .await??;
 

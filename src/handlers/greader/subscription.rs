@@ -187,7 +187,12 @@ pub async fn subscription_edit(
             let site_url = form.site_url.clone();
             let custom_user_agent = form.custom_user_agent.clone();
             let http2_disabled = form.http2_disabled;
-            let custom_referrer = form.custom_referrer.clone();
+            let custom_referrer_provided = form.custom_referrer.is_some();
+            let custom_referrer = form
+                .custom_referrer
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(String::from);
 
             state
                 .db
@@ -212,8 +217,11 @@ pub async fn subscription_edit(
                         .as_deref()
                         .or(f.custom_user_agent.as_deref());
                     let effective_http2_disabled = http2_disabled.unwrap_or(f.http2_disabled);
-                    let effective_referrer =
-                        custom_referrer.as_deref().or(f.custom_referrer.as_deref());
+                    let effective_referrer = if custom_referrer_provided {
+                        custom_referrer.as_deref()
+                    } else {
+                        f.custom_referrer.as_deref()
+                    };
 
                     feed::update_feed(
                         conn,

@@ -25,6 +25,28 @@ pub struct ProxyQuery {
     r: Option<String>,
 }
 
+/// Decodes a base64url-encoded referrer parameter.
+fn decode_referrer(encoded: &str) -> AppResult<String> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| AppError::InvalidImageUrl)?;
+    String::from_utf8(bytes).map_err(|_| AppError::InvalidImageUrl)
+}
+
+/// Verifies the proxy URL signature, accounting for optional referrer.
+fn verify_proxy_signature(
+    url: &str,
+    signature: &str,
+    referrer: Option<&str>,
+    secret: &[u8],
+) -> bool {
+    if let Some(referrer) = referrer {
+        verify_signature_with_referrer(url, referrer, signature, secret)
+    } else {
+        verify_signature(url, signature, secret)
+    }
+}
+
 pub async fn proxy_image(
     State(state): State<AppState>,
     _user: AuthUser,
@@ -36,28 +58,16 @@ pub async fn proxy_image(
         .map_err(|_| AppError::InvalidImageUrl)?;
     let url_str = String::from_utf8(url_bytes).map_err(|_| AppError::InvalidImageUrl)?;
 
-    // Decode and verify referrer if present
-    let referrer = if let Some(ref r_encoded) = query.r {
-        let r_bytes = URL_SAFE_NO_PAD
-            .decode(r_encoded)
-            .map_err(|_| AppError::InvalidImageUrl)?;
-        Some(String::from_utf8(r_bytes).map_err(|_| AppError::InvalidImageUrl)?)
-    } else {
-        None
-    };
+    // Decode referrer if present
+    let referrer = query.r.as_deref().map(decode_referrer).transpose()?;
 
     // Verify signature (with or without referrer)
-    let valid = if let Some(ref referrer) = referrer {
-        verify_signature_with_referrer(
-            &url_str,
-            referrer,
-            &query.s,
-            &state.config.image_proxy_secret,
-        )
-    } else {
-        verify_signature(&url_str, &query.s, &state.config.image_proxy_secret)
-    };
-    if !valid {
+    if !verify_proxy_signature(
+        &url_str,
+        &query.s,
+        referrer.as_deref(),
+        &state.config.image_proxy_secret,
+    ) {
         return Err(AppError::InvalidSignature);
     }
 
@@ -192,6 +202,75 @@ fn is_valid_image_type(content_type: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::{sign_url, sign_url_with_referrer};
+
+    #[test]
+    fn test_decode_referrer_valid() {
+        let referrer = "https://example.com";
+        let encoded = URL_SAFE_NO_PAD.encode(referrer);
+        let decoded = decode_referrer(&encoded).unwrap();
+        assert_eq!(decoded, referrer);
+    }
+
+    #[test]
+    fn test_decode_referrer_invalid_base64() {
+        let result = decode_referrer("!!!invalid!!!");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decode_referrer_invalid_utf8() {
+        // Encode invalid UTF-8 bytes
+        let encoded = URL_SAFE_NO_PAD.encode([0xff, 0xfe]);
+        let result = decode_referrer(&encoded);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_proxy_signature_without_referrer() {
+        let secret = b"test_secret_key_32_bytes_long!!!";
+        let url = "https://example.com/image.jpg";
+        let sig = sign_url(url, secret);
+
+        assert!(verify_proxy_signature(url, &sig, None, secret));
+        assert!(!verify_proxy_signature(url, "invalid", None, secret));
+    }
+
+    #[test]
+    fn test_verify_proxy_signature_with_referrer() {
+        let secret = b"test_secret_key_32_bytes_long!!!";
+        let url = "https://example.com/image.jpg";
+        let referrer = "https://example.com";
+        let sig = sign_url_with_referrer(url, referrer, secret);
+
+        assert!(verify_proxy_signature(url, &sig, Some(referrer), secret));
+        assert!(!verify_proxy_signature(
+            url,
+            &sig,
+            Some("https://other.com"),
+            secret
+        ));
+    }
+
+    #[test]
+    fn test_verify_proxy_signature_referrer_mismatch() {
+        let secret = b"test_secret_key_32_bytes_long!!!";
+        let url = "https://example.com/image.jpg";
+        let referrer = "https://example.com";
+
+        // Signature with referrer should not pass without referrer
+        let sig_with_ref = sign_url_with_referrer(url, referrer, secret);
+        assert!(!verify_proxy_signature(url, &sig_with_ref, None, secret));
+
+        // Signature without referrer should not pass with referrer
+        let sig_no_ref = sign_url(url, secret);
+        assert!(!verify_proxy_signature(
+            url,
+            &sig_no_ref,
+            Some(referrer),
+            secret
+        ));
+    }
 
     #[test]
     fn test_validate_url_valid() {
