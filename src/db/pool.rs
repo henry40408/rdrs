@@ -566,6 +566,70 @@ mod tests {
         let _: &dyn std::error::Error = &err;
     }
 
+    /// Helper to open a shared in-memory SQLite connection by URI name.
+    fn open_shared_memory(name: &str) -> Connection {
+        let uri = format!("file:{}?mode=memory&cache=shared", name);
+        Connection::open_with_flags(
+            uri,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+                | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_read_user_execute() {
+        // Use shared in-memory DB so both write and read connections see the same data
+        let wc = open_shared_memory("test_read_user");
+        wc.execute_batch("CREATE TABLE read_test (id INTEGER PRIMARY KEY, value TEXT);")
+            .unwrap();
+        wc.execute("INSERT INTO read_test (id, value) VALUES (1, 'hello')", [])
+            .unwrap();
+
+        let rc = open_shared_memory("test_read_user");
+        let (pool, _handle) = DbPool::new(wc, rc);
+
+        let result = pool
+            .read_user(|conn| {
+                conn.query_row("SELECT value FROM read_test WHERE id = 1", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .unwrap()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result, "hello");
+    }
+
+    #[tokio::test]
+    async fn test_read_background_execute() {
+        let wc = open_shared_memory("test_read_bg");
+        wc.execute_batch("CREATE TABLE read_bg_test (id INTEGER PRIMARY KEY, value TEXT);")
+            .unwrap();
+        wc.execute(
+            "INSERT INTO read_bg_test (id, value) VALUES (1, 'world')",
+            [],
+        )
+        .unwrap();
+
+        let rc = open_shared_memory("test_read_bg");
+        let (pool, _handle) = DbPool::new(wc, rc);
+
+        let result = pool
+            .read_background(|conn| {
+                conn.query_row("SELECT value FROM read_bg_test WHERE id = 1", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .unwrap()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result, "world");
+    }
+
     #[tokio::test]
     async fn test_background_channel_closes_actor_continues() {
         // Test the case where background channel closes but user channel is still open

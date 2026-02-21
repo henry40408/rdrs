@@ -221,4 +221,100 @@ mod tests {
         assert!(tables.contains(&"webauthn_challenge".to_string()));
         assert!(tables.contains(&"entry_summary".to_string()));
     }
+
+    #[test]
+    fn test_init_db_idempotent() {
+        // Running init_db twice should succeed (all CREATE IF NOT EXISTS)
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        init_db(&conn).unwrap();
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
+    }
+
+    #[test]
+    fn test_init_db_sets_user_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
+    }
+
+    #[test]
+    fn test_init_db_feed_has_bucket_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        // Verify bucket column exists by inserting a row with it
+        conn.execute(
+            "INSERT INTO user (username, password_hash) VALUES ('test', 'hash')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO category (user_id, name) VALUES (1, 'Test')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO feed (category_id, url, bucket) VALUES (1, 'https://example.com/feed', 42)",
+            [],
+        )
+        .unwrap();
+
+        let bucket: i64 = conn
+            .query_row("SELECT bucket FROM feed WHERE id = 1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(bucket, 42);
+    }
+
+    #[test]
+    fn test_init_db_feed_has_custom_referrer_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO user (username, password_hash) VALUES ('test', 'hash')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO category (user_id, name) VALUES (1, 'Test')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO feed (category_id, url, custom_referrer) VALUES (1, 'https://example.com/feed', 'https://ref.example.com')",
+            [],
+        )
+        .unwrap();
+
+        let referrer: Option<String> = conn
+            .query_row("SELECT custom_referrer FROM feed WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(referrer, Some("https://ref.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_init_db_bucket_index_exists() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let indexes: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_feed_bucket'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(indexes.len(), 1);
+    }
 }

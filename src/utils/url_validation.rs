@@ -151,4 +151,88 @@ mod tests {
         let url = Url::parse("file:///etc/passwd").unwrap();
         assert!(validate_url(&url).is_err());
     }
+
+    #[test]
+    fn test_validate_url_ipv6_loopback() {
+        let url = Url::parse("http://[::1]/article").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_url_link_local() {
+        let url = Url::parse("http://169.254.1.1/image.jpg").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_url_broadcast() {
+        let url = Url::parse("http://255.255.255.255/image.jpg").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_url_documentation_ip() {
+        // 192.0.2.0/24 is a documentation range
+        let url = Url::parse("http://192.0.2.1/image.jpg").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_url_unspecified_ipv4() {
+        let url = Url::parse("http://0.0.0.0/image.jpg").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_url_unspecified_ipv6() {
+        let url = Url::parse("http://[::]/image.jpg").unwrap();
+        assert!(validate_url(&url).is_err());
+    }
+
+    #[test]
+    fn test_validate_url_http_valid() {
+        let url = Url::parse("http://example.com/article").unwrap();
+        assert!(validate_url(&url).is_ok());
+    }
+
+    #[test]
+    fn test_error_display() {
+        assert_eq!(
+            format!("{}", UrlValidationError::InvalidScheme),
+            "URL scheme must be http or https"
+        );
+        assert_eq!(format!("{}", UrlValidationError::NoHost), "URL has no host");
+        assert_eq!(
+            format!("{}", UrlValidationError::BlockedHost),
+            "URL host is blocked"
+        );
+        assert_eq!(
+            format!("{}", UrlValidationError::PrivateIp),
+            "URL points to a private IP"
+        );
+    }
+
+    #[test]
+    fn test_error_is_error_trait() {
+        let err = UrlValidationError::InvalidScheme;
+        let _: &dyn std::error::Error = &err;
+    }
+
+    #[test]
+    fn test_is_private_ip_ipv6_unspecified() {
+        let ip: IpAddr = "::".parse().unwrap();
+        assert!(is_private_ip(&ip));
+    }
+
+    #[test]
+    fn test_is_private_ip_ipv6_loopback() {
+        let ip: IpAddr = "::1".parse().unwrap();
+        assert!(is_private_ip(&ip));
+    }
+
+    #[test]
+    fn test_is_private_ip_ipv6_public() {
+        let ip: IpAddr = "2001:db8::1".parse().unwrap();
+        assert!(!is_private_ip(&ip));
+    }
 }

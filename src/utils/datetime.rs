@@ -260,4 +260,85 @@ mod tests {
         // Chinese format
         assert!(parse_timestamp("週四, 22 一月 2026 15:09:47 +0800").is_some());
     }
+
+    #[test]
+    fn test_parse_timestamp_returns_none_for_garbage() {
+        assert!(parse_timestamp("not a date").is_none());
+    }
+
+    #[test]
+    fn test_parse_chinese_datetime_without_weekday() {
+        // No weekday prefix — goes through the else branch
+        let dt = parse_chinese_datetime("6 一月 2026 14:28:00 +0000");
+        assert!(dt.is_some());
+        let dt = dt.unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 1);
+        assert_eq!(dt.day(), 6);
+    }
+
+    #[test]
+    fn test_parse_chinese_datetime_without_timezone() {
+        // No timezone — falls through to naive_dt.and_utc()
+        let dt = parse_chinese_datetime("週二, 6 一月 2026 14:28:00");
+        assert!(dt.is_some());
+        let dt = dt.unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.hour(), 14);
+    }
+
+    #[test]
+    fn test_parse_chinese_datetime_too_few_parts() {
+        assert!(parse_chinese_datetime("6 一月").is_none());
+    }
+
+    #[test]
+    fn test_parse_chinese_datetime_invalid_month() {
+        assert!(parse_chinese_datetime("週二, 6 invalid 2026 14:28:00 +0000").is_none());
+    }
+
+    #[test]
+    fn test_parse_timezone_offset_short_string() {
+        assert!(parse_timezone_offset("+08").is_none());
+        assert!(parse_timezone_offset("").is_none());
+    }
+
+    #[test]
+    fn test_parse_timezone_offset_invalid_sign() {
+        assert!(parse_timezone_offset("X0800").is_none());
+    }
+
+    #[test]
+    fn test_normalize_timezone_format_short_input() {
+        // Input shorter than 6 chars — just returns as-is
+        assert_eq!(normalize_timezone_format("abc"), "abc");
+        assert_eq!(normalize_timezone_format("12:00"), "12:00");
+    }
+
+    #[test]
+    fn test_normalize_timezone_format_no_colon() {
+        // 6+ chars but no timezone-like suffix
+        assert_eq!(normalize_timezone_format("foobar"), "foobar");
+    }
+
+    #[test]
+    fn test_parse_datetime_falls_back_to_utc_now() {
+        // Completely unparsable string — falls back to Utc::now()
+        let dt = parse_datetime("totally unparsable");
+        // Should be close to now
+        let diff = (Utc::now() - dt).num_seconds().abs();
+        assert!(diff < 5);
+    }
+
+    #[test]
+    fn test_parse_chinese_month_all_months() {
+        assert_eq!(parse_chinese_month("二月"), Some(2));
+        assert_eq!(parse_chinese_month("四月"), Some(4));
+        assert_eq!(parse_chinese_month("五月"), Some(5));
+        assert_eq!(parse_chinese_month("七月"), Some(7));
+        assert_eq!(parse_chinese_month("八月"), Some(8));
+        assert_eq!(parse_chinese_month("九月"), Some(9));
+        assert_eq!(parse_chinese_month("十月"), Some(10));
+        assert_eq!(parse_chinese_month("十一月"), Some(11));
+    }
 }
