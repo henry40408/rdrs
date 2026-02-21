@@ -47,8 +47,13 @@ pub struct FetchFullContentResponse {
 pub struct NeighborsQuery {
     #[serde(default)]
     pub unread_only: bool,
+    #[serde(default)]
+    pub starred_only: bool,
+    #[serde(default)]
+    pub read_only: bool,
     pub feed_id: Option<i64>,
     pub category_id: Option<i64>,
+    pub has_summary: Option<bool>,
 }
 
 pub async fn get_entry_neighbors(
@@ -70,14 +75,16 @@ pub async fn get_entry_neighbors(
                 return Err(AppError::EntryNotFound);
             }
 
-            let neighbors = entry::find_neighbors(
-                conn,
-                user_id,
-                id,
-                query.unread_only,
-                query.feed_id,
-                query.category_id,
-            )?;
+            let filter = entry::EntryFilter {
+                feed_id: query.feed_id,
+                category_id: query.category_id,
+                unread_only: query.unread_only,
+                starred_only: query.starred_only,
+                read_only: query.read_only,
+                has_summary: query.has_summary,
+                search: None,
+            };
+            let neighbors = entry::find_neighbors(conn, user_id, id, &filter)?;
             Ok::<_, AppError>(neighbors)
         })
         .await??;

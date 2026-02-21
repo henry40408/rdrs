@@ -817,16 +817,13 @@ pub struct EntryNeighbors {
 /// Entries are ordered by COALESCE(published_at, created_at) DESC.
 /// - prev_id: the entry that comes before (newer/higher in list)
 /// - next_id: the entry that comes after (older/lower in list)
-/// - unread_only: if true, only consider unread entries as neighbors
-/// - feed_id: if Some, only consider entries from this feed
-/// - category_id: if Some, only consider entries from this category
+///
+/// Uses EntryFilter to support all filtering conditions (unread, starred, read, feed, category, has_summary).
 pub fn find_neighbors(
     conn: &Connection,
     user_id: i64,
     entry_id: i64,
-    unread_only: bool,
-    feed_id: Option<i64>,
-    category_id: Option<i64>,
+    filter: &EntryFilter,
 ) -> AppResult<EntryNeighbors> {
     // Get the current entry's sort timestamp
     let sort_time: Option<String> = conn
@@ -853,32 +850,18 @@ pub fn find_neighbors(
         }
     };
 
-    // Build filter conditions with parameterized queries.
+    // Build filter conditions using apply_filter_conditions.
     // Prev query base params: ?1=user_id, ?2=sort_time
     let mut prev_conditions = Vec::new();
     let mut prev_params: Vec<Box<dyn rusqlite::ToSql>> =
         vec![Box::new(user_id), Box::new(sort_time.clone())];
+    apply_filter_conditions(&mut prev_conditions, &mut prev_params, filter);
+
     // Next query base params: ?1=user_id, ?2=sort_time, ?3=entry_id
     let mut next_conditions = Vec::new();
     let mut next_params: Vec<Box<dyn rusqlite::ToSql>> =
         vec![Box::new(user_id), Box::new(sort_time), Box::new(entry_id)];
-
-    if unread_only {
-        prev_conditions.push("e.read_at IS NULL".to_string());
-        next_conditions.push("e.read_at IS NULL".to_string());
-    }
-    if let Some(fid) = feed_id {
-        prev_conditions.push(format!("e.feed_id = ?{}", prev_params.len() + 1));
-        prev_params.push(Box::new(fid));
-        next_conditions.push(format!("e.feed_id = ?{}", next_params.len() + 1));
-        next_params.push(Box::new(fid));
-    }
-    if let Some(cid) = category_id {
-        prev_conditions.push(format!("c.id = ?{}", prev_params.len() + 1));
-        prev_params.push(Box::new(cid));
-        next_conditions.push(format!("c.id = ?{}", next_params.len() + 1));
-        next_params.push(Box::new(cid));
-    }
+    apply_filter_conditions(&mut next_conditions, &mut next_params, filter);
 
     let prev_extra = if prev_conditions.is_empty() {
         String::new()
@@ -1512,5 +1495,112 @@ mod tests {
 
         // All user 1 entries should now be read
         assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_find_neighbors_starred_only() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        // Create 5 entries with distinct timestamps
+        let mut entries = Vec::new();
+        for i in 0..5 {
+            let published = Utc::now() + chrono::Duration::seconds(i * 10);
+            let (entry, _) = upsert_entry(
+                &conn,
+                feed_id,
+                &format!("guid-{}", i),
+                Some(&format!("Entry {}", i)),
+                None,
+                None,
+                None,
+                None,
+                Some(published),
+            )
+            .unwrap();
+            entries.push(entry);
+        }
+
+        // Star entries 1 and 3 (0-indexed)
+        star_entry(&conn, entries[1].id).unwrap();
+        star_entry(&conn, entries[3].id).unwrap();
+
+        // From entry 3 (starred), with starred_only filter:
+        // prev should be entry 1 (the only other starred entry that is newer... wait, entry 3 is newer)
+        // Actually entries are ordered by published_at DESC, so entry 4 is newest.
+        // entry 3 published_at = now+30s, entry 1 published_at = now+10s
+        // prev (newer than entry 3) = none starred that is newer
+        // next (older than entry 3) = entry 1 (starred, older)
+        let filter = EntryFilter {
+            starred_only: true,
+            ..Default::default()
+        };
+        let neighbors = find_neighbors(&conn, user_id, entries[3].id, &filter).unwrap();
+        assert_eq!(neighbors.prev_id, None); // no starred entry newer than entry 3
+        assert_eq!(neighbors.next_id, Some(entries[1].id)); // entry 1 is older and starred
+
+        // From entry 1 (starred):
+        // prev (newer) = entry 3 (starred, newer)
+        // next (older) = none
+        let neighbors = find_neighbors(&conn, user_id, entries[1].id, &filter).unwrap();
+        assert_eq!(neighbors.prev_id, Some(entries[3].id));
+        assert_eq!(neighbors.next_id, None);
+
+        // Without filter, entry 3 should see entry 4 as prev and entry 2 as next
+        let no_filter = EntryFilter::default();
+        let neighbors = find_neighbors(&conn, user_id, entries[3].id, &no_filter).unwrap();
+        assert_eq!(neighbors.prev_id, Some(entries[4].id));
+        assert_eq!(neighbors.next_id, Some(entries[2].id));
+    }
+
+    #[test]
+    fn test_find_neighbors_read_only() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        // Create 4 entries with distinct timestamps
+        let mut entries = Vec::new();
+        for i in 0..4 {
+            let published = Utc::now() + chrono::Duration::seconds(i * 10);
+            let (entry, _) = upsert_entry(
+                &conn,
+                feed_id,
+                &format!("guid-{}", i),
+                Some(&format!("Entry {}", i)),
+                None,
+                None,
+                None,
+                None,
+                Some(published),
+            )
+            .unwrap();
+            entries.push(entry);
+        }
+
+        // Mark entries 0 and 2 as read
+        mark_as_read(&conn, entries[0].id).unwrap();
+        mark_as_read(&conn, entries[2].id).unwrap();
+
+        // From entry 2 (read, published_at = now+20s), with read_only filter:
+        // prev (newer) = none (entry 3 is newer but unread)
+        // next (older) = entry 0 (read, older)
+        let filter = EntryFilter {
+            read_only: true,
+            ..Default::default()
+        };
+        let neighbors = find_neighbors(&conn, user_id, entries[2].id, &filter).unwrap();
+        assert_eq!(neighbors.prev_id, None);
+        assert_eq!(neighbors.next_id, Some(entries[0].id));
+
+        // From entry 0 (read, published_at = now+0s):
+        // prev (newer) = entry 2 (read, newer)
+        // next (older) = none
+        let neighbors = find_neighbors(&conn, user_id, entries[0].id, &filter).unwrap();
+        assert_eq!(neighbors.prev_id, Some(entries[2].id));
+        assert_eq!(neighbors.next_id, None);
     }
 }

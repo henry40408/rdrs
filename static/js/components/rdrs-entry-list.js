@@ -261,6 +261,9 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             let originQuery = `?origin=${encodeURIComponent(origin)}`;
             if (origin === 'feed' && entry.feed_id) originQuery += `&feed=${entry.feed_id}`;
             if (origin === 'category' && entry.category_id) originQuery += `&category=${entry.category_id}`;
+            if (origin === 'read') originQuery += '&read_only=true';
+            if (origin === 'starred') originQuery += '&starred_only=true';
+            if (origin === 'summarized') originQuery += '&has_summary=true';
 
             // Content snippet for search
             let contentSnippetHtml = '';
@@ -517,6 +520,9 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         let originQuery = `?origin=${encodeURIComponent(this.origin)}`;
         if (this.origin === 'feed' && entry.feed_id) originQuery += `&feed=${entry.feed_id}`;
         if (this.origin === 'category' && entry.category_id) originQuery += `&category=${entry.category_id}`;
+        if (this.origin === 'read') originQuery += '&read_only=true';
+        if (this.origin === 'starred') originQuery += '&starred_only=true';
+        if (this.origin === 'summarized') originQuery += '&has_summary=true';
 
         window.location.href = `/entries/${entry.id}${originQuery}`;
     }
