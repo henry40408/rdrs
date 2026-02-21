@@ -29,8 +29,8 @@ impl Session {
 }
 
 fn generate_token() -> String {
-    let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..TOKEN_LENGTH).map(|_| rng.gen()).collect();
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..TOKEN_LENGTH).map(|_| rng.random()).collect();
     base64_encode(&bytes)
 }
 

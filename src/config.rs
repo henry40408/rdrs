@@ -66,7 +66,7 @@ impl Config {
 
         // Generate a random 32-byte secret
         let mut secret = vec![0u8; 32];
-        rand::thread_rng().fill_bytes(&mut secret);
+        rand::rng().fill_bytes(&mut secret);
         (secret, true)
     }
 
