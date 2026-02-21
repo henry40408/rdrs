@@ -258,8 +258,7 @@ pub fn get_completed_entry_ids(conn: &Connection, user_id: i64) -> AppResult<Vec
 
     let ids = stmt
         .query_map(params![user_id], |row| row.get(0))?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(ids)
 }
@@ -284,8 +283,7 @@ pub fn find_incomplete(conn: &Connection) -> AppResult<Vec<(i64, i64, String)>> 
                 row.get::<_, String>(2)?,
             ))
         })?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
 }
@@ -337,14 +335,16 @@ mod tests {
         let category_id = category::create_category(conn, user_id, "Tech").unwrap().id;
         let feed_id = feed::create_feed(
             conn,
-            category_id,
-            "https://example.com/feed.xml",
-            Some("Test Feed"),
-            None,
-            None,
-            None,
-            None,
-            None,
+            &feed::CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: Some("Test Feed"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap()
         .id;
@@ -458,14 +458,16 @@ mod tests {
             .id;
         let feed_id = feed::create_feed(
             &conn,
-            category_id,
-            "https://example.com/feed.xml",
-            Some("Test Feed"),
-            None,
-            None,
-            None,
-            None,
-            None,
+            &feed::CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: Some("Test Feed"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap()
         .id;

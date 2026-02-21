@@ -352,6 +352,7 @@ mod tests {
             custom_user_agent: None,
             http2_disabled: false,
             custom_referrer: None,
+            bucket: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];

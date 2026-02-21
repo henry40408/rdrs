@@ -98,8 +98,7 @@ pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Category>>
 
     let categories = stmt
         .query_map(params![user_id], row_to_category)?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(categories)
 }

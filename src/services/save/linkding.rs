@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{BookmarkData, SaveResult};
 use crate::error::{AppError, AppResult};
-use crate::services::http::{send_with_retry, RetryConfig, EXTERNAL_API_TIMEOUT};
+use crate::services::http::{send_with_retry_on_error, RetryConfig, EXTERNAL_API_TIMEOUT};
 
 /// Linkding service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +71,7 @@ pub async fn save_to_linkding(
     };
 
     let token = format!("Token {}", config.api_token);
-    let response = send_with_retry(&RetryConfig::default(), || {
+    let response = send_with_retry_on_error(&RetryConfig::default(), || {
         client
             .post(&api_url)
             .header("Authorization", &token)

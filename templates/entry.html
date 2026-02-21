@@ -28,12 +28,18 @@
     const filterFeedId = urlParams.get('feed');
     const filterCategoryId = urlParams.get('category');
     const filterOrigin = urlParams.get('origin');
+    const filterReadOnly = urlParams.get('read_only') === 'true';
+    const filterStarredOnly = urlParams.get('starred_only') === 'true';
+    const filterHasSummary = urlParams.get('has_summary') === 'true';
 
     function getFilterQueryString() {
         const params = new URLSearchParams();
         if (filterFeedId) params.set('feed', filterFeedId);
         if (filterCategoryId) params.set('category', filterCategoryId);
         if (filterOrigin) params.set('origin', filterOrigin);
+        if (filterReadOnly) params.set('read_only', 'true');
+        if (filterStarredOnly) params.set('starred_only', 'true');
+        if (filterHasSummary) params.set('has_summary', 'true');
         const str = params.toString();
         return str ? '?' + str : '';
     }
@@ -66,6 +72,9 @@
             const params = new URLSearchParams();
             if (filterFeedId) params.set('feed_id', filterFeedId);
             if (filterCategoryId) params.set('category_id', filterCategoryId);
+            if (filterReadOnly) params.set('read_only', 'true');
+            if (filterStarredOnly) params.set('starred_only', 'true');
+            if (filterHasSummary) params.set('has_summary', 'true');
             const qs = params.toString();
             if (qs) url += '?' + qs;
             const response = await fetch(url);
@@ -83,6 +92,9 @@
             let url = `/api/entries/${entryId}/neighbors?unread_only=true`;
             if (filterFeedId) url += `&feed_id=${filterFeedId}`;
             if (filterCategoryId) url += `&category_id=${filterCategoryId}`;
+            if (filterReadOnly) url += '&read_only=true';
+            if (filterStarredOnly) url += '&starred_only=true';
+            if (filterHasSummary) url += '&has_summary=true';
             const response = await fetch(url);
             if (response.ok) {
                 unreadNeighbors = await response.json();

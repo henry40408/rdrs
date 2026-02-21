@@ -2,7 +2,7 @@ use scraper::{Html, Selector};
 use url::Url;
 
 use crate::error::{AppError, AppResult};
-use crate::services::http::{send_with_retry, RetryConfig, DEFAULT_TIMEOUT};
+use crate::services::http::{send_with_retry_on_error, RetryConfig, DEFAULT_TIMEOUT};
 
 #[derive(Debug, Clone)]
 pub struct DiscoveredFeed {
@@ -30,7 +30,7 @@ pub async fn discover_feed(url: &str, user_agent: &str) -> AppResult<DiscoveredF
     let retry_config = RetryConfig::default();
     let url_owned = url.to_string();
 
-    let response = send_with_retry(&retry_config, || client.get(&url_owned))
+    let response = send_with_retry_on_error(&retry_config, || client.get(&url_owned))
         .await
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
@@ -59,7 +59,7 @@ pub async fn discover_feed(url: &str, user_agent: &str) -> AppResult<DiscoveredF
     let feed_url = find_feed_link_in_html(&body, &parsed_url)?;
 
     // Fetch and parse the discovered feed
-    let feed_response = send_with_retry(&retry_config, || client.get(&feed_url))
+    let feed_response = send_with_retry_on_error(&retry_config, || client.get(&feed_url))
         .await
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 

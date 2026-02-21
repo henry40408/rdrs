@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 
 use crate::error::AppResult;
+use crate::models::feed::url_to_bucket;
 
 pub fn init_db(conn: &Connection) -> AppResult<()> {
     conn.execute_batch(
@@ -150,18 +151,49 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         "#,
     )?;
 
-    // Migration: Add save_services column if not exists
-    // SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we ignore the error
-    let _ = conn.execute(
-        "ALTER TABLE user_settings ADD COLUMN save_services TEXT",
-        [],
-    );
+    // Version-based migrations using PRAGMA user_version
+    let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
-    // Migration: Add theme column if not exists
-    let _ = conn.execute("ALTER TABLE user_settings ADD COLUMN theme TEXT", []);
+    // Migrations 1-3: Legacy migrations that may already exist in older databases.
+    // Use `let _ =` to ignore "duplicate column" errors for databases that already
+    // had these columns added before the user_version system was introduced.
+    if version < 1 {
+        let _ = conn.execute(
+            "ALTER TABLE user_settings ADD COLUMN save_services TEXT",
+            [],
+        );
+    }
+    if version < 2 {
+        let _ = conn.execute("ALTER TABLE user_settings ADD COLUMN theme TEXT", []);
+    }
+    if version < 3 {
+        let _ = conn.execute("ALTER TABLE feed ADD COLUMN custom_referrer TEXT", []);
+    }
+    if version < 4 {
+        conn.execute("ALTER TABLE feed ADD COLUMN bucket INTEGER", [])?;
+        // Backfill bucket values for existing feeds
+        let mut stmt = conn.prepare("SELECT id, url FROM feed")?;
+        let feeds: Vec<(i64, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect();
+        for (id, url) in &feeds {
+            let bucket = url_to_bucket(url) as i64;
+            conn.execute(
+                "UPDATE feed SET bucket = ?1 WHERE id = ?2",
+                rusqlite::params![bucket, id],
+            )?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feed_bucket ON feed(bucket)",
+            [],
+        )?;
+    }
 
-    // Migration: Add custom_referrer column if not exists
-    let _ = conn.execute("ALTER TABLE feed ADD COLUMN custom_referrer TEXT", []);
+    const LATEST_VERSION: i64 = 4;
+    if version < LATEST_VERSION {
+        conn.pragma_update(None, "user_version", LATEST_VERSION)?;
+    }
 
     Ok(())
 }
@@ -188,5 +220,101 @@ mod tests {
         assert!(tables.contains(&"passkey".to_string()));
         assert!(tables.contains(&"webauthn_challenge".to_string()));
         assert!(tables.contains(&"entry_summary".to_string()));
+    }
+
+    #[test]
+    fn test_init_db_idempotent() {
+        // Running init_db twice should succeed (all CREATE IF NOT EXISTS)
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        init_db(&conn).unwrap();
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
+    }
+
+    #[test]
+    fn test_init_db_sets_user_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
+    }
+
+    #[test]
+    fn test_init_db_feed_has_bucket_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        // Verify bucket column exists by inserting a row with it
+        conn.execute(
+            "INSERT INTO user (username, password_hash) VALUES ('test', 'hash')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO category (user_id, name) VALUES (1, 'Test')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO feed (category_id, url, bucket) VALUES (1, 'https://example.com/feed', 42)",
+            [],
+        )
+        .unwrap();
+
+        let bucket: i64 = conn
+            .query_row("SELECT bucket FROM feed WHERE id = 1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(bucket, 42);
+    }
+
+    #[test]
+    fn test_init_db_feed_has_custom_referrer_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO user (username, password_hash) VALUES ('test', 'hash')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO category (user_id, name) VALUES (1, 'Test')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO feed (category_id, url, custom_referrer) VALUES (1, 'https://example.com/feed', 'https://ref.example.com')",
+            [],
+        )
+        .unwrap();
+
+        let referrer: Option<String> = conn
+            .query_row("SELECT custom_referrer FROM feed WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(referrer, Some("https://ref.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_init_db_bucket_index_exists() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let indexes: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_feed_bucket'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(indexes.len(), 1);
     }
 }

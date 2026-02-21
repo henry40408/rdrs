@@ -154,14 +154,16 @@ pub async fn subscription_edit(
 
                     feed::create_feed(
                         conn,
-                        category_id,
-                        &discovered.feed_url,
-                        title.as_deref().or(discovered.title.as_deref()),
-                        discovered.description.as_deref(),
-                        discovered.site_url.as_deref(),
-                        None,
-                        None,
-                        None,
+                        &feed::CreateFeedParams {
+                            category_id,
+                            url: &discovered.feed_url,
+                            title: title.as_deref().or(discovered.title.as_deref()),
+                            description: discovered.description.as_deref(),
+                            site_url: discovered.site_url.as_deref(),
+                            custom_user_agent: None,
+                            http2_disabled: None,
+                            custom_referrer: None,
+                        },
                     )?;
 
                     Ok::<_, AppError>(())
@@ -225,16 +227,18 @@ pub async fn subscription_edit(
 
                     feed::update_feed(
                         conn,
-                        f.id,
-                        f.category_id,
-                        new_category_id,
-                        &f.url,
-                        title.as_deref().or(f.title.as_deref()),
-                        effective_description,
-                        effective_site_url,
-                        effective_user_agent,
-                        effective_http2_disabled,
-                        effective_referrer,
+                        &feed::UpdateFeedParams {
+                            id: f.id,
+                            category_id: f.category_id,
+                            new_category_id,
+                            url: &f.url,
+                            title: title.as_deref().or(f.title.as_deref()),
+                            description: effective_description,
+                            site_url: effective_site_url,
+                            custom_user_agent: effective_user_agent,
+                            http2_disabled: effective_http2_disabled,
+                            custom_referrer: effective_referrer,
+                        },
                     )?;
 
                     Ok::<_, AppError>(())
@@ -328,14 +332,16 @@ pub async fn quickadd(
 
             feed::create_feed(
                 conn,
-                category_id,
-                &discovered.feed_url,
-                discovered.title.as_deref(),
-                discovered.description.as_deref(),
-                discovered.site_url.as_deref(),
-                None,
-                None,
-                None,
+                &feed::CreateFeedParams {
+                    category_id,
+                    url: &discovered.feed_url,
+                    title: discovered.title.as_deref(),
+                    description: discovered.description.as_deref(),
+                    site_url: discovered.site_url.as_deref(),
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
             )?;
 
             Ok::<_, AppError>(())
@@ -409,14 +415,16 @@ pub async fn import(
 
                     let _ = feed::create_feed(
                         conn,
-                        cat.id,
-                        &opml_feed.xml_url,
-                        opml_feed.title.as_deref(),
-                        None,
-                        opml_feed.html_url.as_deref(),
-                        None,
-                        None,
-                        None,
+                        &feed::CreateFeedParams {
+                            category_id: cat.id,
+                            url: &opml_feed.xml_url,
+                            title: opml_feed.title.as_deref(),
+                            description: None,
+                            site_url: opml_feed.html_url.as_deref(),
+                            custom_user_agent: None,
+                            http2_disabled: None,
+                            custom_referrer: None,
+                        },
                     );
                 }
             }

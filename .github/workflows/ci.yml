@@ -45,8 +45,10 @@ jobs:
         run: cargo build --verbose
 
       - uses: taiki-e/install-action@nextest
+        if: runner.os != 'Linux'
 
       - name: Run tests
+        if: runner.os != 'Linux'
         run: cargo nextest run
 
   e2e-tests:
@@ -108,7 +110,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: llvm-tools-preview
 

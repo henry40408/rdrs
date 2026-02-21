@@ -3,7 +3,7 @@ use tracing::debug;
 use url::Url;
 
 use crate::error::{AppError, AppResult};
-use crate::services::http::{send_with_retry, RetryConfig, ICON_TIMEOUT};
+use crate::services::http::{send_with_retry_on_error, RetryConfig, ICON_TIMEOUT};
 
 const MAX_ICON_SIZE: usize = 256 * 1024; // 256KB
 
@@ -55,7 +55,7 @@ async fn fetch_image(url: &str, user_agent: &str) -> AppResult<Option<FetchedIma
     let retry_config = RetryConfig::icon();
     let url_owned = url.to_string();
 
-    let response = match send_with_retry(&retry_config, || client.get(&url_owned)).await {
+    let response = match send_with_retry_on_error(&retry_config, || client.get(&url_owned)).await {
         Ok(r) => r,
         Err(e) => {
             debug!("Failed to fetch image from {}: {}", url, e);
@@ -133,7 +133,7 @@ async fn fetch_favicon(site_url: &str, user_agent: &str) -> AppResult<Option<Fet
     let retry_config = RetryConfig::icon();
     let site_url_owned = site_url.to_string();
 
-    let html = match send_with_retry(&retry_config, || client.get(&site_url_owned)).await {
+    let html = match send_with_retry_on_error(&retry_config, || client.get(&site_url_owned)).await {
         Ok(r) if r.status().is_success() => match r.text().await {
             Ok(t) => t,
             Err(_) => return Ok(None),

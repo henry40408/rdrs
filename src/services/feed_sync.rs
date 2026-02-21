@@ -1,4 +1,4 @@
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::Utc;
 use reqwest::header::{HeaderMap, HeaderValue, IF_MODIFIED_SINCE, IF_NONE_MATCH};
 use serde::Serialize;
 use tracing::{debug, error, info, warn};
@@ -6,139 +6,11 @@ use tracing::{debug, error, info, warn};
 use crate::db::DbPool;
 use crate::error::{AppError, AppResult};
 use crate::models::{entry, feed, image};
-use crate::services::http::{send_with_retry, RetryConfig, DEFAULT_TIMEOUT, FEED_SYNC_TIMEOUT};
+use crate::services::http::{
+    send_with_retry_on_error, RetryConfig, DEFAULT_TIMEOUT, FEED_SYNC_TIMEOUT,
+};
 use crate::services::icon_fetcher;
-
-/// Parse Chinese month names to month number
-fn parse_chinese_month(s: &str) -> Option<u32> {
-    match s {
-        "一月" => Some(1),
-        "二月" => Some(2),
-        "三月" => Some(3),
-        "四月" => Some(4),
-        "五月" => Some(5),
-        "六月" => Some(6),
-        "七月" => Some(7),
-        "八月" => Some(8),
-        "九月" => Some(9),
-        "十月" => Some(10),
-        "十一月" => Some(11),
-        "十二月" => Some(12),
-        _ => None,
-    }
-}
-
-/// Parse timezone offset like "+0000", "+0800", "-0500"
-fn parse_timezone_offset(s: &str) -> Option<i32> {
-    let s = s.trim();
-    if s.len() < 5 {
-        return None;
-    }
-
-    let sign = match s.chars().next()? {
-        '+' => 1,
-        '-' => -1,
-        _ => return None,
-    };
-
-    let hours: i32 = s[1..3].parse().ok()?;
-    let minutes: i32 = s[3..5].parse().ok()?;
-
-    Some(sign * (hours * 3600 + minutes * 60))
-}
-
-/// Parse Chinese date format like "週二, 6 一月 2026 14:28:00 +0000"
-fn parse_chinese_datetime(s: &str) -> Option<DateTime<Utc>> {
-    let s = s.trim();
-    // Remove weekday prefix if present (e.g., "週二, " or "星期二, ")
-    let s = if let Some(pos) = s.find(", ") {
-        &s[pos + 2..]
-    } else {
-        s
-    };
-
-    // Expected format: "6 一月 2026 14:28:00 +0000"
-    let parts: Vec<&str> = s.splitn(4, ' ').collect();
-    if parts.len() < 4 {
-        return None;
-    }
-
-    let day: u32 = parts[0].parse().ok()?;
-    let month = parse_chinese_month(parts[1])?;
-    let year: i32 = parts[2].parse().ok()?;
-
-    // Parse time and timezone: "14:28:00 +0000"
-    let time_tz = parts[3];
-    let time_parts: Vec<&str> = time_tz.splitn(2, ' ').collect();
-    let time_str = time_parts.first()?;
-
-    let time = NaiveTime::parse_from_str(time_str, "%H:%M:%S").ok()?;
-    let date = NaiveDate::from_ymd_opt(year, month, day)?;
-    let naive_dt = NaiveDateTime::new(date, time);
-
-    // Parse timezone offset if present
-    if let Some(tz_str) = time_parts.get(1) {
-        if let Some(offset_secs) = parse_timezone_offset(tz_str) {
-            let offset = FixedOffset::east_opt(offset_secs)?;
-            let dt = naive_dt.and_local_timezone(offset).single()?;
-            return Some(dt.with_timezone(&Utc));
-        }
-    }
-
-    Some(naive_dt.and_utc())
-}
-
-/// Custom timestamp parser for feed-rs that handles:
-/// - Standard formats (via dateparser)
-/// - ISO 8601 style timezone in RFC 2822 dates (+08:00 -> +0800)
-/// - Chinese date formats (e.g., "週二, 6 一月 2026 14:28:00 +0000")
-fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
-    // Try standard parsing first (via dateparser)
-    dateparser::parse(text)
-        .map(|dt| dt.with_timezone(&Utc))
-        .ok()
-        // Try with normalized timezone format (convert +08:00 to +0800)
-        .or_else(|| {
-            let normalized = normalize_timezone_format(text);
-            if normalized != text {
-                dateparser::parse(&normalized)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .ok()
-            } else {
-                None
-            }
-        })
-        // Then try Chinese date format
-        .or_else(|| parse_chinese_datetime(text))
-}
-
-/// Normalize timezone format: convert "+08:00" to "+0800"
-/// Some feeds use ISO 8601 style timezone in RFC 2822 dates, which dateparser can't handle
-fn normalize_timezone_format(text: &str) -> String {
-    let text = text.trim();
-    let len = text.len();
-
-    // Check if ends with timezone like "+08:00" or "-05:30" (6 chars)
-    if len >= 6 {
-        let suffix = &text[len - 6..];
-        if let Some(sign) = suffix.chars().next() {
-            if (sign == '+' || sign == '-')
-                && suffix.chars().nth(3) == Some(':')
-                && suffix[1..3].chars().all(|c| c.is_ascii_digit())
-                && suffix[4..6].chars().all(|c| c.is_ascii_digit())
-            {
-                // Convert "+08:00" to "+0800"
-                let mut result = text[..len - 6].to_string();
-                result.push(sign);
-                result.push_str(&suffix[1..3]);
-                result.push_str(&suffix[4..6]);
-                return result;
-            }
-        }
-    }
-
-    text.to_string()
-}
+use crate::utils::datetime::parse_timestamp;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SyncResult {
@@ -191,7 +63,7 @@ pub async fn refresh_feed(
     }
 
     let retry_config = RetryConfig::default();
-    let response = match send_with_retry(&retry_config, || {
+    let response = match send_with_retry_on_error(&retry_config, || {
         client.get(&feed_data.url).headers(headers.clone())
     })
     .await
@@ -475,38 +347,56 @@ pub async fn refresh_bucket(
     info!("Refreshing {} feeds in bucket {}", feeds.len(), bucket);
 
     let mut results = Vec::new();
+    let concurrency_limit = 4;
 
-    for feed_data in feeds {
-        let result = match tokio::time::timeout(
-            FEED_SYNC_TIMEOUT,
-            refresh_feed(db.clone(), feed_data.id, user_agent),
-        )
-        .await
-        {
-            Ok(inner) => inner,
-            Err(_) => {
-                warn!(
-                    "Feed {} sync timed out after {:?}",
-                    feed_data.id, FEED_SYNC_TIMEOUT
-                );
-                Err(AppError::FetchError(format!(
-                    "Feed sync timed out after {}s",
-                    FEED_SYNC_TIMEOUT.as_secs()
-                )))
-            }
-        };
-        match &result {
-            Ok(sync) => {
-                debug!(
-                    "Feed {} synced: {} new, {} updated",
-                    feed_data.id, sync.new_entries, sync.updated_entries
-                );
-            }
-            Err(e) => {
-                warn!("Feed {} sync failed: {}", feed_data.id, e);
+    for chunk in feeds.chunks(concurrency_limit) {
+        let mut set = tokio::task::JoinSet::new();
+
+        for feed_data in chunk {
+            let db = db.clone();
+            let ua = user_agent.to_string();
+            let feed_id = feed_data.id;
+            set.spawn(async move {
+                let result =
+                    tokio::time::timeout(FEED_SYNC_TIMEOUT, refresh_feed(db, feed_id, &ua)).await;
+                (feed_id, result)
+            });
+        }
+
+        while let Some(join_result) = set.join_next().await {
+            match join_result {
+                Ok((feed_id, Ok(inner))) => {
+                    match &inner {
+                        Ok(sync) => {
+                            debug!(
+                                "Feed {} synced: {} new, {} updated",
+                                feed_id, sync.new_entries, sync.updated_entries
+                            );
+                        }
+                        Err(e) => {
+                            warn!("Feed {} sync failed: {}", feed_id, e);
+                        }
+                    }
+                    results.push((feed_id, inner.map_err(|e| e.to_string())));
+                }
+                Ok((feed_id, Err(_))) => {
+                    warn!(
+                        "Feed {} sync timed out after {:?}",
+                        feed_id, FEED_SYNC_TIMEOUT
+                    );
+                    results.push((
+                        feed_id,
+                        Err(format!(
+                            "Feed sync timed out after {}s",
+                            FEED_SYNC_TIMEOUT.as_secs()
+                        )),
+                    ));
+                }
+                Err(e) => {
+                    error!("Feed sync task panicked: {}", e);
+                }
             }
         }
-        results.push((feed_data.id, result.map_err(|e| e.to_string())));
     }
 
     results
@@ -515,6 +405,7 @@ pub async fn refresh_bucket(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::datetime::normalize_timezone_format;
     use chrono::{Datelike, Timelike};
 
     #[test]
