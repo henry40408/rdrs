@@ -56,7 +56,18 @@ src/
 │   ├── entry.rs         # Entry operations
 │   ├── favicon.rs       # Favicon serving (embedded at compile time)
 │   ├── static_assets.rs # Static JS assets (embedded at compile time)
-│   └── proxy.rs         # Image proxy
+│   ├── proxy.rs         # Image proxy
+│   └── greader/         # Google Reader API compatibility
+│       ├── auth.rs      # ClientLogin authentication
+│       ├── subscription.rs # Subscription list/edit, OPML import
+│       ├── item.rs      # Stream contents and item IDs
+│       ├── tag.rs       # Read/star tag operations
+│       ├── user.rs      # User info endpoint
+│       └── types.rs     # Shared GReader types
+│
+├── utils/               # Shared utility modules
+│   ├── datetime.rs      # Date/time parsing (RFC 2822, ISO 8601, Chinese dates)
+│   └── url_validation.rs# URL validation and SSRF protection
 │
 ├── services/            # Business logic
 │   ├── background.rs    # Background sync scheduler
@@ -121,6 +132,8 @@ Custom `AppError` type that maps to appropriate HTTP responses:
 
 ### Database (`db/schema.rs`)
 
+Schema migrations are tracked using `PRAGMA user_version`. Each migration runs once and advances the version number, replacing the previous ad-hoc `ALTER TABLE` approach.
+
 SQLite schema with 10 tables:
 
 | Table | Purpose |
@@ -128,7 +141,7 @@ SQLite schema with 10 tables:
 | `user` | User accounts with role (admin/user) |
 | `session` | Session tokens with masquerade support |
 | `category` | Feed categories per user |
-| `feed` | Feed metadata with etag caching |
+| `feed` | Feed metadata with etag caching and bucket assignment |
 | `entry` | Feed items with read/starred status |
 | `entry_summary` | AI-generated article summaries |
 | `image` | Polymorphic image storage |
@@ -136,11 +149,20 @@ SQLite schema with 10 tables:
 | `passkey` | WebAuthn credential storage |
 | `webauthn_challenge` | WebAuthn challenge state |
 
+### Connection Pool (`db/pool.rs`)
+
+`DbPool` manages two SQLite connections under WAL mode:
+
+- **Write connection** - Handles all INSERT/UPDATE/DELETE operations via `user()` and `background()` methods
+- **Read-only connection** - Handles SELECT queries via `read_user()` and `read_background()` methods, with `PRAGMA query_only=ON` for safety
+
+Both connections use priority-based scheduling: user requests are always processed before background tasks (e.g., feed sync).
+
 ### Models
 
 Each model provides:
 - Struct definition matching database schema
-- CRUD operations as associated functions
+- CRUD operations as associated functions (using params structs like `CreateFeedParams` to avoid excessive positional arguments)
 - Query methods for common access patterns
 
 Example: `Feed` model provides `find_by_user`, `create`, `update`, `delete`, `find_due_for_sync`.
@@ -194,13 +216,14 @@ RDRS supports passwordless authentication via WebAuthn/Passkey:
 
 **Background Scheduler** (`background.rs`):
 - Runs continuously in a Tokio task
-- Distributes feeds across 60-minute buckets based on ID hash
+- Distributes feeds across 60-minute buckets based on URL hash (stored as `bucket` column for indexed lookup)
 - Syncs feeds in the current bucket every minute
 
 **Sync Logic** (`feed_sync.rs`):
 - Uses etag/if-modified-since for efficient updates
-- Parses feed with feed-rs library
+- Parses feed with feed-rs library (with custom timestamp parser for Chinese date support)
 - Inserts new entries, skips duplicates
+- Processes feeds in parallel using `tokio::task::JoinSet` with a concurrency limit of 4
 
 ### Content Processing
 
@@ -214,7 +237,7 @@ RDRS supports passwordless authentication via WebAuthn/Passkey:
 **Full Content Extraction** (`readability.rs`):
 - Fetches article URL
 - Extracts main content using readability algorithm
-- Includes SSRF protection (blocks private IPs)
+- SSRF protection via shared `utils/url_validation` module (blocks private IPs, localhost, internal domains)
 
 ### Image Proxy (`image_proxy.rs`)
 
@@ -272,8 +295,8 @@ Uses Argon2id with:
 ### Input Sanitization
 
 - All HTML content sanitized with Ammonia
-- SQL injection prevented via parameterized queries
-- SSRF protection in readability fetcher
+- SQL injection prevented via parameterized queries throughout (including dynamic filter conditions)
+- SSRF protection in readability fetcher and image proxy (shared validation module)
 
 ## Deployment
 

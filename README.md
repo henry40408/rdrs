@@ -18,6 +18,7 @@ A self-hosted RSS/Atom feed reader built with Rust. Privacy-focused, lightweight
 - **AI Summarization** - Automatic article summaries via Kagi AI integration
 - **WebAuthn/Passkey** - Passwordless authentication with passkey support
 - **External Services** - Save entries to Linkding bookmark manager
+- **Google Reader API** - Compatible with GReader clients (FeedMe, Read You, etc.)
 - **Multi-User Support** - Role-based access control with admin panel
 - **Docker Ready** - Single-binary deployment with all assets embedded, multi-platform container images
 
