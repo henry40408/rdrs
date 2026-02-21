@@ -56,7 +56,7 @@ impl FromRequestParts<AppState> for AuthUser {
         let user_id = session.user_id;
         let user = state
             .db
-            .user(move |conn| user::find_by_id(conn, user_id)?.ok_or(AppError::Unauthorized))
+            .read_user(move |conn| user::find_by_id(conn, user_id)?.ok_or(AppError::Unauthorized))
             .await??;
 
         if user.is_disabled() {
@@ -146,7 +146,7 @@ impl FromRequestParts<AppState> for AdminUser {
             if let Some(original_user_id) = auth_user.session.original_user_id {
                 let original_user = state
                     .db
-                    .user(move |conn| {
+                    .read_user(move |conn| {
                         user::find_by_id(conn, original_user_id)?.ok_or(AppError::Unauthorized)
                     })
                     .await??;
@@ -187,7 +187,7 @@ impl FromRequestParts<AppState> for PageAdminUser {
             if let Some(original_user_id) = page_auth_user.session.original_user_id {
                 let original_user = state
                     .db
-                    .user(move |conn| {
+                    .read_user(move |conn| {
                         user::find_by_id(conn, original_user_id)
                             .map_err(|_| ())?
                             .ok_or(())

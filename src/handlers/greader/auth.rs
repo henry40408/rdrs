@@ -102,7 +102,7 @@ async fn validate_token(state: &AppState, token: &str) -> AppResult<(Session, Us
     let user_id = session.user_id;
     let user = state
         .db
-        .user(move |conn| user::find_by_id(conn, user_id)?.ok_or(AppError::Unauthorized))
+        .read_user(move |conn| user::find_by_id(conn, user_id)?.ok_or(AppError::Unauthorized))
         .await??;
 
     if user.is_disabled() {

@@ -17,7 +17,7 @@ pub async fn tag_list(
 
     let tags = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let mut tags = vec![
                 Tag {
                     id: "user/-/state/com.google/reading-list".to_string(),

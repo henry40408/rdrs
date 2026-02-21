@@ -175,7 +175,7 @@ pub async fn recover_incomplete_jobs(
     tx: mpsc::Sender<SummaryJob>,
     cache: Arc<SummaryCache>,
 ) -> usize {
-    let incomplete = match db.background(entry_summary::find_incomplete).await {
+    let incomplete = match db.read_background(entry_summary::find_incomplete).await {
         Ok(Ok(jobs)) => jobs,
         Ok(Err(e)) => {
             tracing::error!("Failed to find incomplete jobs: {}", e);
@@ -218,11 +218,27 @@ mod tests {
     use crate::models::{category, entry, feed, user};
     use rusqlite::Connection;
 
+    fn open_shared_memory(name: &str) -> Connection {
+        let uri = format!("file:{}?mode=memory&cache=shared", name);
+        Connection::open_with_flags(
+            uri,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+                | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        )
+        .unwrap()
+    }
+
     fn setup_test_db() -> DbPool {
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
-        let read_conn = Connection::open_in_memory().unwrap();
-        let (pool, _handle) = DbPool::new(conn, read_conn);
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let name = format!("test_summary_worker_{}", id);
+
+        let write_conn = open_shared_memory(&name);
+        init_db(&write_conn).unwrap();
+        let read_conn = open_shared_memory(&name);
+        let (pool, _handle) = DbPool::new(write_conn, read_conn);
         pool
     }
 

@@ -28,7 +28,7 @@ pub async fn unread_count(
 
     let response = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let feed_unreads = entry::count_unread_by_feed(conn, user_id)?;
             let category_unreads = entry::count_unread_by_category(conn, user_id)?;
             let feeds = feed::list_by_user(conn, user_id)?;

@@ -33,7 +33,7 @@ impl IntoResponse for LoginTemplate {
 pub async fn login_page(State(state): State<AppState>, flash: Flash) -> (Flash, LoginTemplate) {
     let signup_enabled = state
         .db
-        .user(|c| crate::models::user::count(c).ok())
+        .read_user(|c| crate::models::user::count(c).ok())
         .await
         .ok()
         .flatten()
@@ -73,7 +73,7 @@ pub async fn register_page(
 ) -> (Flash, RegisterTemplate) {
     let can_register = state
         .db
-        .user(|c| crate::models::user::count(c).ok())
+        .read_user(|c| crate::models::user::count(c).ok())
         .await
         .ok()
         .flatten()
@@ -134,7 +134,7 @@ pub async fn unread_page(
     let user_id = auth_user.user.id;
     let (unread_count, entries_per_page, theme) = state
         .db
-        .user(move |c| {
+        .read_user(move |c| {
             let unread = entry::count_unread_by_user(c, user_id).unwrap_or(0);
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
@@ -197,7 +197,7 @@ pub async fn admin_page(
     let user_id = admin.user.id;
     let theme = state
         .db
-        .user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
         .await
         .unwrap_or(None);
 
@@ -265,7 +265,7 @@ pub async fn user_settings_page(
         theme,
     ) = state
         .db
-        .user(move |c| {
+        .read_user(move |c| {
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
 
@@ -365,7 +365,7 @@ pub async fn categories_page(
     let user_id = auth_user.user.id;
     let theme = state
         .db
-        .user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
         .await
         .unwrap_or(None);
 
@@ -417,7 +417,7 @@ pub async fn feeds_page(
     let user_id = auth_user.user.id;
     let theme = state
         .db
-        .user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
         .await
         .unwrap_or(None);
 
@@ -470,7 +470,7 @@ pub async fn entries_page(
     let user_id = auth_user.user.id;
     let (entries_per_page, theme) = state
         .db
-        .user(move |c| {
+        .read_user(move |c| {
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
@@ -532,7 +532,7 @@ pub async fn entry_page(
     let user_id = auth_user.user.id;
     let (has_save_services, has_kagi_configured, theme) = state
         .db
-        .user(move |c| {
+        .read_user(move |c| {
             let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
 
             let save_config =
@@ -608,7 +608,7 @@ pub async fn settings_page(
     let user_id = auth_user.user.id;
     let theme = state
         .db
-        .user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
         .await
         .unwrap_or(None);
 
@@ -668,7 +668,7 @@ pub async fn read_entries_page(
     let user_id = auth_user.user.id;
     let (entries_per_page, theme) = state
         .db
-        .user(move |c| {
+        .read_user(move |c| {
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
@@ -708,7 +708,7 @@ pub async fn starred_entries_page(
     let user_id = auth_user.user.id;
     let (entries_per_page, theme) = state
         .db
-        .user(move |c| {
+        .read_user(move |c| {
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
@@ -748,7 +748,7 @@ pub async fn summarized_entries_page(
     let user_id = auth_user.user.id;
     let (entries_per_page, theme) = state
         .db
-        .user(move |c| {
+        .read_user(move |c| {
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
@@ -813,7 +813,7 @@ pub async fn category_entries_page(
     let user_id = auth_user.user.id;
     let (entries_per_page, category_name, theme) = state
         .db
-        .user(move |c| {
+        .read_user(move |c| {
             let cat =
                 category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
             let epp = user_settings::get_entries_per_page(c, user_id)
@@ -876,7 +876,7 @@ pub async fn search_page(
     let user_id = auth_user.user.id;
     let (entries_per_page, theme) = state
         .db
-        .user(move |c| {
+        .read_user(move |c| {
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
@@ -944,7 +944,7 @@ pub async fn feed_entries_page(
     let (entries_per_page, feed_url, feed_title, feed_has_icon, category_id, category_name, theme) =
         state
             .db
-            .user(move |c| {
+            .read_user(move |c| {
                 let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
                 let cat =
                     category::find_by_id(c, f.category_id)?.ok_or(AppError::CategoryNotFound)?;

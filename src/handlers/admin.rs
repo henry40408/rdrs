@@ -15,7 +15,7 @@ pub async fn list_users(
     State(state): State<AppState>,
     _admin: AdminUser,
 ) -> AppResult<Json<Vec<User>>> {
-    let users = state.db.user(user::list_all).await??;
+    let users = state.db.read_user(user::list_all).await??;
     Ok(Json(users))
 }
 

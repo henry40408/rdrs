@@ -30,7 +30,7 @@ pub async fn start_registration(
 
     let existing_passkeys = state
         .db
-        .user(move |conn| passkey::list_by_user(conn, user_id))
+        .read_user(move |conn| passkey::list_by_user(conn, user_id))
         .await??;
 
     let exclude_credentials: Vec<CredentialID> = existing_passkeys
@@ -158,7 +158,7 @@ pub struct StartAuthenticationResponse {
 pub async fn start_authentication(
     State(state): State<AppState>,
 ) -> AppResult<Json<StartAuthenticationResponse>> {
-    let all_passkeys = state.db.user(passkey::get_all_passkeys).await??;
+    let all_passkeys = state.db.read_user(passkey::get_all_passkeys).await??;
 
     if all_passkeys.is_empty() {
         return Err(AppError::PasskeyAuthenticationFailed(
@@ -319,7 +319,7 @@ pub async fn list_passkeys(
     let user_id = auth_user.user.id;
     let passkeys = state
         .db
-        .user(move |conn| passkey::list_by_user(conn, user_id))
+        .read_user(move |conn| passkey::list_by_user(conn, user_id))
         .await??;
 
     let passkey_infos: Vec<PasskeyInfo> = passkeys

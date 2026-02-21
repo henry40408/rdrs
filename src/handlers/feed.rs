@@ -57,7 +57,7 @@ pub async fn get_feed_icon(
     let user_id = auth_user.user.id;
     let img = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let f = feed::find_by_id(conn, id)?.ok_or(AppError::FeedNotFound)?;
 
             category::find_by_id_and_user(conn, f.category_id, user_id)?
