@@ -66,7 +66,7 @@ pub async fn stream_contents(
 
     let (entries, continuation, stream_id_str, db_statuses) = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             // Resolve stream-specific constraints
             let mut effective_filter = filter;
 
@@ -185,7 +185,7 @@ pub async fn stream_item_ids(
 
     let response = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let mut effective_filter = filter;
 
             if let StreamId::Feed(ref url) = stream_id {
@@ -252,7 +252,7 @@ pub async fn stream_item_count(
 
     let count = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let mut filter = entry::EntryFilter::default();
 
             match &stream_id {
@@ -337,7 +337,7 @@ async fn fetch_items_by_ids(
 
     let (entries, db_statuses) = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let entries = entry::find_by_ids_with_feed(conn, user_id, &entry_ids)?;
 
             // Batch-query summary statuses from DB

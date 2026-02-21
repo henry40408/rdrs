@@ -22,7 +22,7 @@ pub async fn subscription_list(
     let user_id = auth.user.id;
     let subscriptions = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let feeds = feed::list_by_user(conn, user_id)?;
             let categories = category::list_by_user(conn, user_id)?;
 
@@ -365,7 +365,7 @@ pub async fn export(
     let user_id = auth.user.id;
     let opml_content = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let categories = category::list_by_user(conn, user_id)?;
             let feeds = feed::list_by_user(conn, user_id)?;
             Ok::<_, AppError>(opml::export_opml(&categories, &feeds))
@@ -457,7 +457,7 @@ pub async fn subscribed(
     let user_id = auth.user.id;
     let is_subscribed = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             Ok::<_, AppError>(feed::find_by_url_for_user(conn, &feed_url, user_id)?.is_some())
         })
         .await??;

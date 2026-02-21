@@ -156,7 +156,7 @@ pub async fn get_linkding_settings(
 
     let (configured, api_url) = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let config = user_settings::get_save_services_config(conn, user_id)?;
 
             let configured = config
@@ -267,7 +267,7 @@ pub async fn get_kagi_settings(
 
     let (configured, language) = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let config = user_settings::get_save_services_config(conn, user_id)?;
 
             let configured = config
@@ -304,7 +304,7 @@ pub async fn get_theme(
 
     let theme = state
         .db
-        .user(move |conn| user_settings::get_theme(conn, user_id))
+        .read_user(move |conn| user_settings::get_theme(conn, user_id))
         .await??;
 
     Ok(Json(GetThemeResponse { theme }))

@@ -217,11 +217,12 @@ pub fn list_by_user(
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
                f.title, f.url, c.id, c.name,
-               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon,
+               CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon,
                f.custom_referrer
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
+        LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
         WHERE {}
         ORDER BY {}
         LIMIT ?{} OFFSET ?{}
@@ -632,11 +633,12 @@ pub fn list_by_user_with_continuation(
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
                f.title, f.url, c.id, c.name,
-               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon,
+               CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon,
                f.custom_referrer
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
+        LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
         WHERE {}
         ORDER BY {}
         LIMIT ?{}

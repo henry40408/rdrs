@@ -21,7 +21,7 @@ pub async fn refresh_feed_handler(
     let user_id = auth_user.user.id;
     state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let f = feed::find_by_id(conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
             let cat =
                 category::find_by_id(conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
@@ -65,7 +65,7 @@ pub async fn get_entry_neighbors(
     let user_id = auth_user.user.id;
     let neighbors = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             // Verify entry belongs to user
             let entry_with_feed =
                 entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
@@ -100,7 +100,7 @@ pub async fn fetch_full_content(
     let user_id = auth_user.user.id;
     let (link, custom_referrer) = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let entry_with_feed =
                 entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
 
@@ -269,7 +269,7 @@ pub async fn get_entry_summary(
     // Verify entry ownership and get from DB
     let result = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let entry_with_feed =
                 entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
 
@@ -341,7 +341,7 @@ pub async fn save_to_services(
     let user_id = auth_user.user.id;
     let (entry_data, save_config) = state
         .db
-        .user(move |conn| {
+        .read_user(move |conn| {
             let entry_with_feed =
                 entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
 
