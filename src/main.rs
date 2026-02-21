@@ -21,10 +21,13 @@ async fn main() {
         );
     }
 
-    let conn = Connection::open(&config.database_url).expect("Failed to open database");
-    db::init_db(&conn).expect("Failed to initialize database");
+    let write_conn = Connection::open(&config.database_url).expect("Failed to open database");
+    db::init_db(&write_conn).expect("Failed to initialize database");
 
-    let (db, db_handle) = DbPool::new(conn);
+    let read_conn =
+        Connection::open(&config.database_url).expect("Failed to open read-only connection");
+
+    let (db, db_handle) = DbPool::new(write_conn, read_conn);
 
     let webauthn = auth::create_webauthn(&config).expect("Failed to create WebAuthn");
 

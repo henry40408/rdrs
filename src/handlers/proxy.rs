@@ -5,14 +5,14 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::Deserialize;
-use std::net::IpAddr;
 use url::Url;
 
 use crate::{
     error::{AppError, AppResult},
     middleware::auth::AuthUser,
-    services::http::{send_with_retry, RetryConfig, DEFAULT_TIMEOUT},
+    services::http::{send_with_retry_on_error, RetryConfig, DEFAULT_TIMEOUT},
     services::{verify_signature, verify_signature_with_referrer},
+    utils::url_validation,
     AppState,
 };
 
@@ -73,7 +73,7 @@ pub async fn proxy_image(
 
     // Parse and validate the URL
     let url = Url::parse(&url_str).map_err(|_| AppError::InvalidImageUrl)?;
-    validate_url(&url)?;
+    url_validation::validate_url(&url).map_err(|_| AppError::InvalidImageUrl)?;
 
     // Fetch the image
     let client = reqwest::Client::builder()
@@ -83,7 +83,7 @@ pub async fn proxy_image(
 
     let url_str = url.to_string();
     let user_agent = state.config.user_agent.clone();
-    let response = send_with_retry(&RetryConfig::default(), || {
+    let response = send_with_retry_on_error(&RetryConfig::default(), || {
         let mut req = client.get(&url_str).header("User-Agent", &user_agent);
         if let Some(ref referrer) = referrer {
             req = req.header("Referer", referrer.as_str());
@@ -139,59 +139,6 @@ pub async fn proxy_image(
         bytes,
     )
         .into_response())
-}
-
-fn validate_url(url: &Url) -> AppResult<()> {
-    // Only allow http/https schemes
-    match url.scheme() {
-        "http" | "https" => {}
-        _ => return Err(AppError::InvalidImageUrl),
-    }
-
-    // Get the host
-    let host = url.host_str().ok_or(AppError::InvalidImageUrl)?;
-
-    // Block localhost and loopback addresses
-    if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
-        return Err(AppError::InvalidImageUrl);
-    }
-
-    // Block .local and .internal domains
-    if host.ends_with(".local") || host.ends_with(".internal") {
-        return Err(AppError::InvalidImageUrl);
-    }
-
-    // Try to parse as IP address and check for private ranges
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_private_ip(&ip) {
-            return Err(AppError::InvalidImageUrl);
-        }
-    }
-
-    // Also check if it's an IPv6 address in brackets
-    if host.starts_with('[') && host.ends_with(']') {
-        if let Ok(ip) = host[1..host.len() - 1].parse::<IpAddr>() {
-            if is_private_ip(&ip) {
-                return Err(AppError::InvalidImageUrl);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn is_private_ip(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ipv4) => {
-            ipv4.is_loopback()
-                || ipv4.is_private()
-                || ipv4.is_link_local()
-                || ipv4.is_broadcast()
-                || ipv4.is_documentation()
-                || ipv4.is_unspecified()
-        }
-        IpAddr::V6(ipv6) => ipv6.is_loopback() || ipv6.is_unspecified(),
-    }
 }
 
 fn is_valid_image_type(content_type: &str) -> bool {
@@ -270,66 +217,6 @@ mod tests {
             Some(referrer),
             secret
         ));
-    }
-
-    #[test]
-    fn test_validate_url_valid() {
-        let url = Url::parse("https://example.com/image.jpg").unwrap();
-        assert!(validate_url(&url).is_ok());
-    }
-
-    #[test]
-    fn test_validate_url_localhost() {
-        let url = Url::parse("http://localhost/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_loopback() {
-        let url = Url::parse("http://127.0.0.1/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_private_10() {
-        let url = Url::parse("http://10.0.0.1/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_private_172() {
-        let url = Url::parse("http://172.16.0.1/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_private_192() {
-        let url = Url::parse("http://192.168.1.1/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_local_domain() {
-        let url = Url::parse("http://myhost.local/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_internal_domain() {
-        let url = Url::parse("http://server.internal/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_ftp_scheme() {
-        let url = Url::parse("ftp://example.com/image.jpg").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_file_scheme() {
-        let url = Url::parse("file:///etc/passwd").unwrap();
-        assert!(validate_url(&url).is_err());
     }
 
     #[test]

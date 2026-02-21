@@ -63,7 +63,8 @@ mod tests {
     fn setup_db_pool() -> DbPool {
         let conn = Connection::open_in_memory().unwrap();
         init_db(&conn).unwrap();
-        let (pool, _handle) = DbPool::new(conn);
+        let read_conn = Connection::open_in_memory().unwrap();
+        let (pool, _handle) = DbPool::new(conn, read_conn);
         pool
     }
 

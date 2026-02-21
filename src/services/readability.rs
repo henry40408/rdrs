@@ -1,10 +1,9 @@
-use std::net::IpAddr;
-
 use readability::extractor;
 use url::Url;
 
 use crate::error::{AppError, AppResult};
-use crate::services::http::{send_with_retry, RetryConfig, DEFAULT_TIMEOUT};
+use crate::services::http::{send_with_retry_on_error, RetryConfig, DEFAULT_TIMEOUT};
+use crate::utils::url_validation;
 
 pub struct ExtractedContent {
     pub title: Option<String>,
@@ -15,7 +14,7 @@ pub struct ExtractedContent {
 pub async fn fetch_and_extract(url: &str, user_agent: &str) -> AppResult<ExtractedContent> {
     // Parse and validate URL (SSRF protection)
     let parsed_url = Url::parse(url).map_err(|_| AppError::InvalidUrl)?;
-    validate_url(&parsed_url)?;
+    url_validation::validate_url(&parsed_url).map_err(|_| AppError::InvalidUrl)?;
 
     // Fetch HTML using existing reqwest (rustls-tls)
     let client = reqwest::Client::builder()
@@ -25,7 +24,7 @@ pub async fn fetch_and_extract(url: &str, user_agent: &str) -> AppResult<Extract
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
     let url_owned = url.to_string();
-    let response = send_with_retry(&RetryConfig::default(), || client.get(&url_owned))
+    let response = send_with_retry_on_error(&RetryConfig::default(), || client.get(&url_owned))
         .await
         .map_err(|e| AppError::FetchError(e.to_string()))?;
 
@@ -46,93 +45,4 @@ pub async fn fetch_and_extract(url: &str, user_agent: &str) -> AppResult<Extract
         title: Some(product.title).filter(|t| !t.is_empty()),
         content: product.content,
     })
-}
-
-/// Validates URL to prevent SSRF attacks.
-fn validate_url(url: &Url) -> AppResult<()> {
-    // Only allow http/https schemes
-    match url.scheme() {
-        "http" | "https" => {}
-        _ => return Err(AppError::InvalidUrl),
-    }
-
-    // Get the host
-    let host = url.host_str().ok_or(AppError::InvalidUrl)?;
-
-    // Block localhost and loopback addresses
-    if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
-        return Err(AppError::InvalidUrl);
-    }
-
-    // Block .local and .internal domains
-    if host.ends_with(".local") || host.ends_with(".internal") {
-        return Err(AppError::InvalidUrl);
-    }
-
-    // Try to parse as IP address and check for private ranges
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_private_ip(&ip) {
-            return Err(AppError::InvalidUrl);
-        }
-    }
-
-    // Also check if it's an IPv6 address in brackets
-    if host.starts_with('[') && host.ends_with(']') {
-        if let Ok(ip) = host[1..host.len() - 1].parse::<IpAddr>() {
-            if is_private_ip(&ip) {
-                return Err(AppError::InvalidUrl);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn is_private_ip(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ipv4) => {
-            ipv4.is_loopback()
-                || ipv4.is_private()
-                || ipv4.is_link_local()
-                || ipv4.is_broadcast()
-                || ipv4.is_documentation()
-                || ipv4.is_unspecified()
-        }
-        IpAddr::V6(ipv6) => ipv6.is_loopback() || ipv6.is_unspecified(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_validate_url_valid() {
-        let url = Url::parse("https://example.com/article").unwrap();
-        assert!(validate_url(&url).is_ok());
-    }
-
-    #[test]
-    fn test_validate_url_localhost() {
-        let url = Url::parse("http://localhost/article").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_loopback() {
-        let url = Url::parse("http://127.0.0.1/article").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_private_ip() {
-        let url = Url::parse("http://192.168.1.1/article").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
-
-    #[test]
-    fn test_validate_url_file_scheme() {
-        let url = Url::parse("file:///etc/passwd").unwrap();
-        assert!(validate_url(&url).is_err());
-    }
 }

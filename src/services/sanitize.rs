@@ -74,7 +74,7 @@ const TRACKING_PARAM_PREFIXES: &[&str] = &["utm_", "mtm_"];
 fn remove_tracking_pixels(html: &str) -> String {
     // Build a list of src URLs to remove based on tracking criteria
     let document = Html::parse_fragment(html);
-    let img_selector = Selector::parse("img").unwrap();
+    let img_selector = Selector::parse("img").expect("static CSS selector");
 
     let mut urls_to_remove: Vec<String> = Vec::new();
 
@@ -168,7 +168,7 @@ fn is_tracking_param(name: &str) -> bool {
 /// Strip tracking parameters from all URLs in anchor tags
 fn strip_tracking_params(html: &str) -> String {
     let document = Html::parse_fragment(html);
-    let a_selector = Selector::parse("a[href]").unwrap();
+    let a_selector = Selector::parse("a[href]").expect("static CSS selector");
 
     let mut result = html.to_string();
 
@@ -307,7 +307,7 @@ pub fn rewrite_image_urls(
     referrer: Option<&str>,
 ) -> String {
     let document = Html::parse_fragment(html);
-    let img_selector = Selector::parse("img[src]").unwrap();
+    let img_selector = Selector::parse("img[src]").expect("static CSS selector");
 
     // Parse base URL if provided
     let parsed_base = base_url.and_then(|u| Url::parse(u).ok());
@@ -352,7 +352,7 @@ pub fn rewrite_image_urls(
 /// Add target="_blank" and referrerpolicy="no-referrer" to all external links
 fn add_privacy_attrs_to_links(html: &str) -> String {
     let document = Html::parse_fragment(html);
-    let a_selector = Selector::parse("a[href]").unwrap();
+    let a_selector = Selector::parse("a[href]").expect("static CSS selector");
 
     let mut result = html.to_string();
 

@@ -45,35 +45,68 @@ struct DbMessage {
     respond: oneshot::Sender<Box<dyn std::any::Any + Send>>,
 }
 
-/// A prioritized database connection pool backed by a single SQLite connection.
+/// A prioritized database connection pool backed by SQLite connections.
 ///
-/// All database access goes through an actor task that owns the `Connection`.
+/// All database access goes through actor tasks that own the `Connection`s.
 /// User-priority work is always processed before background-priority work.
+///
+/// Supports separate write and read connections for better concurrency under
+/// WAL mode. Read operations can proceed concurrently with writes.
 #[derive(Clone)]
 pub struct DbPool {
+    // Write connection channels
     user_tx: mpsc::Sender<DbMessage>,
     bg_tx: mpsc::Sender<DbMessage>,
+    // Read-only connection channels
+    read_user_tx: mpsc::Sender<DbMessage>,
+    read_bg_tx: mpsc::Sender<DbMessage>,
 }
 
 impl DbPool {
-    /// Create a new DbPool, spawning the actor task.
+    /// Create a new DbPool, spawning actor tasks for both write and read connections.
     ///
-    /// Enables WAL mode on the connection for better concurrent read performance.
-    /// Returns the DbPool and the JoinHandle for the actor task.
-    pub fn new(conn: Connection) -> (Self, JoinHandle<()>) {
-        // Enable WAL mode for better read performance
-        if let Err(e) = conn.execute_batch("PRAGMA journal_mode=WAL;") {
+    /// Enables WAL mode on the write connection and sets the read connection
+    /// to query-only mode for safety. Returns the DbPool and the JoinHandle
+    /// for the combined actor tasks.
+    pub fn new(write_conn: Connection, read_conn: Connection) -> (Self, JoinHandle<()>) {
+        // Enable WAL mode on write connection
+        if let Err(e) = write_conn.execute_batch("PRAGMA journal_mode=WAL;") {
             error!("Failed to enable WAL mode: {}", e);
         } else {
             debug!("SQLite WAL mode enabled");
         }
 
+        // Set read connection to query-only mode for safety
+        if let Err(e) = read_conn.execute_batch("PRAGMA query_only=ON;") {
+            error!("Failed to enable query_only mode on read connection: {}", e);
+        } else {
+            debug!("Read connection query_only mode enabled");
+        }
+
+        // Write connection channels
         let (user_tx, user_rx) = mpsc::channel::<DbMessage>(256);
         let (bg_tx, bg_rx) = mpsc::channel::<DbMessage>(64);
 
-        let handle = tokio::spawn(actor_loop(conn, user_rx, bg_rx));
+        // Read connection channels
+        let (read_user_tx, read_user_rx) = mpsc::channel::<DbMessage>(256);
+        let (read_bg_tx, read_bg_rx) = mpsc::channel::<DbMessage>(64);
 
-        (DbPool { user_tx, bg_tx }, handle)
+        let handle = tokio::spawn(async move {
+            tokio::join!(
+                actor_loop(write_conn, user_rx, bg_rx),
+                actor_loop(read_conn, read_user_rx, read_bg_rx),
+            );
+        });
+
+        (
+            DbPool {
+                user_tx,
+                bg_tx,
+                read_user_tx,
+                read_bg_tx,
+            },
+            handle,
+        )
     }
 
     /// Gracefully shutdown the database connection.
@@ -145,6 +178,55 @@ impl DbPool {
         T: Send + 'static,
     {
         self.execute(DbPriority::Background, f).await
+    }
+
+    /// Execute a read-only closure on the read connection with the given priority.
+    async fn execute_read<F, T>(&self, priority: DbPriority, f: F) -> Result<T, DbError>
+    where
+        F: FnOnce(&Connection) -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        let (resp_tx, resp_rx) = oneshot::channel();
+
+        let msg = DbMessage {
+            work: Box::new(move |conn| {
+                let result = f(conn);
+                Box::new(result) as Box<dyn std::any::Any + Send>
+            }),
+            respond: resp_tx,
+        };
+
+        let tx = match priority {
+            DbPriority::User => &self.read_user_tx,
+            DbPriority::Background => &self.read_bg_tx,
+        };
+
+        tx.send(msg).await.map_err(|_| DbError::ActorStopped)?;
+
+        let boxed = tokio::time::timeout(DB_EXECUTE_TIMEOUT, resp_rx)
+            .await
+            .map_err(|_| DbError::Timeout)?
+            .map_err(|_| DbError::ActorStopped)?;
+
+        Ok(*boxed.downcast::<T>().expect("DbPool type mismatch"))
+    }
+
+    /// Execute a read-only closure with User priority on the read connection.
+    pub async fn read_user<F, T>(&self, f: F) -> Result<T, DbError>
+    where
+        F: FnOnce(&Connection) -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        self.execute_read(DbPriority::User, f).await
+    }
+
+    /// Execute a read-only closure with Background priority on the read connection.
+    pub async fn read_background<F, T>(&self, f: F) -> Result<T, DbError>
+    where
+        F: FnOnce(&Connection) -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        self.execute_read(DbPriority::Background, f).await
     }
 }
 
@@ -220,7 +302,7 @@ mod tests {
         conn.execute_batch("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT);")
             .unwrap();
 
-        let (pool, _handle) = DbPool::new(conn);
+        let (pool, _handle) = DbPool::new(conn, Connection::open_in_memory().unwrap());
 
         let result = pool
             .user(|conn| {
@@ -240,7 +322,7 @@ mod tests {
     #[tokio::test]
     async fn test_background_execute() {
         let conn = Connection::open_in_memory().unwrap();
-        let (pool, _handle) = DbPool::new(conn);
+        let (pool, _handle) = DbPool::new(conn, Connection::open_in_memory().unwrap());
 
         let result = pool
             .background(|conn| {
@@ -260,7 +342,7 @@ mod tests {
         conn.execute_batch("CREATE TABLE ordering (seq INTEGER);")
             .unwrap();
 
-        let (pool, _handle) = DbPool::new(conn);
+        let (pool, _handle) = DbPool::new(conn, Connection::open_in_memory().unwrap());
 
         // Send several user and background tasks
         let mut handles = vec![];
@@ -310,7 +392,7 @@ mod tests {
     #[tokio::test]
     async fn test_error_propagation() {
         let conn = Connection::open_in_memory().unwrap();
-        let (pool, _handle) = DbPool::new(conn);
+        let (pool, _handle) = DbPool::new(conn, Connection::open_in_memory().unwrap());
 
         let result: Result<Result<String, rusqlite::Error>, DbError> = pool
             .user(|conn| {
@@ -328,7 +410,7 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_sequential_operations() {
         let conn = Connection::open_in_memory().unwrap();
-        let (pool, _handle) = DbPool::new(conn);
+        let (pool, _handle) = DbPool::new(conn, Connection::open_in_memory().unwrap());
 
         pool.user(|conn| {
             conn.execute_batch("CREATE TABLE multi (id INTEGER PRIMARY KEY, val INTEGER);")
@@ -371,7 +453,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let (pool, _handle) = rt.block_on(async {
             let conn = Connection::open_in_memory().unwrap();
-            DbPool::new(conn)
+            DbPool::new(conn, Connection::open_in_memory().unwrap())
         });
         let debug_str = format!("{:?}", pool);
         assert!(debug_str.contains("DbPool"));
@@ -423,7 +505,7 @@ mod tests {
         conn.execute_batch("CREATE TABLE shutdown_test (id INTEGER PRIMARY KEY);")
             .unwrap();
 
-        let (pool, handle) = DbPool::new(conn);
+        let (pool, handle) = DbPool::new(conn, Connection::open_in_memory().unwrap());
 
         // Insert some data
         pool.user(|conn| {

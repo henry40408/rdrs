@@ -1,8 +1,9 @@
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+use crate::utils::datetime::parse_datetime;
 
 /// Sort order for entries
 #[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq)]
@@ -12,89 +13,6 @@ pub enum EntrySortOrder {
     PublishedAt, // COALESCE(published_at, created_at) DESC
     ReadAt,    // read_at DESC
     StarredAt, // starred_at DESC
-}
-
-/// Parse Chinese month names to month number
-fn parse_chinese_month(s: &str) -> Option<u32> {
-    match s {
-        "一月" => Some(1),
-        "二月" => Some(2),
-        "三月" => Some(3),
-        "四月" => Some(4),
-        "五月" => Some(5),
-        "六月" => Some(6),
-        "七月" => Some(7),
-        "八月" => Some(8),
-        "九月" => Some(9),
-        "十月" => Some(10),
-        "十一月" => Some(11),
-        "十二月" => Some(12),
-        _ => None,
-    }
-}
-
-/// Parse Chinese date format like "週二, 6 一月 2026 14:28:00 +0000"
-fn parse_chinese_datetime(s: &str) -> Option<DateTime<Utc>> {
-    // Remove weekday prefix if present (e.g., "週二, " or "星期二, ")
-    let s = s.trim();
-    let s = if let Some(pos) = s.find(", ") {
-        &s[pos + 2..]
-    } else {
-        s
-    };
-
-    // Expected format: "6 一月 2026 14:28:00 +0000"
-    let parts: Vec<&str> = s.splitn(4, ' ').collect();
-    if parts.len() < 4 {
-        return None;
-    }
-
-    let day: u32 = parts[0].parse().ok()?;
-    let month = parse_chinese_month(parts[1])?;
-    let year: i32 = parts[2].parse().ok()?;
-
-    // Parse time and timezone: "14:28:00 +0000"
-    let time_tz = parts[3];
-    let time_parts: Vec<&str> = time_tz.splitn(2, ' ').collect();
-    let time_str = time_parts.first()?;
-
-    let time = NaiveTime::parse_from_str(time_str, "%H:%M:%S").ok()?;
-    let date = NaiveDate::from_ymd_opt(year, month, day)?;
-    let naive_dt = NaiveDateTime::new(date, time);
-
-    // Parse timezone offset if present
-    if let Some(tz_str) = time_parts.get(1) {
-        if let Ok(offset) = parse_timezone_offset(tz_str) {
-            let dt = DateTime::<FixedOffset>::from_naive_utc_and_offset(
-                naive_dt - offset,
-                FixedOffset::east_opt(0).unwrap(),
-            );
-            return Some(dt.with_timezone(&Utc));
-        }
-    }
-
-    Some(naive_dt.and_utc())
-}
-
-/// Parse timezone offset like "+0000", "+0800", "-0500"
-fn parse_timezone_offset(s: &str) -> Result<chrono::Duration, ()> {
-    let s = s.trim();
-    if s.len() < 5 {
-        return Err(());
-    }
-
-    let sign = match s.chars().next() {
-        Some('+') => 1,
-        Some('-') => -1,
-        _ => return Err(()),
-    };
-
-    let hours: i64 = s[1..3].parse().map_err(|_| ())?;
-    let minutes: i64 = s[3..5].parse().map_err(|_| ())?;
-
-    Ok(chrono::Duration::seconds(
-        sign * (hours * 3600 + minutes * 60),
-    ))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -147,21 +65,6 @@ pub struct ContinuationParams {
     pub ot: Option<i64>,
     /// Newest timestamp (seconds since epoch)
     pub nt: Option<i64>,
-}
-
-fn parse_datetime(s: &str) -> DateTime<Utc> {
-    // Try RFC 3339 first (standard format)
-    DateTime::parse_from_rfc3339(s)
-        .map(|dt| dt.with_timezone(&Utc))
-        // Then try SQL datetime format
-        .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
-        })
-        // Then try dateparser for various formats (RFC 2822, localized dates, etc.)
-        .or_else(|_| dateparser::parse(s).map(|dt| dt.with_timezone(&Utc)))
-        // Then try Chinese date format
-        .or_else(|_| parse_chinese_datetime(s).ok_or(()))
-        .unwrap_or_else(|_| Utc::now())
 }
 
 fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<Entry> {
@@ -283,8 +186,7 @@ pub fn list_by_feed(
 
     let entries = stmt
         .query_map(params![feed_id, limit, offset], row_to_entry)?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(entries)
 }
@@ -300,51 +202,7 @@ pub fn list_by_user(
     let mut conditions = vec!["c.user_id = ?1".to_string()];
     let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
 
-    if let Some(feed_id) = filter.feed_id {
-        conditions.push(format!("e.feed_id = ?{}", params_vec.len() + 1));
-        params_vec.push(Box::new(feed_id));
-    }
-
-    if let Some(category_id) = filter.category_id {
-        conditions.push(format!("c.id = ?{}", params_vec.len() + 1));
-        params_vec.push(Box::new(category_id));
-    }
-
-    if filter.unread_only {
-        conditions.push("e.read_at IS NULL".to_string());
-    }
-
-    if filter.starred_only {
-        conditions.push("e.starred_at IS NOT NULL".to_string());
-    }
-
-    if filter.read_only {
-        conditions.push("e.read_at IS NOT NULL".to_string());
-    }
-
-    if let Some(ref search) = filter.search {
-        let search_pattern = format!("%{}%", search);
-        let param_idx = params_vec.len() + 1;
-        conditions.push(format!(
-            "(e.title LIKE ?{} COLLATE NOCASE OR e.content LIKE ?{} COLLATE NOCASE)",
-            param_idx, param_idx
-        ));
-        params_vec.push(Box::new(search_pattern));
-    }
-
-    if let Some(has_summary) = filter.has_summary {
-        if has_summary {
-            // Show entries that have any summary record (pending/processing/completed/failed)
-            conditions.push(
-                "EXISTS (SELECT 1 FROM entry_summary es WHERE es.user_id = ?1 AND es.entry_id = e.id)".to_string()
-            );
-        } else {
-            // Show entries without any summary record
-            conditions.push(
-                "NOT EXISTS (SELECT 1 FROM entry_summary es WHERE es.user_id = ?1 AND es.entry_id = e.id)".to_string()
-            );
-        }
-    }
+    apply_filter_conditions(&mut conditions, &mut params_vec, filter);
 
     let where_clause = conditions.join(" AND ");
 
@@ -383,8 +241,7 @@ pub fn list_by_user(
 
     let entries = stmt
         .query_map(params_refs.as_slice(), row_to_entry_with_feed)?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(entries)
 }
@@ -393,49 +250,7 @@ pub fn count_by_user(conn: &Connection, user_id: i64, filter: &EntryFilter) -> A
     let mut conditions = vec!["c.user_id = ?1".to_string()];
     let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
 
-    if let Some(feed_id) = filter.feed_id {
-        conditions.push(format!("e.feed_id = ?{}", params_vec.len() + 1));
-        params_vec.push(Box::new(feed_id));
-    }
-
-    if let Some(category_id) = filter.category_id {
-        conditions.push(format!("c.id = ?{}", params_vec.len() + 1));
-        params_vec.push(Box::new(category_id));
-    }
-
-    if filter.unread_only {
-        conditions.push("e.read_at IS NULL".to_string());
-    }
-
-    if filter.starred_only {
-        conditions.push("e.starred_at IS NOT NULL".to_string());
-    }
-
-    if filter.read_only {
-        conditions.push("e.read_at IS NOT NULL".to_string());
-    }
-
-    if let Some(ref search) = filter.search {
-        let search_pattern = format!("%{}%", search);
-        let param_idx = params_vec.len() + 1;
-        conditions.push(format!(
-            "(e.title LIKE ?{} COLLATE NOCASE OR e.content LIKE ?{} COLLATE NOCASE)",
-            param_idx, param_idx
-        ));
-        params_vec.push(Box::new(search_pattern));
-    }
-
-    if let Some(has_summary) = filter.has_summary {
-        if has_summary {
-            conditions.push(
-                "EXISTS (SELECT 1 FROM entry_summary es WHERE es.user_id = ?1 AND es.entry_id = e.id)".to_string()
-            );
-        } else {
-            conditions.push(
-                "NOT EXISTS (SELECT 1 FROM entry_summary es WHERE es.user_id = ?1 AND es.entry_id = e.id)".to_string()
-            );
-        }
-    }
+    apply_filter_conditions(&mut conditions, &mut params_vec, filter);
 
     let where_clause = conditions.join(" AND ");
 
@@ -716,8 +531,7 @@ pub fn find_by_ids_with_feed(
     let mut stmt = conn.prepare(&sql)?;
     let entries = stmt
         .query_map(params_refs.as_slice(), row_to_entry_with_feed)?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(entries)
 }
@@ -777,8 +591,7 @@ pub fn list_ids_by_user(
         .query_map(params_refs.as_slice(), |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
         })?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
 }
@@ -839,8 +652,7 @@ pub fn list_by_user_with_continuation(
     let mut stmt = conn.prepare(&sql)?;
     let entries = stmt
         .query_map(params_refs.as_slice(), row_to_entry_with_feed)?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(entries)
 }
@@ -1041,22 +853,42 @@ pub fn find_neighbors(
         }
     };
 
-    // Build filter conditions
-    let mut conditions = Vec::new();
+    // Build filter conditions with parameterized queries.
+    // Prev query base params: ?1=user_id, ?2=sort_time
+    let mut prev_conditions = Vec::new();
+    let mut prev_params: Vec<Box<dyn rusqlite::ToSql>> =
+        vec![Box::new(user_id), Box::new(sort_time.clone())];
+    // Next query base params: ?1=user_id, ?2=sort_time, ?3=entry_id
+    let mut next_conditions = Vec::new();
+    let mut next_params: Vec<Box<dyn rusqlite::ToSql>> =
+        vec![Box::new(user_id), Box::new(sort_time), Box::new(entry_id)];
+
     if unread_only {
-        conditions.push("e.read_at IS NULL".to_string());
+        prev_conditions.push("e.read_at IS NULL".to_string());
+        next_conditions.push("e.read_at IS NULL".to_string());
     }
     if let Some(fid) = feed_id {
-        conditions.push(format!("e.feed_id = {}", fid));
+        prev_conditions.push(format!("e.feed_id = ?{}", prev_params.len() + 1));
+        prev_params.push(Box::new(fid));
+        next_conditions.push(format!("e.feed_id = ?{}", next_params.len() + 1));
+        next_params.push(Box::new(fid));
     }
     if let Some(cid) = category_id {
-        conditions.push(format!("c.id = {}", cid));
+        prev_conditions.push(format!("c.id = ?{}", prev_params.len() + 1));
+        prev_params.push(Box::new(cid));
+        next_conditions.push(format!("c.id = ?{}", next_params.len() + 1));
+        next_params.push(Box::new(cid));
     }
 
-    let extra_conditions = if conditions.is_empty() {
+    let prev_extra = if prev_conditions.is_empty() {
         String::new()
     } else {
-        format!(" AND {}", conditions.join(" AND "))
+        format!(" AND {}", prev_conditions.join(" AND "))
+    };
+    let next_extra = if next_conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" AND {}", next_conditions.join(" AND "))
     };
 
     // Find previous entry (newer, comes before in DESC order)
@@ -1072,10 +904,11 @@ pub fn find_neighbors(
         ORDER BY COALESCE(e.published_at, e.created_at) ASC
         LIMIT 1
         "#,
-        extra_conditions
+        prev_extra
     );
+    let prev_refs: Vec<&dyn rusqlite::ToSql> = prev_params.iter().map(|p| p.as_ref()).collect();
     let prev_id: Option<i64> = conn
-        .query_row(&prev_sql, params![user_id, sort_time], |row| row.get(0))
+        .query_row(&prev_sql, prev_refs.as_slice(), |row| row.get(0))
         .optional()?;
 
     // Find next entry (older, comes after in DESC order)
@@ -1092,12 +925,11 @@ pub fn find_neighbors(
         ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
         LIMIT 1
         "#,
-        extra_conditions
+        next_extra
     );
+    let next_refs: Vec<&dyn rusqlite::ToSql> = next_params.iter().map(|p| p.as_ref()).collect();
     let next_id: Option<i64> = conn
-        .query_row(&next_sql, params![user_id, sort_time, entry_id], |row| {
-            row.get(0)
-        })
+        .query_row(&next_sql, next_refs.as_slice(), |row| row.get(0))
         .optional()?;
 
     Ok(EntryNeighbors { prev_id, next_id })
@@ -1181,7 +1013,6 @@ mod tests {
     use crate::models::category;
     use crate::models::feed;
     use crate::models::user::{self, Role};
-    use chrono::{Datelike, Timelike};
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -1202,14 +1033,16 @@ mod tests {
     fn create_test_feed(conn: &Connection, category_id: i64, url: &str) -> i64 {
         feed::create_feed(
             conn,
-            category_id,
-            url,
-            Some("Test Feed"),
-            None,
-            None,
-            None,
-            None,
-            None,
+            &feed::CreateFeedParams {
+                category_id,
+                url,
+                title: Some("Test Feed"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap()
         .id
@@ -1348,64 +1181,6 @@ mod tests {
         mark_as_read(&conn, entries[1].id).unwrap();
 
         assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 3);
-    }
-
-    #[test]
-    fn test_parse_datetime_rfc3339() {
-        let dt = parse_datetime("2026-01-06T14:28:00Z");
-        assert_eq!(dt.year(), 2026);
-        assert_eq!(dt.month(), 1);
-        assert_eq!(dt.day(), 6);
-        assert_eq!(dt.hour(), 14);
-        assert_eq!(dt.minute(), 28);
-    }
-
-    #[test]
-    fn test_parse_datetime_sql_format() {
-        let dt = parse_datetime("2026-01-06 14:28:00");
-        assert_eq!(dt.year(), 2026);
-        assert_eq!(dt.month(), 1);
-        assert_eq!(dt.day(), 6);
-    }
-
-    #[test]
-    fn test_parse_chinese_datetime_with_weekday() {
-        let dt = parse_chinese_datetime("週二, 6 一月 2026 14:28:00 +0000");
-        assert!(dt.is_some());
-        let dt = dt.unwrap();
-        assert_eq!(dt.year(), 2026);
-        assert_eq!(dt.month(), 1);
-        assert_eq!(dt.day(), 6);
-        assert_eq!(dt.hour(), 14);
-        assert_eq!(dt.minute(), 28);
-    }
-
-    #[test]
-    fn test_parse_chinese_datetime_different_months() {
-        assert!(parse_chinese_datetime("週一, 15 三月 2026 10:00:00 +0800").is_some());
-        assert!(parse_chinese_datetime("週五, 25 十二月 2026 23:59:59 +0000").is_some());
-        assert!(parse_chinese_datetime("週日, 1 七月 2026 00:00:00 -0500").is_some());
-    }
-
-    #[test]
-    fn test_parse_chinese_month() {
-        assert_eq!(parse_chinese_month("一月"), Some(1));
-        assert_eq!(parse_chinese_month("六月"), Some(6));
-        assert_eq!(parse_chinese_month("十二月"), Some(12));
-        assert_eq!(parse_chinese_month("invalid"), None);
-    }
-
-    #[test]
-    fn test_parse_timezone_offset() {
-        assert_eq!(parse_timezone_offset("+0000").unwrap().num_seconds(), 0);
-        assert_eq!(
-            parse_timezone_offset("+0800").unwrap().num_seconds(),
-            8 * 3600
-        );
-        assert_eq!(
-            parse_timezone_offset("-0500").unwrap().num_seconds(),
-            -5 * 3600
-        );
     }
 
     #[test]

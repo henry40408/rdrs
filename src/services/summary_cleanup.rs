@@ -79,7 +79,8 @@ mod tests {
 
     fn setup_db_pool() -> DbPool {
         let conn = setup_db();
-        let (pool, _handle) = DbPool::new(conn);
+        let read_conn = Connection::open_in_memory().unwrap();
+        let (pool, _handle) = DbPool::new(conn, read_conn);
         pool
     }
 
@@ -94,14 +95,16 @@ mod tests {
             .id;
         let feed_id = feed::create_feed(
             &conn,
-            category_id,
-            "https://example.com/feed.xml",
-            Some("Feed"),
-            None,
-            None,
-            None,
-            None,
-            None,
+            &feed::CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: Some("Feed"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap()
         .id;
@@ -175,14 +178,16 @@ mod tests {
                 .id;
             let feed_id = feed::create_feed(
                 conn,
-                category_id,
-                "https://example.com/feed.xml",
-                Some("Feed"),
-                None,
-                None,
-                None,
-                None,
-                None,
+                &feed::CreateFeedParams {
+                    category_id,
+                    url: "https://example.com/feed.xml",
+                    title: Some("Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
             )
             .unwrap()
             .id;

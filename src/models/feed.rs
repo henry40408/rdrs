@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use crate::error::{AppError, AppResult};
 use crate::models::image;
+use crate::utils::datetime::parse_datetime;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Feed {
@@ -24,6 +25,7 @@ pub struct Feed {
     pub custom_user_agent: Option<String>,
     pub http2_disabled: bool,
     pub custom_referrer: Option<String>,
+    pub bucket: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -34,22 +36,38 @@ pub fn url_to_bucket(url: &str) -> u8 {
     (hasher.finish() % 60) as u8
 }
 
-fn parse_datetime(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .map(|dt| dt.with_timezone(&Utc))
-        .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
-        })
-        .or_else(|_| dateparser::parse(s).map(|dt| dt.with_timezone(&Utc)))
-        .unwrap_or_else(|_| Utc::now())
+/// Parameters for creating a new feed.
+pub struct CreateFeedParams<'a> {
+    pub category_id: i64,
+    pub url: &'a str,
+    pub title: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub site_url: Option<&'a str>,
+    pub custom_user_agent: Option<&'a str>,
+    pub http2_disabled: Option<bool>,
+    pub custom_referrer: Option<&'a str>,
+}
+
+/// Parameters for updating an existing feed.
+pub struct UpdateFeedParams<'a> {
+    pub id: i64,
+    pub category_id: i64,
+    pub new_category_id: i64,
+    pub url: &'a str,
+    pub title: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub site_url: Option<&'a str>,
+    pub custom_user_agent: Option<&'a str>,
+    pub http2_disabled: bool,
+    pub custom_referrer: Option<&'a str>,
 }
 
 fn row_to_feed(row: &rusqlite::Row) -> rusqlite::Result<Feed> {
     let feed_updated_at: Option<String> = row.get(6)?;
     let fetched_at: Option<String> = row.get(7)?;
     let http2_disabled: i64 = row.get(12)?;
-    let created_at: String = row.get(14)?;
-    let updated_at: String = row.get(15)?;
+    let created_at: String = row.get(15)?;
+    let updated_at: String = row.get(16)?;
 
     Ok(Feed {
         id: row.get(0)?,
@@ -66,27 +84,18 @@ fn row_to_feed(row: &rusqlite::Row) -> rusqlite::Result<Feed> {
         custom_user_agent: row.get(11)?,
         http2_disabled: http2_disabled != 0,
         custom_referrer: row.get(13)?,
+        bucket: row.get(14)?,
         created_at: parse_datetime(&created_at),
         updated_at: parse_datetime(&updated_at),
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn create_feed(
-    conn: &Connection,
-    category_id: i64,
-    url: &str,
-    title: Option<&str>,
-    description: Option<&str>,
-    site_url: Option<&str>,
-    custom_user_agent: Option<&str>,
-    http2_disabled: Option<bool>,
-    custom_referrer: Option<&str>,
-) -> AppResult<Feed> {
-    let http2_disabled_int = http2_disabled.unwrap_or(false) as i64;
+pub fn create_feed(conn: &Connection, params: &CreateFeedParams<'_>) -> AppResult<Feed> {
+    let http2_disabled_int = params.http2_disabled.unwrap_or(false) as i64;
+    let bucket = url_to_bucket(params.url) as i64;
     let result = conn.execute(
-        "INSERT INTO feed (category_id, url, title, description, site_url, custom_user_agent, http2_disabled, custom_referrer) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![category_id, url, title, description, site_url, custom_user_agent, http2_disabled_int, custom_referrer],
+        "INSERT INTO feed (category_id, url, title, description, site_url, custom_user_agent, http2_disabled, custom_referrer, bucket) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![params.category_id, params.url, params.title, params.description, params.site_url, params.custom_user_agent, http2_disabled_int, params.custom_referrer, bucket],
     );
 
     match result {
@@ -103,7 +112,7 @@ pub fn create_feed(
     }
 }
 
-const SELECT_COLUMNS: &str = "id, category_id, url, title, description, site_url, feed_updated_at, fetched_at, fetch_error, etag, last_modified, custom_user_agent, http2_disabled, custom_referrer, created_at, updated_at";
+const SELECT_COLUMNS: &str = "id, category_id, url, title, description, site_url, feed_updated_at, fetched_at, fetch_error, etag, last_modified, custom_user_agent, http2_disabled, custom_referrer, bucket, created_at, updated_at";
 
 pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Feed>> {
     conn.query_row(
@@ -154,7 +163,7 @@ pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Feed>> {
         r#"
         SELECT f.id, f.category_id, f.url, f.title, f.description, f.site_url,
                f.feed_updated_at, f.fetched_at, f.fetch_error, f.etag, f.last_modified,
-               f.custom_user_agent, f.http2_disabled, f.custom_referrer, f.created_at, f.updated_at
+               f.custom_user_agent, f.http2_disabled, f.custom_referrer, f.bucket, f.created_at, f.updated_at
         FROM feed f
         INNER JOIN category c ON f.category_id = c.id
         WHERE c.user_id = ?1
@@ -164,8 +173,7 @@ pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Feed>> {
 
     let feeds = stmt
         .query_map(params![user_id], row_to_feed)?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(feeds)
 }
@@ -201,39 +209,26 @@ pub fn list_by_category(conn: &Connection, category_id: i64) -> AppResult<Vec<Fe
 
     let feeds = stmt
         .query_map(params![category_id], row_to_feed)?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(feeds)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn update_feed(
-    conn: &Connection,
-    id: i64,
-    category_id: i64,
-    new_category_id: i64,
-    url: &str,
-    title: Option<&str>,
-    description: Option<&str>,
-    site_url: Option<&str>,
-    custom_user_agent: Option<&str>,
-    http2_disabled: bool,
-    custom_referrer: Option<&str>,
-) -> AppResult<Feed> {
-    let http2_disabled_int = http2_disabled as i64;
+pub fn update_feed(conn: &Connection, params: &UpdateFeedParams<'_>) -> AppResult<Feed> {
+    let http2_disabled_int = params.http2_disabled as i64;
+    let bucket = url_to_bucket(params.url) as i64;
     let result = conn.execute(
         r#"
         UPDATE feed
-        SET category_id = ?1, url = ?2, title = ?3, description = ?4, site_url = ?5, custom_user_agent = ?6, http2_disabled = ?7, custom_referrer = ?8, updated_at = datetime('now')
-        WHERE id = ?9 AND category_id = ?10
+        SET category_id = ?1, url = ?2, title = ?3, description = ?4, site_url = ?5, custom_user_agent = ?6, http2_disabled = ?7, custom_referrer = ?8, bucket = ?9, updated_at = datetime('now')
+        WHERE id = ?10 AND category_id = ?11
         "#,
-        params![new_category_id, url, title, description, site_url, custom_user_agent, http2_disabled_int, custom_referrer, id, category_id],
+        rusqlite::params![params.new_category_id, params.url, params.title, params.description, params.site_url, params.custom_user_agent, http2_disabled_int, params.custom_referrer, bucket, params.id, params.category_id],
     );
 
     match result {
         Ok(0) => Err(AppError::FeedNotFound),
-        Ok(_) => find_by_id(conn, id)?.ok_or(AppError::FeedNotFound),
+        Ok(_) => find_by_id(conn, params.id)?.ok_or(AppError::FeedNotFound),
         Err(rusqlite::Error::SqliteFailure(err, _))
             if err.code == rusqlite::ErrorCode::ConstraintViolation =>
         {
@@ -280,13 +275,14 @@ pub fn update_fetch_result(
 }
 
 pub fn list_by_bucket(conn: &Connection, bucket: u8) -> AppResult<Vec<Feed>> {
-    let mut stmt = conn.prepare(&format!("SELECT {} FROM feed", SELECT_COLUMNS))?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM feed WHERE bucket = ?1",
+        SELECT_COLUMNS
+    ))?;
 
-    let feeds: Vec<Feed> = stmt
-        .query_map([], row_to_feed)?
-        .filter_map(Result::ok)
-        .filter(|feed| url_to_bucket(&feed.url) == bucket)
-        .collect();
+    let feeds = stmt
+        .query_map(params![bucket as i64], row_to_feed)?
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(feeds)
 }
@@ -322,14 +318,16 @@ mod tests {
 
         let feed = create_feed(
             &conn,
-            category_id,
-            "https://example.com/feed.xml",
-            Some("Example Feed"),
-            Some("An example feed"),
-            Some("https://example.com"),
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: Some("Example Feed"),
+                description: Some("An example feed"),
+                site_url: Some("https://example.com"),
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap();
 
@@ -352,26 +350,30 @@ mod tests {
 
         create_feed(
             &conn,
-            category_id,
-            "https://example.com/feed.xml",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: None,
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap();
         let result = create_feed(
             &conn,
-            category_id,
-            "https://example.com/feed.xml",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: None,
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         );
         assert!(matches!(result, Err(AppError::FeedExists)));
     }
@@ -385,26 +387,30 @@ mod tests {
 
         create_feed(
             &conn,
-            cat1,
-            "https://example.com/feed.xml",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id: cat1,
+                url: "https://example.com/feed.xml",
+                title: None,
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap();
         let result = create_feed(
             &conn,
-            cat2,
-            "https://example.com/feed.xml",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id: cat2,
+                url: "https://example.com/feed.xml",
+                title: None,
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         );
         assert!(result.is_ok());
     }
@@ -419,26 +425,30 @@ mod tests {
 
         create_feed(
             &conn,
-            cat1,
-            "https://example1.com/feed.xml",
-            Some("Feed 1"),
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id: cat1,
+                url: "https://example1.com/feed.xml",
+                title: Some("Feed 1"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap();
         create_feed(
             &conn,
-            cat2,
-            "https://example2.com/feed.xml",
-            Some("Feed 2"),
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id: cat2,
+                url: "https://example2.com/feed.xml",
+                title: Some("Feed 2"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap();
 
@@ -460,38 +470,44 @@ mod tests {
 
         create_feed(
             &conn,
-            cat1,
-            "https://example1.com/feed.xml",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id: cat1,
+                url: "https://example1.com/feed.xml",
+                title: None,
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap();
         create_feed(
             &conn,
-            cat1,
-            "https://example2.com/feed.xml",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id: cat1,
+                url: "https://example2.com/feed.xml",
+                title: None,
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap();
         create_feed(
             &conn,
-            cat2,
-            "https://example3.com/feed.xml",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id: cat2,
+                url: "https://example3.com/feed.xml",
+                title: None,
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap();
 
@@ -510,29 +526,33 @@ mod tests {
 
         let feed = create_feed(
             &conn,
-            category_id,
-            "https://example.com/feed.xml",
-            Some("Old Title"),
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: Some("Old Title"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap();
 
         let updated = update_feed(
             &conn,
-            feed.id,
-            category_id,
-            category_id,
-            "https://example.com/new-feed.xml",
-            Some("New Title"),
-            Some("New Description"),
-            Some("https://example.com"),
-            Some("Custom UA"),
-            true,
-            Some("https://example.com"),
+            &UpdateFeedParams {
+                id: feed.id,
+                category_id,
+                new_category_id: category_id,
+                url: "https://example.com/new-feed.xml",
+                title: Some("New Title"),
+                description: Some("New Description"),
+                site_url: Some("https://example.com"),
+                custom_user_agent: Some("Custom UA"),
+                http2_disabled: true,
+                custom_referrer: Some("https://example.com"),
+            },
         )
         .unwrap();
 
@@ -555,14 +575,16 @@ mod tests {
 
         let feed = create_feed(
             &conn,
-            category_id,
-            "https://example.com/feed.xml",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: None,
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap();
         delete_feed(&conn, feed.id, category_id).unwrap();
@@ -578,14 +600,16 @@ mod tests {
 
         let feed = create_feed(
             &conn,
-            category_id,
-            "https://example.com/feed.xml",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: None,
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
         .unwrap();
 

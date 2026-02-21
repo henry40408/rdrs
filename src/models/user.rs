@@ -132,8 +132,7 @@ pub fn list_all(conn: &Connection) -> AppResult<Vec<User>> {
 
     let users = stmt
         .query_map([], row_to_user)?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(users)
 }

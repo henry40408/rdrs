@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 
 use crate::error::AppResult;
+use crate::models::feed::url_to_bucket;
 
 pub fn init_db(conn: &Connection) -> AppResult<()> {
     conn.execute_batch(
@@ -150,18 +151,49 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         "#,
     )?;
 
-    // Migration: Add save_services column if not exists
-    // SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we ignore the error
-    let _ = conn.execute(
-        "ALTER TABLE user_settings ADD COLUMN save_services TEXT",
-        [],
-    );
+    // Version-based migrations using PRAGMA user_version
+    let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
-    // Migration: Add theme column if not exists
-    let _ = conn.execute("ALTER TABLE user_settings ADD COLUMN theme TEXT", []);
+    // Migrations 1-3: Legacy migrations that may already exist in older databases.
+    // Use `let _ =` to ignore "duplicate column" errors for databases that already
+    // had these columns added before the user_version system was introduced.
+    if version < 1 {
+        let _ = conn.execute(
+            "ALTER TABLE user_settings ADD COLUMN save_services TEXT",
+            [],
+        );
+    }
+    if version < 2 {
+        let _ = conn.execute("ALTER TABLE user_settings ADD COLUMN theme TEXT", []);
+    }
+    if version < 3 {
+        let _ = conn.execute("ALTER TABLE feed ADD COLUMN custom_referrer TEXT", []);
+    }
+    if version < 4 {
+        conn.execute("ALTER TABLE feed ADD COLUMN bucket INTEGER", [])?;
+        // Backfill bucket values for existing feeds
+        let mut stmt = conn.prepare("SELECT id, url FROM feed")?;
+        let feeds: Vec<(i64, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect();
+        for (id, url) in &feeds {
+            let bucket = url_to_bucket(url) as i64;
+            conn.execute(
+                "UPDATE feed SET bucket = ?1 WHERE id = ?2",
+                rusqlite::params![bucket, id],
+            )?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feed_bucket ON feed(bucket)",
+            [],
+        )?;
+    }
 
-    // Migration: Add custom_referrer column if not exists
-    let _ = conn.execute("ALTER TABLE feed ADD COLUMN custom_referrer TEXT", []);
+    const LATEST_VERSION: i64 = 4;
+    if version < LATEST_VERSION {
+        conn.pragma_update(None, "user_version", LATEST_VERSION)?;
+    }
 
     Ok(())
 }

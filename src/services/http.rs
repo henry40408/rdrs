@@ -116,7 +116,7 @@ where
 /// Returns the `Response` on success, or a `reqwest::Error` after retries are exhausted.
 /// Non-transient HTTP status codes (4xx except 408/429) are returned as successful responses
 /// for the caller to handle.
-pub async fn send_with_retry<F>(
+pub async fn send_with_retry_on_error<F>(
     config: &RetryConfig,
     mut build_request: F,
 ) -> Result<Response, reqwest::Error>
@@ -155,7 +155,7 @@ where
 ///
 /// `build_request` is called on each attempt to produce a fresh `reqwest::RequestBuilder`.
 /// Returns the final `Response` (which may be a non-retriable error status like 4xx).
-pub async fn send_with_retry_on_status<F>(
+pub async fn send_with_retry_on_error_on_status<F>(
     config: &RetryConfig,
     mut build_request: F,
 ) -> Result<Response, reqwest::Error>
@@ -352,7 +352,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_with_retry_success() {
+    async fn test_send_with_retry_on_error_success() {
         let mock_server = wiremock::MockServer::start().await;
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
@@ -369,14 +369,16 @@ mod tests {
 
         let url = mock_server.uri();
         let client = reqwest::Client::new();
-        let response = send_with_retry(&config, || client.get(&url)).await.unwrap();
+        let response = send_with_retry_on_error(&config, || client.get(&url))
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "ok");
     }
 
     #[tokio::test]
-    async fn test_send_with_retry_on_status_retries_5xx() {
+    async fn test_send_with_retry_on_error_on_status_retries_5xx() {
         let mock_server = wiremock::MockServer::start().await;
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
@@ -400,7 +402,7 @@ mod tests {
 
         let url = mock_server.uri();
         let client = reqwest::Client::new();
-        let response = send_with_retry_on_status(&config, || client.get(&url))
+        let response = send_with_retry_on_error_on_status(&config, || client.get(&url))
             .await
             .unwrap();
 
@@ -409,7 +411,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_with_retry_on_status_no_retry_4xx() {
+    async fn test_send_with_retry_on_error_on_status_no_retry_4xx() {
         let mock_server = wiremock::MockServer::start().await;
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
@@ -426,7 +428,7 @@ mod tests {
 
         let url = mock_server.uri();
         let client = reqwest::Client::new();
-        let response = send_with_retry_on_status(&config, || client.get(&url))
+        let response = send_with_retry_on_error_on_status(&config, || client.get(&url))
             .await
             .unwrap();
 
@@ -434,7 +436,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_with_retry_on_status_retries_429() {
+    async fn test_send_with_retry_on_error_on_status_retries_429() {
         let mock_server = wiremock::MockServer::start().await;
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
@@ -458,7 +460,7 @@ mod tests {
 
         let url = mock_server.uri();
         let client = reqwest::Client::new();
-        let response = send_with_retry_on_status(&config, || client.get(&url))
+        let response = send_with_retry_on_error_on_status(&config, || client.get(&url))
             .await
             .unwrap();
 
@@ -466,7 +468,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_with_retry_on_status_exhausted() {
+    async fn test_send_with_retry_on_error_on_status_exhausted() {
         let mock_server = wiremock::MockServer::start().await;
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
@@ -483,7 +485,7 @@ mod tests {
 
         let url = mock_server.uri();
         let client = reqwest::Client::new();
-        let response = send_with_retry_on_status(&config, || client.get(&url))
+        let response = send_with_retry_on_error_on_status(&config, || client.get(&url))
             .await
             .unwrap();
 
