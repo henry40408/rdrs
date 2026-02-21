@@ -39,11 +39,23 @@ struct TestApp {
     db: DbPool,
 }
 
-fn create_test_app(config: Config) -> TestApp {
-    let conn = Connection::open_in_memory().unwrap();
-    db::init_db(&conn).unwrap();
+fn open_shared_memory(name: &str) -> Connection {
+    let uri = format!("file:{}?mode=memory&cache=shared", name);
+    Connection::open_with_flags(
+        uri,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    )
+    .unwrap()
+}
 
-    let (db, _handle) = DbPool::new(conn, Connection::open_in_memory().unwrap());
+fn create_test_app(config: Config) -> TestApp {
+    let write_conn = open_shared_memory("test_greader");
+    db::init_db(&write_conn).unwrap();
+    let read_conn = open_shared_memory("test_greader");
+
+    let (db, _handle) = DbPool::new(write_conn, read_conn);
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -600,10 +612,11 @@ async fn test_unread_count_with_entries() {
 #[tokio::test]
 async fn test_unauthenticated_access_denied() {
     let config = default_test_config();
-    let conn = Connection::open_in_memory().unwrap();
-    db::init_db(&conn).unwrap();
+    let write_conn = open_shared_memory("test_unauth");
+    db::init_db(&write_conn).unwrap();
+    let read_conn = open_shared_memory("test_unauth");
 
-    let (db, _handle) = DbPool::new(conn, Connection::open_in_memory().unwrap());
+    let (db, _handle) = DbPool::new(write_conn, read_conn);
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);

@@ -21,11 +21,23 @@ struct TestApp {
     db: DbPool,
 }
 
-fn create_test_server(config: Config) -> TestServer {
-    let conn = Connection::open_in_memory().unwrap();
-    db::init_db(&conn).unwrap();
+fn open_shared_memory(name: &str) -> Connection {
+    let uri = format!("file:{}?mode=memory&cache=shared", name);
+    Connection::open_with_flags(
+        uri,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    )
+    .unwrap()
+}
 
-    let (db, _handle) = DbPool::new(conn, Connection::open_in_memory().unwrap());
+fn create_test_server(config: Config) -> TestServer {
+    let write_conn = open_shared_memory("test_handlers_server");
+    db::init_db(&write_conn).unwrap();
+    let read_conn = open_shared_memory("test_handlers_server");
+
+    let (db, _handle) = DbPool::new(write_conn, read_conn);
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -43,10 +55,11 @@ fn create_test_server(config: Config) -> TestServer {
 }
 
 fn create_test_app(config: Config) -> TestApp {
-    let conn = Connection::open_in_memory().unwrap();
-    db::init_db(&conn).unwrap();
+    let write_conn = open_shared_memory("test_handlers_app");
+    db::init_db(&write_conn).unwrap();
+    let read_conn = open_shared_memory("test_handlers_app");
 
-    let (db, _handle) = DbPool::new(conn, Connection::open_in_memory().unwrap());
+    let (db, _handle) = DbPool::new(write_conn, read_conn);
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
