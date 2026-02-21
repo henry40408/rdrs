@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
-use rand::RngCore;
+use rand::Rng;
 use std::env;
 
 /// Default user agent for HTTP requests (transparent and responsible crawling)
