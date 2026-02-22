@@ -3,7 +3,7 @@ use std::task::{Context, Poll};
 use tower::{Layer, Service};
 
 /// Middleware layer that adds HTTP Date header to all responses
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DateHeaderLayer;
 
 impl DateHeaderLayer {
