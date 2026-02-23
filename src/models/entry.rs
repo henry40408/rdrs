@@ -38,6 +38,7 @@ pub struct EntryWithFeed {
     pub entry: Entry,
     pub feed_title: Option<String>,
     pub feed_url: String,
+    pub site_url: Option<String>,
     pub category_id: i64,
     pub category_name: String,
     pub feed_has_icon: bool,
@@ -97,7 +98,7 @@ fn row_to_entry_with_feed(row: &rusqlite::Row) -> rusqlite::Result<EntryWithFeed
     let starred_at: Option<String> = row.get(10)?;
     let created_at: String = row.get(11)?;
     let updated_at: String = row.get(12)?;
-    let has_icon: i64 = row.get(17)?;
+    let has_icon: i64 = row.get(18)?;
 
     Ok(EntryWithFeed {
         entry: Entry {
@@ -117,10 +118,11 @@ fn row_to_entry_with_feed(row: &rusqlite::Row) -> rusqlite::Result<EntryWithFeed
         },
         feed_title: row.get(13)?,
         feed_url: row.get(14)?,
-        category_id: row.get(15)?,
-        category_name: row.get(16)?,
+        site_url: row.get(15)?,
+        category_id: row.get(16)?,
+        category_name: row.get(17)?,
         feed_has_icon: has_icon > 0,
-        custom_referrer: row.get(18)?,
+        custom_referrer: row.get(19)?,
     })
 }
 
@@ -141,7 +143,7 @@ pub fn find_by_id_with_feed(conn: &Connection, id: i64) -> AppResult<Option<Entr
         r#"
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, c.id, c.name,
+               f.title, f.url, f.site_url, c.id, c.name,
                (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon,
                f.custom_referrer
         FROM entry e
@@ -216,7 +218,7 @@ pub fn list_by_user(
         r#"
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, c.id, c.name,
+               f.title, f.url, f.site_url, c.id, c.name,
                CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon,
                f.custom_referrer
         FROM entry e
@@ -511,7 +513,7 @@ pub fn find_by_ids_with_feed(
         r#"
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, c.id, c.name,
+               f.title, f.url, f.site_url, c.id, c.name,
                (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon,
                f.custom_referrer
         FROM entry e
@@ -632,7 +634,7 @@ pub fn list_by_user_with_continuation(
         r#"
         SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, c.id, c.name,
+               f.title, f.url, f.site_url, c.id, c.name,
                CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon,
                f.custom_referrer
         FROM entry e

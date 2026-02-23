@@ -508,7 +508,7 @@ fn entry_with_feed_to_greader_item(
         origin: GReaderOrigin {
             stream_id: format!("feed/{}", ewf.feed_url),
             title: ewf.feed_title.clone().unwrap_or_default(),
-            html_url: ewf.feed_url.clone(),
+            html_url: ewf.site_url.clone().unwrap_or_default(),
         },
         // RDRS extensions
         entry_id: e.id,
