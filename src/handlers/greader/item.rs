@@ -476,15 +476,23 @@ fn entry_with_feed_to_greader_item(
     let timestamp_usec = (published * 1_000_000).to_string();
 
     let link = e.link.as_deref().unwrap_or("");
-    let raw_content = e.content.as_deref().or(e.summary.as_deref()).unwrap_or("");
+    let base_url = if link.is_empty() { None } else { Some(link) };
+    let referrer = ewf.custom_referrer.as_deref();
 
-    // Sanitize content: rewrite image URLs to go through the image proxy
-    let sanitized_content = sanitize_html(
-        raw_content,
-        secret,
-        if link.is_empty() { None } else { Some(link) },
-        ewf.custom_referrer.as_deref(),
-    );
+    // Sanitize entry.content once; reuse the result for both the GReader `summary` field
+    // and the RDRS `_content` extension field to avoid double HTML processing.
+    let sanitized_entry_content: Option<String> = e
+        .content
+        .as_deref()
+        .map(|c| sanitize_html(c, secret, base_url, referrer));
+
+    // For the standard GReader `summary` field: prefer sanitized content, fall back to summary.
+    let sanitized_summary = if let Some(ref sc) = sanitized_entry_content {
+        sc.clone()
+    } else {
+        let fallback = e.summary.as_deref().unwrap_or("");
+        sanitize_html(fallback, secret, base_url, referrer)
+    };
 
     GReaderItem {
         id: entry_id_to_item_id(e.id),
@@ -495,7 +503,7 @@ fn entry_with_feed_to_greader_item(
         title: e.title.clone().unwrap_or_default(),
         categories,
         summary: GReaderContent {
-            content: sanitized_content,
+            content: sanitized_summary,
         },
         canonical: vec![GReaderLink {
             href: link.to_string(),
@@ -519,14 +527,7 @@ fn entry_with_feed_to_greader_item(
         read_at: e.read_at.map(|dt| dt.to_rfc3339()),
         starred_at: e.starred_at.map(|dt| dt.to_rfc3339()),
         published_at: e.published_at.map(|dt| dt.to_rfc3339()),
-        content: e.content.as_ref().map(|c| {
-            sanitize_html(
-                c,
-                secret,
-                if link.is_empty() { None } else { Some(link) },
-                ewf.custom_referrer.as_deref(),
-            )
-        }),
+        content: sanitized_entry_content,
         summary_status,
     }
 }
