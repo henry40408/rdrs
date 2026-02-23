@@ -250,13 +250,13 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             // Summary badge
             let summaryBadgeHtml = '';
             if (summaryStatus === 'completed') {
-                summaryBadgeHtml = '<span title="Has Summary" class="summary-badge">S</span>';
+                summaryBadgeHtml = '<span title="Has Summary" class="summary-badge">✓</span>';
             } else if (summaryStatus === 'pending') {
-                summaryBadgeHtml = '<span title="Pending" class="summary-badge-pending">P</span>';
+                summaryBadgeHtml = '<span title="Pending" class="summary-badge-pending">○</span>';
             } else if (summaryStatus === 'processing') {
-                summaryBadgeHtml = '<span title="Processing" class="summary-badge-processing">\u2026</span>';
+                summaryBadgeHtml = '<span title="Processing" class="summary-badge-processing">↻</span>';
             } else if (summaryStatus === 'failed') {
-                summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">F</span>';
+                summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">✗</span>';
             }
 
             // Title with optional search highlight
@@ -315,7 +315,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             <div class="entry-item${isSelected ? ' selected' : ''}${isRead ? ' entry-read' : ''}" id="entry-${entry.id}" data-index="${index}" data-testid="entry-item">
                 <div>
                     <a href="/entries/${entry.id}${originQuery}" class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}" data-testid="entry-title-link">${titleHtml}</a>
-                    ${isStarred ? '<span title="Starred">*</span>' : ''}
+                    ${isStarred ? '<span title="Starred">★</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>${contentSnippetHtml}
                 <div class="muted entry-item-meta">
