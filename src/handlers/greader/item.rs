@@ -39,6 +39,8 @@ pub struct StreamContentsQuery {
     pub q: Option<String>,
     /// Filter to entries with/without summary (RDRS extension)
     pub has_summary: Option<String>,
+    /// Skip content sanitization for metadata-only list views (RDRS extension)
+    pub no_content: Option<bool>,
 }
 
 /// `GET /reader/api/0/stream/contents/*stream`
@@ -114,13 +116,14 @@ pub async fn stream_contents(
     let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
 
     let secret = &state.config.image_proxy_secret;
+    let no_content = query.no_content.unwrap_or(false);
     let items: Vec<GReaderItem> = entries
         .iter()
         .map(|ewf| {
             let status = summary_statuses
                 .get(&ewf.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status, secret)
+            entry_with_feed_to_greader_item(ewf, status, secret, no_content)
         })
         .collect();
 
@@ -358,7 +361,7 @@ async fn fetch_items_by_ids(
             let status = summary_statuses
                 .get(&ewf.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status, secret)
+            entry_with_feed_to_greader_item(ewf, status, secret, false)
         })
         .collect();
 
@@ -450,10 +453,12 @@ fn merge_summary_statuses(
 
 /// Convert an `EntryWithFeed` to a Google Reader `GReaderItem`.
 /// The `secret` is the image proxy secret used to sign proxy URLs.
+/// When `no_content` is true, content sanitization is skipped (RDRS extension for list views).
 fn entry_with_feed_to_greader_item(
     ewf: &entry::EntryWithFeed,
     summary_status: Option<String>,
     secret: &[u8],
+    no_content: bool,
 ) -> GReaderItem {
     let e = &ewf.entry;
 
@@ -479,19 +484,23 @@ fn entry_with_feed_to_greader_item(
     let base_url = if link.is_empty() { None } else { Some(link) };
     let referrer = ewf.custom_referrer.as_deref();
 
-    // Sanitize entry.content once; reuse the result for both the GReader `summary` field
+    // When no_content is set, skip all HTML sanitization (list view doesn't need content).
+    // Otherwise, sanitize entry.content once and reuse for both the GReader `summary` field
     // and the RDRS `_content` extension field to avoid double HTML processing.
-    let sanitized_entry_content: Option<String> = e
-        .content
-        .as_deref()
-        .map(|c| sanitize_html(c, secret, base_url, referrer));
-
-    // For the standard GReader `summary` field: prefer sanitized content, fall back to summary.
-    let sanitized_summary = if let Some(ref sc) = sanitized_entry_content {
-        sc.clone()
+    let (sanitized_entry_content, sanitized_summary) = if no_content {
+        (None, String::new())
     } else {
-        let fallback = e.summary.as_deref().unwrap_or("");
-        sanitize_html(fallback, secret, base_url, referrer)
+        let sc: Option<String> = e
+            .content
+            .as_deref()
+            .map(|c| sanitize_html(c, secret, base_url, referrer));
+        let ss = if let Some(ref sc) = sc {
+            sc.clone()
+        } else {
+            let fallback = e.summary.as_deref().unwrap_or("");
+            sanitize_html(fallback, secret, base_url, referrer)
+        };
+        (sc, ss)
     };
 
     GReaderItem {

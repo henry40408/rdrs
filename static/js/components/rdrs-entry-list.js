@@ -158,6 +158,11 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             params.set('q', this._search);
         }
 
+        // Skip content sanitization when not searching (list view doesn't need it)
+        if (!this._search) {
+            params.set('no_content', 'true');
+        }
+
         const fullUrl = `${url}?${params.toString()}`;
 
         try {
