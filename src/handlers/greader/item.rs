@@ -39,6 +39,8 @@ pub struct StreamContentsQuery {
     pub q: Option<String>,
     /// Filter to entries with/without summary (RDRS extension)
     pub has_summary: Option<String>,
+    /// Skip content sanitization for metadata-only list views (RDRS extension)
+    pub no_content: Option<bool>,
 }
 
 /// `GET /reader/api/0/stream/contents/*stream`
@@ -114,13 +116,14 @@ pub async fn stream_contents(
     let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
 
     let secret = &state.config.image_proxy_secret;
+    let no_content = query.no_content.unwrap_or(false);
     let items: Vec<GReaderItem> = entries
         .iter()
         .map(|ewf| {
             let status = summary_statuses
                 .get(&ewf.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status, secret)
+            entry_with_feed_to_greader_item(ewf, status, secret, no_content)
         })
         .collect();
 
@@ -358,7 +361,7 @@ async fn fetch_items_by_ids(
             let status = summary_statuses
                 .get(&ewf.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status, secret)
+            entry_with_feed_to_greader_item(ewf, status, secret, false)
         })
         .collect();
 
@@ -450,10 +453,12 @@ fn merge_summary_statuses(
 
 /// Convert an `EntryWithFeed` to a Google Reader `GReaderItem`.
 /// The `secret` is the image proxy secret used to sign proxy URLs.
+/// When `no_content` is true, content sanitization is skipped (RDRS extension for list views).
 fn entry_with_feed_to_greader_item(
     ewf: &entry::EntryWithFeed,
     summary_status: Option<String>,
     secret: &[u8],
+    no_content: bool,
 ) -> GReaderItem {
     let e = &ewf.entry;
 
@@ -476,15 +481,27 @@ fn entry_with_feed_to_greader_item(
     let timestamp_usec = (published * 1_000_000).to_string();
 
     let link = e.link.as_deref().unwrap_or("");
-    let raw_content = e.content.as_deref().or(e.summary.as_deref()).unwrap_or("");
+    let base_url = if link.is_empty() { None } else { Some(link) };
+    let referrer = ewf.custom_referrer.as_deref();
 
-    // Sanitize content: rewrite image URLs to go through the image proxy
-    let sanitized_content = sanitize_html(
-        raw_content,
-        secret,
-        if link.is_empty() { None } else { Some(link) },
-        ewf.custom_referrer.as_deref(),
-    );
+    // When no_content is set, skip all HTML sanitization (list view doesn't need content).
+    // Otherwise, sanitize entry.content once and reuse for both the GReader `summary` field
+    // and the RDRS `_content` extension field to avoid double HTML processing.
+    let (sanitized_entry_content, sanitized_summary) = if no_content {
+        (None, String::new())
+    } else {
+        let sc: Option<String> = e
+            .content
+            .as_deref()
+            .map(|c| sanitize_html(c, secret, base_url, referrer));
+        let ss = if let Some(ref sc) = sc {
+            sc.clone()
+        } else {
+            let fallback = e.summary.as_deref().unwrap_or("");
+            sanitize_html(fallback, secret, base_url, referrer)
+        };
+        (sc, ss)
+    };
 
     GReaderItem {
         id: entry_id_to_item_id(e.id),
@@ -495,7 +512,7 @@ fn entry_with_feed_to_greader_item(
         title: e.title.clone().unwrap_or_default(),
         categories,
         summary: GReaderContent {
-            content: sanitized_content,
+            content: sanitized_summary,
         },
         canonical: vec![GReaderLink {
             href: link.to_string(),
@@ -519,14 +536,7 @@ fn entry_with_feed_to_greader_item(
         read_at: e.read_at.map(|dt| dt.to_rfc3339()),
         starred_at: e.starred_at.map(|dt| dt.to_rfc3339()),
         published_at: e.published_at.map(|dt| dt.to_rfc3339()),
-        content: e.content.as_ref().map(|c| {
-            sanitize_html(
-                c,
-                secret,
-                if link.is_empty() { None } else { Some(link) },
-                ewf.custom_referrer.as_deref(),
-            )
-        }),
+        content: sanitized_entry_content,
         summary_status,
     }
 }

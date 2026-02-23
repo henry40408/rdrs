@@ -338,10 +338,16 @@ pub fn rewrite_image_urls(
                     create_proxy_url(&url, secret)
                 };
 
-                // Replace the original src with the proxy URL and add lazy loading
-                let old_attr = format!("src=\"{}\"", src);
+                // Replace the original src with the proxy URL and add lazy loading.
+                // Try the &amp; version first (more common after ammonia encodes & to &amp;)
+                let old_attr_amp = format!("src=\"{}\"", src.replace('&', "&amp;"));
+                let old_attr_raw = format!("src=\"{}\"", src);
                 let new_attr = format!("src=\"{}\" loading=\"lazy\" decoding=\"async\"", proxy_url);
-                result = result.replacen(&old_attr, &new_attr, 1);
+                if result.contains(&old_attr_amp) {
+                    result = result.replacen(&old_attr_amp, &new_attr, 1);
+                } else {
+                    result = result.replacen(&old_attr_raw, &new_attr, 1);
+                }
             }
         }
     }
@@ -692,6 +698,37 @@ mod tests {
         // Without base URL, relative paths should remain unchanged
         assert!(output.contains("src=\"/images/photo.jpg\""));
         assert!(!output.contains("/api/proxy/image"));
+    }
+
+    #[test]
+    fn test_rewrite_image_url_with_query_params_containing_ampersand() {
+        // Ammonia encodes & to &amp; in attributes; scraper decodes it back when reading.
+        // The replacement must still succeed and proxy the URL.
+        let input =
+            r#"<img src="https://example.com/image.jpg?size=800&amp;format=webp" alt="Photo">"#;
+        let output = rewrite_image_urls(input, TEST_SECRET, None, None);
+        assert!(
+            output.contains("/api/proxy/image?url="),
+            "image should be proxied"
+        );
+        assert!(
+            !output.contains("src=\"https://example.com/image.jpg"),
+            "original src should be replaced"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_html_proxies_image_with_query_ampersand() {
+        let input = r#"<img src="https://cdn.example.com/photo?w=800&h=600" alt="Photo">"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None);
+        assert!(
+            output.contains("/api/proxy/image?url="),
+            "image should be proxied"
+        );
+        assert!(
+            !output.contains("cdn.example.com"),
+            "original domain should not appear in src"
+        );
     }
 
     #[test]
