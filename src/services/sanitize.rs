@@ -704,9 +704,13 @@ mod tests {
     fn test_rewrite_image_url_with_query_params_containing_ampersand() {
         // Ammonia encodes & to &amp; in attributes; scraper decodes it back when reading.
         // The replacement must still succeed and proxy the URL.
-        let input = r#"<img src="https://example.com/image.jpg?size=800&amp;format=webp" alt="Photo">"#;
+        let input =
+            r#"<img src="https://example.com/image.jpg?size=800&amp;format=webp" alt="Photo">"#;
         let output = rewrite_image_urls(input, TEST_SECRET, None, None);
-        assert!(output.contains("/api/proxy/image?url="), "image should be proxied");
+        assert!(
+            output.contains("/api/proxy/image?url="),
+            "image should be proxied"
+        );
         assert!(
             !output.contains("src=\"https://example.com/image.jpg"),
             "original src should be replaced"
@@ -717,7 +721,10 @@ mod tests {
     fn test_sanitize_html_proxies_image_with_query_ampersand() {
         let input = r#"<img src="https://cdn.example.com/photo?w=800&h=600" alt="Photo">"#;
         let output = sanitize_html(input, TEST_SECRET, None, None);
-        assert!(output.contains("/api/proxy/image?url="), "image should be proxied");
+        assert!(
+            output.contains("/api/proxy/image?url="),
+            "image should be proxied"
+        );
         assert!(
             !output.contains("cdn.example.com"),
             "original domain should not appear in src"
