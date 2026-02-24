@@ -116,6 +116,7 @@ pub async fn stream_contents(
     let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
 
     let secret = &state.config.image_proxy_secret;
+    let proxy_base_url = state.config.public_base_url.as_deref();
     let no_content = query.no_content.unwrap_or(false);
     let items: Vec<GReaderItem> = entries
         .iter()
@@ -123,7 +124,7 @@ pub async fn stream_contents(
             let status = summary_statuses
                 .get(&ewf.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status, secret, no_content)
+            entry_with_feed_to_greader_item(ewf, status, secret, no_content, proxy_base_url)
         })
         .collect();
 
@@ -355,13 +356,14 @@ async fn fetch_items_by_ids(
     let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
 
     let secret = &state.config.image_proxy_secret;
+    let proxy_base_url = state.config.public_base_url.as_deref();
     let items: Vec<GReaderItem> = entries
         .iter()
         .map(|ewf| {
             let status = summary_statuses
                 .get(&ewf.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status, secret, false)
+            entry_with_feed_to_greader_item(ewf, status, secret, false, proxy_base_url)
         })
         .collect();
 
@@ -459,6 +461,7 @@ fn entry_with_feed_to_greader_item(
     summary_status: Option<String>,
     secret: &[u8],
     no_content: bool,
+    proxy_base_url: Option<&str>,
 ) -> GReaderItem {
     let e = &ewf.entry;
 
@@ -493,12 +496,12 @@ fn entry_with_feed_to_greader_item(
         let sc: Option<String> = e
             .content
             .as_deref()
-            .map(|c| sanitize_html(c, secret, base_url, referrer));
+            .map(|c| sanitize_html(c, secret, base_url, referrer, proxy_base_url));
         let ss = if let Some(ref sc) = sc {
             sc.clone()
         } else {
             let fallback = e.summary.as_deref().unwrap_or("");
-            sanitize_html(fallback, secret, base_url, referrer)
+            sanitize_html(fallback, secret, base_url, referrer, proxy_base_url)
         };
         (sc, ss)
     };

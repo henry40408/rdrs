@@ -241,13 +241,23 @@ RDRS supports passwordless authentication via WebAuthn/Passkey:
 
 ### Image Proxy (`image_proxy.rs`)
 
-Proxies external images to:
-- Protect user privacy (no direct requests to external servers)
-- Work around mixed content issues
+Proxies external images through the server to:
+- Protect user privacy (no direct requests to external servers from clients)
+- Work around mixed content issues (HTTPS pages with HTTP images)
 
 Uses HMAC-SHA256 signatures to prevent abuse:
-1. Server generates signed URL: `/api/proxy/image?url=...&sig=...`
-2. Proxy handler verifies signature before fetching
+1. Server generates signed URL: `/api/proxy/image?url=...&s=...`
+2. Proxy handler verifies signature before fetching the image
+3. Signature is truncated to 8 bytes for URL brevity
+
+**URL Format:**
+- **Relative paths** (default): `/api/proxy/image?url=...&s=...`
+  - Used by Web UI (browsers automatically resolve relative paths)
+  - Backward compatible behavior when `PUBLIC_BASE_URL` is not configured
+- **Absolute URLs** (optional): `https://rdrs.example.com/api/proxy/image?url=...&s=...`
+  - Used by Google Reader API when `PUBLIC_BASE_URL` is configured
+  - Required for native RSS clients (e.g., NetNewsWire) that render HTML directly
+  - Configured via `PUBLIC_BASE_URL` environment variable
 
 ### External Services
 

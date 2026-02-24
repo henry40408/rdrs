@@ -240,6 +240,7 @@ pub fn sanitize_html(
     secret: &[u8],
     base_url: Option<&str>,
     referrer: Option<&str>,
+    proxy_base_url: Option<&str>,
 ) -> String {
     let allowed_tags: HashSet<&str> = [
         "p",
@@ -294,7 +295,13 @@ pub fn sanitize_html(
     let without_tracking = strip_tracking_params(&without_pixels);
 
     // Step 4: Rewrite image URLs to proxy (resolve relative URLs using base_url)
-    let with_images = rewrite_image_urls(&without_tracking, secret, base_url, referrer);
+    let with_images = rewrite_image_urls(
+        &without_tracking,
+        secret,
+        base_url,
+        referrer,
+        proxy_base_url,
+    );
 
     // Step 5: Add privacy attributes to links
     add_privacy_attrs_to_links(&with_images)
@@ -305,6 +312,7 @@ pub fn rewrite_image_urls(
     secret: &[u8],
     base_url: Option<&str>,
     referrer: Option<&str>,
+    proxy_base_url: Option<&str>,
 ) -> String {
     let document = Html::parse_fragment(html);
     let img_selector = Selector::parse("img[src]").expect("static CSS selector");
@@ -333,9 +341,9 @@ pub fn rewrite_image_urls(
 
             if let Some(url) = absolute_url {
                 let proxy_url = if let Some(ref_val) = referrer {
-                    create_proxy_url_with_referrer(&url, ref_val, secret)
+                    create_proxy_url_with_referrer(&url, ref_val, secret, proxy_base_url)
                 } else {
-                    create_proxy_url(&url, secret)
+                    create_proxy_url(&url, secret, proxy_base_url)
                 };
 
                 // Replace the original src with the proxy URL and add lazy loading.
@@ -388,14 +396,14 @@ mod tests {
     #[test]
     fn test_sanitize_basic_html() {
         let input = "<p>Hello <strong>world</strong></p>";
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert_eq!(output, "<p>Hello <strong>world</strong></p>");
     }
 
     #[test]
     fn test_remove_script_tags() {
         let input = "<p>Hello</p><script>alert('xss')</script>";
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("script"));
         assert!(output.contains("<p>Hello</p>"));
     }
@@ -403,7 +411,7 @@ mod tests {
     #[test]
     fn test_preserve_links() {
         let input = r#"<a href="https://example.com">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(output.contains("href=\"https://example.com\""));
         assert!(output.contains("rel=\"noopener noreferrer\""));
     }
@@ -411,14 +419,14 @@ mod tests {
     #[test]
     fn test_remove_javascript_urls() {
         let input = r#"<a href="javascript:alert('xss')">Click</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("javascript"));
     }
 
     #[test]
     fn test_preserve_images() {
         let input = r#"<img src="https://example.com/image.jpg" alt="Image">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         // Image URLs should be rewritten to proxy URLs with signature
         assert!(output.contains("/api/proxy/image?url="));
         assert!(output.contains("&s="));
@@ -428,7 +436,7 @@ mod tests {
     #[test]
     fn test_rewrite_image_urls() {
         let input = r#"<p>Text</p><img src="https://example.com/image.jpg" alt="Image">"#;
-        let output = rewrite_image_urls(input, TEST_SECRET, None, None);
+        let output = rewrite_image_urls(input, TEST_SECRET, None, None, None);
         assert!(output.contains("/api/proxy/image?url="));
         assert!(output.contains("&s="));
         assert!(!output.contains("src=\"https://example.com/image.jpg\""));
@@ -437,7 +445,7 @@ mod tests {
     #[test]
     fn test_rewrite_preserves_data_urls() {
         let input = r#"<img src="data:image/png;base64,abc123" alt="Data URL">"#;
-        let output = rewrite_image_urls(input, TEST_SECRET, None, None);
+        let output = rewrite_image_urls(input, TEST_SECRET, None, None, None);
         assert!(output.contains("data:image/png;base64,abc123"));
         assert!(!output.contains("/api/proxy/image"));
     }
@@ -445,7 +453,7 @@ mod tests {
     #[test]
     fn test_rewrite_multiple_images() {
         let input = r#"<img src="https://a.com/1.jpg"><img src="https://b.com/2.jpg">"#;
-        let output = rewrite_image_urls(input, TEST_SECRET, None, None);
+        let output = rewrite_image_urls(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("src=\"https://a.com/1.jpg\""));
         assert!(!output.contains("src=\"https://b.com/2.jpg\""));
         // Both should be rewritten with signatures
@@ -458,7 +466,7 @@ mod tests {
     #[test]
     fn test_links_have_target_blank() {
         let input = r#"<a href="https://example.com">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(output.contains("target=\"_blank\""));
         assert!(output.contains("rel=\"noopener noreferrer\""));
     }
@@ -466,7 +474,7 @@ mod tests {
     #[test]
     fn test_multiple_links_have_target_blank() {
         let input = r#"<a href="https://a.com">A</a><a href="https://b.com">B</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         let target_count = output.matches("target=\"_blank\"").count();
         assert_eq!(target_count, 2);
     }
@@ -474,7 +482,7 @@ mod tests {
     #[test]
     fn test_relative_links_no_target_blank() {
         let input = r#"<a href="/local/path">Local</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("target=\"_blank\""));
     }
 
@@ -617,7 +625,7 @@ mod tests {
     #[test]
     fn test_links_have_referrerpolicy() {
         let input = r#"<a href="https://example.com">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(output.contains("referrerpolicy=\"no-referrer\""));
         assert!(output.contains("target=\"_blank\""));
         assert!(output.contains("rel=\"noopener noreferrer\""));
@@ -626,7 +634,7 @@ mod tests {
     #[test]
     fn test_multiple_links_have_referrerpolicy() {
         let input = r#"<a href="https://a.com">A</a><a href="https://b.com">B</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         let policy_count = output.matches("referrerpolicy=\"no-referrer\"").count();
         assert_eq!(policy_count, 2);
     }
@@ -637,7 +645,7 @@ mod tests {
     fn test_sanitize_removes_tracking_pixels() {
         let input =
             r#"<p>Text</p><img src="https://pixel.tracker.com/img.gif" width="1" height="1">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("pixel.tracker.com"));
         assert!(output.contains("<p>Text</p>"));
     }
@@ -645,7 +653,7 @@ mod tests {
     #[test]
     fn test_sanitize_strips_tracking_params() {
         let input = r#"<a href="https://example.com/page?utm_source=test&id=123">Link</a>"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("utm_source"));
         assert!(output.contains("id=123"));
     }
@@ -660,6 +668,7 @@ mod tests {
             TEST_SECRET,
             Some("https://example.com/article/123"),
             None,
+            None,
         );
         assert!(output.contains("/api/proxy/image?url="));
         assert!(!output.contains("src=\"/images/photo.jpg\""));
@@ -672,6 +681,7 @@ mod tests {
             input,
             TEST_SECRET,
             Some("https://example.com/article/123"),
+            None,
             None,
         );
         assert!(output.contains("/api/proxy/image?url="));
@@ -686,6 +696,7 @@ mod tests {
             TEST_SECRET,
             Some("https://example.com/article/123"),
             None,
+            None,
         );
         assert!(output.contains("/api/proxy/image?url="));
         assert!(!output.contains("src=\"../images/photo.jpg\""));
@@ -694,7 +705,7 @@ mod tests {
     #[test]
     fn test_relative_images_without_base_url_unchanged() {
         let input = r#"<img src="/images/photo.jpg" alt="Photo">"#;
-        let output = rewrite_image_urls(input, TEST_SECRET, None, None);
+        let output = rewrite_image_urls(input, TEST_SECRET, None, None, None);
         // Without base URL, relative paths should remain unchanged
         assert!(output.contains("src=\"/images/photo.jpg\""));
         assert!(!output.contains("/api/proxy/image"));
@@ -706,7 +717,7 @@ mod tests {
         // The replacement must still succeed and proxy the URL.
         let input =
             r#"<img src="https://example.com/image.jpg?size=800&amp;format=webp" alt="Photo">"#;
-        let output = rewrite_image_urls(input, TEST_SECRET, None, None);
+        let output = rewrite_image_urls(input, TEST_SECRET, None, None, None);
         assert!(
             output.contains("/api/proxy/image?url="),
             "image should be proxied"
@@ -720,7 +731,7 @@ mod tests {
     #[test]
     fn test_sanitize_html_proxies_image_with_query_ampersand() {
         let input = r#"<img src="https://cdn.example.com/photo?w=800&h=600" alt="Photo">"#;
-        let output = sanitize_html(input, TEST_SECRET, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(
             output.contains("/api/proxy/image?url="),
             "image should be proxied"
@@ -734,7 +745,13 @@ mod tests {
     #[test]
     fn test_mixed_absolute_and_relative_images() {
         let input = r#"<img src="https://cdn.example.com/abs.jpg"><img src="/images/rel.jpg">"#;
-        let output = rewrite_image_urls(input, TEST_SECRET, Some("https://example.com/page"), None);
+        let output = rewrite_image_urls(
+            input,
+            TEST_SECRET,
+            Some("https://example.com/page"),
+            None,
+            None,
+        );
         // Both should be rewritten
         let proxy_count = output.matches("/api/proxy/image?url=").count();
         assert_eq!(proxy_count, 2);
@@ -748,8 +765,36 @@ mod tests {
             TEST_SECRET,
             Some("https://example.com/article"),
             None,
+            None,
         );
         assert!(output.contains("/api/proxy/image?url="));
         assert!(!output.contains("src=\"/images/photo.jpg\""));
+    }
+
+    #[test]
+    fn test_rewrite_image_urls_with_proxy_base() {
+        let input = r#"<img src="https://example.com/image.jpg">"#;
+        let output = rewrite_image_urls(
+            input,
+            TEST_SECRET,
+            None,
+            None,
+            Some("https://rdrs.example.com"),
+        );
+        assert!(output.contains("https://rdrs.example.com/api/proxy/image?url="));
+        assert!(!output.contains("src=\"/api/proxy/image"));
+    }
+
+    #[test]
+    fn test_sanitize_html_with_proxy_base() {
+        let input = r#"<img src="https://cdn.example.com/photo.jpg">"#;
+        let output = sanitize_html(
+            input,
+            TEST_SECRET,
+            None,
+            None,
+            Some("https://rdrs.example.com"),
+        );
+        assert!(output.contains("https://rdrs.example.com/api/proxy/image?url="));
     }
 }

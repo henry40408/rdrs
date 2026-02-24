@@ -21,6 +21,7 @@ pub struct Config {
     pub webauthn_rp_id: String,
     pub webauthn_rp_origin: String,
     pub webauthn_rp_name: String,
+    pub public_base_url: Option<String>,
 }
 
 impl Config {
@@ -47,6 +48,7 @@ impl Config {
             webauthn_rp_origin: env::var("WEBAUTHN_RP_ORIGIN")
                 .unwrap_or_else(|_| format!("http://localhost:{}", server_port)),
             webauthn_rp_name: env::var("WEBAUTHN_RP_NAME").unwrap_or_else(|_| "rdrs".to_string()),
+            public_base_url: env::var("PUBLIC_BASE_URL").ok().filter(|s| !s.is_empty()),
         }
     }
 
@@ -91,6 +93,7 @@ mod tests {
             webauthn_rp_id: "localhost".to_string(),
             webauthn_rp_origin: "http://localhost:3000".to_string(),
             webauthn_rp_name: "rdrs".to_string(),
+            public_base_url: None,
         }
     }
 

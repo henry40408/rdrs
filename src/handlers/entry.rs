@@ -129,6 +129,7 @@ pub async fn fetch_full_content(
         &state.config.image_proxy_secret,
         Some(&link),
         custom_referrer.as_deref(),
+        None, // Web UI doesn't need absolute URLs
     );
 
     Ok(Json(FetchFullContentResponse {

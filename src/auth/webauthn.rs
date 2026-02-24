@@ -33,6 +33,7 @@ mod tests {
             webauthn_rp_id: "localhost".to_string(),
             webauthn_rp_origin: "http://localhost:3000".to_string(),
             webauthn_rp_name: "rdrs".to_string(),
+            public_base_url: None,
         }
     }
 
