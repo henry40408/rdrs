@@ -62,6 +62,7 @@ All configuration is done via environment variables:
 | `SIGNUP_ENABLED` | `false` | Allow new user registration |
 | `MULTI_USER_ENABLED` | `false` | Allow multiple users (requires signup enabled) |
 | `IMAGE_PROXY_SECRET` | Auto-generated | HMAC secret for secure image proxying |
+| `PUBLIC_BASE_URL` | - | Public base URL for generating absolute image proxy URLs in API responses (e.g., `https://rdrs.example.com`). If not set, relative paths are used (backward compatible). |
 | `USER_AGENT` | `RDRS/...` | Custom user agent for feed fetching |
 | `WEBAUTHN_RP_ID` | `localhost` | WebAuthn Relying Party ID for passkey authentication |
 | `WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin URL |

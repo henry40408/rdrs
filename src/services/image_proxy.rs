@@ -22,10 +22,16 @@ pub fn verify_signature(url: &str, signature: &str, secret: &[u8]) -> bool {
 }
 
 /// Creates a proxy URL with signature for an image URL.
-pub fn create_proxy_url(original_url: &str, secret: &[u8]) -> String {
+/// If base_url is provided, returns an absolute URL; otherwise returns a relative path.
+pub fn create_proxy_url(original_url: &str, secret: &[u8], base_url: Option<&str>) -> String {
     let encoded = URL_SAFE_NO_PAD.encode(original_url);
     let signature = sign_url(original_url, secret);
-    format!("/api/proxy/image?url={}&s={}", encoded, signature)
+    let path = format!("/api/proxy/image?url={}&s={}", encoded, signature);
+
+    match base_url {
+        Some(base) => format!("{}{}", base.trim_end_matches('/'), path),
+        None => path,
+    }
 }
 
 /// Signs a URL combined with a referrer using HMAC-SHA256.
@@ -50,14 +56,25 @@ pub fn verify_signature_with_referrer(
 }
 
 /// Creates a proxy URL with signature for an image URL, including a referrer parameter.
-pub fn create_proxy_url_with_referrer(original_url: &str, referrer: &str, secret: &[u8]) -> String {
+/// If base_url is provided, returns an absolute URL; otherwise returns a relative path.
+pub fn create_proxy_url_with_referrer(
+    original_url: &str,
+    referrer: &str,
+    secret: &[u8],
+    base_url: Option<&str>,
+) -> String {
     let encoded_url = URL_SAFE_NO_PAD.encode(original_url);
     let encoded_referrer = URL_SAFE_NO_PAD.encode(referrer);
     let signature = sign_url_with_referrer(original_url, referrer, secret);
-    format!(
+    let path = format!(
         "/api/proxy/image?url={}&s={}&r={}",
         encoded_url, signature, encoded_referrer
-    )
+    );
+
+    match base_url {
+        Some(base) => format!("{}{}", base.trim_end_matches('/'), path),
+        None => path,
+    }
 }
 
 /// Constant-time equality comparison to prevent timing attacks.
@@ -128,7 +145,7 @@ mod tests {
         let secret = b"test_secret_key_32_bytes_long!!!";
         let url = "https://example.com/image.jpg";
 
-        let proxy_url = create_proxy_url(url, secret);
+        let proxy_url = create_proxy_url(url, secret, None);
 
         assert!(proxy_url.starts_with("/api/proxy/image?url="));
         assert!(proxy_url.contains("&s="));
@@ -138,6 +155,35 @@ mod tests {
         assert_eq!(parts.len(), 2);
         let signature = parts[1];
         assert!(verify_signature(url, signature, secret));
+    }
+
+    #[test]
+    fn test_create_proxy_url_with_base() {
+        let secret = b"test_secret_key_32_bytes_long!!!";
+        let url = "https://example.com/image.jpg";
+        let base = "https://my-instance.com";
+
+        let proxy_url = create_proxy_url(url, secret, Some(base));
+        assert!(proxy_url.starts_with("https://my-instance.com/api/proxy/image?url="));
+        assert!(proxy_url.contains("&s="));
+
+        // Verify signature still works
+        let parts: Vec<&str> = proxy_url.split("&s=").collect();
+        assert_eq!(parts.len(), 2);
+        let signature = parts[1];
+        assert!(verify_signature(url, signature, secret));
+    }
+
+    #[test]
+    fn test_create_proxy_url_with_base_trailing_slash() {
+        let secret = b"test_secret_key_32_bytes_long!!!";
+        let url = "https://example.com/image.jpg";
+        let base = "https://my-instance.com/"; // trailing slash
+
+        let proxy_url = create_proxy_url(url, secret, Some(base));
+        // Should not have double slash
+        assert!(!proxy_url.contains("com//api"));
+        assert!(proxy_url.starts_with("https://my-instance.com/api/proxy/image?url="));
     }
 
     #[test]
@@ -189,7 +235,7 @@ mod tests {
         let url = "https://example.com/image.jpg";
         let referrer = "https://example.com";
 
-        let proxy_url = create_proxy_url_with_referrer(url, referrer, secret);
+        let proxy_url = create_proxy_url_with_referrer(url, referrer, secret, None);
 
         assert!(proxy_url.starts_with("/api/proxy/image?url="));
         assert!(proxy_url.contains("&s="));
@@ -200,6 +246,25 @@ mod tests {
         assert!(proxy_url.contains(&format!("&r={}", encoded_referrer)));
 
         // Verify the signature
+        let parts: Vec<&str> = proxy_url.split('&').collect();
+        let sig = parts[1].strip_prefix("s=").unwrap();
+        assert!(verify_signature_with_referrer(url, referrer, sig, secret));
+    }
+
+    #[test]
+    fn test_create_proxy_url_with_referrer_and_base() {
+        let secret = b"test_secret_key_32_bytes_long!!!";
+        let url = "https://example.com/image.jpg";
+        let referrer = "https://example.com";
+        let base = "https://rdrs.example.com";
+
+        let proxy_url = create_proxy_url_with_referrer(url, referrer, secret, Some(base));
+
+        assert!(proxy_url.starts_with("https://rdrs.example.com/api/proxy/image?url="));
+        assert!(proxy_url.contains("&s="));
+        assert!(proxy_url.contains("&r="));
+
+        // Verify signature still works
         let parts: Vec<&str> = proxy_url.split('&').collect();
         let sig = parts[1].strip_prefix("s=").unwrap();
         assert!(verify_signature_with_referrer(url, referrer, sig, secret));
