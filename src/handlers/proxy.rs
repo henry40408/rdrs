@@ -9,7 +9,6 @@ use url::Url;
 
 use crate::{
     error::{AppError, AppResult},
-    middleware::auth::AuthUser,
     services::http::{send_with_retry_on_error, RetryConfig, DEFAULT_TIMEOUT},
     services::{verify_signature, verify_signature_with_referrer},
     utils::url_validation,
@@ -49,7 +48,6 @@ fn verify_proxy_signature(
 
 pub async fn proxy_image(
     State(state): State<AppState>,
-    _user: AuthUser,
     Query(query): Query<ProxyQuery>,
 ) -> AppResult<Response> {
     // Decode the base64 URL
