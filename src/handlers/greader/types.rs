@@ -98,8 +98,16 @@ pub fn item_id_to_entry_id(s: &str) -> AppResult<i64> {
             .map_err(|_| AppError::Validation(format!("Invalid item ID: {}", s)));
     }
 
-    // Short format: plain decimal number
-    s.parse::<i64>()
+    // Short format: try decimal first, then hex (some clients send bare hex like "0000000000005da1")
+    if let Ok(id) = s.parse::<i64>() {
+        return Ok(id);
+    }
+
+    let hex = s.trim_start_matches('0');
+    if hex.is_empty() {
+        return Ok(0);
+    }
+    i64::from_str_radix(hex, 16)
         .map_err(|_| AppError::Validation(format!("Invalid item ID: {}", s)))
 }
 
@@ -380,6 +388,14 @@ mod tests {
     fn test_item_id_to_entry_id_short() {
         assert_eq!(item_id_to_entry_id("1").unwrap(), 1);
         assert_eq!(item_id_to_entry_id("255").unwrap(), 255);
+    }
+
+    #[test]
+    fn test_item_id_to_entry_id_bare_hex() {
+        // Some clients send the hex part without the tag prefix
+        assert_eq!(item_id_to_entry_id("0000000000005da1").unwrap(), 0x5da1);
+        assert_eq!(item_id_to_entry_id("00000000000000ff").unwrap(), 255);
+        assert_eq!(item_id_to_entry_id("0000000000000000").unwrap(), 0);
     }
 
     #[test]
