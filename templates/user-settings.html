@@ -5,637 +5,594 @@
 
 {% block title %}User Settings - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
+{% block body %}
+<div class="app-layout">
+{% call macros::sidebar("user-settings", is_admin, is_masquerading, username) %}{% endcall %}
 
-{% block content %}
-{% call macros::nav("user-settings", is_admin, is_masquerading, username) %}{% endcall %}
+<main class="main-content">
+    <div class="page-content">
+    {% call macros::flash(flash_messages) %}{% endcall %}
 
-<h1>User Settings</h1>
+    <h1>User Settings</h1>
 
-<h2>Account Information</h2>
-<table>
-  <tr>
-    <th class="settings-th">Username</th>
-    <td>{{ username }}</td>
-  </tr>
-  <tr>
-    <th class="settings-th">Role</th>
-    <td>{{ role }}</td>
-  </tr>
-  <tr>
-    <th class="settings-th">Registered</th>
-    <td>{{ created_at }}</td>
-  </tr>
-  <tr>
-    <th class="settings-th">Logged In</th>
-    <td>{{ logged_in_at }}</td>
-  </tr>
-</table>
+    <h2>Account Information</h2>
+    <table>
+      <tr>
+        <th class="settings-th">Username</th>
+        <td>{{ username }}</td>
+      </tr>
+      <tr>
+        <th class="settings-th">Role</th>
+        <td>{{ role }}</td>
+      </tr>
+      <tr>
+        <th class="settings-th">Registered</th>
+        <td>{{ created_at }}</td>
+      </tr>
+      <tr>
+        <th class="settings-th">Logged In</th>
+        <td>{{ logged_in_at }}</td>
+      </tr>
+    </table>
 
-<h2>RSS Client (Google Reader API)</h2>
-<p class="muted">Connect any RSS reader that supports the Google Reader API (e.g., Reeder, NetNewsWire, FeedMe, Read You, FreshRSS).</p>
-<table>
-  <tr>
-    <th class="settings-th">Server URL</th>
-    <td><code id="greader-server-url"></code></td>
-  </tr>
-  <tr>
-    <th class="settings-th">Username</th>
-    <td><code>{{ username }}</code></td>
-  </tr>
-  <tr>
-    <th class="settings-th">Password</th>
-    <td class="muted">Your RDRS password</td>
-  </tr>
-</table>
-<p class="muted">
-  In your RSS client, choose "Google Reader" or "FreshRSS" as the account type and enter the server URL above with your credentials.
-  Some clients may require the FreshRSS-compatible URL: <code id="greader-freshrss-url"></code>
-</p>
-<script>
-  document.getElementById('greader-server-url').textContent = window.location.origin;
-  document.getElementById('greader-freshrss-url').textContent = window.location.origin + '/api/greader.php';
-</script>
+    <h2>RSS Client (Google Reader API)</h2>
+    <p class="muted">Connect any RSS reader that supports the Google Reader API (e.g., Reeder, NetNewsWire, FeedMe, Read You, FreshRSS).</p>
+    <table>
+      <tr>
+        <th class="settings-th">Server URL</th>
+        <td><code id="greader-server-url"></code></td>
+      </tr>
+      <tr>
+        <th class="settings-th">Username</th>
+        <td><code>{{ username }}</code></td>
+      </tr>
+      <tr>
+        <th class="settings-th">Password</th>
+        <td class="muted">Your RDRS password</td>
+      </tr>
+    </table>
+    <p class="muted">
+      In your RSS client, choose "Google Reader" or "FreshRSS" as the account type and enter the server URL above with your credentials.
+      Some clients may require the FreshRSS-compatible URL: <code id="greader-freshrss-url"></code>
+    </p>
+    <script>
+      document.getElementById('greader-server-url').textContent = window.location.origin;
+      document.getElementById('greader-freshrss-url').textContent = window.location.origin + '/api/greader.php';
+    </script>
 
-<hr>
+    <hr>
 
-<h2>Change Password</h2>
-<div id="password-error" class="error" style="display: none"></div>
-<form id="change-password-form">
-  <div class="form-group">
-    <label for="current-password">Current Password</label>
-    <input type="password" id="current-password" name="current-password" required autocomplete="current-password">
-  </div>
-  <div class="form-group">
-    <label for="new-password">New Password</label>
-    <input type="password" id="new-password" name="new-password" required minlength="6" autocomplete="new-password">
-  </div>
-  <div class="form-group">
-    <label for="confirm-password">Confirm New Password</label>
-    <input type="password" id="confirm-password" name="confirm-password" required minlength="6" autocomplete="new-password">
-  </div>
-  <button type="submit">Change Password</button>
-</form>
-<script>
-  document
-    .getElementById("change-password-form")
-    .addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const errorDiv = document.getElementById("password-error");
-      errorDiv.style.display = "none";
+    <h2>Change Password</h2>
+    <div id="password-error" class="error" style="display: none"></div>
+    <form id="change-password-form">
+      <div class="form-group">
+        <label for="current-password">Current Password</label>
+        <input type="password" id="current-password" name="current-password" required autocomplete="current-password">
+      </div>
+      <div class="form-group">
+        <label for="new-password">New Password</label>
+        <input type="password" id="new-password" name="new-password" required minlength="6" autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label for="confirm-password">Confirm New Password</label>
+        <input type="password" id="confirm-password" name="confirm-password" required minlength="6" autocomplete="new-password">
+      </div>
+      <button type="submit">Change Password</button>
+    </form>
+    <script>
+      document
+        .getElementById("change-password-form")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const errorDiv = document.getElementById("password-error");
+          errorDiv.style.display = "none";
 
-      const currentPassword = document.getElementById("current-password").value;
-      const newPassword = document.getElementById("new-password").value;
-      const confirmPassword = document.getElementById("confirm-password").value;
+          const currentPassword = document.getElementById("current-password").value;
+          const newPassword = document.getElementById("new-password").value;
+          const confirmPassword = document.getElementById("confirm-password").value;
 
-      if (newPassword !== confirmPassword) {
-        errorDiv.textContent = "New passwords do not match";
-        errorDiv.style.display = "block";
-        return;
-      }
+          if (newPassword !== confirmPassword) {
+            errorDiv.textContent = "New passwords do not match";
+            errorDiv.style.display = "block";
+            return;
+          }
 
-      try {
-        const response = await fetch("/api/user/password", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            current_password: currentPassword,
-            new_password: newPassword,
-          }),
+          try {
+            const response = await fetch("/api/user/password", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                current_password: currentPassword,
+                new_password: newPassword,
+              }),
+            });
+
+            if (response.ok) {
+              flash.redirect("/login", "success", "Password changed successfully. Please login with your new password.");
+            } else {
+              const data = await response.json();
+              errorDiv.textContent = data.error || "Failed to change password";
+              errorDiv.style.display = "block";
+            }
+          } catch (err) {
+            errorDiv.textContent = "An error occurred. Please try again.";
+            errorDiv.style.display = "block";
+          }
         });
+    </script>
 
-        if (response.ok) {
-          flash.redirect("/login", "success", "Password changed successfully. Please login with your new password.");
-        } else {
-          const data = await response.json();
-          errorDiv.textContent = data.error || "Failed to change password";
-          errorDiv.style.display = "block";
-        }
-      } catch (err) {
-        errorDiv.textContent = "An error occurred. Please try again.";
-        errorDiv.style.display = "block";
-      }
-    });
-</script>
+    <hr>
 
-<hr>
+    <h2>Passkeys</h2>
+    <p class="muted">Passkeys let you sign in without a password using your device's biometrics or security key.</p>
 
-<h2>Passkeys</h2>
-<p class="muted">Passkeys let you sign in without a password using your device's biometrics or security key.</p>
-
-<div id="passkey-unsupported" style="display: none;">
-    <p class="error">Your browser does not support passkeys.</p>
-</div>
-
-<div id="passkey-section" style="display: none;">
-    <div id="passkey-error" class="error" style="display: none"></div>
-
-    <h3>Registered Passkeys</h3>
-    <div id="passkeys-list">
-        <p class="muted">Loading...</p>
+    <div id="passkey-unsupported" style="display: none;">
+        <p class="error">Your browser does not support passkeys.</p>
     </div>
 
-    <h3>Register New Passkey</h3>
-    <form id="register-passkey-form">
-        <div class="form-group">
-            <label for="passkey-name">Passkey Name</label>
-            <input type="text" id="passkey-name" name="passkey-name" required placeholder="e.g., MacBook Touch ID">
+    <div id="passkey-section" style="display: none;">
+        <div id="passkey-error" class="error" style="display: none"></div>
+
+        <h3>Registered Passkeys</h3>
+        <div id="passkeys-list">
+            <p class="muted">Loading...</p>
         </div>
-        <button type="submit" id="register-passkey-btn">Register Passkey</button>
-    </form>
-</div>
 
-<script>
-    const isWebAuthnSupported = window.PublicKeyCredential !== undefined;
+        <h3>Register New Passkey</h3>
+        <form id="register-passkey-form">
+            <div class="form-group">
+                <label for="passkey-name">Passkey Name</label>
+                <input type="text" id="passkey-name" name="passkey-name" required placeholder="e.g., MacBook Touch ID">
+            </div>
+            <button type="submit" id="register-passkey-btn">Register Passkey</button>
+        </form>
+    </div>
 
-    if (isWebAuthnSupported) {
-        document.getElementById('passkey-section').style.display = 'block';
-        loadPasskeys();
-    } else {
-        document.getElementById('passkey-unsupported').style.display = 'block';
-    }
+    <script>
+        const isWebAuthnSupported = window.PublicKeyCredential !== undefined;
 
-    function base64urlToBuffer(base64url) {
-        const padding = '='.repeat((4 - base64url.length % 4) % 4);
-        const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/') + padding;
-        const binary = atob(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
+        if (isWebAuthnSupported) {
+            document.getElementById('passkey-section').style.display = 'block';
+            loadPasskeys();
+        } else {
+            document.getElementById('passkey-unsupported').style.display = 'block';
         }
-        return bytes.buffer;
-    }
 
-    function bufferToBase64url(buffer) {
-        const bytes = new Uint8Array(buffer);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-    }
-
-    async function loadPasskeys() {
-        const listDiv = document.getElementById('passkeys-list');
-        try {
-            const response = await fetch('/api/passkeys');
-            if (!response.ok) throw new Error('Failed to load passkeys');
-
-            const data = await response.json();
-            if (data.passkeys.length === 0) {
-                listDiv.innerHTML = '<p class="muted">No passkeys registered yet.</p>';
-            } else {
-                listDiv.innerHTML = '<table><thead><tr><th>Name</th><th>Created</th><th>Last Used</th><th>Actions</th></tr></thead><tbody>' +
-                    data.passkeys.map(p => `
-                        <tr id="passkey-row-${p.id}">
-                            <td><span id="passkey-name-${p.id}">${escapeHtml(p.name)}</span></td>
-                            <td>${p.created_at}</td>
-                            <td>${p.last_used_at || 'Never'}</td>
-                            <td>
-                                <a href="#" onclick="renamePasskey(${p.id}); return false;">Rename</a>
-                                <a href="#" onclick="deletePasskey(${p.id}); return false;">Delete</a>
-                            </td>
-                        </tr>
-                    `).join('') +
-                    '</tbody></table>';
+        function base64urlToBuffer(base64url) {
+            const padding = '='.repeat((4 - base64url.length % 4) % 4);
+            const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/') + padding;
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
             }
-        } catch (err) {
-            listDiv.innerHTML = '<p class="error">Failed to load passkeys.</p>';
+            return bytes.buffer;
         }
-    }
 
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
+        function bufferToBase64url(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        }
 
-    async function renamePasskey(id) {
-        const currentName = document.getElementById(`passkey-name-${id}`).textContent;
-        const newName = prompt('Enter new name:', currentName);
-        if (!newName || newName === currentName) return;
+        async function loadPasskeys() {
+            const listDiv = document.getElementById('passkeys-list');
+            try {
+                const response = await fetch('/api/passkeys');
+                if (!response.ok) throw new Error('Failed to load passkeys');
 
-        try {
-            const response = await fetch(`/api/passkeys/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: newName })
-            });
-
-            if (response.ok) {
-                flash.success('Passkey renamed successfully.');
-                loadPasskeys();
-            } else {
                 const data = await response.json();
-                flash.error(data.error || 'Failed to rename passkey');
-            }
-        } catch (err) {
-            flash.error('An error occurred. Please try again.');
-        }
-    }
-
-    async function deletePasskey(id) {
-        if (!confirm('Are you sure you want to delete this passkey?')) return;
-
-        try {
-            const response = await fetch(`/api/passkeys/${id}`, {
-                method: 'DELETE'
-            });
-
-            if (response.ok) {
-                flash.success('Passkey deleted successfully.');
-                loadPasskeys();
-            } else {
-                const data = await response.json();
-                flash.error(data.error || 'Failed to delete passkey');
-            }
-        } catch (err) {
-            flash.error('An error occurred. Please try again.');
-        }
-    }
-
-    document.getElementById('register-passkey-form')?.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const errorDiv = document.getElementById('passkey-error');
-        const btn = document.getElementById('register-passkey-btn');
-        const nameInput = document.getElementById('passkey-name');
-        errorDiv.style.display = 'none';
-
-        const name = nameInput.value.trim();
-        if (!name) {
-            errorDiv.textContent = 'Passkey name is required';
-            errorDiv.style.display = 'block';
-            return;
-        }
-
-        try {
-            btn.disabled = true;
-            btn.textContent = 'Registering...';
-
-            // Start registration
-            const startResponse = await fetch('/api/passkey/register/start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            });
-
-            if (!startResponse.ok) {
-                const data = await startResponse.json();
-                throw new Error(data.error || 'Failed to start registration');
-            }
-
-            const { options } = await startResponse.json();
-
-            // Prepare credential creation options
-            const publicKey = {
-                ...options.publicKey,
-                challenge: base64urlToBuffer(options.publicKey.challenge),
-                user: {
-                    ...options.publicKey.user,
-                    id: base64urlToBuffer(options.publicKey.user.id)
-                },
-                excludeCredentials: options.publicKey.excludeCredentials?.map(cred => ({
-                    ...cred,
-                    id: base64urlToBuffer(cred.id)
-                })) || []
-            };
-
-            // Create credential
-            const credential = await navigator.credentials.create({ publicKey });
-
-            // Prepare credential for server
-            const credentialForServer = {
-                id: credential.id,
-                rawId: bufferToBase64url(credential.rawId),
-                type: credential.type,
-                response: {
-                    attestationObject: bufferToBase64url(credential.response.attestationObject),
-                    clientDataJSON: bufferToBase64url(credential.response.clientDataJSON)
+                if (data.passkeys.length === 0) {
+                    listDiv.innerHTML = '<p class="muted">No passkeys registered yet.</p>';
+                } else {
+                    listDiv.innerHTML = '<table><thead><tr><th>Name</th><th>Created</th><th>Last Used</th><th>Actions</th></tr></thead><tbody>' +
+                        data.passkeys.map(p => `
+                            <tr id="passkey-row-${p.id}">
+                                <td><span id="passkey-name-${p.id}">${escapeHtml(p.name)}</span></td>
+                                <td>${p.created_at}</td>
+                                <td>${p.last_used_at || 'Never'}</td>
+                                <td class="actions">
+                                    <a href="#" onclick="renamePasskey(${p.id}); return false;">Rename</a>
+                                    <a href="#" onclick="deletePasskey(${p.id}); return false;">Delete</a>
+                                </td>
+                            </tr>
+                        `).join('') +
+                        '</tbody></table>';
                 }
-            };
+            } catch (err) {
+                listDiv.innerHTML = '<p class="error">Failed to load passkeys.</p>';
+            }
+        }
 
-            // Add transports if available
-            if (credential.response.getTransports) {
-                credentialForServer.response.transports = credential.response.getTransports();
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function renamePasskey(id) {
+            const currentName = document.getElementById(`passkey-name-${id}`).textContent;
+            const newName = prompt('Enter new name:', currentName);
+            if (!newName || newName === currentName) return;
+            try {
+                const response = await fetch(`/api/passkeys/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName })
+                });
+                if (response.ok) {
+                    flash.success('Passkey renamed successfully.');
+                    loadPasskeys();
+                } else {
+                    const data = await response.json();
+                    flash.error(data.error || 'Failed to rename passkey');
+                }
+            } catch (err) {
+                flash.error('An error occurred. Please try again.');
+            }
+        }
+
+        async function deletePasskey(id) {
+            if (!confirm('Are you sure you want to delete this passkey?')) return;
+            try {
+                const response = await fetch(`/api/passkeys/${id}`, { method: 'DELETE' });
+                if (response.ok) {
+                    flash.success('Passkey deleted successfully.');
+                    loadPasskeys();
+                } else {
+                    const data = await response.json();
+                    flash.error(data.error || 'Failed to delete passkey');
+                }
+            } catch (err) {
+                flash.error('An error occurred. Please try again.');
+            }
+        }
+
+        document.getElementById('register-passkey-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const errorDiv = document.getElementById('passkey-error');
+            const btn = document.getElementById('register-passkey-btn');
+            const nameInput = document.getElementById('passkey-name');
+            errorDiv.style.display = 'none';
+
+            const name = nameInput.value.trim();
+            if (!name) {
+                errorDiv.textContent = 'Passkey name is required';
+                errorDiv.style.display = 'block';
+                return;
             }
 
-            // Finish registration
-            const finishResponse = await fetch('/api/passkey/register/finish', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name: name,
-                    credential: credentialForServer
-                })
+            try {
+                btn.disabled = true;
+                btn.textContent = 'Registering...';
+
+                const startResponse = await fetch('/api/passkey/register/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                if (!startResponse.ok) {
+                    const data = await startResponse.json();
+                    throw new Error(data.error || 'Failed to start registration');
+                }
+                const { options } = await startResponse.json();
+                const publicKey = {
+                    ...options.publicKey,
+                    challenge: base64urlToBuffer(options.publicKey.challenge),
+                    user: {
+                        ...options.publicKey.user,
+                        id: base64urlToBuffer(options.publicKey.user.id)
+                    },
+                    excludeCredentials: options.publicKey.excludeCredentials?.map(cred => ({
+                        ...cred,
+                        id: base64urlToBuffer(cred.id)
+                    })) || []
+                };
+                const credential = await navigator.credentials.create({ publicKey });
+                const credentialForServer = {
+                    id: credential.id,
+                    rawId: bufferToBase64url(credential.rawId),
+                    type: credential.type,
+                    response: {
+                        attestationObject: bufferToBase64url(credential.response.attestationObject),
+                        clientDataJSON: bufferToBase64url(credential.response.clientDataJSON)
+                    }
+                };
+                if (credential.response.getTransports) {
+                    credentialForServer.response.transports = credential.response.getTransports();
+                }
+                const finishResponse = await fetch('/api/passkey/register/finish', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name, credential: credentialForServer })
+                });
+                if (finishResponse.ok) {
+                    flash.success('Passkey registered successfully.');
+                    nameInput.value = '';
+                    loadPasskeys();
+                } else {
+                    const data = await finishResponse.json();
+                    throw new Error(data.error || 'Registration failed');
+                }
+            } catch (err) {
+                if (err.name === 'NotAllowedError') {
+                    errorDiv.textContent = 'Registration was cancelled or timed out.';
+                } else if (err.name === 'InvalidStateError') {
+                    errorDiv.textContent = 'This passkey is already registered.';
+                } else {
+                    errorDiv.textContent = err.message || 'An error occurred. Please try again.';
+                }
+                errorDiv.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Register Passkey';
+            }
+        });
+    </script>
+
+    <hr>
+
+    <h2>Display Preferences</h2>
+    <div id="settings-error" class="error" style="display: none"></div>
+
+    <form id="settings-form">
+      <div class="form-group">
+          <label for="theme-select">Theme</label>
+          <select id="theme-select" data-testid="theme-select" onchange="previewTheme(this.value)">
+              <option value="system" {% if theme.is_none() %}selected{% endif %}>System (auto)</option>
+              <option value="light" {% if theme == Some("light".to_string()) %}selected{% endif %}>Light</option>
+              <option value="dark" {% if theme == Some("dark".to_string()) %}selected{% endif %}>Dark</option>
+          </select>
+      </div>
+      <div class="form-group">
+        <label for="entries-per-page">Entries per page</label>
+        <input type="number" id="entries-per-page" name="entries-per-page" value="{{ entries_per_page }}" min="10" max="100" required>
+        <span class="muted" style="font-size:var(--font-xs);">(10-100)</span>
+      </div>
+      <button type="submit">Save Preferences</button>
+    </form>
+    <script>
+      function previewTheme(theme) {
+          if (theme === 'system' || !theme) {
+              document.documentElement.removeAttribute('data-theme');
+          } else {
+              document.documentElement.setAttribute('data-theme', theme);
+          }
+      }
+
+      document
+        .getElementById("settings-form")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const errorDiv = document.getElementById("settings-error");
+          errorDiv.style.display = "none";
+
+          const entriesPerPage = parseInt(document.getElementById("entries-per-page").value);
+          const themeSelect = document.getElementById("theme-select");
+          const theme = themeSelect.value;
+
+          if (entriesPerPage < 10 || entriesPerPage > 100) {
+            errorDiv.textContent = "Entries per page must be between 10 and 100";
+            errorDiv.style.display = "block";
+            return;
+          }
+
+          try {
+            const settingsResponse = await fetch("/api/user/settings", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ entries_per_page: entriesPerPage }),
             });
 
-            if (finishResponse.ok) {
-                flash.success('Passkey registered successfully.');
-                nameInput.value = '';
-                loadPasskeys();
-            } else {
-                const data = await finishResponse.json();
-                throw new Error(data.error || 'Registration failed');
+            if (!settingsResponse.ok) {
+              const data = await settingsResponse.json();
+              errorDiv.textContent = data.error || "Failed to save preferences";
+              errorDiv.style.display = "block";
+              return;
             }
-        } catch (err) {
-            if (err.name === 'NotAllowedError') {
-                errorDiv.textContent = 'Registration was cancelled or timed out.';
-            } else if (err.name === 'InvalidStateError') {
-                errorDiv.textContent = 'This passkey is already registered.';
+
+            await window.theme.syncToServer(theme);
+            flash.success("Preferences saved successfully.");
+          } catch (err) {
+            errorDiv.textContent = "An error occurred. Please try again.";
+            errorDiv.style.display = "block";
+          }
+        });
+    </script>
+
+    <hr>
+
+    <h2>Integrations</h2>
+    <p class="muted">Connect external services to save articles.</p>
+
+    <h3>Linkding</h3>
+    <p class="muted">
+      <a href="https://github.com/sissbruecker/linkding" target="_blank" rel="noopener noreferrer">Linkding</a>
+      is a self-hosted bookmark manager.
+      {% if linkding_configured %}
+      <span class="success-text">Configured</span>
+      {% endif %}
+    </p>
+    <div id="linkding-error" class="error" style="display: none"></div>
+    <form id="linkding-form">
+      <div class="form-group">
+        <label for="linkding-api-url">API URL</label>
+        <input type="url" id="linkding-api-url" name="linkding-api-url" value="{{ linkding_api_url }}" placeholder="https://linkding.example.com">
+      </div>
+      <div class="form-group">
+        <label for="linkding-api-token">API Token</label>
+        <input type="password" id="linkding-api-token" name="linkding-api-token" placeholder="{% if linkding_configured %}(unchanged){% else %}Enter your API token{% endif %}">
+      </div>
+      <button type="submit">Save Linkding Settings</button>
+      {% if linkding_configured %}
+      <button type="button" onclick="clearLinkding()" class="btn-secondary">Clear</button>
+      {% endif %}
+    </form>
+    <script>
+      document
+        .getElementById("linkding-form")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const errorDiv = document.getElementById("linkding-error");
+          errorDiv.style.display = "none";
+
+          const apiUrl = document.getElementById("linkding-api-url").value.trim();
+          const apiToken = document.getElementById("linkding-api-token").value;
+
+          if (apiUrl && !apiToken && !{{ linkding_configured }}) {
+            errorDiv.textContent = "API token is required";
+            errorDiv.style.display = "block";
+            return;
+          }
+
+          try {
+            const body = {};
+            if (apiUrl) body.api_url = apiUrl;
+            if (apiToken) body.api_token = apiToken;
+
+            const response = await fetch("/api/user/settings/linkding", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              flash.success(data.configured ? "Linkding settings saved successfully." : "Linkding settings cleared.");
+              setTimeout(() => location.reload(), 1000);
             } else {
-                errorDiv.textContent = err.message || 'An error occurred. Please try again.';
+              const data = await response.json();
+              errorDiv.textContent = data.error || "Failed to save Linkding settings";
+              errorDiv.style.display = "block";
             }
-            errorDiv.style.display = 'block';
-        } finally {
-            btn.disabled = false;
-            btn.textContent = 'Register Passkey';
-        }
-    });
-</script>
-
-<hr>
-
-<h2>Display Preferences</h2>
-<div id="settings-error" class="error" style="display: none"></div>
-
-<form id="settings-form">
-  <div class="form-group">
-      <label for="theme-select">Theme</label>
-      <select id="theme-select" data-testid="theme-select" onchange="previewTheme(this.value)">
-          <option value="system" {% if theme.is_none() %}selected{% endif %}>System (auto)</option>
-          <option value="light" {% if theme == Some("light".to_string()) %}selected{% endif %}>Light</option>
-          <option value="dark" {% if theme == Some("dark".to_string()) %}selected{% endif %}>Dark</option>
-      </select>
-  </div>
-  <div class="form-group">
-    <label for="entries-per-page">Entries per page</label>
-    <input type="number" id="entries-per-page" name="entries-per-page" value="{{ entries_per_page }}" min="10" max="100" required>
-    <span class="muted">(10-100)</span>
-  </div>
-  <button type="submit">Save Preferences</button>
-</form>
-<script>
-  // Preview theme immediately when changed (without saving)
-  function previewTheme(theme) {
-      if (theme === 'system' || !theme) {
-          document.documentElement.removeAttribute('data-theme');
-      } else {
-          document.documentElement.setAttribute('data-theme', theme);
-      }
-  }
-
-  document
-    .getElementById("settings-form")
-    .addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const errorDiv = document.getElementById("settings-error");
-      errorDiv.style.display = "none";
-
-      const entriesPerPage = parseInt(document.getElementById("entries-per-page").value);
-      const themeSelect = document.getElementById("theme-select");
-      const theme = themeSelect.value;
-
-      if (entriesPerPage < 10 || entriesPerPage > 100) {
-        errorDiv.textContent = "Entries per page must be between 10 and 100";
-        errorDiv.style.display = "block";
-        return;
-      }
-
-      try {
-        // Save entries per page
-        const settingsResponse = await fetch("/api/user/settings", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            entries_per_page: entriesPerPage,
-          }),
+          } catch (err) {
+            errorDiv.textContent = "An error occurred. Please try again.";
+            errorDiv.style.display = "block";
+          }
         });
 
-        if (!settingsResponse.ok) {
-          const data = await settingsResponse.json();
-          errorDiv.textContent = data.error || "Failed to save preferences";
-          errorDiv.style.display = "block";
-          return;
-        }
-
-        // Save theme to server
-        await window.theme.syncToServer(theme);
-
-        flash.success("Preferences saved successfully.");
-      } catch (err) {
-        errorDiv.textContent = "An error occurred. Please try again.";
-        errorDiv.style.display = "block";
-      }
-    });
-</script>
-
-<hr>
-
-<h2>Integrations</h2>
-<p class="muted">Connect external services to save articles.</p>
-
-<h3>Linkding</h3>
-<p class="muted">
-  <a href="https://github.com/sissbruecker/linkding" target="_blank" rel="noopener noreferrer">Linkding</a>
-  is a self-hosted bookmark manager.
-  {% if linkding_configured %}
-  <span class="success-text">✓ Configured</span>
-  {% endif %}
-</p>
-<div id="linkding-error" class="error" style="display: none"></div>
-<form id="linkding-form">
-  <div class="form-group">
-    <label for="linkding-api-url">API URL</label>
-    <input type="url" id="linkding-api-url" name="linkding-api-url" value="{{ linkding_api_url }}" placeholder="https://linkding.example.com">
-    <span class="muted">(Your Linkding server URL)</span>
-  </div>
-  <div class="form-group">
-    <label for="linkding-api-token">API Token</label>
-    <input type="password" id="linkding-api-token" name="linkding-api-token" placeholder="{% if linkding_configured %}(unchanged){% else %}Enter your API token{% endif %}">
-    <span class="muted">(Settings &rarr; Integrations &rarr; REST API)</span>
-  </div>
-  <button type="submit">Save Linkding Settings</button>
-  {% if linkding_configured %}
-  <button type="button" onclick="clearLinkding()" class="btn-secondary">Clear</button>
-  {% endif %}
-</form>
-<script>
-  document
-    .getElementById("linkding-form")
-    .addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const errorDiv = document.getElementById("linkding-error");
-      errorDiv.style.display = "none";
-
-      const apiUrl = document.getElementById("linkding-api-url").value.trim();
-      const apiToken = document.getElementById("linkding-api-token").value;
-
-      // If URL is provided but token is empty and not previously configured, show error
-      if (apiUrl && !apiToken && !{{ linkding_configured }}) {
-        errorDiv.textContent = "API token is required";
-        errorDiv.style.display = "block";
-        return;
-      }
-
-      try {
-        const body = {};
-        if (apiUrl) body.api_url = apiUrl;
-        if (apiToken) body.api_token = apiToken;
-
-        const response = await fetch("/api/user/settings/linkding", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.configured) {
-            flash.success("Linkding settings saved successfully.");
-          } else {
+      async function clearLinkding() {
+        if (!confirm("Clear Linkding settings?")) return;
+        try {
+          const response = await fetch("/api/user/settings/linkding", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          if (response.ok) {
             flash.success("Linkding settings cleared.");
+            setTimeout(() => location.reload(), 1000);
+          } else {
+            const data = await response.json();
+            flash.error(data.error || "Failed to clear Linkding settings");
           }
-          // Reload to update UI state
-          setTimeout(() => location.reload(), 1000);
-        } else {
-          const data = await response.json();
-          errorDiv.textContent = data.error || "Failed to save Linkding settings";
-          errorDiv.style.display = "block";
+        } catch (err) {
+          flash.error("An error occurred. Please try again.");
         }
-      } catch (err) {
-        errorDiv.textContent = "An error occurred. Please try again.";
-        errorDiv.style.display = "block";
       }
-    });
+    </script>
 
-  async function clearLinkding() {
-    if (!confirm("Clear Linkding settings?")) return;
+    <h3>Kagi Universal Summarizer</h3>
+    <p class="muted">
+      <a href="https://kagi.com/summarizer" target="_blank" rel="noopener noreferrer">Kagi Universal Summarizer</a>
+      provides AI-powered article summaries.
+      {% if kagi_configured %}
+      <span class="success-text">Configured</span>
+      {% endif %}
+    </p>
+    <div id="kagi-error" class="error" style="display: none"></div>
+    <form id="kagi-form">
+      <div class="form-group">
+        <label for="kagi-session-link">Session Link</label>
+        <input type="text" id="kagi-session-link" name="kagi-session-link" placeholder="{% if kagi_configured %}(unchanged){% else %}Paste your session link{% endif %}">
+      </div>
+      <div class="form-group">
+        <label for="kagi-language">Target Language</label>
+        <select id="kagi-language" name="kagi-language">
+          <option value="">Auto-detect</option>
+          <option value="EN" {% if kagi_language == "EN" %}selected{% endif %}>English</option>
+          <option value="ZH-HANT" {% if kagi_language == "ZH-HANT" %}selected{% endif %}>繁體中文</option>
+          <option value="ZH-CN" {% if kagi_language == "ZH-CN" %}selected{% endif %}>简体中文</option>
+          <option value="JA" {% if kagi_language == "JA" %}selected{% endif %}>日本語</option>
+          <option value="KO" {% if kagi_language == "KO" %}selected{% endif %}>한국어</option>
+          <option value="DE" {% if kagi_language == "DE" %}selected{% endif %}>Deutsch</option>
+          <option value="FR" {% if kagi_language == "FR" %}selected{% endif %}>Français</option>
+          <option value="ES" {% if kagi_language == "ES" %}selected{% endif %}>Español</option>
+          <option value="PT" {% if kagi_language == "PT" %}selected{% endif %}>Português</option>
+        </select>
+      </div>
+      <button type="submit">Save Kagi Settings</button>
+      {% if kagi_configured %}
+      <button type="button" onclick="clearKagi()" class="btn-secondary">Clear</button>
+      {% endif %}
+    </form>
+    <script>
+      document
+        .getElementById("kagi-form")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const errorDiv = document.getElementById("kagi-error");
+          errorDiv.style.display = "none";
 
-    try {
-      const response = await fetch("/api/user/settings/linkding", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
+          const sessionLink = document.getElementById("kagi-session-link").value;
+          const language = document.getElementById("kagi-language").value;
 
-      if (response.ok) {
-        flash.success("Linkding settings cleared.");
-        setTimeout(() => location.reload(), 1000);
-      } else {
-        const data = await response.json();
-        flash.error(data.error || "Failed to clear Linkding settings");
-      }
-    } catch (err) {
-      flash.error("An error occurred. Please try again.");
-    }
-  }
-</script>
+          if (!sessionLink && !{{ kagi_configured }}) {
+            errorDiv.textContent = "Session link is required";
+            errorDiv.style.display = "block";
+            return;
+          }
 
-<h3>Kagi Universal Summarizer</h3>
-<p class="muted">
-  <a href="https://kagi.com/summarizer" target="_blank" rel="noopener noreferrer">Kagi Universal Summarizer</a>
-  provides AI-powered article summaries.
-  {% if kagi_configured %}
-  <span class="success-text">✓ Configured</span>
-  {% endif %}
-</p>
-<div id="kagi-error" class="error" style="display: none"></div>
-<form id="kagi-form">
-  <div class="form-group">
-    <label for="kagi-session-link">Session Link</label>
-    <input type="text" id="kagi-session-link" name="kagi-session-link" placeholder="{% if kagi_configured %}(unchanged){% else %}Paste your session link{% endif %}">
-    <span class="muted">(Settings &rarr; Session Link &rarr; copy the full URL)</span>
-  </div>
-  <div class="form-group">
-    <label for="kagi-language">Target Language</label>
-    <select id="kagi-language" name="kagi-language">
-      <option value="">Auto-detect</option>
-      <option value="EN" {% if kagi_language == "EN" %}selected{% endif %}>English</option>
-      <option value="ZH-HANT" {% if kagi_language == "ZH-HANT" %}selected{% endif %}>繁體中文</option>
-      <option value="ZH-CN" {% if kagi_language == "ZH-CN" %}selected{% endif %}>简体中文</option>
-      <option value="JA" {% if kagi_language == "JA" %}selected{% endif %}>日本語</option>
-      <option value="KO" {% if kagi_language == "KO" %}selected{% endif %}>한국어</option>
-      <option value="DE" {% if kagi_language == "DE" %}selected{% endif %}>Deutsch</option>
-      <option value="FR" {% if kagi_language == "FR" %}selected{% endif %}>Français</option>
-      <option value="ES" {% if kagi_language == "ES" %}selected{% endif %}>Español</option>
-      <option value="PT" {% if kagi_language == "PT" %}selected{% endif %}>Português</option>
-    </select>
-    <span class="muted">(Optional: translate summary to this language)</span>
-  </div>
-  <button type="submit">Save Kagi Settings</button>
-  {% if kagi_configured %}
-  <button type="button" onclick="clearKagi()" class="btn-secondary">Clear</button>
-  {% endif %}
-</form>
-<script>
-  document
-    .getElementById("kagi-form")
-    .addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const errorDiv = document.getElementById("kagi-error");
-      errorDiv.style.display = "none";
+          try {
+            const body = {};
+            if (sessionLink) body.session_link = sessionLink;
+            body.language = language || null;
 
-      const sessionLink = document.getElementById("kagi-session-link").value;
-      const language = document.getElementById("kagi-language").value;
+            const response = await fetch("/api/user/settings/kagi", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
 
-      // If session link is empty and not previously configured, show error
-      if (!sessionLink && !{{ kagi_configured }}) {
-        errorDiv.textContent = "Session link is required";
-        errorDiv.style.display = "block";
-        return;
-      }
-
-      try {
-        const body = {};
-        if (sessionLink) body.session_link = sessionLink;
-        body.language = language || null;
-
-        const response = await fetch("/api/user/settings/kagi", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+            if (response.ok) {
+              const data = await response.json();
+              flash.success(data.configured ? "Kagi settings saved successfully." : "Kagi settings cleared.");
+              setTimeout(() => location.reload(), 1000);
+            } else {
+              const data = await response.json();
+              errorDiv.textContent = data.error || "Failed to save Kagi settings";
+              errorDiv.style.display = "block";
+            }
+          } catch (err) {
+            errorDiv.textContent = "An error occurred. Please try again.";
+            errorDiv.style.display = "block";
+          }
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          if (data.configured) {
-            flash.success("Kagi settings saved successfully.");
-          } else {
+      async function clearKagi() {
+        if (!confirm("Clear Kagi settings?")) return;
+        try {
+          const response = await fetch("/api/user/settings/kagi", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          if (response.ok) {
             flash.success("Kagi settings cleared.");
+            setTimeout(() => location.reload(), 1000);
+          } else {
+            const data = await response.json();
+            flash.error(data.error || "Failed to clear Kagi settings");
           }
-          // Reload to update UI state
-          setTimeout(() => location.reload(), 1000);
-        } else {
-          const data = await response.json();
-          errorDiv.textContent = data.error || "Failed to save Kagi settings";
-          errorDiv.style.display = "block";
+        } catch (err) {
+          flash.error("An error occurred. Please try again.");
         }
-      } catch (err) {
-        errorDiv.textContent = "An error occurred. Please try again.";
-        errorDiv.style.display = "block";
       }
-    });
+    </script>
 
-  async function clearKagi() {
-    if (!confirm("Clear Kagi settings?")) return;
-
-    try {
-      const response = await fetch("/api/user/settings/kagi", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-
-      if (response.ok) {
-        flash.success("Kagi settings cleared.");
-        setTimeout(() => location.reload(), 1000);
-      } else {
-        const data = await response.json();
-        flash.error(data.error || "Failed to clear Kagi settings");
-      }
-    } catch (err) {
-      flash.error("An error occurred. Please try again.");
-    }
-  }
-</script>
-
+    </div>
+</main>
+</div>
 {% endblock %}

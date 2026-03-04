@@ -3,44 +3,45 @@
 
 {% block title %}Login - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
+{% block body %}
+<div class="auth-layout">
+    <div class="auth-card">
+        {% call macros::flash(flash_messages) %}{% endcall %}
+        <h1>rdrs</h1>
+        <div id="error" class="error" style="display: none;" data-testid="login-error"></div>
 
-{% block content %}
-<h1>Login</h1>
-<div id="error" class="error" style="display: none;" data-testid="login-error"></div>
+        <div id="passkey-section" style="display: none;">
+            <button type="button" id="passkey-login-btn" class="btn-primary" style="width: 100%; margin-bottom: var(--space-4);">
+                Login with Passkey
+            </button>
+            <p class="muted" style="text-align: center; margin-bottom: var(--space-4); font-size: var(--font-sm);">or use password</p>
+        </div>
 
-<div id="passkey-section" style="display: none;">
-    <button type="button" id="passkey-login-btn" class="btn-primary" style="width: 100%; margin-bottom: 1rem;">
-        Login with Passkey
-    </button>
-    <p class="muted" style="text-align: center; margin-bottom: 1rem;">or use password</p>
-</div>
-
-<form id="login-form" data-testid="login-form">
-    <div class="form-group">
-        <label for="username">Username</label>
-        <input type="text" id="username" name="username" required autocomplete="username" data-testid="username-input">
+        <form id="login-form" data-testid="login-form">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required autocomplete="username" data-testid="username-input">
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required autocomplete="current-password" data-testid="password-input">
+            </div>
+            <button type="submit" style="width: 100%;" data-testid="login-submit">Sign In</button>
+        </form>
+        {% if signup_enabled %}
+        <div class="link">
+            <a href="/register">Create an account</a>
+        </div>
+        {% endif %}
     </div>
-    <div class="form-group">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" required autocomplete="current-password" data-testid="password-input">
-    </div>
-    <button type="submit" data-testid="login-submit">Submit</button>
-</form>
-{% if signup_enabled %}
-<div class="link">
-    → <a href="/register">Create an account</a>
 </div>
-{% endif %}
 <script>
-    // Check if WebAuthn is supported
     const isWebAuthnSupported = window.PublicKeyCredential !== undefined;
 
     if (isWebAuthnSupported) {
         document.getElementById('passkey-section').style.display = 'block';
     }
 
-    // Helper functions for base64url encoding/decoding
     function base64urlToBuffer(base64url) {
         const padding = '='.repeat((4 - base64url.length % 4) % 4);
         const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/') + padding;
@@ -61,7 +62,6 @@
         return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
     }
 
-    // Password login
     document.getElementById('login-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const errorDiv = document.getElementById('error');
@@ -90,7 +90,6 @@
         }
     });
 
-    // Passkey login
     document.getElementById('passkey-login-btn')?.addEventListener('click', async () => {
         const errorDiv = document.getElementById('error');
         const btn = document.getElementById('passkey-login-btn');
@@ -100,7 +99,6 @@
             btn.disabled = true;
             btn.textContent = 'Authenticating...';
 
-            // Start authentication
             const startResponse = await fetch('/api/passkey/auth/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
@@ -113,7 +111,6 @@
 
             const { options } = await startResponse.json();
 
-            // Prepare credential request options
             const publicKey = {
                 ...options.publicKey,
                 challenge: base64urlToBuffer(options.publicKey.challenge),
@@ -123,10 +120,8 @@
                 })) || []
             };
 
-            // Get credential from authenticator
             const credential = await navigator.credentials.get({ publicKey });
 
-            // Prepare credential for server
             const credentialForServer = {
                 id: credential.id,
                 rawId: bufferToBase64url(credential.rawId),
@@ -139,7 +134,6 @@
                 }
             };
 
-            // Finish authentication
             const finishResponse = await fetch('/api/passkey/auth/finish', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

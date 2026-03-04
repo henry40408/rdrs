@@ -5,37 +5,44 @@
 
 {% block title %}Categories - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
+{% block body %}
+<div class="app-layout">
+{% call macros::sidebar("categories", is_admin, is_masquerading, username) %}{% endcall %}
 
-{% block content %}
-{% call macros::nav("categories", is_admin, is_masquerading, username) %}{% endcall %}
+<main class="main-content">
+    <div class="page-content">
+    {% call macros::flash(flash_messages) %}{% endcall %}
 
-<h1>Categories</h1>
+    <h1>Categories</h1>
 
-<form id="add-form" onsubmit="addCategory(event)">
-    <div class="form-group">
-        <label for="name">New Category</label>
-        <input type="text" id="name" name="name" placeholder="Category name" required maxlength="100" data-testid="category-name-input">
+    <form id="add-form" onsubmit="addCategory(event)">
+        <div class="form-group">
+            <label for="name">New Category</label>
+            <input type="text" id="name" name="name" placeholder="Category name" required maxlength="100" data-testid="category-name-input">
+        </div>
+        <button type="submit" data-testid="add-category-btn">Add Category</button>
+    </form>
+
+    <hr>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Feeds</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="categories-table" data-testid="categories-table">
+            <tr>
+                <td colspan="3" class="muted">Loading...</td>
+            </tr>
+        </tbody>
+    </table>
+
     </div>
-    <button type="submit" data-testid="add-category-btn">Add Category</button>
-</form>
-
-<hr>
-
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Feeds</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody id="categories-table" data-testid="categories-table">
-        <tr>
-            <td colspan="3">Loading...</td>
-        </tr>
-    </tbody>
-</table>
+</main>
+</div>
 
 <script>
     let feeds = [];
@@ -46,11 +53,8 @@
                 fetch('/reader/api/0/tag/list'),
                 fetch('/reader/api/0/subscription/list')
             ]);
-            if (!catResponse.ok) {
-                throw new Error('Failed to load categories');
-            }
+            if (!catResponse.ok) throw new Error('Failed to load categories');
             const catData = await catResponse.json();
-            // Transform GReader tags to category objects — only label tags
             const categories = catData.tags
                 .filter(tag => tag.id.includes('/label/'))
                 .map(tag => {
@@ -114,29 +118,20 @@
         event.preventDefault();
         const nameInput = document.getElementById('name');
         const name = nameInput.value.trim();
-
-        if (!name) {
-            flash.error('Category name cannot be empty');
-            return;
-        }
-
+        if (!name) { flash.error('Category name cannot be empty'); return; }
         try {
-            // Use rename-tag with same source and dest to create category
             const tagId = `user/-/label/${name}`;
             const body = new URLSearchParams();
             body.set('s', tagId);
             body.set('dest', tagId);
-
             const response = await fetch('/reader/api/0/rename-tag', {
                 method: 'POST',
                 body: body
             });
-
             if (!response.ok) {
                 const text = await response.text();
                 throw new Error(text || 'Failed to create category');
             }
-
             nameInput.value = '';
             flash.success('Category created.');
             loadCategories();
@@ -172,27 +167,19 @@
         const tagId = row.dataset.tagId;
         const input = row.querySelector('.cat-edit-input');
         const newName = input.value.trim();
-
-        if (!newName) {
-            flash.error('Category name cannot be empty');
-            return;
-        }
-
+        if (!newName) { flash.error('Category name cannot be empty'); return; }
         try {
             const body = new URLSearchParams();
             body.set('s', tagId);
             body.set('dest', `user/-/label/${newName}`);
-
             const response = await fetch('/reader/api/0/rename-tag', {
                 method: 'POST',
                 body: body
             });
-
             if (!response.ok) {
                 const text = await response.text();
                 throw new Error(text || 'Failed to update category');
             }
-
             flash.success('Category renamed.');
             loadCategories();
         } catch (err) {
@@ -207,24 +194,18 @@
             message += ` This will also delete ${feedCount} feed${feedCount > 1 ? 's' : ''}.`;
         }
         message += ' This cannot be undone.';
-        if (!confirm(message)) {
-            return;
-        }
-
+        if (!confirm(message)) return;
         try {
             const body = new URLSearchParams();
             body.set('s', tagId);
-
             const response = await fetch('/reader/api/0/disable-tag', {
                 method: 'POST',
                 body: body
             });
-
             if (!response.ok) {
                 const text = await response.text();
                 throw new Error(text || 'Failed to delete category');
             }
-
             flash.success(`Category "${name}" deleted.`);
             loadCategories();
         } catch (err) {

@@ -3,32 +3,35 @@
 
 {% block title %}Register - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
-
-{% block content %}
-<h1>Register</h1>
-{% if let Some(err) = error %}
-<div class="error">{{ err }}</div>
-{% else %}
-<div id="error" class="error" style="display: none;" data-testid="register-error"></div>
-<form id="register-form" data-testid="register-form">
-    <div class="form-group">
-        <label for="username">Username</label>
-        <input type="text" id="username" name="username" required autocomplete="username" data-testid="register-username">
+{% block body %}
+<div class="auth-layout">
+    <div class="auth-card">
+        {% call macros::flash(flash_messages) %}{% endcall %}
+        <h1>rdrs</h1>
+        {% if let Some(err) = error %}
+        <div class="error">{{ err }}</div>
+        {% else %}
+        <div id="error" class="error" style="display: none;" data-testid="register-error"></div>
+        <form id="register-form" data-testid="register-form">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required autocomplete="username" data-testid="register-username">
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required minlength="6" autocomplete="new-password" data-testid="register-password">
+            </div>
+            <div class="form-group">
+                <label for="confirm-password">Confirm Password</label>
+                <input type="password" id="confirm-password" name="confirm-password" required minlength="6" autocomplete="new-password" data-testid="register-confirm-password">
+            </div>
+            <button type="submit" style="width: 100%;" data-testid="register-submit">Create Account</button>
+        </form>
+        {% endif %}
+        <div class="link">
+            <a href="/login">Already have an account? Sign in</a>
+        </div>
     </div>
-    <div class="form-group">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" required minlength="6" autocomplete="new-password" data-testid="register-password">
-    </div>
-    <div class="form-group">
-        <label for="confirm-password">Confirm Password</label>
-        <input type="password" id="confirm-password" name="confirm-password" required minlength="6" autocomplete="new-password" data-testid="register-confirm-password">
-    </div>
-    <button type="submit" data-testid="register-submit">Submit</button>
-</form>
-{% endif %}
-<div class="link">
-    → <a href="/login">Already have an account? Login</a>
 </div>
 <script>
     const form = document.getElementById('register-form');

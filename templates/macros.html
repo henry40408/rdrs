@@ -6,34 +6,95 @@
     {% for msg in messages %}
     <div class="flash {{ msg.level_class() }}" data-testid="flash-message">
         <span>{{ msg.message }}</span>
-        <span class="flash-right"><span class="flash-time">{{ msg.formatted_time() }}</span> <a href="#" class="flash-close" data-testid="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">×</a></span>
+        <span class="flash-right"><span class="flash-time">{{ msg.formatted_time() }}</span> <a href="#" class="flash-close" data-testid="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">&times;</a></span>
     </div>
     {% endfor %}
 </div>
 {% endif %}
 {% endmacro %}
 
-{% macro nav(current, is_admin, is_masquerading, username) %}
-<nav data-testid="main-nav">
-    <ul>
-        <li><a href="/" data-testid="nav-unread"{% if current == "unread" %} class="active"{% endif %}>Unread</a></li>
-        <li><a href="/entries" data-testid="nav-entries"{% if current == "entries" %} class="active"{% endif %}>Entries</a></li>
-        <li><a href="/feeds" data-testid="nav-feeds"{% if current == "feeds" %} class="active"{% endif %}>Feeds</a></li>
-        <li><a href="/categories" data-testid="nav-categories"{% if current == "categories" %} class="active"{% endif %}>Categories</a></li>
-        <li><a href="/search" data-testid="nav-search"{% if current == "search" %} class="active"{% endif %}>Search</a></li>
-        <li><a href="/user-settings" data-testid="nav-settings"{% if current == "user-settings" %} class="active"{% endif %}>Settings</a></li>
-        <li><a href="/settings"{% if current == "settings" %} class="active"{% endif %}>App</a></li>
-        {% if is_admin %}
-        <li><a href="/admin" data-testid="nav-admin"{% if current == "admin" %} class="active"{% endif %}>Admin</a></li>
-        {% endif %}
-        <li class="ml-auto"><span class="muted">{{ username }}</span> <a href="#" data-testid="logout-btn" onclick="logout(); return false;">Sign Out</a></li>
-    </ul>
-</nav>
-{% if is_masquerading %}
-<div class="flash flash-warning">
-    MASQUERADE: You are viewing as another user. <a href="#" onclick="stopMasquerade(); return false;">Stop</a>
-</div>
-{% endif %}
+{% macro sidebar(current, is_admin, is_masquerading, username) %}
+<button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Open menu">&#9776;</button>
+
+<aside class="sidebar" id="sidebar">
+    {% if is_masquerading %}
+    <div class="masquerade-banner">
+        Viewing as another user &middot; <a href="#" onclick="stopMasquerade(); return false;">Stop</a>
+    </div>
+    {% endif %}
+
+    <div class="sidebar-header">
+        <a href="/" class="sidebar-logo">rdrs</a>
+        <button class="sidebar-close" onclick="closeSidebar()" aria-label="Close menu">&times;</button>
+    </div>
+
+    <nav class="sidebar-nav">
+        <div class="sidebar-section">
+            <a href="/" class="sidebar-item{% if current == "unread" %} active{% endif %}" data-testid="nav-unread">
+                <span class="sidebar-item-icon">&#9670;</span>
+                <span>Unread</span>
+                <span class="sidebar-badge" id="unread-count"></span>
+            </a>
+            <a href="/entries/starred" class="sidebar-item{% if current == "starred" %} active{% endif %}">
+                <span class="sidebar-item-icon">&#9733;</span>
+                <span>Starred</span>
+            </a>
+            <a href="/entries" class="sidebar-item{% if current == "entries" %} active{% endif %}" data-testid="nav-entries">
+                <span class="sidebar-item-icon">&#9638;</span>
+                <span>All Entries</span>
+            </a>
+        </div>
+
+        <div class="sidebar-section">
+            <div class="sidebar-section-title">Categories</div>
+            <div id="sidebar-categories">
+                <span class="sidebar-item muted" style="font-size:var(--font-xs);">Loading...</span>
+            </div>
+        </div>
+
+        <div class="sidebar-divider"></div>
+
+        <div class="sidebar-section">
+            <a href="/feeds" class="sidebar-item{% if current == "feeds" %} active{% endif %}" data-testid="nav-feeds">
+                <span class="sidebar-item-icon">&#9881;</span>
+                <span>Feeds</span>
+            </a>
+            <a href="/categories" class="sidebar-item{% if current == "categories" %} active{% endif %}" data-testid="nav-categories">
+                <span class="sidebar-item-icon">&#9783;</span>
+                <span>Categories</span>
+            </a>
+        </div>
+
+        <div class="sidebar-divider"></div>
+
+        <div class="sidebar-section">
+            <a href="/search" class="sidebar-item{% if current == "search" %} active{% endif %}" data-testid="nav-search">
+                <span class="sidebar-item-icon">&#8981;</span>
+                <span>Search</span>
+            </a>
+            <a href="/user-settings" class="sidebar-item{% if current == "user-settings" %} active{% endif %}" data-testid="nav-settings">
+                <span class="sidebar-item-icon">&#9881;</span>
+                <span>Settings</span>
+            </a>
+            <a href="/settings" class="sidebar-item{% if current == "settings" %} active{% endif %}">
+                <span class="sidebar-item-icon">&#9889;</span>
+                <span>App</span>
+            </a>
+            {% if is_admin %}
+            <a href="/admin" class="sidebar-item{% if current == "admin" %} active{% endif %}" data-testid="nav-admin">
+                <span class="sidebar-item-icon">&#9737;</span>
+                <span>Admin</span>
+            </a>
+            {% endif %}
+        </div>
+    </nav>
+
+    <div class="sidebar-footer">
+        <span class="sidebar-user">{{ username }}</span>
+        <a href="#" data-testid="logout-btn" onclick="logout(); return false;">Sign Out</a>
+    </div>
+</aside>
+
 <script>
 async function logout() {
     try {
@@ -62,5 +123,77 @@ async function stopMasquerade() {
         flash.error("An error occurred");
     }
 }
+
+// Populate sidebar categories + unread counts
+(async function loadSidebarData() {
+    try {
+        const [catRes, countRes] = await Promise.all([
+            fetch('/reader/api/0/tag/list'),
+            fetch('/reader/api/0/unread-count')
+        ]);
+
+        // Parse categories
+        let categories = [];
+        if (catRes.ok) {
+            const catData = await catRes.json();
+            categories = catData.tags
+                .filter(tag => tag.id.includes('/label/'))
+                .map(tag => {
+                    const name = tag.id.split('/label/').pop();
+                    const numericId = parseInt(tag.sortid, 16);
+                    return { id: tag.id, name, numericId };
+                });
+        }
+
+        // Parse unread counts
+        let unreadByCategory = {};
+        let totalUnread = 0;
+        if (countRes.ok) {
+            const countData = await countRes.json();
+            for (const uc of countData.unreadcounts || []) {
+                if (uc.id.includes('/label/')) {
+                    unreadByCategory[uc.id] = uc.count;
+                } else if (uc.id === 'user/-/state/com.google/reading-list') {
+                    totalUnread = uc.count;
+                }
+            }
+        }
+
+        // Update total unread badge
+        const unreadEl = document.getElementById('unread-count');
+        if (unreadEl && totalUnread > 0) {
+            unreadEl.textContent = totalUnread;
+        }
+
+        // Render categories
+        const container = document.getElementById('sidebar-categories');
+        if (container && categories.length > 0) {
+            container.innerHTML = categories.map(cat => {
+                const count = unreadByCategory[cat.id] || 0;
+                const esc = (t) => { const d=document.createElement('div'); d.textContent=t; return d.innerHTML; };
+                return `<a href="/categories/${cat.numericId}/entries" class="sidebar-item">
+                    <span>${esc(cat.name)}</span>
+                    ${count > 0 ? `<span class="sidebar-badge">${count}</span>` : ''}
+                </a>`;
+            }).join('');
+        } else if (container) {
+            container.innerHTML = '';
+        }
+    } catch (e) {
+        // Silent fail for sidebar data
+        const container = document.getElementById('sidebar-categories');
+        if (container) container.innerHTML = '';
+    }
+})();
+
+// Close sidebar when clicking outside on mobile
+document.addEventListener('click', function(e) {
+    const sidebar = document.getElementById('sidebar');
+    const toggle = document.querySelector('.sidebar-toggle');
+    if (sidebar && sidebar.classList.contains('open') &&
+        !sidebar.contains(e.target) && !toggle.contains(e.target)) {
+        closeSidebar();
+    }
+});
 </script>
 {% endmacro %}

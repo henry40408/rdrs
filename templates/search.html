@@ -5,35 +5,48 @@
 
 {% block title %}Search - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
+{% block body %}
+<div class="app-layout">
+{% call macros::sidebar("search", is_admin, is_masquerading, username) %}{% endcall %}
 
-{% block content %}
-{% call macros::nav("search", is_admin, is_masquerading, username) %}{% endcall %}
+<main class="main-content">
+    {% call macros::flash(flash_messages) %}{% endcall %}
 
-<h1>Search</h1>
+    <div class="split-view">
+        <div class="list-pane">
+            <div class="list-pane-header">
+                <h1>Search</h1>
+                <div class="filter-bar">
+                    <div class="form-group form-group-inline" style="flex:1;">
+                        <input type="text" id="filter-search" placeholder="Search entries..."
+                               autofocus data-testid="search-input">
+                    </div>
+                    <div>
+                        <button type="button" onclick="doSearch()" data-testid="search-btn">Search</button>
+                    </div>
+                </div>
+            </div>
 
-<div class="filter-bar">
-    <div class="form-group form-group-inline">
-        <label for="filter-search">Query</label>
-        <input type="text" id="filter-search" placeholder="Enter search term..."
-               style="width:20em;" autofocus data-testid="search-input">
+            <div class="list-pane-body">
+                <rdrs-entry-list
+                    stream-id="user/-/state/com.google/reading-list"
+                    entries-per-page="{{ entries_per_page }}"
+                    origin="search"
+                    show-feed
+                    show-category
+                    empty-message="Enter a search term and press Enter to search."
+                    no-auto-load
+                    reading-pane="#reading-pane"
+                ></rdrs-entry-list>
+            </div>
+        </div>
+
+        <div class="reading-pane" id="reading-pane">
+            <div class="reading-pane-empty">Search and select an entry to read</div>
+        </div>
     </div>
-    <div>
-        <button type="button" onclick="doSearch()" data-testid="search-btn">Search</button>
-    </div>
+</main>
 </div>
-
-<hr>
-
-<rdrs-entry-list
-    stream-id="user/-/state/com.google/reading-list"
-    entries-per-page="{{ entries_per_page }}"
-    origin="search"
-    show-feed
-    show-category
-    empty-message="Enter a search term and press Enter to search."
-    no-auto-load
-></rdrs-entry-list>
 
 <script>
     const searchInput = document.getElementById('filter-search');
@@ -49,7 +62,6 @@
         }
         list.search = search;
         list.loadEntries();
-        // Update URL
         const params = new URLSearchParams();
         params.set('q', search);
         history.replaceState(null, '', '/search?' + params.toString());
@@ -68,7 +80,6 @@
     customElements.whenDefined('rdrs-entry-list').then(() => {
         const list = document.querySelector('rdrs-entry-list');
 
-        // Load from URL params if present
         const urlParams = new URLSearchParams(window.location.search);
         const query = urlParams.get('q');
         if (query) {
