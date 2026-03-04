@@ -43,18 +43,13 @@ test.describe("Entry Keyboard Navigation", () => {
     await expect(secondEntry).not.toHaveClass(/selected/);
   });
 
-  test("Enter opens entry, q returns to list", async ({ page, serverUrl }) => {
+  test("Enter opens entry in reading pane", async ({ page }) => {
     // Select and open first entry
     await page.keyboard.press("j");
     await page.keyboard.press("Enter");
 
-    // Should navigate to entry detail page
-    await page.waitForURL(/\/entries\/\d+/);
-    await expect(page.getByTestId("entry-title")).toBeVisible();
-
-    // Press q to go back
-    await page.keyboard.press("q");
-    await page.waitForURL(`${serverUrl}/`);
+    // Should load entry in reading pane (three-column layout)
+    await expect(page.locator(".reading-pane-title")).toBeVisible();
   });
 
   test("gg jumps to first, G jumps to last", async ({ page }) => {

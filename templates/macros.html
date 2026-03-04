@@ -16,7 +16,7 @@
 {% macro sidebar(current, is_admin, is_masquerading, username) %}
 <button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Open menu">&#9776;</button>
 
-<aside class="sidebar" id="sidebar">
+<aside class="sidebar" id="sidebar" data-testid="main-nav">
     {% if is_masquerading %}
     <div class="masquerade-banner">
         Viewing as another user &middot; <a href="#" onclick="stopMasquerade(); return false;">Stop</a>
