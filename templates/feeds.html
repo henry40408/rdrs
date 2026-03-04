@@ -45,13 +45,13 @@
     <div class="filter-bar">
         <div class="form-group form-group-inline">
             <label for="filter-category">Category</label>
-            <select id="filter-category" onchange="handleFilterChange()" style="width:auto;">
+            <select id="filter-category" onchange="handleFilterChange()" class="select-auto">
                 <option value="">All Categories</option>
             </select>
         </div>
         <div class="form-group form-group-inline">
             <label for="sort-by">Sort</label>
-            <select id="sort-by" onchange="handleFilterChange()" style="width:auto;">
+            <select id="sort-by" onchange="handleFilterChange()" class="select-auto">
                 <option value="title">Title</option>
                 <option value="unread">Unread Count</option>
                 <option value="category">Category</option>
@@ -91,7 +91,7 @@
             </div>
             <div class="form-group">
                 <label for="import-content">Or paste OPML content</label>
-                <textarea id="import-content" rows="10" style="width:100%;" placeholder="<?xml version=&quot;1.0&quot;?>&#10;<opml version=&quot;2.0&quot;>&#10;  ...&#10;</opml>"></textarea>
+                <textarea id="import-content" rows="10" class="textarea-full" placeholder="<?xml version=&quot;1.0&quot;?>&#10;<opml version=&quot;2.0&quot;>&#10;  ...&#10;</opml>"></textarea>
             </div>
             <div class="modal-actions">
                 <button type="submit" id="import-btn">Import</button>
@@ -130,7 +130,7 @@
                 </select>
             </div>
             <details class="feed-http-settings">
-                <summary style="cursor:pointer; font-weight:500;">HTTP Settings</summary>
+                <summary>HTTP Settings</summary>
                 <div class="feed-http-settings-body">
                     <div class="form-group">
                         <label for="edit-custom-user-agent">Custom User Agent</label>

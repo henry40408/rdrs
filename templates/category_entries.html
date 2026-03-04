@@ -21,7 +21,7 @@
                 <h1>{{ category_name }}</h1>
                 <div class="filter-bar">
                     <div class="form-group form-group-inline">
-                        <select id="filter-status" onchange="handleFilterChange()" style="width:auto;">
+                        <select id="filter-status" onchange="handleFilterChange()" class="select-auto">
                             <option value="">All</option>
                             <option value="unread">Unread</option>
                             <option value="read">Read</option>
@@ -29,7 +29,7 @@
                         </select>
                     </div>
                     <div class="form-group form-group-inline">
-                        <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;" style="width:auto;">
+                        <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;" class="select-auto">
                             <option value="">Mark as Read...</option>
                             <option value="1">Older than 1 day</option>
                             <option value="7">Older than 1 week</option>

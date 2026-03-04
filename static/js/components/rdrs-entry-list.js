@@ -56,7 +56,7 @@ class RdrsEntryList extends HTMLElement {
         const initialMessage = this.hasAttribute('no-auto-load') ? this.emptyMessage : 'Loading...';
         this.innerHTML = `
 <div id="entries-list" data-testid="entries-list">
-    <p class="muted" style="padding:var(--space-4) var(--space-5);">${initialMessage}</p>
+    <p class="muted entries-status-msg">${initialMessage}</p>
 </div>
 <div id="load-more" class="hidden-mt4">
     <button type="button" data-testid="load-more-btn">Load More</button>
@@ -216,7 +216,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 this._updateUnreadCount();
             }
         } catch (err) {
-            container.innerHTML = '<p class="muted" style="padding:var(--space-4) var(--space-5);">Failed to load entries</p>';
+            container.innerHTML = '<p class="muted entries-status-msg">Failed to load entries</p>';
         } finally {
             container.classList.remove('entries-list-refreshing');
         }
@@ -252,7 +252,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         const container = this.querySelector('#entries-list');
 
         if (this.entries.length === 0) {
-            container.innerHTML = `<p class="muted" style="padding:var(--space-4) var(--space-5);">${escapeHtml(this.emptyMessage)}</p>`;
+            container.innerHTML = `<p class="muted entries-status-msg">${escapeHtml(this.emptyMessage)}</p>`;
             return;
         }
 
@@ -341,7 +341,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             <div class="entry-item${isSelected ? ' selected' : ''}${isRead ? ' entry-read' : ''}" id="entry-${entry.id}" data-index="${index}" data-testid="entry-item">
                 <div>
                     <a href="/entries/${entry.id}${originQuery}" class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}" data-testid="entry-title-link">${titleHtml}</a>
-                    ${isStarred ? '<span title="Starred" style="color:var(--color-accent);font-size:var(--font-xs);">&#9733;</span>' : ''}
+                    ${isStarred ? '<span title="Starred" class="star-icon">&#9733;</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>${contentSnippetHtml}
                 <div class="muted entry-item-meta">
@@ -814,7 +814,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         this.selectedIndex = -1;
         const container = this.querySelector('#entries-list');
         if (container) {
-            container.innerHTML = `<p class="muted" style="padding:var(--space-4) var(--space-5);">${escapeHtml(message || this.emptyMessage)}</p>`;
+            container.innerHTML = `<p class="muted entries-status-msg">${escapeHtml(message || this.emptyMessage)}</p>`;
         }
         this._updateLoadMore();
         this._updateEntriesCount();

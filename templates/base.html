@@ -54,6 +54,17 @@
             /* Layout */
             --sidebar-width: 220px;
             --list-pane-width: 340px;
+            --content-max-width: 720px;
+            --page-max-width: 900px;
+            --dialog-max-width: 600px;
+            --auth-max-width: 380px;
+
+            /* Borders */
+            --border-accent-width: 3px;
+
+            /* Icon sizes */
+            --icon-sm: 14px;
+            --icon-md: 18px;
 
             /* Colors - Light theme (Ink & Paper) */
             --color-bg: #FAF8F5;
@@ -253,7 +264,7 @@
             display: none;
             background: none;
             border: none;
-            font-size: 1.4rem;
+            font-size: var(--font-2xl);
             color: var(--color-text-muted);
             cursor: pointer;
             padding: var(--space-1);
@@ -292,8 +303,8 @@
             font-size: var(--font-sm);
             font-weight: 500;
             transition: background 0.15s, color 0.15s;
-            border-left: 3px solid transparent;
-            margin-left: -3px;
+            border-left: var(--border-accent-width) solid transparent;
+            margin-left: calc(-1 * var(--border-accent-width));
         }
 
         .sidebar-item:hover {
@@ -309,7 +320,7 @@
         }
 
         .sidebar-item-icon {
-            width: 18px;
+            width: var(--icon-md);
             text-align: center;
             font-size: var(--font-sm);
             flex-shrink: 0;
@@ -322,7 +333,7 @@
             color: var(--color-accent);
             background: var(--color-accent-subtle);
             padding: 0.1em 0.5em;
-            border-radius: 10px;
+            border-radius: var(--radius-lg);
             min-width: 1.4em;
             text-align: center;
         }
@@ -394,7 +405,7 @@
             border-radius: var(--radius-md);
             padding: var(--space-2);
             cursor: pointer;
-            font-size: 1.1rem;
+            font-size: var(--font-xl);
             line-height: 1;
             color: var(--color-text);
             box-shadow: var(--shadow-sm);
@@ -412,7 +423,7 @@
         /* Page content (non-split pages) */
         .page-content {
             padding: var(--space-8) var(--space-10);
-            max-width: 900px;
+            max-width: var(--page-max-width);
             width: 100%;
         }
 
@@ -469,7 +480,7 @@
 
         .reading-pane-content {
             padding: var(--space-8) var(--space-10);
-            max-width: 760px;
+            max-width: var(--content-max-width);
         }
 
         .reading-pane-title {
@@ -522,9 +533,9 @@
             line-height: 1.3;
         }
 
-        .reading-pane-article h1 { font-size: 1.5rem; }
-        .reading-pane-article h2 { font-size: 1.3rem; }
-        .reading-pane-article h3 { font-size: 1.15rem; }
+        .reading-pane-article h1 { font-size: var(--font-2xl); }
+        .reading-pane-article h2 { font-size: var(--font-xl); }
+        .reading-pane-article h3 { font-size: var(--font-lg); }
 
         .reading-pane-article a {
             color: var(--color-accent);
@@ -570,11 +581,7 @@
         }
 
         .reading-pane-article code {
-            font-family: var(--font-mono);
-            font-size: 0.88em;
             background: var(--color-bg-tertiary);
-            padding: 0.15em 0.4em;
-            border-radius: var(--radius-sm);
         }
 
         .reading-pane-article pre code {
@@ -584,7 +591,7 @@
         }
 
         .reading-pane-article blockquote {
-            border-left: 3px solid var(--color-accent);
+            border-left: var(--border-accent-width) solid var(--color-accent);
             margin: var(--space-6) 0;
             padding: var(--space-3) 0 var(--space-3) var(--space-6);
             color: var(--color-text-secondary);
@@ -811,6 +818,7 @@
         .settings-th {
             text-align: left;
             padding-right: var(--space-8);
+            width: 200px;
             font-weight: 600;
             color: var(--color-text-secondary);
             text-transform: none;
@@ -891,7 +899,7 @@
             border-bottom: 1px solid var(--color-border-light);
             cursor: pointer;
             transition: background 0.1s;
-            border-left: 3px solid transparent;
+            border-left: var(--border-accent-width) solid transparent;
         }
 
         .entry-item:hover {
@@ -1001,7 +1009,7 @@
             margin: auto;
             background: var(--color-bg);
             color: var(--color-text);
-            max-width: 600px;
+            max-width: var(--dialog-max-width);
             width: calc(100% - var(--space-8));
             padding: var(--space-8);
             border: 1px solid var(--color-border);
@@ -1120,6 +1128,42 @@
             margin-left: auto;
         }
 
+        .btn-block {
+            width: 100%;
+        }
+
+        .select-auto {
+            width: auto;
+        }
+
+        .textarea-full {
+            width: 100%;
+        }
+
+        .flex-1 {
+            flex: 1;
+        }
+
+        .entries-status-msg {
+            padding: var(--space-4) var(--space-5);
+        }
+
+        .star-icon {
+            color: var(--color-accent);
+            font-size: var(--font-xs);
+        }
+
+        .auth-divider {
+            text-align: center;
+            margin-bottom: var(--space-4);
+            font-size: var(--font-sm);
+        }
+
+        .auth-passkey-btn {
+            width: 100%;
+            margin-bottom: var(--space-4);
+        }
+
         .hidden-mt4 {
             display: none;
             margin-top: var(--space-4);
@@ -1135,8 +1179,8 @@
 
         /* Feed icon */
         .feed-icon {
-            width: 14px;
-            height: 14px;
+            width: var(--icon-sm);
+            height: var(--icon-sm);
             vertical-align: middle;
             margin-right: var(--space-1);
             border-radius: var(--radius-sm);
@@ -1147,8 +1191,8 @@
         .search-highlight {
             background-color: var(--color-highlight);
             color: var(--color-text);
-            padding: 0 2px;
-            border-radius: 2px;
+            padding: 0 var(--space-1);
+            border-radius: var(--radius-sm);
         }
 
         /* Summary badges */
@@ -1212,6 +1256,11 @@
             white-space: nowrap;
         }
 
+        summary {
+            cursor: pointer;
+            font-weight: 500;
+        }
+
         .feed-http-settings {
             margin-top: var(--space-4);
             border: 1px solid var(--color-border-light);
@@ -1271,7 +1320,7 @@
 
         .auth-card {
             width: 100%;
-            max-width: 380px;
+            max-width: var(--auth-max-width);
         }
 
         .auth-card h1 {
@@ -1290,7 +1339,7 @@
 
         /* ===== Entry Detail (standalone entry.html) ===== */
         .entry-detail {
-            max-width: 720px;
+            max-width: var(--content-max-width);
             margin: 0 auto;
             padding: var(--space-8) var(--space-6);
         }
@@ -1349,7 +1398,7 @@
         }
 
         .entry-content {
-            max-width: 720px;
+            max-width: var(--content-max-width);
             font-family: var(--font-body);
             font-size: var(--font-xl);
             line-height: 1.8;
@@ -1370,10 +1419,10 @@
             line-height: 1.3;
         }
 
-        .entry-content h1 { font-size: 1.5rem; }
-        .entry-content h2 { font-size: 1.35rem; }
-        .entry-content h3 { font-size: 1.2rem; }
-        .entry-content h4 { font-size: 1.1rem; }
+        .entry-content h1 { font-size: var(--font-2xl); }
+        .entry-content h2 { font-size: var(--font-xl); }
+        .entry-content h3 { font-size: var(--font-lg); }
+        .entry-content h4 { font-size: var(--font-base); }
 
         .entry-content a {
             color: var(--color-accent);
@@ -1417,11 +1466,7 @@
         }
 
         .entry-content code {
-            font-family: var(--font-mono);
-            font-size: 0.88em;
             background: var(--color-bg-tertiary);
-            padding: 0.15em 0.4em;
-            border-radius: var(--radius-sm);
         }
 
         .entry-content pre code {
@@ -1431,7 +1476,7 @@
         }
 
         .entry-content blockquote {
-            border-left: 3px solid var(--color-accent);
+            border-left: var(--border-accent-width) solid var(--color-accent);
             margin: var(--space-6) 0;
             padding: var(--space-3) 0 var(--space-3) var(--space-6);
             color: var(--color-text-secondary);
@@ -1460,7 +1505,7 @@
         .entry-content th,
         .entry-content td {
             border: 1px solid var(--color-border-light);
-            padding: 0.75em;
+            padding: var(--space-3);
             text-align: left;
         }
 
@@ -1492,7 +1537,7 @@
         }
 
         .summary-box blockquote {
-            border-left: 3px solid var(--color-accent);
+            border-left: var(--border-accent-width) solid var(--color-accent);
             margin: 0;
             padding: var(--space-2) 0 var(--space-2) var(--space-4);
             color: var(--color-text);
