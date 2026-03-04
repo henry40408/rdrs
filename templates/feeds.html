@@ -5,170 +5,161 @@
 
 {% block title %}Feeds - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
+{% block body %}
+<div class="app-layout">
+{% call macros::sidebar("feeds", is_admin, is_masquerading, username) %}{% endcall %}
 
-{% block content %}
-{% call macros::nav("feeds", is_admin, is_masquerading, username) %}{% endcall %}
+<main class="main-content">
+    <div class="page-content">
+    {% call macros::flash(flash_messages) %}{% endcall %}
 
-<h1>Feeds</h1>
+    <h1>Feeds</h1>
 
-<div class="feeds-toolbar">
-    <a href="/reader/api/0/subscription/export" class="btn">Export OPML</a>
-    <button type="button" onclick="showImportModal()">Import OPML</button>
-</div>
-
-<hr>
-
-<form id="add-form" onsubmit="addFeed(event)">
-    <div class="form-group">
-        <label for="url">Feed URL</label>
-        <input type="text" id="url" name="url" placeholder="https://example.com/feed.xml or https://example.com" required data-testid="feed-url-input">
+    <div class="feeds-toolbar">
+        <a href="/reader/api/0/subscription/export" class="btn btn-secondary">Export OPML</a>
+        <button type="button" class="btn-secondary" onclick="showImportModal()">Import OPML</button>
     </div>
-    <div class="form-group">
-        <label for="category">Category</label>
-        <select id="category" name="category" required data-testid="feed-category-select">
-            <option value="">Loading categories...</option>
-        </select>
-    </div>
-    <button type="submit" id="add-btn" data-testid="add-feed-btn">Add Feed</button>
-</form>
 
-<hr>
+    <hr>
 
-<style>
-.feed-row-syncing { background: var(--color-bg-secondary); }
-#sync-status-bar {
-    display: none;
-    padding: var(--space-2) var(--space-4);
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-light);
-    margin-bottom: var(--space-4);
-}
-#sync-status-bar.active { display: block; }
-#sync-status-text {
-    color: var(--color-accent);
-    animation: blink 1s infinite;
-}
-</style>
-
-<div id="sync-status-bar">
-    <span id="sync-status-text"></span>
-</div>
-
-<div class="filter-bar">
-    <div class="form-group form-group-inline">
-        <label for="filter-category">Filter by Category</label>
-        <select id="filter-category" onchange="handleFilterChange()">
-            <option value="">All Categories</option>
-        </select>
-    </div>
-    <div class="form-group form-group-inline">
-        <label for="sort-by">Sort by</label>
-        <select id="sort-by" onchange="handleFilterChange()">
-            <option value="title">Title</option>
-            <option value="unread">Unread Count</option>
-            <option value="category">Category</option>
-        </select>
-    </div>
-    <div class="form-group form-group-inline">
-        <label>
-            <input type="checkbox" id="filter-errors" onchange="handleFilterChange()">
-            Show only feeds with errors
-        </label>
-    </div>
-</div>
-
-<table>
-    <thead>
-        <tr>
-            <th>Title</th>
-            <th>Category</th>
-            <th>Unread</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody id="feeds-table" data-testid="feeds-table">
-        <tr>
-            <td colspan="4">Loading...</td>
-        </tr>
-    </tbody>
-</table>
-
-<!-- Import Modal -->
-<dialog id="import-modal">
-    <h2 class="modal-title">Import OPML</h2>
-    <form id="import-form" onsubmit="importOpml(event)">
+    <form id="add-form" onsubmit="addFeed(event)">
         <div class="form-group">
-            <label for="import-file">Upload .opml file</label>
-            <input type="file" id="import-file" accept=".opml,.xml" onchange="loadOpmlFile(this)">
+            <label for="url">Feed URL</label>
+            <input type="text" id="url" name="url" placeholder="https://example.com/feed.xml or https://example.com" required data-testid="feed-url-input">
         </div>
         <div class="form-group">
-            <label for="import-content">Or paste OPML content</label>
-            <textarea id="import-content" rows="10" style="width:100%; font-family:monospace; font-size:0.875rem;" placeholder="<?xml version=&quot;1.0&quot;?>&#10;<opml version=&quot;2.0&quot;>&#10;  ...&#10;</opml>"></textarea>
-        </div>
-        <div class="modal-actions">
-            <button type="submit" id="import-btn">Import</button>
-            <button type="button" onclick="closeImportModal()">Cancel</button>
-        </div>
-    </form>
-</dialog>
-
-<!-- Edit Modal -->
-<dialog id="edit-modal">
-    <h2 class="modal-title">Edit Feed</h2>
-    <form id="edit-form" onsubmit="saveFeed(event)">
-        <input type="hidden" id="edit-id">
-        <div class="form-group">
-            <label for="edit-url">Feed URL</label>
-            <div class="feed-edit-url-row">
-                <input type="text" id="edit-url" name="url" required>
-                <button type="button" onclick="fetchMetadata()">Fetch</button>
-            </div>
-        </div>
-        <div class="form-group">
-            <label for="edit-title">Title</label>
-            <input type="text" id="edit-title" name="title">
-        </div>
-        <div class="form-group">
-            <label for="edit-description">Description</label>
-            <input type="text" id="edit-description" name="description">
-        </div>
-        <div class="form-group">
-            <label for="edit-site-url">Site URL</label>
-            <input type="text" id="edit-site-url" name="site_url">
-        </div>
-        <div class="form-group">
-            <label for="edit-category">Category</label>
-            <select id="edit-category" name="category" required>
+            <label for="category">Category</label>
+            <select id="category" name="category" required data-testid="feed-category-select">
+                <option value="">Loading categories...</option>
             </select>
         </div>
-        <details class="feed-http-settings">
-            <summary style="cursor:pointer; font-weight:normal;">HTTP Settings</summary>
-            <div class="feed-http-settings-body">
-                <div class="form-group">
-                    <label for="edit-custom-user-agent">Custom User Agent</label>
-                    <input type="text" id="edit-custom-user-agent" name="custom_user_agent" placeholder="Leave empty to use global default">
-                </div>
-                <div class="form-group">
-                    <label for="edit-custom-referrer">Custom Referrer</label>
-                    <input type="text" id="edit-custom-referrer" name="custom_referrer" placeholder="Leave empty to not send Referer header">
-                    <div class="feed-http-hint">Some image servers require a specific Referer header to serve images</div>
-                </div>
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="edit-http2-disabled" name="http2_disabled">
-                        Disable HTTP/2
-                    </label>
-                    <div class="feed-http-hint">Enable this if the feed server has HTTP/2 compatibility issues</div>
+        <button type="submit" id="add-btn" data-testid="add-feed-btn">Add Feed</button>
+    </form>
+
+    <hr>
+
+    <div id="sync-status-bar">
+        <span id="sync-status-text"></span>
+    </div>
+
+    <div class="filter-bar">
+        <div class="form-group form-group-inline">
+            <label for="filter-category">Category</label>
+            <select id="filter-category" onchange="handleFilterChange()" class="select-auto">
+                <option value="">All Categories</option>
+            </select>
+        </div>
+        <div class="form-group form-group-inline">
+            <label for="sort-by">Sort</label>
+            <select id="sort-by" onchange="handleFilterChange()" class="select-auto">
+                <option value="title">Title</option>
+                <option value="unread">Unread Count</option>
+                <option value="category">Category</option>
+            </select>
+        </div>
+        <div class="form-group form-group-inline">
+            <label>
+                <input type="checkbox" id="filter-errors" onchange="handleFilterChange()">
+                Errors only
+            </label>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Category</th>
+                <th>Unread</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="feeds-table" data-testid="feeds-table">
+            <tr>
+                <td colspan="4" class="muted">Loading...</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- Import Modal -->
+    <dialog id="import-modal">
+        <h2 class="modal-title">Import OPML</h2>
+        <form id="import-form" onsubmit="importOpml(event)">
+            <div class="form-group">
+                <label for="import-file">Upload .opml file</label>
+                <input type="file" id="import-file" accept=".opml,.xml" onchange="loadOpmlFile(this)">
+            </div>
+            <div class="form-group">
+                <label for="import-content">Or paste OPML content</label>
+                <textarea id="import-content" rows="10" class="textarea-full" placeholder="<?xml version=&quot;1.0&quot;?>&#10;<opml version=&quot;2.0&quot;>&#10;  ...&#10;</opml>"></textarea>
+            </div>
+            <div class="modal-actions">
+                <button type="submit" id="import-btn">Import</button>
+                <button type="button" class="btn-secondary" onclick="closeImportModal()">Cancel</button>
+            </div>
+        </form>
+    </dialog>
+
+    <!-- Edit Modal -->
+    <dialog id="edit-modal">
+        <h2 class="modal-title">Edit Feed</h2>
+        <form id="edit-form" onsubmit="saveFeed(event)">
+            <input type="hidden" id="edit-id">
+            <div class="form-group">
+                <label for="edit-url">Feed URL</label>
+                <div class="feed-edit-url-row">
+                    <input type="text" id="edit-url" name="url" required>
+                    <button type="button" class="btn-secondary" onclick="fetchMetadata()">Fetch</button>
                 </div>
             </div>
-        </details>
-        <div class="modal-actions">
-            <button type="submit">Save</button>
-            <button type="button" onclick="closeEditModal()">Cancel</button>
-        </div>
-    </form>
-</dialog>
+            <div class="form-group">
+                <label for="edit-title">Title</label>
+                <input type="text" id="edit-title" name="title">
+            </div>
+            <div class="form-group">
+                <label for="edit-description">Description</label>
+                <input type="text" id="edit-description" name="description">
+            </div>
+            <div class="form-group">
+                <label for="edit-site-url">Site URL</label>
+                <input type="text" id="edit-site-url" name="site_url">
+            </div>
+            <div class="form-group">
+                <label for="edit-category">Category</label>
+                <select id="edit-category" name="category" required>
+                </select>
+            </div>
+            <details class="feed-http-settings">
+                <summary>HTTP Settings</summary>
+                <div class="feed-http-settings-body">
+                    <div class="form-group">
+                        <label for="edit-custom-user-agent">Custom User Agent</label>
+                        <input type="text" id="edit-custom-user-agent" name="custom_user_agent" placeholder="Leave empty to use global default">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-custom-referrer">Custom Referrer</label>
+                        <input type="text" id="edit-custom-referrer" name="custom_referrer" placeholder="Leave empty to not send Referer header">
+                        <div class="feed-http-hint">Some image servers require a specific Referer header to serve images</div>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="edit-http2-disabled" name="http2_disabled">
+                            Disable HTTP/2
+                        </label>
+                        <div class="feed-http-hint">Enable this if the feed server has HTTP/2 compatibility issues</div>
+                    </div>
+                </div>
+            </details>
+            <div class="modal-actions">
+                <button type="submit">Save</button>
+                <button type="button" class="btn-secondary" onclick="closeEditModal()">Cancel</button>
+            </div>
+        </form>
+    </dialog>
+
+    </div>
+</main>
+</div>
 
 <script>
     let categories = [];
@@ -194,12 +185,8 @@
     async function loadCategories() {
         try {
             const response = await fetch('/reader/api/0/tag/list');
-            if (!response.ok) {
-                throw new Error('Failed to load categories');
-            }
+            if (!response.ok) throw new Error('Failed to load categories');
             const data = await response.json();
-            // Transform GReader tags to category objects
-            // Tags are like "user/-/label/CategoryName" — extract label tags only
             categories = data.tags
                 .filter(tag => tag.id.includes('/label/'))
                 .map(tag => {
@@ -225,10 +212,8 @@
             ).join('');
         }
 
-        // Filter dropdown keeps "All Categories" option (counts updated after feeds load)
         updateFilterDropdown();
 
-        // Edit dropdown
         editSelect.innerHTML = categories.map(cat =>
             `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.name)}</option>`
         ).join('');
@@ -244,26 +229,22 @@
                 return `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.name)} (${count})</option>`;
             }).join('');
 
-        // Restore selection
         filterSelect.value = currentValue;
     }
 
     async function loadFeeds() {
         try {
             const response = await fetch('/reader/api/0/subscription/list');
-            if (!response.ok) {
-                throw new Error('Failed to load feeds');
-            }
+            if (!response.ok) throw new Error('Failed to load feeds');
             const data = await response.json();
-            // Transform GReader subscriptions to feed objects
             feeds = data.subscriptions.map(sub => {
                 const catId = sub.categories.length > 0 ? sub.categories[0].id : '';
                 return {
-                    id: sub.id,              // "feed/<url>"
+                    id: sub.id,
                     url: sub.url,
                     title: sub.title,
                     site_url: sub.htmlUrl,
-                    category_id: catId,       // "user/-/label/<name>"
+                    category_id: catId,
                     has_icon: sub.iconUrl !== '',
                     icon_url: sub.iconUrl,
                     fetch_error: sub._fetchError || null,
@@ -287,8 +268,6 @@
             const response = await fetch('/reader/api/0/unread-count');
             if (!response.ok) throw new Error('Failed to load unread stats');
             const data = await response.json();
-            // Transform GReader unread counts to our format
-            // unreadcounts has entries like { id: "feed/<url>", count: N } and { id: "user/-/label/<name>", count: N }
             unreadStats = { by_feed: {}, by_category: {} };
             for (const uc of data.unreadcounts || []) {
                 if (uc.id.startsWith('feed/')) {
@@ -328,32 +307,20 @@
         const filterErrors = document.getElementById('filter-errors').checked;
         const sortBy = document.getElementById('sort-by').value;
 
-        let filteredFeeds = feeds.slice(); // Create a copy
-        if (filterCategory) {
-            filteredFeeds = filteredFeeds.filter(f => f.category_id === filterCategory);
-        }
-        if (filterErrors) {
-            filteredFeeds = filteredFeeds.filter(f => f.fetch_error !== null);
-        }
+        let filteredFeeds = feeds.slice();
+        if (filterCategory) filteredFeeds = filteredFeeds.filter(f => f.category_id === filterCategory);
+        if (filterErrors) filteredFeeds = filteredFeeds.filter(f => f.fetch_error !== null);
 
-        // Sort feeds
         filteredFeeds.sort((a, b) => {
             switch (sortBy) {
                 case 'unread':
-                    const unreadA = unreadStats.by_feed[a.id] || 0;
-                    const unreadB = unreadStats.by_feed[b.id] || 0;
-                    return unreadB - unreadA; // Descending
+                    return (unreadStats.by_feed[b.id] || 0) - (unreadStats.by_feed[a.id] || 0);
                 case 'category':
                     const catA = categories.find(c => c.id === a.category_id);
                     const catB = categories.find(c => c.id === b.category_id);
-                    const catNameA = catA ? catA.name.toLowerCase() : '';
-                    const catNameB = catB ? catB.name.toLowerCase() : '';
-                    return catNameA.localeCompare(catNameB);
-                case 'title':
+                    return (catA ? catA.name : '').localeCompare(catB ? catB.name : '');
                 default:
-                    const titleA = (a.title || a.url).toLowerCase();
-                    const titleB = (b.title || b.url).toLowerCase();
-                    return titleA.localeCompare(titleB);
+                    return (a.title || a.url).toLowerCase().localeCompare((b.title || b.url).toLowerCase());
             }
         });
 
@@ -374,8 +341,6 @@
                 : '';
             const unreadCount = unreadStats.by_feed[feed.id] || 0;
             const feedIdAttr = escapeHtml(feed.id);
-
-            // Use numeric feed ID for RDRS-specific endpoints (entries, refresh, edit)
             const entriesHref = feedNumericId ? `/feeds/${feedNumericId}/entries` : '#';
 
             let rows = `
@@ -418,23 +383,15 @@
         const addBtn = document.getElementById('add-btn');
 
         const url = urlInput.value.trim();
-        const categoryLabel = categorySelect.value; // "user/-/label/<name>"
+        const categoryLabel = categorySelect.value;
 
-        if (!url) {
-            flash.error('URL cannot be empty');
-            return;
-        }
-
-        if (!categoryLabel) {
-            flash.error('Please select a category');
-            return;
-        }
+        if (!url) { flash.error('URL cannot be empty'); return; }
+        if (!categoryLabel) { flash.error('Please select a category'); return; }
 
         addBtn.textContent = 'Adding...';
         addBtn.disabled = true;
 
         try {
-            // Use subscription/edit with ac=subscribe to add feed with category
             const body = new URLSearchParams();
             body.set('ac', 'subscribe');
             body.set('s', `feed/${url}`);
@@ -464,7 +421,6 @@
     function editFeed(id) {
         const feed = feeds.find(f => f.id === id);
         if (!feed) return;
-
         document.getElementById('edit-id').value = feed.id;
         document.getElementById('edit-url').value = feed.url;
         document.getElementById('edit-title').value = feed.title || '';
@@ -474,56 +430,37 @@
         document.getElementById('edit-custom-user-agent').value = feed.custom_user_agent || '';
         document.getElementById('edit-custom-referrer').value = feed.custom_referrer || '';
         document.getElementById('edit-http2-disabled').checked = feed.http2_disabled;
-
         document.getElementById('edit-modal').showModal();
     }
 
-    function closeEditModal() {
-        document.getElementById('edit-modal').close();
-    }
-
+    function closeEditModal() { document.getElementById('edit-modal').close(); }
     function showImportModal() {
         document.getElementById('import-content').value = '';
         document.getElementById('import-file').value = '';
         document.getElementById('import-modal').showModal();
     }
-
-    function closeImportModal() {
-        document.getElementById('import-modal').close();
-    }
+    function closeImportModal() { document.getElementById('import-modal').close(); }
 
     async function fetchMetadata() {
         const urlInput = document.getElementById('edit-url');
         const url = urlInput.value.trim();
-
-        if (!url) {
-            flash.error('URL cannot be empty');
-            return;
-        }
-
-        if (!confirm('Fetch metadata from URL? This will overwrite current values.')) {
-            return;
-        }
-
+        if (!url) { flash.error('URL cannot be empty'); return; }
+        if (!confirm('Fetch metadata from URL? This will overwrite current values.')) return;
         try {
             const response = await fetch('/api/feeds/fetch-metadata', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url })
             });
-
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to fetch metadata');
             }
-
             const metadata = await response.json();
-
             document.getElementById('edit-url').value = metadata.feed_url;
             document.getElementById('edit-title').value = metadata.title || '';
             document.getElementById('edit-description').value = metadata.description || '';
             document.getElementById('edit-site-url').value = metadata.site_url || '';
-
             flash.success('Metadata fetched.');
         } catch (err) {
             flash.error(err.message);
@@ -532,21 +469,17 @@
 
     async function saveFeed(event) {
         event.preventDefault();
-
-        const streamId = document.getElementById('edit-id').value; // "feed/<url>"
+        const streamId = document.getElementById('edit-id').value;
         const url = document.getElementById('edit-url').value.trim();
         const title = document.getElementById('edit-title').value.trim() || null;
         const description = document.getElementById('edit-description').value.trim();
         const siteUrl = document.getElementById('edit-site-url').value.trim();
-        const categoryLabel = document.getElementById('edit-category').value; // "user/-/label/<name>"
+        const categoryLabel = document.getElementById('edit-category').value;
         const customUserAgent = document.getElementById('edit-custom-user-agent').value.trim();
         const customReferrer = document.getElementById('edit-custom-referrer').value.trim();
         const http2Disabled = document.getElementById('edit-http2-disabled').checked;
 
-        if (!url) {
-            flash.error('URL cannot be empty');
-            return;
-        }
+        if (!url) { flash.error('URL cannot be empty'); return; }
 
         try {
             const body = new URLSearchParams();
@@ -579,25 +512,19 @@
     }
 
     async function deleteFeed(streamId, title) {
-        if (!confirm(`Delete feed "${title}"? This cannot be undone.`)) {
-            return;
-        }
-
+        if (!confirm(`Delete feed "${title}"? This cannot be undone.`)) return;
         try {
             const body = new URLSearchParams();
             body.set('ac', 'unsubscribe');
             body.set('s', streamId);
-
             const response = await fetch('/reader/api/0/subscription/edit', {
                 method: 'POST',
                 body: body
             });
-
             if (!response.ok) {
                 const text = await response.text();
                 throw new Error(text || 'Failed to delete feed');
             }
-
             flash.success(`Feed "${title}" deleted.`);
             loadFeeds();
         } catch (err) {
@@ -617,15 +544,11 @@
         updateSyncStatus();
 
         try {
-            const response = await fetch(`/api/feeds/${id}/refresh`, {
-                method: 'POST'
-            });
-
+            const response = await fetch(`/api/feeds/${id}/refresh`, { method: 'POST' });
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to refresh feed');
             }
-
             const result = await response.json();
             flash.success(`Refreshed: ${result.new_entries} new, ${result.updated_entries} updated.`);
             loadFeeds();
@@ -640,62 +563,37 @@
         }
     }
 
-    // Close dialog when clicking on backdrop
-    document.getElementById('edit-modal').addEventListener('click', function(e) {
-        if (e.target === this) {
-            this.close();
-        }
-    });
-
-    document.getElementById('import-modal').addEventListener('click', function(e) {
-        if (e.target === this) {
-            this.close();
-        }
-    });
+    document.getElementById('edit-modal').addEventListener('click', function(e) { if (e.target === this) this.close(); });
+    document.getElementById('import-modal').addEventListener('click', function(e) { if (e.target === this) this.close(); });
 
     function loadOpmlFile(input) {
         const file = input.files[0];
         if (!file) return;
-
         const reader = new FileReader();
-        reader.onload = function(e) {
-            document.getElementById('import-content').value = e.target.result;
-        };
-        reader.onerror = function() {
-            flash.error('Failed to read file');
-        };
+        reader.onload = function(e) { document.getElementById('import-content').value = e.target.result; };
+        reader.onerror = function() { flash.error('Failed to read file'); };
         reader.readAsText(file);
     }
 
     async function importOpml(event) {
         event.preventDefault();
-
         const content = document.getElementById('import-content').value.trim();
-        if (!content) {
-            flash.error('Please paste OPML content or upload a file');
-            return;
-        }
-
+        if (!content) { flash.error('Please paste OPML content or upload a file'); return; }
         const importBtn = document.getElementById('import-btn');
         importBtn.textContent = 'Importing...';
         importBtn.disabled = true;
-
         try {
             const response = await fetch('/reader/api/0/subscription/import', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/xml' },
                 body: content
             });
-
             if (!response.ok) {
                 const text = await response.text();
                 throw new Error(text || 'Failed to import OPML');
             }
-
             closeImportModal();
             flash.success('OPML imported successfully.');
-
-            // Reload data
             await loadCategories();
             await loadFeeds();
         } catch (err) {
@@ -706,18 +604,14 @@
         }
     }
 
-    // Initialize
     loadCategories().then(() => {
-        // Read filters from URL
         const urlParams = new URLSearchParams(window.location.search);
         const categoryId = urlParams.get('category');
         const sortBy = urlParams.get('sort');
         const filterErrors = urlParams.get('errors');
-
         if (categoryId) document.getElementById('filter-category').value = categoryId;
         if (sortBy) document.getElementById('sort-by').value = sortBy;
         if (filterErrors) document.getElementById('filter-errors').checked = true;
-
         loadFeeds();
         loadUnreadStats();
     });

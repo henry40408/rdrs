@@ -5,43 +5,45 @@
 
 {% block title %}{{ page_title }} - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
+{% block body %}
+<div class="app-layout">
+{% call macros::sidebar("entries", is_admin, is_masquerading, username) %}{% endcall %}
 
-{% block content %}
-{% call macros::nav("entries", is_admin, is_masquerading, username) %}{% endcall %}
+<main class="main-content">
+    {% call macros::flash(flash_messages) %}{% endcall %}
 
-<style>
-.tab-bar {
-    margin-bottom: var(--space-4);
-}
-.tab-bar a {
-    margin-right: var(--space-2);
-}
-.tab-bar a.active {
-    font-weight: bold;
-}
-</style>
+    <div class="split-view">
+        <div class="list-pane">
+            <div class="list-pane-header">
+                <h1>{{ page_title }}</h1>
+                <div class="tab-bar">
+                    <a href="/entries"{% if page_mode == "all" %} class="active"{% endif %}>All</a>
+                    <a href="/entries/read"{% if page_mode == "read" %} class="active"{% endif %}>Read</a>
+                    <a href="/entries/starred"{% if page_mode == "starred" %} class="active"{% endif %}>Starred</a>
+                    <a href="/entries/summarized"{% if page_mode == "summarized" %} class="active"{% endif %}>Summarized</a>
+                </div>
+            </div>
 
-<h1>{{ page_title }}</h1>
+            <div class="list-pane-body">
+                <rdrs-entry-list
+                    id="entry-list"
+                    stream-id="{% if page_mode == "read" %}user/-/state/com.google/read{% elif page_mode == "starred" %}user/-/state/com.google/starred{% else %}user/-/state/com.google/reading-list{% endif %}"
+                    api-params='{% if page_mode == "summarized" %}{"has_summary":"true"}{% else %}{}{% endif %}'
+                    entries-per-page="{{ entries_per_page }}"
+                    origin="{{ page_mode }}"
+                    show-feed
+                    show-category
+                    reading-pane="#reading-pane"
+                ></rdrs-entry-list>
+            </div>
+        </div>
 
-<div class="tab-bar">
-    <a href="/entries"{% if page_mode == "all" %} class="active"{% endif %}>All</a>
-    <a href="/entries/read"{% if page_mode == "read" %} class="active"{% endif %}>Read</a>
-    <a href="/entries/starred"{% if page_mode == "starred" %} class="active"{% endif %}>Starred</a>
-    <a href="/entries/summarized"{% if page_mode == "summarized" %} class="active"{% endif %}>Summarized</a>
+        <div class="reading-pane" id="reading-pane">
+            <div class="reading-pane-empty">Select an entry to read</div>
+        </div>
+    </div>
+</main>
 </div>
-
-<hr>
-
-<rdrs-entry-list
-    id="entry-list"
-    stream-id="{% if page_mode == "read" %}user/-/state/com.google/read{% elif page_mode == "starred" %}user/-/state/com.google/starred{% else %}user/-/state/com.google/reading-list{% endif %}"
-    api-params='{% if page_mode == "summarized" %}{"has_summary":"true"}{% else %}{}{% endif %}'
-    entries-per-page="{{ entries_per_page }}"
-    origin="{{ page_mode }}"
-    show-feed
-    show-category
-></rdrs-entry-list>
 
 <script>
     customElements.whenDefined('rdrs-entry-list').then(() => {

@@ -10,6 +10,7 @@ class RdrsEntryList extends HTMLElement {
         this.total = -1; // unknown until first count
         this.selectedIndex = -1;
         this._search = '';
+        this._readingPaneEntry = null; // currently displayed entry in reading pane
     }
 
     connectedCallback() {
@@ -38,26 +39,30 @@ class RdrsEntryList extends HTMLElement {
     get search() { return this._search; }
     set search(v) { this._search = v; }
     get emptyMessage() { return this.getAttribute('empty-message') || 'No entries found.'; }
+    get readingPaneSelector() { return this.getAttribute('reading-pane') || null; }
+
+    /** Get the reading pane element, if configured and visible. */
+    _getReadingPane() {
+        const sel = this.readingPaneSelector;
+        if (!sel) return null;
+        const pane = document.querySelector(sel);
+        if (!pane) return null;
+        // Only use reading pane if it's actually visible (hidden on mobile/tablet)
+        return pane.offsetParent !== null ? pane : null;
+    }
 
     // --- Initial render (skeleton) ---
     _render() {
         const initialMessage = this.hasAttribute('no-auto-load') ? this.emptyMessage : 'Loading...';
         this.innerHTML = `
-<style>
-.entries-list-refreshing {
-    position: relative;
-    opacity: 0.5;
-    pointer-events: none;
-}
-</style>
 <div id="entries-list" data-testid="entries-list">
-    <p class="muted">${initialMessage}</p>
+    <p class="muted entries-status-msg">${initialMessage}</p>
 </div>
 <div id="load-more" class="hidden-mt4">
     <button type="button" data-testid="load-more-btn">Load More</button>
 </div>
 ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
-    <button type="button" data-testid="mark-above-btn">Mark Above as Read</button>
+    <button type="button" class="btn-secondary" data-testid="mark-above-btn">Mark Above as Read</button>
 </div>` : ''}
 <p id="entries-count" class="muted" data-testid="entries-count"></p>
         `;
@@ -115,6 +120,27 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                     // Don't prevent default — let the link open in new tab
                     this.markRead(id);
                     break;
+            }
+        });
+
+        // Click on entry item to select + show in reading pane
+        this.querySelector('#entries-list').addEventListener('click', (e) => {
+            const entryItem = e.target.closest('.entry-item');
+            if (!entryItem) return;
+
+            // Don't handle if clicking on action links
+            if (e.target.closest('.entry-item-actions') || e.target.closest('.entry-item-meta a')) return;
+
+            const index = parseInt(entryItem.dataset.index, 10);
+            if (isNaN(index)) return;
+
+            this.selectEntry(index);
+
+            // If reading pane is visible, load entry there instead of navigating
+            const pane = this._getReadingPane();
+            if (pane && !e.target.matches('.entry-item-title')) {
+                e.preventDefault();
+                this._loadInReadingPane(index);
             }
         });
     }
@@ -190,7 +216,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 this._updateUnreadCount();
             }
         } catch (err) {
-            container.innerHTML = '<p class="muted">Failed to load entries</p>';
+            container.innerHTML = '<p class="muted entries-status-msg">Failed to load entries</p>';
         } finally {
             container.classList.remove('entries-list-refreshing');
         }
@@ -226,7 +252,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         const container = this.querySelector('#entries-list');
 
         if (this.entries.length === 0) {
-            container.innerHTML = `<p class="muted">${escapeHtml(this.emptyMessage)}</p>`;
+            container.innerHTML = `<p class="muted entries-status-msg">${escapeHtml(this.emptyMessage)}</p>`;
             return;
         }
 
@@ -250,13 +276,13 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             // Summary badge
             let summaryBadgeHtml = '';
             if (summaryStatus === 'completed') {
-                summaryBadgeHtml = '<span title="Has Summary" class="summary-badge">✓</span>';
+                summaryBadgeHtml = '<span title="Has Summary" class="summary-badge">&#10003;</span>';
             } else if (summaryStatus === 'pending') {
-                summaryBadgeHtml = '<span title="Pending" class="summary-badge-pending">○</span>';
+                summaryBadgeHtml = '<span title="Pending" class="summary-badge-pending">&#9675;</span>';
             } else if (summaryStatus === 'processing') {
-                summaryBadgeHtml = '<span title="Processing" class="summary-badge-processing">↻</span>';
+                summaryBadgeHtml = '<span title="Processing" class="summary-badge-processing">&#8635;</span>';
             } else if (summaryStatus === 'failed') {
-                summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">✗</span>';
+                summaryBadgeHtml = '<span title="Failed" class="summary-badge-failed">&#10007;</span>';
             }
 
             // Title with optional search highlight
@@ -315,7 +341,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             <div class="entry-item${isSelected ? ' selected' : ''}${isRead ? ' entry-read' : ''}" id="entry-${entry.id}" data-index="${index}" data-testid="entry-item">
                 <div>
                     <a href="/entries/${entry.id}${originQuery}" class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}" data-testid="entry-title-link">${titleHtml}</a>
-                    ${isStarred ? '<span title="Starred">★</span>' : ''}
+                    ${isStarred ? '<span title="Starred" class="star-icon">&#9733;</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>${contentSnippetHtml}
                 <div class="muted entry-item-meta">
@@ -328,6 +354,100 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 </div>
             </div>`;
         }).join('');
+    }
+
+    // --- Reading Pane ---
+    async _loadInReadingPane(index) {
+        const entry = this.entries[index];
+        if (!entry) return;
+
+        const pane = this._getReadingPane();
+        if (!pane) return;
+
+        this._readingPaneEntry = entry;
+
+        // Show loading state
+        pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Loading...</p></div>`;
+
+        try {
+            // Fetch full content
+            const body = new URLSearchParams();
+            body.set('i', entry.id.toString());
+
+            const response = await fetch('/reader/api/0/stream/items/contents', {
+                method: 'POST',
+                body: body
+            });
+
+            if (!response.ok) throw new Error('Failed to load entry');
+            const result = await response.json();
+            if (!result.items || result.items.length === 0) {
+                pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Entry not found.</p></div>`;
+                return;
+            }
+
+            const item = result.items[0];
+            const data = {
+                title: item.title || '',
+                link: item.canonical?.[0]?.href || item.alternate?.[0]?.href || '',
+                content: item._content || item.summary?.content || '',
+                author: item.author || '',
+                feed_title: item.origin?.title || '',
+                feed_has_icon: item._feedHasIcon || false,
+                feed_id: item._feedId,
+                published_at: item._publishedAt || null,
+                starred_at: item._starredAt || null,
+            };
+
+            const title = this._decodeHtml(data.title) || 'Untitled';
+            const feedTitle = this._decodeHtml(data.feed_title);
+            const author = this._decodeHtml(data.author);
+            const date = data.published_at ? new Date(data.published_at).toLocaleString() : '';
+            const content = data.content || '<p class="muted">No content available.</p>';
+            const feedIconHtml = data.feed_has_icon
+                ? `<img src="/api/feeds/${data.feed_id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
+                : '';
+
+            let metaParts = [];
+            if (feedTitle) metaParts.push(feedIconHtml + escapeHtml(feedTitle));
+            if (author) metaParts.push(escapeHtml(author));
+            if (date) metaParts.push(date);
+
+            // Build origin query for "Open full page" link
+            let originQuery = `?origin=${encodeURIComponent(this.origin)}`;
+            if (this.origin === 'feed' && entry.feed_id) originQuery += `&feed=${entry.feed_id}`;
+            if (this.origin === 'category' && entry.category_id) originQuery += `&category=${entry.category_id}`;
+
+            pane.innerHTML = `
+                <div class="reading-pane-content">
+                    <h1 class="reading-pane-title">${escapeHtml(title)}</h1>
+                    <div class="reading-pane-meta">${metaParts.join(' &middot; ')}</div>
+                    <div class="reading-pane-actions">
+                        <a href="/entries/${entry.id}${originQuery}" class="btn btn-secondary btn-sm">Open full page</a>
+                        ${data.link ? `<a href="${escapeHtml(data.link)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">View original</a>` : ''}
+                    </div>
+                    <div class="reading-pane-article">${content}</div>
+                </div>
+            `;
+
+            // Scroll reading pane to top
+            pane.scrollTop = 0;
+
+            // Auto-mark as read
+            if (entry.read_at === null) {
+                this.markRead(entry.id);
+            }
+
+        } catch (err) {
+            pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Failed to load entry.</p></div>`;
+        }
+    }
+
+    _decodeHtml(html) {
+        if (!html) return '';
+        const textarea = document.createElement('textarea');
+        textarea.innerHTML = html;
+        return textarea.value;
     }
 
     // --- UI updates ---
@@ -520,6 +640,15 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     openSelectedEntry() {
         const entry = this.getSelectedEntry();
         if (!entry) return;
+
+        // If reading pane is visible, load there
+        const pane = this._getReadingPane();
+        if (pane) {
+            this._loadInReadingPane(this.selectedIndex);
+            return;
+        }
+
+        // Otherwise navigate to entry page
         if (this.selectedIndex >= 0) window._resumeIndex = this.selectedIndex;
 
         let originQuery = `?origin=${encodeURIComponent(this.origin)}`;
@@ -685,7 +814,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         this.selectedIndex = -1;
         const container = this.querySelector('#entries-list');
         if (container) {
-            container.innerHTML = `<p class="muted">${escapeHtml(message || this.emptyMessage)}</p>`;
+            container.innerHTML = `<p class="muted entries-status-msg">${escapeHtml(message || this.emptyMessage)}</p>`;
         }
         this._updateLoadMore();
         this._updateEntriesCount();

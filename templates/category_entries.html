@@ -5,59 +5,61 @@
 
 {% block title %}{{ category_name }} - Entries - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
+{% block body %}
+<div class="app-layout">
+{% call macros::sidebar("categories", is_admin, is_masquerading, username) %}{% endcall %}
 
-{% block content %}
-{% call macros::nav("categories", is_admin, is_masquerading, username) %}{% endcall %}
+<main class="main-content">
+    {% call macros::flash(flash_messages) %}{% endcall %}
 
-<style>
-.breadcrumb {
-    margin-bottom: var(--space-4);
-}
-.breadcrumb a {
-    color: inherit;
-}
-</style>
+    <div class="split-view">
+        <div class="list-pane">
+            <div class="list-pane-header">
+                <div class="breadcrumb">
+                    <a href="/categories">Categories</a> / {{ category_name }}
+                </div>
+                <h1>{{ category_name }}</h1>
+                <div class="filter-bar">
+                    <div class="form-group form-group-inline">
+                        <select id="filter-status" onchange="handleFilterChange()" class="select-auto">
+                            <option value="">All</option>
+                            <option value="unread">Unread</option>
+                            <option value="read">Read</option>
+                            <option value="starred">Starred</option>
+                        </select>
+                    </div>
+                    <div class="form-group form-group-inline">
+                        <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;" class="select-auto">
+                            <option value="">Mark as Read...</option>
+                            <option value="1">Older than 1 day</option>
+                            <option value="7">Older than 1 week</option>
+                            <option value="30">Older than 1 month</option>
+                            <option value="365">Older than 1 year</option>
+                            <option value="all">All entries</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
 
-<div class="breadcrumb">
-    <a href="/categories">Categories</a> / {{ category_name }}
-</div>
+            <div class="list-pane-body">
+                <rdrs-entry-list
+                    stream-id="user/-/label/{{ category_name }}"
+                    entries-per-page="{{ entries_per_page }}"
+                    origin="category"
+                    show-feed
+                    show-mark-above
+                    no-auto-load
+                    reading-pane="#reading-pane"
+                ></rdrs-entry-list>
+            </div>
+        </div>
 
-<h1>{{ category_name }}</h1>
-
-<div class="filter-bar">
-    <div class="form-group form-group-inline">
-        <label for="filter-status">Status</label>
-        <select id="filter-status" onchange="handleFilterChange()">
-            <option value="">All</option>
-            <option value="unread">Unread</option>
-            <option value="read">Read</option>
-            <option value="starred">Starred</option>
-        </select>
+        <div class="reading-pane" id="reading-pane">
+            <div class="reading-pane-empty">Select an entry to read</div>
+        </div>
     </div>
-    <div class="form-group form-group-inline">
-        <label for="mark-read-age">Mark as Read</label>
-        <select id="mark-read-age" onchange="markAsRead(this.value); this.selectedIndex=0;">
-            <option value="">Select...</option>
-            <option value="1">Older than 1 day</option>
-            <option value="7">Older than 1 week</option>
-            <option value="30">Older than 1 month</option>
-            <option value="365">Older than 1 year</option>
-            <option value="all">All entries</option>
-        </select>
-    </div>
+</main>
 </div>
-
-<hr>
-
-<rdrs-entry-list
-    stream-id="user/-/label/{{ category_name }}"
-    entries-per-page="{{ entries_per_page }}"
-    origin="category"
-    show-feed
-    show-mark-above
-    no-auto-load
-></rdrs-entry-list>
 
 <script>
     const categoryId = {{ category_id }};
@@ -123,7 +125,6 @@
     customElements.whenDefined('rdrs-entry-list').then(() => {
         const list = document.querySelector('rdrs-entry-list');
 
-        // Read filter from URL and set initial params
         const urlParams = new URLSearchParams(window.location.search);
         const status = urlParams.get('status');
         document.getElementById('filter-status').value = status || 'unread';

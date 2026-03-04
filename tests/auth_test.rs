@@ -949,7 +949,7 @@ async fn test_unread_page_shows_admin_link_for_admin() {
     let response = server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains(">Admin</a>"));
+    assert!(body.contains("data-testid=\"nav-admin\""));
     assert!(body.contains(r#"href="/admin""#));
 }
 
@@ -987,7 +987,7 @@ async fn test_unread_page_hides_admin_link_for_regular_user() {
     let response = server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(!body.contains(">Admin</a>"));
+    assert!(!body.contains("data-testid=\"nav-admin\""));
     assert!(!body.contains(r#"href="/admin""#));
 }
 

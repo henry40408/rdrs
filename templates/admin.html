@@ -5,30 +5,37 @@
 
 {% block title %}Admin Panel - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
+{% block body %}
+<div class="app-layout">
+{% call macros::sidebar("admin", true, is_masquerading, username) %}{% endcall %}
 
-{% block content %}
-{% call macros::nav("admin", true, is_masquerading, username) %}{% endcall %}
+<main class="main-content">
+    <div class="page-content">
+    {% call macros::flash(flash_messages) %}{% endcall %}
 
-<h1>Admin Panel</h1>
+    <h1>Admin Panel</h1>
 
-<table>
-    <thead>
-        <tr>
-            <th>ID</th>
-            <th>Username</th>
-            <th>Role</th>
-            <th>Status</th>
-            <th>Created</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody id="users-table">
-        <tr>
-            <td colspan="6">Loading...</td>
-        </tr>
-    </tbody>
-</table>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="users-table">
+            <tr>
+                <td colspan="6" class="muted">Loading...</td>
+            </tr>
+        </tbody>
+    </table>
+
+    </div>
+</main>
+</div>
 
 <script>
     const currentUserId = {{ current_user_id }};
@@ -37,9 +44,7 @@
     async function loadUsers() {
         try {
             const response = await fetch('/api/admin/users');
-            if (!response.ok) {
-                throw new Error('Failed to load users');
-            }
+            if (!response.ok) throw new Error('Failed to load users');
             const users = await response.json();
             renderUsers(users);
         } catch (err) {
@@ -61,7 +66,7 @@
                     <td>${user.id}</td>
                     <td>${escapeHtml(user.username)}</td>
                     <td>${user.role}</td>
-                    <td>${isDisabled ? 'disabled' : 'active'}</td>
+                    <td>${isDisabled ? '<span class="error-text">disabled</span>' : '<span class="success-text">active</span>'}</td>
                     <td>${formatDate(user.created_at)}</td>
                     <td class="actions">
                         ${!isSelf ? `
@@ -125,9 +130,7 @@
 
     async function masquerade(userId) {
         try {
-            const response = await fetch(`/api/admin/masquerade/${userId}`, {
-                method: 'POST'
-            });
+            const response = await fetch(`/api/admin/masquerade/${userId}`, { method: 'POST' });
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to start masquerade');
@@ -139,13 +142,9 @@
     }
 
     async function deleteUser(userId, username) {
-        if (!confirm(`Delete user "${username}"? This cannot be undone.`)) {
-            return;
-        }
+        if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
         try {
-            const response = await fetch(`/api/admin/users/${userId}`, {
-                method: 'DELETE'
-            });
+            const response = await fetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to delete user');

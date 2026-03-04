@@ -5,13 +5,17 @@
 
 {% block title %}Entry - RDRS{% endblock %}
 
-{% block flash %}{% call macros::flash(flash_messages) %}{% endcall %}{% endblock %}
+{% block body %}
+<div class="app-layout">
+{% call macros::sidebar("entries", is_admin, is_masquerading, username) %}{% endcall %}
 
-{% block content %}
-{% call macros::nav("entries", is_admin, is_masquerading, username) %}{% endcall %}
+<main class="main-content">
+    {% call macros::flash(flash_messages) %}{% endcall %}
 
-<div id="entry-container">
-    <p class="muted">Loading...</p>
+    <div class="entry-detail" id="entry-container">
+        <p class="muted">Loading...</p>
+    </div>
+</main>
 </div>
 
 <script>
@@ -23,7 +27,6 @@
     let unreadNeighbors = { prev_id: null, next_id: null };
     let currentSummary = null;
 
-    // Get filter parameters from URL
     const urlParams = new URLSearchParams(window.location.search);
     const filterFeedId = urlParams.get('feed');
     const filterCategoryId = urlParams.get('category');
@@ -178,32 +181,20 @@
     }
 
     function goToPrevEntry() {
-        if (neighbors.prev_id) {
-            window.location.href = `/entries/${neighbors.prev_id}${getFilterQueryString()}`;
-        }
+        if (neighbors.prev_id) window.location.href = `/entries/${neighbors.prev_id}${getFilterQueryString()}`;
     }
-
     function goToNextEntry() {
-        if (neighbors.next_id) {
-            window.location.href = `/entries/${neighbors.next_id}${getFilterQueryString()}`;
-        }
+        if (neighbors.next_id) window.location.href = `/entries/${neighbors.next_id}${getFilterQueryString()}`;
     }
-
     function goToPrevUnreadEntry() {
-        if (unreadNeighbors.prev_id) {
-            window.location.href = `/entries/${unreadNeighbors.prev_id}${getFilterQueryString()}`;
-        }
+        if (unreadNeighbors.prev_id) window.location.href = `/entries/${unreadNeighbors.prev_id}${getFilterQueryString()}`;
     }
-
     function goToNextUnreadEntry() {
-        if (unreadNeighbors.next_id) {
-            window.location.href = `/entries/${unreadNeighbors.next_id}${getFilterQueryString()}`;
-        }
+        if (unreadNeighbors.next_id) window.location.href = `/entries/${unreadNeighbors.next_id}${getFilterQueryString()}`;
     }
 
     async function loadEntry() {
         try {
-            // Fetch entry via GReader stream/items/contents
             const body = new URLSearchParams();
             body.set('i', entryId.toString());
 
@@ -224,7 +215,6 @@
                 return;
             }
 
-            // Transform GReader item to internal format
             const item = result.items[0];
             const data = {
                 id: item._entryId,
@@ -248,7 +238,6 @@
             entryData = data;
             renderEntry(data);
 
-            // Auto-mark as read via edit-tag
             if (data.read_at === null) {
                 const markBody = new URLSearchParams();
                 markBody.set('i', entryId.toString());
@@ -256,12 +245,9 @@
                 await fetch('/reader/api/0/edit-tag', { method: 'POST', body: markBody });
             }
 
-            // Load neighbors for n/p navigation
             loadNeighbors();
-            // Load unread neighbors for N/P navigation
             loadUnreadNeighbors();
 
-            // Load summary based on status
             if (data.summary_status) {
                 handleSummaryStatus(data.summary_status);
             }
@@ -272,19 +258,14 @@
 
     function handleSummaryStatus(status) {
         if (status === 'completed') {
-            // Load the completed summary
             loadSummaryFromServer();
         } else if (status === 'pending' || status === 'processing') {
-            // Summary is being generated, start polling
             const btn = document.getElementById('summarize-btn');
             if (btn) {
                 btn.textContent = 'Summarizing...';
                 btn.disabled = true;
             }
             startSummaryPolling();
-        } else if (status === 'failed') {
-            // Summary generation failed - user can retry by clicking the button
-            console.log('Previous summary generation failed');
         }
     }
 
@@ -297,7 +278,6 @@
                     currentSummary = data.summary_text;
                     showSummary(data.summary_text);
                 } else if (data.status === 'pending' || data.status === 'processing') {
-                    // Still processing, start polling
                     const btn = document.getElementById('summarize-btn');
                     if (btn) {
                         btn.textContent = 'Summarizing...';
@@ -327,9 +307,9 @@
             <div class="entry-nav">
                 <a href="${getBackUrl()}" data-testid="back-link">&larr; ${getBackLabel()}</a>
                 <span class="entry-nav-sep">&middot;</span>
-                <a href="#" id="prev-entry-link" data-testid="prev-entry" class="disabled">&larr; Previous</a>
+                <a href="#" id="prev-entry-link" data-testid="prev-entry" class="disabled">&larr; Prev</a>
                 <span class="entry-nav-sep">&middot;</span>
-                <a href="#" id="prev-unread-link" class="disabled">&larr; Previous Unread</a>
+                <a href="#" id="prev-unread-link" class="disabled">&larr; Prev Unread</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="#" id="next-unread-link" class="disabled">Next Unread &rarr;</a>
                 <span class="entry-nav-sep">&middot;</span>
@@ -345,19 +325,19 @@
             </div>
 
             <div class="entry-actions">
-                <button type="button" onclick="toggleStar()" id="star-btn" data-testid="star-btn">${isStarred ? 'Unstar' : 'Star'}</button>
-                <button type="button" onclick="markUnread()" data-testid="mark-unread-btn">Mark Unread</button>
-                ${data.link ? `<button type="button" onclick="fetchFullContent()" id="fetch-content-btn">Fetch Full Content</button>` : ''}
-                ${hasKagiConfigured && data.link ? `<button type="button" onclick="summarizeEntry()" id="summarize-btn">Summarize</button>` : ''}
-                ${hasSaveServices && data.link ? `<button type="button" onclick="saveEntry()" id="save-btn">Save</button>` : ''}
-                ${data.link ? `<a href="${escapeHtml(data.link)}" target="_blank" rel="noopener noreferrer" class="btn">View Original</a>` : ''}
+                <button type="button" class="btn-secondary" onclick="toggleStar()" id="star-btn" data-testid="star-btn">${isStarred ? 'Unstar' : 'Star'}</button>
+                <button type="button" class="btn-secondary" onclick="markUnread()" data-testid="mark-unread-btn">Mark Unread</button>
+                ${data.link ? `<button type="button" class="btn-secondary" onclick="fetchFullContent()" id="fetch-content-btn">Fetch Full Content</button>` : ''}
+                ${hasKagiConfigured && data.link ? `<button type="button" class="btn-secondary" onclick="summarizeEntry()" id="summarize-btn">Summarize</button>` : ''}
+                ${hasSaveServices && data.link ? `<button type="button" class="btn-secondary" onclick="saveEntry()" id="save-btn">Save</button>` : ''}
+                ${data.link ? `<a href="${escapeHtml(data.link)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">View Original</a>` : ''}
             </div>
 
             <div id="summary-container" class="d-none">
                 <div class="summary-box">
                     <div class="summary-actions">
-                        <button type="button" onclick="copySummary()" id="copy-summary-btn">Copy</button>
-                        <button type="button" onclick="dismissSummary()">Dismiss</button>
+                        <button type="button" class="btn-sm btn-secondary" onclick="copySummary()" id="copy-summary-btn">Copy</button>
+                        <button type="button" class="btn-sm btn-secondary" onclick="dismissSummary()">Dismiss</button>
                     </div>
                     <blockquote id="summary-content"></blockquote>
                 </div>
@@ -372,9 +352,9 @@
             <hr>
 
             <div class="entry-nav entry-nav-bottom">
-                <a href="#" id="prev-entry-link-bottom" class="disabled">&larr; Previous</a>
+                <a href="#" id="prev-entry-link-bottom" class="disabled">&larr; Prev</a>
                 <span class="entry-nav-sep">&middot;</span>
-                <a href="#" id="prev-unread-link-bottom" class="disabled">&larr; Previous Unread</a>
+                <a href="#" id="prev-unread-link-bottom" class="disabled">&larr; Prev Unread</a>
                 <span class="entry-nav-sep">&middot;</span>
                 <a href="${getBackUrl()}">${getBackLabel()}</a>
                 <span class="entry-nav-sep">&middot;</span>
@@ -402,7 +382,6 @@
             });
             if (!response.ok) throw new Error('Failed to toggle star');
 
-            // Update local state
             if (isCurrentlyStarred) {
                 entryData.starred_at = null;
             } else {
@@ -452,15 +431,12 @@
                 throw new Error(data.error || 'Failed to summarize');
             }
 
-            // Handle async response based on status
             if (data.status === 'completed' && data.summary_text) {
-                // Already cached
                 currentSummary = data.summary_text;
                 showSummary(data.summary_text);
                 btn.textContent = 'Summarize';
                 btn.disabled = false;
             } else if (data.status === 'pending' || data.status === 'processing') {
-                // Start polling
                 startSummaryPolling();
             } else if (data.status === 'failed') {
                 throw new Error(data.error || 'Summarization failed');
@@ -482,19 +458,13 @@
                 const response = await fetch(`/api/entries/${entryId}/summary`);
 
                 if (response.status === 404) {
-                    // Summary was cleared
                     stopSummaryPolling();
                     const btn = document.getElementById('summarize-btn');
-                    if (btn) {
-                        btn.textContent = 'Summarize';
-                        btn.disabled = false;
-                    }
+                    if (btn) { btn.textContent = 'Summarize'; btn.disabled = false; }
                     return;
                 }
 
-                if (!response.ok) {
-                    throw new Error('Failed to check summary status');
-                }
+                if (!response.ok) throw new Error('Failed to check summary status');
 
                 const data = await response.json();
 
@@ -503,30 +473,20 @@
                     currentSummary = data.summary_text;
                     showSummary(data.summary_text);
                     const btn = document.getElementById('summarize-btn');
-                    if (btn) {
-                        btn.textContent = 'Summarize';
-                        btn.disabled = false;
-                    }
+                    if (btn) { btn.textContent = 'Summarize'; btn.disabled = false; }
                 } else if (data.status === 'failed') {
                     stopSummaryPolling();
                     flash.error(data.error || 'Summarization failed');
                     const btn = document.getElementById('summarize-btn');
-                    if (btn) {
-                        btn.textContent = 'Summarize';
-                        btn.disabled = false;
-                    }
+                    if (btn) { btn.textContent = 'Summarize'; btn.disabled = false; }
                 }
-                // Keep polling if still pending or processing
             } catch (err) {
                 stopSummaryPolling();
                 flash.error(err.message);
                 const btn = document.getElementById('summarize-btn');
-                if (btn) {
-                    btn.textContent = 'Summarize';
-                    btn.disabled = false;
-                }
+                if (btn) { btn.textContent = 'Summarize'; btn.disabled = false; }
             }
-        }, 2000); // Poll every 2 seconds
+        }, 2000);
     }
 
     function stopSummaryPolling() {
@@ -550,16 +510,10 @@
 
     async function dismissSummary() {
         const container = document.getElementById('summary-container');
-        if (container) {
-            container.style.display = 'none';
-        }
+        if (container) container.style.display = 'none';
         currentSummary = null;
-
-        // Delete summary from cache
         try {
-            await fetch(`/api/entries/${entryId}/summary`, {
-                method: 'DELETE'
-            });
+            await fetch(`/api/entries/${entryId}/summary`, { method: 'DELETE' });
         } catch (err) {
             console.error('Failed to delete summary from cache:', err);
         }
@@ -567,37 +521,24 @@
 
     function sanitizeTitleForTiddlyWiki(title) {
         if (!title) return '';
-        // Remove characters that TiddlyWiki doesn't support
         return title
-            .replace(/\[\[/g, '')  // Double brackets (links)
-            .replace(/\]\]/g, '')
-            .replace(/\[/g, '')    // Single brackets
-            .replace(/\]/g, '')
-            .replace(/\|/g, '')    // Pipe (link separator)
-            .replace(/\{/g, '')    // Curly braces (macros)
-            .replace(/\}/g, '')
-            .replace(/</g, '')     // Angle brackets (HTML)
-            .replace(/>/g, '')
+            .replace(/\[\[/g, '').replace(/\]\]/g, '')
+            .replace(/\[/g, '').replace(/\]/g, '')
+            .replace(/\|/g, '')
+            .replace(/\{/g, '').replace(/\}/g, '')
+            .replace(/</g, '').replace(/>/g, '')
             .trim();
     }
 
     async function copySummary() {
         if (!currentSummary || !entryData) return;
-
         const cleanTitle = sanitizeTitleForTiddlyWiki(decodeHtml(entryData.title) || 'Untitled');
         const link = entryData.link || '';
-
         const formattedText = `${cleanTitle}\n\n${link}\n\n${currentSummary}`;
-
         try {
             await navigator.clipboard.writeText(formattedText);
             const btn = document.getElementById('copy-summary-btn');
-            if (btn) {
-                btn.textContent = 'Copied!';
-                setTimeout(() => {
-                    btn.textContent = 'Copy';
-                }, 2000);
-            }
+            if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 2000); }
         } catch (err) {
             flash.error('Failed to copy to clipboard');
         }
@@ -606,40 +547,22 @@
     async function saveEntry() {
         const btn = document.getElementById('save-btn');
         if (!btn) return;
-
         btn.textContent = 'Saving...';
         btn.disabled = true;
-
         try {
-            const response = await fetch(`/api/entries/${entryId}/save`, {
-                method: 'POST'
-            });
-
+            const response = await fetch(`/api/entries/${entryId}/save`, { method: 'POST' });
             const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to save');
-            }
-
+            if (!response.ok) throw new Error(data.error || 'Failed to save');
             if (data.all_success) {
                 const count = data.results.length;
                 flash.success(`Saved to ${count} service${count > 1 ? 's' : ''}`);
                 btn.textContent = 'Saved!';
-                // Reset button after a delay
-                setTimeout(() => {
-                    btn.textContent = 'Save';
-                }, 2000);
+                setTimeout(() => { btn.textContent = 'Save'; }, 2000);
             } else {
-                // Partial success or all failed
                 const failed = data.results.filter(r => !r.success);
                 const succeeded = data.results.filter(r => r.success);
-
-                if (succeeded.length > 0) {
-                    flash.success(`Saved to: ${succeeded.map(r => r.service).join(', ')}`);
-                }
-                if (failed.length > 0) {
-                    flash.error(`Failed: ${failed.map(r => `${r.service} (${r.message})`).join(', ')}`);
-                }
+                if (succeeded.length > 0) flash.success(`Saved to: ${succeeded.map(r => r.service).join(', ')}`);
+                if (failed.length > 0) flash.error(`Failed: ${failed.map(r => `${r.service} (${r.message})`).join(', ')}`);
                 btn.textContent = 'Save';
             }
         } catch (err) {
@@ -658,37 +581,20 @@
         const btn = document.getElementById('fetch-content-btn');
         btn.textContent = 'Fetching...';
         btn.disabled = true;
-
         try {
-            const response = await fetch(`/api/entries/${entryId}/fetch-full-content`, {
-                method: 'POST'
-            });
-
+            const response = await fetch(`/api/entries/${entryId}/fetch-full-content`, { method: 'POST' });
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to fetch content');
             }
-
             const data = await response.json();
-
-            // Save original content (first time only)
-            if (!originalContent) {
-                originalContent = document.querySelector('.entry-content').innerHTML;
-            }
-
-            // Save full content for toggling
+            if (!originalContent) originalContent = document.querySelector('.entry-content').innerHTML;
             fullContent = data.sanitized_content || '<p class="muted">No content extracted.</p>';
-
-            // Display full content
             document.querySelector('.entry-content').innerHTML = fullContent;
-
             showingFullContent = true;
             btn.style.display = 'none';
-
-            // Add toggle button if not exists
             if (!document.getElementById('toggle-content-btn')) {
-                btn.insertAdjacentHTML('afterend',
-                    ' <button type="button" onclick="toggleContent()" id="toggle-content-btn">Show Original</button>');
+                btn.insertAdjacentHTML('afterend', ' <button type="button" class="btn-secondary" onclick="toggleContent()" id="toggle-content-btn">Show Original</button>');
             } else {
                 document.getElementById('toggle-content-btn').textContent = 'Show Original';
             }
@@ -703,7 +609,6 @@
     function toggleContent() {
         const contentEl = document.querySelector('.entry-content');
         const toggleBtn = document.getElementById('toggle-content-btn');
-
         if (showingFullContent) {
             contentEl.innerHTML = originalContent;
             toggleBtn.textContent = 'Show Full Content';
@@ -721,7 +626,6 @@
         return div.innerHTML;
     }
 
-    // Decode HTML entities (e.g., &#x27; -> ')
     function decodeHtml(html) {
         if (!html) return '';
         const textarea = document.createElement('textarea');
@@ -729,26 +633,16 @@
         return textarea.value;
     }
 
-    // Keyboard navigation functions
     function scrollContent(direction) {
         const scrollAmount = window.innerHeight * 0.4;
-        window.scrollBy({
-            top: direction * scrollAmount,
-            behavior: 'smooth'
-        });
+        window.scrollBy({ top: direction * scrollAmount, behavior: 'smooth' });
     }
 
-    function goBackToList() {
-        window.location.href = getBackUrl();
-    }
-
+    function goBackToList() { window.location.href = getBackUrl(); }
     function openOriginalLink() {
-        if (entryData && entryData.link) {
-            window.open(entryData.link, '_blank', 'noopener,noreferrer');
-        }
+        if (entryData && entryData.link) window.open(entryData.link, '_blank', 'noopener,noreferrer');
     }
 
-    // Keyboard handlers — stored on window so the module script below can access them
     window._entryKeyboardHelpItems = [
         { key: 'j', desc: 'Scroll down' },
         { key: 'k', desc: 'Scroll up' },
@@ -768,334 +662,44 @@
     ];
     window._entryKeyboardHandlers = {
         handleCombo(combo) {
-            if (combo === 'g g') {
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-                return true;
-            }
+            if (combo === 'g g') { window.scrollTo({ top: 0, behavior: 'smooth' }); return true; }
             return false;
         },
         handleKey(key, shiftKey) {
             switch (key) {
-                case 'j':
-                    scrollContent(1);
-                    return true;
-                case 'k':
-                    scrollContent(-1);
-                    return true;
-                case 'G':
-                    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-                    return true;
-                case 'n':
-                    goToNextEntry();
-                    return true;
-                case 'N':
-                    goToNextUnreadEntry();
-                    return true;
-                case 'p':
-                    goToPrevEntry();
-                    return true;
-                case 'P':
-                    goToPrevUnreadEntry();
-                    return true;
-                case 'u':
-                    markUnread();
-                    return true;
-                case 's':
-                    toggleStar();
-                    return true;
-                case 'v':
-                    openOriginalLink();
-                    return true;
+                case 'j': scrollContent(1); return true;
+                case 'k': scrollContent(-1); return true;
+                case 'G': window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); return true;
+                case 'n': goToNextEntry(); return true;
+                case 'N': goToNextUnreadEntry(); return true;
+                case 'p': goToPrevEntry(); return true;
+                case 'P': goToPrevUnreadEntry(); return true;
+                case 'u': markUnread(); return true;
+                case 's': toggleStar(); return true;
+                case 'v': openOriginalLink(); return true;
                 case 'f':
-                    if (fullContent) {
-                        toggleContent();
-                    } else {
-                        const fetchBtn = document.getElementById('fetch-content-btn');
-                        if (fetchBtn && !fetchBtn.disabled) {
-                            fetchFullContent();
-                        }
-                    }
+                    if (fullContent) { toggleContent(); }
+                    else { const fetchBtn = document.getElementById('fetch-content-btn'); if (fetchBtn && !fetchBtn.disabled) fetchFullContent(); }
                     return true;
                 case 'b':
-                    if (hasSaveServices && entryData && entryData.link) {
-                        const saveBtn = document.getElementById('save-btn');
-                        if (saveBtn && !saveBtn.disabled) {
-                            saveEntry();
-                        }
-                    }
+                    if (hasSaveServices && entryData && entryData.link) { const saveBtn = document.getElementById('save-btn'); if (saveBtn && !saveBtn.disabled) saveEntry(); }
                     return true;
                 case 'z':
-                    if (currentSummary) {
-                        dismissSummary();
-                    } else if (hasKagiConfigured && entryData && entryData.link) {
-                        const summarizeBtn = document.getElementById('summarize-btn');
-                        if (summarizeBtn && !summarizeBtn.disabled) {
-                            summarizeEntry();
-                        }
-                    }
+                    if (currentSummary) { dismissSummary(); }
+                    else if (hasKagiConfigured && entryData && entryData.link) { const summarizeBtn = document.getElementById('summarize-btn'); if (summarizeBtn && !summarizeBtn.disabled) summarizeEntry(); }
                     return true;
                 case 'Escape':
-                case 'q':
-                    goBackToList();
-                    return true;
+                case 'q': goBackToList(); return true;
             }
             return false;
         }
     };
 
-    // Initialize
     loadEntry();
 </script>
 <script type="module">
-    // keyboard.js is an ES module, so window.keyboard is only available in module context
     window.keyboard.init('entry');
     window.keyboard.setHelpItems(window._entryKeyboardHelpItems);
     window.keyboard.registerHandlers(window._entryKeyboardHandlers);
 </script>
-
-<style>
-    .entry-title {
-        font-size: 1.6rem;
-        font-weight: bold;
-        line-height: 1.3;
-        margin-bottom: var(--space-3);
-        color: var(--color-text);
-    }
-
-    .entry-meta {
-        color: var(--color-text-muted);
-        margin-bottom: var(--space-5);
-        font-size: 0.85rem;
-    }
-
-    .entry-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--space-2);
-        margin-bottom: var(--space-6);
-    }
-
-    .entry-actions button,
-    .entry-actions .btn {
-        white-space: nowrap;
-    }
-
-    .entry-nav {
-        margin-bottom: var(--space-5);
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--space-2);
-        align-items: center;
-    }
-
-    .entry-nav-bottom {
-        margin-bottom: 0;
-        margin-top: var(--space-5);
-    }
-
-    .entry-nav-sep {
-        color: var(--color-text-muted);
-    }
-
-    .entry-nav a {
-        font-size: 0.85rem;
-    }
-
-    .entry-nav a.disabled {
-        color: var(--color-border-light);
-        pointer-events: none;
-        cursor: default;
-    }
-
-    .entry-nav a.disabled:hover {
-        background: none;
-        color: var(--color-border-light);
-    }
-
-    .entry-content {
-        max-width: 720px;
-        font-family: Georgia, "Times New Roman", serif;
-        font-size: 1.125rem;
-        line-height: 1.8;
-        color: var(--color-text);
-    }
-
-    .entry-content p {
-        margin-bottom: var(--space-6);
-        word-break: break-word;
-    }
-
-    .entry-content h1,
-    .entry-content h2,
-    .entry-content h3,
-    .entry-content h4,
-    .entry-content h5,
-    .entry-content h6 {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        margin-top: var(--space-8);
-        margin-bottom: var(--space-4);
-        line-height: 1.3;
-        color: var(--color-text);
-    }
-
-    .entry-content h1 { font-size: 1.5rem; }
-    .entry-content h2 { font-size: 1.35rem; }
-    .entry-content h3 { font-size: 1.2rem; }
-    .entry-content h4 { font-size: 1.1rem; }
-
-    .entry-content a {
-        color: var(--color-accent);
-        text-decoration: underline;
-        text-underline-offset: 2px;
-    }
-
-    .entry-content a:hover {
-        background: var(--color-accent);
-        color: var(--color-bg);
-    }
-
-    .entry-content img {
-        max-width: 100%;
-        height: auto;
-        display: block;
-        margin: var(--space-6) auto;
-        border-radius: var(--radius-md);
-    }
-
-    .entry-content figure {
-        margin: var(--space-8) 0;
-    }
-
-    .entry-content figcaption {
-        text-align: center;
-        font-size: 0.9rem;
-        color: var(--color-text-muted);
-        margin-top: var(--space-2);
-        font-style: italic;
-    }
-
-    .entry-content pre {
-        overflow-x: auto;
-        background: var(--color-bg-secondary);
-        border: 1px solid var(--color-border-light);
-        border-radius: var(--radius-md);
-        padding: var(--space-4);
-        margin: var(--space-6) 0;
-        font-family: "SF Mono", "Monaco", "Inconsolata", monospace;
-        font-size: 0.9rem;
-        line-height: 1.5;
-    }
-
-    .entry-content code {
-        font-family: "SF Mono", "Monaco", "Inconsolata", monospace;
-        font-size: 0.9em;
-        background: var(--color-bg-tertiary);
-        padding: 0.15em 0.4em;
-        border-radius: var(--radius-sm);
-    }
-
-    .entry-content pre code {
-        background: none;
-        padding: 0;
-        font-size: inherit;
-    }
-
-    .entry-content blockquote {
-        border-left: 4px solid var(--color-border-light);
-        margin: var(--space-6) 0;
-        padding: var(--space-2) 0 var(--space-2) var(--space-6);
-        color: var(--color-text-muted);
-        font-style: italic;
-        background: var(--color-bg-secondary);
-    }
-
-    .entry-content blockquote p:last-child {
-        margin-bottom: 0;
-    }
-
-    .entry-content ul,
-    .entry-content ol {
-        margin: var(--space-6) 0;
-        padding-left: var(--space-8);
-    }
-
-    .entry-content li {
-        margin-bottom: var(--space-2);
-    }
-
-    .entry-content li > ul,
-    .entry-content li > ol {
-        margin: var(--space-2) 0;
-    }
-
-    .entry-content table {
-        width: 100%;
-        border-collapse: collapse;
-        margin: var(--space-6) 0;
-        font-size: 0.95rem;
-    }
-
-    .entry-content th,
-    .entry-content td {
-        border: 1px solid var(--color-border-light);
-        padding: 0.75em;
-        text-align: left;
-    }
-
-    .entry-content th {
-        background: var(--color-bg-tertiary);
-        font-weight: bold;
-    }
-
-    .entry-content tr:nth-child(even) {
-        background: var(--color-bg-secondary);
-    }
-
-    .entry-content hr {
-        border: none;
-        border-top: 1px solid var(--color-border-light);
-        margin: var(--space-8) 0;
-    }
-
-    .entry-content strong,
-    .entry-content b {
-        font-weight: 600;
-    }
-
-    .entry-content em,
-    .entry-content i {
-        font-style: italic;
-    }
-
-    /* Summary box styles */
-    #summary-container {
-        margin-bottom: var(--space-6);
-    }
-
-    .summary-box {
-        background: var(--color-bg-secondary);
-        border: 1px solid var(--color-border-light);
-        border-radius: var(--radius-md);
-        padding: var(--space-4);
-    }
-
-    .summary-actions {
-        display: flex;
-        gap: var(--space-2);
-        margin-bottom: var(--space-3);
-    }
-
-    .summary-box blockquote {
-        border-left: 4px solid var(--color-accent);
-        margin: 0;
-        padding: var(--space-2) 0 var(--space-2) var(--space-4);
-        color: var(--color-text);
-        font-style: normal;
-        background: transparent;
-        font-family: Georgia, "Times New Roman", serif;
-        font-size: 1rem;
-        line-height: 1.6;
-        white-space: pre-wrap;
-    }
-</style>
 {% endblock %}
