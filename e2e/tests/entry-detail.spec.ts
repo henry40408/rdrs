@@ -19,8 +19,10 @@ test.describe("Entry Detail Page", () => {
     await page.waitForURL(`${serverUrl}/`);
     await expect(page.getByTestId("entry-item").first()).toBeVisible();
 
-    // Open first entry
+    // Click first entry to load in reading pane, then open full page
     await page.getByTestId("entry-title-link").first().click();
+    await expect(page.locator(".reading-pane-title")).toBeVisible();
+    await page.locator(".reading-pane-actions a").first().click();
     await page.waitForURL(/\/entries\/\d+/);
     await expect(page.getByTestId("entry-title")).toBeVisible();
   });
