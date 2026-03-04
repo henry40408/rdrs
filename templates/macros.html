@@ -168,10 +168,13 @@ async function stopMasquerade() {
         // Render categories
         const container = document.getElementById('sidebar-categories');
         if (container && categories.length > 0) {
+            const currentPath = window.location.pathname;
             container.innerHTML = categories.map(cat => {
                 const count = unreadByCategory[cat.id] || 0;
+                const href = `/categories/${cat.numericId}/entries`;
+                const isActive = currentPath === href;
                 const esc = (t) => { const d=document.createElement('div'); d.textContent=t; return d.innerHTML; };
-                return `<a href="/categories/${cat.numericId}/entries" class="sidebar-item">
+                return `<a href="${href}" class="sidebar-item${isActive ? ' active' : ''}">
                     <span>${esc(cat.name)}</span>
                     ${count > 0 ? `<span class="sidebar-badge">${count}</span>` : ''}
                 </a>`;

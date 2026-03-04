@@ -136,11 +136,13 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
 
             this.selectEntry(index);
 
-            // If reading pane is visible, load entry there instead of navigating
+            // If reading pane is visible, load entry there; otherwise navigate to entry page
             const pane = this._getReadingPane();
-            if (pane && !e.target.matches('.entry-item-title')) {
+            if (pane) {
                 e.preventDefault();
                 this._loadInReadingPane(index);
+            } else {
+                this.openSelectedEntry();
             }
         });
     }
@@ -340,7 +342,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             return `
             <div class="entry-item${isSelected ? ' selected' : ''}${isRead ? ' entry-read' : ''}" id="entry-${entry.id}" data-index="${index}" data-testid="entry-item">
                 <div>
-                    <a href="/entries/${entry.id}${originQuery}" class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}" data-testid="entry-title-link">${titleHtml}</a>
+                    <span class="entry-item-title ${isRead ? 'entry-title-normal' : 'entry-title-bold'}" data-testid="entry-title-link">${titleHtml}</span>
                     ${isStarred ? '<span title="Starred" class="star-icon">&#9733;</span>' : ''}
                     ${summaryBadgeHtml}
                 </div>${contentSnippetHtml}
