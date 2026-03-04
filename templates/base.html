@@ -418,6 +418,13 @@
             min-width: 0;
             display: flex;
             flex-direction: column;
+            height: 100vh;
+            overflow-y: auto;
+        }
+
+        /* When split-view is present, main-content must not scroll — each pane scrolls independently */
+        .main-content:has(.split-view) {
+            overflow: hidden;
         }
 
         /* Page content (non-split pages) */
@@ -432,7 +439,6 @@
             display: flex;
             flex: 1;
             min-height: 0;
-            height: 100vh;
         }
 
         .list-pane {
@@ -929,8 +935,8 @@
             font-size: var(--font-sm);
             line-height: 1.4;
             color: var(--color-text);
-            text-decoration: none;
             display: inline;
+            cursor: pointer;
         }
 
         .entry-item-title:hover {
@@ -1579,6 +1585,11 @@
 
             .split-view {
                 height: auto;
+            }
+
+            .main-content {
+                height: auto;
+                overflow: visible;
             }
         }
 
