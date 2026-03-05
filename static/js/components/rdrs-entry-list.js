@@ -11,15 +11,32 @@ class RdrsEntryList extends HTMLElement {
         this.selectedIndex = -1;
         this._search = '';
         this._readingPaneEntry = null; // currently displayed entry in reading pane
+        this._readingPaneData = null; // full data for the reading pane entry
+        this._entryMode = false; // whether keyboard is in entry detail mode
+        this._summaryPollInterval = null;
+        this._currentSummary = null;
+        this._showingFullContent = false;
+        this._originalContent = null;
+        this._fullContent = null;
+        this._extraHandlers = {};
+        this._popstateHandler = null;
     }
 
     connectedCallback() {
         this._render();
         this._setupDelegation();
         this._setupPersistedRestore();
+        this._setupPopstate();
         // Pages that need to set API params before loading should add no-auto-load
         if (!this.hasAttribute('no-auto-load')) {
             this.loadEntries();
+        }
+    }
+
+    disconnectedCallback() {
+        this._stopSummaryPolling();
+        if (this._popstateHandler) {
+            window.removeEventListener('popstate', this._popstateHandler);
         }
     }
 
@@ -40,6 +57,8 @@ class RdrsEntryList extends HTMLElement {
     set search(v) { this._search = v; }
     get emptyMessage() { return this.getAttribute('empty-message') || 'No entries found.'; }
     get readingPaneSelector() { return this.getAttribute('reading-pane') || null; }
+    get hasSaveServices() { return this.hasAttribute('has-save-services'); }
+    get hasKagiConfigured() { return this.hasAttribute('has-kagi-configured'); }
 
     /** Get the reading pane element, if configured and visible. */
     _getReadingPane() {
@@ -147,6 +166,86 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         });
     }
 
+    // --- popstate for browser back/forward ---
+    _setupPopstate() {
+        this._popstateHandler = (e) => {
+            if (e.state && e.state.entryId !== undefined) {
+                const idx = this.entries.findIndex(en => en.id === e.state.entryId);
+                if (idx >= 0) {
+                    this.selectEntry(idx);
+                    this._loadInReadingPane(idx, true);
+                } else {
+                    this._loadEntryByIdInPane(e.state.entryId);
+                }
+            } else {
+                this._closeReadingPaneDetail();
+            }
+        };
+        window.addEventListener('popstate', this._popstateHandler);
+    }
+
+    // --- Check URL for ?entry= param on load ---
+    _checkEntryParam() {
+        const urlEntry = new URLSearchParams(window.location.search).get('entry');
+        if (!urlEntry) return;
+
+        const entryId = parseInt(urlEntry, 10);
+        if (isNaN(entryId)) return;
+
+        // Try to find in loaded entries
+        const idx = this.entries.findIndex(e => e.id === entryId);
+        if (idx >= 0) {
+            this.selectEntry(idx);
+            this._loadInReadingPane(idx);
+        } else {
+            // Entry not in current list, load directly via API
+            this._loadEntryByIdInPane(entryId);
+        }
+    }
+
+    // --- Load an entry by ID directly into the reading pane ---
+    async _loadEntryByIdInPane(entryId) {
+        const pane = this._getReadingPane();
+        if (!pane) return;
+
+        pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Loading...</p></div>`;
+
+        try {
+            const body = new URLSearchParams();
+            body.set('i', entryId.toString());
+
+            const response = await fetch('/reader/api/0/stream/items/contents', {
+                method: 'POST',
+                body: body
+            });
+
+            if (!response.ok) throw new Error('Failed to load entry');
+            const result = await response.json();
+            if (!result.items || result.items.length === 0) {
+                pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Entry not found.</p></div>`;
+                return;
+            }
+
+            const item = result.items[0];
+            const data = this._extractEntryData(item);
+            this._readingPaneEntry = { id: entryId, ...data };
+            this._readingPaneData = data;
+            this._renderReadingPaneDetail(pane, data, entryId);
+            pane.scrollTop = 0;
+            this._switchToEntryMode();
+
+            if (data.read_at === null) {
+                this.markRead(entryId);
+            }
+
+            if (data.summary_status) {
+                this._handleSummaryStatus(data.summary_status, entryId);
+            }
+        } catch (err) {
+            pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Failed to load entry.</p></div>`;
+        }
+    }
+
     // --- bfcache restore ---
     _setupPersistedRestore() {
         window.setupPersistedRestore(
@@ -217,6 +316,11 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             if (this.isUnreadMode) {
                 this._updateUnreadCount();
             }
+
+            // After first load, check for ?entry= param
+            if (reset) {
+                this._checkEntryParam();
+            }
         } catch (err) {
             container.innerHTML = '<p class="muted entries-status-msg">Failed to load entries</p>';
         } finally {
@@ -238,6 +342,25 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             link: item.canonical?.[0]?.href || item.alternate?.[0]?.href || '',
             content: item._content || item.summary?.content || '',
             author: item.author || '',
+            published_at: item._publishedAt || null,
+            read_at: item._readAt || null,
+            starred_at: item._starredAt || null,
+            summary_status: item._summaryStatus || null,
+        };
+    }
+
+    /** Extract full entry data from a GReader item for reading pane detail. */
+    _extractEntryData(item) {
+        return {
+            title: item.title || '',
+            link: item.canonical?.[0]?.href || item.alternate?.[0]?.href || '',
+            content: item._content || item.summary?.content || '',
+            author: item.author || '',
+            feed_title: item.origin?.title || '',
+            feed_has_icon: item._feedHasIcon || false,
+            feed_id: item._feedId,
+            category_id: item._categoryId,
+            category_name: item._categoryName,
             published_at: item._publishedAt || null,
             read_at: item._readAt || null,
             starred_at: item._starredAt || null,
@@ -358,8 +481,8 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         }).join('');
     }
 
-    // --- Reading Pane ---
-    async _loadInReadingPane(index) {
+    // --- Reading Pane: Full Entry Detail ---
+    async _loadInReadingPane(index, skipPushState = false) {
         const entry = this.entries[index];
         if (!entry) return;
 
@@ -367,6 +490,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         if (!pane) return;
 
         this._readingPaneEntry = entry;
+        this._resetReadingPaneState();
 
         // Show loading state
         pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Loading...</p></div>`;
@@ -389,60 +513,557 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             }
 
             const item = result.items[0];
-            const data = {
-                title: item.title || '',
-                link: item.canonical?.[0]?.href || item.alternate?.[0]?.href || '',
-                content: item._content || item.summary?.content || '',
-                author: item.author || '',
-                feed_title: item.origin?.title || '',
-                feed_has_icon: item._feedHasIcon || false,
-                feed_id: item._feedId,
-                published_at: item._publishedAt || null,
-                starred_at: item._starredAt || null,
-            };
+            const data = this._extractEntryData(item);
+            this._readingPaneData = data;
 
-            const title = this._decodeHtml(data.title) || 'Untitled';
-            const feedTitle = this._decodeHtml(data.feed_title);
-            const author = this._decodeHtml(data.author);
-            const date = data.published_at ? new Date(data.published_at).toLocaleString() : '';
-            const content = data.content || '<p class="muted">No content available.</p>';
-            const feedIconHtml = data.feed_has_icon
-                ? `<img src="/api/feeds/${data.feed_id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
-                : '';
-
-            let metaParts = [];
-            if (feedTitle) metaParts.push(feedIconHtml + escapeHtml(feedTitle));
-            if (author) metaParts.push(escapeHtml(author));
-            if (date) metaParts.push(date);
-
-            // Build origin query for "Open full page" link
-            let originQuery = `?origin=${encodeURIComponent(this.origin)}`;
-            if (this.origin === 'feed' && entry.feed_id) originQuery += `&feed=${entry.feed_id}`;
-            if (this.origin === 'category' && entry.category_id) originQuery += `&category=${entry.category_id}`;
-
-            pane.innerHTML = `
-                <div class="reading-pane-content">
-                    <h1 class="reading-pane-title">${escapeHtml(title)}</h1>
-                    <div class="reading-pane-meta">${metaParts.join(' &middot; ')}</div>
-                    <div class="reading-pane-actions">
-                        <a href="/entries/${entry.id}${originQuery}" class="btn btn-secondary btn-sm">Open full page</a>
-                        ${data.link ? `<a href="${escapeHtml(data.link)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">View original</a>` : ''}
-                    </div>
-                    <div class="reading-pane-article">${content}</div>
-                </div>
-            `;
+            this._renderReadingPaneDetail(pane, data, entry.id);
 
             // Scroll reading pane to top
             pane.scrollTop = 0;
+
+            // pushState to update URL
+            if (!skipPushState) {
+                let originQuery = `?origin=${encodeURIComponent(this.origin)}`;
+                if (this.origin === 'feed' && entry.feed_id) originQuery += `&feed=${entry.feed_id}`;
+                if (this.origin === 'category' && entry.category_id) originQuery += `&category=${entry.category_id}`;
+                if (this.origin === 'read') originQuery += '&read_only=true';
+                if (this.origin === 'starred') originQuery += '&starred_only=true';
+                if (this.origin === 'summarized') originQuery += '&has_summary=true';
+                const url = `/entries/${entry.id}${originQuery}`;
+                history.pushState({ entryId: entry.id, index }, '', url);
+            }
+
+            // Switch to entry keyboard mode
+            this._switchToEntryMode();
 
             // Auto-mark as read
             if (entry.read_at === null) {
                 this.markRead(entry.id);
             }
 
+            // Handle existing summary
+            if (data.summary_status) {
+                this._handleSummaryStatus(data.summary_status, entry.id);
+            }
+
         } catch (err) {
             pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Failed to load entry.</p></div>`;
         }
+    }
+
+    _resetReadingPaneState() {
+        this._stopSummaryPolling();
+        this._currentSummary = null;
+        this._showingFullContent = false;
+        this._originalContent = null;
+        this._fullContent = null;
+    }
+
+    _renderReadingPaneDetail(pane, data, entryId) {
+        const title = this._decodeHtml(data.title) || 'Untitled';
+        const feedTitle = this._decodeHtml(data.feed_title);
+        const author = this._decodeHtml(data.author);
+        const date = data.published_at ? new Date(data.published_at).toLocaleString() : '';
+        const content = data.content || '<p class="muted">No content available.</p>';
+        const isStarred = data.starred_at !== null;
+        const feedIconHtml = data.feed_has_icon
+            ? `<img src="/api/feeds/${data.feed_id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
+            : '';
+
+        let metaParts = [];
+        if (feedTitle) metaParts.push(feedIconHtml + escapeHtml(feedTitle));
+        if (author) metaParts.push(escapeHtml(author));
+        if (date) metaParts.push(date);
+
+        const hasSave = this.hasSaveServices;
+        const hasKagi = this.hasKagiConfigured;
+
+        pane.innerHTML = `
+            <div class="reading-pane-content">
+                <h1 class="reading-pane-title">${escapeHtml(title)}</h1>
+                <div class="reading-pane-meta">${metaParts.join(' &middot; ')}</div>
+                <div class="reading-pane-actions">
+                    <button type="button" class="btn-secondary btn-sm" data-rp-action="toggle-star" data-testid="rp-star-btn">${isStarred ? 'Unstar' : 'Star'}</button>
+                    <button type="button" class="btn-secondary btn-sm" data-rp-action="mark-unread" data-testid="rp-mark-unread-btn">Mark Unread</button>
+                    ${data.link ? `<button type="button" class="btn-secondary btn-sm" data-rp-action="fetch-full-content" data-testid="rp-fetch-btn">Fetch Full Content</button>` : ''}
+                    ${hasKagi && data.link ? `<button type="button" class="btn-secondary btn-sm" data-rp-action="summarize" data-testid="rp-summarize-btn">Summarize</button>` : ''}
+                    ${hasSave && data.link ? `<button type="button" class="btn-secondary btn-sm" data-rp-action="save" data-testid="rp-save-btn">Save</button>` : ''}
+                    ${data.link ? `<a href="${escapeHtml(data.link)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">View Original</a>` : ''}
+                </div>
+                <div class="rp-summary-container d-none" data-testid="rp-summary-container">
+                    <div class="summary-box">
+                        <div class="summary-actions">
+                            <button type="button" class="btn-sm btn-secondary" data-rp-action="copy-summary">Copy</button>
+                            <button type="button" class="btn-sm btn-secondary" data-rp-action="dismiss-summary">Dismiss</button>
+                        </div>
+                        <blockquote class="rp-summary-content"></blockquote>
+                    </div>
+                </div>
+                <hr>
+                <article class="reading-pane-article" data-testid="rp-entry-content">${content}</article>
+            </div>
+        `;
+
+        // Set up action delegation for reading pane buttons
+        this._setupReadingPaneActions(pane, entryId);
+    }
+
+    _setupReadingPaneActions(pane, entryId) {
+        pane.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-rp-action]');
+            if (!btn) return;
+
+            e.preventDefault();
+            const action = btn.dataset.rpAction;
+
+            switch (action) {
+                case 'toggle-star':
+                    this._rpToggleStar(entryId);
+                    break;
+                case 'mark-unread':
+                    this._rpMarkUnread(entryId);
+                    break;
+                case 'fetch-full-content':
+                    this._rpFetchFullContent(entryId);
+                    break;
+                case 'summarize':
+                    this._rpSummarize(entryId);
+                    break;
+                case 'save':
+                    this._rpSave(entryId);
+                    break;
+                case 'copy-summary':
+                    this._rpCopySummary(entryId);
+                    break;
+                case 'dismiss-summary':
+                    this._rpDismissSummary(entryId);
+                    break;
+            }
+        });
+    }
+
+    // --- Reading Pane Actions ---
+    async _rpToggleStar(entryId) {
+        const data = this._readingPaneData;
+        if (!data) return;
+
+        const isCurrentlyStarred = data.starred_at !== null;
+        try {
+            const body = new URLSearchParams();
+            body.set('i', entryId.toString());
+            if (isCurrentlyStarred) {
+                body.set('r', 'user/-/state/com.google/starred');
+            } else {
+                body.set('a', 'user/-/state/com.google/starred');
+            }
+            const response = await fetch('/reader/api/0/edit-tag', { method: 'POST', body });
+            if (!response.ok) throw new Error('Failed to toggle star');
+
+            data.starred_at = isCurrentlyStarred ? null : new Date().toISOString();
+
+            // Update button text
+            const pane = this._getReadingPane();
+            const btn = pane?.querySelector('[data-rp-action="toggle-star"]');
+            if (btn) btn.textContent = data.starred_at ? 'Unstar' : 'Star';
+
+            // Also update in entries list
+            this._updateEntryField(entryId, 'starred_at', data.starred_at);
+        } catch (err) {
+            window.flash.error(err.message);
+        }
+    }
+
+    async _rpMarkUnread(entryId) {
+        try {
+            const body = new URLSearchParams();
+            body.set('i', entryId.toString());
+            body.set('r', 'user/-/state/com.google/read');
+            const response = await fetch('/reader/api/0/edit-tag', { method: 'POST', body });
+            if (!response.ok) throw new Error('Failed to mark as unread');
+            window.flash.success('Marked as unread.');
+            this._updateEntryField(entryId, 'read_at', null);
+        } catch (err) {
+            window.flash.error(err.message);
+        }
+    }
+
+    async _rpFetchFullContent(entryId) {
+        const pane = this._getReadingPane();
+        const btn = pane?.querySelector('[data-rp-action="fetch-full-content"]');
+        if (!btn) return;
+
+        btn.textContent = 'Fetching...';
+        btn.disabled = true;
+
+        try {
+            const response = await fetch(`/api/entries/${entryId}/fetch-full-content`, { method: 'POST' });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to fetch content');
+            }
+            const data = await response.json();
+            const articleEl = pane.querySelector('.reading-pane-article');
+            if (!this._originalContent) this._originalContent = articleEl.innerHTML;
+            this._fullContent = data.sanitized_content || '<p class="muted">No content extracted.</p>';
+            articleEl.innerHTML = this._fullContent;
+            this._showingFullContent = true;
+            btn.style.display = 'none';
+
+            // Add toggle button if not exists
+            if (!pane.querySelector('[data-rp-action="toggle-content"]')) {
+                btn.insertAdjacentHTML('afterend', ' <button type="button" class="btn-secondary btn-sm" data-rp-action="toggle-content">Show Original</button>');
+                pane.querySelector('[data-rp-action="toggle-content"]').addEventListener('click', () => this._rpToggleContent());
+            } else {
+                pane.querySelector('[data-rp-action="toggle-content"]').textContent = 'Show Original';
+            }
+        } catch (err) {
+            window.flash.error(err.message);
+            btn.textContent = 'Fetch Full Content';
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    _rpToggleContent() {
+        const pane = this._getReadingPane();
+        if (!pane) return;
+        const articleEl = pane.querySelector('.reading-pane-article');
+        const toggleBtn = pane.querySelector('[data-rp-action="toggle-content"]');
+        if (this._showingFullContent) {
+            articleEl.innerHTML = this._originalContent;
+            toggleBtn.textContent = 'Show Full Content';
+        } else {
+            articleEl.innerHTML = this._fullContent;
+            toggleBtn.textContent = 'Show Original';
+        }
+        this._showingFullContent = !this._showingFullContent;
+    }
+
+    async _rpSummarize(entryId) {
+        const pane = this._getReadingPane();
+        const btn = pane?.querySelector('[data-rp-action="summarize"]');
+        if (!btn) return;
+
+        btn.textContent = 'Summarizing...';
+        btn.disabled = true;
+
+        try {
+            const response = await fetch(`/api/entries/${entryId}/summarize`, { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Failed to summarize');
+
+            if (data.status === 'completed' && data.summary_text) {
+                this._currentSummary = data.summary_text;
+                this._showSummary(entryId);
+                btn.textContent = 'Summarize';
+                btn.disabled = false;
+            } else if (data.status === 'pending' || data.status === 'processing') {
+                this._startSummaryPolling(entryId);
+            } else if (data.status === 'failed') {
+                throw new Error(data.error || 'Summarization failed');
+            }
+        } catch (err) {
+            window.flash.error(err.message);
+            btn.textContent = 'Summarize';
+            btn.disabled = false;
+        }
+    }
+
+    async _rpSave(entryId) {
+        const pane = this._getReadingPane();
+        const btn = pane?.querySelector('[data-rp-action="save"]');
+        if (!btn) return;
+
+        btn.textContent = 'Saving...';
+        btn.disabled = true;
+
+        try {
+            const response = await fetch(`/api/entries/${entryId}/save`, { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Failed to save');
+
+            if (data.all_success) {
+                const count = data.results.length;
+                window.flash.success(`Saved to ${count} service${count > 1 ? 's' : ''}`);
+                btn.textContent = 'Saved!';
+                setTimeout(() => { btn.textContent = 'Save'; }, 2000);
+            } else {
+                const failed = data.results.filter(r => !r.success);
+                const succeeded = data.results.filter(r => r.success);
+                if (succeeded.length > 0) window.flash.success(`Saved to: ${succeeded.map(r => r.service).join(', ')}`);
+                if (failed.length > 0) window.flash.error(`Failed: ${failed.map(r => `${r.service} (${r.message})`).join(', ')}`);
+                btn.textContent = 'Save';
+            }
+        } catch (err) {
+            window.flash.error(err.message);
+            btn.textContent = 'Save';
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    async _rpCopySummary(entryId) {
+        if (!this._currentSummary || !this._readingPaneData) return;
+        const data = this._readingPaneData;
+        const cleanTitle = this._sanitizeTitleForTiddlyWiki(this._decodeHtml(data.title) || 'Untitled');
+        const link = data.link || '';
+        const formattedText = `${cleanTitle}\n\n${link}\n\n${this._currentSummary}`;
+        try {
+            await navigator.clipboard.writeText(formattedText);
+            const pane = this._getReadingPane();
+            const btn = pane?.querySelector('[data-rp-action="copy-summary"]');
+            if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 2000); }
+        } catch (err) {
+            window.flash.error('Failed to copy to clipboard');
+        }
+    }
+
+    async _rpDismissSummary(entryId) {
+        const pane = this._getReadingPane();
+        const container = pane?.querySelector('.rp-summary-container');
+        if (container) container.style.display = 'none';
+        this._currentSummary = null;
+        try {
+            await fetch(`/api/entries/${entryId}/summary`, { method: 'DELETE' });
+        } catch (err) {
+            console.error('Failed to delete summary from cache:', err);
+        }
+    }
+
+    // --- Summary polling ---
+    _handleSummaryStatus(status, entryId) {
+        if (status === 'completed') {
+            this._loadSummaryFromServer(entryId);
+        } else if (status === 'pending' || status === 'processing') {
+            const pane = this._getReadingPane();
+            const btn = pane?.querySelector('[data-rp-action="summarize"]');
+            if (btn) { btn.textContent = 'Summarizing...'; btn.disabled = true; }
+            this._startSummaryPolling(entryId);
+        }
+    }
+
+    async _loadSummaryFromServer(entryId) {
+        try {
+            const response = await fetch(`/api/entries/${entryId}/summary`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.status === 'completed' && data.summary_text) {
+                    this._currentSummary = data.summary_text;
+                    this._showSummary(entryId);
+                } else if (data.status === 'pending' || data.status === 'processing') {
+                    const pane = this._getReadingPane();
+                    const btn = pane?.querySelector('[data-rp-action="summarize"]');
+                    if (btn) { btn.textContent = 'Summarizing...'; btn.disabled = true; }
+                    this._startSummaryPolling(entryId);
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load summary:', err);
+        }
+    }
+
+    _showSummary(entryId) {
+        const pane = this._getReadingPane();
+        const container = pane?.querySelector('.rp-summary-container');
+        const content = pane?.querySelector('.rp-summary-content');
+        if (container && content && this._readingPaneData) {
+            const data = this._readingPaneData;
+            const cleanTitle = this._sanitizeTitleForTiddlyWiki(this._decodeHtml(data.title) || 'Untitled');
+            const link = data.link || '';
+            const formattedText = `${cleanTitle}\n\n${link}\n\n${this._currentSummary}`;
+            content.textContent = formattedText;
+            container.style.display = 'block';
+        }
+    }
+
+    _startSummaryPolling(entryId) {
+        if (this._summaryPollInterval) return;
+        this._summaryPollInterval = setInterval(async () => {
+            try {
+                const response = await fetch(`/api/entries/${entryId}/summary`);
+                if (response.status === 404) {
+                    this._stopSummaryPolling();
+                    const pane = this._getReadingPane();
+                    const btn = pane?.querySelector('[data-rp-action="summarize"]');
+                    if (btn) { btn.textContent = 'Summarize'; btn.disabled = false; }
+                    return;
+                }
+                if (!response.ok) throw new Error('Failed to check summary status');
+                const data = await response.json();
+                if (data.status === 'completed' && data.summary_text) {
+                    this._stopSummaryPolling();
+                    this._currentSummary = data.summary_text;
+                    this._showSummary(entryId);
+                    const pane = this._getReadingPane();
+                    const btn = pane?.querySelector('[data-rp-action="summarize"]');
+                    if (btn) { btn.textContent = 'Summarize'; btn.disabled = false; }
+                } else if (data.status === 'failed') {
+                    this._stopSummaryPolling();
+                    window.flash.error(data.error || 'Summarization failed');
+                    const pane = this._getReadingPane();
+                    const btn = pane?.querySelector('[data-rp-action="summarize"]');
+                    if (btn) { btn.textContent = 'Summarize'; btn.disabled = false; }
+                }
+            } catch (err) {
+                this._stopSummaryPolling();
+                window.flash.error(err.message);
+                const pane = this._getReadingPane();
+                const btn = pane?.querySelector('[data-rp-action="summarize"]');
+                if (btn) { btn.textContent = 'Summarize'; btn.disabled = false; }
+            }
+        }, 2000);
+    }
+
+    _stopSummaryPolling() {
+        if (this._summaryPollInterval) {
+            clearInterval(this._summaryPollInterval);
+            this._summaryPollInterval = null;
+        }
+    }
+
+    _sanitizeTitleForTiddlyWiki(title) {
+        if (!title) return '';
+        return title
+            .replace(/\[\[/g, '').replace(/\]\]/g, '')
+            .replace(/\[/g, '').replace(/\]/g, '')
+            .replace(/\|/g, '')
+            .replace(/\{/g, '').replace(/\}/g, '')
+            .replace(/</g, '').replace(/>/g, '')
+            .trim();
+    }
+
+    // --- Close reading pane detail, return to list mode ---
+    _closeReadingPaneDetail() {
+        this._stopSummaryPolling();
+        this._readingPaneEntry = null;
+        this._readingPaneData = null;
+        this._entryMode = false;
+
+        const pane = this._getReadingPane();
+        if (pane) {
+            pane.innerHTML = '<div class="reading-pane-empty">Select an entry to read</div>';
+        }
+
+        // Switch back to list keyboard mode
+        this._switchToListMode();
+    }
+
+    // --- Keyboard mode switching ---
+    _switchToEntryMode() {
+        if (this._entryMode) return;
+        this._entryMode = true;
+
+        const list = this;
+        const entryHelpItems = [
+            { key: 'j', desc: 'Scroll down' },
+            { key: 'k', desc: 'Scroll up' },
+            { key: 'g g', desc: 'Scroll to top' },
+            { key: 'G', desc: 'Scroll to bottom' },
+            { key: 'n', desc: 'Next unread entry' },
+            { key: 'N', desc: 'Previous unread entry' },
+            { key: 'p', desc: 'Next entry' },
+            { key: 'P', desc: 'Previous entry' },
+            { key: 'u', desc: 'Mark as unread' },
+            { key: 's', desc: 'Toggle star' },
+            { key: 'v', desc: 'Open original in new tab' },
+            { key: 'f', desc: 'Toggle full content' },
+            { key: 'b', desc: 'Save to bookmarks' },
+            { key: 'z', desc: 'Toggle Kagi summary' },
+            { key: 'q / Esc', desc: 'Back to list' },
+        ];
+
+        window.keyboard.init('entry');
+        window.keyboard.setHelpItems(entryHelpItems);
+        window.keyboard.registerHandlers({
+            handleCombo(combo) {
+                if (combo === 'g g') {
+                    const pane = list._getReadingPane();
+                    if (pane) pane.scrollTo({ top: 0, behavior: 'smooth' });
+                    return true;
+                }
+                return false;
+            },
+            handleKey(key) {
+                const pane = list._getReadingPane();
+                const entry = list._readingPaneEntry;
+                const entryId = entry?.id;
+
+                switch (key) {
+                    case 'j':
+                        if (pane) pane.scrollBy({ top: pane.clientHeight * 0.4, behavior: 'smooth' });
+                        return true;
+                    case 'k':
+                        if (pane) pane.scrollBy({ top: -pane.clientHeight * 0.4, behavior: 'smooth' });
+                        return true;
+                    case 'G':
+                        if (pane) pane.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' });
+                        return true;
+                    case 'n': {
+                        const next = list.findNextUnread(1);
+                        if (next >= 0) { list.selectEntry(next); list._loadInReadingPane(next); }
+                        return true;
+                    }
+                    case 'N': {
+                        const prev = list.findNextUnread(-1);
+                        if (prev >= 0) { list.selectEntry(prev); list._loadInReadingPane(prev); }
+                        return true;
+                    }
+                    case 'p': {
+                        const nextIdx = list.selectedIndex + 1;
+                        if (nextIdx < list.entries.length) { list.selectEntry(nextIdx); list._loadInReadingPane(nextIdx); }
+                        return true;
+                    }
+                    case 'P': {
+                        const prevIdx = list.selectedIndex - 1;
+                        if (prevIdx >= 0) { list.selectEntry(prevIdx); list._loadInReadingPane(prevIdx); }
+                        return true;
+                    }
+                    case 'u':
+                        if (entryId) list._rpMarkUnread(entryId);
+                        return true;
+                    case 's':
+                        if (entryId) list._rpToggleStar(entryId);
+                        return true;
+                    case 'v':
+                        if (list._readingPaneData?.link) window.open(list._readingPaneData.link, '_blank', 'noopener,noreferrer');
+                        return true;
+                    case 'f':
+                        if (list._fullContent) {
+                            list._rpToggleContent();
+                        } else {
+                            const fetchBtn = pane?.querySelector('[data-rp-action="fetch-full-content"]');
+                            if (fetchBtn && !fetchBtn.disabled) list._rpFetchFullContent(entryId);
+                        }
+                        return true;
+                    case 'b':
+                        if (list.hasSaveServices && list._readingPaneData?.link) {
+                            const saveBtn = pane?.querySelector('[data-rp-action="save"]');
+                            if (saveBtn && !saveBtn.disabled) list._rpSave(entryId);
+                        }
+                        return true;
+                    case 'z':
+                        if (list._currentSummary) {
+                            list._rpDismissSummary(entryId);
+                        } else if (list.hasKagiConfigured && list._readingPaneData?.link) {
+                            const summarizeBtn = pane?.querySelector('[data-rp-action="summarize"]');
+                            if (summarizeBtn && !summarizeBtn.disabled) list._rpSummarize(entryId);
+                        }
+                        return true;
+                    case 'Escape':
+                    case 'q':
+                        // Go back — restore list URL
+                        history.back();
+                        return true;
+                }
+                return false;
+            }
+        });
+    }
+
+    _switchToListMode() {
+        this._entryMode = false;
+        // Re-register the list keyboard handlers
+        this.registerKeyboardHandlers(this._extraHandlers);
     }
 
     _decodeHtml(html) {
@@ -650,7 +1271,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             return;
         }
 
-        // Otherwise navigate to entry page
+        // Otherwise navigate to entry page (redirect will handle it)
         if (this.selectedIndex >= 0) window._resumeIndex = this.selectedIndex;
 
         let originQuery = `?origin=${encodeURIComponent(this.origin)}`;
@@ -699,6 +1320,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
 
     // --- Register standard keyboard handlers ---
     registerKeyboardHandlers(extraHandlers = {}) {
+        this._extraHandlers = extraHandlers;
         const list = this;
 
         const baseHelpItems = [
