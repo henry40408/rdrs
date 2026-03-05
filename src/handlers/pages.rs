@@ -152,7 +152,13 @@ pub async fn unread_page(
             (unread, epp, save_services, kagi_configured, theme)
         })
         .await
-        .unwrap_or((0, user_settings::DEFAULT_ENTRIES_PER_PAGE, false, false, None));
+        .unwrap_or((
+            0,
+            user_settings::DEFAULT_ENTRIES_PER_PAGE,
+            false,
+            false,
+            None,
+        ));
 
     (
         flash.clone(),
@@ -556,7 +562,7 @@ pub async fn entry_page(
         "summarized" => "/entries/summarized".to_string(),
         "entries" => "/entries".to_string(),
         "search" => "/search".to_string(),
-        "unread" | _ => "/".to_string(),
+        _ => "/".to_string(),
     };
 
     let redirect_url = format!("{}?entry={}", base_url, id);
@@ -952,49 +958,57 @@ pub async fn feed_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, has_save_services, has_kagi_configured, feed_url, feed_title, feed_has_icon, category_id, category_name, theme) =
-        state
-            .db
-            .read_user(move |c| {
-                let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
-                let cat =
-                    category::find_by_id(c, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
-                if cat.user_id != user_id {
-                    return Err(AppError::FeedNotFound);
-                }
-                let epp = user_settings::get_entries_per_page(c, user_id)
-                    .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-                let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
-                let save_config =
-                    user_settings::get_save_services_config(c, user_id).unwrap_or_default();
-                let kagi_configured = save_config
-                    .kagi
-                    .as_ref()
-                    .map(|k| k.is_configured())
-                    .unwrap_or(false);
-                let feed_url = f.url.clone();
-                let feed_title = f.title.unwrap_or_else(|| f.url.clone());
-                let has_icon: i64 = c
-                    .query_row(
-                        "SELECT COUNT(*) FROM image WHERE entity_type = 'feed' AND entity_id = ?1",
-                        [id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-                let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-                Ok::<_, AppError>((
-                    epp,
-                    save_services,
-                    kagi_configured,
-                    feed_url,
-                    feed_title,
-                    has_icon > 0,
-                    cat.id,
-                    cat.name,
-                    theme,
-                ))
-            })
-            .await??;
+    let (
+        entries_per_page,
+        has_save_services,
+        has_kagi_configured,
+        feed_url,
+        feed_title,
+        feed_has_icon,
+        category_id,
+        category_name,
+        theme,
+    ) = state
+        .db
+        .read_user(move |c| {
+            let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
+            let cat = category::find_by_id(c, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::FeedNotFound);
+            }
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
+            let save_config =
+                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
+            let kagi_configured = save_config
+                .kagi
+                .as_ref()
+                .map(|k| k.is_configured())
+                .unwrap_or(false);
+            let feed_url = f.url.clone();
+            let feed_title = f.title.unwrap_or_else(|| f.url.clone());
+            let has_icon: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM image WHERE entity_type = 'feed' AND entity_id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            Ok::<_, AppError>((
+                epp,
+                save_services,
+                kagi_configured,
+                feed_url,
+                feed_title,
+                has_icon > 0,
+                cat.id,
+                cat.name,
+                theme,
+            ))
+        })
+        .await??;
 
     Ok((
         flash.clone(),
