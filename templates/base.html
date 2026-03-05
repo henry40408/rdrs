@@ -397,8 +397,8 @@
         .sidebar-toggle {
             display: none;
             position: fixed;
-            top: var(--space-3);
-            left: var(--space-3);
+            top: var(--space-4);
+            left: var(--space-4);
             z-index: 101;
             background: var(--color-bg);
             border: 1px solid var(--color-border);
@@ -1651,11 +1651,11 @@
             }
 
             .page-content {
-                padding: var(--space-12) var(--space-4) var(--space-4);
+                padding: var(--space-16) var(--space-4) var(--space-4);
             }
 
             .list-pane-header {
-                padding: var(--space-12) var(--space-4) var(--space-3);
+                padding: var(--space-16) var(--space-4) var(--space-3);
             }
 
             .entry-item {
@@ -1663,7 +1663,7 @@
             }
 
             .entry-detail {
-                padding: var(--space-12) var(--space-4) var(--space-4);
+                padding: var(--space-16) var(--space-4) var(--space-4);
             }
 
             #entries-count {
@@ -1705,12 +1705,18 @@
         // Sidebar toggle
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
-            if (sidebar) sidebar.classList.toggle('open');
+            const toggle = document.querySelector('.sidebar-toggle');
+            if (sidebar) {
+                sidebar.classList.toggle('open');
+                if (toggle) toggle.style.display = sidebar.classList.contains('open') ? 'none' : '';
+            }
         }
 
         function closeSidebar() {
             const sidebar = document.getElementById('sidebar');
+            const toggle = document.querySelector('.sidebar-toggle');
             if (sidebar) sidebar.classList.remove('open');
+            if (toggle) toggle.style.display = '';
         }
     </script>
     <script type="module" src="/static/js/components/rdrs-kb-pending.js?v={{ git_version }}"></script>
