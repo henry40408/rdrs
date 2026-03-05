@@ -9,7 +9,10 @@ const keyboard = {
 
     init(pageType) {
         this.pageType = pageType;
-        document.addEventListener('keydown', this.handleKeyDown.bind(this));
+        if (!this._bound) {
+            this._bound = this.handleKeyDown.bind(this);
+            document.addEventListener('keydown', this._bound);
+        }
     },
 
     setHelpItems(items) {

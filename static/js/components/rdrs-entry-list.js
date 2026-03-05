@@ -604,16 +604,22 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             </div>
         `;
 
-        // Set up action delegation for reading pane buttons
-        this._setupReadingPaneActions(pane, entryId);
+        // Set up action delegation for reading pane buttons (once per pane)
+        this._ensureReadingPaneActions(pane);
     }
 
-    _setupReadingPaneActions(pane, entryId) {
+    _ensureReadingPaneActions(pane) {
+        if (pane._rpActionsSetup) return;
+        pane._rpActionsSetup = true;
+
         pane.addEventListener('click', (e) => {
             const btn = e.target.closest('[data-rp-action]');
             if (!btn) return;
 
             e.preventDefault();
+            const entryId = this._readingPaneEntry?.id;
+            if (!entryId) return;
+
             const action = btn.dataset.rpAction;
 
             switch (action) {
@@ -946,6 +952,11 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
 
         // Switch back to list keyboard mode
         this._switchToListMode();
+
+        // In unread mode, refresh list to remove read entries
+        if (this.isUnreadMode) {
+            this.loadEntries();
+        }
     }
 
     // --- Keyboard mode switching ---
@@ -959,10 +970,10 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             { key: 'k', desc: 'Scroll up' },
             { key: 'g g', desc: 'Scroll to top' },
             { key: 'G', desc: 'Scroll to bottom' },
-            { key: 'n', desc: 'Next unread entry' },
-            { key: 'N', desc: 'Previous unread entry' },
-            { key: 'p', desc: 'Next entry' },
-            { key: 'P', desc: 'Previous entry' },
+            { key: 'n', desc: 'Next entry' },
+            { key: 'p', desc: 'Previous entry' },
+            { key: 'N', desc: 'Next unread entry' },
+            { key: 'P', desc: 'Previous unread entry' },
             { key: 'u', desc: 'Mark as unread' },
             { key: 's', desc: 'Toggle star' },
             { key: 'v', desc: 'Open original in new tab' },
@@ -980,6 +991,10 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                     const pane = list._getReadingPane();
                     if (pane) pane.scrollTo({ top: 0, behavior: 'smooth' });
                     return true;
+                }
+                // Delegate unhandled combos to page-specific extra handlers
+                if (list._extraHandlers?.handleCombo) {
+                    return list._extraHandlers.handleCombo(combo);
                 }
                 return false;
             },
@@ -999,23 +1014,23 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                         if (pane) pane.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' });
                         return true;
                     case 'n': {
-                        const next = list.findNextUnread(1);
-                        if (next >= 0) { list.selectEntry(next); list._loadInReadingPane(next); }
-                        return true;
-                    }
-                    case 'N': {
-                        const prev = list.findNextUnread(-1);
-                        if (prev >= 0) { list.selectEntry(prev); list._loadInReadingPane(prev); }
-                        return true;
-                    }
-                    case 'p': {
                         const nextIdx = list.selectedIndex + 1;
                         if (nextIdx < list.entries.length) { list.selectEntry(nextIdx); list._loadInReadingPane(nextIdx); }
                         return true;
                     }
-                    case 'P': {
+                    case 'p': {
                         const prevIdx = list.selectedIndex - 1;
                         if (prevIdx >= 0) { list.selectEntry(prevIdx); list._loadInReadingPane(prevIdx); }
+                        return true;
+                    }
+                    case 'N': {
+                        const next = list.findNextUnread(1);
+                        if (next >= 0) { list.selectEntry(next); list._loadInReadingPane(next); }
+                        return true;
+                    }
+                    case 'P': {
+                        const prev = list.findNextUnread(-1);
+                        if (prev >= 0) { list.selectEntry(prev); list._loadInReadingPane(prev); }
                         return true;
                     }
                     case 'u':
@@ -1054,6 +1069,10 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                         // Go back — restore list URL
                         history.back();
                         return true;
+                }
+                // Delegate unhandled keys to page-specific extra handlers
+                if (list._extraHandlers?.handleKey) {
+                    return list._extraHandlers.handleKey(key);
                 }
                 return false;
             }
@@ -1120,8 +1139,8 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             });
             if (!response.ok) throw new Error('Failed to mark as read');
 
-            if (this.isUnreadMode) {
-                // Remove from list in unread mode
+            if (this.isUnreadMode && !this._entryMode) {
+                // Remove from list in unread mode (but not while browsing in reading pane)
                 this.entries = this.entries.filter(e => e.id !== id);
                 this.renderEntries();
                 this._updateLoadMore();
@@ -1136,6 +1155,9 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 }
             } else {
                 this._updateEntryField(id, 'read_at', new Date().toISOString());
+                if (this.isUnreadMode) {
+                    this._updateUnreadCount();
+                }
             }
         } catch (err) {
             window.flash.error(err.message);
@@ -1244,13 +1266,14 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     findNextUnread(direction) {
         if (this.entries.length === 0) return -1;
 
-        if (this.isUnreadMode) {
-            // In unread mode all entries are unread, just move in direction
+        if (this.isUnreadMode && !this._entryMode) {
+            // In unread list mode, all visible entries are unread, just move in direction
             const start = this.selectedIndex < 0 ? (direction > 0 ? -1 : this.entries.length) : this.selectedIndex;
             const index = start + direction;
             return (index >= 0 && index < this.entries.length) ? index : -1;
         }
 
+        // In entry mode or non-unread mode, check actual read_at status
         const start = this.selectedIndex < 0 ? (direction > 0 ? -1 : this.entries.length) : this.selectedIndex;
         let index = start + direction;
         while (index >= 0 && index < this.entries.length) {
@@ -1328,8 +1351,10 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             { key: 'k', desc: 'Previous entry' },
             { key: 'g g', desc: 'First entry' },
             { key: 'G', desc: 'Last entry' },
-            { key: 'n', desc: 'Next unread entry' },
-            { key: 'N', desc: 'Previous unread entry' },
+            { key: 'n', desc: 'Next entry' },
+            { key: 'p', desc: 'Previous entry' },
+            { key: 'N', desc: 'Next unread entry' },
+            { key: 'P', desc: 'Previous unread entry' },
             { key: 'Enter / o', desc: 'Open entry' },
             { key: 'v', desc: 'Open original in new tab' },
             { key: 'm', desc: list.isUnreadMode ? 'Mark as read' : 'Toggle read/unread' },
@@ -1372,12 +1397,18 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                     case 'G':
                         if (list.entries.length > 0) list.selectEntry(list.entries.length - 1);
                         return true;
-                    case 'n': {
+                    case 'n':
+                        list.selectEntry(list.selectedIndex + 1);
+                        return true;
+                    case 'p':
+                        list.selectEntry(list.selectedIndex - 1);
+                        return true;
+                    case 'N': {
                         const next = list.findNextUnread(1);
                         if (next >= 0) list.selectEntry(next);
                         return true;
                     }
-                    case 'N': {
+                    case 'P': {
                         const prev = list.findNextUnread(-1);
                         if (prev >= 0) list.selectEntry(prev);
                         return true;

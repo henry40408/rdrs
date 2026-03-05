@@ -838,7 +838,12 @@
 
         /* ===== Flash Messages ===== */
         .flash-container {
-            margin-bottom: var(--space-6);
+            position: fixed;
+            top: var(--space-3);
+            right: var(--space-3);
+            z-index: 200;
+            max-width: 480px;
+            width: 100%;
         }
 
         .flash {
@@ -854,18 +859,46 @@
         }
 
         .flash-success {
-            background: rgba(45, 122, 58, 0.08);
-            border-color: rgba(45, 122, 58, 0.2);
+            background: #e8f5e9;
+            border-color: #2d7a3a;
         }
 
         .flash-error {
-            background: rgba(185, 28, 28, 0.08);
-            border-color: rgba(185, 28, 28, 0.2);
+            background: #fde8e8;
+            border-color: #b91c1c;
         }
 
         .flash-warning {
-            background: rgba(146, 97, 14, 0.08);
-            border-color: rgba(146, 97, 14, 0.2);
+            background: #fef3e2;
+            border-color: #92610e;
+        }
+
+        [data-theme="dark"] .flash-success {
+            background: #1a2b1a;
+            border-color: #4ADE80;
+        }
+        [data-theme="dark"] .flash-error {
+            background: #2b1a1a;
+            border-color: #F87171;
+        }
+        [data-theme="dark"] .flash-warning {
+            background: #2b2516;
+            border-color: #FBBF24;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme]) .flash-success {
+                background: #1a2b1a;
+                border-color: #4ADE80;
+            }
+            :root:not([data-theme]) .flash-error {
+                background: #2b1a1a;
+                border-color: #F87171;
+            }
+            :root:not([data-theme]) .flash-warning {
+                background: #2b2516;
+                border-color: #FBBF24;
+            }
         }
 
         .flash-success::before { content: "OK "; font-weight: 600; color: var(--color-success); }
