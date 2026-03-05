@@ -28,11 +28,11 @@ class RdrsKbHelp extends HTMLElement {
                     max-width: 600px;
                     max-height: 80vh;
                     overflow-y: auto;
-                    font-size: 0.9rem;
+                    font-size: 1rem;
                     color: var(--color-text, #111111);
                 }
                 h2 {
-                    font-size: 1rem;
+                    font-size: 1.125rem;
                     margin-bottom: var(--space-4, 1rem);
                     border-bottom: 1px solid var(--color-border, #111111);
                     padding-bottom: var(--space-2, 0.5rem);
@@ -53,7 +53,7 @@ class RdrsKbHelp extends HTMLElement {
                     color: var(--color-text, #111111);
                 }
                 #content h3 {
-                    font-size: 0.9rem;
+                    font-size: 1rem;
                     margin: var(--space-4, 1rem) 0 var(--space-2, 0.5rem);
                     color: var(--color-text-muted, #666666);
                 }
