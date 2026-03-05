@@ -385,7 +385,7 @@ async fn test_user_settings_page_with_flash() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_entry_page_shows_save_button_when_configured() {
+async fn test_entry_page_redirects_with_save_services_configured() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -403,36 +403,25 @@ async fn test_entry_page_shows_save_button_when_configured() {
                 rusqlite::params![1, config.to_string()],
             )
             .unwrap();
-
-            // Create entry
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Test"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/feed.xml", "Test Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title, link) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![1, "guid-1", "Test Entry", "https://example.com/entry"],
-            )
-            .unwrap();
         })
         .await
         .unwrap();
 
     login(&app.server, "admin").await;
 
+    // Entry page now redirects to the list page
     let response = app.server.get("/entries/1").await;
+    response.assert_status_see_other();
+
+    // Entries list page should have has-save-services attribute
+    let response = app.server.get("/entries").await;
     response.assert_status_ok();
-    // Page should render successfully with save services configured
+    let body = response.text();
+    assert!(body.contains("has-save-services"));
 }
 
 #[tokio::test]
-async fn test_entry_page_shows_summarize_when_kagi_configured() {
+async fn test_entry_page_redirects_with_kagi_configured() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -450,32 +439,21 @@ async fn test_entry_page_shows_summarize_when_kagi_configured() {
                 rusqlite::params![1, config.to_string()],
             )
             .unwrap();
-
-            // Create entry
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Test"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/feed.xml", "Test Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title, link) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![1, "guid-1", "Test Entry", "https://example.com/entry"],
-            )
-            .unwrap();
         })
         .await
         .unwrap();
 
     login(&app.server, "admin").await;
 
+    // Entry page now redirects to the list page
     let response = app.server.get("/entries/1").await;
+    response.assert_status_see_other();
+
+    // Entries list page should have has-kagi-configured attribute
+    let response = app.server.get("/entries").await;
     response.assert_status_ok();
-    // Page should render successfully with Kagi configured
+    let body = response.text();
+    assert!(body.contains("has-kagi-configured"));
 }
 
 // ============================================================================

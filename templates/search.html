@@ -37,6 +37,8 @@
                     empty-message="Enter a search term and press Enter to search."
                     no-auto-load
                     reading-pane="#reading-pane"
+                    {% if has_save_services %}has-save-services{% endif %}
+                    {% if has_kagi_configured %}has-kagi-configured{% endif %}
                 ></rdrs-entry-list>
             </div>
         </div>

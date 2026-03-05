@@ -1,8 +1,8 @@
 use askama::Template;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Redirect, Response},
 };
 
 use crate::config::DEFAULT_USER_AGENT;
@@ -105,6 +105,8 @@ pub struct UnreadTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
+    pub has_save_services: bool,
+    pub has_kagi_configured: bool,
     pub theme: Option<String>,
     pub git_version: &'static str,
 }
@@ -132,17 +134,31 @@ pub async fn unread_page(
     };
 
     let user_id = auth_user.user.id;
-    let (unread_count, entries_per_page, theme) = state
+    let (unread_count, entries_per_page, has_save_services, has_kagi_configured, theme) = state
         .db
         .read_user(move |c| {
             let unread = entry::count_unread_by_user(c, user_id).unwrap_or(0);
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
+            let save_config =
+                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
+            let kagi_configured = save_config
+                .kagi
+                .as_ref()
+                .map(|k| k.is_configured())
+                .unwrap_or(false);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            (unread, epp, theme)
+            (unread, epp, save_services, kagi_configured, theme)
         })
         .await
-        .unwrap_or((0, user_settings::DEFAULT_ENTRIES_PER_PAGE, None));
+        .unwrap_or((
+            0,
+            user_settings::DEFAULT_ENTRIES_PER_PAGE,
+            false,
+            false,
+            None,
+        ));
 
     (
         flash.clone(),
@@ -159,6 +175,8 @@ pub async fn unread_page(
             is_masquerading,
             flash_messages: flash.messages,
             entries_per_page,
+            has_save_services,
+            has_kagi_configured,
             theme,
             git_version: crate::GIT_VERSION,
         },
@@ -442,6 +460,8 @@ pub struct EntriesTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
+    pub has_save_services: bool,
+    pub has_kagi_configured: bool,
     pub theme: Option<String>,
     pub git_version: &'static str,
 }
@@ -468,16 +488,24 @@ pub async fn entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, theme) = state
+    let (entries_per_page, has_save_services, has_kagi_configured, theme) = state
         .db
         .read_user(move |c| {
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
+            let save_config =
+                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
+            let kagi_configured = save_config
+                .kagi
+                .as_ref()
+                .map(|k| k.is_configured())
+                .unwrap_or(false);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            (epp, theme)
+            (epp, save_services, kagi_configured, theme)
         })
         .await
-        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, None));
+        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, false, false, None));
 
     (
         flash.clone(),
@@ -487,84 +515,58 @@ pub async fn entries_page(
             is_masquerading,
             flash_messages: flash.messages,
             entries_per_page,
-            theme,
-            git_version: crate::GIT_VERSION,
-        },
-    )
-}
-
-#[derive(Template)]
-#[template(path = "entry.html")]
-pub struct EntryTemplate {
-    pub username: String,
-    pub entry_id: i64,
-    pub is_admin: bool,
-    pub is_masquerading: bool,
-    pub flash_messages: Vec<FlashMessage>,
-    pub has_save_services: bool,
-    pub has_kagi_configured: bool,
-    pub theme: Option<String>,
-    pub git_version: &'static str,
-}
-
-impl IntoResponse for EntryTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-pub async fn entry_page(
-    auth_user: PageAuthUser,
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    flash: Flash,
-) -> (Flash, EntryTemplate) {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
-
-    let user_id = auth_user.user.id;
-    let (has_save_services, has_kagi_configured, theme) = state
-        .db
-        .read_user(move |c| {
-            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
-
-            let save_config =
-                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
-
-            let kagi_configured = save_config
-                .kagi
-                .as_ref()
-                .map(|c| c.is_configured())
-                .unwrap_or(false);
-
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-
-            (save_services, kagi_configured, theme)
-        })
-        .await
-        .unwrap_or((false, false, None));
-
-    (
-        flash.clone(),
-        EntryTemplate {
-            username: auth_user.user.username,
-            entry_id: id,
-            is_admin,
-            is_masquerading,
-            flash_messages: flash.messages,
             has_save_services,
             has_kagi_configured,
             theme,
             git_version: crate::GIT_VERSION,
         },
     )
+}
+
+/// Query parameters for the entry page redirect.
+#[derive(serde::Deserialize, Default)]
+pub struct EntryPageQuery {
+    pub origin: Option<String>,
+    pub feed: Option<i64>,
+    pub category: Option<i64>,
+    pub read_only: Option<String>,
+    pub starred_only: Option<String>,
+    pub has_summary: Option<String>,
+}
+
+/// Redirect `/entries/{id}` to the appropriate list page with `?entry={id}`.
+pub async fn entry_page(
+    _auth_user: PageAuthUser,
+    Path(id): Path<i64>,
+    Query(query): Query<EntryPageQuery>,
+) -> Redirect {
+    let origin = query.origin.as_deref().unwrap_or("");
+
+    let base_url = match origin {
+        "feed" => {
+            if let Some(feed_id) = query.feed {
+                format!("/feeds/{}/entries", feed_id)
+            } else {
+                "/entries".to_string()
+            }
+        }
+        "category" => {
+            if let Some(cat_id) = query.category {
+                format!("/categories/{}/entries", cat_id)
+            } else {
+                "/entries".to_string()
+            }
+        }
+        "read" => "/entries/read".to_string(),
+        "starred" => "/entries/starred".to_string(),
+        "summarized" => "/entries/summarized".to_string(),
+        "entries" => "/entries".to_string(),
+        "search" => "/search".to_string(),
+        _ => "/".to_string(),
+    };
+
+    let redirect_url = format!("{}?entry={}", base_url, id);
+    Redirect::to(&redirect_url)
 }
 
 #[derive(Template)]
@@ -638,6 +640,8 @@ pub struct ArchiveEntriesTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
+    pub has_save_services: bool,
+    pub has_kagi_configured: bool,
     pub page_mode: String,
     pub page_title: String,
     pub theme: Option<String>,
@@ -653,6 +657,31 @@ impl IntoResponse for ArchiveEntriesTemplate {
     }
 }
 
+/// Helper to fetch common entry-list config from DB (entries_per_page, save_services, kagi, theme).
+async fn fetch_entry_list_config(
+    state: &AppState,
+    user_id: i64,
+) -> (i64, bool, bool, Option<String>) {
+    state
+        .db
+        .read_user(move |c| {
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
+            let save_config =
+                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
+            let kagi_configured = save_config
+                .kagi
+                .as_ref()
+                .map(|k| k.is_configured())
+                .unwrap_or(false);
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            (epp, save_services, kagi_configured, theme)
+        })
+        .await
+        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, false, false, None))
+}
+
 pub async fn read_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -665,17 +694,8 @@ pub async fn read_entries_page(
         auth_user.user.is_admin()
     };
 
-    let user_id = auth_user.user.id;
-    let (entries_per_page, theme) = state
-        .db
-        .read_user(move |c| {
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            (epp, theme)
-        })
-        .await
-        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, None));
+    let (entries_per_page, has_save_services, has_kagi_configured, theme) =
+        fetch_entry_list_config(&state, auth_user.user.id).await;
 
     (
         flash.clone(),
@@ -685,6 +705,8 @@ pub async fn read_entries_page(
             is_masquerading,
             flash_messages: flash.messages,
             entries_per_page,
+            has_save_services,
+            has_kagi_configured,
             page_mode: "read".to_string(),
             page_title: "Read Entries".to_string(),
             theme,
@@ -705,17 +727,8 @@ pub async fn starred_entries_page(
         auth_user.user.is_admin()
     };
 
-    let user_id = auth_user.user.id;
-    let (entries_per_page, theme) = state
-        .db
-        .read_user(move |c| {
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            (epp, theme)
-        })
-        .await
-        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, None));
+    let (entries_per_page, has_save_services, has_kagi_configured, theme) =
+        fetch_entry_list_config(&state, auth_user.user.id).await;
 
     (
         flash.clone(),
@@ -725,6 +738,8 @@ pub async fn starred_entries_page(
             is_masquerading,
             flash_messages: flash.messages,
             entries_per_page,
+            has_save_services,
+            has_kagi_configured,
             page_mode: "starred".to_string(),
             page_title: "Starred Entries".to_string(),
             theme,
@@ -745,17 +760,8 @@ pub async fn summarized_entries_page(
         auth_user.user.is_admin()
     };
 
-    let user_id = auth_user.user.id;
-    let (entries_per_page, theme) = state
-        .db
-        .read_user(move |c| {
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            (epp, theme)
-        })
-        .await
-        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, None));
+    let (entries_per_page, has_save_services, has_kagi_configured, theme) =
+        fetch_entry_list_config(&state, auth_user.user.id).await;
 
     (
         flash.clone(),
@@ -765,6 +771,8 @@ pub async fn summarized_entries_page(
             is_masquerading,
             flash_messages: flash.messages,
             entries_per_page,
+            has_save_services,
+            has_kagi_configured,
             page_mode: "summarized".to_string(),
             page_title: "Summarized Entries".to_string(),
             theme,
@@ -782,6 +790,8 @@ pub struct CategoryEntriesTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
+    pub has_save_services: bool,
+    pub has_kagi_configured: bool,
     pub category_id: i64,
     pub category_name: String,
     pub theme: Option<String>,
@@ -811,15 +821,23 @@ pub async fn category_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, category_name, theme) = state
+    let (entries_per_page, has_save_services, has_kagi_configured, category_name, theme) = state
         .db
         .read_user(move |c| {
             let cat =
                 category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
             let epp = user_settings::get_entries_per_page(c, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
+            let save_config =
+                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
+            let kagi_configured = save_config
+                .kagi
+                .as_ref()
+                .map(|k| k.is_configured())
+                .unwrap_or(false);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            Ok::<_, AppError>((epp, cat.name, theme))
+            Ok::<_, AppError>((epp, save_services, kagi_configured, cat.name, theme))
         })
         .await??;
 
@@ -831,6 +849,8 @@ pub async fn category_entries_page(
             is_masquerading,
             flash_messages: flash.messages,
             entries_per_page,
+            has_save_services,
+            has_kagi_configured,
             category_id: id,
             category_name,
             theme,
@@ -848,6 +868,8 @@ pub struct SearchTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
+    pub has_save_services: bool,
+    pub has_kagi_configured: bool,
     pub theme: Option<String>,
     pub git_version: &'static str,
 }
@@ -873,17 +895,8 @@ pub async fn search_page(
         auth_user.user.is_admin()
     };
 
-    let user_id = auth_user.user.id;
-    let (entries_per_page, theme) = state
-        .db
-        .read_user(move |c| {
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            (epp, theme)
-        })
-        .await
-        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, None));
+    let (entries_per_page, has_save_services, has_kagi_configured, theme) =
+        fetch_entry_list_config(&state, auth_user.user.id).await;
 
     (
         flash.clone(),
@@ -893,6 +906,8 @@ pub async fn search_page(
             is_masquerading,
             flash_messages: flash.messages,
             entries_per_page,
+            has_save_services,
+            has_kagi_configured,
             theme,
             git_version: crate::GIT_VERSION,
         },
@@ -908,6 +923,8 @@ pub struct FeedEntriesTemplate {
     pub is_masquerading: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub entries_per_page: i64,
+    pub has_save_services: bool,
+    pub has_kagi_configured: bool,
     pub feed_id: i64,
     pub feed_url: String,
     pub feed_title: String,
@@ -941,39 +958,57 @@ pub async fn feed_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, feed_url, feed_title, feed_has_icon, category_id, category_name, theme) =
-        state
-            .db
-            .read_user(move |c| {
-                let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
-                let cat =
-                    category::find_by_id(c, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
-                if cat.user_id != user_id {
-                    return Err(AppError::FeedNotFound);
-                }
-                let epp = user_settings::get_entries_per_page(c, user_id)
-                    .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-                let feed_url = f.url.clone();
-                let feed_title = f.title.unwrap_or_else(|| f.url.clone());
-                let has_icon: i64 = c
-                    .query_row(
-                        "SELECT COUNT(*) FROM image WHERE entity_type = 'feed' AND entity_id = ?1",
-                        [id],
-                        |row| row.get(0),
-                    )
-                    .unwrap_or(0);
-                let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-                Ok::<_, AppError>((
-                    epp,
-                    feed_url,
-                    feed_title,
-                    has_icon > 0,
-                    cat.id,
-                    cat.name,
-                    theme,
-                ))
-            })
-            .await??;
+    let (
+        entries_per_page,
+        has_save_services,
+        has_kagi_configured,
+        feed_url,
+        feed_title,
+        feed_has_icon,
+        category_id,
+        category_name,
+        theme,
+    ) = state
+        .db
+        .read_user(move |c| {
+            let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
+            let cat = category::find_by_id(c, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
+            if cat.user_id != user_id {
+                return Err(AppError::FeedNotFound);
+            }
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
+            let save_config =
+                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
+            let kagi_configured = save_config
+                .kagi
+                .as_ref()
+                .map(|k| k.is_configured())
+                .unwrap_or(false);
+            let feed_url = f.url.clone();
+            let feed_title = f.title.unwrap_or_else(|| f.url.clone());
+            let has_icon: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM image WHERE entity_type = 'feed' AND entity_id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            Ok::<_, AppError>((
+                epp,
+                save_services,
+                kagi_configured,
+                feed_url,
+                feed_title,
+                has_icon > 0,
+                cat.id,
+                cat.name,
+                theme,
+            ))
+        })
+        .await??;
 
     Ok((
         flash.clone(),
@@ -983,6 +1018,8 @@ pub async fn feed_entries_page(
             is_masquerading,
             flash_messages: flash.messages,
             entries_per_page,
+            has_save_services,
+            has_kagi_configured,
             feed_id: id,
             feed_url,
             feed_title,

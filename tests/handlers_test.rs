@@ -1392,10 +1392,9 @@ async fn test_entry_page() {
     let server = create_test_server(default_test_config());
     setup_authenticated_user(&server).await;
 
-    // Entry page should render even for non-existent entries
-    // (the frontend handles the 404 when fetching entry data)
+    // Entry page now redirects to the list page with ?entry= param
     let response = server.get("/entries/1").await;
-    response.assert_status_ok();
+    response.assert_status_see_other();
 }
 
 #[tokio::test]
