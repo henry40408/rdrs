@@ -980,6 +980,8 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         if (this._entryMode) return;
         this._entryMode = true;
 
+        if (this._isMobileLayout()) return;
+
         const list = this;
         const entryHelpItems = [
             { key: 'j', desc: 'Scroll down' },
@@ -1360,6 +1362,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     // --- Register standard keyboard handlers ---
     registerKeyboardHandlers(extraHandlers = {}) {
         this._extraHandlers = extraHandlers;
+        if (this._isMobileLayout()) return;
         const list = this;
 
         const baseHelpItems = [
