@@ -1646,6 +1646,14 @@
                 overflow-y: auto;
             }
 
+            .reading-pane.reading-pane-active {
+                overscroll-behavior: contain;
+            }
+
+            body:has(.reading-pane-active) {
+                overflow: hidden;
+            }
+
             body:has(.reading-pane-active) .sidebar-toggle {
                 display: none;
             }
