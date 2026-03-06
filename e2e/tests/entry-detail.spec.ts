@@ -19,27 +19,24 @@ test.describe("Entry Detail Page", () => {
     await page.waitForURL(`${serverUrl}/`);
     await expect(page.getByTestId("entry-item").first()).toBeVisible();
 
-    // Click first entry to load in reading pane, then open full page
+    // Click first entry to load in reading pane
     await page.getByTestId("entry-title-link").first().click();
     await expect(page.locator(".reading-pane-title")).toBeVisible();
-    await page.locator(".reading-pane-actions a").first().click();
-    await page.waitForURL(/\/entries\/\d+/);
-    await expect(page.getByTestId("entry-title")).toBeVisible();
   });
 
   test("opening entry auto-marks as read", async ({ page, serverUrl }) => {
-    // Go back to unread list
-    await page.getByTestId("back-link").click();
-    await page.waitForURL(`${serverUrl}/`);
+    // Entry was opened in reading pane, which auto-marks as read.
+    // Go back to unread list to verify.
+    await page.goto(`${serverUrl}/`);
+    await expect(page.getByTestId("entry-item").first()).toBeVisible();
 
     // The entry we just viewed should no longer be in the unread list
     // (count should be 4 instead of 5)
-    await expect(page.getByTestId("entry-item").first()).toBeVisible();
     await expect(page.getByTestId("entry-item")).toHaveCount(4);
   });
 
   test("s toggles star button text", async ({ page }) => {
-    const starBtn = page.getByTestId("star-btn");
+    const starBtn = page.getByTestId("rp-star-btn");
     await expect(starBtn).toHaveText("Star");
 
     await page.keyboard.press("s");

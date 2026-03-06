@@ -70,18 +70,19 @@ test.describe("Entry Keyboard Navigation", () => {
     await expect(lastEntry).toHaveClass(/selected/);
   });
 
-  test("n/N navigates to next/previous unread", async ({ page }) => {
-    // On unread page, all entries are unread, so n just goes to next
+  test("n/p navigates to next/previous entry", async ({ page }) => {
+    // n selects first entry (next entry from no selection)
     await page.keyboard.press("n");
     const firstEntry = page.getByTestId("entry-item").nth(0);
     await expect(firstEntry).toHaveClass(/selected/);
 
+    // n moves to next entry
     await page.keyboard.press("n");
     const secondEntry = page.getByTestId("entry-item").nth(1);
     await expect(secondEntry).toHaveClass(/selected/);
 
-    // N goes back to previous unread
-    await page.keyboard.press("N");
+    // p goes back to previous entry
+    await page.keyboard.press("p");
     await expect(firstEntry).toHaveClass(/selected/);
   });
 });
