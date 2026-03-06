@@ -60,14 +60,16 @@ class RdrsEntryList extends HTMLElement {
     get hasSaveServices() { return this.hasAttribute('has-save-services'); }
     get hasKagiConfigured() { return this.hasAttribute('has-kagi-configured'); }
 
-    /** Get the reading pane element, if configured and visible. */
+    /** Get the reading pane element, if configured. */
     _getReadingPane() {
         const sel = this.readingPaneSelector;
         if (!sel) return null;
-        const pane = document.querySelector(sel);
-        if (!pane) return null;
-        // Only use reading pane if it's actually visible (hidden on mobile/tablet)
-        return pane.offsetParent !== null ? pane : null;
+        return document.querySelector(sel);
+    }
+
+    /** Check if we're in mobile layout (reading pane is not visible by default). */
+    _isMobileLayout() {
+        return window.matchMedia('(max-width: 1024px)').matches;
     }
 
     // --- Initial render (skeleton) ---
@@ -208,6 +210,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         const pane = this._getReadingPane();
         if (!pane) return;
 
+        pane.classList.add('reading-pane-active');
         pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Loading...</p></div>`;
 
         try {
@@ -492,6 +495,9 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         this._readingPaneEntry = entry;
         this._resetReadingPaneState();
 
+        // Activate reading pane (for mobile full-screen)
+        pane.classList.add('reading-pane-active');
+
         // Show loading state
         pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Loading...</p></div>`;
 
@@ -578,7 +584,12 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         const hasSave = this.hasSaveServices;
         const hasKagi = this.hasKagiConfigured;
 
+        const backBtn = this._isMobileLayout()
+            ? `<div class="reading-pane-back" data-rp-action="back">&#8592; Back</div>`
+            : '';
+
         pane.innerHTML = `
+            ${backBtn}
             <div class="reading-pane-content">
                 <h1 class="reading-pane-title">${escapeHtml(title)}</h1>
                 <div class="reading-pane-meta">${metaParts.join(' &middot; ')}</div>
@@ -599,7 +610,6 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                         <blockquote class="rp-summary-content"></blockquote>
                     </div>
                 </div>
-                <hr>
                 <article class="reading-pane-article" data-testid="rp-entry-content">${content}</article>
             </div>
         `;
@@ -617,10 +627,15 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             if (!btn) return;
 
             e.preventDefault();
+            const action = btn.dataset.rpAction;
+
+            if (action === 'back') {
+                history.back();
+                return;
+            }
+
             const entryId = this._readingPaneEntry?.id;
             if (!entryId) return;
-
-            const action = btn.dataset.rpAction;
 
             switch (action) {
                 case 'toggle-star':
@@ -947,6 +962,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
 
         const pane = this._getReadingPane();
         if (pane) {
+            pane.classList.remove('reading-pane-active');
             pane.innerHTML = '<div class="reading-pane-empty">Select an entry to read</div>';
         }
 
@@ -963,6 +979,8 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     _switchToEntryMode() {
         if (this._entryMode) return;
         this._entryMode = true;
+
+        if (this._isMobileLayout()) return;
 
         const list = this;
         const entryHelpItems = [
@@ -1344,6 +1362,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     // --- Register standard keyboard handlers ---
     registerKeyboardHandlers(extraHandlers = {}) {
         this._extraHandlers = extraHandlers;
+        if (this._isMobileLayout()) return;
         const list = this;
 
         const baseHelpItems = [

@@ -25,7 +25,7 @@
 
     <hr>
 
-    <table>
+    <table class="mobile-cards">
         <thead>
             <tr>
                 <th>Name</th>
@@ -91,11 +91,11 @@
             const safeId = escapeHtml(cat.id);
             return `
             <tr id="row-${index}" data-tag-id="${safeId}">
-                <td>
+                <td data-label="Name">
                     <span class="cat-name">${escapeHtml(cat.name)}</span>
                     <input type="text" class="cat-edit-input" value="${escapeHtml(cat.name)}" style="display:none;" maxlength="100">
                 </td>
-                <td>${feedCount}</td>
+                <td data-label="Feeds">${feedCount}</td>
                 <td class="actions">
                     <a href="/feeds?category=${encodeURIComponent(cat.id)}">feeds</a>
                     <a href="/categories/${cat.numericId}/entries">entries</a>

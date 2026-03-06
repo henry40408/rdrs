@@ -65,7 +65,7 @@
 
     <h3>Environment Variables</h3>
     <p class="muted">Configure these environment variables to customize RDRS:</p>
-    <table>
+    <table class="mobile-cards-settings">
         <thead>
             <tr>
                 <th class="settings-th">Variable</th>
@@ -76,33 +76,33 @@
         <tbody>
             <tr>
                 <td><code>DATABASE_URL</code></td>
-                <td>SQLite database file path</td>
-                <td><code>rdrs.sqlite3</code></td>
+                <td data-label="Description">SQLite database file path</td>
+                <td data-label="Default"><code>rdrs.sqlite3</code></td>
             </tr>
             <tr>
                 <td><code>SERVER_PORT</code></td>
-                <td>HTTP server port</td>
-                <td><code>3000</code></td>
+                <td data-label="Description">HTTP server port</td>
+                <td data-label="Default"><code>3000</code></td>
             </tr>
             <tr>
                 <td><code>USER_AGENT</code></td>
-                <td>User agent for HTTP requests</td>
-                <td><code>RDRS/{version} (...)</code></td>
+                <td data-label="Description">User agent for HTTP requests</td>
+                <td data-label="Default"><code>RDRS/{version} (...)</code></td>
             </tr>
             <tr>
                 <td><code>SIGNUP_ENABLED</code></td>
-                <td>Allow new user registration</td>
-                <td><code>false</code></td>
+                <td data-label="Description">Allow new user registration</td>
+                <td data-label="Default"><code>false</code></td>
             </tr>
             <tr>
                 <td><code>MULTI_USER_ENABLED</code></td>
-                <td>Allow multiple users</td>
-                <td><code>false</code></td>
+                <td data-label="Description">Allow multiple users</td>
+                <td data-label="Default"><code>false</code></td>
             </tr>
             <tr>
                 <td><code>IMAGE_PROXY_SECRET</code></td>
-                <td>Secret key for image proxy URLs</td>
-                <td><em>(auto-generated)</em></td>
+                <td data-label="Description">Secret key for image proxy URLs</td>
+                <td data-label="Default"><em>(auto-generated)</em></td>
             </tr>
         </tbody>
     </table>

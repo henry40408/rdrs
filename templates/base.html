@@ -1119,6 +1119,10 @@
             margin-bottom: 0;
         }
 
+        .list-pane-header:has(.tab-bar, .filter-bar) {
+            border-bottom: none;
+        }
+
         .tab-bar a {
             padding: var(--space-2) var(--space-4);
             font-size: var(--font-sm);
@@ -1298,6 +1302,7 @@
         /* Entries count */
         #entries-count {
             margin-top: var(--space-4);
+            margin-bottom: var(--space-6);
             padding: 0 var(--space-5);
             font-size: var(--font-xs);
         }
@@ -1632,6 +1637,30 @@
         @media (max-width: 1024px) {
             .reading-pane {
                 display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                z-index: 100;
+                background: var(--color-bg);
+            }
+
+            .reading-pane.reading-pane-active {
+                display: block;
+                overflow-y: auto;
+            }
+
+            .reading-pane.reading-pane-active {
+                overscroll-behavior: contain;
+            }
+
+            body:has(.reading-pane-active) {
+                overflow: hidden;
+            }
+
+            body:has(.reading-pane-active) .sidebar-toggle {
+                display: none;
             }
 
             .list-pane {
@@ -1682,6 +1711,33 @@
                 padding: var(--space-16) var(--space-4) var(--space-3);
             }
 
+            /* Allow tab-bar to scroll edge-to-edge */
+            .list-pane-header .tab-bar {
+                margin-left: calc(-1 * var(--space-4));
+                margin-right: calc(-1 * var(--space-4));
+                padding-left: var(--space-4);
+                padding-right: var(--space-4);
+            }
+
+            .reading-pane-back {
+                display: flex;
+                align-items: center;
+                gap: var(--space-2);
+                padding: var(--space-3) var(--space-4);
+                border-bottom: 1px solid var(--color-border-light);
+                color: var(--color-link);
+                cursor: pointer;
+                font-size: var(--font-sm);
+                background: var(--color-bg);
+                position: sticky;
+                top: 0;
+                z-index: 1;
+            }
+
+            .reading-pane-back:hover {
+                color: var(--color-link-hover);
+            }
+
             .entry-item {
                 padding: var(--space-3) var(--space-4);
             }
@@ -1698,11 +1754,106 @@
                 padding: 0 var(--space-4);
             }
 
-            /* Responsive tables: horizontal scroll on mobile */
-            .page-content table {
+            /* Responsive tables: card layout on mobile */
+            .page-content table.mobile-cards {
                 display: block;
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
+                border: none;
+            }
+
+            .page-content table.mobile-cards thead {
+                display: none;
+            }
+
+            .page-content table.mobile-cards tbody {
+                display: block;
+            }
+
+            .page-content table.mobile-cards tbody tr {
+                display: block;
+                padding: var(--space-3) 0;
+                border-bottom: 1px solid var(--color-border-light);
+            }
+
+            .page-content table.mobile-cards tbody td {
+                display: flex;
+                justify-content: space-between;
+                align-items: baseline;
+                padding: var(--space-1) 0;
+                border-bottom: none;
+            }
+
+            .page-content table.mobile-cards tbody td::before {
+                content: attr(data-label);
+                font-weight: 600;
+                font-size: var(--font-xs);
+                color: var(--color-text-secondary);
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                flex-shrink: 0;
+                margin-right: var(--space-3);
+            }
+
+            .page-content table.mobile-cards tbody td.actions {
+                justify-content: flex-start;
+                flex-wrap: wrap;
+                gap: var(--space-2);
+            }
+
+            .page-content table.mobile-cards tbody td.actions::before {
+                display: none;
+            }
+
+            /* Feed error rows in card mode */
+            .page-content table.mobile-cards tbody tr.error-row {
+                padding-top: 0;
+                border-bottom: 1px solid var(--color-border-light);
+            }
+
+            .page-content table.mobile-cards tbody tr.error-row td {
+                display: block;
+            }
+
+            /* Settings env-vars table card layout */
+            .page-content table.mobile-cards-settings thead {
+                display: none;
+            }
+
+            .page-content table.mobile-cards-settings {
+                display: block;
+                border: none;
+            }
+
+            .page-content table.mobile-cards-settings tbody {
+                display: block;
+            }
+
+            .page-content table.mobile-cards-settings tbody tr {
+                display: block;
+                padding: var(--space-3) 0;
+                border-bottom: 1px solid var(--color-border-light);
+            }
+
+            .page-content table.mobile-cards-settings tbody td {
+                display: block;
+                padding: var(--space-1) 0;
+                border-bottom: none;
+            }
+
+            .page-content table.mobile-cards-settings tbody td::before {
+                content: attr(data-label);
+                display: block;
+                font-weight: 600;
+                font-size: var(--font-xs);
+                color: var(--color-text-secondary);
+                margin-bottom: 2px;
+            }
+
+            .page-content table.mobile-cards-settings tbody td:first-child {
+                font-weight: 600;
+            }
+
+            .page-content table.mobile-cards-settings tbody td:first-child::before {
+                display: none;
             }
 
             .settings-th {

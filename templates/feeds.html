@@ -65,7 +65,7 @@
         </div>
     </div>
 
-    <table>
+    <table class="mobile-cards">
         <thead>
             <tr>
                 <th>Title</th>
@@ -345,9 +345,9 @@
 
             let rows = `
             <tr id="row-${feedIdAttr}"${hasError ? ' class="feed-error-no-border"' : ''}>
-                <td${hasError ? ' class="feed-error-no-border"' : ''}>${iconHtml}<span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
-                <td${hasError ? ' class="feed-error-no-border"' : ''}>${escapeHtml(categoryName)}</td>
-                <td${hasError ? ' class="feed-error-no-border"' : ''}>${unreadCount > 0 ? `<strong>${unreadCount}</strong>` : '0'}</td>
+                <td data-label="Title"${hasError ? ' class="feed-error-no-border"' : ''}>${iconHtml}<span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
+                <td data-label="Category"${hasError ? ' class="feed-error-no-border"' : ''}>${escapeHtml(categoryName)}</td>
+                <td data-label="Unread"${hasError ? ' class="feed-error-no-border"' : ''}>${unreadCount > 0 ? `<strong>${unreadCount}</strong>` : '0'}</td>
                 <td class="actions${hasError ? ' feed-error-no-border' : ''}">
                     <a href="${entriesHref}">entries</a>
                     ${feedNumericId ? `<a href="#" onclick="refreshFeed('${feedNumericId}'); return false;" id="refresh-${feedNumericId}">refresh</a>` : ''}
