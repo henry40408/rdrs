@@ -28,6 +28,7 @@ src/
 ├── lib.rs               # Router and app configuration
 ├── config.rs            # Environment configuration
 ├── error.rs             # Error types and HTTP responses
+├── version.rs           # Build version information
 │
 ├── db/
 │   ├── schema.rs        # SQLite schema initialization
@@ -57,6 +58,7 @@ src/
 │   ├── favicon.rs       # Favicon serving (embedded at compile time)
 │   ├── static_assets.rs # Static JS assets (embedded at compile time)
 │   ├── proxy.rs         # Image proxy
+│   ├── health.rs        # Health check endpoint
 │   └── greader/         # Google Reader API compatibility
 │       ├── auth.rs      # ClientLogin authentication
 │       ├── subscription.rs # Subscription list/edit, OPML import
@@ -77,6 +79,7 @@ src/
 │   ├── sanitize.rs      # HTML sanitization
 │   ├── opml.rs          # OPML import/export
 │   ├── icon_fetcher.rs  # Feed icon fetching
+│   ├── http.rs          # Shared HTTP client utilities
 │   ├── image_proxy.rs   # Secure image proxying
 │   ├── summary_cache.rs # Summary caching
 │   ├── summary_cleanup.rs # Summary cleanup task
@@ -89,6 +92,7 @@ src/
 │
 ├── middleware/          # HTTP middleware
 │   ├── auth.rs          # Session authentication
+│   ├── date_header.rs   # Date response header
 │   └── flash.rs         # Flash messages
 │
 └── auth/
