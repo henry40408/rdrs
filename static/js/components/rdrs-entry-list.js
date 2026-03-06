@@ -610,7 +610,6 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                         <blockquote class="rp-summary-content"></blockquote>
                     </div>
                 </div>
-                <hr>
                 <article class="reading-pane-article" data-testid="rp-entry-content">${content}</article>
             </div>
         `;
