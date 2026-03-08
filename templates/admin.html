@@ -41,10 +41,10 @@
                 <td data-label="Created">{{ user.created_at }}</td>
                 <td class="actions">
                     {% if user.id != current_user_id && user.id != original_user_id %}
-                    <a href="#" onclick="toggleRole({{ user.id }}, '{{ user.role }}'); return false;">{% if user.role == "admin" %}demote{% else %}promote{% endif %}</a>
-                    <a href="#" onclick="toggleDisabled({{ user.id }}, {{ user.is_disabled }}); return false;">{% if user.is_disabled %}enable{% else %}disable{% endif %}</a>
-                    <a href="#" onclick="masquerade({{ user.id }}); return false;">view as</a>
-                    <a href="#" onclick="deleteUser({{ user.id }}, '{{ user.username }}'); return false;">delete</a>
+                    <a href="#" data-action="toggle-role" data-user-id="{{ user.id }}" data-role="{{ user.role }}">{% if user.role == "admin" %}demote{% else %}promote{% endif %}</a>
+                    <a href="#" data-action="toggle-disabled" data-user-id="{{ user.id }}" data-disabled="{{ user.is_disabled }}">{% if user.is_disabled %}enable{% else %}disable{% endif %}</a>
+                    <a href="#" data-action="masquerade" data-user-id="{{ user.id }}">view as</a>
+                    <a href="#" data-action="delete" data-user-id="{{ user.id }}">delete</a>
                     {% else %}
                     <span class="muted">(you)</span>
                     {% endif %}
@@ -72,6 +72,22 @@
     function reloadPage() {
         window.location.reload();
     }
+
+    // Event delegation for user action links
+    document.getElementById('users-table').addEventListener('click', function(e) {
+        const target = e.target.closest('[data-action]');
+        if (!target) return;
+        e.preventDefault();
+        const action = target.dataset.action;
+        const userId = parseInt(target.dataset.userId);
+        if (action === 'toggle-role') toggleRole(userId, target.dataset.role);
+        else if (action === 'toggle-disabled') toggleDisabled(userId, target.dataset.disabled === 'true');
+        else if (action === 'masquerade') masquerade(userId);
+        else if (action === 'delete') {
+            const username = target.closest('tr').querySelector('[data-label="Username"]').textContent;
+            deleteUser(userId, username);
+        }
+    });
 
     async function toggleRole(userId, currentRole) {
         const newRole = currentRole === 'admin' ? 'user' : 'admin';

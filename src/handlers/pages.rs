@@ -42,6 +42,12 @@ struct SsrEntryListData {
     continuation: Option<String>,
 }
 
+/// Escape a JSON string for safe embedding inside HTML `<script>` tags.
+/// Replaces `</` with `<\/` to prevent `</script>` breakout attacks.
+fn escape_json_for_script(json: &str) -> String {
+    json.replace("</", "<\\/")
+}
+
 /// Convert EntryWithFeed + summary statuses to SSR entries.
 fn entries_to_ssr(
     entries: Vec<entry::EntryWithFeed>,
@@ -111,6 +117,7 @@ fn fetch_entries_for_ssr(
     };
 
     let json = serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string());
+    let json = escape_json_for_script(&json);
     (json, data.continuation)
 }
 
@@ -709,6 +716,7 @@ pub async fn feeds_page(
     let feed_data_map: std::collections::HashMap<i64, &FeedRow> =
         feeds_data.iter().map(|f| (f.id, f)).collect();
     let feed_data_json = serde_json::to_string(&feed_data_map).unwrap_or_else(|_| "{}".to_string());
+    let feed_data_json = escape_json_for_script(&feed_data_json);
 
     (
         flash.clone(),

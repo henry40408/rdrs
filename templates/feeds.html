@@ -96,9 +96,9 @@
                 <td data-label="Unread"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>{% if feed.unread_count > 0 %}<strong>{{ feed.unread_count }}</strong>{% else %}0{% endif %}</td>
                 <td class="actions{% if feed.fetch_error.is_some() %} feed-error-no-border{% endif %}">
                     <a href="/feeds/{{ feed.id }}/entries">entries</a>
-                    <a href="#" onclick="refreshFeed('{{ feed.id }}'); return false;" id="refresh-{{ feed.id }}">refresh</a>
-                    <a href="#" onclick="editFeed({{ feed.id }}); return false;">edit</a>
-                    <a href="#" onclick="deleteFeed({{ feed.id }}, '{{ feed.title }}'); return false;">delete</a>
+                    <a href="#" data-action="refresh" data-feed-id="{{ feed.id }}" id="refresh-{{ feed.id }}">refresh</a>
+                    <a href="#" data-action="edit" data-feed-id="{{ feed.id }}">edit</a>
+                    <a href="#" data-action="delete" data-feed-id="{{ feed.id }}">delete</a>
                 </td>
             </tr>
             {% if let Some(error) = feed.fetch_error %}
@@ -442,6 +442,21 @@
             updateSyncStatus();
         }
     }
+
+    // Event delegation for feed action links
+    document.getElementById('feeds-table').addEventListener('click', function(e) {
+        const target = e.target.closest('[data-action]');
+        if (!target) return;
+        e.preventDefault();
+        const action = target.dataset.action;
+        const feedId = target.dataset.feedId;
+        if (action === 'refresh') refreshFeed(feedId);
+        else if (action === 'edit') editFeed(parseInt(feedId));
+        else if (action === 'delete') {
+            const feed = feedData[feedId];
+            if (feed) deleteFeed(parseInt(feedId), feed.title);
+        }
+    });
 
     document.getElementById('edit-modal').addEventListener('click', function(e) { if (e.target === this) this.close(); });
     document.getElementById('import-modal').addEventListener('click', function(e) { if (e.target === this) this.close(); });
