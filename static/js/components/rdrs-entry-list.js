@@ -20,17 +20,60 @@ class RdrsEntryList extends HTMLElement {
         this._fullContent = null;
         this._extraHandlers = {};
         this._popstateHandler = null;
+        this._ssrData = null; // SSR data from server, if available
     }
 
     connectedCallback() {
+        // Extract SSR data before _render() clears innerHTML
+        this._extractSsrData();
         this._render();
         this._setupDelegation();
         this._setupPersistedRestore();
         this._setupPopstate();
         // Pages that need to set API params before loading should add no-auto-load
         if (!this.hasAttribute('no-auto-load')) {
-            this.loadEntries();
+            // If we have SSR data, use it instead of fetching
+            if (this._ssrData) {
+                this._consumeSsrData();
+            } else {
+                this.loadEntries();
+            }
         }
+    }
+
+    /** Extract SSR data from embedded <script type="application/json"> tag. */
+    _extractSsrData() {
+        const script = this.querySelector('script.ssr-entries');
+        if (!script) return;
+        try {
+            const data = JSON.parse(script.textContent);
+            if (data && data.entries) {
+                this._ssrData = data;
+            }
+        } catch (e) {
+            // Invalid JSON, ignore
+        }
+    }
+
+    /** Consume SSR data: populate entries and render without a network request. */
+    _consumeSsrData() {
+        if (!this._ssrData) return;
+        const data = this._ssrData;
+        this._ssrData = null; // consumed, don't reuse
+
+        this.entries = data.entries;
+        this.continuation = data.continuation || null;
+
+        this.renderEntries();
+        this._updateLoadMore();
+        this._updateEntriesCount();
+        this._updateMarkAbove();
+
+        if (this.isUnreadMode) {
+            this._updateUnreadCount();
+        }
+
+        this._checkEntryParam();
     }
 
     disconnectedCallback() {
@@ -485,7 +528,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     }
 
     // --- Reading Pane: Full Entry Detail ---
-    async _loadInReadingPane(index, skipPushState = false) {
+    async _loadInReadingPane(index, skipPushState = false, replaceHistory = false) {
         const entry = this.entries[index];
         if (!entry) return;
 
@@ -523,6 +566,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             this._readingPaneData = data;
 
             this._renderReadingPaneDetail(pane, data, entry.id);
+            this._updateReadingPaneNav();
 
             // Scroll reading pane to top
             pane.scrollTop = 0;
@@ -536,7 +580,11 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 if (this.origin === 'starred') originQuery += '&starred_only=true';
                 if (this.origin === 'summarized') originQuery += '&has_summary=true';
                 const url = `/entries/${entry.id}${originQuery}`;
-                history.pushState({ entryId: entry.id, index }, '', url);
+                if (replaceHistory) {
+                    history.replaceState({ entryId: entry.id, index }, '', url);
+                } else {
+                    history.pushState({ entryId: entry.id, index }, '', url);
+                }
             }
 
             // Switch to entry keyboard mode
@@ -585,7 +633,13 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         const hasKagi = this.hasKagiConfigured;
 
         const backBtn = this._isMobileLayout()
-            ? `<div class="reading-pane-back" data-rp-action="back">&#8592; Back</div>`
+            ? `<div class="reading-pane-back">
+                <span data-rp-action="back" class="reading-pane-back-link">&#8592; Back</span>
+                <span class="reading-pane-nav">
+                    <button type="button" data-rp-action="prev-entry" class="reading-pane-nav-btn" aria-label="Previous entry">&#8249;</button>
+                    <button type="button" data-rp-action="next-entry" class="reading-pane-nav-btn" aria-label="Next entry">&#8250;</button>
+                </span>
+              </div>`
             : '';
 
         pane.innerHTML = `
@@ -618,6 +672,41 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         this._ensureReadingPaneActions(pane);
     }
 
+    _updateReadingPaneNav() {
+        const pane = this._getReadingPane();
+        if (!pane) return;
+        const prevBtn = pane.querySelector('[data-rp-action="prev-entry"]');
+        const nextBtn = pane.querySelector('[data-rp-action="next-entry"]');
+        if (!prevBtn || !nextBtn) return;
+
+        prevBtn.disabled = this.selectedIndex <= 0;
+        nextBtn.disabled = this.selectedIndex >= this.entries.length - 1 && !this.continuation;
+    }
+
+    async _navigateReadingPane(direction) {
+        const newIndex = this.selectedIndex + direction;
+
+        // Need to loadMore first
+        if (newIndex >= this.entries.length && this.continuation) {
+            try {
+                await this.loadMore();
+                if (newIndex < this.entries.length) {
+                    this.selectEntry(newIndex);
+                    this._loadInReadingPane(newIndex, false, true);
+                }
+            } catch (err) {
+                window.flash?.error('Failed to load more entries.');
+            }
+            this._updateReadingPaneNav();
+            return;
+        }
+
+        if (newIndex < 0 || newIndex >= this.entries.length) return;
+        this.selectEntry(newIndex);
+        this._loadInReadingPane(newIndex, false, true);
+        this._updateReadingPaneNav();
+    }
+
     _ensureReadingPaneActions(pane) {
         if (pane._rpActionsSetup) return;
         pane._rpActionsSetup = true;
@@ -631,6 +720,14 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
 
             if (action === 'back') {
                 history.back();
+                return;
+            }
+            if (action === 'prev-entry') {
+                this._navigateReadingPane(-1);
+                return;
+            }
+            if (action === 'next-entry') {
+                this._navigateReadingPane(1);
                 return;
             }
 
@@ -703,6 +800,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             if (!response.ok) throw new Error('Failed to mark as unread');
             window.flash.success('Marked as unread.');
             this._updateEntryField(entryId, 'read_at', null);
+            this._updateUnreadCount();
         } catch (err) {
             window.flash.error(err.message);
         }
@@ -998,6 +1096,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             { key: 'f', desc: 'Toggle full content' },
             { key: 'b', desc: 'Save to bookmarks' },
             { key: 'z', desc: 'Toggle Kagi summary' },
+            { key: 'r', desc: 'Refresh list' },
             { key: 'q / Esc', desc: 'Back to list' },
         ];
 
@@ -1082,6 +1181,9 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                             if (summarizeBtn && !summarizeBtn.disabled) list._rpSummarize(entryId);
                         }
                         return true;
+                    case 'r':
+                        list.loadEntries();
+                        return true;
                     case 'Escape':
                     case 'q':
                         // Go back — restore list URL
@@ -1134,13 +1236,54 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     }
 
     _updateUnreadCount() {
-        // Fetch the actual unread count from GReader API
+        // Fetch the actual unread count from GReader API and update sidebar badges
         fetch('/reader/api/0/unread-count')
             .then(r => r.json())
             .then(data => {
-                const total = data.unreadcounts?.find(u => u.id === 'user/-/state/com.google/reading-list');
+                const counts = data.unreadcounts || [];
+
+                // Update total unread badge
+                const total = counts.find(u => u.id === 'user/-/state/com.google/reading-list');
                 const el = document.getElementById('unread-count');
-                if (el && total) el.textContent = total.count;
+                if (el) {
+                    el.textContent = (total && total.count > 0) ? total.count : '';
+                }
+
+                // Update category badges
+                const catContainer = document.getElementById('sidebar-categories');
+                if (!catContainer) return;
+                const catLinks = catContainer.querySelectorAll('a.sidebar-item');
+                // Build a map of category numeric ID -> unread count
+                const countByLabel = {};
+                for (const uc of counts) {
+                    if (uc.id.includes('/label/')) {
+                        countByLabel[uc.id] = uc.count;
+                    }
+                }
+                for (const link of catLinks) {
+                    const badge = link.querySelector('.sidebar-badge');
+                    // Extract category label from link text
+                    const href = link.getAttribute('href') || '';
+                    // Find matching count by checking all label counts
+                    const labelId = Object.keys(countByLabel).find(id => {
+                        const name = id.split('/label/').pop();
+                        const nameSpan = link.querySelector('span:first-child');
+                        return nameSpan && nameSpan.textContent === name;
+                    });
+                    const count = labelId ? countByLabel[labelId] : 0;
+                    if (count > 0) {
+                        if (badge) {
+                            badge.textContent = count;
+                        } else {
+                            const span = document.createElement('span');
+                            span.className = 'sidebar-badge';
+                            span.textContent = count;
+                            link.appendChild(span);
+                        }
+                    } else if (badge) {
+                        badge.remove();
+                    }
+                }
             })
             .catch(() => {});
     }
@@ -1162,7 +1305,6 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 this.entries = this.entries.filter(e => e.id !== id);
                 this.renderEntries();
                 this._updateLoadMore();
-                this._updateUnreadCount();
                 this._updateMarkAbove();
                 // Adjust selection
                 if (this.selectedIndex >= this.entries.length) {
@@ -1173,10 +1315,8 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 }
             } else {
                 this._updateEntryField(id, 'read_at', new Date().toISOString());
-                if (this.isUnreadMode) {
-                    this._updateUnreadCount();
-                }
             }
+            this._updateUnreadCount();
         } catch (err) {
             window.flash.error(err.message);
         }
@@ -1193,6 +1333,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             });
             if (!response.ok) throw new Error('Failed to mark as unread');
             this._updateEntryField(id, 'read_at', null);
+            this._updateUnreadCount();
         } catch (err) {
             window.flash.error(err.message);
         }
@@ -1250,6 +1391,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             });
             if (!response.ok) throw new Error('Failed to mark entries as read');
             window.flash.success(`Marked ${this.entries.length} entries as read.`);
+            this._updateUnreadCount();
             this.loadEntries();
         } catch (err) {
             window.flash.error(err.message);

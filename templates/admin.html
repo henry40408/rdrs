@@ -15,7 +15,7 @@
 
     <h1>Admin Panel</h1>
 
-    <table>
+    <table class="mobile-cards">
         <thead>
             <tr>
                 <th>ID</th>
@@ -27,9 +27,31 @@
             </tr>
         </thead>
         <tbody id="users-table">
+            {% if users.is_empty() %}
             <tr>
-                <td colspan="6" class="muted">Loading...</td>
+                <td colspan="6" class="muted">No users found.</td>
             </tr>
+            {% else %}
+            {% for user in users %}
+            <tr>
+                <td data-label="ID">{{ user.id }}</td>
+                <td data-label="Username">{{ user.username }}</td>
+                <td data-label="Role">{{ user.role }}</td>
+                <td data-label="Status">{% if user.is_disabled %}<span class="error-text">disabled</span>{% else %}<span class="success-text">active</span>{% endif %}</td>
+                <td data-label="Created">{{ user.created_at }}</td>
+                <td class="actions">
+                    {% if user.id != current_user_id && user.id != original_user_id %}
+                    <a href="#" data-action="toggle-role" data-user-id="{{ user.id }}" data-role="{{ user.role }}">{% if user.role == "admin" %}demote{% else %}promote{% endif %}</a>
+                    <a href="#" data-action="toggle-disabled" data-user-id="{{ user.id }}" data-disabled="{{ user.is_disabled }}">{% if user.is_disabled %}enable{% else %}disable{% endif %}</a>
+                    <a href="#" data-action="masquerade" data-user-id="{{ user.id }}">view as</a>
+                    <a href="#" data-action="delete" data-user-id="{{ user.id }}">delete</a>
+                    {% else %}
+                    <span class="muted">(you)</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            {% endif %}
         </tbody>
     </table>
 
@@ -41,55 +63,31 @@
     const currentUserId = {{ current_user_id }};
     const originalUserId = {{ original_user_id }};
 
-    async function loadUsers() {
-        try {
-            const response = await fetch('/api/admin/users');
-            if (!response.ok) throw new Error('Failed to load users');
-            const users = await response.json();
-            renderUsers(users);
-        } catch (err) {
-            document.getElementById('users-table').innerHTML =
-                '<tr><td colspan="6">Failed to load users</td></tr>';
-        }
-    }
-
-    function renderUsers(users) {
-        const tbody = document.getElementById('users-table');
-        tbody.innerHTML = users.map(user => {
-            const isCurrentUser = user.id === currentUserId;
-            const isOriginalUser = user.id === originalUserId;
-            const isSelf = isCurrentUser || isOriginalUser;
-            const isDisabled = user.disabled_at !== null;
-
-            return `
-                <tr>
-                    <td>${user.id}</td>
-                    <td>${escapeHtml(user.username)}</td>
-                    <td>${user.role}</td>
-                    <td>${isDisabled ? '<span class="error-text">disabled</span>' : '<span class="success-text">active</span>'}</td>
-                    <td>${formatDate(user.created_at)}</td>
-                    <td class="actions">
-                        ${!isSelf ? `
-                            <a href="#" onclick="toggleRole(${user.id}, '${user.role}'); return false;">${user.role === 'admin' ? 'demote' : 'promote'}</a>
-                            <a href="#" onclick="toggleDisabled(${user.id}, ${isDisabled}); return false;">${isDisabled ? 'enable' : 'disable'}</a>
-                            <a href="#" onclick="masquerade(${user.id}); return false;">view as</a>
-                            <a href="#" onclick="deleteUser(${user.id}, '${escapeHtml(user.username)}'); return false;">delete</a>
-                        ` : '<span class="muted">(you)</span>'}
-                    </td>
-                </tr>
-            `;
-        }).join('');
-    }
-
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
 
-    function formatDate(dateStr) {
-        return dateStr.split('T')[0];
+    function reloadPage() {
+        window.location.reload();
     }
+
+    // Event delegation for user action links
+    document.getElementById('users-table').addEventListener('click', function(e) {
+        const target = e.target.closest('[data-action]');
+        if (!target) return;
+        e.preventDefault();
+        const action = target.dataset.action;
+        const userId = parseInt(target.dataset.userId);
+        if (action === 'toggle-role') toggleRole(userId, target.dataset.role);
+        else if (action === 'toggle-disabled') toggleDisabled(userId, target.dataset.disabled === 'true');
+        else if (action === 'masquerade') masquerade(userId);
+        else if (action === 'delete') {
+            const username = target.closest('tr').querySelector('[data-label="Username"]').textContent;
+            deleteUser(userId, username);
+        }
+    });
 
     async function toggleRole(userId, currentRole) {
         const newRole = currentRole === 'admin' ? 'user' : 'admin';
@@ -104,7 +102,7 @@
                 throw new Error(error.error || 'Failed to update role');
             }
             flash.success(`Role updated to ${newRole}.`);
-            loadUsers();
+            reloadPage();
         } catch (err) {
             flash.error(err.message);
         }
@@ -122,7 +120,7 @@
                 throw new Error(error.error || 'Failed to update user status');
             }
             flash.success(isCurrentlyDisabled ? 'User enabled.' : 'User disabled.');
-            loadUsers();
+            reloadPage();
         } catch (err) {
             flash.error(err.message);
         }
@@ -150,12 +148,10 @@
                 throw new Error(error.error || 'Failed to delete user');
             }
             flash.success(`User "${username}" deleted.`);
-            loadUsers();
+            reloadPage();
         } catch (err) {
             flash.error(err.message);
         }
     }
-
-    loadUsers();
 </script>
 {% endblock %}

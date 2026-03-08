@@ -36,7 +36,7 @@
                     reading-pane="#reading-pane"
                     {% if has_save_services %}has-save-services{% endif %}
                     {% if has_kagi_configured %}has-kagi-configured{% endif %}
-                ></rdrs-entry-list>
+                ><script type="application/json" class="ssr-entries">{{ ssr_entries_json|safe }}</script></rdrs-entry-list>
             </div>
         </div>
 
