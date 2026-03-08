@@ -15,7 +15,7 @@
 
     <h1>Admin Panel</h1>
 
-    <table>
+    <table class="mobile-cards">
         <thead>
             <tr>
                 <th>ID</th>
@@ -34,11 +34,11 @@
             {% else %}
             {% for user in users %}
             <tr>
-                <td>{{ user.id }}</td>
-                <td>{{ user.username }}</td>
-                <td>{{ user.role }}</td>
-                <td>{% if user.is_disabled %}<span class="error-text">disabled</span>{% else %}<span class="success-text">active</span>{% endif %}</td>
-                <td>{{ user.created_at }}</td>
+                <td data-label="ID">{{ user.id }}</td>
+                <td data-label="Username">{{ user.username }}</td>
+                <td data-label="Role">{{ user.role }}</td>
+                <td data-label="Status">{% if user.is_disabled %}<span class="error-text">disabled</span>{% else %}<span class="success-text">active</span>{% endif %}</td>
+                <td data-label="Created">{{ user.created_at }}</td>
                 <td class="actions">
                     {% if user.id != current_user_id && user.id != original_user_id %}
                     <a href="#" onclick="toggleRole({{ user.id }}, '{{ user.role }}'); return false;">{% if user.role == "admin" %}demote{% else %}promote{% endif %}</a>
