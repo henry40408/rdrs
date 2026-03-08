@@ -566,6 +566,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             this._readingPaneData = data;
 
             this._renderReadingPaneDetail(pane, data, entry.id);
+            this._updateReadingPaneNav();
 
             // Scroll reading pane to top
             pane.scrollTop = 0;
@@ -628,7 +629,13 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         const hasKagi = this.hasKagiConfigured;
 
         const backBtn = this._isMobileLayout()
-            ? `<div class="reading-pane-back" data-rp-action="back">&#8592; Back</div>`
+            ? `<div class="reading-pane-back">
+                <span data-rp-action="back" class="reading-pane-back-link">&#8592; Back</span>
+                <span class="reading-pane-nav">
+                    <button type="button" data-rp-action="prev-entry" class="reading-pane-nav-btn" aria-label="Previous entry">&#8249;</button>
+                    <button type="button" data-rp-action="next-entry" class="reading-pane-nav-btn" aria-label="Next entry">&#8250;</button>
+                </span>
+              </div>`
             : '';
 
         pane.innerHTML = `
@@ -661,6 +668,42 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         this._ensureReadingPaneActions(pane);
     }
 
+    _updateReadingPaneNav() {
+        const pane = this._getReadingPane();
+        if (!pane) return;
+        const prevBtn = pane.querySelector('[data-rp-action="prev-entry"]');
+        const nextBtn = pane.querySelector('[data-rp-action="next-entry"]');
+        if (!prevBtn || !nextBtn) return;
+
+        prevBtn.disabled = this.selectedIndex <= 0;
+        nextBtn.disabled = this.selectedIndex >= this.entries.length - 1 && !this.continuation;
+    }
+
+    async _navigateReadingPane(direction) {
+        const newIndex = this.selectedIndex + direction;
+
+        // Need to loadMore first
+        if (newIndex >= this.entries.length && this.continuation) {
+            try {
+                await this.loadMore();
+                // After loadMore, check if we actually got new entries
+                if (newIndex < this.entries.length) {
+                    this.selectEntry(newIndex);
+                    this._loadInReadingPane(newIndex);
+                }
+            } catch (err) {
+                window.flash?.error('Failed to load more entries.');
+            }
+            this._updateReadingPaneNav();
+            return;
+        }
+
+        if (newIndex < 0 || newIndex >= this.entries.length) return;
+        this.selectEntry(newIndex);
+        this._loadInReadingPane(newIndex);
+        this._updateReadingPaneNav();
+    }
+
     _ensureReadingPaneActions(pane) {
         if (pane._rpActionsSetup) return;
         pane._rpActionsSetup = true;
@@ -674,6 +717,14 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
 
             if (action === 'back') {
                 history.back();
+                return;
+            }
+            if (action === 'prev-entry') {
+                this._navigateReadingPane(-1);
+                return;
+            }
+            if (action === 'next-entry') {
+                this._navigateReadingPane(1);
                 return;
             }
 

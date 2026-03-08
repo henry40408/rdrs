@@ -1723,11 +1723,9 @@
             .reading-pane-back {
                 display: flex;
                 align-items: center;
-                gap: var(--space-2);
+                justify-content: space-between;
                 padding: var(--space-3) var(--space-4);
                 border-bottom: 1px solid var(--color-border-light);
-                color: var(--color-link);
-                cursor: pointer;
                 font-size: var(--font-sm);
                 background: var(--color-bg);
                 position: sticky;
@@ -1735,8 +1733,39 @@
                 z-index: 1;
             }
 
-            .reading-pane-back:hover {
+            .reading-pane-back-link {
+                color: var(--color-link);
+                cursor: pointer;
+            }
+
+            .reading-pane-back-link:hover {
                 color: var(--color-link-hover);
+            }
+
+            .reading-pane-nav {
+                display: flex;
+                gap: var(--space-2);
+            }
+
+            .reading-pane-nav-btn {
+                background: none;
+                border: 1px solid var(--color-border);
+                border-radius: var(--radius-md);
+                color: var(--color-link);
+                cursor: pointer;
+                font-size: var(--font-lg);
+                line-height: 1;
+                padding: var(--space-1) var(--space-3);
+            }
+
+            .reading-pane-nav-btn:hover:not(:disabled) {
+                background: var(--color-bg-secondary);
+                color: var(--color-link-hover);
+            }
+
+            .reading-pane-nav-btn:disabled {
+                opacity: 0.3;
+                cursor: default;
             }
 
             .entry-item {
