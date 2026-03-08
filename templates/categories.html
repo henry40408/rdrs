@@ -34,9 +34,29 @@
             </tr>
         </thead>
         <tbody id="categories-table" data-testid="categories-table">
+            {% if categories.is_empty() %}
             <tr>
-                <td colspan="3" class="muted">Loading...</td>
+                <td colspan="3" class="muted">No categories yet.</td>
             </tr>
+            {% else %}
+            {% for cat in categories %}
+            <tr id="row-{{ loop.index0 }}" data-tag-id="user/-/label/{{ cat.name }}">
+                <td data-label="Name">
+                    <span class="cat-name">{{ cat.name }}</span>
+                    <input type="text" class="cat-edit-input" value="{{ cat.name }}" style="display:none;" maxlength="100">
+                </td>
+                <td data-label="Feeds">{{ cat.feed_count }}</td>
+                <td class="actions">
+                    <a href="/feeds?category=user%2F-%2Flabel%2F{{ cat.name|urlencode }}">feeds</a>
+                    <a href="/categories/{{ cat.id }}/entries">entries</a>
+                    <a href="#" class="edit-btn" onclick="startEdit({{ loop.index0 }}); return false;">rename</a>
+                    <a href="#" class="save-btn" onclick="saveEdit({{ loop.index0 }}); return false;" style="display:none;">save</a>
+                    <a href="#" class="cancel-btn" onclick="cancelEdit({{ loop.index0 }}); return false;" style="display:none;">cancel</a>
+                    <a href="#" onclick="deleteCategory(this.closest('tr').dataset.tagId, '{{ cat.name }}'); return false;">delete</a>
+                </td>
+            </tr>
+            {% endfor %}
+            {% endif %}
         </tbody>
     </table>
 
@@ -45,42 +65,13 @@
 </div>
 
 <script>
-    let feeds = [];
-
-    async function loadCategories() {
-        try {
-            const [catResponse, feedResponse] = await Promise.all([
-                fetch('/reader/api/0/tag/list'),
-                fetch('/reader/api/0/subscription/list')
-            ]);
-            if (!catResponse.ok) throw new Error('Failed to load categories');
-            const catData = await catResponse.json();
-            const categories = catData.tags
-                .filter(tag => tag.id.includes('/label/'))
-                .map(tag => {
-                    const name = tag.id.split('/label/').pop();
-                    const numericId = parseInt(tag.sortid, 16);
-                    return { id: tag.id, name: name, numericId: numericId };
-                });
-
-            if (feedResponse.ok) {
-                const feedData = await feedResponse.json();
-                feeds = feedData.subscriptions.map(sub => {
-                    const catId = sub.categories.length > 0 ? sub.categories[0].id : '';
-                    return { category_id: catId };
-                });
-            } else {
-                feeds = [];
-            }
-
-            renderCategories(categories);
-        } catch (err) {
-            document.getElementById('categories-table').innerHTML =
-                '<tr><td colspan="3">Failed to load categories</td></tr>';
-        }
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
-    function renderCategories(categories) {
+    function renderCategories(categories, feeds) {
         const tbody = document.getElementById('categories-table');
         if (categories.length === 0) {
             tbody.innerHTML = '<tr><td colspan="3" class="muted">No categories yet.</td></tr>';
@@ -108,10 +99,36 @@
         `}).join('');
     }
 
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+    async function reloadCategories() {
+        try {
+            const [catResponse, feedResponse] = await Promise.all([
+                fetch('/reader/api/0/tag/list'),
+                fetch('/reader/api/0/subscription/list')
+            ]);
+            if (!catResponse.ok) throw new Error('Failed to load categories');
+            const catData = await catResponse.json();
+            const categories = catData.tags
+                .filter(tag => tag.id.includes('/label/'))
+                .map(tag => {
+                    const name = tag.id.split('/label/').pop();
+                    const numericId = parseInt(tag.sortid, 16);
+                    return { id: tag.id, name: name, numericId: numericId };
+                });
+
+            let feeds = [];
+            if (feedResponse.ok) {
+                const feedData = await feedResponse.json();
+                feeds = feedData.subscriptions.map(sub => {
+                    const catId = sub.categories.length > 0 ? sub.categories[0].id : '';
+                    return { category_id: catId };
+                });
+            }
+
+            renderCategories(categories, feeds);
+        } catch (err) {
+            document.getElementById('categories-table').innerHTML =
+                '<tr><td colspan="3">Failed to load categories</td></tr>';
+        }
     }
 
     async function addCategory(event) {
@@ -134,7 +151,7 @@
             }
             nameInput.value = '';
             flash.success('Category created.');
-            loadCategories();
+            reloadCategories();
         } catch (err) {
             flash.error(err.message);
         }
@@ -181,18 +198,14 @@
                 throw new Error(text || 'Failed to update category');
             }
             flash.success('Category renamed.');
-            loadCategories();
+            reloadCategories();
         } catch (err) {
             flash.error(err.message);
         }
     }
 
     async function deleteCategory(tagId, name) {
-        const feedCount = feeds.filter(f => f.category_id === tagId).length;
         let message = `Delete category "${name}"?`;
-        if (feedCount > 0) {
-            message += ` This will also delete ${feedCount} feed${feedCount > 1 ? 's' : ''}.`;
-        }
         message += ' This cannot be undone.';
         if (!confirm(message)) return;
         try {
@@ -207,12 +220,10 @@
                 throw new Error(text || 'Failed to delete category');
             }
             flash.success(`Category "${name}" deleted.`);
-            loadCategories();
+            reloadCategories();
         } catch (err) {
             flash.error(err.message);
         }
     }
-
-    loadCategories();
 </script>
 {% endblock %}

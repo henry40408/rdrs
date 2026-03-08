@@ -20,17 +20,60 @@ class RdrsEntryList extends HTMLElement {
         this._fullContent = null;
         this._extraHandlers = {};
         this._popstateHandler = null;
+        this._ssrData = null; // SSR data from server, if available
     }
 
     connectedCallback() {
+        // Extract SSR data before _render() clears innerHTML
+        this._extractSsrData();
         this._render();
         this._setupDelegation();
         this._setupPersistedRestore();
         this._setupPopstate();
         // Pages that need to set API params before loading should add no-auto-load
         if (!this.hasAttribute('no-auto-load')) {
-            this.loadEntries();
+            // If we have SSR data, use it instead of fetching
+            if (this._ssrData) {
+                this._consumeSsrData();
+            } else {
+                this.loadEntries();
+            }
         }
+    }
+
+    /** Extract SSR data from embedded <script type="application/json"> tag. */
+    _extractSsrData() {
+        const script = this.querySelector('script.ssr-entries');
+        if (!script) return;
+        try {
+            const data = JSON.parse(script.textContent);
+            if (data && data.entries) {
+                this._ssrData = data;
+            }
+        } catch (e) {
+            // Invalid JSON, ignore
+        }
+    }
+
+    /** Consume SSR data: populate entries and render without a network request. */
+    _consumeSsrData() {
+        if (!this._ssrData) return;
+        const data = this._ssrData;
+        this._ssrData = null; // consumed, don't reuse
+
+        this.entries = data.entries;
+        this.continuation = data.continuation || null;
+
+        this.renderEntries();
+        this._updateLoadMore();
+        this._updateEntriesCount();
+        this._updateMarkAbove();
+
+        if (this.isUnreadMode) {
+            this._updateUnreadCount();
+        }
+
+        this._checkEntryParam();
     }
 
     disconnectedCallback() {

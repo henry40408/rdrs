@@ -30,7 +30,13 @@
         <div class="form-group">
             <label for="category">Category</label>
             <select id="category" name="category" required data-testid="feed-category-select">
-                <option value="">Loading categories...</option>
+                {% if categories.is_empty() %}
+                <option value="">No categories available</option>
+                {% else %}
+                {% for cat in categories %}
+                <option value="user/-/label/{{ cat.name }}">{{ cat.name }}</option>
+                {% endfor %}
+                {% endif %}
             </select>
         </div>
         <button type="submit" id="add-btn" data-testid="add-feed-btn">Add Feed</button>
@@ -46,7 +52,10 @@
         <div class="form-group form-group-inline">
             <label for="filter-category">Category</label>
             <select id="filter-category" onchange="handleFilterChange()" class="select-auto">
-                <option value="">All Categories</option>
+                <option value="">All Categories ({{ feeds.len() }})</option>
+                {% for cat in categories %}
+                <option value="{{ cat.id }}">{{ cat.name }} ({{ cat.feed_count }})</option>
+                {% endfor %}
             </select>
         </div>
         <div class="form-group form-group-inline">
@@ -75,9 +84,32 @@
             </tr>
         </thead>
         <tbody id="feeds-table" data-testid="feeds-table">
+            {% if feeds.is_empty() %}
             <tr>
-                <td colspan="4" class="muted">Loading...</td>
+                <td colspan="4" class="muted">No feeds yet.</td>
             </tr>
+            {% else %}
+            {% for feed in feeds %}
+            <tr id="row-feed-{{ feed.id }}" data-feed-id="{{ feed.id }}" data-category-id="{{ feed.category_id }}" data-has-error="{{ feed.fetch_error.is_some() }}" {% if feed.fetch_error.is_some() %}class="feed-error-no-border"{% endif %}>
+                <td data-label="Title"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>{% if feed.has_icon %}<img src="/api/feeds/{{ feed.id }}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">{% endif %}<span title="{{ feed.url }}">{{ feed.title }}</span></td>
+                <td data-label="Category"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>{{ feed.category_name }}</td>
+                <td data-label="Unread"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>{% if feed.unread_count > 0 %}<strong>{{ feed.unread_count }}</strong>{% else %}0{% endif %}</td>
+                <td class="actions{% if feed.fetch_error.is_some() %} feed-error-no-border{% endif %}">
+                    <a href="/feeds/{{ feed.id }}/entries">entries</a>
+                    <a href="#" onclick="refreshFeed('{{ feed.id }}'); return false;" id="refresh-{{ feed.id }}">refresh</a>
+                    <a href="#" onclick="editFeed({{ feed.id }}); return false;">edit</a>
+                    <a href="#" onclick="deleteFeed({{ feed.id }}, '{{ feed.title }}'); return false;">delete</a>
+                </td>
+            </tr>
+            {% if let Some(error) = feed.fetch_error %}
+            <tr class="error-row" data-feed-id="{{ feed.id }}" data-is-error-row="true">
+                <td colspan="4" class="error-text feed-error-cell">
+                    Error: {{ error }}
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+            {% endif %}
         </tbody>
     </table>
 
@@ -127,6 +159,9 @@
             <div class="form-group">
                 <label for="edit-category">Category</label>
                 <select id="edit-category" name="category" required>
+                    {% for cat in categories %}
+                    <option value="user/-/label/{{ cat.name }}">{{ cat.name }}</option>
+                    {% endfor %}
                 </select>
             </div>
             <details class="feed-http-settings">
@@ -162,16 +197,22 @@
 </div>
 
 <script>
-    let categories = [];
-    let feeds = [];
-    let unreadStats = { by_feed: {}, by_category: {} };
     let activeSyncs = new Set();
+
+    // Feed data embedded from server for edit/delete operations
+    const feedData = {{ feed_data_json|safe }};
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
 
     function updateSyncStatus() {
         const bar = document.getElementById('sync-status-bar');
         const text = document.getElementById('sync-status-text');
         if (!bar || !text) return;
-
         if (activeSyncs.size > 0) {
             bar.classList.add('active');
             text.textContent = activeSyncs.size === 1
@@ -182,104 +223,30 @@
         }
     }
 
-    async function loadCategories() {
-        try {
-            const response = await fetch('/reader/api/0/tag/list');
-            if (!response.ok) throw new Error('Failed to load categories');
-            const data = await response.json();
-            categories = data.tags
-                .filter(tag => tag.id.includes('/label/'))
-                .map(tag => {
-                    const name = tag.id.split('/label/').pop();
-                    return { id: tag.id, name: name };
-                });
-            updateCategoryDropdowns();
-        } catch (err) {
-            flash.error(err.message);
-        }
-    }
+    // Client-side filtering and sorting of the SSR table
+    function handleFilterChange() {
+        const filterCategory = document.getElementById('filter-category').value;
+        const filterErrors = document.getElementById('filter-errors').checked;
+        const tbody = document.getElementById('feeds-table');
+        const rows = tbody.querySelectorAll('tr[data-feed-id]');
 
-    function updateCategoryDropdowns() {
-        const addSelect = document.getElementById('category');
-        const filterSelect = document.getElementById('filter-category');
-        const editSelect = document.getElementById('edit-category');
+        rows.forEach(row => {
+            if (row.dataset.isErrorRow) return; // handled with its parent
+            const catId = row.dataset.categoryId;
+            const hasError = row.dataset.hasError === 'true';
+            const feedId = row.dataset.feedId;
 
-        if (categories.length === 0) {
-            addSelect.innerHTML = '<option value="">No categories available</option>';
-        } else {
-            addSelect.innerHTML = categories.map(cat =>
-                `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.name)}</option>`
-            ).join('');
-        }
+            let show = true;
+            if (filterCategory && catId !== filterCategory) show = false;
+            if (filterErrors && !hasError) show = false;
 
-        updateFilterDropdown();
+            row.style.display = show ? '' : 'none';
+            // Also toggle error row
+            const errorRow = tbody.querySelector(`tr[data-is-error-row="true"][data-feed-id="${feedId}"]`);
+            if (errorRow) errorRow.style.display = show ? '' : 'none';
+        });
 
-        editSelect.innerHTML = categories.map(cat =>
-            `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.name)}</option>`
-        ).join('');
-    }
-
-    function updateFilterDropdown() {
-        const filterSelect = document.getElementById('filter-category');
-        const currentValue = filterSelect.value;
-
-        filterSelect.innerHTML = `<option value="">All Categories (${feeds.length})</option>` +
-            categories.map(cat => {
-                const count = feeds.filter(f => f.category_id === cat.id).length;
-                return `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.name)} (${count})</option>`;
-            }).join('');
-
-        filterSelect.value = currentValue;
-    }
-
-    async function loadFeeds() {
-        try {
-            const response = await fetch('/reader/api/0/subscription/list');
-            if (!response.ok) throw new Error('Failed to load feeds');
-            const data = await response.json();
-            feeds = data.subscriptions.map(sub => {
-                const catId = sub.categories.length > 0 ? sub.categories[0].id : '';
-                return {
-                    id: sub.id,
-                    url: sub.url,
-                    title: sub.title,
-                    site_url: sub.htmlUrl,
-                    category_id: catId,
-                    has_icon: sub.iconUrl !== '',
-                    icon_url: sub.iconUrl,
-                    fetch_error: sub._fetchError || null,
-                    description: sub._description || null,
-                    custom_user_agent: sub._customUserAgent || null,
-                    http2_disabled: sub._http2Disabled || false,
-                    custom_referrer: sub._customReferrer || null,
-                    _feedId: sub._feedId ? String(sub._feedId) : null,
-                };
-            });
-            updateFilterDropdown();
-            renderFeeds();
-        } catch (err) {
-            document.getElementById('feeds-table').innerHTML =
-                '<tr><td colspan="5">Failed to load feeds</td></tr>';
-        }
-    }
-
-    async function loadUnreadStats() {
-        try {
-            const response = await fetch('/reader/api/0/unread-count');
-            if (!response.ok) throw new Error('Failed to load unread stats');
-            const data = await response.json();
-            unreadStats = { by_feed: {}, by_category: {} };
-            for (const uc of data.unreadcounts || []) {
-                if (uc.id.startsWith('feed/')) {
-                    unreadStats.by_feed[uc.id] = uc.count;
-                } else if (uc.id.includes('/label/')) {
-                    unreadStats.by_category[uc.id] = uc.count;
-                }
-            }
-            renderFeeds();
-        } catch (err) {
-            console.error(err);
-        }
+        updateURL();
     }
 
     function updateURL() {
@@ -287,129 +254,50 @@
         const categoryId = document.getElementById('filter-category').value;
         const sortBy = document.getElementById('sort-by').value;
         const filterErrors = document.getElementById('filter-errors').checked;
-
         if (categoryId) params.set('category', categoryId);
         if (sortBy && sortBy !== 'title') params.set('sort', sortBy);
         if (filterErrors) params.set('errors', '1');
-
         const newURL = params.toString() ? `/feeds?${params.toString()}` : '/feeds';
         history.replaceState(null, '', newURL);
     }
 
-    function handleFilterChange() {
-        updateURL();
-        renderFeeds();
-    }
-
-    function renderFeeds() {
-        const tbody = document.getElementById('feeds-table');
-        const filterCategory = document.getElementById('filter-category').value;
-        const filterErrors = document.getElementById('filter-errors').checked;
-        const sortBy = document.getElementById('sort-by').value;
-
-        let filteredFeeds = feeds.slice();
-        if (filterCategory) filteredFeeds = filteredFeeds.filter(f => f.category_id === filterCategory);
-        if (filterErrors) filteredFeeds = filteredFeeds.filter(f => f.fetch_error !== null);
-
-        filteredFeeds.sort((a, b) => {
-            switch (sortBy) {
-                case 'unread':
-                    return (unreadStats.by_feed[b.id] || 0) - (unreadStats.by_feed[a.id] || 0);
-                case 'category':
-                    const catA = categories.find(c => c.id === a.category_id);
-                    const catB = categories.find(c => c.id === b.category_id);
-                    return (catA ? catA.name : '').localeCompare(catB ? catB.name : '');
-                default:
-                    return (a.title || a.url).toLowerCase().localeCompare((b.title || b.url).toLowerCase());
-            }
-        });
-
-        if (filteredFeeds.length === 0) {
-            const msg = filterErrors ? 'No feeds with errors.' : 'No feeds yet.';
-            tbody.innerHTML = `<tr><td colspan="4" class="muted">${msg}</td></tr>`;
-            return;
-        }
-
-        tbody.innerHTML = filteredFeeds.map(feed => {
-            const category = categories.find(c => c.id === feed.category_id);
-            const categoryName = category ? category.name : 'Unknown';
-            const title = feed.title || feed.url;
-            const hasError = feed.fetch_error !== null;
-            const feedNumericId = feed._feedId;
-            const iconHtml = feed.has_icon && feed.icon_url
-                ? `<img src="${escapeHtml(feed.icon_url)}" alt="" class="feed-icon" onerror="this.style.display='none'">`
-                : '';
-            const unreadCount = unreadStats.by_feed[feed.id] || 0;
-            const feedIdAttr = escapeHtml(feed.id);
-            const entriesHref = feedNumericId ? `/feeds/${feedNumericId}/entries` : '#';
-
-            let rows = `
-            <tr id="row-${feedIdAttr}"${hasError ? ' class="feed-error-no-border"' : ''}>
-                <td data-label="Title"${hasError ? ' class="feed-error-no-border"' : ''}>${iconHtml}<span title="${escapeHtml(feed.url)}">${escapeHtml(title)}</span></td>
-                <td data-label="Category"${hasError ? ' class="feed-error-no-border"' : ''}>${escapeHtml(categoryName)}</td>
-                <td data-label="Unread"${hasError ? ' class="feed-error-no-border"' : ''}>${unreadCount > 0 ? `<strong>${unreadCount}</strong>` : '0'}</td>
-                <td class="actions${hasError ? ' feed-error-no-border' : ''}">
-                    <a href="${entriesHref}">entries</a>
-                    ${feedNumericId ? `<a href="#" onclick="refreshFeed('${feedNumericId}'); return false;" id="refresh-${feedNumericId}">refresh</a>` : ''}
-                    <a href="#" onclick="editFeed('${feedIdAttr}'); return false;">edit</a>
-                    <a href="#" onclick="deleteFeed('${feedIdAttr}', '${escapeHtml(title).replace(/'/g, "\\'")}'); return false;">delete</a>
-                </td>
-            </tr>`;
-
-            if (hasError) {
-                rows += `
-            <tr class="error-row">
-                <td colspan="4" class="error-text feed-error-cell">
-                    Error: ${escapeHtml(feed.fetch_error)}
-                </td>
-            </tr>`;
-            }
-
-            return rows;
-        }).join('');
-    }
-
-    function escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
+    // Restore filter state from URL
+    (function restoreFilters() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const categoryId = urlParams.get('category');
+        const sortBy = urlParams.get('sort');
+        const filterErrors = urlParams.get('errors');
+        if (categoryId) document.getElementById('filter-category').value = categoryId;
+        if (sortBy) document.getElementById('sort-by').value = sortBy;
+        if (filterErrors) document.getElementById('filter-errors').checked = true;
+        if (categoryId || filterErrors) handleFilterChange();
+    })();
 
     async function addFeed(event) {
         event.preventDefault();
         const urlInput = document.getElementById('url');
         const categorySelect = document.getElementById('category');
         const addBtn = document.getElementById('add-btn');
-
         const url = urlInput.value.trim();
         const categoryLabel = categorySelect.value;
-
         if (!url) { flash.error('URL cannot be empty'); return; }
         if (!categoryLabel) { flash.error('Please select a category'); return; }
-
         addBtn.textContent = 'Adding...';
         addBtn.disabled = true;
-
         try {
             const body = new URLSearchParams();
             body.set('ac', 'subscribe');
             body.set('s', `feed/${url}`);
             body.set('a', categoryLabel);
-
             const response = await fetch('/reader/api/0/subscription/edit', {
-                method: 'POST',
-                body: body
+                method: 'POST', body: body
             });
-
             if (!response.ok) {
                 const text = await response.text();
                 throw new Error(text || 'Failed to add feed');
             }
-
             urlInput.value = '';
-            flash.success('Feed added.');
-            loadFeeds();
+            flash.redirect(window.location.pathname + window.location.search, 'success', 'Feed added.');
         } catch (err) {
             flash.error(err.message);
         } finally {
@@ -419,14 +307,19 @@
     }
 
     function editFeed(id) {
-        const feed = feeds.find(f => f.id === id);
+        const feed = feedData[id];
         if (!feed) return;
-        document.getElementById('edit-id').value = feed.id;
+        document.getElementById('edit-id').value = `feed/${feed.url}`;
         document.getElementById('edit-url').value = feed.url;
         document.getElementById('edit-title').value = feed.title || '';
         document.getElementById('edit-description').value = feed.description || '';
         document.getElementById('edit-site-url').value = feed.site_url || '';
-        document.getElementById('edit-category').value = feed.category_id;
+        // Set category by matching category_name
+        const catSelect = document.getElementById('edit-category');
+        const targetLabel = `user/-/label/${feed.category_name}`;
+        for (const opt of catSelect.options) {
+            if (opt.value === targetLabel) { opt.selected = true; break; }
+        }
         document.getElementById('edit-custom-user-agent').value = feed.custom_user_agent || '';
         document.getElementById('edit-custom-referrer').value = feed.custom_referrer || '';
         document.getElementById('edit-http2-disabled').checked = feed.http2_disabled;
@@ -478,9 +371,7 @@
         const customUserAgent = document.getElementById('edit-custom-user-agent').value.trim();
         const customReferrer = document.getElementById('edit-custom-referrer').value.trim();
         const http2Disabled = document.getElementById('edit-http2-disabled').checked;
-
         if (!url) { flash.error('URL cannot be empty'); return; }
-
         try {
             const body = new URLSearchParams();
             body.set('ac', 'edit');
@@ -492,73 +383,62 @@
             body.set('custom_user_agent', customUserAgent);
             body.set('custom_referrer', customReferrer);
             body.set('http2_disabled', http2Disabled ? 'true' : 'false');
-
             const response = await fetch('/reader/api/0/subscription/edit', {
-                method: 'POST',
-                body: body
+                method: 'POST', body: body
             });
-
             if (!response.ok) {
                 const text = await response.text();
                 throw new Error(text || 'Failed to update feed');
             }
-
             closeEditModal();
-            flash.success('Feed updated.');
-            loadFeeds();
+            flash.redirect(window.location.pathname + window.location.search, 'success', 'Feed updated.');
         } catch (err) {
             flash.error(err.message);
         }
     }
 
-    async function deleteFeed(streamId, title) {
+    async function deleteFeed(feedId, title) {
+        const feed = feedData[feedId];
+        if (!feed) return;
         if (!confirm(`Delete feed "${title}"? This cannot be undone.`)) return;
         try {
             const body = new URLSearchParams();
             body.set('ac', 'unsubscribe');
-            body.set('s', streamId);
+            body.set('s', `feed/${feed.url}`);
             const response = await fetch('/reader/api/0/subscription/edit', {
-                method: 'POST',
-                body: body
+                method: 'POST', body: body
             });
             if (!response.ok) {
                 const text = await response.text();
                 throw new Error(text || 'Failed to delete feed');
             }
-            flash.success(`Feed "${title}" deleted.`);
-            loadFeeds();
+            flash.redirect(window.location.pathname + window.location.search, 'success', `Feed "${title}" deleted.`);
         } catch (err) {
             flash.error(err.message);
         }
     }
 
-    async function refreshFeed(feedNumericId) {
-        const id = feedNumericId;
-        const btn = document.getElementById(`refresh-${id}`);
+    async function refreshFeed(feedId) {
+        const btn = document.getElementById(`refresh-${feedId}`);
         const row = btn ? btn.closest('tr') : null;
         const originalText = btn ? btn.textContent : '';
-
         btn.textContent = '...';
         row?.classList.add('feed-row-syncing');
-        activeSyncs.add(id);
+        activeSyncs.add(feedId);
         updateSyncStatus();
-
         try {
-            const response = await fetch(`/api/feeds/${id}/refresh`, { method: 'POST' });
+            const response = await fetch(`/api/feeds/${feedId}/refresh`, { method: 'POST' });
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to refresh feed');
             }
             const result = await response.json();
-            flash.success(`Refreshed: ${result.new_entries} new, ${result.updated_entries} updated.`);
-            loadFeeds();
-            loadUnreadStats();
+            flash.redirect(window.location.pathname + window.location.search, 'success', `Refreshed: ${result.new_entries} new, ${result.updated_entries} updated.`);
         } catch (err) {
             flash.error(err.message);
-        } finally {
             btn.textContent = originalText;
             row?.classList.remove('feed-row-syncing');
-            activeSyncs.delete(id);
+            activeSyncs.delete(feedId);
             updateSyncStatus();
         }
     }
@@ -593,9 +473,7 @@
                 throw new Error(text || 'Failed to import OPML');
             }
             closeImportModal();
-            flash.success('OPML imported successfully.');
-            await loadCategories();
-            await loadFeeds();
+            flash.redirect(window.location.pathname, 'success', 'OPML imported successfully.');
         } catch (err) {
             flash.error(err.message);
         } finally {
@@ -603,17 +481,5 @@
             importBtn.disabled = false;
         }
     }
-
-    loadCategories().then(() => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const categoryId = urlParams.get('category');
-        const sortBy = urlParams.get('sort');
-        const filterErrors = urlParams.get('errors');
-        if (categoryId) document.getElementById('filter-category').value = categoryId;
-        if (sortBy) document.getElementById('sort-by').value = sortBy;
-        if (filterErrors) document.getElementById('filter-errors').checked = true;
-        loadFeeds();
-        loadUnreadStats();
-    });
 </script>
 {% endblock %}

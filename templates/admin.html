@@ -27,9 +27,31 @@
             </tr>
         </thead>
         <tbody id="users-table">
+            {% if users.is_empty() %}
             <tr>
-                <td colspan="6" class="muted">Loading...</td>
+                <td colspan="6" class="muted">No users found.</td>
             </tr>
+            {% else %}
+            {% for user in users %}
+            <tr>
+                <td>{{ user.id }}</td>
+                <td>{{ user.username }}</td>
+                <td>{{ user.role }}</td>
+                <td>{% if user.is_disabled %}<span class="error-text">disabled</span>{% else %}<span class="success-text">active</span>{% endif %}</td>
+                <td>{{ user.created_at }}</td>
+                <td class="actions">
+                    {% if user.id != current_user_id && user.id != original_user_id %}
+                    <a href="#" onclick="toggleRole({{ user.id }}, '{{ user.role }}'); return false;">{% if user.role == "admin" %}demote{% else %}promote{% endif %}</a>
+                    <a href="#" onclick="toggleDisabled({{ user.id }}, {{ user.is_disabled }}); return false;">{% if user.is_disabled %}enable{% else %}disable{% endif %}</a>
+                    <a href="#" onclick="masquerade({{ user.id }}); return false;">view as</a>
+                    <a href="#" onclick="deleteUser({{ user.id }}, '{{ user.username }}'); return false;">delete</a>
+                    {% else %}
+                    <span class="muted">(you)</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            {% endif %}
         </tbody>
     </table>
 
@@ -41,54 +63,14 @@
     const currentUserId = {{ current_user_id }};
     const originalUserId = {{ original_user_id }};
 
-    async function loadUsers() {
-        try {
-            const response = await fetch('/api/admin/users');
-            if (!response.ok) throw new Error('Failed to load users');
-            const users = await response.json();
-            renderUsers(users);
-        } catch (err) {
-            document.getElementById('users-table').innerHTML =
-                '<tr><td colspan="6">Failed to load users</td></tr>';
-        }
-    }
-
-    function renderUsers(users) {
-        const tbody = document.getElementById('users-table');
-        tbody.innerHTML = users.map(user => {
-            const isCurrentUser = user.id === currentUserId;
-            const isOriginalUser = user.id === originalUserId;
-            const isSelf = isCurrentUser || isOriginalUser;
-            const isDisabled = user.disabled_at !== null;
-
-            return `
-                <tr>
-                    <td>${user.id}</td>
-                    <td>${escapeHtml(user.username)}</td>
-                    <td>${user.role}</td>
-                    <td>${isDisabled ? '<span class="error-text">disabled</span>' : '<span class="success-text">active</span>'}</td>
-                    <td>${formatDate(user.created_at)}</td>
-                    <td class="actions">
-                        ${!isSelf ? `
-                            <a href="#" onclick="toggleRole(${user.id}, '${user.role}'); return false;">${user.role === 'admin' ? 'demote' : 'promote'}</a>
-                            <a href="#" onclick="toggleDisabled(${user.id}, ${isDisabled}); return false;">${isDisabled ? 'enable' : 'disable'}</a>
-                            <a href="#" onclick="masquerade(${user.id}); return false;">view as</a>
-                            <a href="#" onclick="deleteUser(${user.id}, '${escapeHtml(user.username)}'); return false;">delete</a>
-                        ` : '<span class="muted">(you)</span>'}
-                    </td>
-                </tr>
-            `;
-        }).join('');
-    }
-
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
 
-    function formatDate(dateStr) {
-        return dateStr.split('T')[0];
+    function reloadPage() {
+        window.location.reload();
     }
 
     async function toggleRole(userId, currentRole) {
@@ -104,7 +86,7 @@
                 throw new Error(error.error || 'Failed to update role');
             }
             flash.success(`Role updated to ${newRole}.`);
-            loadUsers();
+            reloadPage();
         } catch (err) {
             flash.error(err.message);
         }
@@ -122,7 +104,7 @@
                 throw new Error(error.error || 'Failed to update user status');
             }
             flash.success(isCurrentlyDisabled ? 'User enabled.' : 'User disabled.');
-            loadUsers();
+            reloadPage();
         } catch (err) {
             flash.error(err.message);
         }
@@ -150,12 +132,10 @@
                 throw new Error(error.error || 'Failed to delete user');
             }
             flash.success(`User "${username}" deleted.`);
-            loadUsers();
+            reloadPage();
         } catch (err) {
             flash.error(err.message);
         }
     }
-
-    loadUsers();
 </script>
 {% endblock %}

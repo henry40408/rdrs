@@ -44,6 +44,7 @@
             <div class="list-pane-body">
                 <rdrs-entry-list
                     stream-id="user/-/label/{{ category_name }}"
+                    api-params='{"xt":"user/-/state/com.google/read"}'
                     entries-per-page="{{ entries_per_page }}"
                     origin="category"
                     show-feed
@@ -52,7 +53,7 @@
                     reading-pane="#reading-pane"
                     {% if has_save_services %}has-save-services{% endif %}
                     {% if has_kagi_configured %}has-kagi-configured{% endif %}
-                ></rdrs-entry-list>
+                ><script type="application/json" class="ssr-entries">{{ ssr_entries_json|safe }}</script></rdrs-entry-list>
             </div>
         </div>
 
@@ -129,9 +130,16 @@
 
         const urlParams = new URLSearchParams(window.location.search);
         const status = urlParams.get('status');
-        document.getElementById('filter-status').value = status || 'unread';
+        const defaultStatus = status || 'unread';
+        document.getElementById('filter-status').value = defaultStatus;
         list.setApiParams(getFilterParams());
-        list.loadEntries();
+
+        // If the filter matches what was SSR'd (unread), use the SSR data; otherwise fetch
+        if (defaultStatus === 'unread' && list._ssrData) {
+            list._consumeSsrData();
+        } else {
+            list.loadEntries();
+        }
 
         list.registerKeyboardHandlers({
             helpItems: [
