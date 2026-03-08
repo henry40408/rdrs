@@ -1041,6 +1041,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             { key: 'f', desc: 'Toggle full content' },
             { key: 'b', desc: 'Save to bookmarks' },
             { key: 'z', desc: 'Toggle Kagi summary' },
+            { key: 'r', desc: 'Refresh list' },
             { key: 'q / Esc', desc: 'Back to list' },
         ];
 
@@ -1124,6 +1125,9 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                             const summarizeBtn = pane?.querySelector('[data-rp-action="summarize"]');
                             if (summarizeBtn && !summarizeBtn.disabled) list._rpSummarize(entryId);
                         }
+                        return true;
+                    case 'r':
+                        list.loadEntries();
                         return true;
                     case 'Escape':
                     case 'q':
