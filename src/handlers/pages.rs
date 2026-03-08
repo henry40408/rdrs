@@ -50,7 +50,9 @@ fn entries_to_ssr(
     entries
         .into_iter()
         .map(|e| {
-            let status = summary_statuses.get(&e.entry.id).map(|s| s.as_str().to_string());
+            let status = summary_statuses
+                .get(&e.entry.id)
+                .map(|s| s.as_str().to_string());
             SsrEntry {
                 id: e.entry.id,
                 feed_id: e.entry.feed_id,
@@ -87,9 +89,8 @@ fn fetch_entries_for_ssr(
         nt: None,
     };
 
-    let mut entries =
-        entry::list_by_user_with_continuation(conn, user_id, filter, &pagination)
-            .unwrap_or_default();
+    let mut entries = entry::list_by_user_with_continuation(conn, user_id, filter, &pagination)
+        .unwrap_or_default();
 
     let continuation = if entries.len() as i64 > limit {
         let last = entries.pop().unwrap();
@@ -235,7 +236,14 @@ pub async fn unread_page(
     };
 
     let user_id = auth_user.user.id;
-    let (unread_count, entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme) = state
+    let (
+        unread_count,
+        entries_per_page,
+        has_save_services,
+        has_kagi_configured,
+        ssr_entries_json,
+        theme,
+    ) = state
         .db
         .read_user(move |c| {
             let unread = entry::count_unread_by_user(c, user_id).unwrap_or(0);
@@ -537,8 +545,9 @@ pub async fn categories_page(
             let cats_with_counts: Vec<CategoryWithCount> = cats
                 .into_iter()
                 .map(|cat| {
-                    let feed_count =
-                        feed::list_by_category(c, cat.id).map(|f| f.len()).unwrap_or(0);
+                    let feed_count = feed::list_by_category(c, cat.id)
+                        .map(|f| f.len())
+                        .unwrap_or(0);
                     CategoryWithCount {
                         id: cat.id,
                         name: cat.name,
@@ -776,7 +785,13 @@ pub async fn entries_page(
             (epp, save_services, kagi_configured, ssr_json, theme)
         })
         .await
-        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, false, false, "null".to_string(), None));
+        .unwrap_or((
+            user_settings::DEFAULT_ENTRIES_PER_PAGE,
+            false,
+            false,
+            "null".to_string(),
+            None,
+        ));
 
     (
         flash.clone(),
@@ -954,7 +969,13 @@ async fn fetch_entry_list_config(
             (epp, save_services, kagi_configured, ssr_json, theme)
         })
         .await
-        .unwrap_or((user_settings::DEFAULT_ENTRIES_PER_PAGE, false, false, "null".to_string(), None))
+        .unwrap_or((
+            user_settings::DEFAULT_ENTRIES_PER_PAGE,
+            false,
+            false,
+            "null".to_string(),
+            None,
+        ))
 }
 
 pub async fn read_entries_page(
@@ -1112,7 +1133,14 @@ pub async fn category_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, has_save_services, has_kagi_configured, category_name, ssr_entries_json, theme) = state
+    let (
+        entries_per_page,
+        has_save_services,
+        has_kagi_configured,
+        category_name,
+        ssr_entries_json,
+        theme,
+    ) = state
         .db
         .read_user(move |c| {
             let cat =
@@ -1137,7 +1165,14 @@ pub async fn category_entries_page(
             };
             let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
 
-            Ok::<_, AppError>((epp, save_services, kagi_configured, cat.name, ssr_json, theme))
+            Ok::<_, AppError>((
+                epp,
+                save_services,
+                kagi_configured,
+                cat.name,
+                ssr_json,
+                theme,
+            ))
         })
         .await??;
 
