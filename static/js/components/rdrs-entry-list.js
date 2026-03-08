@@ -528,7 +528,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     }
 
     // --- Reading Pane: Full Entry Detail ---
-    async _loadInReadingPane(index, skipPushState = false) {
+    async _loadInReadingPane(index, skipPushState = false, replaceHistory = false) {
         const entry = this.entries[index];
         if (!entry) return;
 
@@ -580,7 +580,11 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 if (this.origin === 'starred') originQuery += '&starred_only=true';
                 if (this.origin === 'summarized') originQuery += '&has_summary=true';
                 const url = `/entries/${entry.id}${originQuery}`;
-                history.pushState({ entryId: entry.id, index }, '', url);
+                if (replaceHistory) {
+                    history.replaceState({ entryId: entry.id, index }, '', url);
+                } else {
+                    history.pushState({ entryId: entry.id, index }, '', url);
+                }
             }
 
             // Switch to entry keyboard mode
@@ -686,10 +690,9 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         if (newIndex >= this.entries.length && this.continuation) {
             try {
                 await this.loadMore();
-                // After loadMore, check if we actually got new entries
                 if (newIndex < this.entries.length) {
                     this.selectEntry(newIndex);
-                    this._loadInReadingPane(newIndex);
+                    this._loadInReadingPane(newIndex, false, true);
                 }
             } catch (err) {
                 window.flash?.error('Failed to load more entries.');
@@ -700,7 +703,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
 
         if (newIndex < 0 || newIndex >= this.entries.length) return;
         this.selectEntry(newIndex);
-        this._loadInReadingPane(newIndex);
+        this._loadInReadingPane(newIndex, false, true);
         this._updateReadingPaneNav();
     }
 
