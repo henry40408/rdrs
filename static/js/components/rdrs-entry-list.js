@@ -800,6 +800,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             if (!response.ok) throw new Error('Failed to mark as unread');
             window.flash.success('Marked as unread.');
             this._updateEntryField(entryId, 'read_at', null);
+            this._updateUnreadCount();
         } catch (err) {
             window.flash.error(err.message);
         }
@@ -1235,13 +1236,54 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     }
 
     _updateUnreadCount() {
-        // Fetch the actual unread count from GReader API
+        // Fetch the actual unread count from GReader API and update sidebar badges
         fetch('/reader/api/0/unread-count')
             .then(r => r.json())
             .then(data => {
-                const total = data.unreadcounts?.find(u => u.id === 'user/-/state/com.google/reading-list');
+                const counts = data.unreadcounts || [];
+
+                // Update total unread badge
+                const total = counts.find(u => u.id === 'user/-/state/com.google/reading-list');
                 const el = document.getElementById('unread-count');
-                if (el && total) el.textContent = total.count;
+                if (el) {
+                    el.textContent = (total && total.count > 0) ? total.count : '';
+                }
+
+                // Update category badges
+                const catContainer = document.getElementById('sidebar-categories');
+                if (!catContainer) return;
+                const catLinks = catContainer.querySelectorAll('a.sidebar-item');
+                // Build a map of category numeric ID -> unread count
+                const countByLabel = {};
+                for (const uc of counts) {
+                    if (uc.id.includes('/label/')) {
+                        countByLabel[uc.id] = uc.count;
+                    }
+                }
+                for (const link of catLinks) {
+                    const badge = link.querySelector('.sidebar-badge');
+                    // Extract category label from link text
+                    const href = link.getAttribute('href') || '';
+                    // Find matching count by checking all label counts
+                    const labelId = Object.keys(countByLabel).find(id => {
+                        const name = id.split('/label/').pop();
+                        const nameSpan = link.querySelector('span:first-child');
+                        return nameSpan && nameSpan.textContent === name;
+                    });
+                    const count = labelId ? countByLabel[labelId] : 0;
+                    if (count > 0) {
+                        if (badge) {
+                            badge.textContent = count;
+                        } else {
+                            const span = document.createElement('span');
+                            span.className = 'sidebar-badge';
+                            span.textContent = count;
+                            link.appendChild(span);
+                        }
+                    } else if (badge) {
+                        badge.remove();
+                    }
+                }
             })
             .catch(() => {});
     }
@@ -1263,7 +1305,6 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 this.entries = this.entries.filter(e => e.id !== id);
                 this.renderEntries();
                 this._updateLoadMore();
-                this._updateUnreadCount();
                 this._updateMarkAbove();
                 // Adjust selection
                 if (this.selectedIndex >= this.entries.length) {
@@ -1274,10 +1315,8 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 }
             } else {
                 this._updateEntryField(id, 'read_at', new Date().toISOString());
-                if (this.isUnreadMode) {
-                    this._updateUnreadCount();
-                }
             }
+            this._updateUnreadCount();
         } catch (err) {
             window.flash.error(err.message);
         }
@@ -1294,6 +1333,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             });
             if (!response.ok) throw new Error('Failed to mark as unread');
             this._updateEntryField(id, 'read_at', null);
+            this._updateUnreadCount();
         } catch (err) {
             window.flash.error(err.message);
         }
@@ -1351,6 +1391,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             });
             if (!response.ok) throw new Error('Failed to mark entries as read');
             window.flash.success(`Marked ${this.entries.length} entries as read.`);
+            this._updateUnreadCount();
             this.loadEntries();
         } catch (err) {
             window.flash.error(err.message);
