@@ -54,7 +54,7 @@
             /* Layout */
             --sidebar-width: 220px;
             --list-pane-width: 340px;
-            --content-max-width: 720px;
+            --content-max-width: 820px;
             --page-max-width: 900px;
             --dialog-max-width: 600px;
             --auth-max-width: 380px;
@@ -433,7 +433,6 @@
         /* Page content (non-split pages) */
         .page-content {
             padding: var(--space-8) var(--space-10);
-            max-width: var(--page-max-width);
             width: 100%;
             overflow-wrap: break-word;
             word-break: break-word;
@@ -496,6 +495,7 @@
         .reading-pane-content {
             padding: var(--space-8) var(--space-10);
             max-width: var(--content-max-width);
+            margin: 0 auto;
             overflow-wrap: break-word;
             word-break: break-word;
         }
@@ -1472,6 +1472,7 @@
 
         .entry-content {
             max-width: var(--content-max-width);
+            margin: 0 auto;
             font-family: var(--font-body);
             font-size: var(--font-xl);
             line-height: 1.8;
@@ -1631,6 +1632,13 @@
             position: relative;
             opacity: 0.5;
             pointer-events: none;
+        }
+
+        /* ===== Responsive: Wide screens ===== */
+        @media (min-width: 1600px) {
+            :root {
+                --list-pane-width: 400px;
+            }
         }
 
         /* ===== Responsive ===== */
