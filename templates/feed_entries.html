@@ -7,7 +7,7 @@
 
 {% block body %}
 <div class="app-layout">
-{% call macros::sidebar("feeds", is_admin, is_masquerading, username) %}{% endcall %}
+{% call macros::sidebar("feeds", is_admin, is_masquerading, username, sidebar_categories, sidebar_unread_count) %}{% endcall %}
 
 <main class="main-content">
     {% call macros::flash(flash_messages) %}{% endcall %}

@@ -14,6 +14,37 @@ use crate::models::user_settings;
 use crate::models::{category, entry, feed};
 use crate::AppState;
 
+/// A category link for SSR sidebar rendering.
+pub struct SidebarCategory {
+    pub id: i64,
+    pub name: String,
+    pub unread_count: i64,
+}
+
+/// Fetch sidebar categories with unread counts for a user.
+fn fetch_sidebar_data(
+    conn: &rusqlite::Connection,
+    user_id: i64,
+) -> (Vec<SidebarCategory>, i64) {
+    let cats = category::list_by_user(conn, user_id).unwrap_or_default();
+    let unread_by_cat = entry::count_unread_by_category(conn, user_id).unwrap_or_default();
+    let total_unread = entry::count_unread_by_user(conn, user_id).unwrap_or(0);
+
+    let sidebar_cats = cats
+        .into_iter()
+        .map(|cat| {
+            let unread_count = *unread_by_cat.get(&cat.id).unwrap_or(&0);
+            SidebarCategory {
+                id: cat.id,
+                name: cat.name,
+                unread_count,
+            }
+        })
+        .collect();
+
+    (sidebar_cats, total_unread)
+}
+
 /// Entry data for SSR embedding as JSON.
 /// Field names match what the JS `_transformItem()` expects.
 #[derive(serde::Serialize)]
@@ -218,6 +249,8 @@ pub struct UnreadTemplate {
     pub ssr_entries_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for UnreadTemplate {
@@ -250,6 +283,8 @@ pub async fn unread_page(
         has_kagi_configured,
         ssr_entries_json,
         theme,
+        sidebar_categories,
+        sidebar_unread_count,
     ) = state
         .db
         .read_user(move |c| {
@@ -273,7 +308,9 @@ pub async fn unread_page(
             };
             let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
 
-            (unread, epp, save_services, kagi_configured, ssr_json, theme)
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+
+            (unread, epp, save_services, kagi_configured, ssr_json, theme, sidebar_cats, sidebar_unread)
         })
         .await
         .unwrap_or((
@@ -283,6 +320,8 @@ pub async fn unread_page(
             false,
             "null".to_string(),
             None,
+            vec![],
+            0,
         ));
 
     (
@@ -305,6 +344,8 @@ pub async fn unread_page(
             ssr_entries_json,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -329,6 +370,8 @@ pub struct AdminTemplate {
     pub users: Vec<AdminUserRow>,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for AdminTemplate {
@@ -349,7 +392,7 @@ pub async fn admin_page(
     let original_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
 
     let user_id = admin.user.id;
-    let (users, theme) = state
+    let (users, theme, sidebar_categories, sidebar_unread_count) = state
         .db
         .read_user(move |c| {
             let user_list = crate::models::user::list_all(c).unwrap_or_default();
@@ -369,10 +412,11 @@ pub async fn admin_page(
                 })
                 .collect();
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            (rows, theme)
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+            (rows, theme, sidebar_cats, sidebar_unread)
         })
         .await
-        .unwrap_or((vec![], None));
+        .unwrap_or((vec![], None, vec![], 0));
 
     (
         flash.clone(),
@@ -385,6 +429,8 @@ pub async fn admin_page(
             users,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -406,6 +452,8 @@ pub struct UserSettingsTemplate {
     pub kagi_language: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for UserSettingsTemplate {
@@ -437,6 +485,8 @@ pub async fn user_settings_page(
         kagi_configured,
         kagi_language,
         theme,
+        sidebar_categories,
+        sidebar_unread_count,
     ) = state
         .db
         .read_user(move |c| {
@@ -455,6 +505,7 @@ pub async fn user_settings_page(
             let kagi_lang = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
 
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
 
             (
                 epp,
@@ -463,6 +514,8 @@ pub async fn user_settings_page(
                 kagi_configured,
                 kagi_lang,
                 theme,
+                sidebar_cats,
+                sidebar_unread,
             )
         })
         .await
@@ -473,6 +526,8 @@ pub async fn user_settings_page(
             false,
             String::new(),
             None,
+            vec![],
+            0,
         ));
 
     (
@@ -500,6 +555,8 @@ pub async fn user_settings_page(
             kagi_language,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -521,6 +578,8 @@ pub struct CategoriesTemplate {
     pub categories: Vec<CategoryWithCount>,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for CategoriesTemplate {
@@ -545,7 +604,7 @@ pub async fn categories_page(
     };
 
     let user_id = auth_user.user.id;
-    let (categories_with_counts, theme) = state
+    let (categories_with_counts, theme, sidebar_categories, sidebar_unread_count) = state
         .db
         .read_user(move |c| {
             let cats = category::list_by_user(c, user_id).unwrap_or_default();
@@ -563,10 +622,11 @@ pub async fn categories_page(
                 })
                 .collect();
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            (cats_with_counts, theme)
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+            (cats_with_counts, theme, sidebar_cats, sidebar_unread)
         })
         .await
-        .unwrap_or((vec![], None));
+        .unwrap_or((vec![], None, vec![], 0));
 
     (
         flash.clone(),
@@ -578,6 +638,8 @@ pub async fn categories_page(
             categories: categories_with_counts,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -619,6 +681,8 @@ pub struct FeedsTemplate {
     pub feed_data_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for FeedsTemplate {
@@ -643,7 +707,7 @@ pub async fn feeds_page(
     };
 
     let user_id = auth_user.user.id;
-    let (feeds_data, cats_data, theme) = state
+    let (feeds_data, cats_data, theme, sidebar_categories, sidebar_unread_count) = state
         .db
         .read_user(move |c| {
             let cats = category::list_by_user(c, user_id).unwrap_or_default();
@@ -707,10 +771,11 @@ pub async fn feeds_page(
                 .collect();
 
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            (feed_rows, cat_options, theme)
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+            (feed_rows, cat_options, theme, sidebar_cats, sidebar_unread)
         })
         .await
-        .unwrap_or((vec![], vec![], None));
+        .unwrap_or((vec![], vec![], None, vec![], 0));
 
     // Build a JSON map: { feedId: { url, title, description, ... }, ... }
     let feed_data_map: std::collections::HashMap<i64, &FeedRow> =
@@ -730,6 +795,8 @@ pub async fn feeds_page(
             feed_data_json,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -747,6 +814,8 @@ pub struct EntriesTemplate {
     pub ssr_entries_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for EntriesTemplate {
@@ -771,7 +840,7 @@ pub async fn entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme) = state
+    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme, sidebar_categories, sidebar_unread_count) = state
         .db
         .read_user(move |c| {
             let epp = user_settings::get_entries_per_page(c, user_id)
@@ -790,7 +859,9 @@ pub async fn entries_page(
             let filter = entry::EntryFilter::default();
             let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
 
-            (epp, save_services, kagi_configured, ssr_json, theme)
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+
+            (epp, save_services, kagi_configured, ssr_json, theme, sidebar_cats, sidebar_unread)
         })
         .await
         .unwrap_or((
@@ -799,6 +870,8 @@ pub async fn entries_page(
             false,
             "null".to_string(),
             None,
+            vec![],
+            0,
         ));
 
     (
@@ -814,6 +887,8 @@ pub async fn entries_page(
             ssr_entries_json,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -877,6 +952,8 @@ pub struct SettingsTemplate {
     pub signup_enabled: bool,
     pub multi_user_enabled: bool,
     pub theme: Option<String>,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for SettingsTemplate {
@@ -903,11 +980,15 @@ pub async fn settings_page(
     let user_agent_is_default = state.config.user_agent == DEFAULT_USER_AGENT;
 
     let user_id = auth_user.user.id;
-    let theme = state
+    let (theme, sidebar_categories, sidebar_unread_count) = state
         .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .read_user(move |c| {
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+            (theme, sidebar_cats, sidebar_unread)
+        })
         .await
-        .unwrap_or(None);
+        .unwrap_or((None, vec![], 0));
 
     (
         flash.clone(),
@@ -922,6 +1003,8 @@ pub async fn settings_page(
             signup_enabled: state.config.signup_enabled,
             multi_user_enabled: state.config.multi_user_enabled,
             theme,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -942,6 +1025,8 @@ pub struct ArchiveEntriesTemplate {
     pub ssr_entries_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for ArchiveEntriesTemplate {
@@ -958,7 +1043,7 @@ async fn fetch_entry_list_config(
     state: &AppState,
     user_id: i64,
     filter: entry::EntryFilter,
-) -> (i64, bool, bool, String, Option<String>) {
+) -> (i64, bool, bool, String, Option<String>, Vec<SidebarCategory>, i64) {
     state
         .db
         .read_user(move |c| {
@@ -974,7 +1059,8 @@ async fn fetch_entry_list_config(
                 .unwrap_or(false);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
             let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
-            (epp, save_services, kagi_configured, ssr_json, theme)
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+            (epp, save_services, kagi_configured, ssr_json, theme, sidebar_cats, sidebar_unread)
         })
         .await
         .unwrap_or((
@@ -983,6 +1069,8 @@ async fn fetch_entry_list_config(
             false,
             "null".to_string(),
             None,
+            vec![],
+            0,
         ))
 }
 
@@ -1002,7 +1090,7 @@ pub async fn read_entries_page(
         read_only: true,
         ..Default::default()
     };
-    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme) =
+    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme, sidebar_categories, sidebar_unread_count) =
         fetch_entry_list_config(&state, auth_user.user.id, filter).await;
 
     (
@@ -1020,6 +1108,8 @@ pub async fn read_entries_page(
             ssr_entries_json,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -1040,7 +1130,7 @@ pub async fn starred_entries_page(
         starred_only: true,
         ..Default::default()
     };
-    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme) =
+    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme, sidebar_categories, sidebar_unread_count) =
         fetch_entry_list_config(&state, auth_user.user.id, filter).await;
 
     (
@@ -1058,6 +1148,8 @@ pub async fn starred_entries_page(
             ssr_entries_json,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -1078,7 +1170,7 @@ pub async fn summarized_entries_page(
         has_summary: Some(true),
         ..Default::default()
     };
-    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme) =
+    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme, sidebar_categories, sidebar_unread_count) =
         fetch_entry_list_config(&state, auth_user.user.id, filter).await;
 
     (
@@ -1096,6 +1188,8 @@ pub async fn summarized_entries_page(
             ssr_entries_json,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -1116,6 +1210,8 @@ pub struct CategoryEntriesTemplate {
     pub ssr_entries_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for CategoryEntriesTemplate {
@@ -1148,6 +1244,8 @@ pub async fn category_entries_page(
         category_name,
         ssr_entries_json,
         theme,
+        sidebar_categories,
+        sidebar_unread_count,
     ) = state
         .db
         .read_user(move |c| {
@@ -1172,6 +1270,7 @@ pub async fn category_entries_page(
                 ..Default::default()
             };
             let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
 
             Ok::<_, AppError>((
                 epp,
@@ -1180,6 +1279,8 @@ pub async fn category_entries_page(
                 cat.name,
                 ssr_json,
                 theme,
+                sidebar_cats,
+                sidebar_unread,
             ))
         })
         .await??;
@@ -1199,6 +1300,8 @@ pub async fn category_entries_page(
             ssr_entries_json,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     ))
 }
@@ -1216,6 +1319,8 @@ pub struct SearchTemplate {
     pub has_kagi_configured: bool,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for SearchTemplate {
@@ -1241,7 +1346,7 @@ pub async fn search_page(
 
     // Search doesn't need SSR entries - pass a dummy filter that won't fetch
     let filter = entry::EntryFilter::default();
-    let (entries_per_page, has_save_services, has_kagi_configured, _, theme) =
+    let (entries_per_page, has_save_services, has_kagi_configured, _, theme, sidebar_categories, sidebar_unread_count) =
         fetch_entry_list_config(&state, auth_user.user.id, filter).await;
 
     (
@@ -1256,6 +1361,8 @@ pub async fn search_page(
             has_kagi_configured,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -1280,6 +1387,8 @@ pub struct FeedEntriesTemplate {
     pub ssr_entries_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for FeedEntriesTemplate {
@@ -1316,6 +1425,8 @@ pub async fn feed_entries_page(
         category_name,
         ssr_entries_json,
         theme,
+        sidebar_categories,
+        sidebar_unread_count,
     ) = state
         .db
         .read_user(move |c| {
@@ -1352,6 +1463,7 @@ pub async fn feed_entries_page(
                 ..Default::default()
             };
             let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
 
             Ok::<_, AppError>((
                 epp,
@@ -1364,6 +1476,8 @@ pub async fn feed_entries_page(
                 cat.name,
                 ssr_json,
                 theme,
+                sidebar_cats,
+                sidebar_unread,
             ))
         })
         .await??;
@@ -1387,6 +1501,8 @@ pub async fn feed_entries_page(
             ssr_entries_json,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     ))
 }

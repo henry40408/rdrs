@@ -13,7 +13,7 @@
 {% endif %}
 {% endmacro %}
 
-{% macro sidebar(current, is_admin, is_masquerading, username) %}
+{% macro sidebar(current, is_admin, is_masquerading, username, sidebar_categories, sidebar_unread_count) %}
 <button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Open menu">&#9776;</button>
 
 <aside class="sidebar" id="sidebar" data-testid="main-nav">
@@ -33,7 +33,7 @@
             <a href="/" class="sidebar-item{% if current == "unread" %} active{% endif %}" data-testid="nav-unread">
                 <span class="sidebar-item-icon">&#9670;</span>
                 <span>Unread</span>
-                <span class="sidebar-badge" id="unread-count"></span>
+                <span class="sidebar-badge" id="unread-count">{% if sidebar_unread_count > 0 %}{{ sidebar_unread_count }}{% endif %}</span>
             </a>
             <a href="/entries/starred" class="sidebar-item{% if current == "starred" %} active{% endif %}">
                 <span class="sidebar-item-icon">&#9733;</span>
@@ -45,12 +45,19 @@
             </a>
         </div>
 
+        {% if !sidebar_categories.is_empty() %}
         <div class="sidebar-section">
             <div class="sidebar-section-title">Categories</div>
             <div id="sidebar-categories">
-                <span class="sidebar-item muted" style="font-size:var(--font-xs)">Loading...</span>
+                {% for cat in sidebar_categories %}
+                <a href="/categories/{{ cat.id }}/entries" class="sidebar-item{% if current == "category" %} {% endif %}">
+                    <span>{{ cat.name }}</span>
+                    {% if cat.unread_count > 0 %}<span class="sidebar-badge">{{ cat.unread_count }}</span>{% endif %}
+                </a>
+                {% endfor %}
             </div>
         </div>
+        {% endif %}
 
         <div class="sidebar-divider"></div>
 
@@ -123,71 +130,6 @@ async function stopMasquerade() {
         flash.error("An error occurred");
     }
 }
-
-// Populate sidebar categories + unread counts
-(async function loadSidebarData() {
-    try {
-        const [catRes, countRes] = await Promise.all([
-            fetch('/reader/api/0/tag/list'),
-            fetch('/reader/api/0/unread-count')
-        ]);
-
-        // Parse categories
-        let categories = [];
-        if (catRes.ok) {
-            const catData = await catRes.json();
-            categories = catData.tags
-                .filter(tag => tag.id.includes('/label/'))
-                .map(tag => {
-                    const name = tag.id.split('/label/').pop();
-                    const numericId = parseInt(tag.sortid, 16);
-                    return { id: tag.id, name, numericId };
-                });
-        }
-
-        // Parse unread counts
-        let unreadByCategory = {};
-        let totalUnread = 0;
-        if (countRes.ok) {
-            const countData = await countRes.json();
-            for (const uc of countData.unreadcounts || []) {
-                if (uc.id.includes('/label/')) {
-                    unreadByCategory[uc.id] = uc.count;
-                } else if (uc.id === 'user/-/state/com.google/reading-list') {
-                    totalUnread = uc.count;
-                }
-            }
-        }
-
-        // Update total unread badge
-        const unreadEl = document.getElementById('unread-count');
-        if (unreadEl && totalUnread > 0) {
-            unreadEl.textContent = totalUnread;
-        }
-
-        // Render categories
-        const container = document.getElementById('sidebar-categories');
-        if (container && categories.length > 0) {
-            const currentPath = window.location.pathname;
-            container.innerHTML = categories.map(cat => {
-                const count = unreadByCategory[cat.id] || 0;
-                const href = `/categories/${cat.numericId}/entries`;
-                const isActive = currentPath === href;
-                const esc = (t) => { const d=document.createElement('div'); d.textContent=t; return d.innerHTML; };
-                return `<a href="${href}" class="sidebar-item${isActive ? ' active' : ''}">
-                    <span>${esc(cat.name)}</span>
-                    ${count > 0 ? `<span class="sidebar-badge">${count}</span>` : ''}
-                </a>`;
-            }).join('');
-        } else if (container) {
-            container.innerHTML = '';
-        }
-    } catch (e) {
-        // Silent fail for sidebar data
-        const container = document.getElementById('sidebar-categories');
-        if (container) container.innerHTML = '';
-    }
-})();
 
 // Close sidebar when clicking outside on mobile
 document.addEventListener('click', function(e) {
