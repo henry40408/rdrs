@@ -23,10 +23,7 @@ pub struct SidebarCategory {
 }
 
 /// Fetch sidebar categories with unread counts for a user.
-fn fetch_sidebar_data(
-    conn: &rusqlite::Connection,
-    user_id: i64,
-) -> (Vec<SidebarCategory>, i64) {
+fn fetch_sidebar_data(conn: &rusqlite::Connection, user_id: i64) -> (Vec<SidebarCategory>, i64) {
     let cats = category::list_by_user(conn, user_id).unwrap_or_default();
     let unread_by_cat = entry::count_unread_by_category(conn, user_id).unwrap_or_default();
     let total_unread = entry::count_unread_by_user(conn, user_id).unwrap_or(0);
