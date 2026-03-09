@@ -56,9 +56,7 @@
             </div>
         </div>
 
-        <div class="reading-pane" id="reading-pane">
-            <div class="reading-pane-empty">Select an entry to read</div>
-        </div>
+        {% call macros::reading_pane(ssr_reading_pane, ssr_reading_pane_json, has_save_services, has_kagi_configured) %}{% endcall %}
     </div>
 </main>
 </div>

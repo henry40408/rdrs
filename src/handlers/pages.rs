@@ -12,6 +12,7 @@ use crate::middleware::flash::{Flash, FlashMessage};
 use crate::models::entry_summary;
 use crate::models::user_settings;
 use crate::models::{category, entry, feed};
+use crate::services::sanitize_html;
 use crate::AppState;
 
 /// A category link for SSR sidebar rendering.
@@ -137,6 +138,92 @@ fn ssr_entries_to_views(entries: &[SsrEntry]) -> Vec<SsrEntryView> {
             }
         })
         .collect()
+}
+
+/// SSR data for the reading pane (entry detail view).
+/// Embedded as JSON for JS hydration + fields for Askama HTML rendering.
+#[derive(serde::Serialize)]
+pub struct SsrReadingPaneEntry {
+    pub id: i64,
+    pub title: String,
+    pub link: Option<String>,
+    pub content: String,
+    pub author: String,
+    pub feed_title: String,
+    pub feed_has_icon: bool,
+    pub feed_id: i64,
+    pub category_id: i64,
+    pub category_name: String,
+    pub published_at: Option<String>,
+    pub read_at: Option<String>,
+    pub starred_at: Option<String>,
+    pub summary_status: Option<String>,
+    /// Pre-formatted date for display
+    #[serde(skip)]
+    pub published_date: String,
+}
+
+/// Query parameter for pages that support `?entry=<id>` to SSR the reading pane.
+#[derive(serde::Deserialize, Default)]
+pub struct EntryQuery {
+    pub entry: Option<i64>,
+}
+
+/// Fetch and sanitize an entry for SSR reading pane rendering.
+fn fetch_reading_pane_entry(
+    conn: &rusqlite::Connection,
+    user_id: i64,
+    entry_id: i64,
+    secret: &[u8],
+    proxy_base_url: Option<&str>,
+) -> Option<SsrReadingPaneEntry> {
+    let ewf = entry::find_by_id_with_feed(conn, entry_id).ok()??;
+
+    // Verify the entry belongs to this user's feeds
+    let cat = category::find_by_id(conn, ewf.category_id).ok()??;
+    if cat.user_id != user_id {
+        return None;
+    }
+
+    let e = &ewf.entry;
+    let link = e.link.as_deref().unwrap_or("");
+    let base_url = if link.is_empty() { None } else { Some(link) };
+    let referrer = ewf.custom_referrer.as_deref();
+
+    let content = if let Some(c) = e.content.as_deref() {
+        sanitize_html(c, secret, base_url, referrer, proxy_base_url)
+    } else {
+        let fallback = e.summary.as_deref().unwrap_or("");
+        sanitize_html(fallback, secret, base_url, referrer, proxy_base_url)
+    };
+
+    // Summary status
+    let summary_status = entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])
+        .ok()
+        .and_then(|m| m.get(&entry_id).map(|s| s.as_str().to_string()));
+
+    let published_date = e
+        .published_at
+        .map(|dt| dt.format("%b %-d, %Y %H:%M").to_string())
+        .unwrap_or_default();
+
+    Some(SsrReadingPaneEntry {
+        id: e.id,
+        title: e.title.clone().unwrap_or_else(|| "Untitled".to_string()),
+        link: e.link.clone(),
+        content,
+        author: e.author.clone().unwrap_or_default(),
+        feed_title: ewf.feed_title.unwrap_or_else(|| ewf.feed_url.clone()),
+        feed_has_icon: ewf.feed_has_icon,
+        feed_id: e.feed_id,
+        category_id: ewf.category_id,
+        category_name: ewf.category_name,
+        published_at: e.published_at.map(|dt| dt.to_rfc3339()),
+        read_at: e.read_at.map(|dt| dt.to_rfc3339()),
+        starred_at: e.starred_at.map(|dt| dt.to_rfc3339()),
+        summary_status,
+        published_date,
+    })
 }
 
 /// Convert EntryWithFeed + summary statuses to SSR entries.
@@ -322,6 +409,8 @@ pub struct UnreadTemplate {
     pub ssr_entries_json: String,
     pub ssr_entry_views: Vec<SsrEntryView>,
     pub ssr_has_continuation: bool,
+    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
@@ -340,6 +429,7 @@ impl IntoResponse for UnreadTemplate {
 pub async fn unread_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> (Flash, UnreadTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -355,7 +445,7 @@ pub async fn unread_page(
         unread_only: true,
         ..Default::default()
     };
-    let cfg = fetch_entry_list_config(&state, user_id, filter).await;
+    let cfg = fetch_entry_list_config(&state, user_id, filter, query.entry).await;
 
     (
         flash.clone(),
@@ -377,6 +467,8 @@ pub async fn unread_page(
             ssr_entries_json: cfg.ssr_entries_json,
             ssr_entry_views: cfg.ssr_entry_views,
             ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
             theme: cfg.theme,
             git_version: crate::GIT_VERSION,
             sidebar_categories: cfg.sidebar_categories,
@@ -849,6 +941,8 @@ pub struct EntriesTemplate {
     pub ssr_entries_json: String,
     pub ssr_entry_views: Vec<SsrEntryView>,
     pub ssr_has_continuation: bool,
+    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
@@ -867,6 +961,7 @@ impl IntoResponse for EntriesTemplate {
 pub async fn entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> (Flash, EntriesTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -877,7 +972,7 @@ pub async fn entries_page(
     };
 
     let filter = entry::EntryFilter::default();
-    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
 
     (
         flash.clone(),
@@ -892,6 +987,8 @@ pub async fn entries_page(
             ssr_entries_json: cfg.ssr_entries_json,
             ssr_entry_views: cfg.ssr_entry_views,
             ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
             theme: cfg.theme,
             git_version: crate::GIT_VERSION,
             sidebar_categories: cfg.sidebar_categories,
@@ -1032,6 +1129,8 @@ pub struct ArchiveEntriesTemplate {
     pub ssr_entries_json: String,
     pub ssr_entry_views: Vec<SsrEntryView>,
     pub ssr_has_continuation: bool,
+    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
@@ -1056,6 +1155,8 @@ struct EntryListConfig {
     ssr_entries_json: String,
     ssr_entry_views: Vec<SsrEntryView>,
     ssr_has_continuation: bool,
+    ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    ssr_reading_pane_json: String,
     theme: Option<String>,
     sidebar_categories: Vec<SidebarCategory>,
     sidebar_unread_count: i64,
@@ -1065,7 +1166,10 @@ async fn fetch_entry_list_config(
     state: &AppState,
     user_id: i64,
     filter: entry::EntryFilter,
+    reading_pane_entry_id: Option<i64>,
 ) -> EntryListConfig {
+    let secret = state.config.image_proxy_secret.clone();
+    let proxy_base_url = state.config.public_base_url.clone();
     state
         .db
         .read_user(move |c| {
@@ -1082,6 +1186,15 @@ async fn fetch_entry_list_config(
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
             let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
             let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+
+            let rp = reading_pane_entry_id.and_then(|eid| {
+                fetch_reading_pane_entry(c, user_id, eid, &secret, proxy_base_url.as_deref())
+            });
+            let rp_json = rp
+                .as_ref()
+                .map(|e| escape_json_for_script(&serde_json::to_string(e).unwrap_or_default()))
+                .unwrap_or_default();
+
             EntryListConfig {
                 entries_per_page: epp,
                 has_save_services: save_services,
@@ -1089,6 +1202,8 @@ async fn fetch_entry_list_config(
                 ssr_entries_json: ssr.json,
                 ssr_entry_views: ssr.views,
                 ssr_has_continuation: ssr.has_continuation,
+                ssr_reading_pane: rp,
+                ssr_reading_pane_json: rp_json,
                 theme,
                 sidebar_categories: sidebar_cats,
                 sidebar_unread_count: sidebar_unread,
@@ -1102,6 +1217,8 @@ async fn fetch_entry_list_config(
             ssr_entries_json: "null".to_string(),
             ssr_entry_views: vec![],
             ssr_has_continuation: false,
+            ssr_reading_pane: None,
+            ssr_reading_pane_json: String::new(),
             theme: None,
             sidebar_categories: vec![],
             sidebar_unread_count: 0,
@@ -1111,6 +1228,7 @@ async fn fetch_entry_list_config(
 pub async fn read_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> (Flash, ArchiveEntriesTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1124,7 +1242,7 @@ pub async fn read_entries_page(
         read_only: true,
         ..Default::default()
     };
-    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
 
     (
         flash.clone(),
@@ -1141,6 +1259,8 @@ pub async fn read_entries_page(
             ssr_entries_json: cfg.ssr_entries_json,
             ssr_entry_views: cfg.ssr_entry_views,
             ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
             theme: cfg.theme,
             git_version: crate::GIT_VERSION,
             sidebar_categories: cfg.sidebar_categories,
@@ -1152,6 +1272,7 @@ pub async fn read_entries_page(
 pub async fn starred_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> (Flash, ArchiveEntriesTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1165,7 +1286,7 @@ pub async fn starred_entries_page(
         starred_only: true,
         ..Default::default()
     };
-    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
 
     (
         flash.clone(),
@@ -1182,6 +1303,8 @@ pub async fn starred_entries_page(
             ssr_entries_json: cfg.ssr_entries_json,
             ssr_entry_views: cfg.ssr_entry_views,
             ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
             theme: cfg.theme,
             git_version: crate::GIT_VERSION,
             sidebar_categories: cfg.sidebar_categories,
@@ -1193,6 +1316,7 @@ pub async fn starred_entries_page(
 pub async fn summarized_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> (Flash, ArchiveEntriesTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1206,7 +1330,7 @@ pub async fn summarized_entries_page(
         has_summary: Some(true),
         ..Default::default()
     };
-    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
 
     (
         flash.clone(),
@@ -1223,6 +1347,8 @@ pub async fn summarized_entries_page(
             ssr_entries_json: cfg.ssr_entries_json,
             ssr_entry_views: cfg.ssr_entry_views,
             ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
             theme: cfg.theme,
             git_version: crate::GIT_VERSION,
             sidebar_categories: cfg.sidebar_categories,
@@ -1247,6 +1373,8 @@ pub struct CategoryEntriesTemplate {
     pub ssr_entries_json: String,
     pub ssr_entry_views: Vec<SsrEntryView>,
     pub ssr_has_continuation: bool,
+    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
@@ -1266,6 +1394,7 @@ pub async fn category_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> Result<(Flash, CategoryEntriesTemplate), AppError> {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1276,6 +1405,9 @@ pub async fn category_entries_page(
     };
 
     let user_id = auth_user.user.id;
+    let rp_entry_id = query.entry;
+    let secret = state.config.image_proxy_secret.clone();
+    let proxy_base_url = state.config.public_base_url.clone();
     let (category_name, cfg) = state
         .db
         .read_user(move |c| {
@@ -1301,6 +1433,14 @@ pub async fn category_entries_page(
             let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
             let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
 
+            let rp = rp_entry_id.and_then(|eid| {
+                fetch_reading_pane_entry(c, user_id, eid, &secret, proxy_base_url.as_deref())
+            });
+            let rp_json = rp
+                .as_ref()
+                .map(|e| escape_json_for_script(&serde_json::to_string(e).unwrap_or_default()))
+                .unwrap_or_default();
+
             Ok::<_, AppError>((
                 cat.name,
                 EntryListConfig {
@@ -1310,6 +1450,8 @@ pub async fn category_entries_page(
                     ssr_entries_json: ssr.json,
                     ssr_entry_views: ssr.views,
                     ssr_has_continuation: ssr.has_continuation,
+                    ssr_reading_pane: rp,
+                    ssr_reading_pane_json: rp_json,
                     theme,
                     sidebar_categories: sidebar_cats,
                     sidebar_unread_count: sidebar_unread,
@@ -1333,6 +1475,8 @@ pub async fn category_entries_page(
             ssr_entries_json: cfg.ssr_entries_json,
             ssr_entry_views: cfg.ssr_entry_views,
             ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
             theme: cfg.theme,
             git_version: crate::GIT_VERSION,
             sidebar_categories: cfg.sidebar_categories,
@@ -1352,6 +1496,8 @@ pub struct SearchTemplate {
     pub entries_per_page: i64,
     pub has_save_services: bool,
     pub has_kagi_configured: bool,
+    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
@@ -1370,6 +1516,7 @@ impl IntoResponse for SearchTemplate {
 pub async fn search_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> (Flash, SearchTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1381,7 +1528,7 @@ pub async fn search_page(
 
     // Search doesn't need SSR entries - pass a dummy filter that won't fetch
     let filter = entry::EntryFilter::default();
-    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
 
     (
         flash.clone(),
@@ -1393,6 +1540,8 @@ pub async fn search_page(
             entries_per_page: cfg.entries_per_page,
             has_save_services: cfg.has_save_services,
             has_kagi_configured: cfg.has_kagi_configured,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
             theme: cfg.theme,
             git_version: crate::GIT_VERSION,
             sidebar_categories: cfg.sidebar_categories,
@@ -1421,6 +1570,8 @@ pub struct FeedEntriesTemplate {
     pub ssr_entries_json: String,
     pub ssr_entry_views: Vec<SsrEntryView>,
     pub ssr_has_continuation: bool,
+    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
@@ -1440,6 +1591,7 @@ pub async fn feed_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> Result<(Flash, FeedEntriesTemplate), AppError> {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1450,6 +1602,9 @@ pub async fn feed_entries_page(
     };
 
     let user_id = auth_user.user.id;
+    let rp_entry_id = query.entry;
+    let secret = state.config.image_proxy_secret.clone();
+    let proxy_base_url = state.config.public_base_url.clone();
     let (feed_url, feed_title, feed_has_icon, category_id, category_name, cfg) = state
         .db
         .read_user(move |c| {
@@ -1487,6 +1642,14 @@ pub async fn feed_entries_page(
             let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
             let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
 
+            let rp = rp_entry_id.and_then(|eid| {
+                fetch_reading_pane_entry(c, user_id, eid, &secret, proxy_base_url.as_deref())
+            });
+            let rp_json = rp
+                .as_ref()
+                .map(|e| escape_json_for_script(&serde_json::to_string(e).unwrap_or_default()))
+                .unwrap_or_default();
+
             Ok::<_, AppError>((
                 feed_url,
                 feed_title,
@@ -1500,6 +1663,8 @@ pub async fn feed_entries_page(
                     ssr_entries_json: ssr.json,
                     ssr_entry_views: ssr.views,
                     ssr_has_continuation: ssr.has_continuation,
+                    ssr_reading_pane: rp,
+                    ssr_reading_pane_json: rp_json,
                     theme,
                     sidebar_categories: sidebar_cats,
                     sidebar_unread_count: sidebar_unread,
@@ -1527,6 +1692,8 @@ pub async fn feed_entries_page(
             ssr_entries_json: cfg.ssr_entries_json,
             ssr_entry_views: cfg.ssr_entry_views,
             ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
             theme: cfg.theme,
             git_version: crate::GIT_VERSION,
             sidebar_categories: cfg.sidebar_categories,

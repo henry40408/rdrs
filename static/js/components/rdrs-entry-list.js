@@ -265,6 +265,16 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         const entryId = parseInt(urlEntry, 10);
         if (isNaN(entryId)) return;
 
+        // Check if reading pane was SSR'd
+        const pane = this._getReadingPane();
+        if (pane && this._hydrateReadingPaneSsr(pane, entryId)) {
+            // SSR hydration successful, select the entry in the list if present
+            const idx = this.entries.findIndex(e => e.id === entryId);
+            if (idx >= 0) this.selectEntry(idx);
+            this._switchToEntryMode();
+            return;
+        }
+
         // Try to find in loaded entries
         const idx = this.entries.findIndex(e => e.id === entryId);
         if (idx >= 0) {
@@ -273,6 +283,40 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         } else {
             // Entry not in current list, load directly via API
             this._loadEntryByIdInPane(entryId);
+        }
+    }
+
+    // --- Hydrate SSR'd reading pane content ---
+    _hydrateReadingPaneSsr(pane, entryId) {
+        const ssrScript = pane.querySelector('script.ssr-reading-pane');
+        if (!ssrScript) return false;
+
+        try {
+            const data = JSON.parse(ssrScript.textContent);
+            ssrScript.remove();
+
+            if (data.id !== entryId) return false;
+
+            // Populate JS state from SSR data
+            this._readingPaneEntry = { id: data.id, ...data };
+            this._readingPaneData = data;
+
+            // Wire up reading pane actions
+            this._ensureReadingPaneActions(pane);
+
+            // Auto-mark as read
+            if (data.read_at === null) {
+                this.markRead(data.id);
+            }
+
+            // Handle existing summary
+            if (data.summary_status) {
+                this._handleSummaryStatus(data.summary_status, data.id);
+            }
+
+            return true;
+        } catch {
+            return false;
         }
     }
 

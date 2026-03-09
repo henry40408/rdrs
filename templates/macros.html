@@ -194,3 +194,49 @@ document.addEventListener('click', function(e) {
 <p id="entries-count" class="muted" data-testid="entries-count">{% if !ssr_entry_views.is_empty() %}Showing {{ ssr_entry_views.len() }} entries{% endif %}</p>
 <script type="application/json" class="ssr-entries">{{ ssr_entries_json|safe }}</script>
 {% endmacro %}
+
+{% macro reading_pane(ssr_reading_pane, ssr_reading_pane_json, has_save_services, has_kagi_configured) %}
+<div class="reading-pane{% if ssr_reading_pane.is_some() %} reading-pane-active{% endif %}" id="reading-pane">
+{% match ssr_reading_pane %}
+{% when Some with (rp) %}
+    <div class="reading-pane-content">
+        <h1 class="reading-pane-title">{{ rp.title }}</h1>
+        <div class="reading-pane-meta">
+            {%- if rp.feed_has_icon %}<img src="/api/feeds/{{ rp.feed_id }}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">{% endif -%}
+            {{ rp.feed_title }}
+            {%- if !rp.author.is_empty() %} &middot; {{ rp.author }}{% endif -%}
+            {%- if !rp.published_date.is_empty() %} &middot; {{ rp.published_date }}{% endif -%}
+        </div>
+        <div class="reading-pane-actions">
+            <button type="button" class="btn-secondary btn-sm" data-rp-action="toggle-star" data-testid="rp-star-btn">{% if rp.starred_at.is_some() %}Unstar{% else %}Star{% endif %}</button>
+            <button type="button" class="btn-secondary btn-sm" data-rp-action="mark-unread" data-testid="rp-mark-unread-btn">Mark Unread</button>
+            {% if rp.link.is_some() %}
+            <button type="button" class="btn-secondary btn-sm" data-rp-action="fetch-full-content" data-testid="rp-fetch-btn">Fetch Full Content</button>
+            {% endif %}
+            {% if has_kagi_configured && rp.link.is_some() %}
+            <button type="button" class="btn-secondary btn-sm" data-rp-action="summarize" data-testid="rp-summarize-btn">Summarize</button>
+            {% endif %}
+            {% if has_save_services && rp.link.is_some() %}
+            <button type="button" class="btn-secondary btn-sm" data-rp-action="save" data-testid="rp-save-btn">Save</button>
+            {% endif %}
+            {% if let Some(link) = rp.link %}
+            <a href="{{ link }}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">View Original</a>
+            {% endif %}
+        </div>
+        <div class="rp-summary-container d-none" data-testid="rp-summary-container">
+            <div class="summary-box">
+                <div class="summary-actions">
+                    <button type="button" class="btn-sm btn-secondary" data-rp-action="copy-summary">Copy</button>
+                    <button type="button" class="btn-sm btn-secondary" data-rp-action="dismiss-summary">Dismiss</button>
+                </div>
+                <blockquote class="rp-summary-content"></blockquote>
+            </div>
+        </div>
+        <article class="reading-pane-article" data-testid="rp-entry-content">{{ rp.content|safe }}</article>
+    </div>
+    <script type="application/json" class="ssr-reading-pane">{{ ssr_reading_pane_json|safe }}</script>
+{% when None %}
+    <div class="reading-pane-empty">Select an entry to read</div>
+{% endmatch %}
+</div>
+{% endmacro %}
