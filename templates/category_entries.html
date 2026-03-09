@@ -7,7 +7,7 @@
 
 {% block body %}
 <div class="app-layout">
-{% call macros::sidebar("categories", is_admin, is_masquerading, username) %}{% endcall %}
+{% call macros::sidebar("categories", is_admin, is_masquerading, username, sidebar_categories, sidebar_unread_count) %}{% endcall %}
 
 <main class="main-content">
     {% call macros::flash(flash_messages) %}{% endcall %}
@@ -53,13 +53,11 @@
                     reading-pane="#reading-pane"
                     {% if has_save_services %}has-save-services{% endif %}
                     {% if has_kagi_configured %}has-kagi-configured{% endif %}
-                ><script type="application/json" class="ssr-entries">{{ ssr_entries_json|safe }}</script></rdrs-entry-list>
+                >{% call macros::entry_list_content(ssr_entry_views, ssr_has_continuation, ssr_entries_json, "category", true, false, true, true, "No entries found.") %}{% endcall %}</rdrs-entry-list>
             </div>
         </div>
 
-        <div class="reading-pane" id="reading-pane">
-            <div class="reading-pane-empty">Select an entry to read</div>
-        </div>
+        {% call macros::reading_pane(ssr_reading_pane, ssr_reading_pane_json, has_save_services, has_kagi_configured) %}{% endcall %}
     </div>
 </main>
 </div>
@@ -134,8 +132,10 @@
         document.getElementById('filter-status').value = defaultStatus;
         list.setApiParams(getFilterParams());
 
-        // If the filter matches what was SSR'd (unread), use the SSR data; otherwise fetch
-        if (defaultStatus === 'unread' && list._ssrData) {
+        // If the filter matches what was SSR'd (unread), the HTML is already rendered
+        if (defaultStatus === 'unread' && list._hydrated) {
+            // Already hydrated from SSR, nothing to do
+        } else if (defaultStatus === 'unread' && list._ssrData) {
             list._consumeSsrData();
         } else {
             list.loadEntries();

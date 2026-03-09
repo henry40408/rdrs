@@ -7,7 +7,7 @@
 
 {% block body %}
 <div class="app-layout">
-{% call macros::sidebar("search", is_admin, is_masquerading, username) %}{% endcall %}
+{% call macros::sidebar("search", is_admin, is_masquerading, username, sidebar_categories, sidebar_unread_count) %}{% endcall %}
 
 <main class="main-content">
     {% call macros::flash(flash_messages) %}{% endcall %}
@@ -43,9 +43,7 @@
             </div>
         </div>
 
-        <div class="reading-pane" id="reading-pane">
-            <div class="reading-pane-empty">Search and select an entry to read</div>
-        </div>
+        {% call macros::reading_pane(ssr_reading_pane, ssr_reading_pane_json, has_save_services, has_kagi_configured) %}{% endcall %}
     </div>
 </main>
 </div>

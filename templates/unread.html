@@ -7,7 +7,7 @@
 
 {% block body %}
 <div class="app-layout">
-{% call macros::sidebar("unread", is_admin, is_masquerading, username) %}{% endcall %}
+{% call macros::sidebar("unread", is_admin, is_masquerading, username, sidebar_categories, sidebar_unread_count) %}{% endcall %}
 
 <main class="main-content">
     {% call macros::flash(flash_messages) %}{% endcall %}
@@ -43,13 +43,11 @@
                     reading-pane="#reading-pane"
                     {% if has_save_services %}has-save-services{% endif %}
                     {% if has_kagi_configured %}has-kagi-configured{% endif %}
-                ><script type="application/json" class="ssr-entries">{{ ssr_entries_json|safe }}</script></rdrs-entry-list>
+                >{% call macros::entry_list_content(ssr_entry_views, ssr_has_continuation, ssr_entries_json, "unread", true, true, true, true, "No unread entries.") %}{% endcall %}</rdrs-entry-list>
             </div>
         </div>
 
-        <div class="reading-pane" id="reading-pane">
-            <div class="reading-pane-empty">Select an entry to read</div>
-        </div>
+        {% call macros::reading_pane(ssr_reading_pane, ssr_reading_pane_json, has_save_services, has_kagi_configured) %}{% endcall %}
     </div>
 </main>
 </div>

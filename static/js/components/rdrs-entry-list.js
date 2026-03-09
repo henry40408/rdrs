@@ -21,21 +21,29 @@ class RdrsEntryList extends HTMLElement {
         this._extraHandlers = {};
         this._popstateHandler = null;
         this._ssrData = null; // SSR data from server, if available
+        this._hydrated = false; // true if SSR HTML was hydrated in place
     }
 
     connectedCallback() {
-        // Extract SSR data before _render() clears innerHTML
+        // Extract SSR data before _render() might clear innerHTML
         this._extractSsrData();
-        this._render();
+
+        // If server rendered the full HTML (entries-list container exists), hydrate in place
+        if (this._ssrData && this.querySelector('#entries-list')) {
+            this._hydrateSsr();
+        } else {
+            this._render();
+        }
+
         this._setupDelegation();
         this._setupPersistedRestore();
         this._setupPopstate();
+
         // Pages that need to set API params before loading should add no-auto-load
         if (!this.hasAttribute('no-auto-load')) {
-            // If we have SSR data, use it instead of fetching
             if (this._ssrData) {
                 this._consumeSsrData();
-            } else {
+            } else if (!this._hydrated) {
                 this.loadEntries();
             }
         }
@@ -53,6 +61,26 @@ class RdrsEntryList extends HTMLElement {
         } catch (e) {
             // Invalid JSON, ignore
         }
+    }
+
+    /** Hydrate SSR HTML: populate JS state from JSON without re-rendering DOM. */
+    _hydrateSsr() {
+        const data = this._ssrData;
+        this._ssrData = null;
+        this._hydrated = true;
+
+        this.entries = data.entries;
+        this.continuation = data.continuation || null;
+
+        // Wire up load-more button
+        const loadMoreBtn = this.querySelector('#load-more button');
+        if (loadMoreBtn) loadMoreBtn.addEventListener('click', () => this.loadMore());
+
+        // Wire up mark-above button
+        const markAboveBtn = this.querySelector('#mark-above-read button');
+        if (markAboveBtn) markAboveBtn.addEventListener('click', () => this.markAboveAsRead());
+
+        this._checkEntryParam();
     }
 
     /** Consume SSR data: populate entries and render without a network request. */
@@ -237,6 +265,16 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         const entryId = parseInt(urlEntry, 10);
         if (isNaN(entryId)) return;
 
+        // Check if reading pane was SSR'd
+        const pane = this._getReadingPane();
+        if (pane && this._hydrateReadingPaneSsr(pane, entryId)) {
+            // SSR hydration successful, select the entry in the list if present
+            const idx = this.entries.findIndex(e => e.id === entryId);
+            if (idx >= 0) this.selectEntry(idx);
+            this._switchToEntryMode();
+            return;
+        }
+
         // Try to find in loaded entries
         const idx = this.entries.findIndex(e => e.id === entryId);
         if (idx >= 0) {
@@ -245,6 +283,40 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         } else {
             // Entry not in current list, load directly via API
             this._loadEntryByIdInPane(entryId);
+        }
+    }
+
+    // --- Hydrate SSR'd reading pane content ---
+    _hydrateReadingPaneSsr(pane, entryId) {
+        const ssrScript = pane.querySelector('script.ssr-reading-pane');
+        if (!ssrScript) return false;
+
+        try {
+            const data = JSON.parse(ssrScript.textContent);
+            ssrScript.remove();
+
+            if (data.id !== entryId) return false;
+
+            // Populate JS state from SSR data
+            this._readingPaneEntry = { id: data.id, ...data };
+            this._readingPaneData = data;
+
+            // Wire up reading pane actions
+            this._ensureReadingPaneActions(pane);
+
+            // Auto-mark as read
+            if (data.read_at === null) {
+                this.markRead(data.id);
+            }
+
+            // Handle existing summary
+            if (data.summary_status) {
+                this._handleSummaryStatus(data.summary_status, data.id);
+            }
+
+            return true;
+        } catch {
+            return false;
         }
     }
 

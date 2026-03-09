@@ -12,7 +12,36 @@ use crate::middleware::flash::{Flash, FlashMessage};
 use crate::models::entry_summary;
 use crate::models::user_settings;
 use crate::models::{category, entry, feed};
+use crate::services::sanitize_html;
 use crate::AppState;
+
+/// A category link for SSR sidebar rendering.
+pub struct SidebarCategory {
+    pub id: i64,
+    pub name: String,
+    pub unread_count: i64,
+}
+
+/// Fetch sidebar categories with unread counts for a user.
+fn fetch_sidebar_data(conn: &rusqlite::Connection, user_id: i64) -> (Vec<SidebarCategory>, i64) {
+    let cats = category::list_by_user(conn, user_id).unwrap_or_default();
+    let unread_by_cat = entry::count_unread_by_category(conn, user_id).unwrap_or_default();
+    let total_unread = entry::count_unread_by_user(conn, user_id).unwrap_or(0);
+
+    let sidebar_cats = cats
+        .into_iter()
+        .map(|cat| {
+            let unread_count = *unread_by_cat.get(&cat.id).unwrap_or(&0);
+            SidebarCategory {
+                id: cat.id,
+                name: cat.name,
+                unread_count,
+            }
+        })
+        .collect();
+
+    (sidebar_cats, total_unread)
+}
 
 /// Entry data for SSR embedding as JSON.
 /// Field names match what the JS `_transformItem()` expects.
@@ -48,6 +77,152 @@ fn escape_json_for_script(json: &str) -> String {
     json.replace("</", "<\\/")
 }
 
+/// Entry data for SSR HTML rendering in Askama templates.
+pub struct SsrEntryView {
+    pub id: i64,
+    pub feed_id: i64,
+    pub category_id: i64,
+    pub category_name: String,
+    pub feed_title: String,
+    pub feed_has_icon: bool,
+    pub title: String,
+    pub link: Option<String>,
+    pub is_read: bool,
+    pub is_starred: bool,
+    pub summary_status: Option<String>,
+    pub published_date: String,
+    pub published_datetime: String,
+}
+
+fn ssr_entries_to_views(entries: &[SsrEntry]) -> Vec<SsrEntryView> {
+    entries
+        .iter()
+        .map(|e| {
+            let (published_date, published_datetime) = e
+                .published_at
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| {
+                    (
+                        dt.format("%b %-d, %Y").to_string(),
+                        dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                    )
+                })
+                .unwrap_or_default();
+
+            SsrEntryView {
+                id: e.id,
+                feed_id: e.feed_id,
+                category_id: e.category_id,
+                category_name: e.category_name.clone(),
+                feed_title: if e.feed_title.is_empty() {
+                    e.feed_url.clone()
+                } else {
+                    e.feed_title.clone()
+                },
+                feed_has_icon: e.feed_has_icon,
+                title: if e.title.is_empty() {
+                    "Untitled".to_string()
+                } else {
+                    e.title.clone()
+                },
+                link: e.link.clone(),
+                is_read: e.read_at.is_some(),
+                is_starred: e.starred_at.is_some(),
+                summary_status: e.summary_status.clone(),
+                published_date,
+                published_datetime,
+            }
+        })
+        .collect()
+}
+
+/// SSR data for the reading pane (entry detail view).
+/// Embedded as JSON for JS hydration + fields for Askama HTML rendering.
+#[derive(serde::Serialize)]
+pub struct SsrReadingPaneEntry {
+    pub id: i64,
+    pub title: String,
+    pub link: Option<String>,
+    pub content: String,
+    pub author: String,
+    pub feed_title: String,
+    pub feed_has_icon: bool,
+    pub feed_id: i64,
+    pub category_id: i64,
+    pub category_name: String,
+    pub published_at: Option<String>,
+    pub read_at: Option<String>,
+    pub starred_at: Option<String>,
+    pub summary_status: Option<String>,
+    /// Pre-formatted date for display
+    #[serde(skip)]
+    pub published_date: String,
+}
+
+/// Query parameter for pages that support `?entry=<id>` to SSR the reading pane.
+#[derive(serde::Deserialize, Default)]
+pub struct EntryQuery {
+    pub entry: Option<i64>,
+}
+
+/// Fetch and sanitize an entry for SSR reading pane rendering.
+fn fetch_reading_pane_entry(
+    conn: &rusqlite::Connection,
+    user_id: i64,
+    entry_id: i64,
+    secret: &[u8],
+    proxy_base_url: Option<&str>,
+) -> Option<SsrReadingPaneEntry> {
+    let ewf = entry::find_by_id_with_feed(conn, entry_id).ok()??;
+
+    // Verify the entry belongs to this user's feeds
+    let cat = category::find_by_id(conn, ewf.category_id).ok()??;
+    if cat.user_id != user_id {
+        return None;
+    }
+
+    let e = &ewf.entry;
+    let link = e.link.as_deref().unwrap_or("");
+    let base_url = if link.is_empty() { None } else { Some(link) };
+    let referrer = ewf.custom_referrer.as_deref();
+
+    let content = if let Some(c) = e.content.as_deref() {
+        sanitize_html(c, secret, base_url, referrer, proxy_base_url)
+    } else {
+        let fallback = e.summary.as_deref().unwrap_or("");
+        sanitize_html(fallback, secret, base_url, referrer, proxy_base_url)
+    };
+
+    // Summary status
+    let summary_status = entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])
+        .ok()
+        .and_then(|m| m.get(&entry_id).map(|s| s.as_str().to_string()));
+
+    let published_date = e
+        .published_at
+        .map(|dt| dt.format("%b %-d, %Y %H:%M").to_string())
+        .unwrap_or_default();
+
+    Some(SsrReadingPaneEntry {
+        id: e.id,
+        title: e.title.clone().unwrap_or_else(|| "Untitled".to_string()),
+        link: e.link.clone(),
+        content,
+        author: e.author.clone().unwrap_or_default(),
+        feed_title: ewf.feed_title.unwrap_or_else(|| ewf.feed_url.clone()),
+        feed_has_icon: ewf.feed_has_icon,
+        feed_id: e.feed_id,
+        category_id: ewf.category_id,
+        category_name: ewf.category_name,
+        published_at: e.published_at.map(|dt| dt.to_rfc3339()),
+        read_at: e.read_at.map(|dt| dt.to_rfc3339()),
+        starred_at: e.starred_at.map(|dt| dt.to_rfc3339()),
+        summary_status,
+        published_date,
+    })
+}
+
 /// Convert EntryWithFeed + summary statuses to SSR entries.
 fn entries_to_ssr(
     entries: Vec<entry::EntryWithFeed>,
@@ -80,13 +255,20 @@ fn entries_to_ssr(
         .collect()
 }
 
-/// Fetch first page of entries for SSR, returns (ssr_json, has_more).
+/// SSR result containing JSON for JS hydration and views for HTML rendering.
+struct SsrEntryResult {
+    json: String,
+    views: Vec<SsrEntryView>,
+    has_continuation: bool,
+}
+
+/// Fetch first page of entries for SSR.
 fn fetch_entries_for_ssr(
     conn: &rusqlite::Connection,
     user_id: i64,
     filter: &entry::EntryFilter,
     limit: i64,
-) -> (String, Option<String>) {
+) -> SsrEntryResult {
     let pagination = entry::ContinuationParams {
         oldest_first: false,
         limit: limit + 1, // fetch one extra to check for continuation
@@ -111,6 +293,8 @@ fn fetch_entries_for_ssr(
         entry_summary::get_statuses_for_entries(conn, user_id, &entry_ids).unwrap_or_default();
 
     let ssr_entries = entries_to_ssr(entries, &summary_statuses);
+    let views = ssr_entries_to_views(&ssr_entries);
+    let has_continuation = continuation.is_some();
     let data = SsrEntryListData {
         entries: ssr_entries,
         continuation,
@@ -118,7 +302,11 @@ fn fetch_entries_for_ssr(
 
     let json = serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string());
     let json = escape_json_for_script(&json);
-    (json, data.continuation)
+    SsrEntryResult {
+        json,
+        views,
+        has_continuation,
+    }
 }
 
 #[derive(Template)]
@@ -216,8 +404,14 @@ pub struct UnreadTemplate {
     pub has_save_services: bool,
     pub has_kagi_configured: bool,
     pub ssr_entries_json: String,
+    pub ssr_entry_views: Vec<SsrEntryView>,
+    pub ssr_has_continuation: bool,
+    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for UnreadTemplate {
@@ -232,6 +426,7 @@ impl IntoResponse for UnreadTemplate {
 pub async fn unread_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> (Flash, UnreadTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -243,47 +438,11 @@ pub async fn unread_page(
     };
 
     let user_id = auth_user.user.id;
-    let (
-        unread_count,
-        entries_per_page,
-        has_save_services,
-        has_kagi_configured,
-        ssr_entries_json,
-        theme,
-    ) = state
-        .db
-        .read_user(move |c| {
-            let unread = entry::count_unread_by_user(c, user_id).unwrap_or(0);
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
-            let save_config =
-                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
-            let kagi_configured = save_config
-                .kagi
-                .as_ref()
-                .map(|k| k.is_configured())
-                .unwrap_or(false);
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-
-            // SSR: fetch first page of unread entries
-            let filter = entry::EntryFilter {
-                unread_only: true,
-                ..Default::default()
-            };
-            let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
-
-            (unread, epp, save_services, kagi_configured, ssr_json, theme)
-        })
-        .await
-        .unwrap_or((
-            0,
-            user_settings::DEFAULT_ENTRIES_PER_PAGE,
-            false,
-            false,
-            "null".to_string(),
-            None,
-        ));
+    let filter = entry::EntryFilter {
+        unread_only: true,
+        ..Default::default()
+    };
+    let cfg = fetch_entry_list_config(&state, user_id, filter, query.entry).await;
 
     (
         flash.clone(),
@@ -295,16 +454,22 @@ pub async fn unread_page(
                 .created_at
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string(),
-            unread_count,
+            unread_count: cfg.sidebar_unread_count,
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
-            ssr_entries_json,
-            theme,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     )
 }
@@ -329,6 +494,8 @@ pub struct AdminTemplate {
     pub users: Vec<AdminUserRow>,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for AdminTemplate {
@@ -349,7 +516,7 @@ pub async fn admin_page(
     let original_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
 
     let user_id = admin.user.id;
-    let (users, theme) = state
+    let (users, theme, sidebar_categories, sidebar_unread_count) = state
         .db
         .read_user(move |c| {
             let user_list = crate::models::user::list_all(c).unwrap_or_default();
@@ -369,10 +536,11 @@ pub async fn admin_page(
                 })
                 .collect();
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            (rows, theme)
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+            (rows, theme, sidebar_cats, sidebar_unread)
         })
         .await
-        .unwrap_or((vec![], None));
+        .unwrap_or((vec![], None, vec![], 0));
 
     (
         flash.clone(),
@@ -385,6 +553,8 @@ pub async fn admin_page(
             users,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -406,6 +576,8 @@ pub struct UserSettingsTemplate {
     pub kagi_language: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for UserSettingsTemplate {
@@ -437,6 +609,8 @@ pub async fn user_settings_page(
         kagi_configured,
         kagi_language,
         theme,
+        sidebar_categories,
+        sidebar_unread_count,
     ) = state
         .db
         .read_user(move |c| {
@@ -455,6 +629,7 @@ pub async fn user_settings_page(
             let kagi_lang = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
 
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
 
             (
                 epp,
@@ -463,6 +638,8 @@ pub async fn user_settings_page(
                 kagi_configured,
                 kagi_lang,
                 theme,
+                sidebar_cats,
+                sidebar_unread,
             )
         })
         .await
@@ -473,6 +650,8 @@ pub async fn user_settings_page(
             false,
             String::new(),
             None,
+            vec![],
+            0,
         ));
 
     (
@@ -500,6 +679,8 @@ pub async fn user_settings_page(
             kagi_language,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -521,6 +702,8 @@ pub struct CategoriesTemplate {
     pub categories: Vec<CategoryWithCount>,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for CategoriesTemplate {
@@ -545,7 +728,7 @@ pub async fn categories_page(
     };
 
     let user_id = auth_user.user.id;
-    let (categories_with_counts, theme) = state
+    let (categories_with_counts, theme, sidebar_categories, sidebar_unread_count) = state
         .db
         .read_user(move |c| {
             let cats = category::list_by_user(c, user_id).unwrap_or_default();
@@ -563,10 +746,11 @@ pub async fn categories_page(
                 })
                 .collect();
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            (cats_with_counts, theme)
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+            (cats_with_counts, theme, sidebar_cats, sidebar_unread)
         })
         .await
-        .unwrap_or((vec![], None));
+        .unwrap_or((vec![], None, vec![], 0));
 
     (
         flash.clone(),
@@ -578,6 +762,8 @@ pub async fn categories_page(
             categories: categories_with_counts,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -619,6 +805,8 @@ pub struct FeedsTemplate {
     pub feed_data_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for FeedsTemplate {
@@ -643,7 +831,7 @@ pub async fn feeds_page(
     };
 
     let user_id = auth_user.user.id;
-    let (feeds_data, cats_data, theme) = state
+    let (feeds_data, cats_data, theme, sidebar_categories, sidebar_unread_count) = state
         .db
         .read_user(move |c| {
             let cats = category::list_by_user(c, user_id).unwrap_or_default();
@@ -707,10 +895,11 @@ pub async fn feeds_page(
                 .collect();
 
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            (feed_rows, cat_options, theme)
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+            (feed_rows, cat_options, theme, sidebar_cats, sidebar_unread)
         })
         .await
-        .unwrap_or((vec![], vec![], None));
+        .unwrap_or((vec![], vec![], None, vec![], 0));
 
     // Build a JSON map: { feedId: { url, title, description, ... }, ... }
     let feed_data_map: std::collections::HashMap<i64, &FeedRow> =
@@ -730,6 +919,8 @@ pub async fn feeds_page(
             feed_data_json,
             theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -745,8 +936,14 @@ pub struct EntriesTemplate {
     pub has_save_services: bool,
     pub has_kagi_configured: bool,
     pub ssr_entries_json: String,
+    pub ssr_entry_views: Vec<SsrEntryView>,
+    pub ssr_has_continuation: bool,
+    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for EntriesTemplate {
@@ -761,6 +958,7 @@ impl IntoResponse for EntriesTemplate {
 pub async fn entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> (Flash, EntriesTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -770,36 +968,8 @@ pub async fn entries_page(
         auth_user.user.is_admin()
     };
 
-    let user_id = auth_user.user.id;
-    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme) = state
-        .db
-        .read_user(move |c| {
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
-            let save_config =
-                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
-            let kagi_configured = save_config
-                .kagi
-                .as_ref()
-                .map(|k| k.is_configured())
-                .unwrap_or(false);
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-
-            // SSR: fetch first page of all entries
-            let filter = entry::EntryFilter::default();
-            let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
-
-            (epp, save_services, kagi_configured, ssr_json, theme)
-        })
-        .await
-        .unwrap_or((
-            user_settings::DEFAULT_ENTRIES_PER_PAGE,
-            false,
-            false,
-            "null".to_string(),
-            None,
-        ));
+    let filter = entry::EntryFilter::default();
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
 
     (
         flash.clone(),
@@ -808,12 +978,18 @@ pub async fn entries_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
-            ssr_entries_json,
-            theme,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     )
 }
@@ -877,6 +1053,8 @@ pub struct SettingsTemplate {
     pub signup_enabled: bool,
     pub multi_user_enabled: bool,
     pub theme: Option<String>,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for SettingsTemplate {
@@ -903,11 +1081,15 @@ pub async fn settings_page(
     let user_agent_is_default = state.config.user_agent == DEFAULT_USER_AGENT;
 
     let user_id = auth_user.user.id;
-    let theme = state
+    let (theme, sidebar_categories, sidebar_unread_count) = state
         .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .read_user(move |c| {
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+            (theme, sidebar_cats, sidebar_unread)
+        })
         .await
-        .unwrap_or(None);
+        .unwrap_or((None, vec![], 0));
 
     (
         flash.clone(),
@@ -922,6 +1104,8 @@ pub async fn settings_page(
             signup_enabled: state.config.signup_enabled,
             multi_user_enabled: state.config.multi_user_enabled,
             theme,
+            sidebar_categories,
+            sidebar_unread_count,
         },
     )
 }
@@ -940,8 +1124,14 @@ pub struct ArchiveEntriesTemplate {
     pub page_mode: String,
     pub page_title: String,
     pub ssr_entries_json: String,
+    pub ssr_entry_views: Vec<SsrEntryView>,
+    pub ssr_has_continuation: bool,
+    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for ArchiveEntriesTemplate {
@@ -954,11 +1144,29 @@ impl IntoResponse for ArchiveEntriesTemplate {
 }
 
 /// Helper to fetch common entry-list config + SSR entries from DB.
+/// Common entry-list page data.
+struct EntryListConfig {
+    entries_per_page: i64,
+    has_save_services: bool,
+    has_kagi_configured: bool,
+    ssr_entries_json: String,
+    ssr_entry_views: Vec<SsrEntryView>,
+    ssr_has_continuation: bool,
+    ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    ssr_reading_pane_json: String,
+    theme: Option<String>,
+    sidebar_categories: Vec<SidebarCategory>,
+    sidebar_unread_count: i64,
+}
+
 async fn fetch_entry_list_config(
     state: &AppState,
     user_id: i64,
     filter: entry::EntryFilter,
-) -> (i64, bool, bool, String, Option<String>) {
+    reading_pane_entry_id: Option<i64>,
+) -> EntryListConfig {
+    let secret = state.config.image_proxy_secret.clone();
+    let proxy_base_url = state.config.public_base_url.clone();
     state
         .db
         .read_user(move |c| {
@@ -973,22 +1181,51 @@ async fn fetch_entry_list_config(
                 .map(|k| k.is_configured())
                 .unwrap_or(false);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
-            (epp, save_services, kagi_configured, ssr_json, theme)
+            let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+
+            let rp = reading_pane_entry_id.and_then(|eid| {
+                fetch_reading_pane_entry(c, user_id, eid, &secret, proxy_base_url.as_deref())
+            });
+            let rp_json = rp
+                .as_ref()
+                .map(|e| escape_json_for_script(&serde_json::to_string(e).unwrap_or_default()))
+                .unwrap_or_default();
+
+            EntryListConfig {
+                entries_per_page: epp,
+                has_save_services: save_services,
+                has_kagi_configured: kagi_configured,
+                ssr_entries_json: ssr.json,
+                ssr_entry_views: ssr.views,
+                ssr_has_continuation: ssr.has_continuation,
+                ssr_reading_pane: rp,
+                ssr_reading_pane_json: rp_json,
+                theme,
+                sidebar_categories: sidebar_cats,
+                sidebar_unread_count: sidebar_unread,
+            }
         })
         .await
-        .unwrap_or((
-            user_settings::DEFAULT_ENTRIES_PER_PAGE,
-            false,
-            false,
-            "null".to_string(),
-            None,
-        ))
+        .unwrap_or(EntryListConfig {
+            entries_per_page: user_settings::DEFAULT_ENTRIES_PER_PAGE,
+            has_save_services: false,
+            has_kagi_configured: false,
+            ssr_entries_json: "null".to_string(),
+            ssr_entry_views: vec![],
+            ssr_has_continuation: false,
+            ssr_reading_pane: None,
+            ssr_reading_pane_json: String::new(),
+            theme: None,
+            sidebar_categories: vec![],
+            sidebar_unread_count: 0,
+        })
 }
 
 pub async fn read_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> (Flash, ArchiveEntriesTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1002,8 +1239,7 @@ pub async fn read_entries_page(
         read_only: true,
         ..Default::default()
     };
-    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme) =
-        fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
 
     (
         flash.clone(),
@@ -1012,14 +1248,20 @@ pub async fn read_entries_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
             page_mode: "read".to_string(),
             page_title: "Read Entries".to_string(),
-            ssr_entries_json,
-            theme,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     )
 }
@@ -1027,6 +1269,7 @@ pub async fn read_entries_page(
 pub async fn starred_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> (Flash, ArchiveEntriesTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1040,8 +1283,7 @@ pub async fn starred_entries_page(
         starred_only: true,
         ..Default::default()
     };
-    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme) =
-        fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
 
     (
         flash.clone(),
@@ -1050,14 +1292,20 @@ pub async fn starred_entries_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
             page_mode: "starred".to_string(),
             page_title: "Starred Entries".to_string(),
-            ssr_entries_json,
-            theme,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     )
 }
@@ -1065,6 +1313,7 @@ pub async fn starred_entries_page(
 pub async fn summarized_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> (Flash, ArchiveEntriesTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1078,8 +1327,7 @@ pub async fn summarized_entries_page(
         has_summary: Some(true),
         ..Default::default()
     };
-    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme) =
-        fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
 
     (
         flash.clone(),
@@ -1088,14 +1336,20 @@ pub async fn summarized_entries_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
             page_mode: "summarized".to_string(),
             page_title: "Summarized Entries".to_string(),
-            ssr_entries_json,
-            theme,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     )
 }
@@ -1114,8 +1368,14 @@ pub struct CategoryEntriesTemplate {
     pub category_id: i64,
     pub category_name: String,
     pub ssr_entries_json: String,
+    pub ssr_entry_views: Vec<SsrEntryView>,
+    pub ssr_has_continuation: bool,
+    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for CategoryEntriesTemplate {
@@ -1131,6 +1391,7 @@ pub async fn category_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> Result<(Flash, CategoryEntriesTemplate), AppError> {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1141,14 +1402,10 @@ pub async fn category_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (
-        entries_per_page,
-        has_save_services,
-        has_kagi_configured,
-        category_name,
-        ssr_entries_json,
-        theme,
-    ) = state
+    let rp_entry_id = query.entry;
+    let secret = state.config.image_proxy_secret.clone();
+    let proxy_base_url = state.config.public_base_url.clone();
+    let (category_name, cfg) = state
         .db
         .read_user(move |c| {
             let cat =
@@ -1165,21 +1422,37 @@ pub async fn category_entries_page(
                 .unwrap_or(false);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
 
-            // SSR: fetch first page of category entries (default: unread)
             let filter = entry::EntryFilter {
                 category_id: Some(id),
                 unread_only: true,
                 ..Default::default()
             };
-            let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
+            let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+
+            let rp = rp_entry_id.and_then(|eid| {
+                fetch_reading_pane_entry(c, user_id, eid, &secret, proxy_base_url.as_deref())
+            });
+            let rp_json = rp
+                .as_ref()
+                .map(|e| escape_json_for_script(&serde_json::to_string(e).unwrap_or_default()))
+                .unwrap_or_default();
 
             Ok::<_, AppError>((
-                epp,
-                save_services,
-                kagi_configured,
                 cat.name,
-                ssr_json,
-                theme,
+                EntryListConfig {
+                    entries_per_page: epp,
+                    has_save_services: save_services,
+                    has_kagi_configured: kagi_configured,
+                    ssr_entries_json: ssr.json,
+                    ssr_entry_views: ssr.views,
+                    ssr_has_continuation: ssr.has_continuation,
+                    ssr_reading_pane: rp,
+                    ssr_reading_pane_json: rp_json,
+                    theme,
+                    sidebar_categories: sidebar_cats,
+                    sidebar_unread_count: sidebar_unread,
+                },
             ))
         })
         .await??;
@@ -1191,14 +1464,20 @@ pub async fn category_entries_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
             category_id: id,
             category_name,
-            ssr_entries_json,
-            theme,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     ))
 }
@@ -1214,8 +1493,12 @@ pub struct SearchTemplate {
     pub entries_per_page: i64,
     pub has_save_services: bool,
     pub has_kagi_configured: bool,
+    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for SearchTemplate {
@@ -1230,6 +1513,7 @@ impl IntoResponse for SearchTemplate {
 pub async fn search_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> (Flash, SearchTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1241,8 +1525,7 @@ pub async fn search_page(
 
     // Search doesn't need SSR entries - pass a dummy filter that won't fetch
     let filter = entry::EntryFilter::default();
-    let (entries_per_page, has_save_services, has_kagi_configured, _, theme) =
-        fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
 
     (
         flash.clone(),
@@ -1251,11 +1534,15 @@ pub async fn search_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
-            theme,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     )
 }
@@ -1278,8 +1565,14 @@ pub struct FeedEntriesTemplate {
     pub category_id: i64,
     pub category_name: String,
     pub ssr_entries_json: String,
+    pub ssr_entry_views: Vec<SsrEntryView>,
+    pub ssr_has_continuation: bool,
+    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
+    pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
 }
 
 impl IntoResponse for FeedEntriesTemplate {
@@ -1295,6 +1588,7 @@ pub async fn feed_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(query): Query<EntryQuery>,
     flash: Flash,
 ) -> Result<(Flash, FeedEntriesTemplate), AppError> {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1305,18 +1599,10 @@ pub async fn feed_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (
-        entries_per_page,
-        has_save_services,
-        has_kagi_configured,
-        feed_url,
-        feed_title,
-        feed_has_icon,
-        category_id,
-        category_name,
-        ssr_entries_json,
-        theme,
-    ) = state
+    let rp_entry_id = query.entry;
+    let secret = state.config.image_proxy_secret.clone();
+    let proxy_base_url = state.config.public_base_url.clone();
+    let (feed_url, feed_title, feed_has_icon, category_id, category_name, cfg) = state
         .db
         .read_user(move |c| {
             let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
@@ -1345,25 +1631,41 @@ pub async fn feed_entries_page(
                 .unwrap_or(0);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
 
-            // SSR: fetch first page of feed entries (default: unread)
             let filter = entry::EntryFilter {
                 feed_id: Some(id),
                 unread_only: true,
                 ..Default::default()
             };
-            let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
+            let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+
+            let rp = rp_entry_id.and_then(|eid| {
+                fetch_reading_pane_entry(c, user_id, eid, &secret, proxy_base_url.as_deref())
+            });
+            let rp_json = rp
+                .as_ref()
+                .map(|e| escape_json_for_script(&serde_json::to_string(e).unwrap_or_default()))
+                .unwrap_or_default();
 
             Ok::<_, AppError>((
-                epp,
-                save_services,
-                kagi_configured,
                 feed_url,
                 feed_title,
                 has_icon > 0,
                 cat.id,
                 cat.name,
-                ssr_json,
-                theme,
+                EntryListConfig {
+                    entries_per_page: epp,
+                    has_save_services: save_services,
+                    has_kagi_configured: kagi_configured,
+                    ssr_entries_json: ssr.json,
+                    ssr_entry_views: ssr.views,
+                    ssr_has_continuation: ssr.has_continuation,
+                    ssr_reading_pane: rp,
+                    ssr_reading_pane_json: rp_json,
+                    theme,
+                    sidebar_categories: sidebar_cats,
+                    sidebar_unread_count: sidebar_unread,
+                },
             ))
         })
         .await??;
@@ -1375,18 +1677,24 @@ pub async fn feed_entries_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
             feed_id: id,
             feed_url,
             feed_title,
             feed_has_icon,
             category_id,
             category_name,
-            ssr_entries_json,
-            theme,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            ssr_reading_pane: cfg.ssr_reading_pane,
+            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     ))
 }
