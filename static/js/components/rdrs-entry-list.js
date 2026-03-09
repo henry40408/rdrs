@@ -21,21 +21,29 @@ class RdrsEntryList extends HTMLElement {
         this._extraHandlers = {};
         this._popstateHandler = null;
         this._ssrData = null; // SSR data from server, if available
+        this._hydrated = false; // true if SSR HTML was hydrated in place
     }
 
     connectedCallback() {
-        // Extract SSR data before _render() clears innerHTML
+        // Extract SSR data before _render() might clear innerHTML
         this._extractSsrData();
-        this._render();
+
+        // If server rendered the full HTML (entries-list container exists), hydrate in place
+        if (this._ssrData && this.querySelector('#entries-list')) {
+            this._hydrateSsr();
+        } else {
+            this._render();
+        }
+
         this._setupDelegation();
         this._setupPersistedRestore();
         this._setupPopstate();
+
         // Pages that need to set API params before loading should add no-auto-load
         if (!this.hasAttribute('no-auto-load')) {
-            // If we have SSR data, use it instead of fetching
             if (this._ssrData) {
                 this._consumeSsrData();
-            } else {
+            } else if (!this._hydrated) {
                 this.loadEntries();
             }
         }
@@ -53,6 +61,26 @@ class RdrsEntryList extends HTMLElement {
         } catch (e) {
             // Invalid JSON, ignore
         }
+    }
+
+    /** Hydrate SSR HTML: populate JS state from JSON without re-rendering DOM. */
+    _hydrateSsr() {
+        const data = this._ssrData;
+        this._ssrData = null;
+        this._hydrated = true;
+
+        this.entries = data.entries;
+        this.continuation = data.continuation || null;
+
+        // Wire up load-more button
+        const loadMoreBtn = this.querySelector('#load-more button');
+        if (loadMoreBtn) loadMoreBtn.addEventListener('click', () => this.loadMore());
+
+        // Wire up mark-above button
+        const markAboveBtn = this.querySelector('#mark-above-read button');
+        if (markAboveBtn) markAboveBtn.addEventListener('click', () => this.markAboveAsRead());
+
+        this._checkEntryParam();
     }
 
     /** Consume SSR data: populate entries and render without a network request. */

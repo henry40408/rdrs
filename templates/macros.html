@@ -142,3 +142,55 @@ document.addEventListener('click', function(e) {
 });
 </script>
 {% endmacro %}
+
+{% macro entry_list_content(ssr_entry_views, ssr_has_continuation, ssr_entries_json, origin, show_feed, show_category, show_mark_above, is_unread_mode, empty_message) %}
+<div id="entries-list" data-testid="entries-list">
+{% if ssr_entry_views.is_empty() %}
+    <p class="muted entries-status-msg">{{ empty_message }}</p>
+{% else %}
+{% for entry in ssr_entry_views %}
+    <div class="entry-item{% if entry.is_read %} entry-read{% endif %}" id="entry-{{ entry.id }}" data-index="{{ loop.index0 }}" data-testid="entry-item">
+        <div>
+            <span class="entry-item-title {% if entry.is_read %}entry-title-normal{% else %}entry-title-bold{% endif %}" data-testid="entry-title-link">{{ entry.title }}</span>
+            {% if entry.is_starred %}<span title="Starred" class="star-icon">&#9733;</span>{% endif %}
+            {% match entry.summary_status.as_deref() %}
+                {% when Some with ("completed") %}<span title="Has Summary" class="summary-badge">&#10003;</span>
+                {% when Some with ("pending") %}<span title="Pending" class="summary-badge-pending">&#9675;</span>
+                {% when Some with ("processing") %}<span title="Processing" class="summary-badge-processing">&#8635;</span>
+                {% when Some with ("failed") %}<span title="Failed" class="summary-badge-failed">&#10007;</span>
+                {% when _ %}
+            {% endmatch %}
+        </div>
+        <div class="muted entry-item-meta">
+            {% if show_feed %}<img src="/api/feeds/{{ entry.feed_id }}/icon" alt="" class="feed-icon" onerror="this.style.display='none'" {% if !entry.feed_has_icon %}style="display:none"{% endif %}><a href="#" data-feed-id="{{ entry.feed_id }}">{{ entry.feed_title }}</a>{% endif %}{% if show_feed && show_category %} &middot; {% endif %}{% if show_category %}<a href="#" data-category-id="{{ entry.category_id }}">{{ entry.category_name }}</a>{% endif %}{% if (show_feed || show_category) && !entry.published_date.is_empty() %} &middot; {% endif %}{% if !entry.published_date.is_empty() %}<span title="{{ entry.published_datetime }}">{{ entry.published_date }}</span>{% endif %}
+        </div>
+        <div class="entry-item-actions">
+            {% if is_unread_mode %}
+            <a href="#" data-action="mark-read" data-entry-id="{{ entry.id }}" data-testid="entry-read-action">read</a>
+            {% else %}
+                {% if entry.is_read %}
+            <a href="#" data-action="mark-unread" data-entry-id="{{ entry.id }}" data-testid="entry-read-action">unread</a>
+                {% else %}
+            <a href="#" data-action="mark-read" data-entry-id="{{ entry.id }}" data-testid="entry-read-action">read</a>
+                {% endif %}
+            {% endif %}
+            <a href="#" data-action="toggle-star" data-entry-id="{{ entry.id }}" data-testid="entry-star-action">{% if entry.is_starred %}unstar{% else %}star{% endif %}</a>
+            {% if let Some(link) = entry.link %}
+            <a href="{{ link }}" target="_blank" rel="noopener noreferrer" data-action="open-original" data-entry-id="{{ entry.id }}" data-testid="entry-original-link">original</a>
+            {% endif %}
+        </div>
+    </div>
+{% endfor %}
+{% endif %}
+</div>
+<div id="load-more" class="hidden-mt4"{% if ssr_has_continuation %} style="display:block"{% endif %}>
+    <button type="button" data-testid="load-more-btn">Load More</button>
+</div>
+{% if show_mark_above %}
+<div id="mark-above-read" class="hidden-mt4"{% if !ssr_entry_views.is_empty() %} style="display:block"{% endif %}>
+    <button type="button" class="btn-secondary" data-testid="mark-above-btn">Mark Above as Read</button>
+</div>
+{% endif %}
+<p id="entries-count" class="muted" data-testid="entries-count">{% if !ssr_entry_views.is_empty() %}Showing {{ ssr_entry_views.len() }} entries{% endif %}</p>
+<script type="application/json" class="ssr-entries">{{ ssr_entries_json|safe }}</script>
+{% endmacro %}

@@ -79,6 +79,66 @@ fn escape_json_for_script(json: &str) -> String {
     json.replace("</", "<\\/")
 }
 
+/// Entry data for SSR HTML rendering in Askama templates.
+pub struct SsrEntryView {
+    pub id: i64,
+    pub feed_id: i64,
+    pub category_id: i64,
+    pub category_name: String,
+    pub feed_title: String,
+    pub feed_has_icon: bool,
+    pub title: String,
+    pub link: Option<String>,
+    pub is_read: bool,
+    pub is_starred: bool,
+    pub summary_status: Option<String>,
+    pub published_date: String,
+    pub published_datetime: String,
+}
+
+fn ssr_entries_to_views(entries: &[SsrEntry]) -> Vec<SsrEntryView> {
+    entries
+        .iter()
+        .map(|e| {
+            let (published_date, published_datetime) = e
+                .published_at
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| {
+                    (
+                        dt.format("%b %-d, %Y").to_string(),
+                        dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                    )
+                })
+                .unwrap_or_default();
+
+            SsrEntryView {
+                id: e.id,
+                feed_id: e.feed_id,
+                category_id: e.category_id,
+                category_name: e.category_name.clone(),
+                feed_title: if e.feed_title.is_empty() {
+                    e.feed_url.clone()
+                } else {
+                    e.feed_title.clone()
+                },
+                feed_has_icon: e.feed_has_icon,
+                title: if e.title.is_empty() {
+                    "Untitled".to_string()
+                } else {
+                    e.title.clone()
+                },
+                link: e.link.clone(),
+                is_read: e.read_at.is_some(),
+                is_starred: e.starred_at.is_some(),
+                summary_status: e.summary_status.clone(),
+                published_date,
+                published_datetime,
+            }
+        })
+        .collect()
+}
+
 /// Convert EntryWithFeed + summary statuses to SSR entries.
 fn entries_to_ssr(
     entries: Vec<entry::EntryWithFeed>,
@@ -111,13 +171,20 @@ fn entries_to_ssr(
         .collect()
 }
 
-/// Fetch first page of entries for SSR, returns (ssr_json, has_more).
+/// SSR result containing JSON for JS hydration and views for HTML rendering.
+struct SsrEntryResult {
+    json: String,
+    views: Vec<SsrEntryView>,
+    has_continuation: bool,
+}
+
+/// Fetch first page of entries for SSR.
 fn fetch_entries_for_ssr(
     conn: &rusqlite::Connection,
     user_id: i64,
     filter: &entry::EntryFilter,
     limit: i64,
-) -> (String, Option<String>) {
+) -> SsrEntryResult {
     let pagination = entry::ContinuationParams {
         oldest_first: false,
         limit: limit + 1, // fetch one extra to check for continuation
@@ -142,6 +209,8 @@ fn fetch_entries_for_ssr(
         entry_summary::get_statuses_for_entries(conn, user_id, &entry_ids).unwrap_or_default();
 
     let ssr_entries = entries_to_ssr(entries, &summary_statuses);
+    let views = ssr_entries_to_views(&ssr_entries);
+    let has_continuation = continuation.is_some();
     let data = SsrEntryListData {
         entries: ssr_entries,
         continuation,
@@ -149,7 +218,11 @@ fn fetch_entries_for_ssr(
 
     let json = serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string());
     let json = escape_json_for_script(&json);
-    (json, data.continuation)
+    SsrEntryResult {
+        json,
+        views,
+        has_continuation,
+    }
 }
 
 #[derive(Template)]
@@ -247,6 +320,8 @@ pub struct UnreadTemplate {
     pub has_save_services: bool,
     pub has_kagi_configured: bool,
     pub ssr_entries_json: String,
+    pub ssr_entry_views: Vec<SsrEntryView>,
+    pub ssr_has_continuation: bool,
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
@@ -276,53 +351,11 @@ pub async fn unread_page(
     };
 
     let user_id = auth_user.user.id;
-    let (
-        unread_count,
-        entries_per_page,
-        has_save_services,
-        has_kagi_configured,
-        ssr_entries_json,
-        theme,
-        sidebar_categories,
-        sidebar_unread_count,
-    ) = state
-        .db
-        .read_user(move |c| {
-            let unread = entry::count_unread_by_user(c, user_id).unwrap_or(0);
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
-            let save_config =
-                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
-            let kagi_configured = save_config
-                .kagi
-                .as_ref()
-                .map(|k| k.is_configured())
-                .unwrap_or(false);
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-
-            // SSR: fetch first page of unread entries
-            let filter = entry::EntryFilter {
-                unread_only: true,
-                ..Default::default()
-            };
-            let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
-
-            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
-
-            (unread, epp, save_services, kagi_configured, ssr_json, theme, sidebar_cats, sidebar_unread)
-        })
-        .await
-        .unwrap_or((
-            0,
-            user_settings::DEFAULT_ENTRIES_PER_PAGE,
-            false,
-            false,
-            "null".to_string(),
-            None,
-            vec![],
-            0,
-        ));
+    let filter = entry::EntryFilter {
+        unread_only: true,
+        ..Default::default()
+    };
+    let cfg = fetch_entry_list_config(&state, user_id, filter).await;
 
     (
         flash.clone(),
@@ -334,18 +367,20 @@ pub async fn unread_page(
                 .created_at
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string(),
-            unread_count,
+            unread_count: cfg.sidebar_unread_count,
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
-            ssr_entries_json,
-            theme,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories,
-            sidebar_unread_count,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     )
 }
@@ -812,6 +847,8 @@ pub struct EntriesTemplate {
     pub has_save_services: bool,
     pub has_kagi_configured: bool,
     pub ssr_entries_json: String,
+    pub ssr_entry_views: Vec<SsrEntryView>,
+    pub ssr_has_continuation: bool,
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
@@ -839,40 +876,8 @@ pub async fn entries_page(
         auth_user.user.is_admin()
     };
 
-    let user_id = auth_user.user.id;
-    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme, sidebar_categories, sidebar_unread_count) = state
-        .db
-        .read_user(move |c| {
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
-            let save_config =
-                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
-            let kagi_configured = save_config
-                .kagi
-                .as_ref()
-                .map(|k| k.is_configured())
-                .unwrap_or(false);
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-
-            // SSR: fetch first page of all entries
-            let filter = entry::EntryFilter::default();
-            let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
-
-            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
-
-            (epp, save_services, kagi_configured, ssr_json, theme, sidebar_cats, sidebar_unread)
-        })
-        .await
-        .unwrap_or((
-            user_settings::DEFAULT_ENTRIES_PER_PAGE,
-            false,
-            false,
-            "null".to_string(),
-            None,
-            vec![],
-            0,
-        ));
+    let filter = entry::EntryFilter::default();
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter).await;
 
     (
         flash.clone(),
@@ -881,14 +886,16 @@ pub async fn entries_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
-            ssr_entries_json,
-            theme,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories,
-            sidebar_unread_count,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     )
 }
@@ -1023,6 +1030,8 @@ pub struct ArchiveEntriesTemplate {
     pub page_mode: String,
     pub page_title: String,
     pub ssr_entries_json: String,
+    pub ssr_entry_views: Vec<SsrEntryView>,
+    pub ssr_has_continuation: bool,
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
@@ -1039,11 +1048,24 @@ impl IntoResponse for ArchiveEntriesTemplate {
 }
 
 /// Helper to fetch common entry-list config + SSR entries from DB.
+/// Common entry-list page data.
+struct EntryListConfig {
+    entries_per_page: i64,
+    has_save_services: bool,
+    has_kagi_configured: bool,
+    ssr_entries_json: String,
+    ssr_entry_views: Vec<SsrEntryView>,
+    ssr_has_continuation: bool,
+    theme: Option<String>,
+    sidebar_categories: Vec<SidebarCategory>,
+    sidebar_unread_count: i64,
+}
+
 async fn fetch_entry_list_config(
     state: &AppState,
     user_id: i64,
     filter: entry::EntryFilter,
-) -> (i64, bool, bool, String, Option<String>, Vec<SidebarCategory>, i64) {
+) -> EntryListConfig {
     state
         .db
         .read_user(move |c| {
@@ -1058,20 +1080,32 @@ async fn fetch_entry_list_config(
                 .map(|k| k.is_configured())
                 .unwrap_or(false);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
+            let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
             let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
-            (epp, save_services, kagi_configured, ssr_json, theme, sidebar_cats, sidebar_unread)
+            EntryListConfig {
+                entries_per_page: epp,
+                has_save_services: save_services,
+                has_kagi_configured: kagi_configured,
+                ssr_entries_json: ssr.json,
+                ssr_entry_views: ssr.views,
+                ssr_has_continuation: ssr.has_continuation,
+                theme,
+                sidebar_categories: sidebar_cats,
+                sidebar_unread_count: sidebar_unread,
+            }
         })
         .await
-        .unwrap_or((
-            user_settings::DEFAULT_ENTRIES_PER_PAGE,
-            false,
-            false,
-            "null".to_string(),
-            None,
-            vec![],
-            0,
-        ))
+        .unwrap_or(EntryListConfig {
+            entries_per_page: user_settings::DEFAULT_ENTRIES_PER_PAGE,
+            has_save_services: false,
+            has_kagi_configured: false,
+            ssr_entries_json: "null".to_string(),
+            ssr_entry_views: vec![],
+            ssr_has_continuation: false,
+            theme: None,
+            sidebar_categories: vec![],
+            sidebar_unread_count: 0,
+        })
 }
 
 pub async fn read_entries_page(
@@ -1090,8 +1124,7 @@ pub async fn read_entries_page(
         read_only: true,
         ..Default::default()
     };
-    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme, sidebar_categories, sidebar_unread_count) =
-        fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter).await;
 
     (
         flash.clone(),
@@ -1100,16 +1133,18 @@ pub async fn read_entries_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
             page_mode: "read".to_string(),
             page_title: "Read Entries".to_string(),
-            ssr_entries_json,
-            theme,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories,
-            sidebar_unread_count,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     )
 }
@@ -1130,8 +1165,7 @@ pub async fn starred_entries_page(
         starred_only: true,
         ..Default::default()
     };
-    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme, sidebar_categories, sidebar_unread_count) =
-        fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter).await;
 
     (
         flash.clone(),
@@ -1140,16 +1174,18 @@ pub async fn starred_entries_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
             page_mode: "starred".to_string(),
             page_title: "Starred Entries".to_string(),
-            ssr_entries_json,
-            theme,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories,
-            sidebar_unread_count,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     )
 }
@@ -1170,8 +1206,7 @@ pub async fn summarized_entries_page(
         has_summary: Some(true),
         ..Default::default()
     };
-    let (entries_per_page, has_save_services, has_kagi_configured, ssr_entries_json, theme, sidebar_categories, sidebar_unread_count) =
-        fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter).await;
 
     (
         flash.clone(),
@@ -1180,16 +1215,18 @@ pub async fn summarized_entries_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
             page_mode: "summarized".to_string(),
             page_title: "Summarized Entries".to_string(),
-            ssr_entries_json,
-            theme,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories,
-            sidebar_unread_count,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     )
 }
@@ -1208,6 +1245,8 @@ pub struct CategoryEntriesTemplate {
     pub category_id: i64,
     pub category_name: String,
     pub ssr_entries_json: String,
+    pub ssr_entry_views: Vec<SsrEntryView>,
+    pub ssr_has_continuation: bool,
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
@@ -1237,16 +1276,7 @@ pub async fn category_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (
-        entries_per_page,
-        has_save_services,
-        has_kagi_configured,
-        category_name,
-        ssr_entries_json,
-        theme,
-        sidebar_categories,
-        sidebar_unread_count,
-    ) = state
+    let (category_name, cfg) = state
         .db
         .read_user(move |c| {
             let cat =
@@ -1263,24 +1293,27 @@ pub async fn category_entries_page(
                 .unwrap_or(false);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
 
-            // SSR: fetch first page of category entries (default: unread)
             let filter = entry::EntryFilter {
                 category_id: Some(id),
                 unread_only: true,
                 ..Default::default()
             };
-            let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
+            let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
             let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
 
             Ok::<_, AppError>((
-                epp,
-                save_services,
-                kagi_configured,
                 cat.name,
-                ssr_json,
-                theme,
-                sidebar_cats,
-                sidebar_unread,
+                EntryListConfig {
+                    entries_per_page: epp,
+                    has_save_services: save_services,
+                    has_kagi_configured: kagi_configured,
+                    ssr_entries_json: ssr.json,
+                    ssr_entry_views: ssr.views,
+                    ssr_has_continuation: ssr.has_continuation,
+                    theme,
+                    sidebar_categories: sidebar_cats,
+                    sidebar_unread_count: sidebar_unread,
+                },
             ))
         })
         .await??;
@@ -1292,16 +1325,18 @@ pub async fn category_entries_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
             category_id: id,
             category_name,
-            ssr_entries_json,
-            theme,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories,
-            sidebar_unread_count,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     ))
 }
@@ -1346,8 +1381,7 @@ pub async fn search_page(
 
     // Search doesn't need SSR entries - pass a dummy filter that won't fetch
     let filter = entry::EntryFilter::default();
-    let (entries_per_page, has_save_services, has_kagi_configured, _, theme, sidebar_categories, sidebar_unread_count) =
-        fetch_entry_list_config(&state, auth_user.user.id, filter).await;
+    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter).await;
 
     (
         flash.clone(),
@@ -1356,13 +1390,13 @@ pub async fn search_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
-            theme,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories,
-            sidebar_unread_count,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     )
 }
@@ -1385,6 +1419,8 @@ pub struct FeedEntriesTemplate {
     pub category_id: i64,
     pub category_name: String,
     pub ssr_entries_json: String,
+    pub ssr_entry_views: Vec<SsrEntryView>,
+    pub ssr_has_continuation: bool,
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
@@ -1414,20 +1450,7 @@ pub async fn feed_entries_page(
     };
 
     let user_id = auth_user.user.id;
-    let (
-        entries_per_page,
-        has_save_services,
-        has_kagi_configured,
-        feed_url,
-        feed_title,
-        feed_has_icon,
-        category_id,
-        category_name,
-        ssr_entries_json,
-        theme,
-        sidebar_categories,
-        sidebar_unread_count,
-    ) = state
+    let (feed_url, feed_title, feed_has_icon, category_id, category_name, cfg) = state
         .db
         .read_user(move |c| {
             let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
@@ -1456,28 +1479,31 @@ pub async fn feed_entries_page(
                 .unwrap_or(0);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
 
-            // SSR: fetch first page of feed entries (default: unread)
             let filter = entry::EntryFilter {
                 feed_id: Some(id),
                 unread_only: true,
                 ..Default::default()
             };
-            let (ssr_json, _) = fetch_entries_for_ssr(c, user_id, &filter, epp);
+            let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
             let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
 
             Ok::<_, AppError>((
-                epp,
-                save_services,
-                kagi_configured,
                 feed_url,
                 feed_title,
                 has_icon > 0,
                 cat.id,
                 cat.name,
-                ssr_json,
-                theme,
-                sidebar_cats,
-                sidebar_unread,
+                EntryListConfig {
+                    entries_per_page: epp,
+                    has_save_services: save_services,
+                    has_kagi_configured: kagi_configured,
+                    ssr_entries_json: ssr.json,
+                    ssr_entry_views: ssr.views,
+                    ssr_has_continuation: ssr.has_continuation,
+                    theme,
+                    sidebar_categories: sidebar_cats,
+                    sidebar_unread_count: sidebar_unread,
+                },
             ))
         })
         .await??;
@@ -1489,20 +1515,22 @@ pub async fn feed_entries_page(
             is_admin,
             is_masquerading,
             flash_messages: flash.messages,
-            entries_per_page,
-            has_save_services,
-            has_kagi_configured,
+            entries_per_page: cfg.entries_per_page,
+            has_save_services: cfg.has_save_services,
+            has_kagi_configured: cfg.has_kagi_configured,
             feed_id: id,
             feed_url,
             feed_title,
             feed_has_icon,
             category_id,
             category_name,
-            ssr_entries_json,
-            theme,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
+            theme: cfg.theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories,
-            sidebar_unread_count,
+            sidebar_categories: cfg.sidebar_categories,
+            sidebar_unread_count: cfg.sidebar_unread_count,
         },
     ))
 }
