@@ -7,7 +7,7 @@
 
 {% block body %}
 <div class="app-layout">
-{% call macros::sidebar("user-settings", is_admin, is_masquerading, username, sidebar_categories, sidebar_unread_count) %}{% endcall %}
+{% call macros::sidebar("user-settings", is_admin, is_masquerading, username, sidebar_categories, sidebar_unread_count, 0) %}{% endcall %}
 
 <main class="main-content">
     <div class="page-content">
