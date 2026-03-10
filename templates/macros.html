@@ -13,7 +13,7 @@
 {% endif %}
 {% endmacro %}
 
-{% macro sidebar(current, is_admin, is_masquerading, username, sidebar_categories, sidebar_unread_count) %}
+{% macro sidebar(current, is_admin, is_masquerading, username, sidebar_categories, sidebar_unread_count, active_category_id) %}
 <button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Open menu">&#9776;</button>
 
 <aside class="sidebar" id="sidebar" data-testid="main-nav">
@@ -50,7 +50,7 @@
             <div class="sidebar-section-title">Categories</div>
             <div id="sidebar-categories">
                 {% for cat in sidebar_categories %}
-                <a href="/categories/{{ cat.id }}/entries" class="sidebar-item{% if current == "category" %} {% endif %}">
+                <a href="/categories/{{ cat.id }}/entries" class="sidebar-item{% if cat.id == active_category_id %} active{% endif %}">
                     <span>{{ cat.name }}</span>
                     {% if cat.unread_count > 0 %}<span class="sidebar-badge">{{ cat.unread_count }}</span>{% endif %}
                 </a>
