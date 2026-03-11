@@ -1639,12 +1639,13 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                         break;
                     case 'Escape':
                         if (pane && rpEntry) {
-                            // Close reading pane detail, stay on list
-                            list._closeReadingPaneDetail();
-                            // Update URL to remove entry param
-                            const url = new URL(window.location);
-                            url.searchParams.delete('entry');
-                            history.pushState(null, '', url.pathname + url.search);
+                            // Clear reading pane content only — no reload, no history change
+                            list._stopSummaryPolling();
+                            list._readingPaneEntry = null;
+                            list._readingPaneData = null;
+                            list._resetReadingPaneState();
+                            pane.classList.remove('reading-pane-active');
+                            pane.innerHTML = '<div class="reading-pane-empty">Select an entry to read</div>';
                             return true;
                         }
                         break;
