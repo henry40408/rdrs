@@ -9,6 +9,11 @@
 
 A self-hosted RSS/Atom feed reader built with Rust. Privacy-focused, lightweight, and designed for personal use.
 
+| Light | Dark |
+|-------|------|
+| ![Unread list - Light](screenshots/unread-list.png) | ![Unread list - Dark](screenshots/unread-list-dark.png) |
+| ![Keyboard shortcuts - Light](screenshots/keyboard-shortcuts.png) | ![Keyboard shortcuts - Dark](screenshots/keyboard-shortcuts-dark.png) |
+
 ## Features
 
 - **Feed Management** - Subscribe to RSS/Atom feeds, organize into categories, OPML import/export

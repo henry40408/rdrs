@@ -95,6 +95,19 @@ export class SeedHelper {
     }
   }
 
+  /** Insert a feed icon into the image table. */
+  insertIcon(feedId: number, data: Buffer, contentType: string, sourceUrl?: string): void {
+    const db = new Database(this.dbPath);
+    try {
+      db.prepare(
+        `INSERT OR REPLACE INTO image (entity_type, entity_id, data, content_type, source_url)
+         VALUES ('feed', ?, ?, ?, ?)`
+      ).run(feedId, data, contentType, sourceUrl ?? null);
+    } finally {
+      db.close();
+    }
+  }
+
   /** Generate and insert N test entries for a feed. Returns entry IDs. */
   seedTestEntries(feedId: number, count: number): number[] {
     const entries: SeedEntry[] = [];
