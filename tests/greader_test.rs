@@ -70,7 +70,7 @@ fn create_test_app(config: Config) -> TestApp {
     };
 
     let app = create_router(state);
-    let server = TestServer::builder().save_cookies().build(app).unwrap();
+    let server = TestServer::builder().save_cookies().build(app);
 
     TestApp { server, db }
 }
@@ -631,7 +631,7 @@ async fn test_unauthenticated_access_denied() {
     };
 
     let app = create_router(state);
-    let server = TestServer::builder().build(app).unwrap();
+    let server = TestServer::builder().build(app);
 
     // All endpoints should be unauthorized without auth
     let response = server.get("/reader/api/0/subscription/list").await;
