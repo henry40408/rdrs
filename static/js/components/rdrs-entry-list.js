@@ -302,9 +302,9 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             // Wire up reading pane actions
             this._ensureReadingPaneActions(pane);
 
-            // Auto-mark as read
+            // Auto-mark as read (keep in list — user is viewing in reading pane)
             if (data.read_at === null) {
-                this.markRead(data.id);
+                this.markRead(data.id, true);
             }
 
             // Handle existing summary
@@ -350,7 +350,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             pane.scrollTop = 0;
 
             if (data.read_at === null) {
-                this.markRead(entryId);
+                this.markRead(entryId, true);
             }
 
             if (data.summary_status) {
@@ -656,9 +656,9 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 }
             }
 
-            // Auto-mark as read
+            // Auto-mark as read (keep in list — user is viewing in reading pane)
             if (entry.read_at === null) {
-                this.markRead(entry.id);
+                this.markRead(entry.id, true);
             }
 
             // Handle existing summary
@@ -1222,7 +1222,13 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     }
 
     // --- Entry actions (via Google Reader edit-tag) ---
-    async markRead(id) {
+    /**
+     * Mark an entry as read.
+     * @param {number} id - Entry ID
+     * @param {boolean} keepInList - If true, keep entry in list even in unread mode
+     *   (used by auto-mark-as-read when loading in reading pane)
+     */
+    async markRead(id, keepInList = false) {
         try {
             const body = new URLSearchParams();
             body.set('i', id.toString());
@@ -1233,8 +1239,8 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             });
             if (!response.ok) throw new Error('Failed to mark as read');
 
-            if (this.isUnreadMode && !this._readingPaneEntry) {
-                // Remove from list in unread mode (but not while browsing in reading pane)
+            if (this.isUnreadMode && !keepInList) {
+                // Remove from list in unread mode
                 this.entries = this.entries.filter(e => e.id !== id);
                 this.renderEntries();
                 this._updateLoadMore();
