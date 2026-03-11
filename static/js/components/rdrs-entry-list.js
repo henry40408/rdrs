@@ -1442,37 +1442,39 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         const hasPane = !!this._getReadingPane();
 
         const baseHelpItems = [
-            { key: 'j / n', desc: 'Next entry' },
-            { key: 'k / p', desc: 'Previous entry' },
-            { key: 'N', desc: 'Next unread entry' },
-            { key: 'P', desc: 'Previous unread entry' },
-            { key: 'g g', desc: 'First entry' },
-            { key: 'G', desc: 'Last entry' },
-            { key: 'Enter / o', desc: 'Open entry' },
-            { key: 'v', desc: 'Open original in new tab' },
-            { key: 'm', desc: list.isUnreadMode ? 'Mark as read' : 'Toggle read/unread' },
-            { key: 's', desc: 'Toggle star' },
-            { key: 'r', desc: 'Refresh list' },
+            // Browse group: list navigation
+            { key: 'j / n', desc: 'Next entry', group: 'Browse' },
+            { key: 'k / p', desc: 'Previous entry', group: 'Browse' },
+            { key: 'N', desc: 'Next unread entry', group: 'Browse' },
+            { key: 'P', desc: 'Previous unread entry', group: 'Browse' },
+            { key: 'g g', desc: 'First entry', group: 'Browse' },
+            { key: 'G', desc: 'Last entry', group: 'Browse' },
+            { key: 'Enter / o', desc: 'Open entry', group: 'Browse' },
+            // Actions group: entry actions
+            { key: 'v', desc: 'Open original in new tab', group: 'Actions' },
+            { key: 'm', desc: list.isUnreadMode ? 'Mark as read' : 'Toggle read/unread', group: 'Actions' },
+            { key: 's', desc: 'Toggle star', group: 'Actions' },
+            { key: 'r', desc: 'Refresh list', group: 'Actions' },
         ];
 
         // Reading pane shortcuts (only shown when pane exists)
         if (hasPane) {
             baseHelpItems.push(
-                { key: 'Space', desc: 'Scroll down in reading pane' },
-                { key: 'Shift+Space', desc: 'Scroll up in reading pane' },
-                { key: 'u', desc: 'Mark as unread' },
-                { key: 'f', desc: 'Toggle full content' },
-                { key: 'b', desc: 'Save to bookmarks' },
-                { key: 'z', desc: 'Toggle Kagi summary' },
-                { key: 'Esc', desc: 'Close reading pane' },
+                { key: 'Space', desc: 'Scroll down', group: 'Reading Pane' },
+                { key: 'Shift+Space', desc: 'Scroll up', group: 'Reading Pane' },
+                { key: 'f', desc: 'Toggle full content', group: 'Reading Pane' },
+                { key: 'u', desc: 'Mark as unread', group: 'Reading Pane' },
+                { key: 'b', desc: 'Save to bookmarks', group: 'Reading Pane' },
+                { key: 'z', desc: 'Toggle Kagi summary', group: 'Reading Pane' },
+                { key: 'Esc', desc: 'Close reading pane', group: 'Reading Pane' },
             );
         }
 
         if (this.showFeed && !hasPane) {
-            baseHelpItems.push({ key: 'f', desc: 'Go to feed page (requires selection)' });
+            baseHelpItems.push({ key: 'f', desc: 'Go to feed page', group: 'Actions' });
         }
         if (this.showCategory) {
-            baseHelpItems.push({ key: 'c', desc: 'Go to category page (requires selection)' });
+            baseHelpItems.push({ key: 'c', desc: 'Go to category page', group: 'Actions' });
         }
 
         const helpItems = (extraHandlers.helpItems || []).length > 0
