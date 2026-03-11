@@ -17,64 +17,121 @@ class RdrsKbHelp extends HTMLElement {
                     z-index: 1000;
                     justify-content: center;
                     align-items: center;
+                    padding: var(--space-4, 1rem);
                 }
                 :host(.visible) {
                     display: flex;
                 }
                 .modal {
-                    background: var(--color-bg, #ffffff);
-                    border: 2px solid var(--color-border, #111111);
-                    padding: var(--space-6, 1.5rem);
-                    max-width: 600px;
+                    background: var(--color-bg, #FAF8F5);
+                    border: 1px solid var(--color-border, #D4CFC8);
+                    border-radius: var(--radius-lg, 10px);
+                    padding: var(--space-6, 1.5rem) var(--space-8, 2rem);
+                    width: 100%;
+                    max-width: 640px;
                     max-height: 80vh;
                     overflow-y: auto;
-                    font-size: 1rem;
-                    color: var(--color-text, #111111);
+                    font-size: 0.9375rem;
+                    color: var(--color-text, #1A1715);
+                    font-family: var(--font-ui, 'DM Sans', sans-serif);
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+                }
+                .header {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    margin-bottom: var(--space-4, 1rem);
+                    padding-bottom: var(--space-3, 0.75rem);
+                    border-bottom: 1px solid var(--color-border-light, #E5E1DB);
                 }
                 h2 {
-                    font-size: 1.125rem;
-                    margin-bottom: var(--space-4, 1rem);
-                    border-bottom: 1px solid var(--color-border, #111111);
-                    padding-bottom: var(--space-2, 0.5rem);
+                    font-family: var(--font-display, 'Playfair Display', serif);
+                    font-size: 1.25rem;
+                    font-weight: 600;
+                    margin: 0;
                 }
-                button {
-                    margin-bottom: var(--space-4, 1rem);
-                    padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
-                    border-radius: var(--radius-md, 4px);
-                    background: var(--color-button-bg, #111111);
-                    color: var(--color-button-text, #ffffff);
-                    border: 1px solid var(--color-border, #111111);
-                    font-family: inherit;
-                    font-size: inherit;
+                .close-btn {
+                    appearance: none;
+                    background: none;
+                    border: 1px solid var(--color-border, #D4CFC8);
+                    border-radius: var(--radius-sm, 3px);
+                    color: var(--color-text-muted, #8A847D);
+                    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+                    font-size: 0.75rem;
+                    padding: 0.2rem 0.5rem;
                     cursor: pointer;
+                    line-height: 1;
                 }
-                button:hover {
-                    background: var(--color-bg, #ffffff);
-                    color: var(--color-text, #111111);
+                .close-btn:hover {
+                    background: var(--color-bg-tertiary, #EBE7E2);
+                    color: var(--color-text, #1A1715);
                 }
-                #content h3 {
-                    font-size: 1rem;
-                    margin: var(--space-4, 1rem) 0 var(--space-2, 0.5rem);
-                    color: var(--color-text-muted, #666666);
+                #content {
+                    columns: 2;
+                    column-gap: var(--space-8, 2rem);
                 }
-                table {
-                    width: 100%;
+                .shortcut-group {
+                    break-inside: avoid;
                     margin-bottom: var(--space-4, 1rem);
-                    border-collapse: collapse;
                 }
-                td {
-                    padding: var(--space-1, 0.25rem) 0;
-                    border: none;
+                .shortcut-group h3 {
+                    font-family: var(--font-ui, 'DM Sans', sans-serif);
+                    font-size: 0.6875rem;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    letter-spacing: 0.08em;
+                    color: var(--color-text-muted, #8A847D);
+                    margin: 0 0 var(--space-2, 0.5rem);
                 }
-                td:first-child {
-                    width: 80px;
-                    font-family: monospace;
-                    font-weight: bold;
+                .shortcut-row {
+                    display: flex;
+                    align-items: baseline;
+                    gap: var(--space-3, 0.75rem);
+                    padding: 0.2rem 0;
+                }
+                .shortcut-key {
+                    flex-shrink: 0;
+                    min-width: 5.5rem;
+                    text-align: right;
+                }
+                .shortcut-key kbd {
+                    display: inline-block;
+                    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+                    font-size: 0.75rem;
+                    line-height: 1;
+                    padding: 0.2rem 0.4rem;
+                    background: var(--color-bg-secondary, #F3F0EC);
+                    border: 1px solid var(--color-border, #D4CFC8);
+                    border-bottom-width: 2px;
+                    border-radius: var(--radius-sm, 3px);
+                    color: var(--color-text-secondary, #4A4540);
+                    white-space: nowrap;
+                }
+                .shortcut-desc {
+                    color: var(--color-text-secondary, #4A4540);
+                    font-size: 0.875rem;
+                    line-height: 1.4;
+                }
+
+                /* Single-column on narrow screens */
+                @media (max-width: 520px) {
+                    .modal {
+                        padding: var(--space-4, 1rem) var(--space-5, 1.25rem);
+                        max-height: 85vh;
+                    }
+                    #content {
+                        columns: 1;
+                    }
+                    .shortcut-key {
+                        min-width: 4.5rem;
+                    }
                 }
             </style>
             <div class="modal">
-                <h2>Keyboard Shortcuts</h2>
-                <button id="close-btn">Close</button>
+                <div class="header">
+                    <h2>Keyboard Shortcuts</h2>
+                    <button class="close-btn" id="close-btn">Esc</button>
+                </div>
                 <div id="content"></div>
             </div>
         `;
@@ -88,26 +145,43 @@ class RdrsKbHelp extends HTMLElement {
         });
     }
 
+    _kbd(keyStr) {
+        // Render key string as <kbd> elements, splitting on ' / ', ' + ', and spaces for combos
+        return keyStr.split(' / ').map(part => {
+            if (part.includes('+')) {
+                // e.g. "Shift+Space" → <kbd>Shift</kbd>+<kbd>Space</kbd>
+                return part.split('+').map(k => `<kbd>${k}</kbd>`).join('+');
+            }
+            // e.g. "g g" → <kbd>g</kbd> <kbd>g</kbd>
+            return part.split(' ').map(k => `<kbd>${k}</kbd>`).join(' ');
+        }).join(' / ');
+    }
+
     show(helpItems) {
         const content = this.shadowRoot.getElementById('content');
         let html = '';
 
-        // Global shortcuts
-        html += '<h3>Global</h3><table>';
-        html += '<tr><td>g h</td><td>Go to Unread</td></tr>';
-        html += '<tr><td>g e</td><td>Go to Entries</td></tr>';
-        html += '<tr><td>g s</td><td>Go to Search</td></tr>';
-        html += '<tr><td>?</td><td>Toggle this help</td></tr>';
-        html += '<tr><td>Esc</td><td>Close help / Blur input</td></tr>';
-        html += '</table>';
+        // Global shortcuts (always shown)
+        const globalItems = [
+            { key: 'g h', desc: 'Go to Unread' },
+            { key: 'g e', desc: 'Go to Entries' },
+            { key: 'g s', desc: 'Go to Search' },
+            { key: '?', desc: 'Toggle this help' },
+        ];
 
-        // Page-specific shortcuts
+        html += this._renderGroup('Navigation', globalItems);
+
+        // Group page-specific shortcuts by their `group` field
         if (helpItems && helpItems.length > 0) {
-            html += '<h3>Page Shortcuts</h3><table>';
-            helpItems.forEach(item => {
-                html += `<tr><td>${item.key}</td><td>${item.desc}</td></tr>`;
-            });
-            html += '</table>';
+            const groups = new Map();
+            for (const item of helpItems) {
+                const groupName = item.group || 'Page';
+                if (!groups.has(groupName)) groups.set(groupName, []);
+                groups.get(groupName).push(item);
+            }
+            for (const [groupName, items] of groups) {
+                html += this._renderGroup(groupName, items);
+            }
         }
 
         content.innerHTML = html;
@@ -115,6 +189,18 @@ class RdrsKbHelp extends HTMLElement {
 
         // Focus close button
         this.shadowRoot.getElementById('close-btn').focus();
+    }
+
+    _renderGroup(title, items) {
+        let html = `<div class="shortcut-group"><h3>${title}</h3>`;
+        items.forEach(item => {
+            html += `<div class="shortcut-row">
+                <span class="shortcut-key">${this._kbd(item.key)}</span>
+                <span class="shortcut-desc">${item.desc}</span>
+            </div>`;
+        });
+        html += '</div>';
+        return html;
     }
 
     hide() {
