@@ -12,7 +12,6 @@ class RdrsEntryList extends HTMLElement {
         this._search = '';
         this._readingPaneEntry = null; // currently displayed entry in reading pane
         this._readingPaneData = null; // full data for the reading pane entry
-        this._entryMode = false; // whether keyboard is in entry detail mode
         this._summaryPollInterval = null;
         this._currentSummary = null;
         this._showingFullContent = false;
@@ -271,7 +270,6 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             // SSR hydration successful, select the entry in the list if present
             const idx = this.entries.findIndex(e => e.id === entryId);
             if (idx >= 0) this.selectEntry(idx);
-            this._switchToEntryMode();
             return;
         }
 
@@ -350,7 +348,6 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             this._readingPaneData = data;
             this._renderReadingPaneDetail(pane, data, entryId);
             pane.scrollTop = 0;
-            this._switchToEntryMode();
 
             if (data.read_at === null) {
                 this.markRead(entryId);
@@ -658,9 +655,6 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                     history.pushState({ entryId: entry.id, index }, '', url);
                 }
             }
-
-            // Switch to entry keyboard mode
-            this._switchToEntryMode();
 
             // Auto-mark as read
             if (entry.read_at === null) {
@@ -1128,7 +1122,6 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         this._stopSummaryPolling();
         this._readingPaneEntry = null;
         this._readingPaneData = null;
-        this._entryMode = false;
 
         const pane = this._getReadingPane();
         if (pane) {
@@ -1136,145 +1129,13 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             pane.innerHTML = '<div class="reading-pane-empty">Select an entry to read</div>';
         }
 
-        // Switch back to list keyboard mode
-        this._switchToListMode();
+        // Reset reading pane state
+        this._resetReadingPaneState();
 
         // In unread mode, refresh list to remove read entries
         if (this.isUnreadMode) {
             this.loadEntries();
         }
-    }
-
-    // --- Keyboard mode switching ---
-    _switchToEntryMode() {
-        if (this._entryMode) return;
-        this._entryMode = true;
-
-        if (this._isMobileLayout()) return;
-
-        const list = this;
-        const entryHelpItems = [
-            { key: 'j', desc: 'Scroll down' },
-            { key: 'k', desc: 'Scroll up' },
-            { key: 'g g', desc: 'Scroll to top' },
-            { key: 'G', desc: 'Scroll to bottom' },
-            { key: 'n', desc: 'Next entry' },
-            { key: 'p', desc: 'Previous entry' },
-            { key: 'N', desc: 'Next unread entry' },
-            { key: 'P', desc: 'Previous unread entry' },
-            { key: 'u', desc: 'Mark as unread' },
-            { key: 's', desc: 'Toggle star' },
-            { key: 'v', desc: 'Open original in new tab' },
-            { key: 'f', desc: 'Toggle full content' },
-            { key: 'b', desc: 'Save to bookmarks' },
-            { key: 'z', desc: 'Toggle Kagi summary' },
-            { key: 'r', desc: 'Refresh list' },
-            { key: 'q / Esc', desc: 'Back to list' },
-        ];
-
-        window.keyboard.init('entry');
-        window.keyboard.setHelpItems(entryHelpItems);
-        window.keyboard.registerHandlers({
-            handleCombo(combo) {
-                if (combo === 'g g') {
-                    const pane = list._getReadingPane();
-                    if (pane) pane.scrollTo({ top: 0, behavior: 'smooth' });
-                    return true;
-                }
-                // Delegate unhandled combos to page-specific extra handlers
-                if (list._extraHandlers?.handleCombo) {
-                    return list._extraHandlers.handleCombo(combo);
-                }
-                return false;
-            },
-            handleKey(key) {
-                const pane = list._getReadingPane();
-                const entry = list._readingPaneEntry;
-                const entryId = entry?.id;
-
-                switch (key) {
-                    case 'j':
-                        if (pane) pane.scrollBy({ top: pane.clientHeight * 0.4, behavior: 'smooth' });
-                        return true;
-                    case 'k':
-                        if (pane) pane.scrollBy({ top: -pane.clientHeight * 0.4, behavior: 'smooth' });
-                        return true;
-                    case 'G':
-                        if (pane) pane.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' });
-                        return true;
-                    case 'n': {
-                        const nextIdx = list.selectedIndex + 1;
-                        if (nextIdx < list.entries.length) { list.selectEntry(nextIdx); list._loadInReadingPane(nextIdx); }
-                        return true;
-                    }
-                    case 'p': {
-                        const prevIdx = list.selectedIndex - 1;
-                        if (prevIdx >= 0) { list.selectEntry(prevIdx); list._loadInReadingPane(prevIdx); }
-                        return true;
-                    }
-                    case 'N': {
-                        const next = list.findNextUnread(1);
-                        if (next >= 0) { list.selectEntry(next); list._loadInReadingPane(next); }
-                        return true;
-                    }
-                    case 'P': {
-                        const prev = list.findNextUnread(-1);
-                        if (prev >= 0) { list.selectEntry(prev); list._loadInReadingPane(prev); }
-                        return true;
-                    }
-                    case 'u':
-                        if (entryId) list._rpMarkUnread(entryId);
-                        return true;
-                    case 's':
-                        if (entryId) list._rpToggleStar(entryId);
-                        return true;
-                    case 'v':
-                        if (list._readingPaneData?.link) window.open(list._readingPaneData.link, '_blank', 'noopener,noreferrer');
-                        return true;
-                    case 'f':
-                        if (list._fullContent) {
-                            list._rpToggleContent();
-                        } else {
-                            const fetchBtn = pane?.querySelector('[data-rp-action="fetch-full-content"]');
-                            if (fetchBtn && !fetchBtn.disabled) list._rpFetchFullContent(entryId);
-                        }
-                        return true;
-                    case 'b':
-                        if (list.hasSaveServices && list._readingPaneData?.link) {
-                            const saveBtn = pane?.querySelector('[data-rp-action="save"]');
-                            if (saveBtn && !saveBtn.disabled) list._rpSave(entryId);
-                        }
-                        return true;
-                    case 'z':
-                        if (list._currentSummary) {
-                            list._rpDismissSummary(entryId);
-                        } else if (list.hasKagiConfigured && list._readingPaneData?.link) {
-                            const summarizeBtn = pane?.querySelector('[data-rp-action="summarize"]');
-                            if (summarizeBtn && !summarizeBtn.disabled) list._rpSummarize(entryId);
-                        }
-                        return true;
-                    case 'r':
-                        list.loadEntries();
-                        return true;
-                    case 'Escape':
-                    case 'q':
-                        // Go back — restore list URL
-                        history.back();
-                        return true;
-                }
-                // Delegate unhandled keys to page-specific extra handlers
-                if (list._extraHandlers?.handleKey) {
-                    return list._extraHandlers.handleKey(key);
-                }
-                return false;
-            }
-        });
-    }
-
-    _switchToListMode() {
-        this._entryMode = false;
-        // Re-register the list keyboard handlers
-        this.registerKeyboardHandlers(this._extraHandlers);
     }
 
     _decodeHtml(html) {
@@ -1372,7 +1233,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             });
             if (!response.ok) throw new Error('Failed to mark as read');
 
-            if (this.isUnreadMode && !this._entryMode) {
+            if (this.isUnreadMode && !this._readingPaneEntry) {
                 // Remove from list in unread mode (but not while browsing in reading pane)
                 this.entries = this.entries.filter(e => e.id !== id);
                 this.renderEntries();
@@ -1498,14 +1359,14 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
     findNextUnread(direction) {
         if (this.entries.length === 0) return -1;
 
-        if (this.isUnreadMode && !this._entryMode) {
+        if (this.isUnreadMode && !this._readingPaneEntry) {
             // In unread list mode, all visible entries are unread, just move in direction
             const start = this.selectedIndex < 0 ? (direction > 0 ? -1 : this.entries.length) : this.selectedIndex;
             const index = start + direction;
             return (index >= 0 && index < this.entries.length) ? index : -1;
         }
 
-        // In entry mode or non-unread mode, check actual read_at status
+        // When reading pane is active or non-unread mode, check actual read_at status
         const start = this.selectedIndex < 0 ? (direction > 0 ? -1 : this.entries.length) : this.selectedIndex;
         let index = start + direction;
         while (index >= 0 && index < this.entries.length) {
@@ -1573,21 +1434,20 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         }
     }
 
-    // --- Register standard keyboard handlers ---
+    // --- Register unified keyboard handlers (no list/entry mode split) ---
     registerKeyboardHandlers(extraHandlers = {}) {
         this._extraHandlers = extraHandlers;
         if (this._isMobileLayout()) return;
         const list = this;
+        const hasPane = !!this._getReadingPane();
 
         const baseHelpItems = [
-            { key: 'j', desc: 'Next entry' },
-            { key: 'k', desc: 'Previous entry' },
-            { key: 'g g', desc: 'First entry' },
-            { key: 'G', desc: 'Last entry' },
-            { key: 'n', desc: 'Next entry' },
-            { key: 'p', desc: 'Previous entry' },
+            { key: 'j / n', desc: 'Next entry' },
+            { key: 'k / p', desc: 'Previous entry' },
             { key: 'N', desc: 'Next unread entry' },
             { key: 'P', desc: 'Previous unread entry' },
+            { key: 'g g', desc: 'First entry' },
+            { key: 'G', desc: 'Last entry' },
             { key: 'Enter / o', desc: 'Open entry' },
             { key: 'v', desc: 'Open original in new tab' },
             { key: 'm', desc: list.isUnreadMode ? 'Mark as read' : 'Toggle read/unread' },
@@ -1595,7 +1455,20 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             { key: 'r', desc: 'Refresh list' },
         ];
 
-        if (this.showFeed) {
+        // Reading pane shortcuts (only shown when pane exists)
+        if (hasPane) {
+            baseHelpItems.push(
+                { key: 'Space', desc: 'Scroll down in reading pane' },
+                { key: 'Shift+Space', desc: 'Scroll up in reading pane' },
+                { key: 'u', desc: 'Mark as unread' },
+                { key: 'f', desc: 'Toggle full content' },
+                { key: 'b', desc: 'Save to bookmarks' },
+                { key: 'z', desc: 'Toggle Kagi summary' },
+                { key: 'Esc', desc: 'Close reading pane' },
+            );
+        }
+
+        if (this.showFeed && !hasPane) {
             baseHelpItems.push({ key: 'f', desc: 'Go to feed page (requires selection)' });
         }
         if (this.showCategory) {
@@ -1612,6 +1485,8 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             handleCombo(combo) {
                 if (combo === 'g g') {
                     list.selectEntry(0);
+                    const pane = list._getReadingPane();
+                    if (pane && list.entries.length > 0) list._loadInReadingPane(0);
                     return true;
                 }
                 if (extraHandlers.handleCombo) {
@@ -1620,45 +1495,134 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 return false;
             },
             handleKey(key, shiftKey) {
+                const pane = list._getReadingPane();
+                const rpEntry = list._readingPaneEntry;
+                const rpEntryId = rpEntry?.id;
+
                 switch (key) {
+                    // --- Navigation (always moves in the entry list) ---
                     case 'j':
-                        list.selectEntry(list.selectedIndex + 1);
+                    case 'n': {
+                        const nextIdx = list.selectedIndex + 1;
+                        if (nextIdx < list.entries.length) {
+                            list.selectEntry(nextIdx);
+                            if (pane) list._loadInReadingPane(nextIdx);
+                        }
                         return true;
+                    }
                     case 'k':
-                        list.selectEntry(list.selectedIndex - 1);
+                    case 'p': {
+                        const prevIdx = list.selectedIndex - 1;
+                        if (prevIdx >= 0) {
+                            list.selectEntry(prevIdx);
+                            if (pane) list._loadInReadingPane(prevIdx);
+                        }
                         return true;
+                    }
                     case 'G':
-                        if (list.entries.length > 0) list.selectEntry(list.entries.length - 1);
-                        return true;
-                    case 'n':
-                        list.selectEntry(list.selectedIndex + 1);
-                        return true;
-                    case 'p':
-                        list.selectEntry(list.selectedIndex - 1);
+                        if (list.entries.length > 0) {
+                            const lastIdx = list.entries.length - 1;
+                            list.selectEntry(lastIdx);
+                            if (pane) list._loadInReadingPane(lastIdx);
+                        }
                         return true;
                     case 'N': {
                         const next = list.findNextUnread(1);
-                        if (next >= 0) list.selectEntry(next);
+                        if (next >= 0) {
+                            list.selectEntry(next);
+                            if (pane) list._loadInReadingPane(next);
+                        }
                         return true;
                     }
                     case 'P': {
                         const prev = list.findNextUnread(-1);
-                        if (prev >= 0) list.selectEntry(prev);
+                        if (prev >= 0) {
+                            list.selectEntry(prev);
+                            if (pane) list._loadInReadingPane(prev);
+                        }
                         return true;
                     }
+
+                    // --- Open / original link ---
                     case 'Enter':
                     case 'o':
                         list.openSelectedEntry();
                         return true;
                     case 'v':
-                        list.openOriginalLink();
+                        // If reading pane has content, open that link; otherwise use selected entry
+                        if (list._readingPaneData?.link) {
+                            window.open(list._readingPaneData.link, '_blank', 'noopener,noreferrer');
+                        } else {
+                            list.openOriginalLink();
+                        }
                         return true;
+
+                    // --- Read/star actions ---
                     case 'm':
                         list.toggleSelectedRead();
                         return true;
                     case 's':
-                        list.toggleSelectedStar();
+                        if (rpEntryId) {
+                            list._rpToggleStar(rpEntryId);
+                        } else {
+                            list.toggleSelectedStar();
+                        }
                         return true;
+                    case 'u':
+                        if (rpEntryId) list._rpMarkUnread(rpEntryId);
+                        return true;
+
+                    // --- Reading pane scrolling ---
+                    case ' ':
+                        if (pane && rpEntry) {
+                            if (shiftKey) {
+                                pane.scrollBy({ top: -pane.clientHeight * 0.8, behavior: 'smooth' });
+                            } else {
+                                pane.scrollBy({ top: pane.clientHeight * 0.8, behavior: 'smooth' });
+                            }
+                            return true;
+                        }
+                        return false;
+
+                    // --- Reading pane content actions ---
+                    case 'f':
+                        if (pane && rpEntryId) {
+                            // Toggle full content in reading pane
+                            if (list._fullContent) {
+                                list._rpToggleContent();
+                            } else {
+                                const fetchBtn = pane.querySelector('[data-rp-action="fetch-full-content"]');
+                                if (fetchBtn && !fetchBtn.disabled) list._rpFetchFullContent(rpEntryId);
+                            }
+                            return true;
+                        }
+                        // No reading pane content — go to feed page
+                        if (list.showFeed) {
+                            const entryF = list.getSelectedEntry();
+                            if (entryF) {
+                                window.location.href = `/feeds/${entryF.feed_id}/entries`;
+                            }
+                            return true;
+                        }
+                        break;
+                    case 'b':
+                        if (list.hasSaveServices && rpEntryId && list._readingPaneData?.link) {
+                            const saveBtn = pane?.querySelector('[data-rp-action="save"]');
+                            if (saveBtn && !saveBtn.disabled) list._rpSave(rpEntryId);
+                        }
+                        return true;
+                    case 'z':
+                        if (rpEntryId) {
+                            if (list._currentSummary) {
+                                list._rpDismissSummary(rpEntryId);
+                            } else if (list.hasKagiConfigured && list._readingPaneData?.link) {
+                                const summarizeBtn = pane?.querySelector('[data-rp-action="summarize"]');
+                                if (summarizeBtn && !summarizeBtn.disabled) list._rpSummarize(rpEntryId);
+                            }
+                        }
+                        return true;
+
+                    // --- Other ---
                     case 'r':
                         list.loadEntries();
                         return true;
@@ -1671,12 +1635,14 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                             return true;
                         }
                         break;
-                    case 'f':
-                        if (list.showFeed) {
-                            const entryF = list.getSelectedEntry();
-                            if (entryF) {
-                                window.location.href = `/feeds/${entryF.feed_id}/entries`;
-                            }
+                    case 'Escape':
+                        if (pane && rpEntry) {
+                            // Close reading pane detail, stay on list
+                            list._closeReadingPaneDetail();
+                            // Update URL to remove entry param
+                            const url = new URL(window.location);
+                            url.searchParams.delete('entry');
+                            history.pushState(null, '', url.pathname + url.search);
                             return true;
                         }
                         break;
