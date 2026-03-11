@@ -51,7 +51,7 @@ fn create_test_server(config: Config) -> TestServer {
     };
 
     let app = create_router(state);
-    TestServer::builder().save_cookies().build(app).unwrap()
+    TestServer::builder().save_cookies().build(app)
 }
 
 fn create_test_app(config: Config) -> TestApp {
@@ -73,7 +73,7 @@ fn create_test_app(config: Config) -> TestApp {
     };
 
     let app = create_router(state);
-    let server = TestServer::builder().save_cookies().build(app).unwrap();
+    let server = TestServer::builder().save_cookies().build(app);
 
     TestApp { server, db }
 }

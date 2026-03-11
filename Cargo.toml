@@ -62,7 +62,7 @@ image = "0.25"
 ico = "0.5"
 
 [dev-dependencies]
-axum-test = "18"
+axum-test = "19"
 cookie = "0.18"
 tempfile = "3.26.0"
 http-body-util = "0.1"
