@@ -299,8 +299,24 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             this._readingPaneEntry = { id: data.id, ...data };
             this._readingPaneData = data;
 
+            // Inject mobile back/prev/next buttons (SSR doesn't include them)
+            if (this._isMobileLayout() && !pane.querySelector('.reading-pane-back')) {
+                const nav = document.createElement('div');
+                nav.className = 'reading-pane-back';
+                nav.innerHTML = `
+                    <span data-rp-action="back" class="reading-pane-back-link">&#8592; Back</span>
+                    <span class="reading-pane-nav">
+                        <button type="button" data-rp-action="prev-entry" class="reading-pane-nav-btn" aria-label="Previous entry">&#8249;</button>
+                        <button type="button" data-rp-action="next-entry" class="reading-pane-nav-btn" aria-label="Next entry">&#8250;</button>
+                    </span>`;
+                pane.prepend(nav);
+            }
+
             // Wire up reading pane actions
             this._ensureReadingPaneActions(pane);
+
+            // Update prev/next button states
+            this._updateReadingPaneNav();
 
             // Auto-mark as read (keep in list — user is viewing in reading pane)
             if (data.read_at === null) {
