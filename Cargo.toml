@@ -67,3 +67,9 @@ cookie = "0.18"
 tempfile = "3.26.0"
 http-body-util = "0.1"
 wiremock = "0.6"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
