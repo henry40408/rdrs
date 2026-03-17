@@ -23,7 +23,7 @@ impl PersonalOverview {
         if self.total_entries == 0 {
             0.0
         } else {
-            (self.read_entries as f64 / self.total_entries as f64) * 100.0
+            ((self.read_entries as f64 / self.total_entries as f64) * 100.0).min(100.0)
         }
     }
 }
@@ -63,7 +63,7 @@ impl AdminEntryStats {
         if self.total_entries == 0 {
             0.0
         } else {
-            (self.read_entries as f64 / self.total_entries as f64) * 100.0
+            ((self.read_entries as f64 / self.total_entries as f64) * 100.0).min(100.0)
         }
     }
 }

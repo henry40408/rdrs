@@ -60,7 +60,7 @@
     <!-- Daily Read Chart -->
     <div class="stats-section">
         <h2>Daily Read Articles</h2>
-        {% if daily_read_counts.is_empty() %}
+        {% if daily_read_max == 0 %}
         <p class="muted">No read activity in this period</p>
         {% else %}
         <div class="stats-chart">
