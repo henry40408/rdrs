@@ -66,6 +66,8 @@ pub struct ContinuationParams {
     pub ot: Option<i64>,
     /// Newest timestamp (seconds since epoch)
     pub nt: Option<i64>,
+    /// Sort order (default: PublishedAt)
+    pub sort_order: EntrySortOrder,
 }
 
 fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<Entry> {
@@ -565,10 +567,13 @@ pub fn list_ids_by_user(
     );
 
     let where_clause = conditions.join(" AND ");
-    let order = if pagination.oldest_first {
-        "COALESCE(e.published_at, e.created_at) ASC, e.id ASC"
-    } else {
-        "COALESCE(e.published_at, e.created_at) DESC, e.id DESC"
+    let order = match (pagination.sort_order, pagination.oldest_first) {
+        (EntrySortOrder::ReadAt, true) => "e.read_at ASC, e.id ASC",
+        (EntrySortOrder::ReadAt, false) => "e.read_at DESC, e.id DESC",
+        (EntrySortOrder::StarredAt, true) => "e.starred_at ASC, e.id ASC",
+        (EntrySortOrder::StarredAt, false) => "e.starred_at DESC, e.id DESC",
+        (_, true) => "COALESCE(e.published_at, e.created_at) ASC, e.id ASC",
+        (_, false) => "COALESCE(e.published_at, e.created_at) DESC, e.id DESC",
     };
 
     let sql = format!(
@@ -624,10 +629,13 @@ pub fn list_by_user_with_continuation(
     );
 
     let where_clause = conditions.join(" AND ");
-    let order = if pagination.oldest_first {
-        "COALESCE(e.published_at, e.created_at) ASC, e.id ASC"
-    } else {
-        "COALESCE(e.published_at, e.created_at) DESC, e.id DESC"
+    let order = match (pagination.sort_order, pagination.oldest_first) {
+        (EntrySortOrder::ReadAt, true) => "e.read_at ASC, e.id ASC",
+        (EntrySortOrder::ReadAt, false) => "e.read_at DESC, e.id DESC",
+        (EntrySortOrder::StarredAt, true) => "e.starred_at ASC, e.id ASC",
+        (EntrySortOrder::StarredAt, false) => "e.starred_at DESC, e.id DESC",
+        (_, true) => "COALESCE(e.published_at, e.created_at) ASC, e.id ASC",
+        (_, false) => "COALESCE(e.published_at, e.created_at) DESC, e.id DESC",
     };
 
     let sql = format!(
