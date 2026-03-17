@@ -1,2 +1,3 @@
 /target
-*.sqlite3.superpowers/
+*.sqlite3
+.superpowers/
