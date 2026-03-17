@@ -113,6 +113,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/entries/{id}", get(handlers::pages::entry_page))
         .route("/search", get(handlers::pages::search_page))
+        .route("/statistics", get(handlers::pages::statistics_page))
         .route(
             "/categories/{id}/entries",
             get(handlers::pages::category_entries_page),
