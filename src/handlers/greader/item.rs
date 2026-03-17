@@ -56,12 +56,18 @@ pub async fn stream_contents(
 
     // Build filter from stream ID and query params
     let filter = build_entry_filter(&stream_id, &query)?;
+    let sort_order = match stream_id {
+        StreamId::Read => entry::EntrySortOrder::ReadAt,
+        StreamId::Starred => entry::EntrySortOrder::StarredAt,
+        _ => entry::EntrySortOrder::PublishedAt,
+    };
     let pagination = entry::ContinuationParams {
         oldest_first: query.r.as_deref() == Some("o"),
         limit: count + 1, // fetch one extra for continuation
         continuation_id: query.c.as_ref().and_then(|c| c.parse::<i64>().ok()),
         ot: query.ot,
         nt: query.nt,
+        sort_order,
     };
 
     let summary_cache = state.summary_cache.clone();
@@ -179,12 +185,18 @@ pub async fn stream_item_ids(
 
     let filter =
         build_entry_filter_from_params(&stream_id, query.xt.as_deref(), query.it.as_deref())?;
+    let sort_order = match stream_id {
+        StreamId::Read => entry::EntrySortOrder::ReadAt,
+        StreamId::Starred => entry::EntrySortOrder::StarredAt,
+        _ => entry::EntrySortOrder::PublishedAt,
+    };
     let pagination = entry::ContinuationParams {
         oldest_first: query.r.as_deref() == Some("o"),
         limit: count + 1,
         continuation_id: query.c.as_ref().and_then(|c| c.parse::<i64>().ok()),
         ot: query.ot,
         nt: query.nt,
+        sort_order,
     };
 
     let response = state

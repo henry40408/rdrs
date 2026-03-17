@@ -342,12 +342,29 @@ fn fetch_entries_for_ssr(
     filter: &entry::EntryFilter,
     limit: i64,
 ) -> SsrEntryResult {
+    fetch_entries_for_ssr_with_sort(
+        conn,
+        user_id,
+        filter,
+        limit,
+        entry::EntrySortOrder::PublishedAt,
+    )
+}
+
+fn fetch_entries_for_ssr_with_sort(
+    conn: &rusqlite::Connection,
+    user_id: i64,
+    filter: &entry::EntryFilter,
+    limit: i64,
+    sort_order: entry::EntrySortOrder,
+) -> SsrEntryResult {
     let pagination = entry::ContinuationParams {
         oldest_first: false,
         limit: limit + 1, // fetch one extra to check for continuation
         continuation_id: None,
         ot: None,
         nt: None,
+        sort_order,
     };
 
     let mut entries = entry::list_by_user_with_continuation(conn, user_id, filter, &pagination)
@@ -1238,6 +1255,23 @@ async fn fetch_entry_list_config(
     filter: entry::EntryFilter,
     reading_pane_entry_id: Option<i64>,
 ) -> EntryListConfig {
+    fetch_entry_list_config_with_sort(
+        state,
+        user_id,
+        filter,
+        reading_pane_entry_id,
+        entry::EntrySortOrder::PublishedAt,
+    )
+    .await
+}
+
+async fn fetch_entry_list_config_with_sort(
+    state: &AppState,
+    user_id: i64,
+    filter: entry::EntryFilter,
+    reading_pane_entry_id: Option<i64>,
+    sort_order: entry::EntrySortOrder,
+) -> EntryListConfig {
     let secret = state.config.image_proxy_secret.clone();
     let proxy_base_url = state.config.public_base_url.clone();
     state
@@ -1254,7 +1288,7 @@ async fn fetch_entry_list_config(
                 .map(|k| k.is_configured())
                 .unwrap_or(false);
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
+            let ssr = fetch_entries_for_ssr_with_sort(c, user_id, &filter, epp, sort_order);
             let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
 
             let rp = reading_pane_entry_id.and_then(|eid| {
@@ -1312,7 +1346,14 @@ pub async fn read_entries_page(
         read_only: true,
         ..Default::default()
     };
-    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
+    let cfg = fetch_entry_list_config_with_sort(
+        &state,
+        auth_user.user.id,
+        filter,
+        query.entry,
+        entry::EntrySortOrder::ReadAt,
+    )
+    .await;
 
     (
         flash.clone(),
