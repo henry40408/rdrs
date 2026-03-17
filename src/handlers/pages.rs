@@ -10,6 +10,7 @@ use crate::error::AppError;
 use crate::middleware::auth::{PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
 use crate::models::entry_summary;
+use crate::models::statistics;
 use crate::models::user_settings;
 use crate::models::{category, entry, feed};
 use crate::services::sanitize_html;
@@ -164,6 +165,56 @@ pub struct SsrReadingPaneEntry {
 #[derive(serde::Deserialize, Default)]
 pub struct EntryQuery {
     pub entry: Option<i64>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct StatisticsQuery {
+    pub period: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+/// Resolve the date range from period query params.
+/// Returns (from_str, to_str, active_period) as ISO date strings for SQL.
+fn resolve_statistics_period(query: &StatisticsQuery) -> (String, String, String) {
+    let today = chrono::Utc::now().date_naive();
+    let default_from = today - chrono::Duration::days(7);
+
+    let period = query.period.as_deref().unwrap_or("7d");
+
+    match period {
+        "30d" => {
+            let from = today - chrono::Duration::days(30);
+            (from.to_string(), (today + chrono::Duration::days(1)).to_string(), "30d".to_string())
+        }
+        "90d" => {
+            let from = today - chrono::Duration::days(90);
+            (from.to_string(), (today + chrono::Duration::days(1)).to_string(), "90d".to_string())
+        }
+        "all" => {
+            ("1970-01-01".to_string(), (today + chrono::Duration::days(1)).to_string(), "all".to_string())
+        }
+        "custom" => {
+            let from = query.from.as_deref()
+                .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+            let to = query.to.as_deref()
+                .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+
+            match (from, to) {
+                (Some(f), Some(t)) if f <= t => {
+                    let max_to = f + chrono::Duration::days(365);
+                    let clamped_to = if t > max_to { max_to } else { t };
+                    (f.to_string(), (clamped_to + chrono::Duration::days(1)).to_string(), "custom".to_string())
+                }
+                _ => {
+                    (default_from.to_string(), (today + chrono::Duration::days(1)).to_string(), "7d".to_string())
+                }
+            }
+        }
+        _ => {
+            (default_from.to_string(), (today + chrono::Duration::days(1)).to_string(), "7d".to_string())
+        }
+    }
 }
 
 /// Fetch and sanitize an entry for SSR reading pane rendering.
@@ -1697,4 +1748,159 @@ pub async fn feed_entries_page(
             sidebar_unread_count: cfg.sidebar_unread_count,
         },
     ))
+}
+
+#[derive(Template)]
+#[template(path = "statistics.html")]
+pub struct StatisticsTemplate {
+    pub username: String,
+    pub is_admin: bool,
+    pub is_masquerading: bool,
+    pub flash_messages: Vec<FlashMessage>,
+    pub theme: Option<String>,
+    pub git_version: &'static str,
+    pub sidebar_categories: Vec<SidebarCategory>,
+    pub sidebar_unread_count: i64,
+    pub active_period: String,
+    pub custom_from: String,
+    pub custom_to: String,
+    pub overview: statistics::PersonalOverview,
+    pub daily_read_counts: Vec<statistics::DailyReadCount>,
+    pub daily_read_max: i64,
+    pub categories: Vec<statistics::CategoryCount>,
+    pub category_max: i64,
+    pub top_feeds: Vec<statistics::FeedCount>,
+    pub feed_max: i64,
+    pub show_admin_stats: bool,
+    pub admin_counts: Option<statistics::AdminCounts>,
+    pub admin_entry_stats: Option<statistics::AdminEntryStats>,
+}
+
+impl IntoResponse for StatisticsTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+pub async fn statistics_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    Query(query): Query<StatisticsQuery>,
+    flash: Flash,
+) -> (Flash, StatisticsTemplate) {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+    let show_admin_stats = is_admin && !is_masquerading;
+
+    let (from, to, active_period) = resolve_statistics_period(&query);
+
+    let chart_from = if active_period == "all" {
+        let today = chrono::Utc::now().date_naive();
+        (today - chrono::Duration::days(90)).to_string()
+    } else {
+        from.clone()
+    };
+
+    let user_id = auth_user.user.id;
+    let from_c = from.clone();
+    let to_c = to.clone();
+    let chart_from_c = chart_from.clone();
+
+    let (
+        theme,
+        sidebar_categories,
+        sidebar_unread_count,
+        overview,
+        daily_read_counts,
+        categories,
+        top_feeds,
+        admin_counts,
+        admin_entry_stats,
+    ) = state
+        .db
+        .read_user(move |c| {
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+
+            let overview = statistics::get_personal_overview(c, user_id, &from_c, &to_c)
+                .unwrap_or_default();
+            let daily = statistics::get_daily_read_counts(c, user_id, &chart_from_c, &to_c)
+                .unwrap_or_default();
+            let cats = statistics::get_entries_by_category(c, user_id, &from_c, &to_c)
+                .unwrap_or_default();
+            let feeds = statistics::get_top_feeds(c, user_id, &from_c, &to_c, 10)
+                .unwrap_or_default();
+
+            let admin_counts = if show_admin_stats {
+                statistics::get_admin_counts(c).ok()
+            } else {
+                None
+            };
+            let admin_entry_stats = if show_admin_stats {
+                statistics::get_admin_entry_stats(c, &from_c, &to_c).ok()
+            } else {
+                None
+            };
+
+            (
+                theme,
+                sidebar_cats,
+                sidebar_unread,
+                overview,
+                daily,
+                cats,
+                feeds,
+                admin_counts,
+                admin_entry_stats,
+            )
+        })
+        .await
+        .unwrap_or_default();
+
+    let daily_read_max = daily_read_counts.iter().map(|d| d.count).max().unwrap_or(0);
+    let category_max = categories.iter().map(|c| c.count).max().unwrap_or(0);
+    let feed_max = top_feeds.iter().map(|f| f.count).max().unwrap_or(0);
+
+    let (custom_from, custom_to) = if active_period == "custom" {
+        (
+            query.from.unwrap_or_default(),
+            query.to.unwrap_or_default(),
+        )
+    } else {
+        (String::new(), String::new())
+    };
+
+    (
+        flash.clone(),
+        StatisticsTemplate {
+            username: auth_user.user.username,
+            is_admin,
+            is_masquerading,
+            flash_messages: flash.messages,
+            theme,
+            git_version: crate::GIT_VERSION,
+            sidebar_categories,
+            sidebar_unread_count,
+            active_period,
+            custom_from,
+            custom_to,
+            overview,
+            daily_read_counts,
+            daily_read_max,
+            categories,
+            category_max,
+            top_feeds,
+            feed_max,
+            show_admin_stats,
+            admin_counts,
+            admin_entry_stats,
+        },
+    )
 }

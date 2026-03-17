@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+
+{% block html_attrs %}{% call macros::theme_attr(theme) %}{% endcall %}{% endblock %}
+
+{% block title %}Statistics - RDRS{% endblock %}
+
+{% block body %}
+<div class="app-layout">
+{% call macros::sidebar("statistics", is_admin, is_masquerading, username, sidebar_categories, sidebar_unread_count, 0) %}{% endcall %}
+
+<main class="main-content">
+    <div class="page-content">
+    {% call macros::flash(flash_messages) %}{% endcall %}
+
+    <div class="stats-header">
+        <h1>Statistics</h1>
+        <form class="stats-period" method="get" action="/statistics">
+            <a href="/statistics?period=7d" class="stats-period-btn{% if active_period == "7d" %} active{% endif %}">7d</a>
+            <a href="/statistics?period=30d" class="stats-period-btn{% if active_period == "30d" %} active{% endif %}">30d</a>
+            <a href="/statistics?period=90d" class="stats-period-btn{% if active_period == "90d" %} active{% endif %}">90d</a>
+            <a href="/statistics?period=all" class="stats-period-btn{% if active_period == "all" %} active{% endif %}">All</a>
+            <span class="stats-period-divider">|</span>
+            <input type="hidden" name="period" value="custom">
+            <input type="date" name="from" value="{{ custom_from }}" class="stats-date-input">
+            <span class="stats-period-dash">&mdash;</span>
+            <input type="date" name="to" value="{{ custom_to }}" class="stats-date-input">
+            <button type="submit" class="stats-period-btn">Apply</button>
+        </form>
+    </div>
+
+    <!-- Overview Cards -->
+    <div class="stats-cards">
+        <div class="stats-card">
+            <div class="stats-card-value">{{ overview.total_entries }}</div>
+            <div class="stats-card-label">Total Entries</div>
+        </div>
+        <div class="stats-card">
+            <div class="stats-card-value stats-card-success">{{ overview.read_entries }}</div>
+            <div class="stats-card-label">Read</div>
+        </div>
+        <div class="stats-card">
+            <div class="stats-card-value stats-card-warning">{{ overview.unread_entries() }}</div>
+            <div class="stats-card-label">Unread</div>
+        </div>
+        <div class="stats-card">
+            <div class="stats-card-value">{{ "{:.1}"|format(overview.read_rate()) }}%</div>
+            <div class="stats-card-label">Read Rate</div>
+        </div>
+        <div class="stats-card">
+            <div class="stats-card-value">{{ overview.starred_entries }}</div>
+            <div class="stats-card-label">Starred</div>
+        </div>
+        <div class="stats-card">
+            <div class="stats-card-value">{{ overview.summaries }}</div>
+            <div class="stats-card-label">Summaries</div>
+        </div>
+    </div>
+
+    <!-- Daily Read Chart -->
+    <div class="stats-section">
+        <h2>Daily Read Articles</h2>
+        {% if daily_read_counts.is_empty() %}
+        <p class="muted">No read activity in this period</p>
+        {% else %}
+        <div class="stats-chart">
+            {% for day in daily_read_counts %}
+            <div class="stats-bar-col" title="{{ day.date }}: {{ day.count }}">
+                <div class="stats-bar" style="height: {% if daily_read_max > 0 %}{{ (day.count * 100) / daily_read_max }}{% else %}0{% endif %}%"></div>
+                <div class="stats-bar-label">{{ day.date.format("%m/%d") }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Two-column: Categories + Top Feeds -->
+    <div class="stats-columns">
+        <div class="stats-section">
+            <h2>Entries by Category</h2>
+            {% if categories.is_empty() %}
+            <p class="muted">No entries in this period</p>
+            {% else %}
+            {% for cat in categories %}
+            <div class="stats-bar-row">
+                <div class="stats-bar-row-header">
+                    <span>{{ cat.name }}</span>
+                    <span class="muted">{{ cat.count }}</span>
+                </div>
+                <div class="stats-progress">
+                    <div class="stats-progress-fill" style="width: {% if category_max > 0 %}{{ (cat.count * 100) / category_max }}{% else %}0{% endif %}%"></div>
+                </div>
+            </div>
+            {% endfor %}
+            {% endif %}
+        </div>
+
+        <div class="stats-section">
+            <h2>Top Feeds</h2>
+            {% if top_feeds.is_empty() %}
+            <p class="muted">No entries in this period</p>
+            {% else %}
+            {% for feed in top_feeds %}
+            <div class="stats-bar-row">
+                <div class="stats-bar-row-header">
+                    <span>{{ feed.title }}</span>
+                    <span class="muted">{{ feed.count }}</span>
+                </div>
+                <div class="stats-progress">
+                    <div class="stats-progress-fill" style="width: {% if feed_max > 0 %}{{ (feed.count * 100) / feed_max }}{% else %}0{% endif %}%"></div>
+                </div>
+            </div>
+            {% endfor %}
+            {% endif %}
+        </div>
+    </div>
+
+    {% if show_admin_stats %}
+    {% if let Some(ac) = admin_counts %}
+    {% if let Some(ae) = admin_entry_stats %}
+    <!-- Admin Section -->
+    <div class="stats-admin-section">
+        <h2>Site-wide Statistics</h2>
+        <div class="stats-cards">
+            <div class="stats-card stats-card-admin">
+                <div class="stats-card-value">{{ ac.total_users }}</div>
+                <div class="stats-card-label">Total Users</div>
+            </div>
+            <div class="stats-card stats-card-admin">
+                <div class="stats-card-value">{{ ae.total_entries }}</div>
+                <div class="stats-card-label">Site Entries</div>
+            </div>
+            <div class="stats-card stats-card-admin">
+                <div class="stats-card-value">{{ ac.total_feeds }}</div>
+                <div class="stats-card-label">Total Feeds</div>
+            </div>
+            <div class="stats-card stats-card-admin">
+                <div class="stats-card-value">{{ "{:.1}"|format(ae.read_rate()) }}%</div>
+                <div class="stats-card-label">Site Read Rate</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    {% endif %}
+    {% endif %}
+
+    </div>
+</main>
+</div>
+{% endblock %}
