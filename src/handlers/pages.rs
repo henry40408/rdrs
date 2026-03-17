@@ -185,35 +185,57 @@ fn resolve_statistics_period(query: &StatisticsQuery) -> (String, String, String
     match period {
         "30d" => {
             let from = today - chrono::Duration::days(30);
-            (from.to_string(), (today + chrono::Duration::days(1)).to_string(), "30d".to_string())
+            (
+                from.to_string(),
+                (today + chrono::Duration::days(1)).to_string(),
+                "30d".to_string(),
+            )
         }
         "90d" => {
             let from = today - chrono::Duration::days(90);
-            (from.to_string(), (today + chrono::Duration::days(1)).to_string(), "90d".to_string())
+            (
+                from.to_string(),
+                (today + chrono::Duration::days(1)).to_string(),
+                "90d".to_string(),
+            )
         }
-        "all" => {
-            ("1970-01-01".to_string(), (today + chrono::Duration::days(1)).to_string(), "all".to_string())
-        }
+        "all" => (
+            "1970-01-01".to_string(),
+            (today + chrono::Duration::days(1)).to_string(),
+            "all".to_string(),
+        ),
         "custom" => {
-            let from = query.from.as_deref()
+            let from = query
+                .from
+                .as_deref()
                 .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
-            let to = query.to.as_deref()
+            let to = query
+                .to
+                .as_deref()
                 .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
 
             match (from, to) {
                 (Some(f), Some(t)) if f <= t => {
                     let max_to = f + chrono::Duration::days(365);
                     let clamped_to = if t > max_to { max_to } else { t };
-                    (f.to_string(), (clamped_to + chrono::Duration::days(1)).to_string(), "custom".to_string())
+                    (
+                        f.to_string(),
+                        (clamped_to + chrono::Duration::days(1)).to_string(),
+                        "custom".to_string(),
+                    )
                 }
-                _ => {
-                    (default_from.to_string(), (today + chrono::Duration::days(1)).to_string(), "7d".to_string())
-                }
+                _ => (
+                    default_from.to_string(),
+                    (today + chrono::Duration::days(1)).to_string(),
+                    "7d".to_string(),
+                ),
             }
         }
-        _ => {
-            (default_from.to_string(), (today + chrono::Duration::days(1)).to_string(), "7d".to_string())
-        }
+        _ => (
+            default_from.to_string(),
+            (today + chrono::Duration::days(1)).to_string(),
+            "7d".to_string(),
+        ),
     }
 }
 
@@ -1829,14 +1851,14 @@ pub async fn statistics_page(
             let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
             let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
 
-            let overview = statistics::get_personal_overview(c, user_id, &from_c, &to_c)
-                .unwrap_or_default();
+            let overview =
+                statistics::get_personal_overview(c, user_id, &from_c, &to_c).unwrap_or_default();
             let daily = statistics::get_daily_read_counts(c, user_id, &chart_from_c, &to_c)
                 .unwrap_or_default();
-            let cats = statistics::get_entries_by_category(c, user_id, &from_c, &to_c)
-                .unwrap_or_default();
-            let feeds = statistics::get_top_feeds(c, user_id, &from_c, &to_c, 10)
-                .unwrap_or_default();
+            let cats =
+                statistics::get_entries_by_category(c, user_id, &from_c, &to_c).unwrap_or_default();
+            let feeds =
+                statistics::get_top_feeds(c, user_id, &from_c, &to_c, 10).unwrap_or_default();
 
             let admin_counts = if show_admin_stats {
                 statistics::get_admin_counts(c).ok()
@@ -1869,10 +1891,7 @@ pub async fn statistics_page(
     let feed_max = top_feeds.iter().map(|f| f.count).max().unwrap_or(0);
 
     let (custom_from, custom_to) = if active_period == "custom" {
-        (
-            query.from.unwrap_or_default(),
-            query.to.unwrap_or_default(),
-        )
+        (query.from.unwrap_or_default(), query.to.unwrap_or_default())
     } else {
         (String::new(), String::new())
     };

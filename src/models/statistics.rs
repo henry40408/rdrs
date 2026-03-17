@@ -188,7 +188,10 @@ pub fn get_daily_read_counts(
     let mut current = from_date;
     while current < to_date {
         let count = counts_map.get(&current).copied().unwrap_or(0);
-        result.push(DailyReadCount { date: current, count });
+        result.push(DailyReadCount {
+            date: current,
+            count,
+        });
         current += chrono::Duration::days(1);
     }
 
@@ -270,13 +273,14 @@ pub fn get_top_feeds(
 
 /// Get site-wide admin counts (period-independent).
 pub fn get_admin_counts(conn: &Connection) -> AppResult<AdminCounts> {
-    let total_users: i64 =
-        conn.query_row("SELECT COUNT(*) FROM user", [], |row| row.get(0))?;
+    let total_users: i64 = conn.query_row("SELECT COUNT(*) FROM user", [], |row| row.get(0))?;
 
-    let total_feeds: i64 =
-        conn.query_row("SELECT COUNT(*) FROM feed", [], |row| row.get(0))?;
+    let total_feeds: i64 = conn.query_row("SELECT COUNT(*) FROM feed", [], |row| row.get(0))?;
 
-    Ok(AdminCounts { total_users, total_feeds })
+    Ok(AdminCounts {
+        total_users,
+        total_feeds,
+    })
 }
 
 /// Get site-wide admin entry stats within a date range.
@@ -307,7 +311,10 @@ pub fn get_admin_entry_stats(
         |row| row.get(0),
     )?;
 
-    Ok(AdminEntryStats { total_entries, read_entries })
+    Ok(AdminEntryStats {
+        total_entries,
+        read_entries,
+    })
 }
 
 #[cfg(test)]
@@ -386,8 +393,7 @@ mod tests {
         let conn = setup_db();
         let user_id = create_user_with_data(&conn);
 
-        let overview =
-            get_personal_overview(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
+        let overview = get_personal_overview(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
 
         assert_eq!(overview.total_entries, 0);
         assert_eq!(overview.read_entries, 0);
@@ -411,8 +417,7 @@ mod tests {
         mark_read(&conn, e2, "2024-01-11");
         mark_starred(&conn, e3, "2024-01-16");
 
-        let overview =
-            get_personal_overview(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
+        let overview = get_personal_overview(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
 
         assert_eq!(overview.total_entries, 3);
         assert_eq!(overview.read_entries, 2);
@@ -433,8 +438,7 @@ mod tests {
         // Outside range (on to boundary — exclusive)
         insert_entry(&conn, feed_id, "g-on-to", "2024-02-01");
 
-        let overview =
-            get_personal_overview(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
+        let overview = get_personal_overview(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
 
         assert_eq!(overview.total_entries, 1);
     }
@@ -444,8 +448,7 @@ mod tests {
         let conn = setup_db();
         let user_id = create_user_with_data(&conn);
 
-        let counts =
-            get_daily_read_counts(&conn, user_id, "2024-01-01", "2024-01-04").unwrap();
+        let counts = get_daily_read_counts(&conn, user_id, "2024-01-01", "2024-01-04").unwrap();
 
         assert_eq!(counts.len(), 3); // Jan 1, 2, 3
         for c in &counts {
@@ -467,8 +470,7 @@ mod tests {
         mark_read(&conn, e2, "2024-01-02");
         mark_read(&conn, e3, "2024-01-03");
 
-        let counts =
-            get_daily_read_counts(&conn, user_id, "2024-01-01", "2024-01-05").unwrap();
+        let counts = get_daily_read_counts(&conn, user_id, "2024-01-01", "2024-01-05").unwrap();
 
         assert_eq!(counts.len(), 4); // Jan 1–4
         assert_eq!(counts[0].count, 0); // Jan 1: no reads on that day
@@ -502,8 +504,7 @@ mod tests {
         insert_entry(&conn, feed_id, "t2", "2024-01-10");
         insert_entry(&conn, feed2_id, "s1", "2024-01-07");
 
-        let counts =
-            get_entries_by_category(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
+        let counts = get_entries_by_category(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
 
         assert_eq!(counts.len(), 2);
         assert_eq!(counts[0].name, "Tech");
