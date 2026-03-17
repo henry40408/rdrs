@@ -5,6 +5,7 @@ pub mod feed;
 pub mod image;
 pub mod passkey;
 pub mod session;
+pub mod statistics;
 pub mod user;
 pub mod user_settings;
 pub mod webauthn_challenge;
