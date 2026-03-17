@@ -9,8 +9,8 @@ Add a statistics dashboard to RDRS that gives users insight into their reading h
 - **Route**: `GET /statistics`
 - **Architecture**: Pure SSR (Askama template), no client-side JS frameworks or chart libraries
 - **Charts**: CSS-only bar charts and progress bars
-- **Navigation**: New "Statistics" item in sidebar, same level as Unread/Starred/Search
-- **Auth**: Requires login (authenticated route group)
+- **Navigation**: New "Statistics" item in sidebar, positioned after Search and before Settings in the bottom section
+- **Auth**: Uses `PageAuthUser` extractor (same as search page). Admin sections shown conditionally via `is_admin`. Admin section is hidden during masquerade (consistent with existing admin feature behavior).
 
 ## Period Selection
 
@@ -20,6 +20,25 @@ Add a statistics dashboard to RDRS that gives users insight into their reading h
 - Fixed interval buttons: 7d, 30d, 90d, All
 - Custom date range: two date inputs + Apply button, separated from fixed buttons by a divider
 - Invalid custom range (from > to): fall back to default `7d`
+- Maximum custom range: 365 days. Ranges exceeding this are clamped.
+
+## Date Column Semantics
+
+Each metric uses a specific date column for period filtering:
+
+| Metric | Period filter column | Rationale |
+|--------|---------------------|-----------|
+| Total Entries | `COALESCE(published_at, created_at)` | Matches existing sort/display behavior |
+| Read | `read_at` | "Articles you read during this period" |
+| Starred | `starred_at` | "Articles you starred during this period" |
+| Summaries | `entry_summary.created_at` | "Summaries generated during this period" |
+| Daily Read chart | `read_at` | Reading activity per day |
+| Entries by Category | `COALESCE(published_at, created_at)` | Entry volume per category |
+| Top Feeds | `COALESCE(published_at, created_at)` | Entry volume per feed |
+| Admin Site Entries | `COALESCE(published_at, created_at)` | Site-wide entry volume |
+| Admin Site Read Rate | read filtered by `read_at`, total by `COALESCE(published_at, created_at)` | Consistent with personal stats |
+
+**Note**: "Unread" is derived as Total - Read. Since Total and Read use different date columns, "Unread" represents entries published in the period that have not been read (regardless of when).
 
 ## Personal Statistics (all users)
 
@@ -40,6 +59,8 @@ Add a statistics dashboard to RDRS that gives users insight into their reading h
 - X-axis: dates within the selected period
 - Y-axis: count of entries marked as read on each date (based on `read_at`)
 - Bar height calculated as percentage of max daily count
+- When `period=all`: chart shows the most recent 90 days only (avoids rendering thousands of bars)
+- Empty state: "No read activity in this period" message when all counts are zero
 
 ### Entries by Category (left column, progress bars)
 
@@ -59,9 +80,9 @@ Rendered below personal stats, separated by a horizontal divider. Visually disti
 
 | Metric | Source |
 |--------|--------|
-| Total Users | `COUNT(user)` (not filtered by period) |
+| Total Users | `COUNT(user)` (not filtered by period — user count is a point-in-time metric) |
 | Site Entries | `COUNT(entry)` across all users, within period |
-| Total Feeds | `COUNT(feed)` across all users (not filtered by period) |
+| Total Feeds | `COUNT(feed)` across all users (not filtered by period — feed count is a point-in-time metric) |
 | Site Read Rate | site-wide read/total percentage, within period |
 
 ## Page Layout
@@ -97,15 +118,18 @@ Add to `src/models/` (new file `statistics.rs` or extend existing model files):
 - `get_daily_read_counts(user_id, from, to)` → Vec<(date, count)>
 - `get_entries_by_category(user_id, from, to)` → Vec<(category_name, count)>
 - `get_top_feeds(user_id, from, to, limit)` → Vec<(feed_title, count)>
-- `get_admin_overview(from, to)` → user count, site entries, feed count, site read rate
+- `get_admin_counts()` → user count, feed count (period-independent)
+- `get_admin_entry_stats(from, to)` → site entries, site read rate (period-dependent)
 
 ## Handler
 
 - File: `src/handlers/pages.rs`
 - Function: `statistics_page()`
+- Auth extractor: `PageAuthUser`
 - Parses `period` and `from`/`to` query params
 - Computes date range from period
-- Calls query functions
+- Calls query functions (all personal queries in a single DB closure to minimize connection checkouts)
+- Derives `is_admin` from session (false during masquerade)
 - Renders `templates/statistics.html`
 
 ## Template
@@ -119,7 +143,7 @@ Add to `src/models/` (new file `statistics.rs` or extend existing model files):
 ## Sidebar
 
 - Add "Statistics" link in `templates/macros.html`
-- Positioned after Search, before Settings
+- Positioned in the bottom navigation section, after Search and before Settings
 
 ## Error Handling
 
