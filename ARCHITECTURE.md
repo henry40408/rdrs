@@ -42,6 +42,7 @@ src/
 │   ├── entry_summary.rs # Article summaries
 │   ├── category.rs      # Feed categories
 │   ├── image.rs         # Image storage
+│   ├── statistics.rs    # Statistics/analytics queries
 │   ├── passkey.rs       # WebAuthn credentials
 │   ├── webauthn_challenge.rs # WebAuthn challenge state
 │   └── user_settings.rs # User preferences
