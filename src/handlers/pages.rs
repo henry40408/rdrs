@@ -127,19 +127,15 @@ fn compute_freshness(
                 ("feed-freshness-stale".to_string(), "stale".to_string())
             }
         }
-        None => {
-            match fetched_at {
-                Some(fetched) if (now - fetched).num_days() <= 30 => {
-                    ("muted".to_string(), "fresh".to_string())
-                }
-                Some(fetched) if (now - fetched).num_days() <= 90 => {
-                    ("feed-freshness-warning".to_string(), "warning".to_string())
-                }
-                _ => {
-                    ("feed-freshness-stale".to_string(), "stale".to_string())
-                }
+        None => match fetched_at {
+            Some(fetched) if (now - fetched).num_days() <= 30 => {
+                ("muted".to_string(), "fresh".to_string())
             }
-        }
+            Some(fetched) if (now - fetched).num_days() <= 90 => {
+                ("feed-freshness-warning".to_string(), "warning".to_string())
+            }
+            _ => ("feed-freshness-stale".to_string(), "stale".to_string()),
+        },
     }
 }
 
@@ -981,6 +977,7 @@ pub struct FeedsTemplate {
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
     pub sidebar_unread_count: i64,
+    pub total_feed_count: usize,
     pub active_filter: String,
     pub active_sort: String,
     pub active_category: Option<i64>,
@@ -1100,6 +1097,7 @@ pub async fn feeds_page(
     let active_category = query.category;
 
     let mut feeds_data = feeds_data;
+    let total_feed_count = feeds_data.len();
 
     if let Some(cat_id) = active_category {
         feeds_data.retain(|f| f.category_id == cat_id);
@@ -1137,6 +1135,7 @@ pub async fn feeds_page(
             git_version: crate::GIT_VERSION,
             sidebar_categories,
             sidebar_unread_count,
+            total_feed_count,
             active_filter,
             active_sort,
             active_category,

@@ -52,7 +52,7 @@
         <div class="form-group form-group-inline">
             <label for="filter-category">Category</label>
             <select id="filter-category" onchange="window.location.href=this.value" class="select-auto">
-                <option value="/feeds?filter={{ active_filter }}&sort={{ active_sort }}">All Categories ({{ feeds.len() }})</option>
+                <option value="/feeds?filter={{ active_filter }}&sort={{ active_sort }}">All Categories ({{ total_feed_count }})</option>
                 {% for cat in categories %}
                 <option value="/feeds?category={{ cat.id }}&filter={{ active_filter }}&sort={{ active_sort }}"{% if let Some(ac) = active_category %}{% if *ac == cat.id %} selected{% endif %}{% endif %}>{{ cat.name }} ({{ cat.feed_count }})</option>
                 {% endfor %}
