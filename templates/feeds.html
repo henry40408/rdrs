@@ -51,26 +51,25 @@
     <div class="filter-bar">
         <div class="form-group form-group-inline">
             <label for="filter-category">Category</label>
-            <select id="filter-category" onchange="handleFilterChange()" class="select-auto">
-                <option value="">All Categories ({{ feeds.len() }})</option>
+            <select id="filter-category" onchange="window.location.href=this.value" class="select-auto">
+                <option value="/feeds?filter={{ active_filter }}&sort={{ active_sort }}">All Categories ({{ feeds.len() }})</option>
                 {% for cat in categories %}
-                <option value="{{ cat.id }}">{{ cat.name }} ({{ cat.feed_count }})</option>
+                <option value="/feeds?category={{ cat.id }}&filter={{ active_filter }}&sort={{ active_sort }}"{% if let Some(ac) = active_category %}{% if *ac == cat.id %} selected{% endif %}{% endif %}>{{ cat.name }} ({{ cat.feed_count }})</option>
                 {% endfor %}
             </select>
         </div>
         <div class="form-group form-group-inline">
             <label for="sort-by">Sort</label>
-            <select id="sort-by" onchange="handleFilterChange()" class="select-auto">
-                <option value="title">Title</option>
-                <option value="unread">Unread Count</option>
-                <option value="category">Category</option>
+            <select id="sort-by" onchange="window.location.href=this.value" class="select-auto">
+                <option value="/feeds?{% if let Some(cat) = active_category %}category={{ cat }}&{% endif %}filter={{ active_filter }}&sort=title"{% if active_sort == "title" %} selected{% endif %}>Title</option>
+                <option value="/feeds?{% if let Some(cat) = active_category %}category={{ cat }}&{% endif %}filter={{ active_filter }}&sort=unread"{% if active_sort == "unread" %} selected{% endif %}>Unread Count</option>
+                <option value="/feeds?{% if let Some(cat) = active_category %}category={{ cat }}&{% endif %}filter={{ active_filter }}&sort=category"{% if active_sort == "category" %} selected{% endif %}>Category</option>
             </select>
         </div>
-        <div class="form-group form-group-inline">
-            <label>
-                <input type="checkbox" id="filter-errors" onchange="handleFilterChange()">
-                Errors only
-            </label>
+        <div class="form-group form-group-inline feed-filter-links">
+            <a href="/feeds?{% if let Some(cat) = active_category %}category={{ cat }}&{% endif %}sort={{ active_sort }}&filter=all" class="feed-filter-link{% if active_filter == "all" %} active{% endif %}">All</a>
+            <a href="/feeds?{% if let Some(cat) = active_category %}category={{ cat }}&{% endif %}sort={{ active_sort }}&filter=errors" class="feed-filter-link{% if active_filter == "errors" %} active{% endif %}">Errors</a>
+            <a href="/feeds?{% if let Some(cat) = active_category %}category={{ cat }}&{% endif %}sort={{ active_sort }}&filter=stale" class="feed-filter-link{% if active_filter == "stale" %} active{% endif %}">Stale</a>
         </div>
     </div>
 
@@ -90,8 +89,15 @@
             </tr>
             {% else %}
             {% for feed in feeds %}
-            <tr id="row-feed-{{ feed.id }}" data-feed-id="{{ feed.id }}" data-category-id="{{ feed.category_id }}" data-has-error="{{ feed.fetch_error.is_some() }}" {% if feed.fetch_error.is_some() %}class="feed-error-no-border"{% endif %}>
-                <td data-label="Title"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>{% if feed.has_icon %}<img src="/api/feeds/{{ feed.id }}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">{% endif %}<span title="{{ feed.url }}">{{ feed.title }}</span></td>
+            <tr id="row-feed-{{ feed.id }}" data-feed-id="{{ feed.id }}" {% if feed.fetch_error.is_some() %}class="feed-error-no-border"{% endif %}>
+                <td data-label="Title"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>
+                    {% if feed.has_icon %}<img src="/api/feeds/{{ feed.id }}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">{% endif %}<span title="{{ feed.url }}">{{ feed.title }}</span>
+                    <div class="feed-health-info">
+                        <span class="muted" title="{{ feed.fetched_at_datetime }}">Fetched: {{ feed.fetched_at_relative }}</span>
+                        &middot;
+                        <span class="{{ feed.freshness_class }}" title="{{ feed.feed_updated_at_datetime }}">Updated: {{ feed.feed_updated_at_relative }}</span>
+                    </div>
+                </td>
                 <td data-label="Category"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>{{ feed.category_name }}</td>
                 <td data-label="Unread"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>{% if feed.unread_count > 0 %}<strong>{{ feed.unread_count }}</strong>{% else %}0{% endif %}</td>
                 <td class="actions{% if feed.fetch_error.is_some() %} feed-error-no-border{% endif %}">
@@ -222,56 +228,6 @@
             bar.classList.remove('active');
         }
     }
-
-    // Client-side filtering and sorting of the SSR table
-    function handleFilterChange() {
-        const filterCategory = document.getElementById('filter-category').value;
-        const filterErrors = document.getElementById('filter-errors').checked;
-        const tbody = document.getElementById('feeds-table');
-        const rows = tbody.querySelectorAll('tr[data-feed-id]');
-
-        rows.forEach(row => {
-            if (row.dataset.isErrorRow) return; // handled with its parent
-            const catId = row.dataset.categoryId;
-            const hasError = row.dataset.hasError === 'true';
-            const feedId = row.dataset.feedId;
-
-            let show = true;
-            if (filterCategory && catId !== filterCategory) show = false;
-            if (filterErrors && !hasError) show = false;
-
-            row.style.display = show ? '' : 'none';
-            // Also toggle error row
-            const errorRow = tbody.querySelector(`tr[data-is-error-row="true"][data-feed-id="${feedId}"]`);
-            if (errorRow) errorRow.style.display = show ? '' : 'none';
-        });
-
-        updateURL();
-    }
-
-    function updateURL() {
-        const params = new URLSearchParams();
-        const categoryId = document.getElementById('filter-category').value;
-        const sortBy = document.getElementById('sort-by').value;
-        const filterErrors = document.getElementById('filter-errors').checked;
-        if (categoryId) params.set('category', categoryId);
-        if (sortBy && sortBy !== 'title') params.set('sort', sortBy);
-        if (filterErrors) params.set('errors', '1');
-        const newURL = params.toString() ? `/feeds?${params.toString()}` : '/feeds';
-        history.replaceState(null, '', newURL);
-    }
-
-    // Restore filter state from URL
-    (function restoreFilters() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const categoryId = urlParams.get('category');
-        const sortBy = urlParams.get('sort');
-        const filterErrors = urlParams.get('errors');
-        if (categoryId) document.getElementById('filter-category').value = categoryId;
-        if (sortBy) document.getElementById('sort-by').value = sortBy;
-        if (filterErrors) document.getElementById('filter-errors').checked = true;
-        if (categoryId || filterErrors) handleFilterChange();
-    })();
 
     async function addFeed(event) {
         event.preventDefault();
