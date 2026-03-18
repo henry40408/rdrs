@@ -47,7 +47,7 @@
                 </td>
                 <td data-label="Feeds">{{ cat.feed_count }}</td>
                 <td class="actions">
-                    <a href="/feeds?category=user%2F-%2Flabel%2F{{ cat.name|urlencode }}">feeds</a>
+                    <a href="/feeds?category={{ cat.id }}">feeds</a>
                     <a href="/categories/{{ cat.id }}/entries">entries</a>
                     <a href="#" class="edit-btn" data-action="rename" data-index="{{ loop.index0 }}">rename</a>
                     <a href="#" class="save-btn" data-action="save" data-index="{{ loop.index0 }}" style="display:none;">save</a>
@@ -88,7 +88,7 @@
                 </td>
                 <td data-label="Feeds">${feedCount}</td>
                 <td class="actions">
-                    <a href="/feeds?category=${encodeURIComponent(cat.id)}">feeds</a>
+                    <a href="/feeds?category=${cat.numericId}">feeds</a>
                     <a href="/categories/${cat.numericId}/entries">entries</a>
                     <a href="#" class="edit-btn" data-action="rename" data-index="${index}">rename</a>
                     <a href="#" class="save-btn" data-action="save" data-index="${index}" style="display:none;">save</a>

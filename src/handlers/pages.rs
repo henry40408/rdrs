@@ -921,7 +921,7 @@ pub async fn categories_page(
 
 #[derive(serde::Deserialize)]
 pub struct FeedsQuery {
-    pub category: Option<i64>,
+    pub category: Option<String>,
     pub filter: Option<String>,
     pub sort: Option<String>,
 }
@@ -1094,7 +1094,10 @@ pub async fn feeds_page(
 
     let active_filter = query.filter.as_deref().unwrap_or("all").to_string();
     let active_sort = query.sort.as_deref().unwrap_or("title").to_string();
-    let active_category = query.category;
+    let active_category = query
+        .category
+        .as_deref()
+        .and_then(|s| s.parse::<i64>().ok());
 
     let mut feeds_data = feeds_data;
     let total_feed_count = feeds_data.len();
