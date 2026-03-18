@@ -1846,6 +1846,9 @@
                 display: none;
             }
 
+            /* Hide feed health info in card mode */
+            .feed-health-info { display: none; }
+
             /* Feed error rows in card mode */
             .page-content table.mobile-cards tbody tr.error-row {
                 padding-top: 0;
@@ -2067,6 +2070,9 @@
         }
 
         /* Feed health */
+        .feed-title-cell {
+            min-width: 0;
+        }
         .feed-health-info {
             font-family: var(--font-ui);
             font-size: var(--font-xs);

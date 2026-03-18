@@ -91,11 +91,13 @@
             {% for feed in feeds %}
             <tr id="row-feed-{{ feed.id }}" data-feed-id="{{ feed.id }}" {% if feed.fetch_error.is_some() %}class="feed-error-no-border"{% endif %}>
                 <td data-label="Title"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>
-                    {% if feed.has_icon %}<img src="/api/feeds/{{ feed.id }}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">{% endif %}<span title="{{ feed.url }}">{{ feed.title }}</span>
-                    <div class="feed-health-info">
-                        <span class="muted" title="{{ feed.fetched_at_datetime }}">Fetched: {{ feed.fetched_at_relative }}</span>
-                        &middot;
-                        <span class="{{ feed.freshness_class }}" title="{{ feed.feed_updated_at_datetime }}">Updated: {{ feed.feed_updated_at_relative }}</span>
+                    <div class="feed-title-cell">
+                        <div>{% if feed.has_icon %}<img src="/api/feeds/{{ feed.id }}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">{% endif %}<span title="{{ feed.url }}">{{ feed.title }}</span></div>
+                        <div class="feed-health-info">
+                            <span class="muted" title="{{ feed.fetched_at_datetime }}">Fetched: {{ feed.fetched_at_relative }}</span>
+                            &middot;
+                            <span class="{{ feed.freshness_class }}" title="{{ feed.feed_updated_at_datetime }}">Updated: {{ feed.feed_updated_at_relative }}</span>
+                        </div>
                     </div>
                 </td>
                 <td data-label="Category"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>{{ feed.category_name }}</td>
