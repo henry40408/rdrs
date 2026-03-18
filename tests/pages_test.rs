@@ -1051,3 +1051,250 @@ async fn test_admin_page_renders_ssr_user_rows() {
     assert!(body.contains("user"));
     assert!(body.contains("active")); // user status
 }
+
+// ============================================================================
+// Feed Health Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_feeds_page_shows_health_info() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Health Test"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title, fetched_at, feed_updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    1,
+                    "https://example.com/health.xml",
+                    "Health Feed",
+                    "2026-03-18T10:00:00Z",
+                    "2026-03-17T10:00:00Z"
+                ],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/feeds").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("feed-health-info"));
+    assert!(body.contains("Fetched:"));
+    assert!(body.contains("Updated:"));
+}
+
+#[tokio::test]
+async fn test_feeds_page_filter_errors() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Filter Test"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title, fetch_error) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![
+                    1,
+                    "https://bad.com/feed.xml",
+                    "Bad Feed",
+                    "Connection refused"
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://good.com/feed.xml", "Good Feed"],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/feeds?filter=errors").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Bad Feed"));
+    assert!(!body.contains("Good Feed"));
+}
+
+#[tokio::test]
+async fn test_feeds_page_filter_stale() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Stale Test"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title, feed_updated_at) VALUES (?1, ?2, ?3, datetime('now', '-100 days'))",
+                rusqlite::params![1, "https://stale.com/feed.xml", "Stale Feed"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title, feed_updated_at) VALUES (?1, ?2, ?3, datetime('now'))",
+                rusqlite::params![1, "https://fresh.com/feed.xml", "Fresh Feed"],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/feeds?filter=stale").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Stale Feed"));
+    assert!(!body.contains("Fresh Feed"));
+}
+
+#[tokio::test]
+async fn test_feeds_page_sort_unread() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Sort Test"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://a.com/feed.xml", "AAA Feed"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://b.com/feed.xml", "BBB Feed"],
+            )
+            .unwrap();
+            for i in 1..=3 {
+                conn.execute(
+                    "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![2, format!("guid-{}", i), format!("Entry {}", i)],
+                )
+                .unwrap();
+            }
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/feeds?sort=unread").await;
+    response.assert_status_ok();
+    let body = response.text();
+    let bbb_pos = body.find("BBB Feed").unwrap();
+    let aaa_pos = body.find("AAA Feed").unwrap();
+    assert!(
+        bbb_pos < aaa_pos,
+        "BBB Feed (3 unread) should come before AAA Feed (0 unread)"
+    );
+}
+
+#[tokio::test]
+async fn test_feeds_page_freshness_classes() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Freshness Test"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title, feed_updated_at) VALUES (?1, ?2, ?3, datetime('now', '-50 days'))",
+                rusqlite::params![1, "https://warn.com/feed.xml", "Warning Feed"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title, feed_updated_at) VALUES (?1, ?2, ?3, datetime('now', '-100 days'))",
+                rusqlite::params![1, "https://stale.com/feed.xml", "Old Feed"],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/feeds").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("feed-freshness-warning"));
+    assert!(body.contains("feed-freshness-stale"));
+}
+
+#[tokio::test]
+async fn test_feeds_page_filter_by_category() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Cat A"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Cat B"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://a.com/feed.xml", "Feed In A"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![2, "https://b.com/feed.xml", "Feed In B"],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/feeds?category=1").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Feed In A"));
+    assert!(!body.contains("Feed In B"));
+}
+
+#[tokio::test]
+async fn test_feeds_page_invalid_filter_defaults_to_all() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/feeds?filter=invalid").await;
+    response.assert_status_ok();
+}
