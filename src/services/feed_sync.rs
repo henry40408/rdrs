@@ -81,6 +81,7 @@ pub async fn refresh_feed(
                         Some(&err_clone),
                         None,
                         None,
+                        None,
                     )
                 })
                 .await;
@@ -103,6 +104,7 @@ pub async fn refresh_feed(
                 None,
                 etag.as_deref(),
                 last_modified.as_deref(),
+                None,
             )
         })
         .await??;
@@ -116,7 +118,15 @@ pub async fn refresh_feed(
         let error_msg = format!("HTTP {}", status);
         let err_clone = error_msg.clone();
         db.background(move |conn| {
-            feed::update_fetch_result(conn, feed_id, Utc::now(), Some(&err_clone), None, None)
+            feed::update_fetch_result(
+                conn,
+                feed_id,
+                Utc::now(),
+                Some(&err_clone),
+                None,
+                None,
+                None,
+            )
         })
         .await??;
         return Err(AppError::FetchError(error_msg));
@@ -149,6 +159,7 @@ pub async fn refresh_feed(
                         Some(&err_clone),
                         None,
                         None,
+                        None,
                     )
                 })
                 .await;
@@ -177,6 +188,7 @@ pub async fn refresh_feed(
                         feed_id,
                         Utc::now(),
                         Some(&err_clone),
+                        None,
                         None,
                         None,
                     )
@@ -250,6 +262,7 @@ pub async fn refresh_feed(
         .background(move |conn| {
             let mut new_entries = 0i64;
             let mut updated_entries = 0i64;
+            let mut latest_entry_date: Option<chrono::DateTime<Utc>> = None;
 
             for item in parsed_feed.entries {
                 let guid = item.id;
@@ -275,6 +288,14 @@ pub async fn refresh_feed(
                     .map(|dt| dt.with_timezone(&Utc))
                     .or(feed_timestamp);
 
+                // Track the latest entry date for feed_updated_at
+                if let Some(dt) = published_at {
+                    latest_entry_date = Some(match latest_entry_date {
+                        Some(current) if current > dt => current,
+                        _ => dt,
+                    });
+                }
+
                 let (_, is_new) = entry::upsert_entry(
                     conn,
                     feed_id,
@@ -294,7 +315,12 @@ pub async fn refresh_feed(
                 }
             }
 
-            // Update feed fetch result
+            // Use the most recent of feed-level timestamp and latest entry date
+            let effective_updated_at = match (feed_timestamp, latest_entry_date) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
+            };
+
             feed::update_fetch_result(
                 conn,
                 feed_id,
@@ -302,6 +328,7 @@ pub async fn refresh_feed(
                 None,
                 new_etag.as_deref(),
                 new_last_modified.as_deref(),
+                effective_updated_at,
             )?;
 
             Ok::<_, AppError>((new_entries, updated_entries))

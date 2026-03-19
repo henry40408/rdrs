@@ -78,6 +78,67 @@ fn escape_json_for_script(json: &str) -> String {
     json.replace("</", "<\\/")
 }
 
+/// Format a datetime as a human-readable relative time string.
+/// Returns (relative_text, iso_datetime_for_tooltip).
+fn format_relative_time(dt: Option<chrono::DateTime<chrono::Utc>>) -> (String, String) {
+    match dt {
+        None => ("Never".to_string(), String::new()),
+        Some(dt) => {
+            let now = chrono::Utc::now();
+            let duration = now.signed_duration_since(dt);
+            let seconds = duration.num_seconds();
+            let relative = if seconds < 60 {
+                "Just now".to_string()
+            } else if seconds < 3600 {
+                let mins = duration.num_minutes();
+                format!("{} minute{} ago", mins, if mins == 1 { "" } else { "s" })
+            } else if seconds < 86400 {
+                let hours = duration.num_hours();
+                format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
+            } else if seconds < 2_592_000 {
+                let days = duration.num_days();
+                format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
+            } else if seconds < 31_536_000 {
+                let months = duration.num_days() / 30;
+                format!("{} month{} ago", months, if months == 1 { "" } else { "s" })
+            } else {
+                let years = duration.num_days() / 365;
+                format!("{} year{} ago", years, if years == 1 { "" } else { "s" })
+            };
+            (relative, dt.to_rfc3339())
+        }
+    }
+}
+
+/// Compute freshness CSS class and key from feed_updated_at and fetched_at.
+fn compute_freshness(
+    feed_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    fetched_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> (String, String) {
+    let now = chrono::Utc::now();
+    match feed_updated_at {
+        Some(updated) => {
+            let days = (now - updated).num_days();
+            if days <= 30 {
+                (String::new(), "fresh".to_string())
+            } else if days <= 90 {
+                ("feed-freshness-warning".to_string(), "warning".to_string())
+            } else {
+                ("feed-freshness-stale".to_string(), "stale".to_string())
+            }
+        }
+        None => match fetched_at {
+            Some(fetched) if (now - fetched).num_days() <= 30 => {
+                ("muted".to_string(), "fresh".to_string())
+            }
+            Some(fetched) if (now - fetched).num_days() <= 90 => {
+                ("feed-freshness-warning".to_string(), "warning".to_string())
+            }
+            _ => ("feed-freshness-stale".to_string(), "stale".to_string()),
+        },
+    }
+}
+
 /// Entry data for SSR HTML rendering in Askama templates.
 pub struct SsrEntryView {
     pub id: i64,
@@ -858,6 +919,13 @@ pub async fn categories_page(
     )
 }
 
+#[derive(serde::Deserialize)]
+pub struct FeedsQuery {
+    pub category: Option<String>,
+    pub filter: Option<String>,
+    pub sort: Option<String>,
+}
+
 /// A feed row for SSR display.
 #[derive(serde::Serialize)]
 pub struct FeedRow {
@@ -874,6 +942,18 @@ pub struct FeedRow {
     pub http2_disabled: bool,
     pub custom_referrer: Option<String>,
     pub unread_count: i64,
+    #[serde(skip)]
+    pub fetched_at_relative: String,
+    #[serde(skip)]
+    pub fetched_at_datetime: String,
+    #[serde(skip)]
+    pub feed_updated_at_relative: String,
+    #[serde(skip)]
+    pub feed_updated_at_datetime: String,
+    #[serde(skip)]
+    pub freshness_class: String,
+    #[serde(skip)]
+    pub freshness_key: String,
 }
 
 /// A category option for SSR dropdowns.
@@ -897,6 +977,10 @@ pub struct FeedsTemplate {
     pub git_version: &'static str,
     pub sidebar_categories: Vec<SidebarCategory>,
     pub sidebar_unread_count: i64,
+    pub total_feed_count: usize,
+    pub active_filter: String,
+    pub active_sort: String,
+    pub active_category: Option<i64>,
 }
 
 impl IntoResponse for FeedsTemplate {
@@ -911,6 +995,7 @@ impl IntoResponse for FeedsTemplate {
 pub async fn feeds_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    Query(query): Query<FeedsQuery>,
     flash: Flash,
 ) -> (Flash, FeedsTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -951,6 +1036,16 @@ pub async fn feeds_page(
                             |row| row.get(0),
                         )
                         .unwrap_or(0);
+                    let (fetched_rel, fetched_dt) = format_relative_time(f.fetched_at);
+                    let (updated_rel, updated_dt) = if f.feed_updated_at.is_some() {
+                        format_relative_time(f.feed_updated_at)
+                    } else if f.fetched_at.map(|ft| (chrono::Utc::now() - ft).num_days() <= 30).unwrap_or(false) {
+                        ("No date info".to_string(), String::new())
+                    } else {
+                        ("Never".to_string(), String::new())
+                    };
+                    let (freshness_class, freshness_key) =
+                        compute_freshness(f.feed_updated_at, f.fetched_at);
                     FeedRow {
                         title: f.title.clone().unwrap_or_else(|| f.url.clone()),
                         category_name: cat_map
@@ -968,6 +1063,12 @@ pub async fn feeds_page(
                         custom_user_agent: f.custom_user_agent,
                         http2_disabled: f.http2_disabled,
                         custom_referrer: f.custom_referrer,
+                        fetched_at_relative: fetched_rel,
+                        fetched_at_datetime: fetched_dt,
+                        feed_updated_at_relative: updated_rel,
+                        feed_updated_at_datetime: updated_dt,
+                        freshness_class,
+                        freshness_key,
                     }
                 })
                 .collect();
@@ -991,6 +1092,32 @@ pub async fn feeds_page(
         .await
         .unwrap_or((vec![], vec![], None, vec![], 0));
 
+    let active_filter = query.filter.as_deref().unwrap_or("all").to_string();
+    let active_sort = query.sort.as_deref().unwrap_or("title").to_string();
+    let active_category = query
+        .category
+        .as_deref()
+        .and_then(|s| s.parse::<i64>().ok());
+
+    let mut feeds_data = feeds_data;
+    let total_feed_count = feeds_data.len();
+
+    if let Some(cat_id) = active_category {
+        feeds_data.retain(|f| f.category_id == cat_id);
+    }
+
+    match active_filter.as_str() {
+        "errors" => feeds_data.retain(|f| f.fetch_error.is_some()),
+        "stale" => feeds_data.retain(|f| f.freshness_key == "stale"),
+        _ => {}
+    }
+
+    match active_sort.as_str() {
+        "unread" => feeds_data.sort_by(|a, b| b.unread_count.cmp(&a.unread_count)),
+        "category" => feeds_data.sort_by(|a, b| a.category_name.cmp(&b.category_name)),
+        _ => feeds_data.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
+    }
+
     // Build a JSON map: { feedId: { url, title, description, ... }, ... }
     let feed_data_map: std::collections::HashMap<i64, &FeedRow> =
         feeds_data.iter().map(|f| (f.id, f)).collect();
@@ -1011,6 +1138,10 @@ pub async fn feeds_page(
             git_version: crate::GIT_VERSION,
             sidebar_categories,
             sidebar_unread_count,
+            total_feed_count,
+            active_filter,
+            active_sort,
+            active_category,
         },
     )
 }

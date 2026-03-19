@@ -261,15 +261,26 @@ pub fn update_fetch_result(
     fetch_error: Option<&str>,
     etag: Option<&str>,
     last_modified: Option<&str>,
+    feed_updated_at: Option<DateTime<Utc>>,
 ) -> AppResult<()> {
     let fetched_at_str = fetched_at.format("%Y-%m-%d %H:%M:%S").to_string();
+    let feed_updated_at_str = feed_updated_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
     conn.execute(
         r#"
         UPDATE feed
-        SET fetched_at = ?1, fetch_error = ?2, etag = ?3, last_modified = ?4, updated_at = datetime('now')
-        WHERE id = ?5
+        SET fetched_at = ?1, fetch_error = ?2, etag = ?3, last_modified = ?4,
+            feed_updated_at = COALESCE(?5, feed_updated_at),
+            updated_at = datetime('now')
+        WHERE id = ?6
         "#,
-        params![fetched_at_str, fetch_error, etag, last_modified, id],
+        params![
+            fetched_at_str,
+            fetch_error,
+            etag,
+            last_modified,
+            feed_updated_at_str,
+            id
+        ],
     )?;
     Ok(())
 }
