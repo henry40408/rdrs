@@ -2915,6 +2915,7 @@ dependencies = [
  "password-hash 0.6.0",
  "quick-xml 0.39.2",
  "rand 0.10.0",
+ "rand_core 0.6.4",
  "readability",
  "reqwest",
  "resvg",

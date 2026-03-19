@@ -20,6 +20,7 @@ rusqlite = { version = "0.38", features = ["bundled"] }
 askama = "0.15"
 argon2 = "0.5"
 password-hash = { version = "0.6", features = ["getrandom"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 rand = "0.10"
 tower-http = { version = "0.6", features = ["timeout", "trace"] }
 tower = "0.5"
