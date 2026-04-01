@@ -46,7 +46,7 @@ ammonia = "4"
 readability = { version = "0.3", default-features = false }
 base64 = "0.22"
 hmac = "0.12"
-sha2 = "0.10"
+sha2 = "0.11"
 webauthn-rs = { version = "0.5", features = [
   "danger-allow-state-serialisation",
 ] }
