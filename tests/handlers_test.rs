@@ -2316,6 +2316,37 @@ async fn test_static_js_not_found() {
     response.assert_status_not_found();
 }
 
+#[tokio::test]
+async fn test_static_css_serves_app_css() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/static/css/app.css").await;
+    response.assert_status_ok();
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(content_type, "text/css; charset=utf-8");
+
+    let cache_control = response
+        .headers()
+        .get("cache-control")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(cache_control, "public, max-age=31536000, immutable");
+
+    let body = response.text();
+    assert!(!body.is_empty(), "CSS file should not be empty");
+    assert!(
+        body.contains(":root"),
+        "CSS should contain design-token :root block"
+    );
+}
+
 // ============================================================================
 // Health Check Tests
 // ============================================================================

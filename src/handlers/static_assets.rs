@@ -4,8 +4,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-// Embed all static JS files at compile time for single-binary deployment
+// Embed all static assets at compile time for single-binary deployment
 const FILES: &[(&str, &str)] = &[
+    ("css/app.css", include_str!("../../static/css/app.css")),
     ("js/utils.js", include_str!("../../static/js/utils.js")),
     (
         "js/keyboard.js",
@@ -29,12 +30,20 @@ const FILES: &[(&str, &str)] = &[
     ),
 ];
 
+fn content_type_for(path: &str) -> &'static str {
+    if path.ends_with(".css") {
+        "text/css; charset=utf-8"
+    } else {
+        "application/javascript"
+    }
+}
+
 pub async fn serve(Path(path): Path<String>) -> Response {
     match FILES.iter().find(|(name, _)| *name == path) {
-        Some((_, content)) => (
+        Some((name, content)) => (
             StatusCode::OK,
             [
-                (header::CONTENT_TYPE, "application/javascript"),
+                (header::CONTENT_TYPE, content_type_for(name)),
                 (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
             ],
             *content,
