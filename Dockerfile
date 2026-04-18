@@ -15,6 +15,13 @@ FROM chef AS builder
 ARG TARGETPLATFORM
 ARG GIT_VERSION=dev
 
+# Copy the toolchain pin BEFORE any rustup invocation so that rustup resolves
+# against the pinned toolchain (rust-toolchain.toml) rather than whatever patch
+# version the base image happens to ship. Without this the base image's default
+# toolchain gets the cross-compile target installed, and then `cargo build`
+# downloads the pinned toolchain fresh (without the target) and fails.
+COPY rust-toolchain.toml .
+
 # Install cross-compilation toolchain based on target
 RUN case "$TARGETPLATFORM" in \
         "linux/arm64") \
