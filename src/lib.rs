@@ -5,7 +5,7 @@ use axum::{
     Router,
 };
 use tokio::sync::mpsc;
-use tower_http::timeout::TimeoutLayer;
+use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};
 use webauthn_rs::prelude::Webauthn;
 
 use services::http::SERVER_REQUEST_TIMEOUT;
@@ -188,6 +188,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/static/{*path}", get(handlers::static_assets::serve))
         .with_state(state)
         .layer(middleware::DateHeaderLayer::new())
+        .layer(CompressionLayer::new().gzip(true))
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             SERVER_REQUEST_TIMEOUT,
