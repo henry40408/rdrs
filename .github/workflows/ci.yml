@@ -25,7 +25,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache dependencies
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ~/.cargo/registry
@@ -65,7 +65,7 @@ jobs:
         uses: dtolnay/rust-toolchain@10c3493d811a9096cee4fdf287e41e852f6a51ba # 1.94.0
 
       - name: Cache Rust dependencies
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ~/.cargo/registry
@@ -115,7 +115,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Cache dependencies
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             ~/.cargo/registry
