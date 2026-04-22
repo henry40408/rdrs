@@ -312,8 +312,19 @@ code {
 .sidebar-item-icon {
     width: var(--icon-md);
     text-align: center;
-    font-size: var(--font-sm);
+    font-size: 1rem;
+    line-height: 1;
     flex-shrink: 0;
+}
+
+[data-theme="dark"] .sidebar-item-icon {
+    opacity: 0.85;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) .sidebar-item-icon {
+        opacity: 0.85;
+    }
 }
 
 .sidebar-badge {

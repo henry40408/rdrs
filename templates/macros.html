@@ -31,16 +31,16 @@
     <nav class="sidebar-nav">
         <div class="sidebar-section">
             <a href="/" class="sidebar-item{% if current == "unread" %} active{% endif %}" data-testid="nav-unread">
-                <span class="sidebar-item-icon">&#9670;</span>
+                <span class="sidebar-item-icon">&#x1F4EC;&#xFE0F;</span>
                 <span>Unread</span>
                 <span class="sidebar-badge" id="unread-count">{% if sidebar_unread_count > 0 %}{{ sidebar_unread_count }}{% endif %}</span>
             </a>
             <a href="/entries/starred" class="sidebar-item{% if current == "starred" %} active{% endif %}">
-                <span class="sidebar-item-icon">&#9733;</span>
+                <span class="sidebar-item-icon">&#x2B50;&#xFE0F;</span>
                 <span>Starred</span>
             </a>
             <a href="/entries" class="sidebar-item{% if current == "entries" %} active{% endif %}" data-testid="nav-entries">
-                <span class="sidebar-item-icon">&#9638;</span>
+                <span class="sidebar-item-icon">&#x1F4F0;&#xFE0F;</span>
                 <span>All Entries</span>
             </a>
         </div>
@@ -63,11 +63,11 @@
 
         <div class="sidebar-section">
             <a href="/feeds" class="sidebar-item{% if current == "feeds" %} active{% endif %}" data-testid="nav-feeds">
-                <span class="sidebar-item-icon">&#9881;</span>
+                <span class="sidebar-item-icon">&#x1F4E1;&#xFE0F;</span>
                 <span>Feeds</span>
             </a>
             <a href="/categories" class="sidebar-item{% if current == "categories" %} active{% endif %}" data-testid="nav-categories">
-                <span class="sidebar-item-icon">&#9783;</span>
+                <span class="sidebar-item-icon">&#x1F5C2;&#xFE0F;</span>
                 <span>Categories</span>
             </a>
         </div>
@@ -76,24 +76,24 @@
 
         <div class="sidebar-section">
             <a href="/search" class="sidebar-item{% if current == "search" %} active{% endif %}" data-testid="nav-search">
-                <span class="sidebar-item-icon">&#8981;</span>
+                <span class="sidebar-item-icon">&#x1F50D;&#xFE0F;</span>
                 <span>Search</span>
             </a>
             <a href="/statistics" class="sidebar-item{% if current == "statistics" %} active{% endif %}" data-testid="nav-statistics">
-                <span class="sidebar-item-icon">&#9636;</span>
+                <span class="sidebar-item-icon">&#x1F4CA;&#xFE0F;</span>
                 <span>Statistics</span>
             </a>
             <a href="/user-settings" class="sidebar-item{% if current == "user-settings" %} active{% endif %}" data-testid="nav-settings">
-                <span class="sidebar-item-icon">&#9881;</span>
+                <span class="sidebar-item-icon">&#x1F464;&#xFE0F;</span>
                 <span>Settings</span>
             </a>
             <a href="/settings" class="sidebar-item{% if current == "settings" %} active{% endif %}">
-                <span class="sidebar-item-icon">&#9889;</span>
+                <span class="sidebar-item-icon">&#x2699;&#xFE0F;</span>
                 <span>App</span>
             </a>
             {% if is_admin %}
             <a href="/admin" class="sidebar-item{% if current == "admin" %} active{% endif %}" data-testid="nav-admin">
-                <span class="sidebar-item-icon">&#9737;</span>
+                <span class="sidebar-item-icon">&#x1F6E1;&#xFE0F;</span>
                 <span>Admin</span>
             </a>
             {% endif %}
