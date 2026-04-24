@@ -303,8 +303,11 @@ Uses Argon2id with:
 
 ### Session Management
 
-- 24-hour session expiry
-- Secure cookie settings
+- Sliding session expiry: 7-day TTL, extended on each authenticated
+  request when less than half the TTL remains
+- Absolute cap of 90 days from session creation to bound session lifetime
+- Secure cookie settings (`HttpOnly`, `SameSite=Lax`); cookie `Max-Age`
+  matches the absolute cap so the browser retains it across slides
 - Masquerade feature for admin testing
 
 ### Input Sanitization
