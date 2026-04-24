@@ -1,7 +1,8 @@
 use axum::http::StatusCode;
 use axum_test::TestServer;
+use chrono::{DateTime, Duration, Utc};
 use rdrs::{auth, create_router, db, services, AppState, Config, DbPool};
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 use serde_json::json;
 
 fn open_shared_memory(name: &str) -> Connection {
@@ -1069,4 +1070,129 @@ async fn test_flash_message_on_unread_page() {
     let body = response.text();
     assert!(body.contains("Warning test"));
     assert!(body.contains("flash-warning"));
+}
+
+fn parse_session_ts(s: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .or_else(|_| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
+        })
+        .unwrap()
+}
+
+/// Force a logged-in user's session into the refresh window by back-dating
+/// `created_at` 5 days and setting `expires_at` 2 hours from now. Returns the
+/// aged `expires_at` so callers can assert forward movement.
+fn age_session(conn: &Connection) -> DateTime<Utc> {
+    let aged_expiry = Utc::now() + Duration::hours(2);
+    let aged_expiry_str = aged_expiry.format("%Y-%m-%d %H:%M:%S").to_string();
+    let created_str = (Utc::now() - Duration::days(5))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+    conn.execute(
+        "UPDATE session SET created_at = ?1, expires_at = ?2",
+        params![created_str, aged_expiry_str],
+    )
+    .unwrap();
+    aged_expiry
+}
+
+fn read_expiry(conn: &Connection) -> DateTime<Utc> {
+    let expires_at: String = conn
+        .query_row("SELECT expires_at FROM session LIMIT 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    parse_session_ts(&expires_at)
+}
+
+#[tokio::test]
+async fn test_api_request_slides_session_expiry_forward() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "admin", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({ "username": "admin", "password": "password123" }))
+        .await
+        .assert_status_ok();
+
+    let db_conn = open_shared_memory("test_auth");
+    let aged_expiry = age_session(&db_conn);
+
+    server.get("/api/user").await.assert_status_ok();
+
+    let refreshed = read_expiry(&db_conn);
+    assert!(
+        refreshed > aged_expiry,
+        "expiry should slide forward: aged={aged_expiry} refreshed={refreshed}"
+    );
+    // Sliding bumps to roughly now + 7 days (sanity bound).
+    let expected_min = Utc::now() + Duration::days(6);
+    assert!(
+        refreshed >= expected_min,
+        "refreshed expiry too small: {refreshed} < {expected_min}"
+    );
+}
+
+#[tokio::test]
+async fn test_page_request_slides_session_expiry_forward() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "admin", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({ "username": "admin", "password": "password123" }))
+        .await
+        .assert_status_ok();
+
+    let db_conn = open_shared_memory("test_auth");
+    let aged_expiry = age_session(&db_conn);
+
+    server.get("/").await.assert_status_ok();
+
+    let refreshed = read_expiry(&db_conn);
+    assert!(
+        refreshed > aged_expiry,
+        "page request should slide expiry forward: aged={aged_expiry} refreshed={refreshed}"
+    );
+}
+
+#[tokio::test]
+async fn test_fresh_session_is_not_refreshed() {
+    let server = create_test_server(default_test_config());
+
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "admin", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({ "username": "admin", "password": "password123" }))
+        .await
+        .assert_status_ok();
+
+    let db_conn = open_shared_memory("test_auth");
+    let before = read_expiry(&db_conn);
+
+    server.get("/api/user").await.assert_status_ok();
+
+    let after = read_expiry(&db_conn);
+    assert_eq!(
+        before, after,
+        "fresh session should not be refreshed on every request"
+    );
 }

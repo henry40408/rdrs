@@ -45,12 +45,7 @@ impl Session {
             return None;
         }
 
-        let desired = (now + ttl).min(absolute_cap);
-        if desired > self.expires_at {
-            Some(desired)
-        } else {
-            None
-        }
+        Some((now + ttl).min(absolute_cap))
     }
 }
 
