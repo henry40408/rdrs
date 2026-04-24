@@ -5,6 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::error::{AppError, AppResult};
 
 pub const SESSION_EXPIRY_DAYS: i64 = 7;
+pub const SESSION_ABSOLUTE_MAX_DAYS: i64 = 90;
 const TOKEN_LENGTH: usize = 32;
 
 #[derive(Debug, Clone)]
@@ -25,6 +26,26 @@ impl Session {
 
     pub fn is_expired(&self) -> bool {
         Utc::now() > self.expires_at
+    }
+
+    /// Compute a new `expires_at` if the session should be slid forward.
+    ///
+    /// Returns `Some(new_expires_at)` when remaining TTL has fallen below
+    /// half of `SESSION_EXPIRY_DAYS` and the session has not yet reached
+    /// its absolute cap (`created_at + SESSION_ABSOLUTE_MAX_DAYS`).
+    /// Otherwise returns `None`.
+    pub fn compute_refreshed_expiry(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let ttl = Duration::days(SESSION_EXPIRY_DAYS);
+        let absolute_cap = self.created_at + Duration::days(SESSION_ABSOLUTE_MAX_DAYS);
+
+        if self.expires_at >= absolute_cap {
+            return None;
+        }
+        if self.expires_at - now >= ttl / 2 {
+            return None;
+        }
+
+        Some((now + ttl).min(absolute_cap))
     }
 }
 
@@ -113,6 +134,23 @@ pub fn find_by_token(conn: &Connection, token: &str) -> AppResult<Option<Session
     )
     .optional()
     .map_err(AppError::Database)
+}
+
+/// Slide the session's `expires_at` forward if it is within the refresh window.
+///
+/// Returns the new `expires_at` when the session was extended, or `None` when
+/// no update was necessary (session still has plenty of TTL, or it has hit the
+/// absolute cap of `created_at + SESSION_ABSOLUTE_MAX_DAYS`).
+pub fn refresh_if_needed(conn: &Connection, session: &Session) -> AppResult<Option<DateTime<Utc>>> {
+    let Some(new_expires_at) = session.compute_refreshed_expiry(Utc::now()) else {
+        return Ok(None);
+    };
+    let new_expires_at_str = new_expires_at.format("%Y-%m-%d %H:%M:%S").to_string();
+    conn.execute(
+        "UPDATE session SET expires_at = ?1 WHERE id = ?2",
+        params![new_expires_at_str, session.id],
+    )?;
+    Ok(Some(new_expires_at))
 }
 
 pub fn delete_session(conn: &Connection, token: &str) -> AppResult<()> {
@@ -262,5 +300,102 @@ mod tests {
 
         assert_ne!(token1, token2);
         assert!(token1.len() >= 40);
+    }
+
+    fn make_session(created_at: DateTime<Utc>, expires_at: DateTime<Utc>) -> Session {
+        Session {
+            id: 1,
+            user_id: 1,
+            session_token: "t".to_string(),
+            original_user_id: None,
+            created_at,
+            expires_at,
+        }
+    }
+
+    #[test]
+    fn compute_refreshed_expiry_skips_fresh_session() {
+        let now = Utc::now();
+        let session = make_session(now, now + Duration::days(SESSION_EXPIRY_DAYS));
+        assert!(session.compute_refreshed_expiry(now).is_none());
+    }
+
+    #[test]
+    fn compute_refreshed_expiry_extends_when_past_half_ttl() {
+        let created = Utc::now() - Duration::days(5);
+        let expires = created + Duration::days(SESSION_EXPIRY_DAYS);
+        let now = Utc::now();
+        let session = make_session(created, expires);
+
+        let new_expires = session
+            .compute_refreshed_expiry(now)
+            .expect("should extend");
+        assert!(new_expires > expires);
+        assert!(new_expires <= now + Duration::days(SESSION_EXPIRY_DAYS));
+    }
+
+    #[test]
+    fn compute_refreshed_expiry_caps_at_absolute_max() {
+        let created = Utc::now() - Duration::days(SESSION_ABSOLUTE_MAX_DAYS - 2);
+        let expires = Utc::now() + Duration::hours(1);
+        let now = Utc::now();
+        let session = make_session(created, expires);
+
+        let new_expires = session
+            .compute_refreshed_expiry(now)
+            .expect("should extend, but capped");
+        let cap = created + Duration::days(SESSION_ABSOLUTE_MAX_DAYS);
+        assert_eq!(new_expires, cap);
+    }
+
+    #[test]
+    fn compute_refreshed_expiry_none_at_absolute_max() {
+        let created = Utc::now() - Duration::days(SESSION_ABSOLUTE_MAX_DAYS);
+        let expires = created + Duration::days(SESSION_ABSOLUTE_MAX_DAYS);
+        let now = Utc::now();
+        let session = make_session(created, expires);
+        assert!(session.compute_refreshed_expiry(now).is_none());
+    }
+
+    #[test]
+    fn refresh_if_needed_persists_new_expiry() {
+        let conn = setup_db();
+        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+        let session = create_session(&conn, user.id).unwrap();
+
+        let past_created = (Utc::now() - Duration::days(6))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let near_expiry = (Utc::now() + Duration::hours(12))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        conn.execute(
+            "UPDATE session SET created_at = ?1, expires_at = ?2 WHERE id = ?3",
+            params![past_created, near_expiry, session.id],
+        )
+        .unwrap();
+
+        let reloaded = find_by_token(&conn, &session.session_token)
+            .unwrap()
+            .unwrap();
+        let new_expires = refresh_if_needed(&conn, &reloaded)
+            .unwrap()
+            .expect("should refresh");
+
+        let after = find_by_token(&conn, &session.session_token)
+            .unwrap()
+            .unwrap();
+        let drift = (after.expires_at - new_expires).num_seconds().abs();
+        assert!(drift <= 1, "persisted expiry diverged: {drift}s");
+        assert!(after.expires_at > reloaded.expires_at);
+    }
+
+    #[test]
+    fn refresh_if_needed_noop_for_fresh_session() {
+        let conn = setup_db();
+        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+        let session = create_session(&conn, user.id).unwrap();
+
+        assert!(refresh_if_needed(&conn, &session).unwrap().is_none());
     }
 }

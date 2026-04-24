@@ -114,7 +114,7 @@ pub async fn login(
         .path("/")
         .http_only(true)
         .same_site(axum_extra::extract::cookie::SameSite::Lax)
-        .max_age(Duration::days(session::SESSION_EXPIRY_DAYS))
+        .max_age(Duration::days(session::SESSION_ABSOLUTE_MAX_DAYS))
         .build();
 
     Ok((

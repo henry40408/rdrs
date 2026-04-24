@@ -39,11 +39,14 @@ impl FromRequestParts<AppState> for AuthUser {
         let (session, expired) = state
             .db
             .user(move |conn| {
-                let session =
+                let mut session =
                     session::find_by_token(conn, &token_clone)?.ok_or(AppError::Unauthorized)?;
                 if session.is_expired() {
                     session::delete_session(conn, &token_clone)?;
                     return Ok::<_, AppError>((session, true));
+                }
+                if let Some(new_expires_at) = session::refresh_if_needed(conn, &session)? {
+                    session.expires_at = new_expires_at;
                 }
                 Ok((session, false))
             })
@@ -103,12 +106,15 @@ impl FromRequestParts<AppState> for PageAuthUser {
         let result = state
             .db
             .user(move |conn| {
-                let session = session::find_by_token(conn, &token_clone)
+                let mut session = session::find_by_token(conn, &token_clone)
                     .map_err(|_| ())?
                     .ok_or(())?;
                 if session.is_expired() {
                     let _ = session::delete_session(conn, &token_clone);
                     return Err(());
+                }
+                if let Ok(Some(new_expires_at)) = session::refresh_if_needed(conn, &session) {
+                    session.expires_at = new_expires_at;
                 }
                 let user = user::find_by_id(conn, session.user_id)
                     .map_err(|_| ())?
