@@ -963,6 +963,204 @@ async fn test_feed_entries_page_contains_ssr_json() {
 }
 
 #[tokio::test]
+async fn test_read_entries_page_contains_ssr_entries_json() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Read SSR Cat"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/read-ssr.xml", "Read SSR Feed"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, title, read_at) VALUES (?1, ?2, ?3, datetime('now'))",
+                rusqlite::params![1, "read-ssr-guid", "Read SSR Entry"],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/entries/read").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
+    assert!(body.contains("Read SSR Entry"));
+}
+
+#[tokio::test]
+async fn test_starred_entries_page_contains_ssr_entries_json() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Starred SSR Cat"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/star-ssr.xml", "Starred SSR Feed"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, title, starred_at) VALUES (?1, ?2, ?3, datetime('now'))",
+                rusqlite::params![1, "star-ssr-guid", "Starred SSR Entry"],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/entries/starred").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
+    assert!(body.contains("Starred SSR Entry"));
+}
+
+#[tokio::test]
+async fn test_summarized_entries_page_contains_ssr_entries_json() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Summary SSR Cat"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/sum-ssr.xml", "Summary SSR Feed"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "sum-ssr-guid", "Summary SSR Entry"],
+            )
+            .unwrap();
+            // entry_summary table marks the entry as having a summary
+            conn.execute(
+                "INSERT INTO entry_summary (entry_id, user_id, status, summary_text) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![1, 1, "completed", "A short summary."],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/entries/summarized").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
+    assert!(body.contains("Summary SSR Entry"));
+}
+
+#[tokio::test]
+async fn test_search_page_contains_ssr_entries_json_when_query_present() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Search SSR Cat"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/search-ssr.xml", "Search SSR Feed"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "search-ssr-guid", "Quokka Discovery"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "search-ssr-guid-2", "Unrelated Pelican"],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/search?q=Quokka").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    // SSR script tag must be present and only the matching entry rendered.
+    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
+    assert!(body.contains("Quokka Discovery"));
+    assert!(!body.contains("Unrelated Pelican"));
+    // Search input should be pre-filled with the query.
+    assert!(body.contains(r#"value="Quokka""#));
+}
+
+#[tokio::test]
+async fn test_search_page_without_query_emits_empty_ssr_payload() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Search Empty Cat"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/empty.xml", "Empty Feed"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "empty-guid", "Should Not Appear"],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/search").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    // SSR script tag is still present but with empty entries (no DB fetch happened).
+    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
+    assert!(body.contains(r#"{"entries":[],"continuation":null}"#));
+    assert!(!body.contains("Should Not Appear"));
+    assert!(body.contains("Enter a search term"));
+}
+
+#[tokio::test]
 async fn test_feeds_page_renders_ssr_feed_rows() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;

@@ -19,6 +19,7 @@
                 <div class="filter-bar">
                     <div class="form-group form-group-inline flex-1">
                         <input type="text" id="filter-search" placeholder="Search entries..."
+                               value="{{ search_query }}"
                                autofocus data-testid="search-input">
                     </div>
                     <div>
@@ -34,12 +35,11 @@
                     origin="search"
                     show-feed
                     show-category
-                    empty-message="Enter a search term and press Enter to search."
                     no-auto-load
                     reading-pane="#reading-pane"
                     {% if has_save_services %}has-save-services{% endif %}
                     {% if has_kagi_configured %}has-kagi-configured{% endif %}
-                ></rdrs-entry-list>
+                >{% call macros::entry_list_content(ssr_entry_views, ssr_has_continuation, ssr_entries_json, "search", true, true, false, false, empty_message) %}{% endcall %}</rdrs-entry-list>
             </div>
         </div>
 
@@ -85,7 +85,10 @@
         if (query) {
             searchInput.value = query;
             list.search = query;
-            list.loadEntries();
+            // SSR may have already hydrated entries on first load; skip the API round-trip then.
+            if (!list.hydrated) {
+                list.loadEntries();
+            }
         }
 
         list.registerKeyboardHandlers({

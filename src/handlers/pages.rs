@@ -1727,7 +1727,7 @@ pub async fn category_entries_page(
     ))
 }
 
-// Search page (no SSR entries - loads on user input)
+// Search page: SSR entries on first load when ?q= is provided
 #[derive(Template)]
 #[template(path = "search.html")]
 pub struct SearchTemplate {
@@ -1738,6 +1738,11 @@ pub struct SearchTemplate {
     pub entries_per_page: i64,
     pub has_save_services: bool,
     pub has_kagi_configured: bool,
+    pub search_query: String,
+    pub empty_message: String,
+    pub ssr_entries_json: String,
+    pub ssr_entry_views: Vec<SsrEntryView>,
+    pub ssr_has_continuation: bool,
     pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
     pub ssr_reading_pane_json: String,
     pub theme: Option<String>,
@@ -1755,10 +1760,16 @@ impl IntoResponse for SearchTemplate {
     }
 }
 
+#[derive(serde::Deserialize, Default)]
+pub struct SearchPageQuery {
+    pub q: Option<String>,
+    pub entry: Option<i64>,
+}
+
 pub async fn search_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
-    Query(query): Query<EntryQuery>,
+    Query(query): Query<SearchPageQuery>,
     flash: Flash,
 ) -> (Flash, SearchTemplate) {
     let is_masquerading = auth_user.session.is_masquerading();
@@ -1768,9 +1779,93 @@ pub async fn search_page(
         auth_user.user.is_admin()
     };
 
-    // Search doesn't need SSR entries - pass a dummy filter that won't fetch
-    let filter = entry::EntryFilter::default();
-    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
+    let user_id = auth_user.user.id;
+    let secret = state.config.image_proxy_secret.clone();
+    let proxy_base_url = state.config.public_base_url.clone();
+    let search_query = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let q_for_ssr = search_query.clone();
+    let rp_entry_id = query.entry;
+
+    let cfg = state
+        .db
+        .read_user(move |c| {
+            let epp = user_settings::get_entries_per_page(c, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
+            let save_config =
+                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
+            let kagi_configured = save_config
+                .kagi
+                .as_ref()
+                .map(|k| k.is_configured())
+                .unwrap_or(false);
+            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
+            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
+
+            let (ssr_json, ssr_views, ssr_continuation) = match q_for_ssr {
+                Some(q) => {
+                    let filter = entry::EntryFilter {
+                        search: Some(q),
+                        ..Default::default()
+                    };
+                    let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
+                    (ssr.json, ssr.views, ssr.has_continuation)
+                }
+                None => {
+                    // Emit a valid (but empty) SSR payload so the JS component hydrates the
+                    // server-rendered empty placeholder in place rather than re-rendering it.
+                    let json = escape_json_for_script(r#"{"entries":[],"continuation":null}"#);
+                    (json, vec![], false)
+                }
+            };
+
+            let rp = rp_entry_id.and_then(|eid| {
+                fetch_reading_pane_entry(c, user_id, eid, &secret, proxy_base_url.as_deref())
+            });
+            let rp_json = rp
+                .as_ref()
+                .map(|e| escape_json_for_script(&serde_json::to_string(e).unwrap_or_default()))
+                .unwrap_or_default();
+
+            EntryListConfig {
+                entries_per_page: epp,
+                has_save_services: save_services,
+                has_kagi_configured: kagi_configured,
+                ssr_entries_json: ssr_json,
+                ssr_entry_views: ssr_views,
+                ssr_has_continuation: ssr_continuation,
+                ssr_reading_pane: rp,
+                ssr_reading_pane_json: rp_json,
+                theme,
+                sidebar_categories: sidebar_cats,
+                sidebar_unread_count: sidebar_unread,
+            }
+        })
+        .await
+        .unwrap_or(EntryListConfig {
+            entries_per_page: user_settings::DEFAULT_ENTRIES_PER_PAGE,
+            has_save_services: false,
+            has_kagi_configured: false,
+            ssr_entries_json: "null".to_string(),
+            ssr_entry_views: vec![],
+            ssr_has_continuation: false,
+            ssr_reading_pane: None,
+            ssr_reading_pane_json: String::new(),
+            theme: None,
+            sidebar_categories: vec![],
+            sidebar_unread_count: 0,
+        });
+
+    let empty_message = if search_query.is_some() {
+        "No matching entries.".to_string()
+    } else {
+        "Enter a search term and press Enter to search.".to_string()
+    };
 
     (
         flash.clone(),
@@ -1782,6 +1877,11 @@ pub async fn search_page(
             entries_per_page: cfg.entries_per_page,
             has_save_services: cfg.has_save_services,
             has_kagi_configured: cfg.has_kagi_configured,
+            search_query: search_query.unwrap_or_default(),
+            empty_message,
+            ssr_entries_json: cfg.ssr_entries_json,
+            ssr_entry_views: cfg.ssr_entry_views,
+            ssr_has_continuation: cfg.ssr_has_continuation,
             ssr_reading_pane: cfg.ssr_reading_pane,
             ssr_reading_pane_json: cfg.ssr_reading_pane_json,
             theme: cfg.theme,
