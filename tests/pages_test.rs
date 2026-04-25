@@ -1122,6 +1122,84 @@ async fn test_search_page_contains_ssr_entries_json_when_query_present() {
 }
 
 #[tokio::test]
+async fn test_ssr_continuation_matches_api_convention_no_duplicates_on_load_more() {
+    // Regression test for issue #148 follow-up: SSR's continuation token must be the ID of
+    // the LAST visible entry (matching `stream_contents` API convention), NOT the ID of the
+    // popped boundary entry. Otherwise the next-page query `e.id < c` re-fetches the boundary
+    // entry and the client renders duplicates after Load More.
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Pag Cat"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/pag.xml", "Pag Feed"],
+            )
+            .unwrap();
+            // Pin entries-per-page to MIN_ENTRIES_PER_PAGE (10) so we can predict the boundary.
+            conn.execute(
+                "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)",
+                rusqlite::params![1, 10],
+            )
+            .unwrap();
+            // 12 entries; published_at decreasing so newest first ⇒ entry id 12 .. 1 in SSR.
+            for i in 1..=12 {
+                conn.execute(
+                    "INSERT INTO entry (feed_id, guid, title, published_at) VALUES (?1, ?2, ?3, datetime('now', ?4))",
+                    rusqlite::params![
+                        1,
+                        format!("p-{}", i),
+                        format!("E{}", i),
+                        format!("-{} hours", 12 - i)
+                    ],
+                )
+                .unwrap();
+            }
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    let marker = r#"<script type="application/json" class="ssr-entries">"#;
+    let json_start = body.find(marker).expect("ssr-entries script") + marker.len();
+    let json_end = body[json_start..]
+        .find("</script>")
+        .expect("ssr-entries script close");
+    let json = &body[json_start..json_start + json_end];
+    let value: serde_json::Value = serde_json::from_str(json).expect("valid SSR JSON");
+
+    let entries = value["entries"].as_array().expect("entries array");
+    assert_eq!(
+        entries.len(),
+        10,
+        "first page should have 10 visible entries"
+    );
+
+    let continuation = value["continuation"]
+        .as_str()
+        .expect("continuation present when more pages exist");
+    let last_visible_id = entries[9]["id"].as_i64().expect("last entry id");
+
+    assert_eq!(
+        continuation,
+        last_visible_id.to_string(),
+        "SSR continuation must equal last visible entry id (API convention); off-by-one would \
+         re-render the boundary entry on Load More"
+    );
+}
+
+#[tokio::test]
 async fn test_search_page_without_query_emits_empty_ssr_payload() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;

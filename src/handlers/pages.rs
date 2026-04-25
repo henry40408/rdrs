@@ -431,9 +431,15 @@ fn fetch_entries_for_ssr_with_sort(
     let mut entries = entry::list_by_user_with_continuation(conn, user_id, filter, &pagination)
         .unwrap_or_default();
 
-    let continuation = if entries.len() as i64 > limit {
-        let last = entries.pop().unwrap();
-        Some(last.entry.id.to_string())
+    // The API side (`stream_contents`) defines `continuation` as the ID of the LAST visible
+    // entry on the current page, then queries `e.id < continuation` for the next page. We must
+    // match that convention or "Load More" will refetch the boundary entry and render duplicates.
+    let has_more = entries.len() as i64 > limit;
+    if has_more {
+        entries.pop();
+    }
+    let continuation = if has_more {
+        entries.last().map(|e| e.entry.id.to_string())
     } else {
         None
     };

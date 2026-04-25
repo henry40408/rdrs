@@ -93,3 +93,67 @@ test.describe("SSR list pages skip first stream/contents fetch", () => {
     await expect(page.getByText("Quokka Discovery")).toBeVisible();
   });
 });
+
+test.describe("Load More appends without duplicates after SSR hydration", () => {
+  const TOTAL = 35;
+
+  // Use a fresh username so we don't collide with the suite above.
+  test.beforeAll(async ({ api, seed }) => {
+    await api.register("loadmoreuser", "password123");
+
+    const userId = seed.getUserId("loadmoreuser");
+    const categoryId = seed.createCategory(userId, "LoadMore Cat");
+    const feedId = seed.createFeed(
+      categoryId,
+      "https://example.com/loadmore-feed.xml",
+      "LoadMore Feed"
+    );
+
+    // Seed entries so id order matches real usage: lower id = older published_at.
+    // This is the assumption the GReader API pagination relies on (`e.id < continuation`
+    // returning *older* entries when sorting by published_at DESC).
+    const entries = Array.from({ length: TOTAL }, (_, idx) => {
+      const i = idx + 1;
+      return {
+        feedId,
+        guid: `loadmore-guid-${i}`,
+        title: `Test Entry ${i}`,
+        link: `https://example.com/entry/${i}`,
+        content: `<p>Content ${i}</p>`,
+        publishedOffset: `-${TOTAL - i + 1} hours`,
+      };
+    });
+    seed.insertEntries(entries);
+  });
+
+  test("clicking Load More yields unique entry ids", async ({
+    page,
+    serverUrl,
+  }) => {
+    await page.goto(`${serverUrl}/login`);
+    await page.getByTestId("username-input").fill("loadmoreuser");
+    await page.getByTestId("password-input").fill("password123");
+    await page.getByTestId("login-submit").click();
+    await page.waitForURL(`${serverUrl}/`);
+
+    // Wait for SSR hydration.
+    await expect(page.getByTestId("entry-item").first()).toBeVisible();
+    const firstPageIds = await page
+      .getByTestId("entry-item")
+      .evaluateAll((els) => els.map((el) => el.id));
+    expect(new Set(firstPageIds).size).toBe(firstPageIds.length);
+
+    // Click Load More and wait for the second page to land.
+    await expect(page.getByTestId("load-more-btn")).toBeVisible();
+    await page.getByTestId("load-more-btn").click();
+    await expect(page.getByTestId("entry-item")).toHaveCount(TOTAL);
+
+    const allIds = await page
+      .getByTestId("entry-item")
+      .evaluateAll((els) => els.map((el) => el.id));
+    expect(allIds).toHaveLength(TOTAL);
+    // Failure here means the SSR continuation off-by-one came back: the boundary entry
+    // got re-fetched on Load More and rendered twice.
+    expect(new Set(allIds).size).toBe(TOTAL);
+  });
+});
