@@ -1534,7 +1534,17 @@ pub async fn starred_entries_page(
         starred_only: true,
         ..Default::default()
     };
-    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
+    // Match the GReader `stream/contents` API which sorts the `starred` stream by `starred_at`.
+    // SSR using `PublishedAt` here would let Load More return entries in a different order than
+    // the SSR-rendered first page.
+    let cfg = fetch_entry_list_config_with_sort(
+        &state,
+        auth_user.user.id,
+        filter,
+        query.entry,
+        entry::EntrySortOrder::StarredAt,
+    )
+    .await;
 
     (
         flash.clone(),

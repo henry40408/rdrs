@@ -94,66 +94,165 @@ test.describe("SSR list pages skip first stream/contents fetch", () => {
   });
 });
 
-test.describe("Load More appends without duplicates after SSR hydration", () => {
-  const TOTAL = 35;
+/**
+ * Comprehensive Load More regression: every SSR-backed list route must let the
+ * client paginate without re-rendering the boundary entry. This catches the
+ * SSR/API continuation mismatch that broke /, /entries, and /categories before.
+ */
+test.describe("Load More appends without duplicates on every list route", () => {
+  // Default entries-per-page is 30; per-feed seed > 30 so Load More has work.
+  const PER_FEED = 35;
 
-  // Use a fresh username so we don't collide with the suite above.
+  // Stash IDs so the test bodies (which take fixtures separately) can reach them.
+  let unreadCategoryId: number;
+  let readCategoryId: number;
+  let unreadFeedId: number;
+  let readFeedId: number;
+
   test.beforeAll(async ({ api, seed }) => {
     await api.register("loadmoreuser", "password123");
-
     const userId = seed.getUserId("loadmoreuser");
-    const categoryId = seed.createCategory(userId, "LoadMore Cat");
-    const feedId = seed.createFeed(
-      categoryId,
-      "https://example.com/loadmore-feed.xml",
-      "LoadMore Feed"
+
+    unreadCategoryId = seed.createCategory(userId, "Unread Cat");
+    unreadFeedId = seed.createFeed(
+      unreadCategoryId,
+      "https://example.com/lm-unread.xml",
+      "Unread Feed"
     );
 
-    // Seed entries so id order matches real usage: lower id = older published_at.
-    // This is the assumption the GReader API pagination relies on (`e.id < continuation`
-    // returning *older* entries when sorting by published_at DESC).
-    const entries = Array.from({ length: TOTAL }, (_, idx) => {
+    readCategoryId = seed.createCategory(userId, "Read Cat");
+    readFeedId = seed.createFeed(
+      readCategoryId,
+      "https://example.com/lm-read.xml",
+      "Read Feed"
+    );
+
+    // Helper: seed N entries with id-correlated published_at (lower id = older).
+    const buildEntries = (
+      feedId: number,
+      prefix: string,
+      titlePrefix: string
+    ) =>
+      Array.from({ length: PER_FEED }, (_, idx) => {
+        const i = idx + 1;
+        return {
+          feedId,
+          guid: `${prefix}-${i}`,
+          title: `${titlePrefix} ${i}`,
+          link: `https://example.com/${prefix}/${i}`,
+          content: `<p>${titlePrefix} ${i}</p>`,
+          publishedOffset: `-${PER_FEED - i + 1} hours`,
+        };
+      });
+
+    seed.insertEntries(buildEntries(unreadFeedId, "lm-unread", "TestEntry"));
+    const readIds = seed.insertEntries(
+      buildEntries(readFeedId, "lm-read", "TestEntry")
+    );
+
+    // For "Read Feed" — mark every entry as read AND starred AND summarized.
+    // Timestamps for read_at / starred_at also correlate with id so each sort
+    // criterion (PublishedAt / ReadAt / StarredAt) yields the same row order
+    // — otherwise the API's `e.id < c` continuation could legitimately skip rows.
+    readIds.forEach((entryId, idx) => {
       const i = idx + 1;
-      return {
-        feedId,
-        guid: `loadmore-guid-${i}`,
-        title: `Test Entry ${i}`,
-        link: `https://example.com/entry/${i}`,
-        content: `<p>Content ${i}</p>`,
-        publishedOffset: `-${TOTAL - i + 1} hours`,
-      };
+      const offset = `-${PER_FEED - i + 1} minutes`;
+      seed.markRead(entryId, offset);
+      seed.markStarred(entryId, offset);
+      seed.insertSummary(entryId, userId, `Summary ${i}`);
     });
-    seed.insertEntries(entries);
   });
 
-  test("clicking Load More yields unique entry ids", async ({
-    page,
-    serverUrl,
-  }) => {
+  async function login(page: Page, serverUrl: string): Promise<void> {
     await page.goto(`${serverUrl}/login`);
     await page.getByTestId("username-input").fill("loadmoreuser");
     await page.getByTestId("password-input").fill("password123");
     await page.getByTestId("login-submit").click();
     await page.waitForURL(`${serverUrl}/`);
+  }
 
-    // Wait for SSR hydration.
+  async function expectNoDuplicatesAfterLoadMore(
+    page: Page,
+    fullUrl: string
+  ): Promise<void> {
+    await page.goto(fullUrl);
     await expect(page.getByTestId("entry-item").first()).toBeVisible();
-    const firstPageIds = await page
+
+    const beforeIds = await page
       .getByTestId("entry-item")
       .evaluateAll((els) => els.map((el) => el.id));
-    expect(new Set(firstPageIds).size).toBe(firstPageIds.length);
+    expect(new Set(beforeIds).size).toBe(beforeIds.length);
 
-    // Click Load More and wait for the second page to land.
-    await expect(page.getByTestId("load-more-btn")).toBeVisible();
-    await page.getByTestId("load-more-btn").click();
-    await expect(page.getByTestId("entry-item")).toHaveCount(TOTAL);
+    const loadMore = page.getByTestId("load-more-btn");
+    await expect(loadMore).toBeVisible();
+    await loadMore.click();
 
-    const allIds = await page
+    // Wait for the second page to land (entry count grows).
+    await expect
+      .poll(() => page.getByTestId("entry-item").count())
+      .toBeGreaterThan(beforeIds.length);
+
+    const afterIds = await page
       .getByTestId("entry-item")
       .evaluateAll((els) => els.map((el) => el.id));
-    expect(allIds).toHaveLength(TOTAL);
-    // Failure here means the SSR continuation off-by-one came back: the boundary entry
-    // got re-fetched on Load More and rendered twice.
-    expect(new Set(allIds).size).toBe(TOTAL);
+
+    // No duplicates — primary regression assertion.
+    expect(new Set(afterIds).size).toBe(afterIds.length);
+    // Initial entries are still present (Load More appended, didn't reset).
+    for (const id of beforeIds) {
+      expect(afterIds).toContain(id);
+    }
+  }
+
+  test("/ (unread)", async ({ page, serverUrl }) => {
+    await login(page, serverUrl);
+    await expectNoDuplicatesAfterLoadMore(page, `${serverUrl}/`);
+  });
+
+  test("/entries", async ({ page, serverUrl }) => {
+    await login(page, serverUrl);
+    await expectNoDuplicatesAfterLoadMore(page, `${serverUrl}/entries`);
+  });
+
+  test("/entries/read", async ({ page, serverUrl }) => {
+    await login(page, serverUrl);
+    await expectNoDuplicatesAfterLoadMore(page, `${serverUrl}/entries/read`);
+  });
+
+  test("/entries/starred", async ({ page, serverUrl }) => {
+    await login(page, serverUrl);
+    await expectNoDuplicatesAfterLoadMore(page, `${serverUrl}/entries/starred`);
+  });
+
+  test("/entries/summarized", async ({ page, serverUrl }) => {
+    await login(page, serverUrl);
+    await expectNoDuplicatesAfterLoadMore(
+      page,
+      `${serverUrl}/entries/summarized`
+    );
+  });
+
+  test("/categories/:id/entries", async ({ page, serverUrl }) => {
+    await login(page, serverUrl);
+    await expectNoDuplicatesAfterLoadMore(
+      page,
+      `${serverUrl}/categories/${unreadCategoryId}/entries`
+    );
+  });
+
+  test("/feeds/:id/entries", async ({ page, serverUrl }) => {
+    await login(page, serverUrl);
+    await expectNoDuplicatesAfterLoadMore(
+      page,
+      `${serverUrl}/feeds/${unreadFeedId}/entries`
+    );
+  });
+
+  test("/search?q=TestEntry", async ({ page, serverUrl }) => {
+    await login(page, serverUrl);
+    await expectNoDuplicatesAfterLoadMore(
+      page,
+      `${serverUrl}/search?q=TestEntry`
+    );
   });
 });
