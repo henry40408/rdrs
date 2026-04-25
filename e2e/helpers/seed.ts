@@ -108,6 +108,43 @@ export class SeedHelper {
     }
   }
 
+  /** Mark an entry as read (sets `read_at` to the supplied SQLite-relative time, default now). */
+  markRead(entryId: number, relativeTime: string = "0 seconds"): void {
+    const db = new Database(this.dbPath);
+    try {
+      db.prepare(
+        `UPDATE entry SET read_at = datetime('now', ?) WHERE id = ?`
+      ).run(relativeTime, entryId);
+    } finally {
+      db.close();
+    }
+  }
+
+  /** Mark an entry as starred (sets `starred_at`). */
+  markStarred(entryId: number, relativeTime: string = "0 seconds"): void {
+    const db = new Database(this.dbPath);
+    try {
+      db.prepare(
+        `UPDATE entry SET starred_at = datetime('now', ?) WHERE id = ?`
+      ).run(relativeTime, entryId);
+    } finally {
+      db.close();
+    }
+  }
+
+  /** Insert a `completed` summary row for the given entry. */
+  insertSummary(entryId: number, userId: number, text: string = "summary."): void {
+    const db = new Database(this.dbPath);
+    try {
+      db.prepare(
+        `INSERT OR IGNORE INTO entry_summary (user_id, entry_id, status, summary_text)
+         VALUES (?, ?, 'completed', ?)`
+      ).run(userId, entryId, text);
+    } finally {
+      db.close();
+    }
+  }
+
   /** Generate and insert N test entries for a feed. Returns entry IDs. */
   seedTestEntries(feedId: number, count: number): number[] {
     const entries: SeedEntry[] = [];

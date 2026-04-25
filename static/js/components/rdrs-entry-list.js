@@ -129,6 +129,8 @@ class RdrsEntryList extends HTMLElement {
     get readingPaneSelector() { return this.getAttribute('reading-pane') || null; }
     get hasSaveServices() { return this.hasAttribute('has-save-services'); }
     get hasKagiConfigured() { return this.hasAttribute('has-kagi-configured'); }
+    /** True after SSR HTML has been hydrated in place. Lets callers skip a redundant loadEntries(). */
+    get hydrated() { return this._hydrated; }
 
     /** Get the reading pane element, if configured. */
     _getReadingPane() {
