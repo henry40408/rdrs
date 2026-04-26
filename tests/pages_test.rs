@@ -1191,11 +1191,130 @@ async fn test_ssr_continuation_matches_api_convention_no_duplicates_on_load_more
         .expect("continuation present when more pages exist");
     let last_visible_id = entries[9]["id"].as_i64().expect("last entry id");
 
+    assert!(
+        continuation.ends_with(&format!("|{}", last_visible_id)),
+        "SSR continuation must encode the last visible entry id in the new \
+         composite '<sort_ts>|<id>' format; got {:?}",
+        continuation
+    );
+}
+
+#[tokio::test]
+async fn test_ssr_load_more_does_not_skip_backdated_entries() {
+    // Regression for #164: when an entry has a HIGH id but an OLD
+    // published_at (e.g. OPML re-import), the legacy `e.id < c` cursor
+    // silently skipped it on Load More. With the composite cursor, every
+    // entry must be visible across pages 1+2.
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Skip Cat"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/skip.xml", "Skip Feed"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)",
+                rusqlite::params![1, 10],
+            )
+            .unwrap();
+
+            // 10 monotonic newest-first (ids 1..=10, descending hours-ago)
+            for i in 1..=10 {
+                conn.execute(
+                    "INSERT INTO entry (feed_id, guid, title, published_at) VALUES (?1, ?2, ?3, datetime('now', ?4))",
+                    rusqlite::params![
+                        1,
+                        format!("mono-{}", i),
+                        format!("M{}", i),
+                        format!("-{} hours", 10 - i)
+                    ],
+                )
+                .unwrap();
+            }
+            // 3 back-dated: NEW ids (11, 12, 13) but OLD timestamps (10+ days ago)
+            for i in 1..=3 {
+                conn.execute(
+                    "INSERT INTO entry (feed_id, guid, title, published_at) VALUES (?1, ?2, ?3, datetime('now', ?4))",
+                    rusqlite::params![
+                        1,
+                        format!("bd-{}", i),
+                        format!("BD{}", i),
+                        format!("-{} days", 10 + i)
+                    ],
+                )
+                .unwrap();
+            }
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    // Page 1: SSR
+    let response = app.server.get("/").await;
+    response.assert_status_ok();
+    let body = response.text();
+    let marker = r#"<script type="application/json" class="ssr-entries">"#;
+    let json_start = body.find(marker).expect("ssr-entries script") + marker.len();
+    let json_end = body[json_start..].find("</script>").unwrap();
+    let json = &body[json_start..json_start + json_end];
+    let value: serde_json::Value = serde_json::from_str(json).expect("valid SSR JSON");
+
+    let page1: Vec<i64> = value["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(page1.len(), 10, "page 1 should have 10 entries");
+
+    let continuation = value["continuation"]
+        .as_str()
+        .expect("continuation")
+        .to_string();
+    assert!(
+        continuation.contains('|'),
+        "continuation must be composite format"
+    );
+
+    // Page 2: stream/contents API with the SSR-emitted cursor — use add_query_param
+    // to URL-safely encode the composite cursor (contains spaces and `|`).
+    let response = app
+        .server
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list")
+        .add_query_param("n", "10")
+        .add_query_param("c", &continuation)
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let page2: Vec<i64> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            // GReader item ids look like "tag:google.com,2005:reader/item/<hex>"
+            let s = e["id"].as_str().unwrap();
+            let hex = s.rsplit('/').next().unwrap();
+            i64::from_str_radix(hex, 16).unwrap()
+        })
+        .collect();
+
+    let mut all: Vec<i64> = page1.iter().chain(page2.iter()).copied().collect();
+    all.sort();
+    all.dedup();
     assert_eq!(
-        continuation,
-        last_visible_id.to_string(),
-        "SSR continuation must equal last visible entry id (API convention); off-by-one would \
-         re-render the boundary entry on Load More"
+        all.len(),
+        13,
+        "pages 1+2 must include all 13 entries (10 monotonic + 3 back-dated); got {} unique ids",
+        all.len()
     );
 }
 

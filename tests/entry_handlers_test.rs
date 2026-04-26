@@ -353,7 +353,8 @@ async fn test_list_entries_with_continuation() {
 
     // Default sort is newest-first. With our data:
     //   entry 5 (newest, id=5), 4, 3, 2, 1 (oldest, id=1)
-    // continuation_id uses `e.id < c`, which works correctly here.
+    // Composite cursor `<sort_ts>|<id>` works correctly here since
+    // id↔published_at order is monotonic.
 
     // First page
     let response = app
@@ -367,13 +368,11 @@ async fn test_list_entries_with_continuation() {
     assert_eq!(first_page_items.len(), 2);
     let continuation = body["continuation"].as_str().unwrap();
 
-    // Second page using continuation
+    // Second page using continuation (add_query_param handles URL-encoding the composite cursor)
     let response = app
         .server
-        .get(&format!(
-            "/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2&c={}",
-            continuation
-        ))
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2")
+        .add_query_param("c", continuation)
         .await;
     response.assert_status_ok();
 
@@ -1963,13 +1962,11 @@ async fn test_stream_contents_with_continuation() {
     assert_eq!(first_page_items.len(), 2);
     let continuation = body["continuation"].as_str().unwrap();
 
-    // Second page using continuation token
+    // Second page using continuation token (add_query_param handles URL-encoding the composite cursor)
     let response = app
         .server
-        .get(&format!(
-            "/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2&c={}",
-            continuation
-        ))
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2")
+        .add_query_param("c", continuation)
         .await;
     response.assert_status_ok();
 

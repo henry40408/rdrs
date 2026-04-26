@@ -256,3 +256,84 @@ test.describe("Load More appends without duplicates on every list route", () => 
     );
   });
 });
+
+/**
+ * Regression: composite cursor (#164) must surface entries with high ids
+ * but old timestamps on Load More. The legacy `e.id < c` cursor silently
+ * skipped these, hiding back-dated / re-imported entries from the user.
+ */
+test.describe("Load More surfaces back-dated entries (composite cursor #164)", () => {
+  const PER_PAGE = 30; // matches default entries_per_page
+
+  test.beforeAll(async ({ api, seed }) => {
+    await api.register("backdateduser", "password123");
+    const userId = seed.getUserId("backdateduser");
+    const catId = seed.createCategory(userId, "Backdated Cat");
+    const feedId = seed.createFeed(
+      catId,
+      "https://example.com/backdated.xml",
+      "Backdated Feed"
+    );
+
+    // Page 1 fill: PER_PAGE recent entries (older ids = older timestamps,
+    // newest-first ordering means they sort to the top of page 1).
+    const recent = Array.from({ length: PER_PAGE }, (_, idx) => {
+      const i = idx + 1;
+      return {
+        feedId,
+        guid: `recent-${i}`,
+        title: `Recent ${i}`,
+        link: `https://example.com/recent/${i}`,
+        content: `<p>Recent ${i}</p>`,
+        publishedOffset: `-${PER_PAGE - i + 1} hours`,
+      };
+    });
+
+    // Back-dated: 3 entries with NEW high ids but OLD timestamps. These
+    // would be silently skipped by the legacy `e.id < c` cursor on page 2.
+    const backdated = [1, 2, 3].map((i) => ({
+      feedId,
+      guid: `bd-${i}`,
+      title: `Backdated ${i}`,
+      link: `https://example.com/bd/${i}`,
+      content: `<p>Backdated ${i}</p>`,
+      publishedOffset: `-${30 + i} days`,
+    }));
+
+    // Insert recent first so back-dated rows get higher ids.
+    seed.insertEntries(recent);
+    seed.insertEntries(backdated);
+  });
+
+  async function login(page: Page, serverUrl: string): Promise<void> {
+    await page.goto(`${serverUrl}/login`);
+    await page.getByTestId("username-input").fill("backdateduser");
+    await page.getByTestId("password-input").fill("password123");
+    await page.getByTestId("login-submit").click();
+    await page.waitForURL(`${serverUrl}/`);
+  }
+
+  test("Load More on / shows back-dated entries", async ({ page, serverUrl }) => {
+    await login(page, serverUrl);
+    await page.goto(`${serverUrl}/`);
+
+    await expect(page.getByTestId("entry-item").first()).toBeVisible();
+    const beforeCount = await page.getByTestId("entry-item").count();
+    expect(beforeCount).toBe(PER_PAGE);
+
+    // None of the back-dated entries should be on page 1 (they're older).
+    for (const i of [1, 2, 3]) {
+      await expect(page.getByText(`Backdated ${i}`, { exact: true })).not.toBeVisible();
+    }
+
+    await page.getByTestId("load-more-btn").click();
+    await expect
+      .poll(() => page.getByTestId("entry-item").count())
+      .toBeGreaterThan(beforeCount);
+
+    // All 3 back-dated entries must appear after Load More.
+    for (const i of [1, 2, 3]) {
+      await expect(page.getByText(`Backdated ${i}`, { exact: true })).toBeVisible();
+    }
+  });
+});

@@ -80,6 +80,7 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_entry_published_at ON entry(published_at);
         CREATE INDEX IF NOT EXISTS idx_entry_read_at ON entry(read_at);
         CREATE INDEX IF NOT EXISTS idx_entry_starred_at ON entry(starred_at);
+        CREATE INDEX IF NOT EXISTS idx_entry_sort_ts ON entry(COALESCE(published_at, created_at));
 
         CREATE TABLE IF NOT EXISTS entry_summary (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -56,12 +56,50 @@ pub struct EntryFilter {
     pub has_summary: Option<bool>,
 }
 
+/// Pagination cursor. The wire format on the API is opaque to clients; we
+/// emit the new composite form `<iso_8601_ts>|<id>` and accept the legacy
+/// bare-`i64` form as a one-time grace path for in-flight cursors that may
+/// still live in browser URLs/JS state at deploy time.
+#[derive(Debug, Clone)]
+pub enum ContinuationCursor {
+    /// New `(sort_ts, id)` composite. `sort_ts` is the entry's sort-field
+    /// value as TEXT (the same byte-string SQLite stores), so the predicate
+    /// compares against an indexed column without conversion.
+    Composite { sort_ts: String, id: i64 },
+    /// Legacy `e.id < ?` cursor — accepted on input only; emitted only by
+    /// pre-#164 clients.
+    LegacyId(i64),
+}
+
+impl ContinuationCursor {
+    pub fn parse(s: &str) -> Option<Self> {
+        if s.is_empty() {
+            return None;
+        }
+        if let Some((ts, id)) = s.split_once('|') {
+            if ts.is_empty() {
+                return None;
+            }
+            id.parse::<i64>().ok().map(|id| Self::Composite {
+                sort_ts: ts.to_string(),
+                id,
+            })
+        } else {
+            s.parse::<i64>().ok().map(Self::LegacyId)
+        }
+    }
+
+    pub fn encode_composite(sort_ts: &str, id: i64) -> String {
+        format!("{}|{}", sort_ts, id)
+    }
+}
+
 /// Parameters for continuation-based pagination (Google Reader style).
 #[derive(Debug, Clone, Default)]
 pub struct ContinuationParams {
     pub oldest_first: bool,
     pub limit: i64,
-    pub continuation_id: Option<i64>,
+    pub continuation: Option<ContinuationCursor>,
     /// Oldest timestamp (seconds since epoch)
     pub ot: Option<i64>,
     /// Newest timestamp (seconds since epoch)
@@ -157,6 +195,27 @@ pub fn find_by_id_with_feed(conn: &Connection, id: i64) -> AppResult<Option<Entr
         row_to_entry_with_feed,
     )
     .optional()
+    .map_err(AppError::Database)
+}
+
+/// Fetch the sort-field value (as the exact TEXT string SQLite stores) for
+/// emitting a composite cursor. Returns `None` if the entry doesn't exist.
+pub fn fetch_sort_ts(
+    conn: &Connection,
+    entry_id: i64,
+    sort_order: EntrySortOrder,
+) -> AppResult<Option<String>> {
+    let column_expr = match sort_order {
+        EntrySortOrder::ReadAt => "read_at",
+        EntrySortOrder::StarredAt => "starred_at",
+        EntrySortOrder::PublishedAt => "COALESCE(published_at, created_at)",
+    };
+    let sql = format!("SELECT {} FROM entry WHERE id = ?1", column_expr);
+    conn.query_row(&sql, params![entry_id], |row| {
+        row.get::<_, Option<String>>(0)
+    })
+    .optional()
+    .map(|opt| opt.flatten())
     .map_err(AppError::Database)
 }
 
@@ -562,7 +621,8 @@ pub fn list_ids_by_user(
     apply_continuation_condition(
         &mut conditions,
         &mut params_vec,
-        pagination.continuation_id,
+        pagination.continuation.as_ref(),
+        pagination.sort_order,
         pagination.oldest_first,
     );
 
@@ -624,7 +684,8 @@ pub fn list_by_user_with_continuation(
     apply_continuation_condition(
         &mut conditions,
         &mut params_vec,
-        pagination.continuation_id,
+        pagination.continuation.as_ref(),
+        pagination.sort_order,
         pagination.oldest_first,
     );
 
@@ -747,20 +808,55 @@ fn apply_time_conditions(
 }
 
 /// Apply continuation-based pagination condition.
+///
+/// Composite cursor uses the V2 bounded-OR form, which the SQLite planner
+/// can convert to an indexed range scan even when sort_ts is an expression
+/// (`COALESCE(...)`). See PoC at `docs/superpowers/specs/2026-04-26-composite-cursor-pagination-design.md`.
 fn apply_continuation_condition(
     conditions: &mut Vec<String>,
     params_vec: &mut Vec<Box<dyn rusqlite::ToSql>>,
-    continuation_id: Option<i64>,
+    continuation: Option<&ContinuationCursor>,
+    sort_order: EntrySortOrder,
     oldest_first: bool,
 ) {
-    if let Some(cont_id) = continuation_id {
-        let param_idx = params_vec.len() + 1;
-        if oldest_first {
-            conditions.push(format!("e.id > ?{}", param_idx));
-        } else {
-            conditions.push(format!("e.id < ?{}", param_idx));
+    let Some(cursor) = continuation else {
+        return;
+    };
+
+    match cursor {
+        ContinuationCursor::Composite { sort_ts, id } => {
+            let sort_ts_expr = match sort_order {
+                EntrySortOrder::ReadAt => "e.read_at",
+                EntrySortOrder::StarredAt => "e.starred_at",
+                EntrySortOrder::PublishedAt => "COALESCE(e.published_at, e.created_at)",
+            };
+            let (cmp_outer, cmp_inner) = if oldest_first {
+                (">=", ">")
+            } else {
+                ("<=", "<")
+            };
+            let ts1 = params_vec.len() + 1;
+            let ts2 = params_vec.len() + 2;
+            let id_idx = params_vec.len() + 3;
+            conditions.push(format!(
+                "{expr} {cmp_outer} ?{ts1} AND ({expr} {cmp_inner} ?{ts2} OR e.id {cmp_inner} ?{id_idx})",
+                expr = sort_ts_expr,
+                cmp_outer = cmp_outer,
+                cmp_inner = cmp_inner,
+                ts1 = ts1,
+                ts2 = ts2,
+                id_idx = id_idx,
+            ));
+            params_vec.push(Box::new(sort_ts.clone()));
+            params_vec.push(Box::new(sort_ts.clone()));
+            params_vec.push(Box::new(*id));
         }
-        params_vec.push(Box::new(cont_id));
+        ContinuationCursor::LegacyId(id) => {
+            let cmp = if oldest_first { ">" } else { "<" };
+            let id_idx = params_vec.len() + 1;
+            conditions.push(format!("e.id {} ?{}", cmp, id_idx));
+            params_vec.push(Box::new(*id));
+        }
     }
 }
 
@@ -1614,5 +1710,306 @@ mod tests {
         let neighbors = find_neighbors(&conn, user_id, entries[0].id, &filter).unwrap();
         assert_eq!(neighbors.prev_id, Some(entries[2].id));
         assert_eq!(neighbors.next_id, None);
+    }
+
+    #[test]
+    fn cursor_parses_composite_format() {
+        let c = ContinuationCursor::parse("2026-04-26 12:34:56|142").expect("composite parses");
+        match c {
+            ContinuationCursor::Composite { sort_ts, id } => {
+                assert_eq!(sort_ts, "2026-04-26 12:34:56");
+                assert_eq!(id, 142);
+            }
+            _ => panic!("expected Composite"),
+        }
+    }
+
+    #[test]
+    fn cursor_parses_bare_i64_as_legacy() {
+        let c = ContinuationCursor::parse("142").expect("legacy parses");
+        match c {
+            ContinuationCursor::LegacyId(id) => assert_eq!(id, 142),
+            _ => panic!("expected LegacyId"),
+        }
+    }
+
+    #[test]
+    fn cursor_rejects_garbage() {
+        assert!(ContinuationCursor::parse("not-a-cursor").is_none());
+        assert!(ContinuationCursor::parse("|").is_none());
+        assert!(ContinuationCursor::parse("ts|notnum").is_none());
+        assert!(ContinuationCursor::parse("").is_none());
+    }
+
+    #[test]
+    fn cursor_encodes_composite() {
+        assert_eq!(
+            ContinuationCursor::encode_composite("2026-04-26 12:34:56", 142),
+            "2026-04-26 12:34:56|142"
+        );
+    }
+
+    #[test]
+    fn fetch_sort_ts_returns_published_or_created_for_publishedat() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "u");
+        let cat_id = create_test_category(&conn, user_id, "c");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+
+        // Entry with published_at set
+        conn.execute(
+            "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![feed_id, "g1", "2026-04-01 10:00:00"],
+        )
+        .unwrap();
+        let id1: i64 = conn.last_insert_rowid();
+
+        // Entry with published_at NULL → COALESCE falls back to created_at
+        conn.execute(
+            "INSERT INTO entry (feed_id, guid, created_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![feed_id, "g2", "2026-04-02 11:00:00"],
+        )
+        .unwrap();
+        let id2: i64 = conn.last_insert_rowid();
+
+        let ts1 = fetch_sort_ts(&conn, id1, EntrySortOrder::PublishedAt).unwrap();
+        let ts2 = fetch_sort_ts(&conn, id2, EntrySortOrder::PublishedAt).unwrap();
+        assert_eq!(ts1.as_deref(), Some("2026-04-01 10:00:00"));
+        assert_eq!(ts2.as_deref(), Some("2026-04-02 11:00:00"));
+    }
+
+    #[test]
+    fn fetch_sort_ts_returns_read_at_for_readat_sort() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "u");
+        let cat_id = create_test_category(&conn, user_id, "c");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+
+        conn.execute(
+            "INSERT INTO entry (feed_id, guid, read_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![feed_id, "g1", "2026-04-03 12:00:00"],
+        )
+        .unwrap();
+        let id: i64 = conn.last_insert_rowid();
+
+        let ts = fetch_sort_ts(&conn, id, EntrySortOrder::ReadAt).unwrap();
+        assert_eq!(ts.as_deref(), Some("2026-04-03 12:00:00"));
+    }
+
+    #[test]
+    fn fetch_sort_ts_returns_none_for_missing_id() {
+        let conn = setup_db();
+        let ts = fetch_sort_ts(&conn, 99999, EntrySortOrder::PublishedAt).unwrap();
+        assert_eq!(ts, None);
+    }
+
+    #[test]
+    fn composite_cursor_walks_non_monotonic_data_without_skip() {
+        // Repro for #164: when id↔published_at order diverges (OPML re-import,
+        // back-dated feed items), the legacy `e.id < ?` cursor silently skips.
+        // The composite cursor must visit every entry.
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "u");
+        let cat_id = create_test_category(&conn, user_id, "c");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+
+        // 6 monotonic entries (newer ts ⇒ later id), then 4 "back-dated" entries
+        // with NEW ids but OLD timestamps (mimics OPML re-import).
+        let monotonic = [
+            ("g1", "2026-04-01 10:00:00"),
+            ("g2", "2026-04-02 10:00:00"),
+            ("g3", "2026-04-03 10:00:00"),
+            ("g4", "2026-04-04 10:00:00"),
+            ("g5", "2026-04-05 10:00:00"),
+            ("g6", "2026-04-06 10:00:00"),
+        ];
+        let backdated = [
+            ("g7-bd", "2026-03-01 10:00:00"),
+            ("g8-bd", "2026-03-02 10:00:00"),
+            ("g9-bd", "2026-03-03 10:00:00"),
+            ("g10-bd", "2026-03-04 10:00:00"),
+        ];
+        for (guid, ts) in monotonic.iter().chain(backdated.iter()) {
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![feed_id, guid, ts],
+            )
+            .unwrap();
+        }
+
+        let filter = EntryFilter::default();
+        let mut seen: Vec<i64> = Vec::new();
+        let mut cursor: Option<ContinuationCursor> = None;
+        let page_limit: i64 = 3;
+
+        // Walk pages (DESC sort by COALESCE(published_at, created_at)) until empty
+        loop {
+            let pagination = ContinuationParams {
+                oldest_first: false,
+                limit: page_limit,
+                continuation: cursor.clone(),
+                ot: None,
+                nt: None,
+                sort_order: EntrySortOrder::PublishedAt,
+            };
+            let page =
+                list_by_user_with_continuation(&conn, user_id, &filter, &pagination).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            for ewf in &page {
+                assert!(
+                    !seen.contains(&ewf.entry.id),
+                    "duplicate id {}",
+                    ewf.entry.id
+                );
+                seen.push(ewf.entry.id);
+            }
+            let last = page.last().unwrap();
+            let sort_ts = fetch_sort_ts(&conn, last.entry.id, EntrySortOrder::PublishedAt)
+                .unwrap()
+                .unwrap();
+            cursor = Some(ContinuationCursor::Composite {
+                sort_ts,
+                id: last.entry.id,
+            });
+            // safety: don't loop forever
+            if seen.len() > 100 {
+                panic!("runaway loop");
+            }
+        }
+
+        assert_eq!(
+            seen.len(),
+            10,
+            "must visit all 10 entries; saw {}",
+            seen.len()
+        );
+    }
+
+    #[test]
+    fn composite_cursor_walks_non_monotonic_data_oldest_first_without_skip() {
+        // Same shape as composite_cursor_walks_non_monotonic_data_without_skip
+        // but exercises the oldest_first=true (ASC) path of the bounded-OR
+        // predicate. Triggered in production by the GReader `r=o` query param.
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "u");
+        let cat_id = create_test_category(&conn, user_id, "c");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+
+        let monotonic = [
+            ("g1", "2026-04-01 10:00:00"),
+            ("g2", "2026-04-02 10:00:00"),
+            ("g3", "2026-04-03 10:00:00"),
+            ("g4", "2026-04-04 10:00:00"),
+            ("g5", "2026-04-05 10:00:00"),
+            ("g6", "2026-04-06 10:00:00"),
+        ];
+        let backdated = [
+            ("g7-bd", "2026-03-01 10:00:00"),
+            ("g8-bd", "2026-03-02 10:00:00"),
+            ("g9-bd", "2026-03-03 10:00:00"),
+            ("g10-bd", "2026-03-04 10:00:00"),
+        ];
+        for (guid, ts) in monotonic.iter().chain(backdated.iter()) {
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![feed_id, guid, ts],
+            )
+            .unwrap();
+        }
+
+        let filter = EntryFilter::default();
+        let mut seen: Vec<i64> = Vec::new();
+        let mut cursor: Option<ContinuationCursor> = None;
+        let page_limit: i64 = 3;
+
+        loop {
+            let pagination = ContinuationParams {
+                oldest_first: true,
+                limit: page_limit,
+                continuation: cursor.clone(),
+                ot: None,
+                nt: None,
+                sort_order: EntrySortOrder::PublishedAt,
+            };
+            let page =
+                list_by_user_with_continuation(&conn, user_id, &filter, &pagination).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            for ewf in &page {
+                assert!(
+                    !seen.contains(&ewf.entry.id),
+                    "duplicate id {}",
+                    ewf.entry.id
+                );
+                seen.push(ewf.entry.id);
+            }
+            let last = page.last().unwrap();
+            let sort_ts = fetch_sort_ts(&conn, last.entry.id, EntrySortOrder::PublishedAt)
+                .unwrap()
+                .unwrap();
+            cursor = Some(ContinuationCursor::Composite {
+                sort_ts,
+                id: last.entry.id,
+            });
+            if seen.len() > 100 {
+                panic!("runaway loop");
+            }
+        }
+
+        assert_eq!(
+            seen.len(),
+            10,
+            "must visit all 10 entries on ASC walk; saw {}",
+            seen.len()
+        );
+    }
+
+    #[test]
+    fn legacy_bare_i64_cursor_still_paginates() {
+        // In-flight cursors from pre-#164 deployments must still work for one
+        // grace period. Under monotonic data (the common case), the legacy
+        // `e.id < ?` predicate is correct.
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "u");
+        let cat_id = create_test_category(&conn, user_id, "c");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+
+        for i in 1..=5 {
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    feed_id,
+                    format!("g{}", i),
+                    format!("2026-04-0{} 10:00:00", i)
+                ],
+            )
+            .unwrap();
+        }
+
+        // Get id of "newest" entry (highest id, latest ts)
+        let max_id: i64 = conn
+            .query_row("SELECT MAX(id) FROM entry", [], |r| r.get(0))
+            .unwrap();
+
+        let pagination = ContinuationParams {
+            oldest_first: false,
+            limit: 10,
+            continuation: Some(ContinuationCursor::LegacyId(max_id)),
+            ot: None,
+            nt: None,
+            sort_order: EntrySortOrder::PublishedAt,
+        };
+        let page =
+            list_by_user_with_continuation(&conn, user_id, &EntryFilter::default(), &pagination)
+                .unwrap();
+
+        // 4 entries below the boundary id
+        assert_eq!(page.len(), 4);
+        for ewf in &page {
+            assert!(ewf.entry.id < max_id);
+        }
     }
 }

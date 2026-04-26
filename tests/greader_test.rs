@@ -393,6 +393,81 @@ async fn test_stream_contents_with_limit() {
 }
 
 #[tokio::test]
+async fn test_stream_contents_composite_cursor_no_skip_on_backdated() {
+    // Regression for #164: legacy `e.id < c` cursor skipped entries with
+    // high ids and old timestamps. Composite cursor must visit them.
+    let app = create_test_app(default_test_config());
+    let user_id = setup_authenticated_user(&app).await;
+    let (_cat_id, feed_id) =
+        create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
+
+    app.db
+        .user(move |conn| {
+            // 5 monotonic entries
+            for i in 1..=5 {
+                conn.execute(
+                    "INSERT INTO entry (feed_id, guid, title, published_at) VALUES (?1, ?2, ?3, datetime('now', ?4))",
+                    rusqlite::params![
+                        feed_id,
+                        format!("mono-{}", i),
+                        format!("M{}", i),
+                        format!("-{} hours", 5 - i)
+                    ],
+                )
+                .unwrap();
+            }
+            // 2 back-dated (new ids, old timestamps)
+            for i in 1..=2 {
+                conn.execute(
+                    "INSERT INTO entry (feed_id, guid, title, published_at) VALUES (?1, ?2, ?3, datetime('now', ?4))",
+                    rusqlite::params![
+                        feed_id,
+                        format!("bd-{}", i),
+                        format!("BD{}", i),
+                        format!("-{} days", 30 + i)
+                    ],
+                )
+                .unwrap();
+            }
+        })
+        .await
+        .unwrap();
+
+    // Page 1: n=5
+    let response = app
+        .server
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=5")
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let items1 = body["items"].as_array().unwrap();
+    assert_eq!(items1.len(), 5);
+    let cursor = body["continuation"]
+        .as_str()
+        .expect("continuation present")
+        .to_string();
+    assert!(
+        cursor.contains('|'),
+        "cursor must be composite format, got {:?}",
+        cursor
+    );
+
+    // Page 2: pass cursor via add_query_param (URL-safely encodes spaces and `|`)
+    let response = app
+        .server
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list")
+        .add_query_param("n", "5")
+        .add_query_param("c", &cursor)
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    let items2 = body["items"].as_array().unwrap();
+
+    // Page 1 holds 5 newest, page 2 holds 2 back-dated → 7 total
+    assert_eq!(items1.len() + items2.len(), 7);
+}
+
+#[tokio::test]
 async fn test_stream_contents_starred_empty() {
     let app = create_test_app(default_test_config());
     setup_authenticated_user(&app).await;

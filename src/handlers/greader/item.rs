@@ -64,7 +64,10 @@ pub async fn stream_contents(
     let pagination = entry::ContinuationParams {
         oldest_first: query.r.as_deref() == Some("o"),
         limit: count + 1, // fetch one extra for continuation
-        continuation_id: query.c.as_ref().and_then(|c| c.parse::<i64>().ok()),
+        continuation: query
+            .c
+            .as_deref()
+            .and_then(entry::ContinuationCursor::parse),
         ot: query.ot,
         nt: query.nt,
         sort_order,
@@ -104,7 +107,11 @@ pub async fn stream_contents(
             let entries: Vec<_> = entries.into_iter().take(count as usize).collect();
 
             let continuation = if has_more {
-                entries.last().map(|e| e.entry.id.to_string())
+                match entries.last() {
+                    Some(e) => entry::fetch_sort_ts(conn, e.entry.id, sort_order)?
+                        .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id)),
+                    None => None,
+                }
             } else {
                 None
             };
@@ -193,7 +200,10 @@ pub async fn stream_item_ids(
     let pagination = entry::ContinuationParams {
         oldest_first: query.r.as_deref() == Some("o"),
         limit: count + 1,
-        continuation_id: query.c.as_ref().and_then(|c| c.parse::<i64>().ok()),
+        continuation: query
+            .c
+            .as_deref()
+            .and_then(entry::ContinuationCursor::parse),
         ot: query.ot,
         nt: query.nt,
         sort_order,
@@ -222,7 +232,11 @@ pub async fn stream_item_ids(
             let entries: Vec<_> = entries.into_iter().take(count as usize).collect();
 
             let continuation = if has_more {
-                entries.last().map(|(id, _)| id.to_string())
+                match entries.last() {
+                    Some((id, _)) => entry::fetch_sort_ts(conn, *id, sort_order)?
+                        .map(|ts| entry::ContinuationCursor::encode_composite(&ts, *id)),
+                    None => None,
+                }
             } else {
                 None
             };
