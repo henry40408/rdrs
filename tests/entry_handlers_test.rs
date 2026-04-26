@@ -353,7 +353,8 @@ async fn test_list_entries_with_continuation() {
 
     // Default sort is newest-first. With our data:
     //   entry 5 (newest, id=5), 4, 3, 2, 1 (oldest, id=1)
-    // continuation_id uses `e.id < c`, which works correctly here.
+    // Composite cursor `<sort_ts>|<id>` works correctly here since
+    // id↔published_at order is monotonic.
 
     // First page
     let response = app
