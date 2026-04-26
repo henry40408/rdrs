@@ -440,10 +440,21 @@ fn fetch_entries_for_ssr_with_sort(
     }
     let continuation = if has_more {
         entries.last().and_then(|e| {
-            entry::fetch_sort_ts(conn, e.entry.id, sort_order)
-                .ok()
-                .flatten()
-                .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id))
+            match entry::fetch_sort_ts(conn, e.entry.id, sort_order) {
+                Ok(Some(ts)) => Some(entry::ContinuationCursor::encode_composite(&ts, e.entry.id)),
+                Ok(None) => None,
+                Err(err) => {
+                    // SSR degrades gracefully (matches the unwrap_or_default above);
+                    // log so silent truncation is at least observable in ops.
+                    tracing::warn!(
+                        entry_id = e.entry.id,
+                        error = ?err,
+                        "fetch_sort_ts failed during SSR cursor emission; \
+                         page will render without Load More"
+                    );
+                    None
+                }
+            }
         })
     } else {
         None

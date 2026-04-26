@@ -107,12 +107,11 @@ pub async fn stream_contents(
             let entries: Vec<_> = entries.into_iter().take(count as usize).collect();
 
             let continuation = if has_more {
-                entries.last().and_then(|e| {
-                    entry::fetch_sort_ts(conn, e.entry.id, sort_order)
-                        .ok()
-                        .flatten()
-                        .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id))
-                })
+                match entries.last() {
+                    Some(e) => entry::fetch_sort_ts(conn, e.entry.id, sort_order)?
+                        .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id)),
+                    None => None,
+                }
             } else {
                 None
             };
@@ -233,12 +232,11 @@ pub async fn stream_item_ids(
             let entries: Vec<_> = entries.into_iter().take(count as usize).collect();
 
             let continuation = if has_more {
-                entries.last().and_then(|(id, _)| {
-                    entry::fetch_sort_ts(conn, *id, sort_order)
-                        .ok()
-                        .flatten()
-                        .map(|ts| entry::ContinuationCursor::encode_composite(&ts, *id))
-                })
+                match entries.last() {
+                    Some((id, _)) => entry::fetch_sort_ts(conn, *id, sort_order)?
+                        .map(|ts| entry::ContinuationCursor::encode_composite(&ts, *id)),
+                    None => None,
+                }
             } else {
                 None
             };

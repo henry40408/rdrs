@@ -1888,6 +1888,86 @@ mod tests {
     }
 
     #[test]
+    fn composite_cursor_walks_non_monotonic_data_oldest_first_without_skip() {
+        // Same shape as composite_cursor_walks_non_monotonic_data_without_skip
+        // but exercises the oldest_first=true (ASC) path of the bounded-OR
+        // predicate. Triggered in production by the GReader `r=o` query param.
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "u");
+        let cat_id = create_test_category(&conn, user_id, "c");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+
+        let monotonic = [
+            ("g1", "2026-04-01 10:00:00"),
+            ("g2", "2026-04-02 10:00:00"),
+            ("g3", "2026-04-03 10:00:00"),
+            ("g4", "2026-04-04 10:00:00"),
+            ("g5", "2026-04-05 10:00:00"),
+            ("g6", "2026-04-06 10:00:00"),
+        ];
+        let backdated = [
+            ("g7-bd", "2026-03-01 10:00:00"),
+            ("g8-bd", "2026-03-02 10:00:00"),
+            ("g9-bd", "2026-03-03 10:00:00"),
+            ("g10-bd", "2026-03-04 10:00:00"),
+        ];
+        for (guid, ts) in monotonic.iter().chain(backdated.iter()) {
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![feed_id, guid, ts],
+            )
+            .unwrap();
+        }
+
+        let filter = EntryFilter::default();
+        let mut seen: Vec<i64> = Vec::new();
+        let mut cursor: Option<ContinuationCursor> = None;
+        let page_limit: i64 = 3;
+
+        loop {
+            let pagination = ContinuationParams {
+                oldest_first: true,
+                limit: page_limit,
+                continuation: cursor.clone(),
+                ot: None,
+                nt: None,
+                sort_order: EntrySortOrder::PublishedAt,
+            };
+            let page =
+                list_by_user_with_continuation(&conn, user_id, &filter, &pagination).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            for ewf in &page {
+                assert!(
+                    !seen.contains(&ewf.entry.id),
+                    "duplicate id {}",
+                    ewf.entry.id
+                );
+                seen.push(ewf.entry.id);
+            }
+            let last = page.last().unwrap();
+            let sort_ts = fetch_sort_ts(&conn, last.entry.id, EntrySortOrder::PublishedAt)
+                .unwrap()
+                .unwrap();
+            cursor = Some(ContinuationCursor::Composite {
+                sort_ts,
+                id: last.entry.id,
+            });
+            if seen.len() > 100 {
+                panic!("runaway loop");
+            }
+        }
+
+        assert_eq!(
+            seen.len(),
+            10,
+            "must visit all 10 entries on ASC walk; saw {}",
+            seen.len()
+        );
+    }
+
+    #[test]
     fn legacy_bare_i64_cursor_still_paginates() {
         // In-flight cursors from pre-#164 deployments must still work for one
         // grace period. Under monotonic data (the common case), the legacy
