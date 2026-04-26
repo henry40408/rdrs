@@ -1276,8 +1276,14 @@ async fn test_ssr_load_more_does_not_skip_backdated_entries() {
         .collect();
     assert_eq!(page1.len(), 10, "page 1 should have 10 entries");
 
-    let continuation = value["continuation"].as_str().expect("continuation").to_string();
-    assert!(continuation.contains('|'), "continuation must be composite format");
+    let continuation = value["continuation"]
+        .as_str()
+        .expect("continuation")
+        .to_string();
+    assert!(
+        continuation.contains('|'),
+        "continuation must be composite format"
+    );
 
     // Page 2: stream/contents API with the SSR-emitted cursor — use add_query_param
     // to URL-safely encode the composite cursor (contains spaces and `|`).

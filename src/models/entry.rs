@@ -1852,20 +1852,23 @@ mod tests {
                 nt: None,
                 sort_order: EntrySortOrder::PublishedAt,
             };
-            let page = list_by_user_with_continuation(&conn, user_id, &filter, &pagination)
-                .unwrap();
+            let page =
+                list_by_user_with_continuation(&conn, user_id, &filter, &pagination).unwrap();
             if page.is_empty() {
                 break;
             }
             for ewf in &page {
-                assert!(!seen.contains(&ewf.entry.id), "duplicate id {}", ewf.entry.id);
+                assert!(
+                    !seen.contains(&ewf.entry.id),
+                    "duplicate id {}",
+                    ewf.entry.id
+                );
                 seen.push(ewf.entry.id);
             }
             let last = page.last().unwrap();
-            let sort_ts =
-                fetch_sort_ts(&conn, last.entry.id, EntrySortOrder::PublishedAt)
-                    .unwrap()
-                    .unwrap();
+            let sort_ts = fetch_sort_ts(&conn, last.entry.id, EntrySortOrder::PublishedAt)
+                .unwrap()
+                .unwrap();
             cursor = Some(ContinuationCursor::Composite {
                 sort_ts,
                 id: last.entry.id,
@@ -1876,7 +1879,12 @@ mod tests {
             }
         }
 
-        assert_eq!(seen.len(), 10, "must visit all 10 entries; saw {}", seen.len());
+        assert_eq!(
+            seen.len(),
+            10,
+            "must visit all 10 entries; saw {}",
+            seen.len()
+        );
     }
 
     #[test]
