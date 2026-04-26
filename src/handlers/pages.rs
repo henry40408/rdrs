@@ -422,7 +422,7 @@ fn fetch_entries_for_ssr_with_sort(
     let pagination = entry::ContinuationParams {
         oldest_first: false,
         limit: limit + 1, // fetch one extra to check for continuation
-        continuation_id: None,
+        continuation: None,
         ot: None,
         nt: None,
         sort_order,
@@ -431,15 +431,20 @@ fn fetch_entries_for_ssr_with_sort(
     let mut entries = entry::list_by_user_with_continuation(conn, user_id, filter, &pagination)
         .unwrap_or_default();
 
-    // The API side (`stream_contents`) defines `continuation` as the ID of the LAST visible
-    // entry on the current page, then queries `e.id < continuation` for the next page. We must
-    // match that convention or "Load More" will refetch the boundary entry and render duplicates.
+    // Emit a composite `<sort_ts>|<id>` cursor matching the GReader API. The
+    // next-page predicate is bounded-OR `(sort_ts < ?ts) OR (sort_ts = ?ts AND id < ?id)`,
+    // which keeps Load More correct under non-monotonic id↔sort_ts data.
     let has_more = entries.len() as i64 > limit;
     if has_more {
         entries.pop();
     }
     let continuation = if has_more {
-        entries.last().map(|e| e.entry.id.to_string())
+        entries.last().and_then(|e| {
+            entry::fetch_sort_ts(conn, e.entry.id, sort_order)
+                .ok()
+                .flatten()
+                .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id))
+        })
     } else {
         None
     };

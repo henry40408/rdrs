@@ -367,13 +367,11 @@ async fn test_list_entries_with_continuation() {
     assert_eq!(first_page_items.len(), 2);
     let continuation = body["continuation"].as_str().unwrap();
 
-    // Second page using continuation
+    // Second page using continuation (add_query_param handles URL-encoding the composite cursor)
     let response = app
         .server
-        .get(&format!(
-            "/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2&c={}",
-            continuation
-        ))
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2")
+        .add_query_param("c", continuation)
         .await;
     response.assert_status_ok();
 
@@ -1963,13 +1961,11 @@ async fn test_stream_contents_with_continuation() {
     assert_eq!(first_page_items.len(), 2);
     let continuation = body["continuation"].as_str().unwrap();
 
-    // Second page using continuation token
+    // Second page using continuation token (add_query_param handles URL-encoding the composite cursor)
     let response = app
         .server
-        .get(&format!(
-            "/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2&c={}",
-            continuation
-        ))
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2")
+        .add_query_param("c", continuation)
         .await;
     response.assert_status_ok();
 

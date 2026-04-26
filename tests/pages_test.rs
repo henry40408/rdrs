@@ -1191,11 +1191,11 @@ async fn test_ssr_continuation_matches_api_convention_no_duplicates_on_load_more
         .expect("continuation present when more pages exist");
     let last_visible_id = entries[9]["id"].as_i64().expect("last entry id");
 
-    assert_eq!(
-        continuation,
-        last_visible_id.to_string(),
-        "SSR continuation must equal last visible entry id (API convention); off-by-one would \
-         re-render the boundary entry on Load More"
+    assert!(
+        continuation.ends_with(&format!("|{}", last_visible_id)),
+        "SSR continuation must encode the last visible entry id in the new \
+         composite '<sort_ts>|<id>' format; got {:?}",
+        continuation
     );
 }
 

@@ -99,7 +99,7 @@ impl ContinuationCursor {
 pub struct ContinuationParams {
     pub oldest_first: bool,
     pub limit: i64,
-    pub continuation_id: Option<i64>,
+    pub continuation: Option<ContinuationCursor>,
     /// Oldest timestamp (seconds since epoch)
     pub ot: Option<i64>,
     /// Newest timestamp (seconds since epoch)
@@ -621,7 +621,8 @@ pub fn list_ids_by_user(
     apply_continuation_condition(
         &mut conditions,
         &mut params_vec,
-        pagination.continuation_id,
+        pagination.continuation.as_ref(),
+        pagination.sort_order,
         pagination.oldest_first,
     );
 
@@ -683,7 +684,8 @@ pub fn list_by_user_with_continuation(
     apply_continuation_condition(
         &mut conditions,
         &mut params_vec,
-        pagination.continuation_id,
+        pagination.continuation.as_ref(),
+        pagination.sort_order,
         pagination.oldest_first,
     );
 
@@ -806,20 +808,55 @@ fn apply_time_conditions(
 }
 
 /// Apply continuation-based pagination condition.
+///
+/// Composite cursor uses the V2 bounded-OR form, which the SQLite planner
+/// can convert to an indexed range scan even when sort_ts is an expression
+/// (`COALESCE(...)`). See PoC at `docs/superpowers/specs/2026-04-26-composite-cursor-pagination-design.md`.
 fn apply_continuation_condition(
     conditions: &mut Vec<String>,
     params_vec: &mut Vec<Box<dyn rusqlite::ToSql>>,
-    continuation_id: Option<i64>,
+    continuation: Option<&ContinuationCursor>,
+    sort_order: EntrySortOrder,
     oldest_first: bool,
 ) {
-    if let Some(cont_id) = continuation_id {
-        let param_idx = params_vec.len() + 1;
-        if oldest_first {
-            conditions.push(format!("e.id > ?{}", param_idx));
-        } else {
-            conditions.push(format!("e.id < ?{}", param_idx));
+    let Some(cursor) = continuation else {
+        return;
+    };
+
+    match cursor {
+        ContinuationCursor::Composite { sort_ts, id } => {
+            let sort_ts_expr = match sort_order {
+                EntrySortOrder::ReadAt => "e.read_at",
+                EntrySortOrder::StarredAt => "e.starred_at",
+                EntrySortOrder::PublishedAt => "COALESCE(e.published_at, e.created_at)",
+            };
+            let (cmp_outer, cmp_inner) = if oldest_first {
+                (">=", ">")
+            } else {
+                ("<=", "<")
+            };
+            let ts1 = params_vec.len() + 1;
+            let ts2 = params_vec.len() + 2;
+            let id_idx = params_vec.len() + 3;
+            conditions.push(format!(
+                "{expr} {cmp_outer} ?{ts1} AND ({expr} {cmp_inner} ?{ts2} OR e.id {cmp_inner} ?{id_idx})",
+                expr = sort_ts_expr,
+                cmp_outer = cmp_outer,
+                cmp_inner = cmp_inner,
+                ts1 = ts1,
+                ts2 = ts2,
+                id_idx = id_idx,
+            ));
+            params_vec.push(Box::new(sort_ts.clone()));
+            params_vec.push(Box::new(sort_ts.clone()));
+            params_vec.push(Box::new(*id));
         }
-        params_vec.push(Box::new(cont_id));
+        ContinuationCursor::LegacyId(id) => {
+            let cmp = if oldest_first { ">" } else { "<" };
+            let id_idx = params_vec.len() + 1;
+            conditions.push(format!("e.id {} ?{}", cmp, id_idx));
+            params_vec.push(Box::new(*id));
+        }
     }
 }
 
