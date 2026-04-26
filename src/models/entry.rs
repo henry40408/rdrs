@@ -56,6 +56,44 @@ pub struct EntryFilter {
     pub has_summary: Option<bool>,
 }
 
+/// Pagination cursor. The wire format on the API is opaque to clients; we
+/// emit the new composite form `<iso_8601_ts>|<id>` and accept the legacy
+/// bare-`i64` form as a one-time grace path for in-flight cursors that may
+/// still live in browser URLs/JS state at deploy time.
+#[derive(Debug, Clone)]
+pub enum ContinuationCursor {
+    /// New `(sort_ts, id)` composite. `sort_ts` is the entry's sort-field
+    /// value as TEXT (the same byte-string SQLite stores), so the predicate
+    /// compares against an indexed column without conversion.
+    Composite { sort_ts: String, id: i64 },
+    /// Legacy `e.id < ?` cursor — accepted on input only; emitted only by
+    /// pre-#164 clients.
+    LegacyId(i64),
+}
+
+impl ContinuationCursor {
+    pub fn parse(s: &str) -> Option<Self> {
+        if s.is_empty() {
+            return None;
+        }
+        if let Some((ts, id)) = s.split_once('|') {
+            if ts.is_empty() {
+                return None;
+            }
+            id.parse::<i64>().ok().map(|id| Self::Composite {
+                sort_ts: ts.to_string(),
+                id,
+            })
+        } else {
+            s.parse::<i64>().ok().map(Self::LegacyId)
+        }
+    }
+
+    pub fn encode_composite(sort_ts: &str, id: i64) -> String {
+        format!("{}|{}", sort_ts, id)
+    }
+}
+
 /// Parameters for continuation-based pagination (Google Reader style).
 #[derive(Debug, Clone, Default)]
 pub struct ContinuationParams {
@@ -1614,5 +1652,42 @@ mod tests {
         let neighbors = find_neighbors(&conn, user_id, entries[0].id, &filter).unwrap();
         assert_eq!(neighbors.prev_id, Some(entries[2].id));
         assert_eq!(neighbors.next_id, None);
+    }
+
+    #[test]
+    fn cursor_parses_composite_format() {
+        let c = ContinuationCursor::parse("2026-04-26 12:34:56|142").expect("composite parses");
+        match c {
+            ContinuationCursor::Composite { sort_ts, id } => {
+                assert_eq!(sort_ts, "2026-04-26 12:34:56");
+                assert_eq!(id, 142);
+            }
+            _ => panic!("expected Composite"),
+        }
+    }
+
+    #[test]
+    fn cursor_parses_bare_i64_as_legacy() {
+        let c = ContinuationCursor::parse("142").expect("legacy parses");
+        match c {
+            ContinuationCursor::LegacyId(id) => assert_eq!(id, 142),
+            _ => panic!("expected LegacyId"),
+        }
+    }
+
+    #[test]
+    fn cursor_rejects_garbage() {
+        assert!(ContinuationCursor::parse("not-a-cursor").is_none());
+        assert!(ContinuationCursor::parse("|").is_none());
+        assert!(ContinuationCursor::parse("ts|notnum").is_none());
+        assert!(ContinuationCursor::parse("").is_none());
+    }
+
+    #[test]
+    fn cursor_encodes_composite() {
+        assert_eq!(
+            ContinuationCursor::encode_composite("2026-04-26 12:34:56", 142),
+            "2026-04-26 12:34:56|142"
+        );
     }
 }
