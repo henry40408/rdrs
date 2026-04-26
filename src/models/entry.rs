@@ -1878,4 +1878,50 @@ mod tests {
 
         assert_eq!(seen.len(), 10, "must visit all 10 entries; saw {}", seen.len());
     }
+
+    #[test]
+    fn legacy_bare_i64_cursor_still_paginates() {
+        // In-flight cursors from pre-#164 deployments must still work for one
+        // grace period. Under monotonic data (the common case), the legacy
+        // `e.id < ?` predicate is correct.
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "u");
+        let cat_id = create_test_category(&conn, user_id, "c");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+
+        for i in 1..=5 {
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    feed_id,
+                    format!("g{}", i),
+                    format!("2026-04-0{} 10:00:00", i)
+                ],
+            )
+            .unwrap();
+        }
+
+        // Get id of "newest" entry (highest id, latest ts)
+        let max_id: i64 = conn
+            .query_row("SELECT MAX(id) FROM entry", [], |r| r.get(0))
+            .unwrap();
+
+        let pagination = ContinuationParams {
+            oldest_first: false,
+            limit: 10,
+            continuation: Some(ContinuationCursor::LegacyId(max_id)),
+            ot: None,
+            nt: None,
+            sort_order: EntrySortOrder::PublishedAt,
+        };
+        let page =
+            list_by_user_with_continuation(&conn, user_id, &EntryFilter::default(), &pagination)
+                .unwrap();
+
+        // 4 entries below the boundary id
+        assert_eq!(page.len(), 4);
+        for ewf in &page {
+            assert!(ewf.entry.id < max_id);
+        }
+    }
 }
