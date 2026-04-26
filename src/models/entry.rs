@@ -1802,4 +1802,80 @@ mod tests {
         let ts = fetch_sort_ts(&conn, 99999, EntrySortOrder::PublishedAt).unwrap();
         assert_eq!(ts, None);
     }
+
+    #[test]
+    fn composite_cursor_walks_non_monotonic_data_without_skip() {
+        // Repro for #164: when id↔published_at order diverges (OPML re-import,
+        // back-dated feed items), the legacy `e.id < ?` cursor silently skips.
+        // The composite cursor must visit every entry.
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "u");
+        let cat_id = create_test_category(&conn, user_id, "c");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+
+        // 6 monotonic entries (newer ts ⇒ later id), then 4 "back-dated" entries
+        // with NEW ids but OLD timestamps (mimics OPML re-import).
+        let monotonic = [
+            ("g1", "2026-04-01 10:00:00"),
+            ("g2", "2026-04-02 10:00:00"),
+            ("g3", "2026-04-03 10:00:00"),
+            ("g4", "2026-04-04 10:00:00"),
+            ("g5", "2026-04-05 10:00:00"),
+            ("g6", "2026-04-06 10:00:00"),
+        ];
+        let backdated = [
+            ("g7-bd", "2026-03-01 10:00:00"),
+            ("g8-bd", "2026-03-02 10:00:00"),
+            ("g9-bd", "2026-03-03 10:00:00"),
+            ("g10-bd", "2026-03-04 10:00:00"),
+        ];
+        for (guid, ts) in monotonic.iter().chain(backdated.iter()) {
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![feed_id, guid, ts],
+            )
+            .unwrap();
+        }
+
+        let filter = EntryFilter::default();
+        let mut seen: Vec<i64> = Vec::new();
+        let mut cursor: Option<ContinuationCursor> = None;
+        let page_limit: i64 = 3;
+
+        // Walk pages (DESC sort by COALESCE(published_at, created_at)) until empty
+        loop {
+            let pagination = ContinuationParams {
+                oldest_first: false,
+                limit: page_limit,
+                continuation: cursor.clone(),
+                ot: None,
+                nt: None,
+                sort_order: EntrySortOrder::PublishedAt,
+            };
+            let page = list_by_user_with_continuation(&conn, user_id, &filter, &pagination)
+                .unwrap();
+            if page.is_empty() {
+                break;
+            }
+            for ewf in &page {
+                assert!(!seen.contains(&ewf.entry.id), "duplicate id {}", ewf.entry.id);
+                seen.push(ewf.entry.id);
+            }
+            let last = page.last().unwrap();
+            let sort_ts =
+                fetch_sort_ts(&conn, last.entry.id, EntrySortOrder::PublishedAt)
+                    .unwrap()
+                    .unwrap();
+            cursor = Some(ContinuationCursor::Composite {
+                sort_ts,
+                id: last.entry.id,
+            });
+            // safety: don't loop forever
+            if seen.len() > 100 {
+                panic!("runaway loop");
+            }
+        }
+
+        assert_eq!(seen.len(), 10, "must visit all 10 entries; saw {}", seen.len());
+    }
 }
