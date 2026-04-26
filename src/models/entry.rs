@@ -198,6 +198,27 @@ pub fn find_by_id_with_feed(conn: &Connection, id: i64) -> AppResult<Option<Entr
     .map_err(AppError::Database)
 }
 
+/// Fetch the sort-field value (as the exact TEXT string SQLite stores) for
+/// emitting a composite cursor. Returns `None` if the entry doesn't exist.
+pub fn fetch_sort_ts(
+    conn: &Connection,
+    entry_id: i64,
+    sort_order: EntrySortOrder,
+) -> AppResult<Option<String>> {
+    let column_expr = match sort_order {
+        EntrySortOrder::ReadAt => "read_at",
+        EntrySortOrder::StarredAt => "starred_at",
+        EntrySortOrder::PublishedAt => "COALESCE(published_at, created_at)",
+    };
+    let sql = format!("SELECT {} FROM entry WHERE id = ?1", column_expr);
+    conn.query_row(&sql, params![entry_id], |row| {
+        row.get::<_, Option<String>>(0)
+    })
+    .optional()
+    .map(|opt| opt.flatten())
+    .map_err(AppError::Database)
+}
+
 pub fn find_by_guid_and_feed(
     conn: &Connection,
     guid: &str,
@@ -1689,5 +1710,59 @@ mod tests {
             ContinuationCursor::encode_composite("2026-04-26 12:34:56", 142),
             "2026-04-26 12:34:56|142"
         );
+    }
+
+    #[test]
+    fn fetch_sort_ts_returns_published_or_created_for_publishedat() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "u");
+        let cat_id = create_test_category(&conn, user_id, "c");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+
+        // Entry with published_at set
+        conn.execute(
+            "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![feed_id, "g1", "2026-04-01 10:00:00"],
+        )
+        .unwrap();
+        let id1: i64 = conn.last_insert_rowid();
+
+        // Entry with published_at NULL → COALESCE falls back to created_at
+        conn.execute(
+            "INSERT INTO entry (feed_id, guid, created_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![feed_id, "g2", "2026-04-02 11:00:00"],
+        )
+        .unwrap();
+        let id2: i64 = conn.last_insert_rowid();
+
+        let ts1 = fetch_sort_ts(&conn, id1, EntrySortOrder::PublishedAt).unwrap();
+        let ts2 = fetch_sort_ts(&conn, id2, EntrySortOrder::PublishedAt).unwrap();
+        assert_eq!(ts1.as_deref(), Some("2026-04-01 10:00:00"));
+        assert_eq!(ts2.as_deref(), Some("2026-04-02 11:00:00"));
+    }
+
+    #[test]
+    fn fetch_sort_ts_returns_read_at_for_readat_sort() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "u");
+        let cat_id = create_test_category(&conn, user_id, "c");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+
+        conn.execute(
+            "INSERT INTO entry (feed_id, guid, read_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![feed_id, "g1", "2026-04-03 12:00:00"],
+        )
+        .unwrap();
+        let id: i64 = conn.last_insert_rowid();
+
+        let ts = fetch_sort_ts(&conn, id, EntrySortOrder::ReadAt).unwrap();
+        assert_eq!(ts.as_deref(), Some("2026-04-03 12:00:00"));
+    }
+
+    #[test]
+    fn fetch_sort_ts_returns_none_for_missing_id() {
+        let conn = setup_db();
+        let ts = fetch_sort_ts(&conn, 99999, EntrySortOrder::PublishedAt).unwrap();
+        assert_eq!(ts, None);
     }
 }
