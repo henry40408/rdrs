@@ -28,6 +28,14 @@ const FILES: &[(&str, &str)] = &[
         "js/components/rdrs-kb-pending.js",
         include_str!("../../static/js/components/rdrs-kb-pending.js"),
     ),
+    (
+        "js/components/rdrs-sidebar.js",
+        include_str!("../../static/js/components/rdrs-sidebar.js"),
+    ),
+    (
+        "js/pages/statistics.js",
+        include_str!("../../static/js/pages/statistics.js"),
+    ),
 ];
 
 fn content_type_for(path: &str) -> &'static str {

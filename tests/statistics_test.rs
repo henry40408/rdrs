@@ -1,4 +1,4 @@
-//! Integration tests for the statistics page.
+//! Integration tests for the statistics CSR shell + JSON API.
 
 use std::sync::Arc;
 
@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum_test::TestServer;
 use rdrs::{auth, create_router, db, services, AppState, Config, DbPool, Role};
 use rusqlite::Connection;
-use serde_json::json;
+use serde_json::{json, Value};
 
 struct TestApp {
     server: TestServer,
@@ -131,6 +131,8 @@ async fn seed_entries(db: &DbPool, admin_id: i64) {
     .unwrap();
 }
 
+// ----- Shell route -----
+
 #[tokio::test]
 async fn test_statistics_page_requires_login() {
     let app = create_test_app("test_stats_auth");
@@ -139,126 +141,146 @@ async fn test_statistics_page_requires_login() {
 }
 
 #[tokio::test]
-async fn test_statistics_page_renders_for_user() {
-    let app = create_test_app("test_stats_user");
+async fn test_statistics_page_shell_renders_for_user() {
+    let app = create_test_app("test_stats_shell");
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/statistics").await;
+    response.assert_status_ok();
+    let body = response.text();
+    // Shell should reference the page custom element + module path,
+    // not the SSR statistics content.
+    assert!(body.contains("<rdrs-statistics-page>"));
+    assert!(body.contains("/static/js/pages/statistics.js"));
+    // SSR content (period buttons, stats cards) should NOT be in the shell.
+    assert!(!body.contains("stats-period-btn"));
+    assert!(!body.contains("Total Entries"));
+}
+
+// ----- /api/statistics -----
+
+#[tokio::test]
+async fn test_api_statistics_requires_login() {
+    let app = create_test_app("test_api_stats_auth");
+    let response = app.server.get("/api/statistics").await;
+    assert_eq!(response.status_code(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_api_statistics_returns_user_data() {
+    let app = create_test_app("test_api_stats_user");
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
     login(&app.server, "admin").await;
 
-    let response = app.server.get("/statistics?period=all").await;
+    let response = app.server.get("/api/statistics?period=all").await;
     response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("Statistics"));
-    assert!(body.contains("Total Entries"));
-    assert!(body.contains("Read"));
-    assert!(body.contains("Unread"));
+    let body: Value = response.json();
+    assert_eq!(body["active_period"], "all");
+    assert_eq!(body["overview"]["total_entries"], 5);
+    assert_eq!(body["overview"]["read_entries"], 3);
+    assert_eq!(body["overview"]["starred_entries"], 1);
+    assert!(body["categories"].is_array());
+    assert!(body["top_feeds"].is_array());
 }
 
 #[tokio::test]
-async fn test_statistics_page_default_period_is_7d() {
-    let app = create_test_app("test_stats_default");
+async fn test_api_statistics_default_period_is_7d() {
+    let app = create_test_app("test_api_stats_default");
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
-    let response = app.server.get("/statistics").await;
+    let response = app.server.get("/api/statistics").await;
     response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("stats-period-btn active\">7d"));
+    let body: Value = response.json();
+    assert_eq!(body["active_period"], "7d");
 }
 
 #[tokio::test]
-async fn test_statistics_page_period_30d() {
-    let app = create_test_app("test_stats_30d");
+async fn test_api_statistics_period_30d() {
+    let app = create_test_app("test_api_stats_30d");
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
-    let response = app.server.get("/statistics?period=30d").await;
+    let response = app.server.get("/api/statistics?period=30d").await;
     response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("stats-period-btn active\">30d"));
+    let body: Value = response.json();
+    assert_eq!(body["active_period"], "30d");
 }
 
 #[tokio::test]
-async fn test_statistics_page_invalid_period_falls_back() {
-    let app = create_test_app("test_stats_invalid");
+async fn test_api_statistics_invalid_period_falls_back() {
+    let app = create_test_app("test_api_stats_invalid");
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
-    let response = app.server.get("/statistics?period=invalid").await;
+    let response = app.server.get("/api/statistics?period=invalid").await;
     response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("stats-period-btn active\">7d"));
+    let body: Value = response.json();
+    assert_eq!(body["active_period"], "7d");
 }
 
 #[tokio::test]
-async fn test_statistics_page_admin_sees_sitewide() {
-    let app = create_test_app("test_stats_admin");
+async fn test_api_statistics_admin_sees_sitewide() {
+    let app = create_test_app("test_api_stats_admin");
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
-    let response = app.server.get("/statistics").await;
+    let response = app.server.get("/api/statistics").await;
     response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("Site-wide Statistics"));
-    assert!(body.contains("Total Users"));
+    let body: Value = response.json();
+    assert!(body["admin"].is_object());
+    assert!(body["admin"]["total_users"].as_i64().unwrap() >= 1);
 }
 
 #[tokio::test]
-async fn test_statistics_page_user_no_sitewide() {
-    let app = create_test_app("test_stats_nonadmin");
+async fn test_api_statistics_user_no_sitewide() {
+    let app = create_test_app("test_api_stats_nonadmin");
     setup_users(&app.db).await;
     login(&app.server, "user").await;
 
-    let response = app.server.get("/statistics").await;
+    let response = app.server.get("/api/statistics").await;
     response.assert_status_ok();
-    let body = response.text();
-    assert!(!body.contains("Site-wide Statistics"));
-    assert!(!body.contains("Total Users"));
+    let body: Value = response.json();
+    assert!(body["admin"].is_null());
 }
 
 #[tokio::test]
-async fn test_statistics_sidebar_link_present() {
-    let app = create_test_app("test_stats_sidebar");
-    setup_users(&app.db).await;
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/statistics").await;
-    response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("data-testid=\"nav-statistics\""));
-}
-
-#[tokio::test]
-async fn test_statistics_page_custom_period() {
-    let app = create_test_app("test_stats_custom");
+async fn test_api_statistics_custom_period() {
+    let app = create_test_app("test_api_stats_custom");
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
     let response = app
         .server
-        .get("/statistics?period=custom&from=2026-03-01&to=2026-03-31")
+        .get("/api/statistics?period=custom&from=2026-03-01&to=2026-03-31")
         .await;
     response.assert_status_ok();
+    let body: Value = response.json();
+    assert_eq!(body["active_period"], "custom");
+    assert_eq!(body["custom_from"], "2026-03-01");
+    assert_eq!(body["custom_to"], "2026-03-31");
 }
 
 #[tokio::test]
-async fn test_statistics_page_invalid_custom_range_falls_back() {
-    let app = create_test_app("test_stats_bad_custom");
+async fn test_api_statistics_invalid_custom_range_falls_back() {
+    let app = create_test_app("test_api_stats_bad_custom");
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
     let response = app
         .server
-        .get("/statistics?period=custom&from=2026-12-01&to=2026-01-01")
+        .get("/api/statistics?period=custom&from=2026-12-01&to=2026-01-01")
         .await;
     response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("stats-period-btn active\">7d"));
+    let body: Value = response.json();
+    assert_eq!(body["active_period"], "7d");
 }
 
 #[tokio::test]
-async fn test_statistics_masquerade_hides_admin_section() {
-    let app = create_test_app("test_stats_masq");
+async fn test_api_statistics_masquerade_hides_admin_section() {
+    let app = create_test_app("test_api_stats_masq");
     let (_admin_id, user_id) = setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -267,8 +289,63 @@ async fn test_statistics_masquerade_hides_admin_section() {
         .await
         .assert_status_ok();
 
-    let response = app.server.get("/statistics").await;
+    let response = app.server.get("/api/statistics").await;
     response.assert_status_ok();
-    let body = response.text();
-    assert!(!body.contains("Site-wide Statistics"));
+    let body: Value = response.json();
+    assert!(body["admin"].is_null());
+}
+
+// ----- /api/me + /api/sidebar -----
+
+#[tokio::test]
+async fn test_api_me_returns_role_and_flags() {
+    let app = create_test_app("test_api_me");
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/api/me").await;
+    response.assert_status_ok();
+    let body: Value = response.json();
+    assert_eq!(body["username"], "admin");
+    assert_eq!(body["role"], "admin");
+    assert_eq!(body["is_admin"], true);
+    assert_eq!(body["is_masquerading"], false);
+}
+
+#[tokio::test]
+async fn test_api_me_masquerade_flag_set() {
+    let app = create_test_app("test_api_me_masq");
+    let (_admin_id, user_id) = setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+    app.server
+        .post(&format!("/api/admin/masquerade/{}", user_id))
+        .await
+        .assert_status_ok();
+
+    let response = app.server.get("/api/me").await;
+    response.assert_status_ok();
+    let body: Value = response.json();
+    assert_eq!(body["username"], "user");
+    assert_eq!(body["is_masquerading"], true);
+    // Original user is admin → is_admin remains true under masquerade.
+    assert_eq!(body["is_admin"], true);
+}
+
+#[tokio::test]
+async fn test_api_sidebar_returns_categories_with_unread() {
+    let app = create_test_app("test_api_sidebar");
+    let (admin_id, _user_id) = setup_users(&app.db).await;
+    seed_entries(&app.db, admin_id).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/api/sidebar").await;
+    response.assert_status_ok();
+    let body: Value = response.json();
+    assert_eq!(body["username"], "admin");
+    let cats = body["categories"].as_array().unwrap();
+    assert_eq!(cats.len(), 1);
+    assert_eq!(cats[0]["name"], "Tech");
+    // 5 seeded, 3 marked read → 2 unread.
+    assert_eq!(cats[0]["unread_count"], 2);
+    assert_eq!(body["total_unread"], 2);
 }
