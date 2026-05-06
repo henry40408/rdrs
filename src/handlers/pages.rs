@@ -645,87 +645,43 @@ pub async fn unread_page(
     )
 }
 
-/// User info for SSR admin display.
-pub struct AdminUserRow {
-    pub id: i64,
-    pub username: String,
-    pub role: String,
-    pub is_disabled: bool,
-    pub created_at: String,
-}
-
-#[derive(Template)]
-#[template(path = "admin.html")]
-pub struct AdminTemplate {
-    pub username: String,
-    pub current_user_id: i64,
-    pub original_user_id: i64,
-    pub is_masquerading: bool,
-    pub flash_messages: Vec<FlashMessage>,
-    pub users: Vec<AdminUserRow>,
-    pub theme: Option<String>,
-    pub git_version: &'static str,
-    pub sidebar_categories: Vec<SidebarCategory>,
-    pub sidebar_unread_count: i64,
-}
-
-impl IntoResponse for AdminTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
+/// Serves the CSR shell for `/admin`. The user list is loaded by
+/// `<rdrs-admin-page>` from the existing `GET /api/admin/users` endpoint.
+/// The page also calls `/api/me` to know which rows are the current admin
+/// (and the original admin under masquerade) and disable destructive
+/// actions for them.
 pub async fn admin_page(
     admin: PageAdminUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AdminTemplate) {
-    let is_masquerading = admin.session.is_masquerading();
-    let original_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
-
+) -> (Flash, AppShellTemplate) {
     let user_id = admin.user.id;
-    let (users, theme, sidebar_categories, sidebar_unread_count) = state
+    let theme = state
         .db
-        .read_user(move |c| {
-            let user_list = crate::models::user::list_all(c).unwrap_or_default();
-            let rows: Vec<AdminUserRow> = user_list
-                .into_iter()
-                .map(|u| {
-                    let is_disabled = u.is_disabled();
-                    let role = u.role.as_str().to_string();
-                    let created_at = u.created_at.format("%Y-%m-%d").to_string();
-                    AdminUserRow {
-                        id: u.id,
-                        username: u.username,
-                        role,
-                        is_disabled,
-                        created_at,
-                    }
-                })
-                .collect();
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
-            (rows, theme, sidebar_cats, sidebar_unread)
-        })
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
         .await
-        .unwrap_or((vec![], None, vec![], 0));
+        .unwrap_or(None);
+
+    // Reuse the same shell helpers as other pages by adapting the admin
+    // extractor into a PageAuthUser shape (sidebar/flash bootstrap don't
+    // care which it is, only about user + session).
+    let auth_user = PageAuthUser {
+        user: admin.user,
+        session: admin.session,
+    };
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
     (
-        flash.clone(),
-        AdminTemplate {
-            username: admin.user.username,
-            current_user_id: admin.user.id,
-            original_user_id,
-            is_masquerading,
-            flash_messages: flash.messages,
-            users,
+        flash,
+        AppShellTemplate {
+            title: "Admin Panel - RDRS",
+            element_tag: "rdrs-admin-page",
+            script_path: "/static/js/pages/admin.js",
             theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories,
-            sidebar_unread_count,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
         },
     )
 }
