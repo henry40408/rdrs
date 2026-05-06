@@ -10,6 +10,20 @@ class RdrsFlash extends HTMLElement {
         if (!this.classList.contains('flash-container')) {
             this.classList.add('flash-container');
         }
+        // CSR shell pages embed pending flash messages as inline JSON.
+        // Show them on first paint so the flow matches the old SSR macro.
+        const node = document.getElementById('rdrs-flash-bootstrap');
+        if (node && node.textContent && !this._bootstrapApplied) {
+            this._bootstrapApplied = true;
+            try {
+                const messages = JSON.parse(node.textContent);
+                if (Array.isArray(messages)) {
+                    for (const m of messages) {
+                        if (m && m.level && m.message) this.show(m.level, m.message);
+                    }
+                }
+            } catch { /* malformed — ignore */ }
+        }
     }
 
     _formatTime(date) {

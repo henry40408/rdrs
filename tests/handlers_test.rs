@@ -1340,7 +1340,9 @@ async fn test_categories_page() {
     let response = server.get("/categories").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("Categories") || body.contains("categories"));
+    // CSR shell: contains the page custom element + module path.
+    assert!(body.contains("<rdrs-categories-page>"));
+    assert!(body.contains("/static/js/pages/categories.js"));
 }
 
 #[tokio::test]
