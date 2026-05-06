@@ -8,8 +8,128 @@ use crate::middleware::AuthUser;
 use crate::models::session;
 use crate::models::user;
 use crate::models::user_settings;
+use crate::models::{category, entry};
 use crate::services::{KagiConfig, LinkdingConfig};
 use crate::AppState;
+
+#[derive(Debug, Serialize)]
+pub struct MeResponse {
+    pub id: i64,
+    pub username: String,
+    pub role: crate::models::Role,
+    pub is_admin: bool,
+    pub is_masquerading: bool,
+}
+
+/// Returns the current user augmented with session-derived flags
+/// (is_admin, is_masquerading) used by CSR pages to decide what UI to show.
+pub async fn get_me(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> AppResult<Json<MeResponse>> {
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        match auth_user.session.original_user_id {
+            Some(original_id) => {
+                let original = state
+                    .db
+                    .read_user(move |conn| user::find_by_id(conn, original_id))
+                    .await??;
+                original.map(|u| u.is_admin()).unwrap_or(false)
+            }
+            None => false,
+        }
+    } else {
+        auth_user.user.is_admin()
+    };
+
+    Ok(Json(MeResponse {
+        id: auth_user.user.id,
+        username: auth_user.user.username,
+        role: auth_user.user.role,
+        is_admin,
+        is_masquerading,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct SidebarCategoryDto {
+    pub id: i64,
+    pub name: String,
+    pub unread_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SidebarResponse {
+    pub username: String,
+    pub is_admin: bool,
+    pub is_masquerading: bool,
+    pub categories: Vec<SidebarCategoryDto>,
+    pub total_unread: i64,
+}
+
+/// Build the sidebar payload for the given authenticated session. Used by
+/// both the JSON API and the shell handler (which embeds it inline so the
+/// CSR sidebar paints without a network round trip).
+pub async fn build_sidebar_response(
+    state: &AppState,
+    user: &crate::models::User,
+    session: &crate::models::session::Session,
+) -> AppResult<SidebarResponse> {
+    let is_masquerading = session.is_masquerading();
+    let is_admin = if is_masquerading {
+        match session.original_user_id {
+            Some(original_id) => state
+                .db
+                .read_user(move |conn| user::find_by_id(conn, original_id))
+                .await??
+                .map(|u| u.is_admin())
+                .unwrap_or(false),
+            None => false,
+        }
+    } else {
+        user.is_admin()
+    };
+
+    let user_id = user.id;
+    let (categories, total_unread) = state
+        .db
+        .read_user(move |conn| {
+            let cats = category::list_by_user(conn, user_id).unwrap_or_default();
+            let unread_by_cat = entry::count_unread_by_category(conn, user_id).unwrap_or_default();
+            let total_unread = entry::count_unread_by_user(conn, user_id).unwrap_or(0);
+
+            let dtos: Vec<SidebarCategoryDto> = cats
+                .into_iter()
+                .map(|c| SidebarCategoryDto {
+                    id: c.id,
+                    name: c.name,
+                    unread_count: *unread_by_cat.get(&c.id).unwrap_or(&0),
+                })
+                .collect();
+
+            Ok::<_, AppError>((dtos, total_unread))
+        })
+        .await??;
+
+    Ok(SidebarResponse {
+        username: user.username.clone(),
+        is_admin,
+        is_masquerading,
+        categories,
+        total_unread,
+    })
+}
+
+/// Returns sidebar data: user identity, masquerade/admin flags, categories
+/// with unread counts, and total unread.
+pub async fn get_sidebar(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> AppResult<Json<SidebarResponse>> {
+    let payload = build_sidebar_response(&state, &auth_user.user, &auth_user.session).await?;
+    Ok(Json(payload))
+}
 
 #[derive(Debug, Deserialize)]
 pub struct ChangePasswordRequest {
