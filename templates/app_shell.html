@@ -60,6 +60,7 @@
     <script type="module" src="{{ script_path }}?v={{ git_version }}"></script>
 </head>
 <body>
+    <script type="application/json" id="rdrs-sidebar-bootstrap">{{ sidebar_bootstrap_json|safe }}</script>
     <{{ element_tag }}></{{ element_tag }}>
     <rdrs-kb-help></rdrs-kb-help>
     <rdrs-kb-pending></rdrs-kb-pending>

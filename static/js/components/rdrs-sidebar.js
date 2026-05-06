@@ -1,6 +1,15 @@
 // <rdrs-sidebar active="statistics"> — CSR sidebar with category unread counts.
 // Mirrors the SSR `macros.html::sidebar` macro DOM structure so existing CSS
 // (sidebar-*, nav-* selectors) keeps working unchanged.
+//
+// Anti-flicker strategy:
+//   1. Read bootstrap JSON embedded in the shell (`<script id="rdrs-sidebar-bootstrap">`)
+//      and render synchronously on connect — zero round trips, zero flash.
+//   2. Mirror the payload to sessionStorage so navigations to non-bootstrapped
+//      pages (e.g. legacy SSR routes that do XHR) still get instant paint.
+//   3. Background-revalidate via /api/sidebar; only re-render if data changed.
+
+const SIDEBAR_CACHE_KEY = 'rdrs.sidebar.v1';
 
 function escapeHtml(text) {
     const div = document.createElement('div');
@@ -8,11 +17,38 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function readBootstrap() {
+    const node = document.getElementById('rdrs-sidebar-bootstrap');
+    if (!node || !node.textContent) return null;
+    try {
+        const parsed = JSON.parse(node.textContent);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch { return null; }
+}
+
+function readCachedSidebar() {
+    try {
+        const raw = sessionStorage.getItem(SIDEBAR_CACHE_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+}
+
+function writeCachedSidebar(data) {
+    try { sessionStorage.setItem(SIDEBAR_CACHE_KEY, JSON.stringify(data)); }
+    catch { /* quota / disabled storage — fine */ }
+}
+
 class RdrsSidebar extends HTMLElement {
     static get observedAttributes() { return ['active', 'active-category-id']; }
 
     connectedCallback() {
-        this.render();
+        const initial = readBootstrap() || readCachedSidebar();
+        if (initial) {
+            this._data = initial;
+            writeCachedSidebar(initial);
+            this.render(initial);
+        }
+        // No initial render on cold start — first paint waits for fetch.
         this.fetchData();
     }
 
@@ -24,8 +60,11 @@ class RdrsSidebar extends HTMLElement {
         try {
             const resp = await fetch('/api/sidebar', { credentials: 'same-origin' });
             if (!resp.ok) return;
-            this._data = await resp.json();
-            this.render(this._data);
+            const data = await resp.json();
+            const changed = JSON.stringify(data) !== JSON.stringify(this._data);
+            this._data = data;
+            writeCachedSidebar(data);
+            if (changed) this.render(data);
         } catch (e) { /* silent */ }
     }
 

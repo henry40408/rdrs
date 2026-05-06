@@ -33,9 +33,15 @@ Each migrated page route returns the same minimal HTML envelope from a new
 - `<body>` contains exactly one custom element tag for the page (e.g.
   `<rdrs-statistics-page></rdrs-statistics-page>`) plus a `<script type="module">`
   importing that page module from `/static/js/pages/<name>.js`.
-- The handler passes `element_tag`, `script_path`, and `title` to the template.
+- The handler passes `element_tag`, `script_path`, `title`, and the
+  sidebar bootstrap JSON to the template.
 
-The shell does **not** embed any per-user JSON. All data is fetched after mount.
+The shell embeds **only** the sidebar payload as
+`<script type="application/json" id="rdrs-sidebar-bootstrap">…</script>`.
+This is the smallest piece of per-user data needed to paint the sidebar
+without an empty-skeleton-then-content flash on first visit. Page-specific
+data (statistics rows, etc.) is still fetched after mount — only the
+shared chrome is inlined.
 
 ### Auth bootstrap
 

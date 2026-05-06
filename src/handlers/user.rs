@@ -68,15 +68,17 @@ pub struct SidebarResponse {
     pub total_unread: i64,
 }
 
-/// Returns sidebar data: user identity, masquerade/admin flags, categories
-/// with unread counts, and total unread.
-pub async fn get_sidebar(
-    State(state): State<AppState>,
-    auth_user: AuthUser,
-) -> AppResult<Json<SidebarResponse>> {
-    let is_masquerading = auth_user.session.is_masquerading();
+/// Build the sidebar payload for the given authenticated session. Used by
+/// both the JSON API and the shell handler (which embeds it inline so the
+/// CSR sidebar paints without a network round trip).
+pub async fn build_sidebar_response(
+    state: &AppState,
+    user: &crate::models::User,
+    session: &crate::models::session::Session,
+) -> AppResult<SidebarResponse> {
+    let is_masquerading = session.is_masquerading();
     let is_admin = if is_masquerading {
-        match auth_user.session.original_user_id {
+        match session.original_user_id {
             Some(original_id) => state
                 .db
                 .read_user(move |conn| user::find_by_id(conn, original_id))
@@ -86,10 +88,10 @@ pub async fn get_sidebar(
             None => false,
         }
     } else {
-        auth_user.user.is_admin()
+        user.is_admin()
     };
 
-    let user_id = auth_user.user.id;
+    let user_id = user.id;
     let (categories, total_unread) = state
         .db
         .read_user(move |conn| {
@@ -110,13 +112,23 @@ pub async fn get_sidebar(
         })
         .await??;
 
-    Ok(Json(SidebarResponse {
-        username: auth_user.user.username,
+    Ok(SidebarResponse {
+        username: user.username.clone(),
         is_admin,
         is_masquerading,
         categories,
         total_unread,
-    }))
+    })
+}
+
+/// Returns sidebar data: user identity, masquerade/admin flags, categories
+/// with unread counts, and total unread.
+pub async fn get_sidebar(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> AppResult<Json<SidebarResponse>> {
+    let payload = build_sidebar_response(&state, &auth_user.user, &auth_user.session).await?;
+    Ok(Json(payload))
 }
 
 #[derive(Debug, Deserialize)]

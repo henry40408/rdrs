@@ -2076,8 +2076,11 @@ pub async fn feed_entries_page(
 }
 
 /// Shared CSR shell template. Each migrated page returns this with the
-/// element_tag and script_path of its page module. No per-user data is
-/// embedded — the page module fetches it after mount.
+/// element_tag and script_path of its page module.
+///
+/// `sidebar_bootstrap_json` carries the `/api/sidebar` payload pre-rendered
+/// inline so `<rdrs-sidebar>` paints without a network round trip on first
+/// visit. The page's own data is still fetched after mount.
 #[derive(Template)]
 #[template(path = "app_shell.html")]
 pub struct AppShellTemplate {
@@ -2086,6 +2089,7 @@ pub struct AppShellTemplate {
     pub script_path: &'static str,
     pub theme: Option<String>,
     pub git_version: &'static str,
+    pub sidebar_bootstrap_json: String,
 }
 
 impl IntoResponse for AppShellTemplate {
@@ -2095,6 +2099,20 @@ impl IntoResponse for AppShellTemplate {
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         }
     }
+}
+
+/// Serialize the sidebar payload for inline embedding in the shell. Escapes
+/// `</` to prevent `</script>` breakout.
+async fn sidebar_bootstrap_json(state: &AppState, auth_user: &PageAuthUser) -> String {
+    let payload =
+        crate::handlers::user::build_sidebar_response(state, &auth_user.user, &auth_user.session)
+            .await
+            .ok();
+    let json = match &payload {
+        Some(p) => serde_json::to_string(p).unwrap_or_else(|_| "null".to_string()),
+        None => "null".to_string(),
+    };
+    escape_json_for_script(&json)
 }
 
 /// Serves the CSR shell for `/statistics`. The actual stats data is fetched
@@ -2110,11 +2128,14 @@ pub async fn statistics_page(
         .await
         .unwrap_or(None);
 
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+
     AppShellTemplate {
         title: "Statistics - RDRS",
         element_tag: "rdrs-statistics-page",
         script_path: "/static/js/pages/statistics.js",
         theme,
         git_version: crate::GIT_VERSION,
+        sidebar_bootstrap_json,
     }
 }

@@ -158,6 +158,25 @@ async fn test_statistics_page_shell_renders_for_user() {
     assert!(!body.contains("Total Entries"));
 }
 
+#[tokio::test]
+async fn test_statistics_shell_embeds_sidebar_bootstrap() {
+    let app = create_test_app("test_stats_shell_bootstrap");
+    let (admin_id, _user_id) = setup_users(&app.db).await;
+    seed_entries(&app.db, admin_id).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/statistics").await;
+    response.assert_status_ok();
+    let body = response.text();
+    // The shell embeds the sidebar payload inline so the sidebar paints
+    // without a round trip on first visit.
+    assert!(body.contains("id=\"rdrs-sidebar-bootstrap\""));
+    assert!(body.contains("\"username\":\"admin\""));
+    assert!(body.contains("\"is_admin\":true"));
+    // Categories from seed appear in the bootstrap payload.
+    assert!(body.contains("\"name\":\"Tech\""));
+}
+
 // ----- /api/statistics -----
 
 #[tokio::test]
