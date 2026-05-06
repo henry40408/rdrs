@@ -857,88 +857,9 @@ pub async fn user_settings_page(
     )
 }
 
-/// A category with its feed count for SSR display.
-pub struct CategoryWithCount {
-    pub id: i64,
-    pub name: String,
-    pub feed_count: usize,
-}
-
-#[derive(Template)]
-#[template(path = "categories.html")]
-pub struct CategoriesTemplate {
-    pub username: String,
-    pub is_admin: bool,
-    pub is_masquerading: bool,
-    pub flash_messages: Vec<FlashMessage>,
-    pub categories: Vec<CategoryWithCount>,
-    pub theme: Option<String>,
-    pub git_version: &'static str,
-    pub sidebar_categories: Vec<SidebarCategory>,
-    pub sidebar_unread_count: i64,
-}
-
-impl IntoResponse for CategoriesTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-pub async fn categories_page(
-    auth_user: PageAuthUser,
-    State(state): State<AppState>,
-    flash: Flash,
-) -> (Flash, CategoriesTemplate) {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
-
-    let user_id = auth_user.user.id;
-    let (categories_with_counts, theme, sidebar_categories, sidebar_unread_count) = state
-        .db
-        .read_user(move |c| {
-            let cats = category::list_by_user(c, user_id).unwrap_or_default();
-            let cats_with_counts: Vec<CategoryWithCount> = cats
-                .into_iter()
-                .map(|cat| {
-                    let feed_count = feed::list_by_category(c, cat.id)
-                        .map(|f| f.len())
-                        .unwrap_or(0);
-                    CategoryWithCount {
-                        id: cat.id,
-                        name: cat.name,
-                        feed_count,
-                    }
-                })
-                .collect();
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
-            (cats_with_counts, theme, sidebar_cats, sidebar_unread)
-        })
-        .await
-        .unwrap_or((vec![], None, vec![], 0));
-
-    (
-        flash.clone(),
-        CategoriesTemplate {
-            username: auth_user.user.username,
-            is_admin,
-            is_masquerading,
-            flash_messages: flash.messages,
-            categories: categories_with_counts,
-            theme,
-            git_version: crate::GIT_VERSION,
-            sidebar_categories,
-            sidebar_unread_count,
-        },
-    )
-}
+// `categories_page` is now defined below as a CSR shell handler. The legacy
+// `CategoriesTemplate` + SSR-rendered `templates/categories.html` were
+// removed during the SSR-to-CSR migration (PR #170 follow-up).
 
 #[derive(serde::Deserialize)]
 pub struct FeedsQuery {
@@ -2078,9 +1999,14 @@ pub async fn feed_entries_page(
 /// Shared CSR shell template. Each migrated page returns this with the
 /// element_tag and script_path of its page module.
 ///
-/// `sidebar_bootstrap_json` carries the `/api/sidebar` payload pre-rendered
-/// inline so `<rdrs-sidebar>` paints without a network round trip on first
-/// visit. The page's own data is still fetched after mount.
+/// Bootstrap fields carry the minimum per-user JSON the CSR chrome needs to
+/// paint without a network round trip:
+/// - `sidebar_bootstrap_json`: the `/api/sidebar` payload
+/// - `flash_bootstrap_json`: pending flash messages (consumed via the `Flash`
+///   extractor; the response also clears the cookie)
+///
+/// The page's own data (statistics rows, category list, etc.) is still
+/// fetched after mount.
 #[derive(Template)]
 #[template(path = "app_shell.html")]
 pub struct AppShellTemplate {
@@ -2090,6 +2016,7 @@ pub struct AppShellTemplate {
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_bootstrap_json: String,
+    pub flash_bootstrap_json: String,
 }
 
 impl IntoResponse for AppShellTemplate {
@@ -2109,9 +2036,15 @@ async fn sidebar_bootstrap_json(state: &AppState, auth_user: &PageAuthUser) -> S
             .await
             .ok();
     let json = match &payload {
-        Some(p) => serde_json::to_string(p).unwrap_or_else(|_| "null".to_string()),
+        Some(p) => serde_json::to_string(p).unwrap_or_else(|_| "[]".to_string()),
         None => "null".to_string(),
     };
+    escape_json_for_script(&json)
+}
+
+/// Serialize the pending flash messages for inline embedding in the shell.
+fn flash_bootstrap_json(messages: &[FlashMessage]) -> String {
+    let json = serde_json::to_string(messages).unwrap_or_else(|_| "[]".to_string());
     escape_json_for_script(&json)
 }
 
@@ -2120,7 +2053,8 @@ async fn sidebar_bootstrap_json(state: &AppState, auth_user: &PageAuthUser) -> S
 pub async fn statistics_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
-) -> AppShellTemplate {
+    flash: Flash,
+) -> (Flash, AppShellTemplate) {
     let user_id = auth_user.user.id;
     let theme = state
         .db
@@ -2129,13 +2063,50 @@ pub async fn statistics_page(
         .unwrap_or(None);
 
     let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
-    AppShellTemplate {
-        title: "Statistics - RDRS",
-        element_tag: "rdrs-statistics-page",
-        script_path: "/static/js/pages/statistics.js",
-        theme,
-        git_version: crate::GIT_VERSION,
-        sidebar_bootstrap_json,
-    }
+    (
+        flash,
+        AppShellTemplate {
+            title: "Statistics - RDRS",
+            element_tag: "rdrs-statistics-page",
+            script_path: "/static/js/pages/statistics.js",
+            theme,
+            git_version: crate::GIT_VERSION,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
+        },
+    )
+}
+
+/// Serves the CSR shell for `/categories`. The category list is fetched by
+/// `<rdrs-categories-page>` from the existing GReader endpoints
+/// (`/reader/api/0/tag/list` + `/reader/api/0/subscription/list`).
+pub async fn categories_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, AppShellTemplate) {
+    let user_id = auth_user.user.id;
+    let theme = state
+        .db
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .await
+        .unwrap_or(None);
+
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+
+    (
+        flash,
+        AppShellTemplate {
+            title: "Categories - RDRS",
+            element_tag: "rdrs-categories-page",
+            script_path: "/static/js/pages/categories.js",
+            theme,
+            git_version: crate::GIT_VERSION,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
+        },
+    )
 }

@@ -36,6 +36,10 @@ const FILES: &[(&str, &str)] = &[
         "js/pages/statistics.js",
         include_str!("../../static/js/pages/statistics.js"),
     ),
+    (
+        "js/pages/categories.js",
+        include_str!("../../static/js/pages/categories.js"),
+    ),
 ];
 
 fn content_type_for(path: &str) -> &'static str {

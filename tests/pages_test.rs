@@ -317,6 +317,9 @@ async fn test_categories_page_with_flash() {
 
     response.assert_status_ok();
     let body = response.text();
+    // CSR shell embeds pending flash messages as inline JSON for
+    // `<rdrs-flash>` to display on first paint.
+    assert!(body.contains("id=\"rdrs-flash-bootstrap\""));
     assert!(body.contains("Category created successfully"));
 }
 
@@ -1398,7 +1401,7 @@ async fn test_feeds_page_renders_ssr_feed_rows() {
 }
 
 #[tokio::test]
-async fn test_categories_page_renders_ssr_category_rows() {
+async fn test_categories_page_csr_shell_does_not_embed_rows() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -1406,13 +1409,12 @@ async fn test_categories_page_renders_ssr_category_rows() {
         .user(move |conn| {
             conn.execute(
                 "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Cats SSR"],
+                rusqlite::params![1, "Cats CSR"],
             )
             .unwrap();
-            // Add feed to category so feed_count > 0
             conn.execute(
                 "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/cats-ssr.xml", "A Feed"],
+                rusqlite::params![1, "https://example.com/cats-csr.xml", "A Feed"],
             )
             .unwrap();
         })
@@ -1425,9 +1427,16 @@ async fn test_categories_page_renders_ssr_category_rows() {
     response.assert_status_ok();
     let body = response.text();
 
-    // Should contain SSR-rendered category with feed count
-    assert!(body.contains("Cats SSR"));
-    assert!(body.contains("1")); // feed count
+    // After migration to CSR, the shell does NOT embed category table
+    // rows — the custom element fetches them via the GReader API after
+    // mount. The category name does still appear inside the sidebar
+    // bootstrap JSON (sidebar lists every category by name), so check
+    // for the row-specific markup rather than the bare name.
+    assert!(body.contains("<rdrs-categories-page>"));
+    assert!(!body.contains("data-tag-id"));
+    assert!(!body.contains("cat-edit-input"));
+    // The sidebar bootstrap (per-user chrome) is still embedded.
+    assert!(body.contains("id=\"rdrs-sidebar-bootstrap\""));
 }
 
 #[tokio::test]
