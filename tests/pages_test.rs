@@ -203,7 +203,7 @@ async fn test_admin_page_while_masquerading() {
 }
 
 #[tokio::test]
-async fn test_user_settings_page_content() {
+async fn test_user_settings_page_serves_csr_shell() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -212,14 +212,12 @@ async fn test_user_settings_page_content() {
     let response = app.server.get("/user-settings").await;
     response.assert_status_ok();
     let body = response.text();
-
-    // Should contain user info sections
-    assert!(body.contains("admin"));
-    assert!(body.contains("Password") || body.contains("password"));
+    assert!(body.contains("<rdrs-user-settings-page>"));
+    assert!(body.contains("/static/js/pages/user-settings.js"));
 }
 
 #[tokio::test]
-async fn test_settings_page_shows_version() {
+async fn test_settings_page_serves_csr_shell() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -228,11 +226,8 @@ async fn test_settings_page_shows_version() {
     let response = app.server.get("/settings").await;
     response.assert_status_ok();
     let body = response.text();
-
-    // Should show version info
-    assert!(body.contains("Version") || body.contains("version"));
-    // Should show user agent
-    assert!(body.contains("User-Agent") || body.contains("user-agent") || body.contains("RDRS"));
+    assert!(body.contains("<rdrs-settings-page>"));
+    assert!(body.contains("/static/js/pages/settings.js"));
 }
 
 #[tokio::test]
@@ -382,6 +377,7 @@ async fn test_user_settings_page_with_flash() {
 
     response.assert_status_ok();
     let body = response.text();
+    assert!(body.contains("id=\"rdrs-flash-bootstrap\""));
     assert!(body.contains("Settings saved"));
 }
 
@@ -510,11 +506,10 @@ async fn test_regular_user_cannot_access_admin_api() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_user_settings_page_shows_linkding_configured() {
+async fn test_api_user_settings_returns_linkding_configured() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
-    // Configure Linkding
     app.db
         .user(move |conn| {
             let config = serde_json::json!({
@@ -534,20 +529,18 @@ async fn test_user_settings_page_shows_linkding_configured() {
 
     login(&app.server, "admin").await;
 
-    let response = app.server.get("/user-settings").await;
+    let response = app.server.get("/api/user-settings").await;
     response.assert_status_ok();
-    let body = response.text();
-
-    // Should show linkding is configured
-    assert!(body.contains("linkding") || body.contains("Linkding"));
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["linkding_configured"], true);
+    assert_eq!(body["linkding_api_url"], "https://linkding.example.com");
 }
 
 #[tokio::test]
-async fn test_user_settings_page_shows_custom_entries_per_page() {
+async fn test_api_user_settings_returns_custom_entries_per_page() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
-    // Set custom entries per page
     app.db
         .user(move |conn| {
             conn.execute(
@@ -561,20 +554,18 @@ async fn test_user_settings_page_shows_custom_entries_per_page() {
 
     login(&app.server, "admin").await;
 
-    let response = app.server.get("/user-settings").await;
+    let response = app.server.get("/api/user-settings").await;
     response.assert_status_ok();
-    let body = response.text();
-
-    // Should show the custom value somewhere
-    assert!(body.contains("100"));
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["entries_per_page"], 100);
 }
 
 // ============================================================================
-// Settings Page Configuration Display
+// /api/server-config tests
 // ============================================================================
 
 #[tokio::test]
-async fn test_settings_page_shows_signup_status() {
+async fn test_api_server_config_returns_signup_status() {
     let config = Config {
         signup_enabled: true,
         multi_user_enabled: true,
@@ -585,21 +576,16 @@ async fn test_settings_page_shows_signup_status() {
 
     login(&app.server, "admin").await;
 
-    let response = app.server.get("/settings").await;
+    let response = app.server.get("/api/server-config").await;
     response.assert_status_ok();
-    let body = response.text();
-
-    // Should show signup configuration
-    assert!(
-        body.contains("Signup")
-            || body.contains("signup")
-            || body.contains("Registration")
-            || body.contains("registration")
-    );
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["signup_enabled"], true);
+    assert_eq!(body["multi_user_enabled"], true);
+    assert!(body["git_version"].is_string());
 }
 
 #[tokio::test]
-async fn test_settings_page_with_custom_user_agent() {
+async fn test_api_server_config_with_custom_user_agent() {
     let config = Config {
         user_agent: "Custom-Agent/2.0".to_string(),
         ..default_test_config()
@@ -609,12 +595,11 @@ async fn test_settings_page_with_custom_user_agent() {
 
     login(&app.server, "admin").await;
 
-    let response = app.server.get("/settings").await;
+    let response = app.server.get("/api/server-config").await;
     response.assert_status_ok();
-    let body = response.text();
-
-    // Should show custom user agent
-    assert!(body.contains("Custom-Agent/2.0"));
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["user_agent"], "Custom-Agent/2.0");
+    assert_eq!(body["user_agent_is_default"], false);
 }
 
 // ============================================================================

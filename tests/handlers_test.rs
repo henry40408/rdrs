@@ -1436,8 +1436,9 @@ async fn test_settings_page() {
     let response = server.get("/settings").await;
     response.assert_status_ok();
     let body = response.text();
-    // Should show version information
-    assert!(body.contains("Version") || body.contains("version"));
+    // CSR shell: contains the page custom element + module path.
+    assert!(body.contains("<rdrs-settings-page>"));
+    assert!(body.contains("/static/js/pages/settings.js"));
 }
 
 #[tokio::test]

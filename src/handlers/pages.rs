@@ -5,7 +5,6 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
 };
 
-use crate::config::DEFAULT_USER_AGENT;
 use crate::error::AppError;
 use crate::middleware::auth::{PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
@@ -731,128 +730,35 @@ pub async fn admin_page(
     )
 }
 
-#[derive(Template)]
-#[template(path = "user-settings.html")]
-pub struct UserSettingsTemplate {
-    pub username: String,
-    pub role: String,
-    pub created_at: String,
-    pub logged_in_at: String,
-    pub entries_per_page: i64,
-    pub is_admin: bool,
-    pub is_masquerading: bool,
-    pub flash_messages: Vec<FlashMessage>,
-    pub linkding_configured: bool,
-    pub linkding_api_url: String,
-    pub kagi_configured: bool,
-    pub kagi_language: String,
-    pub theme: Option<String>,
-    pub git_version: &'static str,
-    pub sidebar_categories: Vec<SidebarCategory>,
-    pub sidebar_unread_count: i64,
-}
-
-impl IntoResponse for UserSettingsTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
+/// Serves the CSR shell for `/user-settings`. Account info, preferences,
+/// passkeys, and integrations are all loaded by `<rdrs-user-settings-page>`
+/// from existing JSON endpoints (`/api/me`, `/api/user-settings`,
+/// `/api/passkeys`, `/api/user/settings/{linkding,kagi,theme}`).
 pub async fn user_settings_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, UserSettingsTemplate) {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
-
+) -> (Flash, AppShellTemplate) {
     let user_id = auth_user.user.id;
-    let (
-        entries_per_page,
-        linkding_configured,
-        linkding_api_url,
-        kagi_configured,
-        kagi_language,
-        theme,
-        sidebar_categories,
-        sidebar_unread_count,
-    ) = state
+    let theme = state
         .db
-        .read_user(move |c| {
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-
-            let save_config =
-                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
-
-            let linkding = save_config.linkding.as_ref();
-            let linkding_configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
-            let api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
-
-            let kagi = save_config.kagi.as_ref();
-            let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
-            let kagi_lang = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
-
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
-
-            (
-                epp,
-                linkding_configured,
-                api_url,
-                kagi_configured,
-                kagi_lang,
-                theme,
-                sidebar_cats,
-                sidebar_unread,
-            )
-        })
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
         .await
-        .unwrap_or((
-            user_settings::DEFAULT_ENTRIES_PER_PAGE,
-            false,
-            String::new(),
-            false,
-            String::new(),
-            None,
-            vec![],
-            0,
-        ));
+        .unwrap_or(None);
+
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
     (
-        flash.clone(),
-        UserSettingsTemplate {
-            username: auth_user.user.username,
-            role: auth_user.user.role.as_str().to_string(),
-            created_at: auth_user
-                .user
-                .created_at
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string(),
-            logged_in_at: auth_user
-                .session
-                .created_at
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string(),
-            entries_per_page,
-            is_admin,
-            is_masquerading,
-            flash_messages: flash.messages,
-            linkding_configured,
-            linkding_api_url,
-            kagi_configured,
-            kagi_language,
+        flash,
+        AppShellTemplate {
+            title: "User Settings - RDRS",
+            element_tag: "rdrs-user-settings-page",
+            script_path: "/static/js/pages/user-settings.js",
             theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories,
-            sidebar_unread_count,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
         },
     )
 }
@@ -1017,72 +923,33 @@ pub async fn entry_page(
     Redirect::to(&redirect_url)
 }
 
-#[derive(Template)]
-#[template(path = "settings.html")]
-pub struct SettingsTemplate {
-    pub username: String,
-    pub is_admin: bool,
-    pub is_masquerading: bool,
-    pub flash_messages: Vec<FlashMessage>,
-    pub git_version: &'static str,
-    pub user_agent: String,
-    pub user_agent_is_default: bool,
-    pub signup_enabled: bool,
-    pub multi_user_enabled: bool,
-    pub theme: Option<String>,
-    pub sidebar_categories: Vec<SidebarCategory>,
-    pub sidebar_unread_count: i64,
-}
-
-impl IntoResponse for SettingsTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
+/// Serves the CSR shell for `/settings`. Read-only server config is
+/// loaded by `<rdrs-settings-page>` from `GET /api/server-config`.
 pub async fn settings_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, SettingsTemplate) {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
-
-    let user_agent_is_default = state.config.user_agent == DEFAULT_USER_AGENT;
-
+) -> (Flash, AppShellTemplate) {
     let user_id = auth_user.user.id;
-    let (theme, sidebar_categories, sidebar_unread_count) = state
+    let theme = state
         .db
-        .read_user(move |c| {
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
-            (theme, sidebar_cats, sidebar_unread)
-        })
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
         .await
-        .unwrap_or((None, vec![], 0));
+        .unwrap_or(None);
+
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
     (
-        flash.clone(),
-        SettingsTemplate {
-            username: auth_user.user.username,
-            is_admin,
-            is_masquerading,
-            flash_messages: flash.messages,
-            git_version: crate::GIT_VERSION,
-            user_agent: state.config.user_agent.clone(),
-            user_agent_is_default,
-            signup_enabled: state.config.signup_enabled,
-            multi_user_enabled: state.config.multi_user_enabled,
+        flash,
+        AppShellTemplate {
+            title: "Settings - RDRS",
+            element_tag: "rdrs-settings-page",
+            script_path: "/static/js/pages/settings.js",
             theme,
-            sidebar_categories,
-            sidebar_unread_count,
+            git_version: crate::GIT_VERSION,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
         },
     )
 }
