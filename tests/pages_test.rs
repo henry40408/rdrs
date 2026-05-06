@@ -1461,7 +1461,7 @@ async fn test_categories_page_csr_shell_does_not_embed_rows() {
 }
 
 #[tokio::test]
-async fn test_admin_page_renders_ssr_user_rows() {
+async fn test_admin_page_csr_shell_does_not_embed_rows() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -1471,10 +1471,12 @@ async fn test_admin_page_renders_ssr_user_rows() {
     response.assert_status_ok();
     let body = response.text();
 
-    // Should contain SSR-rendered user table
-    assert!(body.contains("admin"));
-    assert!(body.contains("user"));
-    assert!(body.contains("active")); // user status
+    // After migration to CSR the shell does NOT embed user table rows.
+    // The custom element fetches them from /api/admin/users after mount.
+    assert!(body.contains("<rdrs-admin-page>"));
+    assert!(body.contains("/static/js/pages/admin.js"));
+    // The "active" status text only exists in the JS module, not inline.
+    assert!(!body.contains(">active</span>"));
 }
 
 // ============================================================================

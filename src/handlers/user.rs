@@ -19,6 +19,10 @@ pub struct MeResponse {
     pub role: crate::models::Role,
     pub is_admin: bool,
     pub is_masquerading: bool,
+    /// The original admin's user id when masquerading (otherwise `None`).
+    /// CSR pages use this to disable destructive actions on both the
+    /// currently-impersonated user and the underlying admin.
+    pub original_user_id: Option<i64>,
     pub created_at: String,
     pub session_created_at: String,
 }
@@ -51,6 +55,7 @@ pub async fn get_me(
         role: auth_user.user.role,
         is_admin,
         is_masquerading,
+        original_user_id: auth_user.session.original_user_id,
         created_at: auth_user
             .user
             .created_at
