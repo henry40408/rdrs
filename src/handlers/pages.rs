@@ -79,7 +79,7 @@ fn escape_json_for_script(json: &str) -> String {
 
 /// Format a datetime as a human-readable relative time string.
 /// Returns (relative_text, iso_datetime_for_tooltip).
-fn format_relative_time(dt: Option<chrono::DateTime<chrono::Utc>>) -> (String, String) {
+pub fn format_relative_time(dt: Option<chrono::DateTime<chrono::Utc>>) -> (String, String) {
     match dt {
         None => ("Never".to_string(), String::new()),
         Some(dt) => {
@@ -110,7 +110,7 @@ fn format_relative_time(dt: Option<chrono::DateTime<chrono::Utc>>) -> (String, S
 }
 
 /// Compute freshness CSS class and key from feed_updated_at and fetched_at.
-fn compute_freshness(
+pub fn compute_freshness(
     feed_updated_at: Option<chrono::DateTime<chrono::Utc>>,
     fetched_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> (String, String) {
@@ -861,6 +861,8 @@ pub async fn user_settings_page(
 // `CategoriesTemplate` + SSR-rendered `templates/categories.html` were
 // removed during the SSR-to-CSR migration (PR #170 follow-up).
 
+/// Query parameters for `/feeds` and the `GET /api/feeds` JSON endpoint.
+/// Used by the CSR `<rdrs-feeds-page>` to drive server-side filter / sort.
 #[derive(serde::Deserialize)]
 pub struct FeedsQuery {
     pub category: Option<String>,
@@ -868,222 +870,34 @@ pub struct FeedsQuery {
     pub sort: Option<String>,
 }
 
-/// A feed row for SSR display.
-#[derive(serde::Serialize)]
-pub struct FeedRow {
-    pub id: i64,
-    pub url: String,
-    pub title: String,
-    pub category_id: i64,
-    pub category_name: String,
-    pub has_icon: bool,
-    pub fetch_error: Option<String>,
-    pub description: Option<String>,
-    pub site_url: Option<String>,
-    pub custom_user_agent: Option<String>,
-    pub http2_disabled: bool,
-    pub custom_referrer: Option<String>,
-    pub unread_count: i64,
-    #[serde(skip)]
-    pub fetched_at_relative: String,
-    #[serde(skip)]
-    pub fetched_at_datetime: String,
-    #[serde(skip)]
-    pub feed_updated_at_relative: String,
-    #[serde(skip)]
-    pub feed_updated_at_datetime: String,
-    #[serde(skip)]
-    pub freshness_class: String,
-    #[serde(skip)]
-    pub freshness_key: String,
-}
-
-/// A category option for SSR dropdowns.
-pub struct CategoryOption {
-    pub id: i64,
-    pub name: String,
-    pub feed_count: usize,
-}
-
-#[derive(Template)]
-#[template(path = "feeds.html")]
-pub struct FeedsTemplate {
-    pub username: String,
-    pub is_admin: bool,
-    pub is_masquerading: bool,
-    pub flash_messages: Vec<FlashMessage>,
-    pub feeds: Vec<FeedRow>,
-    pub categories: Vec<CategoryOption>,
-    pub feed_data_json: String,
-    pub theme: Option<String>,
-    pub git_version: &'static str,
-    pub sidebar_categories: Vec<SidebarCategory>,
-    pub sidebar_unread_count: i64,
-    pub total_feed_count: usize,
-    pub active_filter: String,
-    pub active_sort: String,
-    pub active_category: Option<i64>,
-}
-
-impl IntoResponse for FeedsTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
+/// Serves the CSR shell for `/feeds`. The feed list itself is fetched by
+/// `<rdrs-feeds-page>` from `GET /api/feeds`. CRUD (add / edit / delete /
+/// import / export) goes through the existing GReader endpoints.
 pub async fn feeds_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
-    Query(query): Query<FeedsQuery>,
     flash: Flash,
-) -> (Flash, FeedsTemplate) {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
-
+) -> (Flash, AppShellTemplate) {
     let user_id = auth_user.user.id;
-    let (feeds_data, cats_data, theme, sidebar_categories, sidebar_unread_count) = state
+    let theme = state
         .db
-        .read_user(move |c| {
-            let cats = category::list_by_user(c, user_id).unwrap_or_default();
-            let all_feeds = feed::list_by_user(c, user_id).unwrap_or_default();
-            let unread_map = entry::count_unread_by_feed(c, user_id).unwrap_or_default();
-
-            // Build category name map
-            let cat_map: std::collections::HashMap<i64, String> = cats
-                .iter()
-                .map(|cat| (cat.id, cat.name.clone()))
-                .collect();
-
-            // Count feeds per category
-            let mut feed_count_by_cat: std::collections::HashMap<i64, usize> =
-                std::collections::HashMap::new();
-            for f in &all_feeds {
-                *feed_count_by_cat.entry(f.category_id).or_insert(0) += 1;
-            }
-
-            let feed_rows: Vec<FeedRow> = all_feeds
-                .into_iter()
-                .map(|f| {
-                    let has_icon: i64 = c
-                        .query_row(
-                            "SELECT COUNT(*) FROM image WHERE entity_type = 'feed' AND entity_id = ?1",
-                            [f.id],
-                            |row| row.get(0),
-                        )
-                        .unwrap_or(0);
-                    let (fetched_rel, fetched_dt) = format_relative_time(f.fetched_at);
-                    let (updated_rel, updated_dt) = if f.feed_updated_at.is_some() {
-                        format_relative_time(f.feed_updated_at)
-                    } else if f.fetched_at.map(|ft| (chrono::Utc::now() - ft).num_days() <= 30).unwrap_or(false) {
-                        ("No date info".to_string(), String::new())
-                    } else {
-                        ("Never".to_string(), String::new())
-                    };
-                    let (freshness_class, freshness_key) =
-                        compute_freshness(f.feed_updated_at, f.fetched_at);
-                    FeedRow {
-                        title: f.title.clone().unwrap_or_else(|| f.url.clone()),
-                        category_name: cat_map
-                            .get(&f.category_id)
-                            .cloned()
-                            .unwrap_or_else(|| "Unknown".to_string()),
-                        has_icon: has_icon > 0,
-                        unread_count: *unread_map.get(&f.id).unwrap_or(&0),
-                        id: f.id,
-                        url: f.url,
-                        category_id: f.category_id,
-                        fetch_error: f.fetch_error,
-                        description: f.description,
-                        site_url: f.site_url,
-                        custom_user_agent: f.custom_user_agent,
-                        http2_disabled: f.http2_disabled,
-                        custom_referrer: f.custom_referrer,
-                        fetched_at_relative: fetched_rel,
-                        fetched_at_datetime: fetched_dt,
-                        feed_updated_at_relative: updated_rel,
-                        feed_updated_at_datetime: updated_dt,
-                        freshness_class,
-                        freshness_key,
-                    }
-                })
-                .collect();
-
-            let cat_options: Vec<CategoryOption> = cats
-                .into_iter()
-                .map(|cat| {
-                    let fc = feed_count_by_cat.get(&cat.id).copied().unwrap_or(0);
-                    CategoryOption {
-                        id: cat.id,
-                        name: cat.name,
-                        feed_count: fc,
-                    }
-                })
-                .collect();
-
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
-            (feed_rows, cat_options, theme, sidebar_cats, sidebar_unread)
-        })
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
         .await
-        .unwrap_or((vec![], vec![], None, vec![], 0));
+        .unwrap_or(None);
 
-    let active_filter = query.filter.as_deref().unwrap_or("all").to_string();
-    let active_sort = query.sort.as_deref().unwrap_or("title").to_string();
-    let active_category = query
-        .category
-        .as_deref()
-        .and_then(|s| s.parse::<i64>().ok());
-
-    let mut feeds_data = feeds_data;
-    let total_feed_count = feeds_data.len();
-
-    if let Some(cat_id) = active_category {
-        feeds_data.retain(|f| f.category_id == cat_id);
-    }
-
-    match active_filter.as_str() {
-        "errors" => feeds_data.retain(|f| f.fetch_error.is_some()),
-        "stale" => feeds_data.retain(|f| f.freshness_key == "stale"),
-        _ => {}
-    }
-
-    match active_sort.as_str() {
-        "unread" => feeds_data.sort_by(|a, b| b.unread_count.cmp(&a.unread_count)),
-        "category" => feeds_data.sort_by(|a, b| a.category_name.cmp(&b.category_name)),
-        _ => feeds_data.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
-    }
-
-    // Build a JSON map: { feedId: { url, title, description, ... }, ... }
-    let feed_data_map: std::collections::HashMap<i64, &FeedRow> =
-        feeds_data.iter().map(|f| (f.id, f)).collect();
-    let feed_data_json = serde_json::to_string(&feed_data_map).unwrap_or_else(|_| "{}".to_string());
-    let feed_data_json = escape_json_for_script(&feed_data_json);
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
     (
-        flash.clone(),
-        FeedsTemplate {
-            username: auth_user.user.username,
-            is_admin,
-            is_masquerading,
-            flash_messages: flash.messages,
-            feeds: feeds_data,
-            categories: cats_data,
-            feed_data_json,
+        flash,
+        AppShellTemplate {
+            title: "Feeds - RDRS",
+            element_tag: "rdrs-feeds-page",
+            script_path: "/static/js/pages/feeds.js",
             theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories,
-            sidebar_unread_count,
-            total_feed_count,
-            active_filter,
-            active_sort,
-            active_category,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
         },
     )
 }
