@@ -1361,7 +1361,9 @@ async fn test_feeds_page() {
     let response = server.get("/feeds").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("Feeds") || body.contains("feeds"));
+    // CSR shell: contains the page custom element + module path.
+    assert!(body.contains("<rdrs-feeds-page>"));
+    assert!(body.contains("/static/js/pages/feeds.js"));
 }
 
 #[tokio::test]

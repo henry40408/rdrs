@@ -3,6 +3,7 @@ pub mod auth;
 pub mod entry;
 pub mod favicon;
 pub mod feed;
+pub mod feeds;
 pub mod greader;
 pub mod health;
 pub mod pages;
