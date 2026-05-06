@@ -19,6 +19,8 @@ pub struct MeResponse {
     pub role: crate::models::Role,
     pub is_admin: bool,
     pub is_masquerading: bool,
+    pub created_at: String,
+    pub session_created_at: String,
 }
 
 /// Returns the current user augmented with session-derived flags
@@ -49,6 +51,94 @@ pub async fn get_me(
         role: auth_user.user.role,
         is_admin,
         is_masquerading,
+        created_at: auth_user
+            .user
+            .created_at
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string(),
+        session_created_at: auth_user
+            .session
+            .created_at
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string(),
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserSettingsResponse {
+    pub entries_per_page: i64,
+    pub theme: Option<String>,
+    pub linkding_configured: bool,
+    pub linkding_api_url: String,
+    pub kagi_configured: bool,
+    pub kagi_language: String,
+}
+
+/// Bundled settings payload for the CSR user-settings page (theme,
+/// entries-per-page, integration status). Mutations still flow through
+/// the per-resource PUT endpoints; this is read-only.
+pub async fn get_user_settings(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> AppResult<Json<UserSettingsResponse>> {
+    let user_id = auth_user.user.id;
+
+    let response = state
+        .db
+        .read_user(move |conn| {
+            let entries_per_page = user_settings::get_entries_per_page(conn, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let theme = user_settings::get_theme(conn, user_id).unwrap_or(None);
+            let save_config =
+                user_settings::get_save_services_config(conn, user_id).unwrap_or_default();
+
+            let linkding = save_config.linkding.as_ref();
+            let linkding_configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
+            let linkding_api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
+
+            let kagi = save_config.kagi.as_ref();
+            let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
+            let kagi_language = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
+
+            Ok::<_, AppError>(UserSettingsResponse {
+                entries_per_page,
+                theme,
+                linkding_configured,
+                linkding_api_url,
+                kagi_configured,
+                kagi_language,
+            })
+        })
+        .await??;
+
+    Ok(Json(response))
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServerConfigResponse {
+    pub git_version: &'static str,
+    pub user_agent: String,
+    pub user_agent_is_default: bool,
+    pub signup_enabled: bool,
+    pub multi_user_enabled: bool,
+}
+
+/// Read-only server configuration for the CSR settings page. These values
+/// are configured via environment variables — there is no mutation API.
+pub async fn get_server_config(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> AppResult<Json<ServerConfigResponse>> {
+    // Auth required so configuration isn't exposed publicly.
+    let _ = auth_user;
+    let user_agent_is_default = state.config.user_agent == crate::config::DEFAULT_USER_AGENT;
+
+    Ok(Json(ServerConfigResponse {
+        git_version: crate::GIT_VERSION,
+        user_agent: state.config.user_agent.clone(),
+        user_agent_is_default,
+        signup_enabled: state.config.signup_enabled,
+        multi_user_enabled: state.config.multi_user_enabled,
     }))
 }
 

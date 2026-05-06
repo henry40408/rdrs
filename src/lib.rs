@@ -63,6 +63,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/user", get(handlers::user::get_current_user))
         .route("/api/me", get(handlers::user::get_me))
         .route("/api/sidebar", get(handlers::user::get_sidebar))
+        .route("/api/user-settings", get(handlers::user::get_user_settings))
+        .route("/api/server-config", get(handlers::user::get_server_config))
         .route("/api/statistics", get(handlers::statistics::get_statistics))
         .route("/api/feeds", get(handlers::feeds::list_feeds))
         .route("/api/user/password", put(handlers::user::change_password))
