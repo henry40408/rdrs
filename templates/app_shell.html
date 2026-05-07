@@ -58,11 +58,12 @@
     <script type="module" src="/static/js/keyboard.js?v={{ git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-entry-list.js?v={{ git_version }}"></script>
     <script type="module" src="{{ script_path }}?v={{ git_version }}"></script>
+    <script type="module" src="/static/js/router.js?v={{ git_version }}"></script>
 </head>
 <body>
     <script type="application/json" id="rdrs-sidebar-bootstrap">{{ sidebar_bootstrap_json|safe }}</script>
     <script type="application/json" id="rdrs-flash-bootstrap">{{ flash_bootstrap_json|safe }}</script>
-    <{{ element_tag }}></{{ element_tag }}>
+    <div id="page-host"><{{ element_tag }}></{{ element_tag }}></div>
     <rdrs-kb-help></rdrs-kb-help>
     <rdrs-kb-pending></rdrs-kb-pending>
     <script>
