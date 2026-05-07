@@ -101,10 +101,10 @@ function escapeHtmlInline(s) {
 }
 
 const TAB_KB = [
-    { key: '1', desc: 'Go to All entries', handle: () => { location.href = '/entries'; return true; } },
-    { key: '2', desc: 'Go to Read entries', handle: () => { location.href = '/entries/read'; return true; } },
-    { key: '3', desc: 'Go to Starred entries', handle: () => { location.href = '/entries/starred'; return true; } },
-    { key: '4', desc: 'Go to Summarized entries', handle: () => { location.href = '/entries/summarized'; return true; } },
+    { key: '1', desc: 'Go to All entries', handle: () => { window.rdrsNavigate('/entries'); return true; } },
+    { key: '2', desc: 'Go to Read entries', handle: () => { window.rdrsNavigate('/entries/read'); return true; } },
+    { key: '3', desc: 'Go to Starred entries', handle: () => { window.rdrsNavigate('/entries/starred'); return true; } },
+    { key: '4', desc: 'Go to Summarized entries', handle: () => { window.rdrsNavigate('/entries/summarized'); return true; } },
 ];
 
 const MODES = {
@@ -195,8 +195,8 @@ const MODES = {
             { key: '3', desc: 'Show read only', handle: (list, page) => { page._setStatus('read'); return true; } },
             { key: '4', desc: 'Show starred only', handle: (list, page) => { page._setStatus('starred'); return true; } },
             { key: 'A', desc: 'Mark above as read', handle: (list) => { list.markAboveAsRead(); return true; } },
-            { key: 'c', desc: 'Go to category page', handle: (list, page) => { if (page._categoryId) location.href = `/categories/${page._categoryId}/entries`; return true; } },
-            { key: 'x', desc: 'Go to category page', handle: (list, page) => { if (page._categoryId) location.href = `/categories/${page._categoryId}/entries`; return true; } },
+            { key: 'c', desc: 'Go to category page', handle: (list, page) => { if (page._categoryId) window.rdrsNavigate(`/categories/${page._categoryId}/entries`); return true; } },
+            { key: 'x', desc: 'Go to category page', handle: (list, page) => { if (page._categoryId) window.rdrsNavigate(`/categories/${page._categoryId}/entries`); return true; } },
         ],
     },
     category: {
@@ -210,7 +210,7 @@ const MODES = {
             { key: '3', desc: 'Show read only', handle: (list, page) => { page._setStatus('read'); return true; } },
             { key: '4', desc: 'Show starred only', handle: (list, page) => { page._setStatus('starred'); return true; } },
             { key: 'A', desc: 'Mark above as read', handle: (list) => { list.markAboveAsRead(); return true; } },
-            { key: 'x', desc: 'Go to unread page', handle: () => { location.href = '/'; return true; } },
+            { key: 'x', desc: 'Go to unread page', handle: () => { window.rdrsNavigate('/'); return true; } },
         ],
     },
     search: {

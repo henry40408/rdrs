@@ -103,19 +103,10 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         this.querySelector('#entries-list').addEventListener('click', (e) => {
             const target = e.target;
 
-            // Feed link
-            if (target.matches('[data-feed-id]') && !target.hasAttribute('data-action')) {
-                e.preventDefault();
-                window.location.href = `/feeds/${target.dataset.feedId}/entries`;
-                return;
-            }
-
-            // Category link
-            if (target.matches('[data-category-id]') && !target.hasAttribute('data-action')) {
-                e.preventDefault();
-                window.location.href = `/categories/${target.dataset.categoryId}/entries`;
-                return;
-            }
+            // Feed and category links in the meta row are now real anchors
+            // (`<a href="/feeds/{id}/entries">`); the document-level SPA
+            // router intercepts them, so this handler doesn't need to do
+            // anything for them.
 
             // Actions
             const action = target.dataset.action;
@@ -421,19 +412,16 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                 }
             }
 
-            // Meta
+            // Meta — feed/category links use real href so the SPA router
+            // intercepts them at document level. The entry-item-meta a
+            // selector in the row-click handler also keeps these clicks
+            // from triggering reading-pane selection.
             let metaParts = [];
             if (this.showFeed) {
-                const feedLink = origin === 'search'
-                    ? `<a href="/feeds/${entry.feed_id}/entries">${escapeHtml(feedTitle)}</a>`
-                    : `<a href="#" data-feed-id="${entry.feed_id}">${escapeHtml(feedTitle)}</a>`;
-                metaParts.push(feedIconHtml + feedLink);
+                metaParts.push(feedIconHtml + `<a href="/feeds/${entry.feed_id}/entries">${escapeHtml(feedTitle)}</a>`);
             }
             if (this.showCategory) {
-                const catLink = origin === 'search'
-                    ? `<a href="/categories/${entry.category_id}/entries">${escapeHtml(entry.category_name)}</a>`
-                    : `<a href="#" data-category-id="${entry.category_id}">${escapeHtml(entry.category_name)}</a>`;
-                metaParts.push(catLink);
+                metaParts.push(`<a href="/categories/${entry.category_id}/entries">${escapeHtml(entry.category_name)}</a>`);
             }
             if (date) {
                 metaParts.push(`<span title="${dateTitle}">${date}</span>`);
@@ -1484,7 +1472,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                         if (list.showFeed) {
                             const entryF = list.getSelectedEntry();
                             if (entryF) {
-                                window.location.href = `/feeds/${entryF.feed_id}/entries`;
+                                window.rdrsNavigate(`/feeds/${entryF.feed_id}/entries`);
                             }
                             return true;
                         }
@@ -1514,7 +1502,7 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
                         if (list.showCategory) {
                             const entryC = list.getSelectedEntry();
                             if (entryC) {
-                                window.location.href = `/categories/${entryC.category_id}/entries`;
+                                window.rdrsNavigate(`/categories/${entryC.category_id}/entries`);
                             }
                             return true;
                         }

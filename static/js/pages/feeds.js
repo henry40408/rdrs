@@ -289,7 +289,7 @@ class RdrsFeedsPage extends HTMLElement {
     _onChange(e) {
         const target = e.target.closest('[data-rdrs-nav]');
         if (!target) return;
-        if (target.value) window.location.href = target.value;
+        if (target.value) window.rdrsNavigate(target.value);
     }
 
     _onClick(e) {

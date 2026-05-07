@@ -82,9 +82,9 @@ const keyboard = {
     handleCombo(combo) {
         // Global navigation shortcuts
         switch (combo) {
-            case 'g h': window.location.href = '/'; return true;
-            case 'g e': window.location.href = '/entries'; return true;
-            case 'g s': window.location.href = '/search'; return true;
+            case 'g h': window.rdrsNavigate('/'); return true;
+            case 'g e': window.rdrsNavigate('/entries'); return true;
+            case 'g s': window.rdrsNavigate('/search'); return true;
         }
         // Page-specific combo handlers
         if (this.handlers.handleCombo) {
