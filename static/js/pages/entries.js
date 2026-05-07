@@ -18,8 +18,13 @@
 // Deep links (?entry=N) work via the existing fallback inside
 // <rdrs-entry-list>._checkEntryParam → _loadEntryByIdInPane (which calls
 // /reader/api/0/stream/items/contents). No deep-link logic at this layer.
-
-import '/static/js/components/rdrs-entry-list.js';
+//
+// <rdrs-entry-list>, <rdrs-sidebar>, <rdrs-flash> are loaded by
+// app_shell.html before this module — module ordering by document order
+// guarantees they're registered before connectedCallback runs. We do NOT
+// re-import them here: the shell uses versioned URLs (?v=GIT_VERSION) and
+// ES-module dedup is URL-exact, so a bare import would re-execute the
+// module and trigger a double customElements.define.
 
 const MARK_AS_READ_DROPDOWN = `
     <div class="form-group form-group-inline">
@@ -159,6 +164,12 @@ class RdrsEntriesPage extends HTMLElement {
         this.dataset.mode = mode;
         const cfg = MODES[mode];
 
+        // Mount the entry-list with `no-auto-load` so we can configure its
+        // attributes from /api/user-settings before it fires its first
+        // stream/contents fetch. Without this, the element would fetch
+        // immediately with the wrong entries-per-page (and reading-pane
+        // action bar would flash empty until save/kagi flags arrived).
+        const attrs = { ...cfg.listAttrs, 'no-auto-load': '' };
         this.innerHTML = `
 <div class="app-layout">
 <rdrs-sidebar active="${cfg.navKey}"></rdrs-sidebar>
@@ -168,7 +179,7 @@ class RdrsEntriesPage extends HTMLElement {
         <div class="list-pane">
             <div class="list-pane-header">${cfg.renderHeader()}</div>
             <div class="list-pane-body">
-                <rdrs-entry-list ${attrString(cfg.listAttrs)} reading-pane="#reading-pane"></rdrs-entry-list>
+                <rdrs-entry-list ${attrString(attrs)} reading-pane="#reading-pane"></rdrs-entry-list>
             </div>
         </div>
         <div class="reading-pane" id="reading-pane">
@@ -181,27 +192,27 @@ class RdrsEntriesPage extends HTMLElement {
         this._wireMarkAsRead();
         this._wireTabActive(mode);
         this._wireKeyboardHandlers(mode);
-        this._loadUserSettings();
+        this._loadAndStart();
     }
 
-    /// Fetch /api/user-settings to learn whether Linkding (save) or Kagi
-    /// (summarize) are configured, then mirror those flags onto
-    /// <rdrs-entry-list> so the reading-pane action bar shows the right
-    /// buttons. Async + non-blocking — the buttons surface as soon as
-    /// the settings land.
-    async _loadUserSettings() {
+    async _loadAndStart() {
         const list = this.querySelector('rdrs-entry-list');
         if (!list) return;
         try {
             const res = await fetch('/api/user-settings');
-            if (!res.ok) return;
-            const settings = await res.json();
-            if (settings.linkding_configured) list.setAttribute('has-save-services', '');
-            if (settings.kagi_configured) list.setAttribute('has-kagi-configured', '');
+            if (res.ok) {
+                const settings = await res.json();
+                if (settings.entries_per_page) {
+                    list.setAttribute('entries-per-page', String(settings.entries_per_page));
+                }
+                if (settings.linkding_configured) list.setAttribute('has-save-services', '');
+                if (settings.kagi_configured) list.setAttribute('has-kagi-configured', '');
+            }
         } catch {
-            // Network error — leave attributes off; reading pane just
-            // won't show Save/Summarize buttons. No flash to avoid noise.
+            // Network error — proceed with defaults; reading-pane action
+            // bar just won't show Save/Summarize buttons.
         }
+        list.loadEntries();
     }
 
     _wireMarkAsRead() {

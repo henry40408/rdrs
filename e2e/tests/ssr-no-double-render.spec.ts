@@ -4,11 +4,12 @@ import { test, expect } from "../fixtures/rdrs.js";
 const STREAM_CONTENTS_PATH = "/reader/api/0/stream/contents/";
 
 /**
- * Asserts that SSR-enabled list pages render their first entry directly from
- * server HTML and skip the redundant `stream/contents` fetch on first paint.
- * This is the perf goal of issue #148.
+ * First paint must fire AT MOST one `stream/contents` fetch. Transitional
+ * during the entries-family CSR migration: routes that have moved to CSR
+ * fire exactly one fetch, routes still on SSR fire zero. Step B3 will
+ * tighten this back to `== 1` once every list page is CSR.
  */
-test.describe("SSR list pages skip first stream/contents fetch", () => {
+test.describe("First paint fires at most one stream/contents fetch", () => {
   test.beforeAll(async ({ api, seed }) => {
     await api.register("ssruser", "password123");
 
@@ -44,6 +45,13 @@ test.describe("SSR list pages skip first stream/contents fetch", () => {
 
   /** Navigate to `path` and return how many `stream/contents` requests fired. */
   async function gotoCounting(page: Page, fullUrl: string): Promise<number> {
+    // Park on about:blank first so in-flight requests from the prior
+    // navigation (e.g. post-login `/` page, which is now CSR and fires its
+    // own stream/contents) settle before we start counting. Without this
+    // step the listener catches both the lingering post-login fetch and
+    // the fresh fetch for the target URL.
+    await page.goto("about:blank");
+
     let count = 0;
     const handler = (req: { url(): string }) => {
       if (req.url().includes(STREAM_CONTENTS_PATH)) count += 1;
@@ -63,13 +71,13 @@ test.describe("SSR list pages skip first stream/contents fetch", () => {
   test("/ (unread)", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     const count = await gotoCounting(page, `${serverUrl}/`);
-    expect(count).toBe(0);
+    expect(count).toBeLessThanOrEqual(1);
   });
 
   test("/entries", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     const count = await gotoCounting(page, `${serverUrl}/entries`);
-    expect(count).toBe(0);
+    expect(count).toBeLessThanOrEqual(1);
   });
 
   test("/feeds/:id/entries", async ({ page, serverUrl, seed }) => {
@@ -83,13 +91,13 @@ test.describe("SSR list pages skip first stream/contents fetch", () => {
       page,
       `${serverUrl}/feeds/${feedId}/entries`
     );
-    expect(count).toBe(0);
+    expect(count).toBeLessThanOrEqual(1);
   });
 
   test("/search?q=Quokka", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     const count = await gotoCounting(page, `${serverUrl}/search?q=Quokka`);
-    expect(count).toBe(0);
+    expect(count).toBeLessThanOrEqual(1);
     await expect(page.getByText("Quokka Discovery")).toBeVisible();
   });
 });
