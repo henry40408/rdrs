@@ -181,6 +181,27 @@ class RdrsEntriesPage extends HTMLElement {
         this._wireMarkAsRead();
         this._wireTabActive(mode);
         this._wireKeyboardHandlers(mode);
+        this._loadUserSettings();
+    }
+
+    /// Fetch /api/user-settings to learn whether Linkding (save) or Kagi
+    /// (summarize) are configured, then mirror those flags onto
+    /// <rdrs-entry-list> so the reading-pane action bar shows the right
+    /// buttons. Async + non-blocking — the buttons surface as soon as
+    /// the settings land.
+    async _loadUserSettings() {
+        const list = this.querySelector('rdrs-entry-list');
+        if (!list) return;
+        try {
+            const res = await fetch('/api/user-settings');
+            if (!res.ok) return;
+            const settings = await res.json();
+            if (settings.linkding_configured) list.setAttribute('has-save-services', '');
+            if (settings.kagi_configured) list.setAttribute('has-kagi-configured', '');
+        } catch {
+            // Network error — leave attributes off; reading pane just
+            // won't show Save/Summarize buttons. No flash to avoid noise.
+        }
     }
 
     _wireMarkAsRead() {

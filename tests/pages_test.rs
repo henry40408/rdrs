@@ -340,7 +340,37 @@ async fn test_entries_page_with_flash() {
 
     response.assert_status_ok();
     let body = response.text();
+    assert!(body.contains("<rdrs-entries-page>"));
+    assert!(body.contains(r#"id="rdrs-flash-bootstrap""#));
     assert!(body.contains("Entries refreshed"));
+}
+
+#[tokio::test]
+async fn test_entries_page_returns_shell() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/entries").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("<rdrs-entries-page>"));
+    assert!(body.contains("/static/js/pages/entries.js"));
+    assert!(!body.contains(r#"class="ssr-entries""#));
+}
+
+#[tokio::test]
+async fn test_summarized_entries_page_returns_shell() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/entries/summarized").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("<rdrs-entries-page>"));
+    assert!(body.contains("/static/js/pages/entries.js"));
+    assert!(!body.contains(r#"class="ssr-entries""#));
 }
 
 #[tokio::test]
@@ -368,77 +398,10 @@ async fn test_user_settings_page_with_flash() {
 // Entry Page with Save Services Tests
 // ============================================================================
 
-#[tokio::test]
-async fn test_entry_page_redirects_with_save_services_configured() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    // Configure Linkding for user
-    app.db
-        .user(move |conn| {
-            let config = serde_json::json!({
-                "linkding": {
-                    "api_url": "https://linkding.example.com",
-                    "api_token": "secret"
-                }
-            });
-            conn.execute(
-                "INSERT INTO user_settings (user_id, save_services) VALUES (?1, ?2)",
-                rusqlite::params![1, config.to_string()],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    // Entry page now redirects to the list page
-    let response = app.server.get("/entries/1").await;
-    response.assert_status_see_other();
-
-    // Entries list page should have has-save-services attribute
-    let response = app.server.get("/entries").await;
-    response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("has-save-services"));
-}
-
-#[tokio::test]
-async fn test_entry_page_redirects_with_kagi_configured() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    // Configure Kagi for user
-    app.db
-        .user(move |conn| {
-            let config = serde_json::json!({
-                "kagi": {
-                    "session_token": "secret-token",
-                    "language": "EN"
-                }
-            });
-            conn.execute(
-                "INSERT INTO user_settings (user_id, save_services) VALUES (?1, ?2)",
-                rusqlite::params![1, config.to_string()],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    // Entry page now redirects to the list page
-    let response = app.server.get("/entries/1").await;
-    response.assert_status_see_other();
-
-    // Entries list page should have has-kagi-configured attribute
-    let response = app.server.get("/entries").await;
-    response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("has-kagi-configured"));
-}
+// `has-save-services` and `has-kagi-configured` attributes are no longer
+// embedded server-side — `<rdrs-entries-page>` fetches `/api/user-settings`
+// after mount and sets them on `<rdrs-entry-list>` client-side. Coverage
+// for that wiring lives in the e2e suite.
 
 // ============================================================================
 // Regular User Permissions Tests
@@ -779,42 +742,6 @@ async fn test_feed_entries_page_other_user() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_entries_page_contains_ssr_entries_json() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "All Cat"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/all.xml", "All Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title, read_at) VALUES (?1, ?2, ?3, datetime('now'))",
-                rusqlite::params![1, "all-guid-1", "Read Entry"],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/entries").await;
-    response.assert_status_ok();
-    let body = response.text();
-
-    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
-    assert!(body.contains("Read Entry"));
-}
-
-#[tokio::test]
 async fn test_category_entries_page_contains_ssr_json() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
@@ -887,120 +814,6 @@ async fn test_feed_entries_page_contains_ssr_json() {
 }
 
 #[tokio::test]
-async fn test_read_entries_page_contains_ssr_entries_json() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Read SSR Cat"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/read-ssr.xml", "Read SSR Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title, read_at) VALUES (?1, ?2, ?3, datetime('now'))",
-                rusqlite::params![1, "read-ssr-guid", "Read SSR Entry"],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/entries/read").await;
-    response.assert_status_ok();
-    let body = response.text();
-
-    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
-    assert!(body.contains("Read SSR Entry"));
-}
-
-#[tokio::test]
-async fn test_starred_entries_page_contains_ssr_entries_json() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Starred SSR Cat"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/star-ssr.xml", "Starred SSR Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title, starred_at) VALUES (?1, ?2, ?3, datetime('now'))",
-                rusqlite::params![1, "star-ssr-guid", "Starred SSR Entry"],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/entries/starred").await;
-    response.assert_status_ok();
-    let body = response.text();
-
-    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
-    assert!(body.contains("Starred SSR Entry"));
-}
-
-#[tokio::test]
-async fn test_summarized_entries_page_contains_ssr_entries_json() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Summary SSR Cat"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/sum-ssr.xml", "Summary SSR Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "sum-ssr-guid", "Summary SSR Entry"],
-            )
-            .unwrap();
-            // entry_summary table marks the entry as having a summary
-            conn.execute(
-                "INSERT INTO entry_summary (entry_id, user_id, status, summary_text) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![1, 1, "completed", "A short summary."],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/entries/summarized").await;
-    response.assert_status_ok();
-    let body = response.text();
-
-    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
-    assert!(body.contains("Summary SSR Entry"));
-}
-
-#[tokio::test]
 async fn test_search_page_contains_ssr_entries_json_when_query_present() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
@@ -1045,202 +858,11 @@ async fn test_search_page_contains_ssr_entries_json_when_query_present() {
     assert!(body.contains(r#"value="Quokka""#));
 }
 
-#[tokio::test]
-async fn test_ssr_continuation_matches_api_convention_no_duplicates_on_load_more() {
-    // Regression test for issue #148 follow-up: SSR's continuation token must be the ID of
-    // the LAST visible entry (matching `stream_contents` API convention), NOT the ID of the
-    // popped boundary entry. Otherwise the next-page query `e.id < c` re-fetches the boundary
-    // entry and the client renders duplicates after Load More.
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Pag Cat"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/pag.xml", "Pag Feed"],
-            )
-            .unwrap();
-            // Pin entries-per-page to MIN_ENTRIES_PER_PAGE (10) so we can predict the boundary.
-            conn.execute(
-                "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)",
-                rusqlite::params![1, 10],
-            )
-            .unwrap();
-            // 12 entries; published_at decreasing so newest first ⇒ entry id 12 .. 1 in SSR.
-            for i in 1..=12 {
-                conn.execute(
-                    "INSERT INTO entry (feed_id, guid, title, published_at) VALUES (?1, ?2, ?3, datetime('now', ?4))",
-                    rusqlite::params![
-                        1,
-                        format!("p-{}", i),
-                        format!("E{}", i),
-                        format!("-{} hours", 12 - i)
-                    ],
-                )
-                .unwrap();
-            }
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/").await;
-    response.assert_status_ok();
-    let body = response.text();
-
-    let marker = r#"<script type="application/json" class="ssr-entries">"#;
-    let json_start = body.find(marker).expect("ssr-entries script") + marker.len();
-    let json_end = body[json_start..]
-        .find("</script>")
-        .expect("ssr-entries script close");
-    let json = &body[json_start..json_start + json_end];
-    let value: serde_json::Value = serde_json::from_str(json).expect("valid SSR JSON");
-
-    let entries = value["entries"].as_array().expect("entries array");
-    assert_eq!(
-        entries.len(),
-        10,
-        "first page should have 10 visible entries"
-    );
-
-    let continuation = value["continuation"]
-        .as_str()
-        .expect("continuation present when more pages exist");
-    let last_visible_id = entries[9]["id"].as_i64().expect("last entry id");
-
-    assert!(
-        continuation.ends_with(&format!("|{}", last_visible_id)),
-        "SSR continuation must encode the last visible entry id in the new \
-         composite '<sort_ts>|<id>' format; got {:?}",
-        continuation
-    );
-}
-
-#[tokio::test]
-async fn test_ssr_load_more_does_not_skip_backdated_entries() {
-    // Regression for #164: when an entry has a HIGH id but an OLD
-    // published_at (e.g. OPML re-import), the legacy `e.id < c` cursor
-    // silently skipped it on Load More. With the composite cursor, every
-    // entry must be visible across pages 1+2.
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Skip Cat"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/skip.xml", "Skip Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)",
-                rusqlite::params![1, 10],
-            )
-            .unwrap();
-
-            // 10 monotonic newest-first (ids 1..=10, descending hours-ago)
-            for i in 1..=10 {
-                conn.execute(
-                    "INSERT INTO entry (feed_id, guid, title, published_at) VALUES (?1, ?2, ?3, datetime('now', ?4))",
-                    rusqlite::params![
-                        1,
-                        format!("mono-{}", i),
-                        format!("M{}", i),
-                        format!("-{} hours", 10 - i)
-                    ],
-                )
-                .unwrap();
-            }
-            // 3 back-dated: NEW ids (11, 12, 13) but OLD timestamps (10+ days ago)
-            for i in 1..=3 {
-                conn.execute(
-                    "INSERT INTO entry (feed_id, guid, title, published_at) VALUES (?1, ?2, ?3, datetime('now', ?4))",
-                    rusqlite::params![
-                        1,
-                        format!("bd-{}", i),
-                        format!("BD{}", i),
-                        format!("-{} days", 10 + i)
-                    ],
-                )
-                .unwrap();
-            }
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    // Page 1: SSR
-    let response = app.server.get("/").await;
-    response.assert_status_ok();
-    let body = response.text();
-    let marker = r#"<script type="application/json" class="ssr-entries">"#;
-    let json_start = body.find(marker).expect("ssr-entries script") + marker.len();
-    let json_end = body[json_start..].find("</script>").unwrap();
-    let json = &body[json_start..json_start + json_end];
-    let value: serde_json::Value = serde_json::from_str(json).expect("valid SSR JSON");
-
-    let page1: Vec<i64> = value["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|e| e["id"].as_i64().unwrap())
-        .collect();
-    assert_eq!(page1.len(), 10, "page 1 should have 10 entries");
-
-    let continuation = value["continuation"]
-        .as_str()
-        .expect("continuation")
-        .to_string();
-    assert!(
-        continuation.contains('|'),
-        "continuation must be composite format"
-    );
-
-    // Page 2: stream/contents API with the SSR-emitted cursor — use add_query_param
-    // to URL-safely encode the composite cursor (contains spaces and `|`).
-    let response = app
-        .server
-        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list")
-        .add_query_param("n", "10")
-        .add_query_param("c", &continuation)
-        .await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    let page2: Vec<i64> = body["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|e| {
-            // GReader item ids look like "tag:google.com,2005:reader/item/<hex>"
-            let s = e["id"].as_str().unwrap();
-            let hex = s.rsplit('/').next().unwrap();
-            i64::from_str_radix(hex, 16).unwrap()
-        })
-        .collect();
-
-    let mut all: Vec<i64> = page1.iter().chain(page2.iter()).copied().collect();
-    all.sort();
-    all.dedup();
-    assert_eq!(
-        all.len(),
-        13,
-        "pages 1+2 must include all 13 entries (10 monotonic + 3 back-dated); got {} unique ids",
-        all.len()
-    );
-}
+// SSR-emitted continuation cursor tests are obsolete after the entries-family
+// CSR migration — `/` no longer SSR-renders entries, so there's no SSR JSON
+// to inspect. Composite-cursor regression coverage lives in
+// `e2e/tests/ssr-no-double-render.spec.ts` (Load More + back-dated blocks),
+// which exercises the same `/reader/api/0/stream/contents` cursor end-to-end.
 
 #[tokio::test]
 async fn test_search_page_without_query_emits_empty_ssr_payload() {
