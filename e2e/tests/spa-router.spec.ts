@@ -61,7 +61,7 @@ test.describe("SPA router", () => {
     }
   });
 
-  test("cross-element nav: / -> /feeds -> /admin (no document reload)", async ({ page, serverUrl }) => {
+  test("cross-element nav: / -> /feeds -> /statistics (no document reload)", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     await expect(page.locator("rdrs-entries-page")).toBeVisible();
 
@@ -72,9 +72,9 @@ test.describe("SPA router", () => {
       await expect(page.locator("rdrs-feeds-page")).toBeVisible();
       await expect(page.locator("rdrs-entries-page")).toHaveCount(0);
 
-      await page.getByTestId("nav-admin").click();
-      await expect(page).toHaveURL(`${serverUrl}/admin`);
-      await expect(page.locator("rdrs-admin-page")).toBeVisible();
+      await page.getByTestId("nav-statistics").click();
+      await expect(page).toHaveURL(`${serverUrl}/statistics`);
+      await expect(page.locator("rdrs-statistics-page")).toBeVisible();
 
       await page.waitForTimeout(200);
       expect(tracker.count()).toBe(0);
@@ -87,8 +87,8 @@ test.describe("SPA router", () => {
     await login(page, serverUrl);
     await page.getByTestId("nav-feeds").click();
     await expect(page.locator("rdrs-feeds-page")).toBeVisible();
-    await page.getByTestId("nav-admin").click();
-    await expect(page.locator("rdrs-admin-page")).toBeVisible();
+    await page.getByTestId("nav-statistics").click();
+    await expect(page.locator("rdrs-statistics-page")).toBeVisible();
 
     const tracker = trackDocumentLoads(page);
     try {
