@@ -113,3 +113,10 @@ document.addEventListener('click', (event) => {
 window.addEventListener('popstate', () => {
     navigateTo(location.pathname + location.search, { skipPushState: true });
 });
+
+// Programmatic entry point for in-app navigation. Page modules call
+// `window.rdrsNavigate('/path')` from keyboard handlers, dropdown
+// onchange, etc. — anywhere they used to do `window.location.href = ...`
+// for an in-app destination. Falls back to a full reload for paths
+// outside the route table (e.g. /login).
+window.rdrsNavigate = (path, opts) => navigateTo(path, opts);

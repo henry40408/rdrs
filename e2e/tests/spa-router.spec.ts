@@ -124,6 +124,32 @@ test.describe("SPA router", () => {
     await expect(page).toHaveURL(`${serverUrl}/`);
   });
 
+  test("entry-list row links (feed / category) navigate via router", async ({ page, serverUrl }) => {
+    // Regression: the row links inside <rdrs-entry-list> used to be
+    // <a href="#" data-feed-id="..."> with a JS handler that did
+    // `window.location.href = ...`. That bypassed the router and
+    // produced a full reload. They now use real <a href="..."> so the
+    // document-level click handler intercepts.
+    await login(page, serverUrl);
+    await page.goto(`${serverUrl}/entries`);
+    await expect(page.getByTestId("entry-item").first()).toBeVisible();
+
+    const tracker = trackDocumentLoads(page);
+    try {
+      // Click the feed link inside the first entry-item meta row.
+      await page
+        .locator("rdrs-entry-list .entry-item .entry-item-meta a")
+        .first()
+        .click();
+      await expect(page).toHaveURL(/\/feeds\/\d+\/entries$/);
+      await expect(page.locator("rdrs-entries-page")).toHaveAttribute("data-mode", "feed");
+      await page.waitForTimeout(200);
+      expect(tracker.count()).toBe(0);
+    } finally {
+      tracker.dispose();
+    }
+  });
+
   test("non-routed link triggers full reload", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
 
