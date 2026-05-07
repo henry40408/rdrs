@@ -104,9 +104,9 @@ This change lands in B3 (the cleanup PR), not B1. During B1 and B2 the SSR-hydra
 
 `entries.js` MUST import `/static/js/components/rdrs-entry-list.js` so the element is registered before `<rdrs-entries-page>` mounts an instance into the DOM.
 
-### New endpoint: `GET /api/entries/{id}`
+### New endpoint: `GET /api/entries/{id}` (lands in B3)
 
-Returns the data needed to render the reading pane for a single entry:
+Returns the data needed to render the reading pane for a single entry. This endpoint is **deferred to B3**: during B1 and B2 the existing `<rdrs-entry-list>._loadEntryByIdInPane` fallback (which calls `POST /reader/api/0/stream/items/contents`) handles `?entry=N` deep links unchanged. B3 — when the SSR-hydration paths are removed from `<rdrs-entry-list>` — replaces the GReader call with this new endpoint for a clean RDRS-native shape:
 
 ```jsonc
 {
@@ -208,8 +208,8 @@ Total network requests on first paint:
 | `src/handlers/pages.rs::{unread,entries,read_entries,starred_entries,summarized_entries,feed_entries,category_entries,search}_page` | rewrite | Standard `(Flash, AppShellTemplate)` shape |
 | `src/handlers/pages.rs::entry_page` | unchanged | Already a redirect |
 | `src/handlers/pages.rs::EntryQuery,EntryPageQuery,fetch_entry_list_config,SsrEntryView,SsrReadingPaneEntry,*Template` | delete (B3) | All SSR scaffolding removed |
-| `src/handlers/entry.rs::get_entry_json` (new) | add (B1) | `GET /api/entries/{id}` |
-| `src/lib.rs` | edit | Register new route; keep page routes pointing at refactored handlers |
+| `src/handlers/entry.rs::get_entry_json` (new) | add (B3) | `GET /api/entries/{id}` — replaces GReader call in `_loadEntryByIdInPane` |
+| `src/lib.rs` | edit | Register new route in B3; refactor page routes in B1/B2 |
 | `src/handlers/static_assets.rs::FILES` | edit | Add `entries.js` |
 | `static/js/pages/entries.js` (new) | add (B1) | `<rdrs-entries-page>` element |
 | `static/js/components/rdrs-entry-list.js` | edit (B3) | Drop SSR hydration paths |
@@ -224,8 +224,8 @@ Total network requests on first paint:
 
 - Add `<rdrs-entries-page>` element supporting modes `unread`, `all`, `read`, `starred`, `summarized`.
 - Migrate handlers for `/`, `/entries`, `/entries/read`, `/entries/starred`, `/entries/summarized`.
-- Add `GET /api/entries/{id}` endpoint.
 - Add `entries.js` to static-assets allowlist.
+- `?entry=N` deep links continue to work via the existing `<rdrs-entry-list>._loadEntryByIdInPane` GReader fallback. The new `GET /api/entries/{id}` endpoint is added in B3 alongside the entry-list cleanup.
 - Templates `entries.html`, `unread.html`, `entries_archive.html` are kept temporarily to avoid breaking B2's feed/category templates that still reference the same SSR helpers — but no longer rendered.
 
   Actually: simpler to delete the three list templates here, since their handlers no longer reference them. Keep only `feed_entries.html`, `category_entries.html`, `search.html` until their respective PRs.
@@ -246,7 +246,8 @@ Total network requests on first paint:
 - Delete `search.html`, `SearchTemplate`.
 - Delete `fetch_entry_list_config`, `SsrEntryView`, `SsrReadingPaneEntry`, and any remaining SSR view structs in `pages.rs`.
 - Delete `entry_list_content` and `reading_pane` macros in `templates/macros.html`.
-- Drop SSR hydration paths in `rdrs-entry-list.js` (`_extractSsrData`, `_hydrateSsr`, `_consumeSsrData`, `_ssrData`, `_hydrated`, `hydrated`).
+- Drop SSR hydration paths in `rdrs-entry-list.js` (`_extractSsrData`, `_hydrateSsr`, `_consumeSsrData`, `_ssrData`, `_hydrated`, `hydrated`, `_hydrateReadingPaneSsr`).
+- Add `GET /api/entries/{id}` endpoint and migrate `_loadEntryByIdInPane` to use it (replacing the GReader call).
 - Reframe `ssr-no-double-render.spec.ts` block 1: rename describe to "First paint fires exactly one stream/contents fetch", change all `count.toBe(0)` to `count.toBe(1)`, drop the issue #148 reference, blocks 2/3 unchanged.
 - Verify all e2e specs green.
 
