@@ -838,9 +838,12 @@ async fn test_unread_page() {
     let response = server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    // Username is displayed in the navigation bar
-    assert!(body.contains("admin"));
-    assert!(body.contains("Sign Out"));
+    // CSR shell — sidebar (incl. username + Sign Out) is rendered client-side
+    // by <rdrs-sidebar>. The initial HTML carries the username inside the
+    // sidebar bootstrap JSON.
+    assert!(body.contains("<rdrs-entries-page>"));
+    assert!(body.contains(r#"id="rdrs-sidebar-bootstrap""#));
+    assert!(body.contains(r#""username":"admin""#));
 }
 
 #[tokio::test]
@@ -950,8 +953,9 @@ async fn test_unread_page_shows_admin_link_for_admin() {
     let response = server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("data-testid=\"nav-admin\""));
-    assert!(body.contains(r#"href="/admin""#));
+    // Admin nav is rendered client-side by <rdrs-sidebar>; the initial HTML
+    // carries `is_admin: true` in the sidebar bootstrap JSON.
+    assert!(body.contains(r#""is_admin":true"#));
 }
 
 #[tokio::test]
@@ -1068,8 +1072,11 @@ async fn test_flash_message_on_unread_page() {
 
     response.assert_status_ok();
     let body = response.text();
+    // Flash messages are now embedded in the rdrs-flash-bootstrap JSON
+    // for the rdrs-flash element to consume on connect.
+    assert!(body.contains(r#"id="rdrs-flash-bootstrap""#));
     assert!(body.contains("Warning test"));
-    assert!(body.contains("flash-warning"));
+    assert!(body.contains(r#""level":"warning""#));
 }
 
 fn parse_session_ts(s: &str) -> DateTime<Utc> {

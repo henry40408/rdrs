@@ -561,86 +561,33 @@ pub async fn register_page(
     )
 }
 
-#[derive(Template)]
-#[template(path = "unread.html")]
-pub struct UnreadTemplate {
-    pub username: String,
-    pub role: String,
-    pub sign_in_time: String,
-    pub unread_count: i64,
-    pub is_admin: bool,
-    pub is_masquerading: bool,
-    pub flash_messages: Vec<FlashMessage>,
-    pub entries_per_page: i64,
-    pub has_save_services: bool,
-    pub has_kagi_configured: bool,
-    pub ssr_entries_json: String,
-    pub ssr_entry_views: Vec<SsrEntryView>,
-    pub ssr_has_continuation: bool,
-    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
-    pub ssr_reading_pane_json: String,
-    pub theme: Option<String>,
-    pub git_version: &'static str,
-    pub sidebar_categories: Vec<SidebarCategory>,
-    pub sidebar_unread_count: i64,
-}
-
-impl IntoResponse for UnreadTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
+/// Serves the CSR shell for `/` (unread). The list itself is loaded by
+/// `<rdrs-entries-page>` (mode `unread`) from `/reader/api/0/stream/contents`.
 pub async fn unread_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
-    Query(query): Query<EntryQuery>,
     flash: Flash,
-) -> (Flash, UnreadTemplate) {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        // When masquerading, check if original user is admin
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
-
+) -> (Flash, AppShellTemplate) {
     let user_id = auth_user.user.id;
-    let filter = entry::EntryFilter {
-        unread_only: true,
-        ..Default::default()
-    };
-    let cfg = fetch_entry_list_config(&state, user_id, filter, query.entry).await;
+    let theme = state
+        .db
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .await
+        .unwrap_or(None);
+
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
     (
-        flash.clone(),
-        UnreadTemplate {
-            username: auth_user.user.username.clone(),
-            role: auth_user.user.role.as_str().to_string(),
-            sign_in_time: auth_user
-                .session
-                .created_at
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string(),
-            unread_count: cfg.sidebar_unread_count,
-            is_admin,
-            is_masquerading,
-            flash_messages: flash.messages,
-            entries_per_page: cfg.entries_per_page,
-            has_save_services: cfg.has_save_services,
-            has_kagi_configured: cfg.has_kagi_configured,
-            ssr_entries_json: cfg.ssr_entries_json,
-            ssr_entry_views: cfg.ssr_entry_views,
-            ssr_has_continuation: cfg.ssr_has_continuation,
-            ssr_reading_pane: cfg.ssr_reading_pane,
-            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
-            theme: cfg.theme,
+        flash,
+        AppShellTemplate {
+            title: "Unread - RDRS",
+            element_tag: "rdrs-entries-page",
+            script_path: "/static/js/pages/entries.js",
+            theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories: cfg.sidebar_categories,
-            sidebar_unread_count: cfg.sidebar_unread_count,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
         },
     )
 }
@@ -764,71 +711,33 @@ pub async fn feeds_page(
     )
 }
 
-#[derive(Template)]
-#[template(path = "entries.html")]
-pub struct EntriesTemplate {
-    pub username: String,
-    pub is_admin: bool,
-    pub is_masquerading: bool,
-    pub flash_messages: Vec<FlashMessage>,
-    pub entries_per_page: i64,
-    pub has_save_services: bool,
-    pub has_kagi_configured: bool,
-    pub ssr_entries_json: String,
-    pub ssr_entry_views: Vec<SsrEntryView>,
-    pub ssr_has_continuation: bool,
-    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
-    pub ssr_reading_pane_json: String,
-    pub theme: Option<String>,
-    pub git_version: &'static str,
-    pub sidebar_categories: Vec<SidebarCategory>,
-    pub sidebar_unread_count: i64,
-}
-
-impl IntoResponse for EntriesTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
+/// Serves the CSR shell for `/entries` (all). The list itself is loaded by
+/// `<rdrs-entries-page>` (mode `all`) from `/reader/api/0/stream/contents`.
 pub async fn entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
-    Query(query): Query<EntryQuery>,
     flash: Flash,
-) -> (Flash, EntriesTemplate) {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
+) -> (Flash, AppShellTemplate) {
+    let user_id = auth_user.user.id;
+    let theme = state
+        .db
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .await
+        .unwrap_or(None);
 
-    let filter = entry::EntryFilter::default();
-    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
     (
-        flash.clone(),
-        EntriesTemplate {
-            username: auth_user.user.username,
-            is_admin,
-            is_masquerading,
-            flash_messages: flash.messages,
-            entries_per_page: cfg.entries_per_page,
-            has_save_services: cfg.has_save_services,
-            has_kagi_configured: cfg.has_kagi_configured,
-            ssr_entries_json: cfg.ssr_entries_json,
-            ssr_entry_views: cfg.ssr_entry_views,
-            ssr_has_continuation: cfg.ssr_has_continuation,
-            ssr_reading_pane: cfg.ssr_reading_pane,
-            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
-            theme: cfg.theme,
+        flash,
+        AppShellTemplate {
+            title: "Entries - RDRS",
+            element_tag: "rdrs-entries-page",
+            script_path: "/static/js/pages/entries.js",
+            theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories: cfg.sidebar_categories,
-            sidebar_unread_count: cfg.sidebar_unread_count,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
         },
     )
 }
@@ -910,41 +819,8 @@ pub async fn settings_page(
     )
 }
 
-// Archive entries pages (read/starred/summarized)
-#[derive(Template)]
-#[template(path = "entries_archive.html")]
-pub struct ArchiveEntriesTemplate {
-    pub username: String,
-    pub is_admin: bool,
-    pub is_masquerading: bool,
-    pub flash_messages: Vec<FlashMessage>,
-    pub entries_per_page: i64,
-    pub has_save_services: bool,
-    pub has_kagi_configured: bool,
-    pub page_mode: String,
-    pub page_title: String,
-    pub ssr_entries_json: String,
-    pub ssr_entry_views: Vec<SsrEntryView>,
-    pub ssr_has_continuation: bool,
-    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
-    pub ssr_reading_pane_json: String,
-    pub theme: Option<String>,
-    pub git_version: &'static str,
-    pub sidebar_categories: Vec<SidebarCategory>,
-    pub sidebar_unread_count: i64,
-}
-
-impl IntoResponse for ArchiveEntriesTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-/// Helper to fetch common entry-list config + SSR entries from DB.
-/// Common entry-list page data.
+/// Common entry-list page data, shared by the SSR-still handlers
+/// (category / feed / search). Removed in B3 along with their templates.
 struct EntryListConfig {
     entries_per_page: i64,
     has_save_services: bool,
@@ -959,231 +835,92 @@ struct EntryListConfig {
     sidebar_unread_count: i64,
 }
 
-async fn fetch_entry_list_config(
-    state: &AppState,
-    user_id: i64,
-    filter: entry::EntryFilter,
-    reading_pane_entry_id: Option<i64>,
-) -> EntryListConfig {
-    fetch_entry_list_config_with_sort(
-        state,
-        user_id,
-        filter,
-        reading_pane_entry_id,
-        entry::EntrySortOrder::PublishedAt,
-    )
-    .await
-}
-
-async fn fetch_entry_list_config_with_sort(
-    state: &AppState,
-    user_id: i64,
-    filter: entry::EntryFilter,
-    reading_pane_entry_id: Option<i64>,
-    sort_order: entry::EntrySortOrder,
-) -> EntryListConfig {
-    let secret = state.config.image_proxy_secret.clone();
-    let proxy_base_url = state.config.public_base_url.clone();
-    state
-        .db
-        .read_user(move |c| {
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
-            let save_config =
-                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
-            let kagi_configured = save_config
-                .kagi
-                .as_ref()
-                .map(|k| k.is_configured())
-                .unwrap_or(false);
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            let ssr = fetch_entries_for_ssr_with_sort(c, user_id, &filter, epp, sort_order);
-            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
-
-            let rp = reading_pane_entry_id.and_then(|eid| {
-                fetch_reading_pane_entry(c, user_id, eid, &secret, proxy_base_url.as_deref())
-            });
-            let rp_json = rp
-                .as_ref()
-                .map(|e| escape_json_for_script(&serde_json::to_string(e).unwrap_or_default()))
-                .unwrap_or_default();
-
-            EntryListConfig {
-                entries_per_page: epp,
-                has_save_services: save_services,
-                has_kagi_configured: kagi_configured,
-                ssr_entries_json: ssr.json,
-                ssr_entry_views: ssr.views,
-                ssr_has_continuation: ssr.has_continuation,
-                ssr_reading_pane: rp,
-                ssr_reading_pane_json: rp_json,
-                theme,
-                sidebar_categories: sidebar_cats,
-                sidebar_unread_count: sidebar_unread,
-            }
-        })
-        .await
-        .unwrap_or(EntryListConfig {
-            entries_per_page: user_settings::DEFAULT_ENTRIES_PER_PAGE,
-            has_save_services: false,
-            has_kagi_configured: false,
-            ssr_entries_json: "null".to_string(),
-            ssr_entry_views: vec![],
-            ssr_has_continuation: false,
-            ssr_reading_pane: None,
-            ssr_reading_pane_json: String::new(),
-            theme: None,
-            sidebar_categories: vec![],
-            sidebar_unread_count: 0,
-        })
-}
-
+/// Serves the CSR shell for `/entries/read`. Mode `read` in `<rdrs-entries-page>`.
 pub async fn read_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
-    Query(query): Query<EntryQuery>,
     flash: Flash,
-) -> (Flash, ArchiveEntriesTemplate) {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
+) -> (Flash, AppShellTemplate) {
+    let user_id = auth_user.user.id;
+    let theme = state
+        .db
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .await
+        .unwrap_or(None);
 
-    let filter = entry::EntryFilter {
-        read_only: true,
-        ..Default::default()
-    };
-    let cfg = fetch_entry_list_config_with_sort(
-        &state,
-        auth_user.user.id,
-        filter,
-        query.entry,
-        entry::EntrySortOrder::ReadAt,
-    )
-    .await;
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
     (
-        flash.clone(),
-        ArchiveEntriesTemplate {
-            username: auth_user.user.username,
-            is_admin,
-            is_masquerading,
-            flash_messages: flash.messages,
-            entries_per_page: cfg.entries_per_page,
-            has_save_services: cfg.has_save_services,
-            has_kagi_configured: cfg.has_kagi_configured,
-            page_mode: "read".to_string(),
-            page_title: "Read Entries".to_string(),
-            ssr_entries_json: cfg.ssr_entries_json,
-            ssr_entry_views: cfg.ssr_entry_views,
-            ssr_has_continuation: cfg.ssr_has_continuation,
-            ssr_reading_pane: cfg.ssr_reading_pane,
-            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
-            theme: cfg.theme,
+        flash,
+        AppShellTemplate {
+            title: "Read Entries - RDRS",
+            element_tag: "rdrs-entries-page",
+            script_path: "/static/js/pages/entries.js",
+            theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories: cfg.sidebar_categories,
-            sidebar_unread_count: cfg.sidebar_unread_count,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
         },
     )
 }
 
+/// Serves the CSR shell for `/entries/starred`. Mode `starred` in `<rdrs-entries-page>`.
 pub async fn starred_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
-    Query(query): Query<EntryQuery>,
     flash: Flash,
-) -> (Flash, ArchiveEntriesTemplate) {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
+) -> (Flash, AppShellTemplate) {
+    let user_id = auth_user.user.id;
+    let theme = state
+        .db
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .await
+        .unwrap_or(None);
 
-    let filter = entry::EntryFilter {
-        starred_only: true,
-        ..Default::default()
-    };
-    // Match the GReader `stream/contents` API which sorts the `starred` stream by `starred_at`.
-    // SSR using `PublishedAt` here would let Load More return entries in a different order than
-    // the SSR-rendered first page.
-    let cfg = fetch_entry_list_config_with_sort(
-        &state,
-        auth_user.user.id,
-        filter,
-        query.entry,
-        entry::EntrySortOrder::StarredAt,
-    )
-    .await;
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
     (
-        flash.clone(),
-        ArchiveEntriesTemplate {
-            username: auth_user.user.username,
-            is_admin,
-            is_masquerading,
-            flash_messages: flash.messages,
-            entries_per_page: cfg.entries_per_page,
-            has_save_services: cfg.has_save_services,
-            has_kagi_configured: cfg.has_kagi_configured,
-            page_mode: "starred".to_string(),
-            page_title: "Starred Entries".to_string(),
-            ssr_entries_json: cfg.ssr_entries_json,
-            ssr_entry_views: cfg.ssr_entry_views,
-            ssr_has_continuation: cfg.ssr_has_continuation,
-            ssr_reading_pane: cfg.ssr_reading_pane,
-            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
-            theme: cfg.theme,
+        flash,
+        AppShellTemplate {
+            title: "Starred Entries - RDRS",
+            element_tag: "rdrs-entries-page",
+            script_path: "/static/js/pages/entries.js",
+            theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories: cfg.sidebar_categories,
-            sidebar_unread_count: cfg.sidebar_unread_count,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
         },
     )
 }
 
+/// Serves the CSR shell for `/entries/summarized`. Mode `summarized` in `<rdrs-entries-page>`.
 pub async fn summarized_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
-    Query(query): Query<EntryQuery>,
     flash: Flash,
-) -> (Flash, ArchiveEntriesTemplate) {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
+) -> (Flash, AppShellTemplate) {
+    let user_id = auth_user.user.id;
+    let theme = state
+        .db
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .await
+        .unwrap_or(None);
 
-    let filter = entry::EntryFilter {
-        has_summary: Some(true),
-        ..Default::default()
-    };
-    let cfg = fetch_entry_list_config(&state, auth_user.user.id, filter, query.entry).await;
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
     (
-        flash.clone(),
-        ArchiveEntriesTemplate {
-            username: auth_user.user.username,
-            is_admin,
-            is_masquerading,
-            flash_messages: flash.messages,
-            entries_per_page: cfg.entries_per_page,
-            has_save_services: cfg.has_save_services,
-            has_kagi_configured: cfg.has_kagi_configured,
-            page_mode: "summarized".to_string(),
-            page_title: "Summarized Entries".to_string(),
-            ssr_entries_json: cfg.ssr_entries_json,
-            ssr_entry_views: cfg.ssr_entry_views,
-            ssr_has_continuation: cfg.ssr_has_continuation,
-            ssr_reading_pane: cfg.ssr_reading_pane,
-            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
-            theme: cfg.theme,
+        flash,
+        AppShellTemplate {
+            title: "Summarized Entries - RDRS",
+            element_tag: "rdrs-entries-page",
+            script_path: "/static/js/pages/entries.js",
+            theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories: cfg.sidebar_categories,
-            sidebar_unread_count: cfg.sidebar_unread_count,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
         },
     )
 }
