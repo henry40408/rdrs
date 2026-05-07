@@ -233,6 +233,7 @@ const MODES = {
             'show-category': '',
             'no-auto-load': '',
             'empty-message': 'Enter a search term and press Enter to search.',
+            'placeholder-message': 'Enter a search term and press Enter to search.',
         },
         kb: [
             { key: '/', desc: 'Focus search box', handle: (list, page) => { const input = page.querySelector('#filter-search'); if (input) input.focus(); return true; } },
@@ -264,6 +265,18 @@ function attrString(attrs) {
         .join(' ');
 }
 
+/// Initial reading-pane content. When the URL carries `?entry=N` we know an
+/// entry will be loaded into the pane shortly after `loadEntries()` resolves
+/// (`<rdrs-entry-list>._checkEntryParam` -> `_loadEntryByIdInPane`), so we
+/// show "Loading..." instead of the "Select an entry" empty state to avoid
+/// telling the user "nothing to read" while a fetch is on its way.
+function readingPaneInitialHtml() {
+    const hasEntry = new URLSearchParams(location.search).has('entry');
+    return hasEntry
+        ? '<div class="reading-pane-content"><p class="muted">Loading...</p></div>'
+        : '<div class="reading-pane-empty">Select an entry to read</div>';
+}
+
 class RdrsEntriesPage extends HTMLElement {
     connectedCallback() {
         const mode = inferMode();
@@ -292,9 +305,7 @@ class RdrsEntriesPage extends HTMLElement {
                 <rdrs-entry-list ${attrString(attrs)} reading-pane="#reading-pane"></rdrs-entry-list>
             </div>
         </div>
-        <div class="reading-pane" id="reading-pane">
-            <div class="reading-pane-empty">Select an entry to read</div>
-        </div>
+        <div class="reading-pane" id="reading-pane">${readingPaneInitialHtml()}</div>
     </div>
 </main>
 </div>`;
@@ -320,9 +331,7 @@ class RdrsEntriesPage extends HTMLElement {
             <div class="list-pane-header" id="list-pane-header"><h1>Loading…</h1></div>
             <div class="list-pane-body" id="list-pane-body"></div>
         </div>
-        <div class="reading-pane" id="reading-pane">
-            <div class="reading-pane-empty">Select an entry to read</div>
-        </div>
+        <div class="reading-pane" id="reading-pane">${readingPaneInitialHtml()}</div>
     </div>
 </main>
 </div>`;
