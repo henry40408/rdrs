@@ -213,6 +213,15 @@ code {
     min-height: 100vh;
 }
 
+/* The SPA router mounts <rdrs-X-page> directly inside #page-host
+   (which is the <main class="main-content"> element). Use
+   `display: contents` so the page-element is transparent to layout —
+   its children (.page-content, .split-view, etc.) act as direct
+   children of <main> and inherit its flex / overflow rules. */
+#page-host > * {
+    display: contents;
+}
+
 /* ===== Sidebar ===== */
 .sidebar {
     width: var(--sidebar-width);

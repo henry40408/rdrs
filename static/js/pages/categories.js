@@ -24,10 +24,7 @@ class RdrsCategoriesPage extends HTMLElement {
     /// the tbody — that way `<rdrs-flash>` and its messages survive reloads.
     _renderShell() {
         this.innerHTML = `
-<div class="app-layout">
-<rdrs-sidebar active="categories"></rdrs-sidebar>
-<main class="main-content">
-    <div class="page-content">
+<div class="page-content">
     <rdrs-flash class="flash-container"></rdrs-flash>
     <h1>Categories</h1>
     <form id="add-form" data-rdrs-add-form>
@@ -48,8 +45,6 @@ class RdrsCategoriesPage extends HTMLElement {
         </thead>
         <tbody id="categories-table" data-testid="categories-table"></tbody>
     </table>
-    </div>
-</main>
 </div>`;
 
         this.querySelector('[data-rdrs-add-form]').addEventListener('submit', (e) => this._onAdd(e));

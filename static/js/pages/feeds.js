@@ -29,10 +29,7 @@ class RdrsFeedsPage extends HTMLElement {
 
     _renderShell() {
         this.innerHTML = `
-<div class="app-layout">
-<rdrs-sidebar active="feeds"></rdrs-sidebar>
-<main class="main-content">
-    <div class="page-content">
+<div class="page-content">
     <rdrs-flash class="flash-container"></rdrs-flash>
     <h1>Feeds</h1>
     <div class="feeds-toolbar">
@@ -148,8 +145,6 @@ class RdrsFeedsPage extends HTMLElement {
             </div>
         </form>
     </dialog>
-    </div>
-</main>
 </div>`;
 
         this.addEventListener('click', (e) => this._onClick(e));

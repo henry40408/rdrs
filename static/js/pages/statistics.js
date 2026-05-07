@@ -10,17 +10,32 @@ class RdrsStatisticsPage extends HTMLElement {
         this._period = params.get('period') || '7d';
         this._customFrom = params.get('from') || '';
         this._customTo = params.get('to') || '';
-        this.render();
+        this._renderShell();
+        this._renderHeader();
+        this._renderBody({ loading: true });
         this.fetchData();
     }
 
-    render(data, errorMessage) {
+    /// Render shell + flash once. Subsequent re-renders touch only
+    /// #stats-header and #stats-body — otherwise rebuilding innerHTML
+    /// would unmount <rdrs-flash> on every fetchData(). Sidebar lives
+    /// in app_shell.html outside this element entirely.
+    _renderShell() {
+        this.innerHTML = `
+<div class="page-content">
+    <rdrs-flash class="flash-container"></rdrs-flash>
+    <div id="stats-header"></div>
+    <div id="stats-body"></div>
+</div>`;
+    }
+
+    _renderHeader(data) {
         const active = data ? data.active_period : this._period;
         const customFrom = data ? data.custom_from : this._customFrom;
         const customTo = data ? data.custom_to : this._customTo;
         const isActive = (p) => p === active ? ' active' : '';
 
-        const headerHtml = `
+        this.querySelector('#stats-header').innerHTML = `
         <div class="stats-header">
             <h1>Statistics</h1>
             <form class="stats-period" method="get" action="/statistics">
@@ -37,29 +52,6 @@ class RdrsStatisticsPage extends HTMLElement {
             </form>
         </div>`;
 
-        const sidebarHtml = `<rdrs-sidebar active="statistics"></rdrs-sidebar>`;
-
-        let bodyHtml;
-        if (errorMessage) {
-            bodyHtml = `<p class="muted" data-testid="stats-error">${escapeHtml(errorMessage)}</p>`;
-        } else if (!data) {
-            bodyHtml = `<p class="muted" data-testid="stats-loading">Loading statistics&hellip;</p>`;
-        } else {
-            bodyHtml = this._renderContent(data);
-        }
-
-        this.innerHTML = `
-<div class="app-layout">
-${sidebarHtml}
-<main class="main-content">
-    <div class="page-content">
-    <rdrs-flash class="flash-container"></rdrs-flash>
-    ${headerHtml}
-    ${bodyHtml}
-    </div>
-</main>
-</div>`;
-
         // Intercept the custom-date Apply submit so it goes through the
         // SPA router instead of triggering a full GET reload.
         const form = this.querySelector('form.stats-period');
@@ -69,6 +61,18 @@ ${sidebarHtml}
                 const params = new URLSearchParams(new FormData(form));
                 window.rdrsNavigate('/statistics?' + params.toString());
             });
+        }
+    }
+
+    _renderBody(state) {
+        const target = this.querySelector('#stats-body');
+        if (!target) return;
+        if (state.error) {
+            target.innerHTML = `<p class="muted" data-testid="stats-error">${escapeHtml(state.error)}</p>`;
+        } else if (state.loading) {
+            target.innerHTML = `<p class="muted" data-testid="stats-loading">Loading statistics&hellip;</p>`;
+        } else {
+            target.innerHTML = this._renderContent(state.data);
         }
     }
 
@@ -186,13 +190,14 @@ ${sidebarHtml}
         try {
             const resp = await fetch('/api/statistics' + qs, { credentials: 'same-origin' });
             if (!resp.ok) {
-                this.render(undefined, `Failed to load statistics (${resp.status}).`);
+                this._renderBody({ error: `Failed to load statistics (${resp.status}).` });
                 return;
             }
             const data = await resp.json();
-            this.render(data);
+            this._renderHeader(data);
+            this._renderBody({ data });
         } catch (e) {
-            this.render(undefined, 'Network error while loading statistics.');
+            this._renderBody({ error: 'Network error while loading statistics.' });
         }
     }
 }

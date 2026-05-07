@@ -78,6 +78,13 @@ async function navigateTo(path, opts = {}) {
         window.scrollTo(0, 0);
     }
     // popstate-driven nav inherits the browser's auto scroll restoration.
+
+    // Notify subscribers (sidebar, anything else that reflects the URL)
+    // that the SPA URL changed. popstate already fires this for back/
+    // forward; we synthesise it for click-driven navigations too.
+    window.dispatchEvent(new CustomEvent('rdrs-router:navigated', {
+        detail: { path: location.pathname + location.search },
+    }));
 }
 
 function shouldIntercept(event, anchor) {

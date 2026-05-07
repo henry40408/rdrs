@@ -63,7 +63,10 @@
 <body>
     <script type="application/json" id="rdrs-sidebar-bootstrap">{{ sidebar_bootstrap_json|safe }}</script>
     <script type="application/json" id="rdrs-flash-bootstrap">{{ flash_bootstrap_json|safe }}</script>
-    <div id="page-host"><{{ element_tag }}></{{ element_tag }}></div>
+    <div class="app-layout">
+        <rdrs-sidebar></rdrs-sidebar>
+        <main class="main-content" id="page-host"><{{ element_tag }}></{{ element_tag }}></main>
+    </div>
     <rdrs-kb-help></rdrs-kb-help>
     <rdrs-kb-pending></rdrs-kb-pending>
     <script>

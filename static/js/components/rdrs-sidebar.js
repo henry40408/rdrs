@@ -42,6 +42,14 @@ class RdrsSidebar extends HTMLElement {
     static get observedAttributes() { return ['active', 'active-category-id']; }
 
     connectedCallback() {
+        // Sidebar lives in the shell (outside #page-host) so it persists
+        // across SPA navigation. The router fires `rdrs-router:navigated`
+        // after each nav; we recompute the active highlight from
+        // location.pathname.
+        this._syncActiveFromPath();
+        this._navListener = () => this._syncActiveFromPath();
+        window.addEventListener('rdrs-router:navigated', this._navListener);
+
         const initial = readBootstrap() || readCachedSidebar();
         if (initial) {
             this._data = initial;
@@ -52,8 +60,47 @@ class RdrsSidebar extends HTMLElement {
         this.fetchData();
     }
 
+    disconnectedCallback() {
+        if (this._navListener) {
+            window.removeEventListener('rdrs-router:navigated', this._navListener);
+        }
+    }
+
     attributeChangedCallback() {
         if (this._data) this.render(this._data);
+    }
+
+    /// Map location.pathname to (active nav-key, active category id) and
+    /// reflect both as attributes. attributeChangedCallback re-renders
+    /// when the values actually change.
+    _syncActiveFromPath() {
+        const path = location.pathname;
+        let active = '';
+        let categoryId = 0;
+        if (path === '/' || path === '') active = 'unread';
+        else if (path === '/entries/starred') active = 'starred';
+        else if (path === '/entries' || path === '/entries/read' || path === '/entries/summarized') active = 'entries';
+        else if (path === '/search') active = 'search';
+        else if (path === '/feeds') active = 'feeds';
+        else if (path === '/categories') active = 'categories';
+        else if (path === '/admin') active = 'admin';
+        else if (path === '/settings') active = 'settings';
+        else if (path === '/user-settings') active = 'user-settings';
+        else if (path === '/statistics') active = 'statistics';
+        else if (/^\/feeds\/\d+\/entries$/.test(path)) active = 'feeds';
+        else {
+            const m = path.match(/^\/categories\/(\d+)\/entries$/);
+            if (m) categoryId = parseInt(m[1], 10);
+        }
+        if ((this.getAttribute('active') || '') !== active) {
+            if (active) this.setAttribute('active', active);
+            else this.removeAttribute('active');
+        }
+        const catAttr = categoryId ? String(categoryId) : '';
+        if ((this.getAttribute('active-category-id') || '') !== catAttr) {
+            if (categoryId) this.setAttribute('active-category-id', catAttr);
+            else this.removeAttribute('active-category-id');
+        }
     }
 
     async fetchData() {

@@ -124,6 +124,45 @@ test.describe("SPA router", () => {
     await expect(page).toHaveURL(`${serverUrl}/`);
   });
 
+  test("sidebar persists across SPA navigation", async ({ page, serverUrl }) => {
+    // Regression: every page-element used to render <rdrs-sidebar> inside
+    // its own innerHTML. The router's host.replaceChildren swap then
+    // unmounted + remounted the sidebar on every nav, which visually
+    // pulled it down/up. Sidebar now lives in app_shell.html outside
+    // #page-host; tag the instance and verify the tag survives several
+    // navs (cross-element, same-element, popstate, statistics-internal
+    // data fetch).
+    await login(page, serverUrl);
+    await expect(page.locator("rdrs-sidebar")).toHaveCount(1);
+
+    // Tag the sidebar.
+    await page.evaluate(() => {
+      document.querySelector("rdrs-sidebar")?.setAttribute("data-spa-marker", "kept");
+    });
+
+    // Cross-element nav.
+    await page.getByTestId("nav-feeds").click();
+    await expect(page.locator("rdrs-feeds-page")).toBeVisible();
+    await expect(page.locator("rdrs-sidebar")).toHaveAttribute("data-spa-marker", "kept");
+
+    // Cross-element to statistics — also exercises the page's internal
+    // re-render after fetchData lands.
+    await page.getByTestId("nav-statistics").click();
+    await expect(page.locator("rdrs-statistics-page")).toBeVisible();
+    await expect(page.locator(".stats-cards").first()).toBeVisible();
+    await expect(page.locator("rdrs-sidebar")).toHaveAttribute("data-spa-marker", "kept");
+
+    // Back into entries — same element shape as the start.
+    await page.goBack();
+    await page.goBack();
+    await expect(page.locator("rdrs-entries-page")).toBeVisible();
+    await expect(page.locator("rdrs-sidebar")).toHaveAttribute("data-spa-marker", "kept");
+
+    // The active highlight on the sidebar must follow the route.
+    // /unread = active='unread'; sidebar should reflect that after popstate.
+    await expect(page.locator("rdrs-sidebar")).toHaveAttribute("active", "unread");
+  });
+
   test("entry-list row links (feed / category) navigate via router", async ({ page, serverUrl }) => {
     // Regression: the row links inside <rdrs-entry-list> used to be
     // <a href="#" data-feed-id="..."> with a JS handler that did

@@ -14,10 +14,7 @@ class RdrsAdminPage extends HTMLElement {
 
     _renderShell() {
         this.innerHTML = `
-<div class="app-layout">
-<rdrs-sidebar active="admin"></rdrs-sidebar>
-<main class="main-content">
-    <div class="page-content">
+<div class="page-content">
     <rdrs-flash class="flash-container"></rdrs-flash>
     <h1>Admin Panel</h1>
     <table class="mobile-cards">
@@ -28,8 +25,6 @@ class RdrsAdminPage extends HTMLElement {
         </thead>
         <tbody id="users-table"></tbody>
     </table>
-    </div>
-</main>
 </div>`;
         this.querySelector('#users-table').addEventListener('click', (e) => this._onClick(e));
     }

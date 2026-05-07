@@ -281,22 +281,17 @@ class RdrsEntriesPage extends HTMLElement {
         // stream/contents fetch.
         const attrs = { ...cfg.listAttrs, 'no-auto-load': '' };
         this.innerHTML = `
-<div class="app-layout">
-<rdrs-sidebar active="${cfg.navKey}"></rdrs-sidebar>
-<main class="main-content">
-    <rdrs-flash class="flash-container"></rdrs-flash>
-    <div class="split-view">
-        <div class="list-pane">
-            <div class="list-pane-header">${cfg.renderHeader()}</div>
-            <div class="list-pane-body">
-                <rdrs-entry-list ${attrString(attrs)} reading-pane="#reading-pane"></rdrs-entry-list>
-            </div>
-        </div>
-        <div class="reading-pane" id="reading-pane">
-            <div class="reading-pane-empty">Select an entry to read</div>
+<rdrs-flash class="flash-container"></rdrs-flash>
+<div class="split-view">
+    <div class="list-pane">
+        <div class="list-pane-header">${cfg.renderHeader()}</div>
+        <div class="list-pane-body">
+            <rdrs-entry-list ${attrString(attrs)} reading-pane="#reading-pane"></rdrs-entry-list>
         </div>
     </div>
-</main>
+    <div class="reading-pane" id="reading-pane">
+        <div class="reading-pane-empty">Select an entry to read</div>
+    </div>
 </div>`;
 
         this._wireMarkAsRead();
@@ -306,25 +301,20 @@ class RdrsEntriesPage extends HTMLElement {
     }
 
     /// feed/category modes resolve their stream-id and breadcrumb data
-    /// asynchronously. Render a placeholder shell first so sidebar +
-    /// flash paint immediately, then await meta and mount the entry-list.
+    /// asynchronously. Render a placeholder shell first so flash paints
+    /// immediately, then await meta and mount the entry-list.
     async _connectAsync(mode, cfg) {
         const id = pathId();
         this.innerHTML = `
-<div class="app-layout">
-<rdrs-sidebar active="${cfg.navKey}"></rdrs-sidebar>
-<main class="main-content">
-    <rdrs-flash class="flash-container"></rdrs-flash>
-    <div class="split-view">
-        <div class="list-pane">
-            <div class="list-pane-header" id="list-pane-header"><h1>Loading…</h1></div>
-            <div class="list-pane-body" id="list-pane-body"></div>
-        </div>
-        <div class="reading-pane" id="reading-pane">
-            <div class="reading-pane-empty">Select an entry to read</div>
-        </div>
+<rdrs-flash class="flash-container"></rdrs-flash>
+<div class="split-view">
+    <div class="list-pane">
+        <div class="list-pane-header" id="list-pane-header"><h1>Loading…</h1></div>
+        <div class="list-pane-body" id="list-pane-body"></div>
     </div>
-</main>
+    <div class="reading-pane" id="reading-pane">
+        <div class="reading-pane-empty">Select an entry to read</div>
+    </div>
 </div>`;
 
         const initialStatus = new URLSearchParams(location.search).get('status') || 'unread';

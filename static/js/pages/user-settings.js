@@ -31,17 +31,12 @@ class RdrsUserSettingsPage extends HTMLElement {
 
     _renderShell() {
         this.innerHTML = `
-<div class="app-layout">
-<rdrs-sidebar active="user-settings"></rdrs-sidebar>
-<main class="main-content">
-    <div class="page-content">
+<div class="page-content">
     <rdrs-flash class="flash-container"></rdrs-flash>
     <h1>User Settings</h1>
     <div id="user-settings-body">
         <p class="muted">Loading&hellip;</p>
     </div>
-    </div>
-</main>
 </div>`;
     }
 
