@@ -597,7 +597,9 @@ async fn test_search_page() {
     let response = app.server.get("/search").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("Search") || body.contains("search"));
+    assert!(body.contains("<rdrs-entries-page>"));
+    assert!(body.contains("/static/js/pages/entries.js"));
+    assert!(!body.contains(r#"class="ssr-entries""#));
 }
 
 // ============================================================================
@@ -746,95 +748,11 @@ async fn test_feed_entries_page_other_user() {
 // SSR Data Embedding Tests
 // ============================================================================
 
-#[tokio::test]
-async fn test_search_page_contains_ssr_entries_json_when_query_present() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Search SSR Cat"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/search-ssr.xml", "Search SSR Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "search-ssr-guid", "Quokka Discovery"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "search-ssr-guid-2", "Unrelated Pelican"],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/search?q=Quokka").await;
-    response.assert_status_ok();
-    let body = response.text();
-
-    // SSR script tag must be present and only the matching entry rendered.
-    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
-    assert!(body.contains("Quokka Discovery"));
-    assert!(!body.contains("Unrelated Pelican"));
-    // Search input should be pre-filled with the query.
-    assert!(body.contains(r#"value="Quokka""#));
-}
-
 // SSR-emitted continuation cursor tests are obsolete after the entries-family
 // CSR migration — `/` no longer SSR-renders entries, so there's no SSR JSON
 // to inspect. Composite-cursor regression coverage lives in
 // `e2e/tests/ssr-no-double-render.spec.ts` (Load More + back-dated blocks),
 // which exercises the same `/reader/api/0/stream/contents` cursor end-to-end.
-
-#[tokio::test]
-async fn test_search_page_without_query_emits_empty_ssr_payload() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Search Empty Cat"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/empty.xml", "Empty Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "empty-guid", "Should Not Appear"],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/search").await;
-    response.assert_status_ok();
-    let body = response.text();
-
-    // SSR script tag is still present but with empty entries (no DB fetch happened).
-    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
-    assert!(body.contains(r#"{"entries":[],"continuation":null}"#));
-    assert!(!body.contains("Should Not Appear"));
-    assert!(body.contains("Enter a search term"));
-}
 
 #[tokio::test]
 async fn test_feeds_page_csr_shell_does_not_embed_rows() {

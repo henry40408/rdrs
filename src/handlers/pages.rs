@@ -8,67 +8,9 @@ use axum::{
 use crate::error::AppError;
 use crate::middleware::auth::{PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
-use crate::models::entry_summary;
 use crate::models::user_settings;
-use crate::models::{category, entry, feed};
-use crate::services::sanitize_html;
+use crate::models::{category, feed};
 use crate::AppState;
-
-/// A category link for SSR sidebar rendering.
-pub struct SidebarCategory {
-    pub id: i64,
-    pub name: String,
-    pub unread_count: i64,
-}
-
-/// Fetch sidebar categories with unread counts for a user.
-fn fetch_sidebar_data(conn: &rusqlite::Connection, user_id: i64) -> (Vec<SidebarCategory>, i64) {
-    let cats = category::list_by_user(conn, user_id).unwrap_or_default();
-    let unread_by_cat = entry::count_unread_by_category(conn, user_id).unwrap_or_default();
-    let total_unread = entry::count_unread_by_user(conn, user_id).unwrap_or(0);
-
-    let sidebar_cats = cats
-        .into_iter()
-        .map(|cat| {
-            let unread_count = *unread_by_cat.get(&cat.id).unwrap_or(&0);
-            SidebarCategory {
-                id: cat.id,
-                name: cat.name,
-                unread_count,
-            }
-        })
-        .collect();
-
-    (sidebar_cats, total_unread)
-}
-
-/// Entry data for SSR embedding as JSON.
-/// Field names match what the JS `_transformItem()` expects.
-#[derive(serde::Serialize)]
-struct SsrEntry {
-    id: i64,
-    feed_id: i64,
-    category_id: i64,
-    category_name: String,
-    feed_title: String,
-    feed_url: String,
-    feed_has_icon: bool,
-    title: String,
-    link: Option<String>,
-    content: String,
-    author: String,
-    published_at: Option<String>,
-    read_at: Option<String>,
-    starred_at: Option<String>,
-    summary_status: Option<String>,
-}
-
-/// SSR data for the entry list component, embedded as JSON.
-#[derive(serde::Serialize)]
-struct SsrEntryListData {
-    entries: Vec<SsrEntry>,
-    continuation: Option<String>,
-}
 
 /// Escape a JSON string for safe embedding inside HTML `<script>` tags.
 /// Replaces `</` with `<\/` to prevent `</script>` breakout attacks.
@@ -135,95 +77,6 @@ pub fn compute_freshness(
             _ => ("feed-freshness-stale".to_string(), "stale".to_string()),
         },
     }
-}
-
-/// Entry data for SSR HTML rendering in Askama templates.
-pub struct SsrEntryView {
-    pub id: i64,
-    pub feed_id: i64,
-    pub category_id: i64,
-    pub category_name: String,
-    pub feed_title: String,
-    pub feed_has_icon: bool,
-    pub title: String,
-    pub link: Option<String>,
-    pub is_read: bool,
-    pub is_starred: bool,
-    pub summary_status: Option<String>,
-    pub published_date: String,
-    pub published_datetime: String,
-}
-
-fn ssr_entries_to_views(entries: &[SsrEntry]) -> Vec<SsrEntryView> {
-    entries
-        .iter()
-        .map(|e| {
-            let (published_date, published_datetime) = e
-                .published_at
-                .as_deref()
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| {
-                    (
-                        dt.format("%b %-d, %Y").to_string(),
-                        dt.format("%Y-%m-%d %H:%M:%S").to_string(),
-                    )
-                })
-                .unwrap_or_default();
-
-            SsrEntryView {
-                id: e.id,
-                feed_id: e.feed_id,
-                category_id: e.category_id,
-                category_name: e.category_name.clone(),
-                feed_title: if e.feed_title.is_empty() {
-                    e.feed_url.clone()
-                } else {
-                    e.feed_title.clone()
-                },
-                feed_has_icon: e.feed_has_icon,
-                title: if e.title.is_empty() {
-                    "Untitled".to_string()
-                } else {
-                    e.title.clone()
-                },
-                link: e.link.clone(),
-                is_read: e.read_at.is_some(),
-                is_starred: e.starred_at.is_some(),
-                summary_status: e.summary_status.clone(),
-                published_date,
-                published_datetime,
-            }
-        })
-        .collect()
-}
-
-/// SSR data for the reading pane (entry detail view).
-/// Embedded as JSON for JS hydration + fields for Askama HTML rendering.
-#[derive(serde::Serialize)]
-pub struct SsrReadingPaneEntry {
-    pub id: i64,
-    pub title: String,
-    pub link: Option<String>,
-    pub content: String,
-    pub author: String,
-    pub feed_title: String,
-    pub feed_has_icon: bool,
-    pub feed_id: i64,
-    pub category_id: i64,
-    pub category_name: String,
-    pub published_at: Option<String>,
-    pub read_at: Option<String>,
-    pub starred_at: Option<String>,
-    pub summary_status: Option<String>,
-    /// Pre-formatted date for display
-    #[serde(skip)]
-    pub published_date: String,
-}
-
-/// Query parameter for pages that support `?entry=<id>` to SSR the reading pane.
-#[derive(serde::Deserialize, Default)]
-pub struct EntryQuery {
-    pub entry: Option<i64>,
 }
 
 #[derive(serde::Deserialize)]
@@ -295,188 +148,6 @@ pub fn resolve_statistics_period(query: &StatisticsQuery) -> (String, String, St
             (today + chrono::Duration::days(1)).to_string(),
             "7d".to_string(),
         ),
-    }
-}
-
-/// Fetch and sanitize an entry for SSR reading pane rendering.
-fn fetch_reading_pane_entry(
-    conn: &rusqlite::Connection,
-    user_id: i64,
-    entry_id: i64,
-    secret: &[u8],
-    proxy_base_url: Option<&str>,
-) -> Option<SsrReadingPaneEntry> {
-    let ewf = entry::find_by_id_with_feed(conn, entry_id).ok()??;
-
-    // Verify the entry belongs to this user's feeds
-    let cat = category::find_by_id(conn, ewf.category_id).ok()??;
-    if cat.user_id != user_id {
-        return None;
-    }
-
-    let e = &ewf.entry;
-    let link = e.link.as_deref().unwrap_or("");
-    let base_url = if link.is_empty() { None } else { Some(link) };
-    let referrer = ewf.custom_referrer.as_deref();
-
-    let content = if let Some(c) = e.content.as_deref() {
-        sanitize_html(c, secret, base_url, referrer, proxy_base_url)
-    } else {
-        let fallback = e.summary.as_deref().unwrap_or("");
-        sanitize_html(fallback, secret, base_url, referrer, proxy_base_url)
-    };
-
-    // Summary status
-    let summary_status = entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])
-        .ok()
-        .and_then(|m| m.get(&entry_id).map(|s| s.as_str().to_string()));
-
-    let published_date = e
-        .published_at
-        .map(|dt| dt.format("%b %-d, %Y %H:%M").to_string())
-        .unwrap_or_default();
-
-    Some(SsrReadingPaneEntry {
-        id: e.id,
-        title: e.title.clone().unwrap_or_else(|| "Untitled".to_string()),
-        link: e.link.clone(),
-        content,
-        author: e.author.clone().unwrap_or_default(),
-        feed_title: ewf.feed_title.unwrap_or_else(|| ewf.feed_url.clone()),
-        feed_has_icon: ewf.feed_has_icon,
-        feed_id: e.feed_id,
-        category_id: ewf.category_id,
-        category_name: ewf.category_name,
-        published_at: e.published_at.map(|dt| dt.to_rfc3339()),
-        read_at: e.read_at.map(|dt| dt.to_rfc3339()),
-        starred_at: e.starred_at.map(|dt| dt.to_rfc3339()),
-        summary_status,
-        published_date,
-    })
-}
-
-/// Convert EntryWithFeed + summary statuses to SSR entries.
-fn entries_to_ssr(
-    entries: Vec<entry::EntryWithFeed>,
-    summary_statuses: &std::collections::HashMap<i64, entry_summary::SummaryStatus>,
-) -> Vec<SsrEntry> {
-    entries
-        .into_iter()
-        .map(|e| {
-            let status = summary_statuses
-                .get(&e.entry.id)
-                .map(|s| s.as_str().to_string());
-            SsrEntry {
-                id: e.entry.id,
-                feed_id: e.entry.feed_id,
-                category_id: e.category_id,
-                category_name: e.category_name,
-                feed_title: e.feed_title.unwrap_or_default(),
-                feed_url: e.feed_url,
-                feed_has_icon: e.feed_has_icon,
-                title: e.entry.title.unwrap_or_default(),
-                link: e.entry.link,
-                content: String::new(), // Don't include content in list view
-                author: e.entry.author.unwrap_or_default(),
-                published_at: e.entry.published_at.map(|dt| dt.to_rfc3339()),
-                read_at: e.entry.read_at.map(|dt| dt.to_rfc3339()),
-                starred_at: e.entry.starred_at.map(|dt| dt.to_rfc3339()),
-                summary_status: status,
-            }
-        })
-        .collect()
-}
-
-/// SSR result containing JSON for JS hydration and views for HTML rendering.
-struct SsrEntryResult {
-    json: String,
-    views: Vec<SsrEntryView>,
-    has_continuation: bool,
-}
-
-/// Fetch first page of entries for SSR.
-fn fetch_entries_for_ssr(
-    conn: &rusqlite::Connection,
-    user_id: i64,
-    filter: &entry::EntryFilter,
-    limit: i64,
-) -> SsrEntryResult {
-    fetch_entries_for_ssr_with_sort(
-        conn,
-        user_id,
-        filter,
-        limit,
-        entry::EntrySortOrder::PublishedAt,
-    )
-}
-
-fn fetch_entries_for_ssr_with_sort(
-    conn: &rusqlite::Connection,
-    user_id: i64,
-    filter: &entry::EntryFilter,
-    limit: i64,
-    sort_order: entry::EntrySortOrder,
-) -> SsrEntryResult {
-    let pagination = entry::ContinuationParams {
-        oldest_first: false,
-        limit: limit + 1, // fetch one extra to check for continuation
-        continuation: None,
-        ot: None,
-        nt: None,
-        sort_order,
-    };
-
-    let mut entries = entry::list_by_user_with_continuation(conn, user_id, filter, &pagination)
-        .unwrap_or_default();
-
-    // Emit a composite `<sort_ts>|<id>` cursor matching the GReader API. The
-    // next-page predicate is bounded-OR `(sort_ts < ?ts) OR (sort_ts = ?ts AND id < ?id)`,
-    // which keeps Load More correct under non-monotonic id↔sort_ts data.
-    let has_more = entries.len() as i64 > limit;
-    if has_more {
-        entries.pop();
-    }
-    let continuation = if has_more {
-        entries.last().and_then(|e| {
-            match entry::fetch_sort_ts(conn, e.entry.id, sort_order) {
-                Ok(Some(ts)) => Some(entry::ContinuationCursor::encode_composite(&ts, e.entry.id)),
-                Ok(None) => None,
-                Err(err) => {
-                    // SSR degrades gracefully (matches the unwrap_or_default above);
-                    // log so silent truncation is at least observable in ops.
-                    tracing::warn!(
-                        entry_id = e.entry.id,
-                        error = ?err,
-                        "fetch_sort_ts failed during SSR cursor emission; \
-                         page will render without Load More"
-                    );
-                    None
-                }
-            }
-        })
-    } else {
-        None
-    };
-
-    // Fetch summary statuses
-    let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
-    let summary_statuses =
-        entry_summary::get_statuses_for_entries(conn, user_id, &entry_ids).unwrap_or_default();
-
-    let ssr_entries = entries_to_ssr(entries, &summary_statuses);
-    let views = ssr_entries_to_views(&ssr_entries);
-    let has_continuation = continuation.is_some();
-    let data = SsrEntryListData {
-        entries: ssr_entries,
-        continuation,
-    };
-
-    let json = serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string());
-    let json = escape_json_for_script(&json);
-    SsrEntryResult {
-        json,
-        views,
-        has_continuation,
     }
 }
 
@@ -819,22 +490,6 @@ pub async fn settings_page(
     )
 }
 
-/// Common entry-list page data, shared by the SSR-still handlers
-/// (category / feed / search). Removed in B3 along with their templates.
-struct EntryListConfig {
-    entries_per_page: i64,
-    has_save_services: bool,
-    has_kagi_configured: bool,
-    ssr_entries_json: String,
-    ssr_entry_views: Vec<SsrEntryView>,
-    ssr_has_continuation: bool,
-    ssr_reading_pane: Option<SsrReadingPaneEntry>,
-    ssr_reading_pane_json: String,
-    theme: Option<String>,
-    sidebar_categories: Vec<SidebarCategory>,
-    sidebar_unread_count: i64,
-}
-
 /// Serves the CSR shell for `/entries/read`. Mode `read` in `<rdrs-entries-page>`.
 pub async fn read_entries_page(
     auth_user: PageAuthUser,
@@ -960,167 +615,33 @@ pub async fn category_entries_page(
     ))
 }
 
-// Search page: SSR entries on first load when ?q= is provided
-#[derive(Template)]
-#[template(path = "search.html")]
-pub struct SearchTemplate {
-    pub username: String,
-    pub is_admin: bool,
-    pub is_masquerading: bool,
-    pub flash_messages: Vec<FlashMessage>,
-    pub entries_per_page: i64,
-    pub has_save_services: bool,
-    pub has_kagi_configured: bool,
-    pub search_query: String,
-    pub empty_message: String,
-    pub ssr_entries_json: String,
-    pub ssr_entry_views: Vec<SsrEntryView>,
-    pub ssr_has_continuation: bool,
-    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
-    pub ssr_reading_pane_json: String,
-    pub theme: Option<String>,
-    pub git_version: &'static str,
-    pub sidebar_categories: Vec<SidebarCategory>,
-    pub sidebar_unread_count: i64,
-}
-
-impl IntoResponse for SearchTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-#[derive(serde::Deserialize, Default)]
-pub struct SearchPageQuery {
-    pub q: Option<String>,
-    pub entry: Option<i64>,
-}
-
+/// Serves the CSR shell for `/search`. The query input + URL state
+/// are managed client-side by `<rdrs-entries-page>` (mode `search`).
 pub async fn search_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
-    Query(query): Query<SearchPageQuery>,
     flash: Flash,
-) -> (Flash, SearchTemplate) {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
-
+) -> (Flash, AppShellTemplate) {
     let user_id = auth_user.user.id;
-    let secret = state.config.image_proxy_secret.clone();
-    let proxy_base_url = state.config.public_base_url.clone();
-    let search_query = query
-        .q
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
-    let q_for_ssr = search_query.clone();
-    let rp_entry_id = query.entry;
-
-    let cfg = state
+    let theme = state
         .db
-        .read_user(move |c| {
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
-            let save_config =
-                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
-            let kagi_configured = save_config
-                .kagi
-                .as_ref()
-                .map(|k| k.is_configured())
-                .unwrap_or(false);
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
-
-            let (ssr_json, ssr_views, ssr_continuation) = match q_for_ssr {
-                Some(q) => {
-                    let filter = entry::EntryFilter {
-                        search: Some(q),
-                        ..Default::default()
-                    };
-                    let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
-                    (ssr.json, ssr.views, ssr.has_continuation)
-                }
-                None => {
-                    // Emit a valid (but empty) SSR payload so the JS component hydrates the
-                    // server-rendered empty placeholder in place rather than re-rendering it.
-                    let json = escape_json_for_script(r#"{"entries":[],"continuation":null}"#);
-                    (json, vec![], false)
-                }
-            };
-
-            let rp = rp_entry_id.and_then(|eid| {
-                fetch_reading_pane_entry(c, user_id, eid, &secret, proxy_base_url.as_deref())
-            });
-            let rp_json = rp
-                .as_ref()
-                .map(|e| escape_json_for_script(&serde_json::to_string(e).unwrap_or_default()))
-                .unwrap_or_default();
-
-            EntryListConfig {
-                entries_per_page: epp,
-                has_save_services: save_services,
-                has_kagi_configured: kagi_configured,
-                ssr_entries_json: ssr_json,
-                ssr_entry_views: ssr_views,
-                ssr_has_continuation: ssr_continuation,
-                ssr_reading_pane: rp,
-                ssr_reading_pane_json: rp_json,
-                theme,
-                sidebar_categories: sidebar_cats,
-                sidebar_unread_count: sidebar_unread,
-            }
-        })
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
         .await
-        .unwrap_or(EntryListConfig {
-            entries_per_page: user_settings::DEFAULT_ENTRIES_PER_PAGE,
-            has_save_services: false,
-            has_kagi_configured: false,
-            ssr_entries_json: "null".to_string(),
-            ssr_entry_views: vec![],
-            ssr_has_continuation: false,
-            ssr_reading_pane: None,
-            ssr_reading_pane_json: String::new(),
-            theme: None,
-            sidebar_categories: vec![],
-            sidebar_unread_count: 0,
-        });
+        .unwrap_or(None);
 
-    let empty_message = if search_query.is_some() {
-        "No matching entries.".to_string()
-    } else {
-        "Enter a search term and press Enter to search.".to_string()
-    };
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
     (
-        flash.clone(),
-        SearchTemplate {
-            username: auth_user.user.username,
-            is_admin,
-            is_masquerading,
-            flash_messages: flash.messages,
-            entries_per_page: cfg.entries_per_page,
-            has_save_services: cfg.has_save_services,
-            has_kagi_configured: cfg.has_kagi_configured,
-            search_query: search_query.unwrap_or_default(),
-            empty_message,
-            ssr_entries_json: cfg.ssr_entries_json,
-            ssr_entry_views: cfg.ssr_entry_views,
-            ssr_has_continuation: cfg.ssr_has_continuation,
-            ssr_reading_pane: cfg.ssr_reading_pane,
-            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
-            theme: cfg.theme,
+        flash,
+        AppShellTemplate {
+            title: "Search - RDRS",
+            element_tag: "rdrs-entries-page",
+            script_path: "/static/js/pages/entries.js",
+            theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories: cfg.sidebar_categories,
-            sidebar_unread_count: cfg.sidebar_unread_count,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
         },
     )
 }

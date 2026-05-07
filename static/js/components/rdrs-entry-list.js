@@ -19,88 +19,18 @@ class RdrsEntryList extends HTMLElement {
         this._fullContent = null;
         this._extraHandlers = {};
         this._popstateHandler = null;
-        this._ssrData = null; // SSR data from server, if available
-        this._hydrated = false; // true if SSR HTML was hydrated in place
     }
 
     connectedCallback() {
-        // Extract SSR data before _render() might clear innerHTML
-        this._extractSsrData();
-
-        // If server rendered the full HTML (entries-list container exists), hydrate in place
-        if (this._ssrData && this.querySelector('#entries-list')) {
-            this._hydrateSsr();
-        } else {
-            this._render();
-        }
-
+        this._render();
         this._setupDelegation();
         this._setupPersistedRestore();
         this._setupPopstate();
 
-        // Pages that need to set API params before loading should add no-auto-load
+        // Pages that need to set API params before loading should add no-auto-load.
         if (!this.hasAttribute('no-auto-load')) {
-            if (this._ssrData) {
-                this._consumeSsrData();
-            } else if (!this._hydrated) {
-                this.loadEntries();
-            }
+            this.loadEntries();
         }
-    }
-
-    /** Extract SSR data from embedded <script type="application/json"> tag. */
-    _extractSsrData() {
-        const script = this.querySelector('script.ssr-entries');
-        if (!script) return;
-        try {
-            const data = JSON.parse(script.textContent);
-            if (data && data.entries) {
-                this._ssrData = data;
-            }
-        } catch (e) {
-            // Invalid JSON, ignore
-        }
-    }
-
-    /** Hydrate SSR HTML: populate JS state from JSON without re-rendering DOM. */
-    _hydrateSsr() {
-        const data = this._ssrData;
-        this._ssrData = null;
-        this._hydrated = true;
-
-        this.entries = data.entries;
-        this.continuation = data.continuation || null;
-
-        // Wire up load-more button
-        const loadMoreBtn = this.querySelector('#load-more button');
-        if (loadMoreBtn) loadMoreBtn.addEventListener('click', () => this.loadMore());
-
-        // Wire up mark-above button
-        const markAboveBtn = this.querySelector('#mark-above-read button');
-        if (markAboveBtn) markAboveBtn.addEventListener('click', () => this.markAboveAsRead());
-
-        this._checkEntryParam();
-    }
-
-    /** Consume SSR data: populate entries and render without a network request. */
-    _consumeSsrData() {
-        if (!this._ssrData) return;
-        const data = this._ssrData;
-        this._ssrData = null; // consumed, don't reuse
-
-        this.entries = data.entries;
-        this.continuation = data.continuation || null;
-
-        this.renderEntries();
-        this._updateLoadMore();
-        this._updateEntriesCount();
-        this._updateMarkAbove();
-
-        if (this.isUnreadMode) {
-            this._updateUnreadCount();
-        }
-
-        this._checkEntryParam();
     }
 
     disconnectedCallback() {
@@ -129,8 +59,6 @@ class RdrsEntryList extends HTMLElement {
     get readingPaneSelector() { return this.getAttribute('reading-pane') || null; }
     get hasSaveServices() { return this.hasAttribute('has-save-services'); }
     get hasKagiConfigured() { return this.hasAttribute('has-kagi-configured'); }
-    /** True after SSR HTML has been hydrated in place. Lets callers skip a redundant loadEntries(). */
-    get hydrated() { return this._hydrated; }
 
     /** Get the reading pane element, if configured. */
     _getReadingPane() {
@@ -266,73 +194,13 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         const entryId = parseInt(urlEntry, 10);
         if (isNaN(entryId)) return;
 
-        // Check if reading pane was SSR'd
-        const pane = this._getReadingPane();
-        if (pane && this._hydrateReadingPaneSsr(pane, entryId)) {
-            // SSR hydration successful, select the entry in the list if present
-            const idx = this.entries.findIndex(e => e.id === entryId);
-            if (idx >= 0) this.selectEntry(idx);
-            return;
-        }
-
-        // Try to find in loaded entries
         const idx = this.entries.findIndex(e => e.id === entryId);
         if (idx >= 0) {
             this.selectEntry(idx);
             this._loadInReadingPane(idx);
         } else {
-            // Entry not in current list, load directly via API
+            // Entry not in current list, load directly via API.
             this._loadEntryByIdInPane(entryId);
-        }
-    }
-
-    // --- Hydrate SSR'd reading pane content ---
-    _hydrateReadingPaneSsr(pane, entryId) {
-        const ssrScript = pane.querySelector('script.ssr-reading-pane');
-        if (!ssrScript) return false;
-
-        try {
-            const data = JSON.parse(ssrScript.textContent);
-            ssrScript.remove();
-
-            if (data.id !== entryId) return false;
-
-            // Populate JS state from SSR data
-            this._readingPaneEntry = { id: data.id, ...data };
-            this._readingPaneData = data;
-
-            // Inject mobile back/prev/next buttons (SSR doesn't include them)
-            if (this._isMobileLayout() && !pane.querySelector('.reading-pane-back')) {
-                const nav = document.createElement('div');
-                nav.className = 'reading-pane-back';
-                nav.innerHTML = `
-                    <span data-rp-action="back" class="reading-pane-back-link">&#8592; Back</span>
-                    <span class="reading-pane-nav">
-                        <button type="button" data-rp-action="prev-entry" class="reading-pane-nav-btn" aria-label="Previous entry">&#8249;</button>
-                        <button type="button" data-rp-action="next-entry" class="reading-pane-nav-btn" aria-label="Next entry">&#8250;</button>
-                    </span>`;
-                pane.prepend(nav);
-            }
-
-            // Wire up reading pane actions
-            this._ensureReadingPaneActions(pane);
-
-            // Update prev/next button states
-            this._updateReadingPaneNav();
-
-            // Auto-mark as read (keep in list — user is viewing in reading pane)
-            if (data.read_at === null) {
-                this.markRead(data.id, true);
-            }
-
-            // Handle existing summary
-            if (data.summary_status) {
-                this._handleSummaryStatus(data.summary_status, data.id);
-            }
-
-            return true;
-        } catch {
-            return false;
         }
     }
 
@@ -345,23 +213,13 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Loading...</p></div>`;
 
         try {
-            const body = new URLSearchParams();
-            body.set('i', entryId.toString());
-
-            const response = await fetch('/reader/api/0/stream/items/contents', {
-                method: 'POST',
-                body: body
-            });
-
-            if (!response.ok) throw new Error('Failed to load entry');
-            const result = await response.json();
-            if (!result.items || result.items.length === 0) {
+            const response = await fetch(`/api/entries/${entryId}`);
+            if (response.status === 404) {
                 pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Entry not found.</p></div>`;
                 return;
             }
-
-            const item = result.items[0];
-            const data = this._extractEntryData(item);
+            if (!response.ok) throw new Error('Failed to load entry');
+            const data = await response.json();
             this._readingPaneEntry = { id: entryId, ...data };
             this._readingPaneData = data;
             this._renderReadingPaneDetail(pane, data, entryId);
