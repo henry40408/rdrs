@@ -112,42 +112,22 @@ async fn login(server: &TestServer, username: &str) {
 // ============================================================================
 
 #[tokio::test]
-async fn test_unread_page_shows_unread_count() {
+async fn test_unread_page_returns_shell() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
-
-    // Create some entries
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Test"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/feed.xml", "Test Feed"],
-            )
-            .unwrap();
-            // Add 3 unread entries
-            for i in 1..=3 {
-                conn.execute(
-                    "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![1, format!("guid-{}", i), format!("Entry {}", i)],
-                )
-                .unwrap();
-            }
-        })
-        .await
-        .unwrap();
 
     login(&app.server, "admin").await;
 
     let response = app.server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    // Should contain the unread count somewhere
-    assert!(body.contains("3") || body.contains("unread"));
+
+    // Shell shape — no SSR entry markup.
+    assert!(body.contains("<rdrs-entries-page>"));
+    assert!(body.contains("/static/js/pages/entries.js"));
+    // SSR machinery for entries must be gone from this route.
+    assert!(!body.contains(r#"class="ssr-entries""#));
+    assert!(!body.contains(r#"class="ssr-reading-pane""#));
 }
 
 #[tokio::test]
@@ -166,10 +146,13 @@ async fn test_unread_page_while_masquerading() {
     let response = app.server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    // Should show the masqueraded user's name
-    assert!(body.contains("user"));
-    // Should still show admin link (because original user is admin)
-    assert!(body.contains("data-testid=\"nav-admin\""));
+    // CSR shell with sidebar bootstrap inlined.
+    assert!(body.contains("<rdrs-entries-page>"));
+    assert!(body.contains(r#"id="rdrs-sidebar-bootstrap""#));
+    // Bootstrap JSON marks the original admin so the rdrs-sidebar element
+    // can show the Admin nav link client-side even under masquerade.
+    assert!(body.contains(r#""is_admin":true"#));
+    assert!(body.contains(r#""is_masquerading":true"#));
 
     // Verify current user API returns masqueraded user
     let response = app.server.get("/api/user").await;
@@ -794,55 +777,6 @@ async fn test_feed_entries_page_other_user() {
 // ============================================================================
 // SSR Data Embedding Tests
 // ============================================================================
-
-#[tokio::test]
-async fn test_unread_page_contains_ssr_entries_json() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "SSR Cat"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/ssr.xml", "SSR Feed"],
-            )
-            .unwrap();
-            for i in 1..=3 {
-                conn.execute(
-                    "INSERT INTO entry (feed_id, guid, title, link, author, published_at) VALUES (?1, ?2, ?3, ?4, ?5, datetime('now', ?6))",
-                    rusqlite::params![
-                        1,
-                        format!("ssr-guid-{}", i),
-                        format!("SSR Entry {}", i),
-                        format!("https://example.com/{}", i),
-                        "Test Author",
-                        format!("-{} hours", i)
-                    ],
-                )
-                .unwrap();
-            }
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/").await;
-    response.assert_status_ok();
-    let body = response.text();
-
-    // SSR JSON should be embedded in a script tag
-    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
-    // Should contain entry titles
-    assert!(body.contains("SSR Entry 1"));
-    assert!(body.contains("SSR Feed"));
-    assert!(body.contains("Test Author"));
-}
 
 #[tokio::test]
 async fn test_entries_page_contains_ssr_entries_json() {
