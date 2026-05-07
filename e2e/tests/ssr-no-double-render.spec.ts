@@ -4,12 +4,13 @@ import { test, expect } from "../fixtures/rdrs.js";
 const STREAM_CONTENTS_PATH = "/reader/api/0/stream/contents/";
 
 /**
- * First paint must fire AT MOST one `stream/contents` fetch. Transitional
- * during the entries-family CSR migration: routes that have moved to CSR
- * fire exactly one fetch, routes still on SSR fire zero. Step B3 will
- * tighten this back to `== 1` once every list page is CSR.
+ * First paint must fire EXACTLY one `stream/contents` fetch — every list
+ * route is CSR, so first paint always issues the one fetch needed to
+ * populate the entries list. Two would mean a render race or a
+ * connectedCallback double-fire (we hit that during B1 — see the
+ * about:blank flush in `gotoCounting`).
  */
-test.describe("First paint fires at most one stream/contents fetch", () => {
+test.describe("First paint fires exactly one stream/contents fetch", () => {
   test.beforeAll(async ({ api, seed }) => {
     await api.register("ssruser", "password123");
 
@@ -71,13 +72,13 @@ test.describe("First paint fires at most one stream/contents fetch", () => {
   test("/ (unread)", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     const count = await gotoCounting(page, `${serverUrl}/`);
-    expect(count).toBeLessThanOrEqual(1);
+    expect(count).toBe(1);
   });
 
   test("/entries", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     const count = await gotoCounting(page, `${serverUrl}/entries`);
-    expect(count).toBeLessThanOrEqual(1);
+    expect(count).toBe(1);
   });
 
   test("/feeds/:id/entries", async ({ page, serverUrl, seed }) => {
@@ -91,13 +92,13 @@ test.describe("First paint fires at most one stream/contents fetch", () => {
       page,
       `${serverUrl}/feeds/${feedId}/entries`
     );
-    expect(count).toBeLessThanOrEqual(1);
+    expect(count).toBe(1);
   });
 
   test("/search?q=Quokka", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     const count = await gotoCounting(page, `${serverUrl}/search?q=Quokka`);
-    expect(count).toBeLessThanOrEqual(1);
+    expect(count).toBe(1);
     await expect(page.getByText("Quokka Discovery")).toBeVisible();
   });
 });
