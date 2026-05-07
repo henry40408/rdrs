@@ -504,15 +504,15 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             // Scroll reading pane to top
             pane.scrollTop = 0;
 
-            // pushState to update URL
+            // pushState to update URL. Stay on the current routable path
+            // and just append `?entry={id}` so the SPA router's popstate
+            // can re-mount the SAME element on browser back/forward —
+            // <rdrs-entries-page>'s `_checkEntryParam` then re-opens the
+            // entry into the reading pane.
             if (!skipPushState) {
-                let originQuery = `?origin=${encodeURIComponent(this.origin)}`;
-                if (this.origin === 'feed' && entry.feed_id) originQuery += `&feed=${entry.feed_id}`;
-                if (this.origin === 'category' && entry.category_id) originQuery += `&category=${entry.category_id}`;
-                if (this.origin === 'read') originQuery += '&read_only=true';
-                if (this.origin === 'starred') originQuery += '&starred_only=true';
-                if (this.origin === 'summarized') originQuery += '&has_summary=true';
-                const url = `/entries/${entry.id}${originQuery}`;
+                const params = new URLSearchParams(location.search);
+                params.set('entry', String(entry.id));
+                const url = location.pathname + '?' + params.toString();
                 if (replaceHistory) {
                     history.replaceState({ entryId: entry.id, index }, '', url);
                 } else {
@@ -1257,17 +1257,13 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
             return;
         }
 
-        // Otherwise navigate to entry page (redirect will handle it)
+        // Otherwise navigate to the same routable path with `?entry={id}`
+        // and let the SPA router handle it. The page's connectedCallback
+        // reads `?entry=N` via `_checkEntryParam` and opens the entry.
         if (this.selectedIndex >= 0) window._resumeIndex = this.selectedIndex;
-
-        let originQuery = `?origin=${encodeURIComponent(this.origin)}`;
-        if (this.origin === 'feed' && entry.feed_id) originQuery += `&feed=${entry.feed_id}`;
-        if (this.origin === 'category' && entry.category_id) originQuery += `&category=${entry.category_id}`;
-        if (this.origin === 'read') originQuery += '&read_only=true';
-        if (this.origin === 'starred') originQuery += '&starred_only=true';
-        if (this.origin === 'summarized') originQuery += '&has_summary=true';
-
-        window.location.href = `/entries/${entry.id}${originQuery}`;
+        const params = new URLSearchParams(location.search);
+        params.set('entry', String(entry.id));
+        window.rdrsNavigate(location.pathname + '?' + params.toString());
     }
 
     openOriginalLink() {
