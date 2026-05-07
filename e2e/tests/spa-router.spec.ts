@@ -181,6 +181,30 @@ test.describe("SPA router", () => {
     }
   });
 
+  test("statistics data fetch doesn't remount sidebar", async ({ page, serverUrl }) => {
+    // Regression: rdrs-statistics-page used to rebuild its entire
+    // innerHTML (incl. <rdrs-sidebar>) on every render() call —
+    // initial "Loading…" + after fetchData() landed. Each rebuild
+    // unmounted/remounted the sidebar, which visually pulled the
+    // sidebar up between the two states. Tag the sidebar after the
+    // first paint and verify the tag survives the loaded-state
+    // re-render.
+    await login(page, serverUrl);
+    await page.goto(`${serverUrl}/statistics`);
+    await expect(page.locator("rdrs-sidebar")).toHaveCount(1);
+
+    await page.evaluate(() => {
+      document.querySelector("rdrs-sidebar")?.setAttribute("data-spa-marker", "kept");
+    });
+
+    // Wait for the loaded state to replace the loading placeholder.
+    await expect(page.getByTestId("stats-loading")).toHaveCount(0);
+    await expect(page.locator(".stats-cards").first()).toBeVisible();
+
+    // Sidebar instance must survive — same node, marker still there.
+    await expect(page.locator("rdrs-sidebar")).toHaveAttribute("data-spa-marker", "kept");
+  });
+
   test("statistics custom-date Apply navigates SPA", async ({ page, serverUrl }) => {
     // Regression: the <form method="get" action="/statistics"> Apply
     // button used to submit normally → full GET reload. Now it's
