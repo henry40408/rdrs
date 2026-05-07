@@ -150,6 +150,61 @@ test.describe("SPA router", () => {
     }
   });
 
+  test("entry detail back/forward stays SPA", async ({ page, serverUrl }) => {
+    // Regression: opening an entry used to pushState the URL `/entries/{id}?origin=...`.
+    // That path isn't in the router table, so browser back from a later
+    // navigation hit the unknown-route fallback (location.href = path)
+    // and triggered a full document reload. Now the URL is the current
+    // routable path with `?entry={id}` appended.
+    await login(page, serverUrl);
+    await page.goto(`${serverUrl}/entries`);
+    await expect(page.getByTestId("entry-item").first()).toBeVisible();
+
+    // Open the first entry → URL becomes /entries?entry=N (SPA-friendly).
+    await page.getByTestId("entry-item").first().click();
+    await expect(page).toHaveURL(/\/entries\?.*entry=\d+/);
+
+    // Navigate elsewhere (via SPA), then back.
+    const tracker = trackDocumentLoads(page);
+    try {
+      await page.getByTestId("nav-feeds").click();
+      await expect(page.locator("rdrs-feeds-page")).toBeVisible();
+
+      await page.goBack();
+      await expect(page).toHaveURL(/\/entries\?.*entry=\d+/);
+      await expect(page.locator("rdrs-entries-page")).toBeVisible();
+
+      await page.waitForTimeout(200);
+      expect(tracker.count()).toBe(0);
+    } finally {
+      tracker.dispose();
+    }
+  });
+
+  test("statistics custom-date Apply navigates SPA", async ({ page, serverUrl }) => {
+    // Regression: the <form method="get" action="/statistics"> Apply
+    // button used to submit normally → full GET reload. Now it's
+    // intercepted and routed through window.rdrsNavigate.
+    await login(page, serverUrl);
+    await page.goto(`${serverUrl}/statistics`);
+    await expect(page.locator("rdrs-statistics-page")).toBeVisible();
+
+    const tracker = trackDocumentLoads(page);
+    try {
+      // Fill the date inputs and click Apply.
+      await page.locator('form.stats-period input[name="from"]').fill("2026-01-01");
+      await page.locator('form.stats-period input[name="to"]').fill("2026-01-15");
+      await page.locator('form.stats-period button[type="submit"]').click();
+
+      await expect(page).toHaveURL(/\/statistics\?.*period=custom/);
+      await expect(page.locator("rdrs-statistics-page")).toBeVisible();
+      await page.waitForTimeout(200);
+      expect(tracker.count()).toBe(0);
+    } finally {
+      tracker.dispose();
+    }
+  });
+
   test("non-routed link triggers full reload", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
 

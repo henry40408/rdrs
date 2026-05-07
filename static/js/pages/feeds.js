@@ -340,7 +340,8 @@ class RdrsFeedsPage extends HTMLElement {
             const r = await fetch('/reader/api/0/subscription/edit', { method: 'POST', body });
             if (!r.ok) throw new Error((await r.text()) || 'Failed to add feed');
             urlInput.value = '';
-            window.flash.redirect(window.location.pathname + window.location.search, 'success', 'Feed added.');
+            window.flash.success('Feed added.');
+            this.load();
         } catch (err) {
             window.flash.error(err.message);
         } finally {
@@ -420,7 +421,8 @@ class RdrsFeedsPage extends HTMLElement {
             const r = await fetch('/reader/api/0/subscription/edit', { method: 'POST', body });
             if (!r.ok) throw new Error((await r.text()) || 'Failed to update feed');
             this.querySelector('#edit-modal').close();
-            window.flash.redirect(window.location.pathname + window.location.search, 'success', 'Feed updated.');
+            window.flash.success('Feed updated.');
+            this.load();
         } catch (err) {
             window.flash.error(err.message);
         }
@@ -436,7 +438,8 @@ class RdrsFeedsPage extends HTMLElement {
             body.set('s', `feed/${feed.url}`);
             const r = await fetch('/reader/api/0/subscription/edit', { method: 'POST', body });
             if (!r.ok) throw new Error((await r.text()) || 'Failed to delete feed');
-            window.flash.redirect(window.location.pathname + window.location.search, 'success', `Feed "${feed.title}" deleted.`);
+            window.flash.success(`Feed "${feed.title}" deleted.`);
+            this.load();
         } catch (err) {
             window.flash.error(err.message);
         }
@@ -459,11 +462,12 @@ class RdrsFeedsPage extends HTMLElement {
                 throw new Error(err.error || 'Failed to refresh feed');
             }
             const result = await r.json();
-            window.flash.redirect(
-                window.location.pathname + window.location.search,
-                'success',
+            window.flash.success(
                 `Refreshed: ${result.new_entries} new, ${result.updated_entries} updated.`
             );
+            this._activeSyncs.delete(id);
+            this._updateSyncStatus();
+            this.load();
         } catch (err) {
             window.flash.error(err.message);
             if (btn) btn.textContent = original;
@@ -511,7 +515,8 @@ class RdrsFeedsPage extends HTMLElement {
             });
             if (!r.ok) throw new Error((await r.text()) || 'Failed to import OPML');
             this.querySelector('#import-modal').close();
-            window.flash.redirect(window.location.pathname, 'success', 'OPML imported successfully.');
+            window.flash.success('OPML imported successfully.');
+            this.load();
         } catch (err) {
             window.flash.error(err.message);
         } finally {

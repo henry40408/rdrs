@@ -59,6 +59,17 @@ ${sidebarHtml}
     </div>
 </main>
 </div>`;
+
+        // Intercept the custom-date Apply submit so it goes through the
+        // SPA router instead of triggering a full GET reload.
+        const form = this.querySelector('form.stats-period');
+        if (form) {
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const params = new URLSearchParams(new FormData(form));
+                window.rdrsNavigate('/statistics?' + params.toString());
+            });
+        }
     }
 
     _renderContent(data) {
