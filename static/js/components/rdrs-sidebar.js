@@ -3,11 +3,21 @@
 // (sidebar-*, nav-* selectors) keeps working unchanged.
 //
 // Anti-flicker strategy:
-//   1. Read bootstrap JSON embedded in the shell (`<script id="rdrs-sidebar-bootstrap">`)
-//      and render synchronously on connect — zero round trips, zero flash.
-//   2. Mirror the payload to sessionStorage so navigations to non-bootstrapped
-//      pages (e.g. legacy SSR routes that do XHR) still get instant paint.
-//   3. Background-revalidate via /api/sidebar; only re-render if data changed.
+//   1. The shell embeds the initial /api/sidebar payload as a JSON
+//      `<script id="rdrs-sidebar-bootstrap">`. On every mount we read it
+//      synchronously and paint — zero round trips, zero flash.
+//   2. After every successful /api/sidebar fetch we rewrite that <script>'s
+//      textContent and the sessionStorage mirror with the new payload, so
+//      the next SPA-mount reads fresh data. The bootstrap is the single
+//      source of truth shared by <rdrs-sidebar> and pages/entries.js's
+//      category-mode lookup, so we keep it live rather than removing it.
+//   3. Background-revalidate via /api/sidebar after every mount, and surgically
+//      patch the unread badges (full-rerender only if identity / category set
+//      changed).
+//
+// Action paths that mutate unread/category state should call
+// `document.querySelector('rdrs-sidebar')?.refresh()` so the bootstrap, the
+// sessionStorage mirror, and the visible badges all advance together.
 
 const SIDEBAR_CACHE_KEY = 'rdrs.sidebar.v1';
 
@@ -34,8 +44,25 @@ function readCachedSidebar() {
 }
 
 function writeCachedSidebar(data) {
-    try { sessionStorage.setItem(SIDEBAR_CACHE_KEY, JSON.stringify(data)); }
+    const json = JSON.stringify(data);
+    try { sessionStorage.setItem(SIDEBAR_CACHE_KEY, json); }
     catch { /* quota / disabled storage — fine */ }
+    // Keep the embedded bootstrap <script> aligned with the latest payload,
+    // so SPA-mounts (which run after this) and pages/entries.js's category
+    // lookup both read the freshest state from a single source.
+    const node = document.getElementById('rdrs-sidebar-bootstrap');
+    if (node) node.textContent = json;
+}
+
+/// True when the difference between two sidebar payloads can't be expressed
+/// by surgical badge updates alone — identity changed, masquerade/admin role
+/// changed, or the category set was added/removed/renamed.
+function isStructuralChange(prev, next) {
+    if (prev.username !== next.username) return true;
+    if (!!prev.is_admin !== !!next.is_admin) return true;
+    if (!!prev.is_masquerading !== !!next.is_masquerading) return true;
+    const key = (cats) => (cats || []).map((c) => `${c.id}:${c.name}`).join('|');
+    return key(prev.categories) !== key(next.categories);
 }
 
 class RdrsSidebar extends HTMLElement {
@@ -56,16 +83,55 @@ class RdrsSidebar extends HTMLElement {
         if (this._data) this.render(this._data);
     }
 
+    /// Public refresh hook for action paths that mutate state the sidebar
+    /// reflects (mark-as-read, mark-unread, mark-all-as-read, etc). Re-fetches
+    /// /api/sidebar so sessionStorage and the live badges both update.
+    refresh() { return this.fetchData(); }
+
     async fetchData() {
         try {
             const resp = await fetch('/api/sidebar', { credentials: 'same-origin' });
             if (!resp.ok) return;
             const data = await resp.json();
-            const changed = JSON.stringify(data) !== JSON.stringify(this._data);
+            const prev = this._data;
             this._data = data;
             writeCachedSidebar(data);
-            if (changed) this.render(data);
+            if (!prev || isStructuralChange(prev, data)) {
+                this.render(data);
+            } else {
+                this._updateBadges(data);
+            }
         } catch (e) { /* silent */ }
+    }
+
+    /// Surgical badge update — used when only unread counts changed. Avoids a
+    /// full innerHTML rebuild so frequent mark-as-read clicks don't flash the
+    /// whole sidebar.
+    _updateBadges(data) {
+        const totalEl = this.querySelector('#unread-count');
+        if (totalEl) {
+            const total = data.total_unread || 0;
+            totalEl.textContent = total > 0 ? String(total) : '';
+        }
+        const catContainer = this.querySelector('#sidebar-categories');
+        if (!catContainer) return;
+        for (const cat of data.categories || []) {
+            const link = catContainer.querySelector(`a[href="/categories/${cat.id}/entries"]`);
+            if (!link) continue;
+            const existing = link.querySelector('.sidebar-badge');
+            if (cat.unread_count > 0) {
+                if (existing) {
+                    existing.textContent = String(cat.unread_count);
+                } else {
+                    const span = document.createElement('span');
+                    span.className = 'sidebar-badge';
+                    span.textContent = String(cat.unread_count);
+                    link.appendChild(span);
+                }
+            } else if (existing) {
+                existing.remove();
+            }
+        }
     }
 
     render(data) {
