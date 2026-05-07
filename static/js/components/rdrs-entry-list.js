@@ -56,6 +56,10 @@ class RdrsEntryList extends HTMLElement {
     get search() { return this._search; }
     set search(v) { this._search = v; }
     get emptyMessage() { return this.getAttribute('empty-message') || 'No entries found.'; }
+    /// Initial placeholder before any data is loaded. Defaults to a loading
+    /// spinner; `<rdrs-entry-list>` only shows an empty-state-style message
+    /// when the page explicitly opts in (e.g. `/search` before submission).
+    get placeholderMessage() { return this.getAttribute('placeholder-message') || 'Loading...'; }
     get readingPaneSelector() { return this.getAttribute('reading-pane') || null; }
     get hasSaveServices() { return this.hasAttribute('has-save-services'); }
     get hasKagiConfigured() { return this.hasAttribute('has-kagi-configured'); }
@@ -74,7 +78,7 @@ class RdrsEntryList extends HTMLElement {
 
     // --- Initial render (skeleton) ---
     _render() {
-        const initialMessage = this.hasAttribute('no-auto-load') ? this.emptyMessage : 'Loading...';
+        const initialMessage = this.placeholderMessage;
         this.innerHTML = `
 <div id="entries-list" data-testid="entries-list">
     <p class="muted entries-status-msg">${initialMessage}</p>
@@ -243,8 +247,18 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         container.classList.add('entries-list-refreshing');
 
         if (reset) {
+            // When the list is empty (first load, or after switching filters /
+            // submitting a new search from a placeholder), swap the message to
+            // "Loading..." so users don't briefly see an empty-state string
+            // (e.g. "No entries found.") while a fetch is in flight. When
+            // entries are already on screen, keep them — `entries-list-refreshing`
+            // is the visual cue for the in-place refresh.
+            const wasEmpty = this.entries.length === 0;
             this.continuation = null;
             this.entries = [];
+            if (wasEmpty) {
+                container.innerHTML = `<p class="muted entries-status-msg">Loading...</p>`;
+            }
         }
 
         const streamId = this.streamId;
