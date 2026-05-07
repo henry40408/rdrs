@@ -213,6 +213,31 @@ const MODES = {
             { key: 'x', desc: 'Go to unread page', handle: () => { location.href = '/'; return true; } },
         ],
     },
+    search: {
+        title: 'Search',
+        navKey: 'search',
+        renderHeader: () => `
+<h1>Search</h1>
+<div class="filter-bar">
+    <div class="form-group form-group-inline flex-1">
+        <input type="text" id="filter-search" placeholder="Search entries..." autofocus data-testid="search-input">
+    </div>
+    <div>
+        <button type="button" id="search-btn" data-testid="search-btn">Search</button>
+    </div>
+</div>`,
+        listAttrs: {
+            'stream-id': READING_LIST_STREAM,
+            origin: 'search',
+            'show-feed': '',
+            'show-category': '',
+            'no-auto-load': '',
+            'empty-message': 'Enter a search term and press Enter to search.',
+        },
+        kb: [
+            { key: '/', desc: 'Focus search box', handle: (list, page) => { const input = page.querySelector('#filter-search'); if (input) input.focus(); return true; } },
+        ],
+    },
 };
 
 function inferMode() {
@@ -222,6 +247,7 @@ function inferMode() {
     if (path === '/entries/read') return 'read';
     if (path === '/entries/starred') return 'starred';
     if (path === '/entries/summarized') return 'summarized';
+    if (path === '/search') return 'search';
     if (/^\/feeds\/\d+\/entries$/.test(path)) return 'feed';
     if (/^\/categories\/\d+\/entries$/.test(path)) return 'category';
     return 'unread';
@@ -452,7 +478,54 @@ class RdrsEntriesPage extends HTMLElement {
             // Network error — proceed with defaults; reading-pane action
             // bar just won't show Save/Summarize buttons.
         }
+        // Search mode is no-auto-load: wire the input + button, and only
+        // fetch when ?q= is present in the URL (or the user submits).
+        if (this.dataset.mode === 'search') {
+            this._wireSearch(list);
+            return;
+        }
         list.loadEntries();
+    }
+
+    _wireSearch(list) {
+        const input = this.querySelector('#filter-search');
+        const btn = this.querySelector('#search-btn');
+        if (!input || !btn) return;
+
+        const doSearch = () => {
+            const q = input.value.trim();
+            if (!q) {
+                list.search = '';
+                list.showEmpty('Enter a search term and press Enter to search.');
+                history.replaceState(null, '', '/search');
+                return;
+            }
+            list.search = q;
+            list.loadEntries();
+            const params = new URLSearchParams();
+            params.set('q', q);
+            history.replaceState(null, '', '/search?' + params.toString());
+        };
+
+        btn.addEventListener('click', doSearch);
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                doSearch();
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                input.blur();
+            }
+        });
+
+        const initialQ = new URLSearchParams(location.search).get('q');
+        if (initialQ) {
+            input.value = initialQ;
+            list.search = initialQ;
+            list.loadEntries();
+        } else {
+            list.showEmpty('Enter a search term and press Enter to search.');
+        }
     }
 
     _wireMarkAsRead() {
