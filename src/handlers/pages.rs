@@ -925,130 +925,37 @@ pub async fn summarized_entries_page(
     )
 }
 
-// Category entries page
-#[derive(Template)]
-#[template(path = "category_entries.html")]
-pub struct CategoryEntriesTemplate {
-    pub username: String,
-    pub is_admin: bool,
-    pub is_masquerading: bool,
-    pub flash_messages: Vec<FlashMessage>,
-    pub entries_per_page: i64,
-    pub has_save_services: bool,
-    pub has_kagi_configured: bool,
-    pub category_id: i64,
-    pub category_name: String,
-    pub ssr_entries_json: String,
-    pub ssr_entry_views: Vec<SsrEntryView>,
-    pub ssr_has_continuation: bool,
-    pub ssr_reading_pane: Option<SsrReadingPaneEntry>,
-    pub ssr_reading_pane_json: String,
-    pub theme: Option<String>,
-    pub git_version: &'static str,
-    pub sidebar_categories: Vec<SidebarCategory>,
-    pub sidebar_unread_count: i64,
-}
-
-impl IntoResponse for CategoryEntriesTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
+/// Serves the CSR shell for `/categories/{id}/entries`. Mode `category`
+/// in `<rdrs-entries-page>` reads the category name from the inlined
+/// sidebar bootstrap blob. The handler verifies ownership (404 otherwise).
 pub async fn category_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Query(query): Query<EntryQuery>,
     flash: Flash,
-) -> Result<(Flash, CategoryEntriesTemplate), AppError> {
-    let is_masquerading = auth_user.session.is_masquerading();
-    let is_admin = if is_masquerading {
-        auth_user.session.original_user_id.is_some()
-    } else {
-        auth_user.user.is_admin()
-    };
-
+) -> Result<(Flash, AppShellTemplate), AppError> {
     let user_id = auth_user.user.id;
-    let rp_entry_id = query.entry;
-    let secret = state.config.image_proxy_secret.clone();
-    let proxy_base_url = state.config.public_base_url.clone();
-    let (category_name, cfg) = state
+    let theme = state
         .db
         .read_user(move |c| {
-            let cat =
-                category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
-            let epp = user_settings::get_entries_per_page(c, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let save_services = user_settings::has_save_services(c, user_id).unwrap_or(false);
-            let save_config =
-                user_settings::get_save_services_config(c, user_id).unwrap_or_default();
-            let kagi_configured = save_config
-                .kagi
-                .as_ref()
-                .map(|k| k.is_configured())
-                .unwrap_or(false);
-            let theme = user_settings::get_theme(c, user_id).unwrap_or(None);
-
-            let filter = entry::EntryFilter {
-                category_id: Some(id),
-                unread_only: true,
-                ..Default::default()
-            };
-            let ssr = fetch_entries_for_ssr(c, user_id, &filter, epp);
-            let (sidebar_cats, sidebar_unread) = fetch_sidebar_data(c, user_id);
-
-            let rp = rp_entry_id.and_then(|eid| {
-                fetch_reading_pane_entry(c, user_id, eid, &secret, proxy_base_url.as_deref())
-            });
-            let rp_json = rp
-                .as_ref()
-                .map(|e| escape_json_for_script(&serde_json::to_string(e).unwrap_or_default()))
-                .unwrap_or_default();
-
-            Ok::<_, AppError>((
-                cat.name,
-                EntryListConfig {
-                    entries_per_page: epp,
-                    has_save_services: save_services,
-                    has_kagi_configured: kagi_configured,
-                    ssr_entries_json: ssr.json,
-                    ssr_entry_views: ssr.views,
-                    ssr_has_continuation: ssr.has_continuation,
-                    ssr_reading_pane: rp,
-                    ssr_reading_pane_json: rp_json,
-                    theme,
-                    sidebar_categories: sidebar_cats,
-                    sidebar_unread_count: sidebar_unread,
-                },
-            ))
+            category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
+            Ok::<_, AppError>(user_settings::get_theme(c, user_id).unwrap_or(None))
         })
         .await??;
 
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+
     Ok((
-        flash.clone(),
-        CategoryEntriesTemplate {
-            username: auth_user.user.username,
-            is_admin,
-            is_masquerading,
-            flash_messages: flash.messages,
-            entries_per_page: cfg.entries_per_page,
-            has_save_services: cfg.has_save_services,
-            has_kagi_configured: cfg.has_kagi_configured,
-            category_id: id,
-            category_name,
-            ssr_entries_json: cfg.ssr_entries_json,
-            ssr_entry_views: cfg.ssr_entry_views,
-            ssr_has_continuation: cfg.ssr_has_continuation,
-            ssr_reading_pane: cfg.ssr_reading_pane,
-            ssr_reading_pane_json: cfg.ssr_reading_pane_json,
-            theme: cfg.theme,
+        flash,
+        AppShellTemplate {
+            title: "Category Entries - RDRS",
+            element_tag: "rdrs-entries-page",
+            script_path: "/static/js/pages/entries.js",
+            theme,
             git_version: crate::GIT_VERSION,
-            sidebar_categories: cfg.sidebar_categories,
-            sidebar_unread_count: cfg.sidebar_unread_count,
+            sidebar_bootstrap_json,
+            flash_bootstrap_json,
         },
     ))
 }

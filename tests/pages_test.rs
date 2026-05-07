@@ -626,7 +626,11 @@ async fn test_category_entries_page() {
     let response = app.server.get("/categories/1/entries").await;
     response.assert_status_ok();
     let body = response.text();
+    assert!(body.contains("<rdrs-entries-page>"));
+    assert!(body.contains("/static/js/pages/entries.js"));
+    // Category name is read from the inlined sidebar bootstrap JSON.
     assert!(body.contains("Test Category"));
+    assert!(!body.contains(r#"class="ssr-entries""#));
 }
 
 #[tokio::test]
@@ -741,42 +745,6 @@ async fn test_feed_entries_page_other_user() {
 // ============================================================================
 // SSR Data Embedding Tests
 // ============================================================================
-
-#[tokio::test]
-async fn test_category_entries_page_contains_ssr_json() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Cat SSR"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/cat-ssr.xml", "Cat Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "cat-ssr-guid", "Cat SSR Entry"],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/categories/1/entries").await;
-    response.assert_status_ok();
-    let body = response.text();
-
-    assert!(body.contains(r#"<script type="application/json" class="ssr-entries">"#));
-    assert!(body.contains("Cat SSR Entry"));
-}
 
 #[tokio::test]
 async fn test_search_page_contains_ssr_entries_json_when_query_present() {
