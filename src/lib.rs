@@ -139,6 +139,7 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::entry::refresh_feed_handler),
         )
         // RDRS-specific entry endpoints (not replaced by GReader API)
+        .route("/api/entries/{id}", get(handlers::entry::get_entry_detail))
         .route(
             "/api/entries/{id}/fetch-full-content",
             post(handlers::entry::fetch_full_content),
