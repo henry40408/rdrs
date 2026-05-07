@@ -345,23 +345,13 @@ ${this.showMarkAbove ? `<div id="mark-above-read" class="hidden-mt4">
         pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Loading...</p></div>`;
 
         try {
-            const body = new URLSearchParams();
-            body.set('i', entryId.toString());
-
-            const response = await fetch('/reader/api/0/stream/items/contents', {
-                method: 'POST',
-                body: body
-            });
-
-            if (!response.ok) throw new Error('Failed to load entry');
-            const result = await response.json();
-            if (!result.items || result.items.length === 0) {
+            const response = await fetch(`/api/entries/${entryId}`);
+            if (response.status === 404) {
                 pane.innerHTML = `<div class="reading-pane-content"><p class="muted">Entry not found.</p></div>`;
                 return;
             }
-
-            const item = result.items[0];
-            const data = this._extractEntryData(item);
+            if (!response.ok) throw new Error('Failed to load entry');
+            const data = await response.json();
             this._readingPaneEntry = { id: entryId, ...data };
             this._readingPaneData = data;
             this._renderReadingPaneDetail(pane, data, entryId);
