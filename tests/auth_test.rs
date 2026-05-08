@@ -302,80 +302,9 @@ async fn test_logout() {
     server.get("/api/user").await.assert_status_unauthorized();
 }
 
-#[tokio::test]
-async fn test_change_password() {
-    let server = create_test_server(default_test_config());
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/session")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status_ok();
-
-    server
-        .put("/api/user/password")
-        .json(&json!({
-            "current_password": "password123",
-            "new_password": "newpassword456"
-        }))
-        .await
-        .assert_status_ok();
-
-    // After password change, all sessions are invalidated, so user needs to login again
-    server
-        .post("/api/session")
-        .json(&json!({
-            "username": "admin",
-            "password": "newpassword456"
-        }))
-        .await
-        .assert_status_ok();
-}
-
-#[tokio::test]
-async fn test_change_password_wrong_current() {
-    let server = create_test_server(default_test_config());
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/session")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status_ok();
-
-    let response = server
-        .put("/api/user/password")
-        .json(&json!({
-            "current_password": "wrongpassword",
-            "new_password": "newpassword456"
-        }))
-        .await;
-
-    response.assert_status_unauthorized();
-}
+// Coverage for password change moved to tests/handlers_test.rs
+// (test_change_password_form_*) since the JSON PUT endpoint was removed in
+// favour of the SSR form-action endpoint at POST /user-settings/password.
 
 #[tokio::test]
 async fn test_admin_list_users() {

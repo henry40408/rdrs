@@ -186,17 +186,28 @@ async fn test_admin_page_while_masquerading() {
 }
 
 #[tokio::test]
-async fn test_user_settings_page_serves_csr_shell() {
+async fn test_user_settings_page_renders_ssr_content() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
-
     login(&app.server, "admin").await;
 
     let response = app.server.get("/user-settings").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("<rdrs-user-settings-page>"));
-    assert!(body.contains("/static/js/pages/user-settings.js"));
+
+    // Old CSR markers gone.
+    assert!(!body.contains("<rdrs-user-settings-page>"));
+    assert!(!body.contains("/static/js/pages/user-settings.js"));
+
+    // SSR content present.
+    assert!(body.contains("<h1>User Settings</h1>"));
+    assert!(body.contains("Account Information"));
+    assert!(body.contains("<form method=\"post\" action=\"/user-settings/password\">"));
+    assert!(body.contains("<form method=\"post\" action=\"/user-settings/preferences\">"));
+    assert!(body.contains("<form method=\"post\" action=\"/user-settings/linkding\">"));
+    assert!(body.contains("<form method=\"post\" action=\"/user-settings/kagi\">"));
+    assert!(body.contains("<rdrs-passkeys>"));
+    assert!(body.contains("/static/js/passkey.js"));
 }
 
 #[tokio::test]

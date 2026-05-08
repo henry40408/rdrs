@@ -1081,142 +1081,13 @@ async fn test_entries_filter_by_valid_category() {
 // ============================================================================
 // User Settings Handler Tests
 // ============================================================================
-
-#[tokio::test]
-async fn test_update_user_settings() {
-    let server = create_test_server(default_test_config());
-    setup_authenticated_user(&server).await;
-
-    let response = server
-        .put("/api/user/settings")
-        .json(&json!({ "entries_per_page": 25 }))
-        .await;
-
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["entries_per_page"], 25);
-}
-
-#[tokio::test]
-async fn test_get_linkding_settings() {
-    let server = create_test_server(default_test_config());
-    setup_authenticated_user(&server).await;
-
-    let response = server.get("/api/user/settings/linkding").await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["configured"], false);
-}
-
-#[tokio::test]
-async fn test_update_linkding_settings() {
-    let server = create_test_server(default_test_config());
-    setup_authenticated_user(&server).await;
-
-    let response = server
-        .put("/api/user/settings/linkding")
-        .json(&json!({
-            "api_url": "https://linkding.example.com",
-            "api_token": "secret-token"
-        }))
-        .await;
-
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["configured"], true);
-    assert_eq!(body["api_url"], "https://linkding.example.com");
-}
-
-#[tokio::test]
-async fn test_update_linkding_settings_clear() {
-    let server = create_test_server(default_test_config());
-    setup_authenticated_user(&server).await;
-
-    // First configure
-    server
-        .put("/api/user/settings/linkding")
-        .json(&json!({
-            "api_url": "https://linkding.example.com",
-            "api_token": "secret-token"
-        }))
-        .await
-        .assert_status_ok();
-
-    // Then clear
-    let response = server
-        .put("/api/user/settings/linkding")
-        .json(&json!({
-            "api_url": "",
-            "api_token": ""
-        }))
-        .await;
-
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["configured"], false);
-}
-
-#[tokio::test]
-async fn test_get_kagi_settings() {
-    let server = create_test_server(default_test_config());
-    setup_authenticated_user(&server).await;
-
-    let response = server.get("/api/user/settings/kagi").await;
-    response.assert_status_ok();
-
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["configured"], false);
-}
-
-#[tokio::test]
-async fn test_update_kagi_settings() {
-    let server = create_test_server(default_test_config());
-    setup_authenticated_user(&server).await;
-
-    let response = server
-        .put("/api/user/settings/kagi")
-        .json(&json!({
-            "session_link": "https://kagi.com/summarizer/index.html?token=abc123",
-            "language": "EN"
-        }))
-        .await;
-
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["configured"], true);
-    assert_eq!(body["language"], "EN");
-}
-
-#[tokio::test]
-async fn test_update_kagi_settings_invalid_session_link() {
-    let server = create_test_server(default_test_config());
-    setup_authenticated_user(&server).await;
-
-    let response = server
-        .put("/api/user/settings/kagi")
-        .json(&json!({
-            "session_link": "not-a-valid-url"
-        }))
-        .await;
-
-    response.assert_status_bad_request();
-}
-
-#[tokio::test]
-async fn test_update_kagi_settings_no_token() {
-    let server = create_test_server(default_test_config());
-    setup_authenticated_user(&server).await;
-
-    let response = server
-        .put("/api/user/settings/kagi")
-        .json(&json!({
-            "session_link": "https://kagi.com/summarizer/index.html"
-        }))
-        .await;
-
-    response.assert_status_bad_request();
-}
+//
+// JSON PUT/GET endpoints for password, settings, linkding, and kagi were
+// removed in PR-4 Task 3 in favour of SSR form-action endpoints
+// (POST /user-settings/{password,preferences,linkding,kagi}). Coverage
+// for those flows lives in test_change_password_form_*,
+// test_update_preferences_form*, test_update_linkding_form, and
+// test_update_kagi_form below.
 
 #[tokio::test]
 async fn test_get_theme_default() {
@@ -2837,4 +2708,121 @@ async fn test_friend_list() {
 
     let body: serde_json::Value = response.json();
     assert_eq!(body, json!({ "friends": [] }));
+}
+
+// ============================================================================
+// Form-action handlers for the SSR /user-settings page (PR-4 T1).
+// Each endpoint accepts application/x-www-form-urlencoded bodies and returns
+// 303 See Other with a flash cookie + Location header.
+// ============================================================================
+
+#[tokio::test]
+async fn test_change_password_form_success() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/user-settings/password")
+        .form(&json!({
+            "current_password": "password123",
+            "new_password": "newpassword456",
+            "confirm_password": "newpassword456",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/login");
+}
+
+#[tokio::test]
+async fn test_change_password_form_mismatch() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/user-settings/password")
+        .form(&json!({
+            "current_password": "password123",
+            "new_password": "newpassword456",
+            "confirm_password": "differentvalue",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/user-settings");
+}
+
+#[tokio::test]
+async fn test_update_preferences_form() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/user-settings/preferences")
+        .form(&json!({
+            "theme": "dark",
+            "entries_per_page": 50,
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/user-settings");
+}
+
+#[tokio::test]
+async fn test_update_preferences_form_validation() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // entries_per_page=5 is below MIN_ENTRIES_PER_PAGE (10), expect error path
+    let response = server
+        .post("/user-settings/preferences")
+        .form(&json!({
+            "theme": "system",
+            "entries_per_page": 5,
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/user-settings");
+}
+
+#[tokio::test]
+async fn test_update_linkding_form() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/user-settings/linkding")
+        .form(&json!({
+            "api_url": "https://linkding.example.com",
+            "api_token": "secret-token",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/user-settings");
+}
+
+#[tokio::test]
+async fn test_update_kagi_form() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/user-settings/kagi")
+        .form(&json!({
+            "session_link": "https://kagi.com/search?token=mysessiontoken",
+            "language": "EN",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/user-settings");
 }

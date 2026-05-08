@@ -45,10 +45,6 @@ const FILES: &[(&str, &str)] = &[
         include_str!("../../static/js/pages/feeds.js"),
     ),
     (
-        "js/pages/user-settings.js",
-        include_str!("../../static/js/pages/user-settings.js"),
-    ),
-    (
         "js/pages/admin.js",
         include_str!("../../static/js/pages/admin.js"),
     ),
@@ -56,6 +52,7 @@ const FILES: &[(&str, &str)] = &[
         "js/pages/entries.js",
         include_str!("../../static/js/pages/entries.js"),
     ),
+    ("js/passkey.js", include_str!("../../static/js/passkey.js")),
     ("js/app.js", include_str!("../../static/js/app.js")),
 ];
 

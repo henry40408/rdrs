@@ -280,10 +280,10 @@ pub async fn admin_page(
     )
 }
 
-/// Serves the CSR shell for `/user-settings`. Account info, preferences,
-/// passkeys, and integrations are all loaded by `<rdrs-user-settings-page>`
-/// from existing JSON endpoints (`/api/me`, `/api/user-settings`,
-/// `/api/passkeys`, `/api/user/settings/{linkding,kagi,theme}`).
+/// Serves `/user-settings` rendered fully server-side. Account info,
+/// GReader URLs, password / preferences / Linkding / Kagi forms targeting
+/// `/user-settings/*` form-action endpoints, and a `<rdrs-passkeys>` mount
+/// for the WebAuthn UI are all populated directly from `state.config` + DB.
 pub async fn user_settings_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -291,12 +291,90 @@ pub async fn user_settings_page(
 ) -> (Flash, UserSettingsTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
+    let user_id = auth_user.user.id;
+
+    // Load theme + entries_per_page + save_services in a single read.
+    let (
+        theme,
+        entries_per_page,
+        linkding_configured,
+        linkding_api_url,
+        kagi_configured,
+        kagi_language,
+    ) = state
+        .db
+        .read_user(move |conn| {
+            let theme = user_settings::get_theme(conn, user_id).unwrap_or(None);
+            let entries_per_page = user_settings::get_entries_per_page(conn, user_id)
+                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let save_config =
+                user_settings::get_save_services_config(conn, user_id).unwrap_or_default();
+
+            let linkding = save_config.linkding.as_ref();
+            let linkding_configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
+            let linkding_api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
+
+            let kagi = save_config.kagi.as_ref();
+            let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
+            let kagi_language = kagi.and_then(|c| c.language.clone());
+
+            Ok::<_, AppError>((
+                theme,
+                entries_per_page,
+                linkding_configured,
+                linkding_api_url,
+                kagi_configured,
+                kagi_language,
+            ))
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or((
+            None,
+            user_settings::DEFAULT_ENTRIES_PER_PAGE,
+            false,
+            String::new(),
+            false,
+            None,
+        ));
+
+    let public_base_url = state
+        .config
+        .public_base_url
+        .clone()
+        .unwrap_or_else(|| format!("http://localhost:{}", state.config.server_port));
+
+    let role = auth_user.user.role.as_str().to_string();
+    let created_at = auth_user
+        .user
+        .created_at
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+    let session_created_at = auth_user
+        .session
+        .created_at
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+    let username = auth_user.user.username.clone();
+
     (
         flash,
         UserSettingsTemplate {
             title: "User Settings",
             git_version: crate::GIT_VERSION,
             layout,
+            username,
+            role,
+            created_at,
+            session_created_at,
+            public_base_url,
+            theme,
+            entries_per_page,
+            linkding_configured,
+            linkding_api_url,
+            kagi_configured,
+            kagi_language,
         },
     )
 }
@@ -626,13 +704,27 @@ impl IntoResponse for SettingsTemplate {
     }
 }
 
-/// Per-route template for `/user-settings`.
+/// Per-route template for `/user-settings`. Renders the full page server-side
+/// (account info, GReader URLs, password / preferences / linkding / kagi
+/// forms, and a `<rdrs-passkeys>` mount). Form actions target the
+/// `/user-settings/*` form-action handlers added in PR-4 Task 1.
 #[derive(Template)]
 #[template(path = "user_settings.html")]
 pub struct UserSettingsTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub username: String,
+    pub role: String,
+    pub created_at: String,
+    pub session_created_at: String,
+    pub public_base_url: String,
+    pub theme: Option<String>,
+    pub entries_per_page: i64,
+    pub linkding_configured: bool,
+    pub linkding_api_url: String,
+    pub kagi_configured: bool,
+    pub kagi_language: Option<String>,
 }
 
 impl IntoResponse for UserSettingsTemplate {

@@ -66,28 +66,27 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/user-settings", get(handlers::user::get_user_settings))
         .route("/api/statistics", get(handlers::statistics::get_statistics))
         .route("/api/feeds", get(handlers::feeds::list_feeds))
-        .route("/api/user/password", put(handlers::user::change_password))
-        .route("/api/user/settings", put(handlers::user::update_settings))
-        .route(
-            "/api/user/settings/linkding",
-            get(handlers::user::get_linkding_settings),
-        )
-        .route(
-            "/api/user/settings/linkding",
-            put(handlers::user::update_linkding_settings),
-        )
-        .route(
-            "/api/user/settings/kagi",
-            get(handlers::user::get_kagi_settings),
-        )
-        .route(
-            "/api/user/settings/kagi",
-            put(handlers::user::update_kagi_settings),
-        )
         .route("/api/user/settings/theme", get(handlers::user::get_theme))
         .route(
             "/api/user/settings/theme",
             put(handlers::user::update_theme),
+        )
+        // Form-action POST endpoints for the SSR /user-settings page (PR-4 T1).
+        .route(
+            "/user-settings/password",
+            post(handlers::user::change_password_form),
+        )
+        .route(
+            "/user-settings/preferences",
+            post(handlers::user::update_preferences_form),
+        )
+        .route(
+            "/user-settings/linkding",
+            post(handlers::user::update_linkding_form),
+        )
+        .route(
+            "/user-settings/kagi",
+            post(handlers::user::update_kagi_form),
         )
         .route("/api/admin/users", get(handlers::admin::list_users))
         .route("/api/admin/users/{id}", put(handlers::admin::update_user))
