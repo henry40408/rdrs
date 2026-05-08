@@ -591,38 +591,6 @@ pub async fn build_app_layout(
     }
 }
 
-/// Shared CSR shell template. Each migrated page returns this with the
-/// element_tag and script_path of its page module.
-///
-/// Bootstrap fields carry the minimum per-user JSON the CSR chrome needs to
-/// paint without a network round trip:
-/// - `sidebar_bootstrap_json`: the `/api/sidebar` payload
-/// - `flash_bootstrap_json`: pending flash messages (consumed via the `Flash`
-///   extractor; the response also clears the cookie)
-///
-/// The page's own data (statistics rows, category list, etc.) is still
-/// fetched after mount.
-#[derive(Template)]
-#[template(path = "app_shell.html")]
-pub struct AppShellTemplate {
-    pub title: &'static str,
-    pub element_tag: &'static str,
-    pub script_path: &'static str,
-    pub theme: Option<String>,
-    pub git_version: &'static str,
-    pub sidebar_bootstrap_json: String,
-    pub flash_bootstrap_json: String,
-}
-
-impl IntoResponse for AppShellTemplate {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
 /// Per-route template for `/settings`. Extends `app_layout.html` with the
 /// settings page's element tag + script path. The shared chrome (sidebar,
 /// flash bootstrap, theme) lives in `layout`.
