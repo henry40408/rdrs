@@ -399,14 +399,16 @@ pub async fn entry_page(
     Redirect::to(&redirect_url)
 }
 
-/// Serves the CSR shell for `/settings`. Read-only server config is
-/// loaded by `<rdrs-settings-page>` from `GET /api/server-config`.
+/// Serves `/settings` rendered fully server-side. The read-only server
+/// config table is populated directly from `state.config` via Askama —
+/// no JS executes for this page apart from the shared chrome scripts.
 pub async fn settings_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, SettingsTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let user_agent_is_default = state.config.user_agent == crate::config::DEFAULT_USER_AGENT;
 
     (
         flash,
@@ -414,6 +416,10 @@ pub async fn settings_page(
             title: "Settings",
             git_version: crate::GIT_VERSION,
             layout,
+            user_agent: state.config.user_agent.clone(),
+            user_agent_is_default,
+            signup_enabled: state.config.signup_enabled,
+            multi_user_enabled: state.config.multi_user_enabled,
         },
     )
 }
@@ -591,9 +597,9 @@ pub async fn build_app_layout(
     }
 }
 
-/// Per-route template for `/settings`. Extends `app_layout.html` with the
-/// settings page's element tag + script path. The shared chrome (sidebar,
-/// flash bootstrap, theme) lives in `layout`.
+/// Per-route template for `/settings`. Renders the full server-config
+/// table directly via Askama from fields populated out of `state.config`.
+/// The shared chrome (sidebar, flash bootstrap, theme) lives in `layout`.
 ///
 /// `git_version` is duplicated here (in addition to `layout.git_version`)
 /// because `base.html` references the bare `{{ git_version }}` outside of
@@ -605,6 +611,10 @@ pub struct SettingsTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub user_agent: String,
+    pub user_agent_is_default: bool,
+    pub signup_enabled: bool,
+    pub multi_user_enabled: bool,
 }
 
 impl IntoResponse for SettingsTemplate {

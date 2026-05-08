@@ -37,22 +37,6 @@
             };
         };
 
-        // Sidebar toggle
-        function toggleSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            const toggle = document.querySelector('.sidebar-toggle');
-            if (sidebar) {
-                sidebar.classList.toggle('open');
-                if (toggle) toggle.style.display = sidebar.classList.contains('open') ? 'none' : '';
-            }
-        }
-
-        function closeSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            const toggle = document.querySelector('.sidebar-toggle');
-            if (sidebar) sidebar.classList.remove('open');
-            if (toggle) toggle.style.display = '';
-        }
     </script>
     <script type="module" src="/static/js/components/rdrs-flash.js?v={{ git_version }}"></script>
     {% block head %}{% endblock %}

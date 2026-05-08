@@ -200,17 +200,50 @@ async fn test_user_settings_page_serves_csr_shell() {
 }
 
 #[tokio::test]
-async fn test_settings_page_serves_csr_shell() {
+async fn test_settings_page_renders_ssr_content() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
-
     login(&app.server, "admin").await;
 
     let response = app.server.get("/settings").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("<rdrs-settings-page>"));
-    assert!(body.contains("/static/js/pages/settings.js"));
+
+    // SSR content — no more <rdrs-settings-page> element / page-script.
+    assert!(!body.contains("<rdrs-settings-page>"));
+    assert!(!body.contains("/static/js/pages/settings.js"));
+
+    // Server-rendered content from default config.
+    assert!(body.contains("<h1>Settings</h1>"));
+    assert!(body.contains("Configuration"));
+    assert!(body.contains("User Agent"));
+    assert!(body.contains("Signup Enabled"));
+    assert!(body.contains("Environment Variables"));
+}
+
+#[tokio::test]
+async fn test_settings_page_reflects_custom_config() {
+    let config = Config {
+        user_agent: "Custom-Agent/2.0".to_string(),
+        signup_enabled: true,
+        multi_user_enabled: true,
+        ..default_test_config()
+    };
+    let app = create_test_app(config);
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/settings").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(body.contains("Custom-Agent/2.0"));
+    assert!(body.contains("(custom)"));
+    // Both Yes flags rendered for signup + multi-user.
+    let yes_count = body
+        .matches("<span class=\"success-text\">Yes</span>")
+        .count();
+    assert!(yes_count >= 2, "expected >=2 Yes badges, got {yes_count}");
 }
 
 #[tokio::test]
@@ -504,48 +537,6 @@ async fn test_api_user_settings_returns_custom_entries_per_page() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(body["entries_per_page"], 100);
-}
-
-// ============================================================================
-// /api/server-config tests
-// ============================================================================
-
-#[tokio::test]
-async fn test_api_server_config_returns_signup_status() {
-    let config = Config {
-        signup_enabled: true,
-        multi_user_enabled: true,
-        ..default_test_config()
-    };
-    let app = create_test_app(config);
-    setup_users(&app.db).await;
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/api/server-config").await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["signup_enabled"], true);
-    assert_eq!(body["multi_user_enabled"], true);
-    assert!(body["git_version"].is_string());
-}
-
-#[tokio::test]
-async fn test_api_server_config_with_custom_user_agent() {
-    let config = Config {
-        user_agent: "Custom-Agent/2.0".to_string(),
-        ..default_test_config()
-    };
-    let app = create_test_app(config);
-    setup_users(&app.db).await;
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/api/server-config").await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["user_agent"], "Custom-Agent/2.0");
-    assert_eq!(body["user_agent_is_default"], false);
 }
 
 // ============================================================================

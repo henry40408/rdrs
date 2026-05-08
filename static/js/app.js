@@ -96,4 +96,25 @@ window.rdrsNavigate = function(path) {
     window.location.href = path;
 };
 
+// Sidebar mobile-toggle helpers. <rdrs-sidebar>'s render emits
+// inline `onclick="toggleSidebar()"` / `onclick="closeSidebar()"`,
+// which require global functions — assign to `window` because
+// module-scope declarations are not visible to inline event
+// attributes.
+window.toggleSidebar = function() {
+    const sidebar = document.getElementById('sidebar');
+    const toggle = document.querySelector('.sidebar-toggle');
+    if (sidebar) {
+        sidebar.classList.toggle('open');
+        if (toggle) toggle.style.display = sidebar.classList.contains('open') ? 'none' : '';
+    }
+};
+
+window.closeSidebar = function() {
+    const sidebar = document.getElementById('sidebar');
+    const toggle = document.querySelector('.sidebar-toggle');
+    if (sidebar) sidebar.classList.remove('open');
+    if (toggle) toggle.style.display = '';
+};
+
 installSwap();

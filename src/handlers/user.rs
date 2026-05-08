@@ -120,34 +120,6 @@ pub async fn get_user_settings(
 }
 
 #[derive(Debug, Serialize)]
-pub struct ServerConfigResponse {
-    pub git_version: &'static str,
-    pub user_agent: String,
-    pub user_agent_is_default: bool,
-    pub signup_enabled: bool,
-    pub multi_user_enabled: bool,
-}
-
-/// Read-only server configuration for the CSR settings page. These values
-/// are configured via environment variables — there is no mutation API.
-pub async fn get_server_config(
-    State(state): State<AppState>,
-    auth_user: AuthUser,
-) -> AppResult<Json<ServerConfigResponse>> {
-    // Auth required so configuration isn't exposed publicly.
-    let _ = auth_user;
-    let user_agent_is_default = state.config.user_agent == crate::config::DEFAULT_USER_AGENT;
-
-    Ok(Json(ServerConfigResponse {
-        git_version: crate::GIT_VERSION,
-        user_agent: state.config.user_agent.clone(),
-        user_agent_is_default,
-        signup_enabled: state.config.signup_enabled,
-        multi_user_enabled: state.config.multi_user_enabled,
-    }))
-}
-
-#[derive(Debug, Serialize)]
 pub struct SidebarCategoryDto {
     pub id: i64,
     pub name: String,
