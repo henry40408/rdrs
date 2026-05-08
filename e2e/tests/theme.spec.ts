@@ -16,23 +16,31 @@ test.describe("Theme Switching", () => {
     await expect(page.getByTestId("theme-select")).toBeVisible();
   });
 
-  test("switch to dark theme sets data-theme attribute", async ({ page }) => {
+  test("switch to dark theme sets data-theme attribute", async ({ page, serverUrl }) => {
     await page.getByTestId("theme-select").selectOption("dark");
+    await page.locator('form[action="/user-settings/preferences"] button[type=submit]').click();
+    await page.waitForURL(`${serverUrl}/user-settings`);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   });
 
-  test("switch to light theme sets data-theme attribute", async ({ page }) => {
+  test("switch to light theme sets data-theme attribute", async ({ page, serverUrl }) => {
     await page.getByTestId("theme-select").selectOption("light");
+    await page.locator('form[action="/user-settings/preferences"] button[type=submit]').click();
+    await page.waitForURL(`${serverUrl}/user-settings`);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   });
 
-  test("switch to system removes data-theme attribute", async ({ page }) => {
+  test("switch to system removes data-theme attribute", async ({ page, serverUrl }) => {
     // First set to dark
     await page.getByTestId("theme-select").selectOption("dark");
+    await page.locator('form[action="/user-settings/preferences"] button[type=submit]').click();
+    await page.waitForURL(`${serverUrl}/user-settings`);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
     // Then switch to system
     await page.getByTestId("theme-select").selectOption("system");
+    await page.locator('form[action="/user-settings/preferences"] button[type=submit]').click();
+    await page.waitForURL(`${serverUrl}/user-settings`);
     await expect(page.locator("html")).not.toHaveAttribute("data-theme");
   });
 });
