@@ -1,0 +1,9 @@
+{% extends "app_layout.html" %}
+
+{% block page_script %}
+    <script type="module" src="/static/js/pages/feeds.js?v={{ layout.git_version }}"></script>
+{% endblock %}
+
+{% block page %}
+    <rdrs-feeds-page></rdrs-feeds-page>
+{% endblock %}
