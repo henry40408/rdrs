@@ -686,6 +686,41 @@ pub async fn feed_entries_page(
     ))
 }
 
+/// Shared layout fields embedded in every per-route logged-in
+/// template. Templates reference these as `{{ layout.<field> }}`.
+pub struct AppLayoutContext {
+    pub theme: Option<String>,
+    pub git_version: &'static str,
+    pub sidebar_bootstrap_json: String,
+    pub flash_bootstrap_json: String,
+}
+
+/// Build the shared layout context for a logged-in page response.
+/// Loads the user's theme, the sidebar tree (escaped for inline
+/// embedding), and the flash messages (also escaped).
+pub async fn build_app_layout(
+    state: &AppState,
+    auth_user: &PageAuthUser,
+    flash: &Flash,
+) -> AppLayoutContext {
+    let user_id = auth_user.user.id;
+    let theme = state
+        .db
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .await
+        .unwrap_or(None);
+
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(state, auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+
+    AppLayoutContext {
+        theme,
+        git_version: crate::GIT_VERSION,
+        sidebar_bootstrap_json,
+        flash_bootstrap_json,
+    }
+}
+
 /// Shared CSR shell template. Each migrated page returns this with the
 /// element_tag and script_path of its page module.
 ///
