@@ -238,27 +238,15 @@ pub async fn unread_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AppShellTemplate) {
-    let user_id = auth_user.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
-
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+) -> (Flash, UnreadTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     (
         flash,
-        AppShellTemplate {
-            title: "Unread - RDRS",
-            element_tag: "rdrs-entries-page",
-            script_path: "/static/js/pages/entries.js",
-            theme,
+        UnreadTemplate {
+            title: "Unread",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     )
 }
@@ -272,14 +260,7 @@ pub async fn admin_page(
     admin: PageAdminUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AppShellTemplate) {
-    let user_id = admin.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
-
+) -> (Flash, AdminTemplate) {
     // Reuse the same shell helpers as other pages by adapting the admin
     // extractor into a PageAuthUser shape (sidebar/flash bootstrap don't
     // care which it is, only about user + session).
@@ -287,19 +268,14 @@ pub async fn admin_page(
         user: admin.user,
         session: admin.session,
     };
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     (
         flash,
-        AppShellTemplate {
-            title: "Admin Panel - RDRS",
-            element_tag: "rdrs-admin-page",
-            script_path: "/static/js/pages/admin.js",
-            theme,
+        AdminTemplate {
+            title: "Admin Panel",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     )
 }
@@ -312,27 +288,15 @@ pub async fn user_settings_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AppShellTemplate) {
-    let user_id = auth_user.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
-
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+) -> (Flash, UserSettingsTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     (
         flash,
-        AppShellTemplate {
-            title: "User Settings - RDRS",
-            element_tag: "rdrs-user-settings-page",
-            script_path: "/static/js/pages/user-settings.js",
-            theme,
+        UserSettingsTemplate {
+            title: "User Settings",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     )
 }
@@ -357,27 +321,15 @@ pub async fn feeds_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AppShellTemplate) {
-    let user_id = auth_user.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
-
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+) -> (Flash, FeedsTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     (
         flash,
-        AppShellTemplate {
-            title: "Feeds - RDRS",
-            element_tag: "rdrs-feeds-page",
-            script_path: "/static/js/pages/feeds.js",
-            theme,
+        FeedsTemplate {
+            title: "Feeds",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     )
 }
@@ -388,27 +340,15 @@ pub async fn entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AppShellTemplate) {
-    let user_id = auth_user.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
-
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+) -> (Flash, EntriesTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     (
         flash,
-        AppShellTemplate {
-            title: "Entries - RDRS",
-            element_tag: "rdrs-entries-page",
-            script_path: "/static/js/pages/entries.js",
-            theme,
+        EntriesTemplate {
+            title: "Entries",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     )
 }
@@ -465,27 +405,15 @@ pub async fn settings_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AppShellTemplate) {
-    let user_id = auth_user.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
-
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+) -> (Flash, SettingsTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     (
         flash,
-        AppShellTemplate {
-            title: "Settings - RDRS",
-            element_tag: "rdrs-settings-page",
-            script_path: "/static/js/pages/settings.js",
-            theme,
+        SettingsTemplate {
+            title: "Settings",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     )
 }
@@ -495,27 +423,15 @@ pub async fn read_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AppShellTemplate) {
-    let user_id = auth_user.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
-
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+) -> (Flash, ReadEntriesTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     (
         flash,
-        AppShellTemplate {
-            title: "Read Entries - RDRS",
-            element_tag: "rdrs-entries-page",
-            script_path: "/static/js/pages/entries.js",
-            theme,
+        ReadEntriesTemplate {
+            title: "Read Entries",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     )
 }
@@ -525,27 +441,15 @@ pub async fn starred_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AppShellTemplate) {
-    let user_id = auth_user.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
-
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+) -> (Flash, StarredEntriesTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     (
         flash,
-        AppShellTemplate {
-            title: "Starred Entries - RDRS",
-            element_tag: "rdrs-entries-page",
-            script_path: "/static/js/pages/entries.js",
-            theme,
+        StarredEntriesTemplate {
+            title: "Starred Entries",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     )
 }
@@ -555,27 +459,15 @@ pub async fn summarized_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AppShellTemplate) {
-    let user_id = auth_user.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
-
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+) -> (Flash, SummarizedEntriesTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     (
         flash,
-        AppShellTemplate {
-            title: "Summarized Entries - RDRS",
-            element_tag: "rdrs-entries-page",
-            script_path: "/static/js/pages/entries.js",
-            theme,
+        SummarizedEntriesTemplate {
+            title: "Summarized Entries",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     )
 }
@@ -588,29 +480,24 @@ pub async fn category_entries_page(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     flash: Flash,
-) -> Result<(Flash, AppShellTemplate), AppError> {
+) -> Result<(Flash, CategoryEntriesTemplate), AppError> {
     let user_id = auth_user.user.id;
-    let theme = state
+    state
         .db
         .read_user(move |c| {
             category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
-            Ok::<_, AppError>(user_settings::get_theme(c, user_id).unwrap_or(None))
+            Ok::<_, AppError>(())
         })
         .await??;
 
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     Ok((
         flash,
-        AppShellTemplate {
-            title: "Category Entries - RDRS",
-            element_tag: "rdrs-entries-page",
-            script_path: "/static/js/pages/entries.js",
-            theme,
+        CategoryEntriesTemplate {
+            title: "Category Entries",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     ))
 }
@@ -621,27 +508,15 @@ pub async fn search_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AppShellTemplate) {
-    let user_id = auth_user.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
-
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+) -> (Flash, SearchTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     (
         flash,
-        AppShellTemplate {
-            title: "Search - RDRS",
-            element_tag: "rdrs-entries-page",
-            script_path: "/static/js/pages/entries.js",
-            theme,
+        SearchTemplate {
+            title: "Search",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     )
 }
@@ -655,9 +530,9 @@ pub async fn feed_entries_page(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     flash: Flash,
-) -> Result<(Flash, AppShellTemplate), AppError> {
+) -> Result<(Flash, FeedEntriesTemplate), AppError> {
     let user_id = auth_user.user.id;
-    let theme = state
+    state
         .db
         .read_user(move |c| {
             let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
@@ -665,51 +540,308 @@ pub async fn feed_entries_page(
             if cat.user_id != user_id {
                 return Err(AppError::FeedNotFound);
             }
-            Ok::<_, AppError>(user_settings::get_theme(c, user_id).unwrap_or(None))
+            Ok::<_, AppError>(())
         })
         .await??;
 
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     Ok((
         flash,
-        AppShellTemplate {
-            title: "Feed Entries - RDRS",
-            element_tag: "rdrs-entries-page",
-            script_path: "/static/js/pages/entries.js",
-            theme,
+        FeedEntriesTemplate {
+            title: "Feed Entries",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     ))
 }
 
-/// Shared CSR shell template. Each migrated page returns this with the
-/// element_tag and script_path of its page module.
-///
-/// Bootstrap fields carry the minimum per-user JSON the CSR chrome needs to
-/// paint without a network round trip:
-/// - `sidebar_bootstrap_json`: the `/api/sidebar` payload
-/// - `flash_bootstrap_json`: pending flash messages (consumed via the `Flash`
-///   extractor; the response also clears the cookie)
-///
-/// The page's own data (statistics rows, category list, etc.) is still
-/// fetched after mount.
-#[derive(Template)]
-#[template(path = "app_shell.html")]
-pub struct AppShellTemplate {
-    pub title: &'static str,
-    pub element_tag: &'static str,
-    pub script_path: &'static str,
+/// Shared layout fields embedded in every per-route logged-in
+/// template. Templates reference these as `{{ layout.<field> }}`.
+pub struct AppLayoutContext {
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_bootstrap_json: String,
     pub flash_bootstrap_json: String,
 }
 
-impl IntoResponse for AppShellTemplate {
+/// Build the shared layout context for a logged-in page response.
+/// Loads the user's theme, the sidebar tree (escaped for inline
+/// embedding), and the flash messages (also escaped).
+pub async fn build_app_layout(
+    state: &AppState,
+    auth_user: &PageAuthUser,
+    flash: &Flash,
+) -> AppLayoutContext {
+    let user_id = auth_user.user.id;
+    let theme = state
+        .db
+        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
+        .await
+        .unwrap_or(None);
+
+    let sidebar_bootstrap_json = sidebar_bootstrap_json(state, auth_user).await;
+    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+
+    AppLayoutContext {
+        theme,
+        git_version: crate::GIT_VERSION,
+        sidebar_bootstrap_json,
+        flash_bootstrap_json,
+    }
+}
+
+/// Per-route template for `/settings`. Extends `app_layout.html` with the
+/// settings page's element tag + script path. The shared chrome (sidebar,
+/// flash bootstrap, theme) lives in `layout`.
+///
+/// `git_version` is duplicated here (in addition to `layout.git_version`)
+/// because `base.html` references the bare `{{ git_version }}` outside of
+/// the blocks owned by `app_layout.html`. Task 4 will move that chrome
+/// into `app_layout.html` and let the duplication go away.
+#[derive(Template)]
+#[template(path = "settings.html")]
+pub struct SettingsTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for SettingsTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/user-settings`.
+#[derive(Template)]
+#[template(path = "user_settings.html")]
+pub struct UserSettingsTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for UserSettingsTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/admin`.
+#[derive(Template)]
+#[template(path = "admin.html")]
+pub struct AdminTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for AdminTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/statistics`.
+#[derive(Template)]
+#[template(path = "statistics.html")]
+pub struct StatisticsTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for StatisticsTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/categories`.
+#[derive(Template)]
+#[template(path = "categories.html")]
+pub struct CategoriesTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for CategoriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/feeds`.
+#[derive(Template)]
+#[template(path = "feeds.html")]
+pub struct FeedsTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for FeedsTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/` (unread).
+#[derive(Template)]
+#[template(path = "unread.html")]
+pub struct UnreadTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for UnreadTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/entries`.
+#[derive(Template)]
+#[template(path = "entries.html")]
+pub struct EntriesTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for EntriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/entries/read`.
+#[derive(Template)]
+#[template(path = "read_entries.html")]
+pub struct ReadEntriesTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for ReadEntriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/entries/starred`.
+#[derive(Template)]
+#[template(path = "starred_entries.html")]
+pub struct StarredEntriesTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for StarredEntriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/entries/summarized`.
+#[derive(Template)]
+#[template(path = "summarized_entries.html")]
+pub struct SummarizedEntriesTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for SummarizedEntriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/feeds/{id}/entries`.
+#[derive(Template)]
+#[template(path = "feed_entries.html")]
+pub struct FeedEntriesTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for FeedEntriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/categories/{id}/entries`.
+#[derive(Template)]
+#[template(path = "category_entries.html")]
+pub struct CategoryEntriesTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for CategoryEntriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/search`.
+#[derive(Template)]
+#[template(path = "search.html")]
+pub struct SearchTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for SearchTemplate {
     fn into_response(self) -> Response {
         match self.render() {
             Ok(html) => Html(html).into_response(),
@@ -744,27 +876,15 @@ pub async fn statistics_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AppShellTemplate) {
-    let user_id = auth_user.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
-
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+) -> (Flash, StatisticsTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     (
         flash,
-        AppShellTemplate {
-            title: "Statistics - RDRS",
-            element_tag: "rdrs-statistics-page",
-            script_path: "/static/js/pages/statistics.js",
-            theme,
+        StatisticsTemplate {
+            title: "Statistics",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     )
 }
@@ -776,27 +896,15 @@ pub async fn categories_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, AppShellTemplate) {
-    let user_id = auth_user.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
-
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(&state, &auth_user).await;
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
+) -> (Flash, CategoriesTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     (
         flash,
-        AppShellTemplate {
-            title: "Categories - RDRS",
-            element_tag: "rdrs-categories-page",
-            script_path: "/static/js/pages/categories.js",
-            theme,
+        CategoriesTemplate {
+            title: "Categories",
             git_version: crate::GIT_VERSION,
-            sidebar_bootstrap_json,
-            flash_bootstrap_json,
+            layout,
         },
     )
 }

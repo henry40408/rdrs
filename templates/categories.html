@@ -1,0 +1,9 @@
+{% extends "app_layout.html" %}
+
+{% block page_script %}
+    <script type="module" src="/static/js/pages/categories.js?v={{ layout.git_version }}"></script>
+{% endblock %}
+
+{% block page %}
+    <rdrs-categories-page></rdrs-categories-page>
+{% endblock %}

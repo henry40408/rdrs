@@ -1166,3 +1166,78 @@ async fn test_api_feeds_invalid_filter_defaults_to_all() {
     let body: serde_json::Value = response.json();
     assert_eq!(body["active_filter"], "all");
 }
+
+// ============================================================================
+// Pre-login shell vs. logged-in chrome separation
+//
+// `templates/base.html` is the slim pre-login shell (only `rdrs-flash.js`).
+// All logged-in chrome (kb-pending, kb-help, keyboard, entry-list, sidebar,
+// app.js + the two body-mounted custom elements) lives in
+// `templates/app_layout.html` and ships only on per-route templates that
+// extend it.
+// ============================================================================
+
+#[tokio::test]
+async fn test_login_page_does_not_load_logged_in_chrome() {
+    let app = create_test_app(default_test_config());
+    let response = app.server.get("/login").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    // None of the logged-in chrome should appear on the pre-login shell.
+    assert!(!body.contains("rdrs-kb-pending.js"));
+    assert!(!body.contains("rdrs-kb-help.js"));
+    assert!(!body.contains("/keyboard.js"));
+    assert!(!body.contains("rdrs-entry-list.js"));
+    assert!(!body.contains("rdrs-sidebar.js"));
+    assert!(!body.contains("/static/js/app.js"));
+    assert!(!body.contains("<rdrs-kb-help>"));
+    assert!(!body.contains("<rdrs-kb-pending>"));
+
+    // Flash machinery is still needed (login/register use flash.redirect).
+    assert!(body.contains("rdrs-flash.js"));
+}
+
+#[tokio::test]
+async fn test_register_page_does_not_load_logged_in_chrome() {
+    let app = create_test_app(default_test_config());
+    let response = app.server.get("/register").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(!body.contains("rdrs-kb-pending.js"));
+    assert!(!body.contains("rdrs-kb-help.js"));
+    assert!(!body.contains("/keyboard.js"));
+    assert!(!body.contains("rdrs-entry-list.js"));
+    assert!(!body.contains("rdrs-sidebar.js"));
+    assert!(!body.contains("/static/js/app.js"));
+    assert!(!body.contains("<rdrs-kb-help>"));
+    assert!(!body.contains("<rdrs-kb-pending>"));
+
+    assert!(body.contains("rdrs-flash.js"));
+}
+
+#[tokio::test]
+async fn test_logged_in_page_loads_full_chrome() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    // /settings extends app_layout.html — same chrome as every other
+    // logged-in route.
+    let response = app.server.get("/settings").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    // All 6 chrome scripts must be present.
+    assert!(body.contains("rdrs-kb-pending.js"));
+    assert!(body.contains("rdrs-kb-help.js"));
+    assert!(body.contains("/keyboard.js"));
+    assert!(body.contains("rdrs-entry-list.js"));
+    assert!(body.contains("rdrs-sidebar.js"));
+    assert!(body.contains("/static/js/app.js"));
+
+    // Both keyboard helper custom elements must be mounted.
+    assert!(body.contains("<rdrs-kb-help>"));
+    assert!(body.contains("<rdrs-kb-pending>"));
+}

@@ -54,11 +54,7 @@
             if (toggle) toggle.style.display = '';
         }
     </script>
-    <script type="module" src="/static/js/components/rdrs-kb-pending.js?v={{ git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-flash.js?v={{ git_version }}"></script>
-    <script type="module" src="/static/js/components/rdrs-kb-help.js?v={{ git_version }}"></script>
-    <script type="module" src="/static/js/keyboard.js?v={{ git_version }}"></script>
-    <script type="module" src="/static/js/components/rdrs-entry-list.js?v={{ git_version }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -66,8 +62,6 @@
     {% block flash %}{% endblock %}
     {% block content %}{% endblock %}
     {% endblock %}
-    <rdrs-kb-help></rdrs-kb-help>
-    <rdrs-kb-pending></rdrs-kb-pending>
     <script>
         window.addEventListener('pageshow', function(event) {
             if (event.persisted && typeof window.onPersistedPageShow === 'function') {
