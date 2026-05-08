@@ -1,9 +1,146 @@
 {% extends "app_layout.html" %}
 
 {% block page_script %}
-    <script type="module" src="/static/js/pages/user-settings.js?v={{ layout.git_version }}"></script>
+    <script type="module" src="/static/js/passkey.js?v={{ layout.git_version }}"></script>
 {% endblock %}
 
 {% block page %}
-    <rdrs-user-settings-page></rdrs-user-settings-page>
+    <div class="app-layout">
+        <rdrs-sidebar active="user-settings"></rdrs-sidebar>
+        <main class="main-content">
+            <div class="page-content">
+                <rdrs-flash class="flash-container"></rdrs-flash>
+                <h1>User Settings</h1>
+
+                <h2>Account Information</h2>
+                <table>
+                    <tr><th class="settings-th">Username</th><td>{{ username }}</td></tr>
+                    <tr><th class="settings-th">Role</th><td>{{ role }}</td></tr>
+                    <tr><th class="settings-th">Registered</th><td>{{ created_at }}</td></tr>
+                    <tr><th class="settings-th">Logged In</th><td>{{ session_created_at }}</td></tr>
+                </table>
+
+                <h2>RSS Client (Google Reader API)</h2>
+                <p class="muted">Connect any RSS reader that supports the Google Reader API (e.g., Reeder, NetNewsWire, FeedMe, Read You, FreshRSS).</p>
+                <table>
+                    <tr><th class="settings-th">Server URL</th><td><code>{{ public_base_url }}</code></td></tr>
+                    <tr><th class="settings-th">Username</th><td><code>{{ username }}</code></td></tr>
+                    <tr><th class="settings-th">Password</th><td class="muted">Your RDRS password</td></tr>
+                </table>
+                <p class="muted">
+                    In your RSS client, choose "Google Reader" or "FreshRSS" as the account type and enter the server URL above with your credentials.
+                    Some clients may require the FreshRSS-compatible URL: <code>{{ public_base_url }}/api/greader.php</code>
+                </p>
+
+                <hr>
+
+                <h2>Change Password</h2>
+                <form method="post" action="/user-settings/password">
+                    <div class="form-group">
+                        <label for="current-password">Current Password</label>
+                        <input type="password" id="current-password" name="current_password" required autocomplete="current-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="new-password">New Password</label>
+                        <input type="password" id="new-password" name="new_password" required minlength="6" autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="confirm-password">Confirm New Password</label>
+                        <input type="password" id="confirm-password" name="confirm_password" required minlength="6" autocomplete="new-password">
+                    </div>
+                    <button type="submit">Change Password</button>
+                </form>
+
+                <hr>
+
+                <h2>Passkeys</h2>
+                <p class="muted">Passkeys let you sign in without a password using your device's biometrics or security key.</p>
+                <rdrs-passkeys></rdrs-passkeys>
+
+                <hr>
+
+                <h2>Display Preferences</h2>
+                <form method="post" action="/user-settings/preferences">
+                    <div class="form-group">
+                        <label for="theme-select">Theme</label>
+                        <select id="theme-select" name="theme" data-testid="theme-select">
+                            <option value="system"{% if theme.is_none() %} selected{% endif %}>System (auto)</option>
+                            <option value="light"{% if let Some(t) = theme %}{% if t == "light" %} selected{% endif %}{% endif %}>Light</option>
+                            <option value="dark"{% if let Some(t) = theme %}{% if t == "dark" %} selected{% endif %}{% endif %}>Dark</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="entries-per-page">Entries per page</label>
+                        <input type="number" id="entries-per-page" name="entries_per_page" value="{{ entries_per_page }}" min="10" max="100" required>
+                        <span class="muted" style="font-size:var(--font-xs);">(10-100)</span>
+                    </div>
+                    <button type="submit">Save Preferences</button>
+                </form>
+
+                <hr>
+
+                <h2>Integrations</h2>
+                <p class="muted">Connect external services to save articles.</p>
+
+                <h3>Linkding</h3>
+                <p class="muted">
+                    <a href="https://github.com/sissbruecker/linkding" target="_blank" rel="noopener noreferrer">Linkding</a>
+                    is a self-hosted bookmark manager.
+                    {% if linkding_configured %}<span class="success-text">Configured</span>{% endif %}
+                </p>
+                <form method="post" action="/user-settings/linkding">
+                    <div class="form-group">
+                        <label for="linkding-api-url">API URL</label>
+                        <input type="url" id="linkding-api-url" name="api_url" value="{{ linkding_api_url }}" placeholder="https://linkding.example.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="linkding-api-token">API Token</label>
+                        <input type="password" id="linkding-api-token" name="api_token" placeholder="{% if linkding_configured %}(unchanged){% else %}Enter your API token{% endif %}">
+                    </div>
+                    <button type="submit">Save Linkding Settings</button>
+                </form>
+                {% if linkding_configured %}
+                <form method="post" action="/user-settings/linkding" style="display:inline-block;margin-top:0.5rem;">
+                    <input type="hidden" name="_clear" value="1">
+                    <button type="submit" class="btn-secondary" onclick="return confirm('Clear Linkding settings?')">Clear Linkding</button>
+                </form>
+                {% endif %}
+
+                <h3>Kagi Universal Summarizer</h3>
+                <p class="muted">
+                    <a href="https://kagi.com/summarizer" target="_blank" rel="noopener noreferrer">Kagi Universal Summarizer</a>
+                    provides AI-powered article summaries.
+                    {% if kagi_configured %}<span class="success-text">Configured</span>{% endif %}
+                </p>
+                <form method="post" action="/user-settings/kagi">
+                    <div class="form-group">
+                        <label for="kagi-session-link">Session Link</label>
+                        <input type="text" id="kagi-session-link" name="session_link" placeholder="{% if kagi_configured %}(unchanged){% else %}Paste your session link{% endif %}">
+                    </div>
+                    <div class="form-group">
+                        <label for="kagi-language">Target Language</label>
+                        <select id="kagi-language" name="language">
+                            <option value=""{% if kagi_language.is_none() %} selected{% endif %}>Auto-detect</option>
+                            <option value="EN"{% if let Some(l) = kagi_language %}{% if l == "EN" %} selected{% endif %}{% endif %}>English</option>
+                            <option value="ZH-HANT"{% if let Some(l) = kagi_language %}{% if l == "ZH-HANT" %} selected{% endif %}{% endif %}>繁體中文</option>
+                            <option value="ZH-CN"{% if let Some(l) = kagi_language %}{% if l == "ZH-CN" %} selected{% endif %}{% endif %}>简体中文</option>
+                            <option value="JA"{% if let Some(l) = kagi_language %}{% if l == "JA" %} selected{% endif %}{% endif %}>日本語</option>
+                            <option value="KO"{% if let Some(l) = kagi_language %}{% if l == "KO" %} selected{% endif %}{% endif %}>한국어</option>
+                            <option value="DE"{% if let Some(l) = kagi_language %}{% if l == "DE" %} selected{% endif %}{% endif %}>Deutsch</option>
+                            <option value="FR"{% if let Some(l) = kagi_language %}{% if l == "FR" %} selected{% endif %}{% endif %}>Français</option>
+                            <option value="ES"{% if let Some(l) = kagi_language %}{% if l == "ES" %} selected{% endif %}{% endif %}>Español</option>
+                            <option value="PT"{% if let Some(l) = kagi_language %}{% if l == "PT" %} selected{% endif %}{% endif %}>Português</option>
+                        </select>
+                    </div>
+                    <button type="submit">Save Kagi Settings</button>
+                </form>
+                {% if kagi_configured %}
+                <form method="post" action="/user-settings/kagi" style="display:inline-block;margin-top:0.5rem;">
+                    <input type="hidden" name="_clear" value="1">
+                    <button type="submit" class="btn-secondary" onclick="return confirm('Clear Kagi settings?')">Clear Kagi</button>
+                </form>
+                {% endif %}
+            </div>
+        </main>
+    </div>
 {% endblock %}
