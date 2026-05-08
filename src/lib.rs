@@ -195,7 +195,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/static/{*path}", get(handlers::static_assets::serve))
         .with_state(state)
         .layer(middleware::DateHeaderLayer::new())
-        .layer(CompressionLayer::new().gzip(true))
+        .layer(CompressionLayer::new().gzip(true).br(true))
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             SERVER_REQUEST_TIMEOUT,
