@@ -194,6 +194,7 @@ pub fn create_router(state: AppState) -> Router {
         .nest("/api/greader.php", handlers::greader::greader_routes())
         .route("/static/{*path}", get(handlers::static_assets::serve))
         .with_state(state)
+        .layer(middleware::ETagLayer::new())
         .layer(middleware::DateHeaderLayer::new())
         .layer(CompressionLayer::new().gzip(true).br(true))
         .layer(TimeoutLayer::with_status_code(
