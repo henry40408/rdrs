@@ -102,6 +102,23 @@ pub fn create_router(state: AppState) -> Router {
             "/api/admin/unmasquerade",
             post(handlers::admin::stop_masquerade),
         )
+        // Form-action POST endpoints for the SSR /admin page (PR-5 T1).
+        .route(
+            "/admin/users/{id}/role",
+            post(handlers::admin::update_role_form),
+        )
+        .route(
+            "/admin/users/{id}/status",
+            post(handlers::admin::update_status_form),
+        )
+        .route(
+            "/admin/users/{id}/masquerade",
+            post(handlers::admin::start_masquerade_form),
+        )
+        .route(
+            "/admin/users/{id}/delete",
+            post(handlers::admin::delete_user_form),
+        )
         // Page routes
         .route("/categories", get(handlers::pages::categories_page))
         .route("/feeds", get(handlers::pages::feeds_page))
