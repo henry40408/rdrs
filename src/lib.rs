@@ -89,6 +89,23 @@ pub fn create_router(state: AppState) -> Router {
             "/api/user/settings/theme",
             put(handlers::user::update_theme),
         )
+        // Form-action POST endpoints for the SSR /user-settings page (PR-4 T1).
+        .route(
+            "/user-settings/password",
+            post(handlers::user::change_password_form),
+        )
+        .route(
+            "/user-settings/preferences",
+            post(handlers::user::update_preferences_form),
+        )
+        .route(
+            "/user-settings/linkding",
+            post(handlers::user::update_linkding_form),
+        )
+        .route(
+            "/user-settings/kagi",
+            post(handlers::user::update_kagi_form),
+        )
         .route("/api/admin/users", get(handlers::admin::list_users))
         .route("/api/admin/users/{id}", put(handlers::admin::update_user))
         .route(

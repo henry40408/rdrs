@@ -2838,3 +2838,120 @@ async fn test_friend_list() {
     let body: serde_json::Value = response.json();
     assert_eq!(body, json!({ "friends": [] }));
 }
+
+// ============================================================================
+// Form-action handlers for the SSR /user-settings page (PR-4 T1).
+// Each endpoint accepts application/x-www-form-urlencoded bodies and returns
+// 303 See Other with a flash cookie + Location header.
+// ============================================================================
+
+#[tokio::test]
+async fn test_change_password_form_success() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/user-settings/password")
+        .form(&json!({
+            "current_password": "password123",
+            "new_password": "newpassword456",
+            "confirm_password": "newpassword456",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/login");
+}
+
+#[tokio::test]
+async fn test_change_password_form_mismatch() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/user-settings/password")
+        .form(&json!({
+            "current_password": "password123",
+            "new_password": "newpassword456",
+            "confirm_password": "differentvalue",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/user-settings");
+}
+
+#[tokio::test]
+async fn test_update_preferences_form() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/user-settings/preferences")
+        .form(&json!({
+            "theme": "dark",
+            "entries_per_page": 50,
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/user-settings");
+}
+
+#[tokio::test]
+async fn test_update_preferences_form_validation() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    // entries_per_page=5 is below MIN_ENTRIES_PER_PAGE (10), expect error path
+    let response = server
+        .post("/user-settings/preferences")
+        .form(&json!({
+            "theme": "system",
+            "entries_per_page": 5,
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/user-settings");
+}
+
+#[tokio::test]
+async fn test_update_linkding_form() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/user-settings/linkding")
+        .form(&json!({
+            "api_url": "https://linkding.example.com",
+            "api_token": "secret-token",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/user-settings");
+}
+
+#[tokio::test]
+async fn test_update_kagi_form() {
+    let server = create_test_server(default_test_config());
+    setup_authenticated_user(&server).await;
+
+    let response = server
+        .post("/user-settings/kagi")
+        .form(&json!({
+            "session_link": "https://kagi.com/search?token=mysessiontoken",
+            "language": "EN",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/user-settings");
+}
