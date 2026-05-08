@@ -321,9 +321,15 @@ class RdrsEntriesPage extends HTMLElement {
     /// flash paint immediately, then await meta and mount the entry-list.
     async _connectAsync(mode, cfg) {
         const id = pathId();
+        // For category mode, the URL id IS the category id — set
+        // active-category-id inline so the matching sidebar entry
+        // highlights on first paint. Feed mode defers (we need
+        // meta.category_id, not the feed id; updated below after
+        // fetchFeedMeta resolves).
+        const sidebarCatAttr = mode === 'category' ? ` active-category-id="${id}"` : '';
         this.innerHTML = `
 <div class="app-layout">
-<rdrs-sidebar active="${cfg.navKey}"></rdrs-sidebar>
+<rdrs-sidebar active="${cfg.navKey}"${sidebarCatAttr}></rdrs-sidebar>
 <main class="main-content">
     <rdrs-flash class="flash-container"></rdrs-flash>
     <div class="split-view">
@@ -349,6 +355,9 @@ class RdrsEntriesPage extends HTMLElement {
             this._categoryId = meta.category_id;
             this._feedUrl = meta.url;
             this._feedTitle = meta.title;
+            // Now that we know the parent category, light it up in the
+            // sidebar so the user sees which section they're inside.
+            this.querySelector('rdrs-sidebar')?.setAttribute('active-category-id', String(meta.category_id));
             streamId = `feed/${meta.url}`;
             const iconImg = meta.has_icon
                 ? `<img src="/api/feeds/${id}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">`
