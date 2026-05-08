@@ -22,7 +22,7 @@ argon2 = "0.5"
 password-hash = { version = "0.6", features = ["getrandom"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 rand = "0.10"
-tower-http = { version = "0.6", features = ["compression-gzip", "timeout", "trace"] }
+tower-http = { version = "0.6", features = ["compression-br", "compression-gzip", "timeout", "trace"] }
 tower = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -84,3 +84,19 @@ async fn test_login_page_not_compressed_without_accept_encoding() {
         "Responses must not be compressed when client does not advertise support"
     );
 }
+
+#[tokio::test]
+async fn test_login_page_brotli_when_accepted() {
+    let server = create_test_server(default_test_config());
+
+    let response = server
+        .get("/login")
+        .add_header(header::ACCEPT_ENCODING, HeaderValue::from_static("br"))
+        .await;
+
+    response.assert_status_ok();
+    let encoding = response.headers().get(header::CONTENT_ENCODING).expect(
+        "CompressionLayer should set Content-Encoding when client sends Accept-Encoding: br",
+    );
+    assert_eq!(encoding.to_str().unwrap(), "br");
+}
