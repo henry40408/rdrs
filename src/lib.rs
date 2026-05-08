@@ -88,16 +88,6 @@ pub fn create_router(state: AppState) -> Router {
             "/user-settings/kagi",
             post(handlers::user::update_kagi_form),
         )
-        .route("/api/admin/users", get(handlers::admin::list_users))
-        .route("/api/admin/users/{id}", put(handlers::admin::update_user))
-        .route(
-            "/api/admin/users/{id}",
-            delete(handlers::admin::delete_user),
-        )
-        .route(
-            "/api/admin/masquerade/{id}",
-            post(handlers::admin::start_masquerade),
-        )
         .route(
             "/api/admin/unmasquerade",
             post(handlers::admin::stop_masquerade),

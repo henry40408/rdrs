@@ -304,9 +304,9 @@ async fn test_api_statistics_masquerade_hides_admin_section() {
     login(&app.server, "admin").await;
 
     app.server
-        .post(&format!("/api/admin/masquerade/{}", user_id))
+        .post(&format!("/admin/users/{}/masquerade", user_id))
         .await
-        .assert_status_ok();
+        .assert_status(axum::http::StatusCode::SEE_OTHER);
 
     let response = app.server.get("/api/statistics").await;
     response.assert_status_ok();
@@ -337,9 +337,9 @@ async fn test_api_me_masquerade_flag_set() {
     let (_admin_id, user_id) = setup_users(&app.db).await;
     login(&app.server, "admin").await;
     app.server
-        .post(&format!("/api/admin/masquerade/{}", user_id))
+        .post(&format!("/admin/users/{}/masquerade", user_id))
         .await
-        .assert_status_ok();
+        .assert_status(axum::http::StatusCode::SEE_OTHER);
 
     let response = app.server.get("/api/me").await;
     response.assert_status_ok();

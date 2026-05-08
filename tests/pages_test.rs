@@ -137,11 +137,11 @@ async fn test_unread_page_while_masquerading() {
 
     login(&app.server, "admin").await;
 
-    // Start masquerading as user
+    // Start masquerading as user via the SSR form endpoint.
     app.server
-        .post(&format!("/api/admin/masquerade/{}", user_id))
+        .post(&format!("/admin/users/{}/masquerade", user_id))
         .await
-        .assert_status_ok();
+        .assert_status(StatusCode::SEE_OTHER);
 
     let response = app.server.get("/").await;
     response.assert_status_ok();
@@ -172,11 +172,11 @@ async fn test_admin_page_while_masquerading() {
 
     login(&app.server, "admin").await;
 
-    // Start masquerading
+    // Start masquerading via the SSR form endpoint.
     app.server
-        .post(&format!("/api/admin/masquerade/{}", user_id))
+        .post(&format!("/admin/users/{}/masquerade", user_id))
         .await
-        .assert_status_ok();
+        .assert_status(StatusCode::SEE_OTHER);
 
     // Admin page should still be accessible
     let response = app.server.get("/admin").await;
@@ -480,16 +480,11 @@ async fn test_regular_user_cannot_access_admin_page() {
     response.assert_status_see_other();
 }
 
-#[tokio::test]
-async fn test_regular_user_cannot_access_admin_api() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    login(&app.server, "user").await;
-
-    let response = app.server.get("/api/admin/users").await;
-    response.assert_status_forbidden();
-}
+// Coverage for non-admin users hitting admin endpoints lives in the
+// /admin SSR page test (`test_regular_user_cannot_access_admin_page` above)
+// and the /admin/users/{id}/* form-action handlers reuse the same AdminUser
+// extractor, so any non-admin caller gets the same redirect/forbidden flow.
+// The dedicated GET /api/admin/users endpoint was removed in PR-5 T2.
 
 // ============================================================================
 // User Settings Page with Existing Config
@@ -870,22 +865,24 @@ async fn test_categories_page_csr_shell_does_not_embed_rows() {
 }
 
 #[tokio::test]
-async fn test_admin_page_csr_shell_does_not_embed_rows() {
+async fn test_admin_page_renders_ssr_content() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
-
     login(&app.server, "admin").await;
 
     let response = app.server.get("/admin").await;
     response.assert_status_ok();
     let body = response.text();
 
-    // After migration to CSR the shell does NOT embed user table rows.
-    // The custom element fetches them from /api/admin/users after mount.
-    assert!(body.contains("<rdrs-admin-page>"));
-    assert!(body.contains("/static/js/pages/admin.js"));
-    // The "active" status text only exists in the JS module, not inline.
-    assert!(!body.contains(">active</span>"));
+    // Old CSR markers gone.
+    assert!(!body.contains("<rdrs-admin-page>"));
+    assert!(!body.contains("/static/js/pages/admin.js"));
+
+    // SSR content present.
+    assert!(body.contains("<h1>Admin Panel</h1>"));
+    assert!(body.contains("<th>Username</th>"));
+    // The admin user themselves shows the (you) marker.
+    assert!(body.contains("(you)"));
 }
 
 // ============================================================================

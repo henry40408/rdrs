@@ -2880,10 +2880,15 @@ async fn test_update_role_form_promotes_user() {
     let location = response.header(header::LOCATION);
     assert_eq!(location, "/admin");
 
-    // Verify role change via API
-    let users_resp = server.get("/api/admin/users").await;
-    let body: Vec<serde_json::Value> = users_resp.json();
-    assert_eq!(body[1]["role"], "admin");
+    // Verify role change via the SSR /admin page — the target row should now
+    // show "demote" (i.e. target is admin) instead of "promote".
+    let admin_resp = server.get("/admin").await;
+    admin_resp.assert_status_ok();
+    let body = admin_resp.text();
+    assert!(body.contains("target"));
+    // Two admins now → both rows render; target row's role cell shows "admin".
+    // The action button on a non-self admin row says "demote".
+    assert!(body.contains("demote"));
 }
 
 #[tokio::test]
@@ -2940,10 +2945,12 @@ async fn test_delete_user_form_succeeds() {
     let location = response.header(header::LOCATION);
     assert_eq!(location, "/admin");
 
-    // Verify only 1 user remains
-    let users_resp = server.get("/api/admin/users").await;
-    let body: Vec<serde_json::Value> = users_resp.json();
-    assert_eq!(body.len(), 1);
+    // Verify the target user is gone — SSR /admin page should no longer
+    // contain a "target" row.
+    let admin_resp = server.get("/admin").await;
+    admin_resp.assert_status_ok();
+    let body = admin_resp.text();
+    assert!(!body.contains(">target<"));
 }
 
 #[tokio::test]
@@ -2962,8 +2969,12 @@ async fn test_update_role_form_self_protection() {
     let location = response.header(header::LOCATION);
     assert_eq!(location, "/admin");
 
-    // Verify the admin role is unchanged
-    let users_resp = server.get("/api/admin/users").await;
-    let body: Vec<serde_json::Value> = users_resp.json();
-    assert_eq!(body[0]["role"], "admin");
+    // Verify the admin role is unchanged via the SSR /admin page.
+    // The admin's own row carries the "(you)" marker and no role-toggle form,
+    // and there are no rows that say "promote" because no non-admin exists.
+    let admin_resp = server.get("/admin").await;
+    admin_resp.assert_status_ok();
+    let body = admin_resp.text();
+    assert!(body.contains("(you)"));
+    assert!(!body.contains("promote"));
 }
