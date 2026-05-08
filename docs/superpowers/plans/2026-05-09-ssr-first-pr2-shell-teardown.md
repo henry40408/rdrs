@@ -620,11 +620,23 @@ All 13 routes now use per-route templates. `AppShellTemplate` and `app_shell.htm
 - Delete: `static/js/router.js`
 - Modify: `src/handlers/static_assets.rs` (remove `js/router.js` allowlist entry)
 
-- [ ] **Step 1: Slim `templates/base.html`.**
+- [ ] **Step 1: Slim `templates/base.html` and complete `app_layout.html`.**
 
-  Read the file. Currently it contains script imports for the entire CSR custom-element fleet. Remove every `<script type="module" src="...">` line EXCEPT `rdrs-flash.js` (login/register depend on `window.flash.redirect`). The kept imports + inline scripts are: theme controller, sidebar mobile toggle helpers, `rdrs-flash.js`, the `pageshow` listener.
+  Two parts. Both must land in the same edit so the rendered HTML for logged-in pages stays equivalent.
 
-  After this step, `base.html` is the minimal pre-login shell. Logged-in chrome lives entirely in `app_layout.html`.
+  **Part A — base.html removals.** Currently base.html contains script imports for the entire CSR custom-element fleet (lines 57-61) plus body-mounted `<rdrs-kb-help></rdrs-kb-help>` and `<rdrs-kb-pending></rdrs-kb-pending>` elements (lines 69-70). Remove every `<script type="module" src="...">` line in `<head>` EXCEPT `rdrs-flash.js` (login/register depend on `window.flash.redirect`). Also remove the two body-mounted custom elements. The kept content: theme controller inline script, sidebar mobile toggle helpers, `rdrs-flash.js`, the `pageshow` listener.
+
+  **Part B — app_layout.html additions.** app_layout.html currently only adds new chrome (sidebar custom-element + app.js). Now add the scripts + body elements that base.html is losing:
+  - In `{% block head %}` BEFORE the existing sidebar/app.js lines, add:
+    `<script type="module" src="/static/js/components/rdrs-kb-pending.js?v={{ layout.git_version }}"></script>`
+    `<script type="module" src="/static/js/components/rdrs-kb-help.js?v={{ layout.git_version }}"></script>`
+    `<script type="module" src="/static/js/keyboard.js?v={{ layout.git_version }}"></script>`
+    `<script type="module" src="/static/js/components/rdrs-entry-list.js?v={{ layout.git_version }}"></script>`
+  - In `{% block body %}` AFTER `{% block page %}`, add:
+    `<rdrs-kb-help></rdrs-kb-help>`
+    `<rdrs-kb-pending></rdrs-kb-pending>`
+
+  After this step, `base.html` is the minimal pre-login shell, and logged-in chrome lives entirely in `app_layout.html`. Login/register lose the kb-pending/kb-help/keyboard/entry-list imports they didn't actually need; they keep flash.js (used by `flash.redirect`).
 
   Concretely, `base.html`'s `<head>` should look like (preserving the existing inline `<script>` content):
 
