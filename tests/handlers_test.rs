@@ -1436,9 +1436,10 @@ async fn test_settings_page() {
     let response = server.get("/settings").await;
     response.assert_status_ok();
     let body = response.text();
-    // CSR shell: contains the page custom element + module path.
-    assert!(body.contains("<rdrs-settings-page>"));
-    assert!(body.contains("/static/js/pages/settings.js"));
+    // SSR content — no longer a CSR shell.
+    assert!(!body.contains("<rdrs-settings-page>"));
+    assert!(!body.contains("/static/js/pages/settings.js"));
+    assert!(body.contains("<h1>Settings</h1>"));
 }
 
 #[tokio::test]
