@@ -788,6 +788,36 @@ impl IntoResponse for AdminTemplate {
     }
 }
 
+/// One day in the daily-read chart, with pre-computed bar height + label.
+pub struct DailyReadView {
+    pub date: String,
+    pub count: i64,
+    pub height_percent: f64,
+    pub short_label: String,
+}
+
+/// One row in the "Entries by Category" list, with pre-computed bar width.
+pub struct CategoryStatsView {
+    pub name: String,
+    pub count: i64,
+    pub width_percent: f64,
+}
+
+/// One row in the "Top Feeds" list, with pre-computed bar width.
+pub struct FeedStatsView {
+    pub title: String,
+    pub count: i64,
+    pub width_percent: f64,
+}
+
+/// Site-wide stats block shown to non-masquerading admins.
+pub struct AdminStatsView {
+    pub total_users: i64,
+    pub total_feeds: i64,
+    pub total_entries: i64,
+    pub read_rate_fmt: String,
+}
+
 /// Per-route template for `/statistics`.
 #[derive(Template)]
 #[template(path = "statistics.html")]
@@ -795,6 +825,20 @@ pub struct StatisticsTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub active_period: String,
+    pub custom_from: String,
+    pub custom_to: String,
+    pub total_entries: i64,
+    pub read_entries: i64,
+    pub unread_entries: i64,
+    pub starred_entries: i64,
+    pub summaries: i64,
+    pub read_rate_fmt: String,
+    pub daily_max: i64,
+    pub daily_read_counts: Vec<DailyReadView>,
+    pub categories: Vec<CategoryStatsView>,
+    pub top_feeds: Vec<FeedStatsView>,
+    pub admin: Option<AdminStatsView>,
 }
 
 impl IntoResponse for StatisticsTemplate {
@@ -1006,14 +1050,148 @@ fn flash_bootstrap_json(messages: &[FlashMessage]) -> String {
     escape_json_for_script(&json)
 }
 
-/// Serves the CSR shell for `/statistics`. The actual stats data is fetched
-/// by `<rdrs-statistics-page>` from `GET /api/statistics`.
+/// Serves `/statistics` rendered fully server-side. Period buttons are
+/// plain `<a href="?period=...">`; the custom-date range is a native GET
+/// form. All chart bar heights / widths are pre-computed in the handler
+/// so the template stays free of expressions.
 pub async fn statistics_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
+    Query(query): Query<StatisticsQuery>,
 ) -> (Flash, StatisticsTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
+
+    let is_masquerading = auth_user.session.is_masquerading();
+    let is_admin = if is_masquerading {
+        auth_user.session.original_user_id.is_some()
+    } else {
+        auth_user.user.is_admin()
+    };
+    let show_admin_stats = is_admin && !is_masquerading;
+
+    let (from, to, active_period) = resolve_statistics_period(&query);
+    let chart_from = if active_period == "all" {
+        let today = chrono::Utc::now().date_naive();
+        (today - chrono::Duration::days(90)).to_string()
+    } else {
+        from.clone()
+    };
+
+    let user_id = auth_user.user.id;
+    let from_c = from.clone();
+    let to_c = to.clone();
+    let chart_from_c = chart_from.clone();
+
+    let (overview, daily, cats, feeds, admin_counts, admin_entry_stats) = state
+        .db
+        .read_user(move |c| {
+            let overview =
+                crate::models::statistics::get_personal_overview(c, user_id, &from_c, &to_c)
+                    .unwrap_or_default();
+            let daily =
+                crate::models::statistics::get_daily_read_counts(c, user_id, &chart_from_c, &to_c)
+                    .unwrap_or_default();
+            let cats =
+                crate::models::statistics::get_entries_by_category(c, user_id, &from_c, &to_c)
+                    .unwrap_or_default();
+            let feeds = crate::models::statistics::get_top_feeds(c, user_id, &from_c, &to_c, 10)
+                .unwrap_or_default();
+            let admin_counts = if show_admin_stats {
+                crate::models::statistics::get_admin_counts(c).ok()
+            } else {
+                None
+            };
+            let admin_entry_stats = if show_admin_stats {
+                crate::models::statistics::get_admin_entry_stats(c, &from_c, &to_c).ok()
+            } else {
+                None
+            };
+            Ok::<_, AppError>((
+                overview,
+                daily,
+                cats,
+                feeds,
+                admin_counts,
+                admin_entry_stats,
+            ))
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+
+    let (custom_from, custom_to) = if active_period == "custom" {
+        (
+            query.from.clone().unwrap_or_default(),
+            query.to.clone().unwrap_or_default(),
+        )
+    } else {
+        (String::new(), String::new())
+    };
+
+    let daily_max = daily.iter().map(|d| d.count).max().unwrap_or(0);
+    let cat_max = cats.iter().map(|c| c.count).max().unwrap_or(0);
+    let feed_max = feeds.iter().map(|f| f.count).max().unwrap_or(0);
+
+    let daily_read_counts = daily
+        .into_iter()
+        .map(|d| {
+            let date_str = d.date.format("%Y-%m-%d").to_string();
+            let short_label = if date_str.len() >= 10 {
+                format!("{}/{}", &date_str[5..7], &date_str[8..10])
+            } else {
+                date_str.clone()
+            };
+            let height_percent = if daily_max > 0 {
+                (d.count as f64 * 100.0) / daily_max as f64
+            } else {
+                0.0
+            };
+            DailyReadView {
+                date: date_str,
+                count: d.count,
+                height_percent,
+                short_label,
+            }
+        })
+        .collect();
+
+    let categories = cats
+        .into_iter()
+        .map(|c| CategoryStatsView {
+            count: c.count,
+            width_percent: if cat_max > 0 {
+                (c.count as f64 * 100.0) / cat_max as f64
+            } else {
+                0.0
+            },
+            name: c.name,
+        })
+        .collect();
+
+    let top_feeds = feeds
+        .into_iter()
+        .map(|f| FeedStatsView {
+            count: f.count,
+            width_percent: if feed_max > 0 {
+                (f.count as f64 * 100.0) / feed_max as f64
+            } else {
+                0.0
+            },
+            title: f.title,
+        })
+        .collect();
+
+    let admin = match (admin_counts, admin_entry_stats) {
+        (Some(c), Some(e)) => Some(AdminStatsView {
+            total_users: c.total_users,
+            total_feeds: c.total_feeds,
+            total_entries: e.total_entries,
+            read_rate_fmt: format!("{:.1}", e.read_rate()),
+        }),
+        _ => None,
+    };
 
     (
         flash,
@@ -1021,6 +1199,20 @@ pub async fn statistics_page(
             title: "Statistics",
             git_version: crate::GIT_VERSION,
             layout,
+            active_period,
+            custom_from,
+            custom_to,
+            total_entries: overview.total_entries,
+            read_entries: overview.read_entries,
+            unread_entries: overview.unread_entries(),
+            starred_entries: overview.starred_entries,
+            summaries: overview.summaries,
+            read_rate_fmt: format!("{:.1}", overview.read_rate()),
+            daily_max,
+            daily_read_counts,
+            categories,
+            top_feeds,
+            admin,
         },
     )
 }

@@ -1,4 +1,5 @@
-//! Integration tests for the statistics CSR shell + JSON API.
+//! Integration tests for the SSR `/statistics` page and the
+//! shared `/api/me` + `/api/sidebar` endpoints used by the chrome.
 
 use std::sync::Arc;
 
@@ -131,7 +132,7 @@ async fn seed_entries(db: &DbPool, admin_id: i64) {
     .unwrap();
 }
 
-// ----- Shell route -----
+// ----- SSR /statistics -----
 
 #[tokio::test]
 async fn test_statistics_page_requires_login() {
@@ -141,165 +142,129 @@ async fn test_statistics_page_requires_login() {
 }
 
 #[tokio::test]
-async fn test_statistics_page_shell_renders_for_user() {
-    let app = create_test_app("test_stats_shell");
+async fn test_statistics_page_renders_ssr_content() {
+    let app = create_test_app("test_stats_ssr");
+    let (admin_id, _user_id) = setup_users(&app.db).await;
+    seed_entries(&app.db, admin_id).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/statistics?period=all").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    // SSR content is present — period buttons, stats cards, headings.
+    assert!(body.contains("stats-period-btn"));
+    assert!(body.contains("Total Entries"));
+    assert!(body.contains("Daily Read Articles"));
+    assert!(body.contains("Entries by Category"));
+    assert!(body.contains("Top Feeds"));
+    // The "all" period button is marked active.
+    assert!(body.contains("class=\"stats-period-btn active\">All"));
+
+    // Legacy CSR markers must be gone.
+    assert!(!body.contains("<rdrs-statistics-page>"));
+    assert!(!body.contains("/static/js/pages/statistics.js"));
+}
+
+#[tokio::test]
+async fn test_statistics_page_default_period_is_7d() {
+    let app = create_test_app("test_stats_default_period");
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
     let response = app.server.get("/statistics").await;
     response.assert_status_ok();
     let body = response.text();
-    // Shell should reference the page custom element + module path,
-    // not the SSR statistics content.
-    assert!(body.contains("<rdrs-statistics-page>"));
-    assert!(body.contains("/static/js/pages/statistics.js"));
-    // SSR content (period buttons, stats cards) should NOT be in the shell.
-    assert!(!body.contains("stats-period-btn"));
-    assert!(!body.contains("Total Entries"));
+    // Default period is 7d — that button is marked active.
+    assert!(body.contains("class=\"stats-period-btn active\">7d"));
 }
 
 #[tokio::test]
-async fn test_statistics_shell_embeds_sidebar_bootstrap() {
-    let app = create_test_app("test_stats_shell_bootstrap");
-    let (admin_id, _user_id) = setup_users(&app.db).await;
-    seed_entries(&app.db, admin_id).await;
+async fn test_statistics_page_period_30d() {
+    let app = create_test_app("test_stats_period_30d");
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/statistics?period=30d").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("class=\"stats-period-btn active\">30d"));
+}
+
+#[tokio::test]
+async fn test_statistics_page_invalid_period_falls_back_to_7d() {
+    let app = create_test_app("test_stats_invalid_period");
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/statistics?period=invalid").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("class=\"stats-period-btn active\">7d"));
+}
+
+#[tokio::test]
+async fn test_statistics_page_admin_sees_sitewide() {
+    let app = create_test_app("test_stats_admin");
+    setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
     let response = app.server.get("/statistics").await;
     response.assert_status_ok();
     let body = response.text();
-    // The shell embeds the sidebar payload inline so the sidebar paints
-    // without a round trip on first visit.
-    assert!(body.contains("id=\"rdrs-sidebar-bootstrap\""));
-    assert!(body.contains("\"username\":\"admin\""));
-    assert!(body.contains("\"is_admin\":true"));
-    // Categories from seed appear in the bootstrap payload.
-    assert!(body.contains("\"name\":\"Tech\""));
-}
-
-// ----- /api/statistics -----
-
-#[tokio::test]
-async fn test_api_statistics_requires_login() {
-    let app = create_test_app("test_api_stats_auth");
-    let response = app.server.get("/api/statistics").await;
-    assert_eq!(response.status_code(), StatusCode::UNAUTHORIZED);
+    // The admin section heading is rendered for non-masquerading admins.
+    assert!(body.contains("Site-wide Statistics"));
+    assert!(body.contains("Total Users"));
 }
 
 #[tokio::test]
-async fn test_api_statistics_returns_user_data() {
-    let app = create_test_app("test_api_stats_user");
-    let (admin_id, _user_id) = setup_users(&app.db).await;
-    seed_entries(&app.db, admin_id).await;
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/api/statistics?period=all").await;
-    response.assert_status_ok();
-    let body: Value = response.json();
-    assert_eq!(body["active_period"], "all");
-    assert_eq!(body["overview"]["total_entries"], 5);
-    assert_eq!(body["overview"]["read_entries"], 3);
-    assert_eq!(body["overview"]["starred_entries"], 1);
-    assert!(body["categories"].is_array());
-    assert!(body["top_feeds"].is_array());
-}
-
-#[tokio::test]
-async fn test_api_statistics_default_period_is_7d() {
-    let app = create_test_app("test_api_stats_default");
-    setup_users(&app.db).await;
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/api/statistics").await;
-    response.assert_status_ok();
-    let body: Value = response.json();
-    assert_eq!(body["active_period"], "7d");
-}
-
-#[tokio::test]
-async fn test_api_statistics_period_30d() {
-    let app = create_test_app("test_api_stats_30d");
-    setup_users(&app.db).await;
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/api/statistics?period=30d").await;
-    response.assert_status_ok();
-    let body: Value = response.json();
-    assert_eq!(body["active_period"], "30d");
-}
-
-#[tokio::test]
-async fn test_api_statistics_invalid_period_falls_back() {
-    let app = create_test_app("test_api_stats_invalid");
-    setup_users(&app.db).await;
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/api/statistics?period=invalid").await;
-    response.assert_status_ok();
-    let body: Value = response.json();
-    assert_eq!(body["active_period"], "7d");
-}
-
-#[tokio::test]
-async fn test_api_statistics_admin_sees_sitewide() {
-    let app = create_test_app("test_api_stats_admin");
-    setup_users(&app.db).await;
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/api/statistics").await;
-    response.assert_status_ok();
-    let body: Value = response.json();
-    assert!(body["admin"].is_object());
-    assert!(body["admin"]["total_users"].as_i64().unwrap() >= 1);
-}
-
-#[tokio::test]
-async fn test_api_statistics_user_no_sitewide() {
-    let app = create_test_app("test_api_stats_nonadmin");
+async fn test_statistics_page_user_no_sitewide() {
+    let app = create_test_app("test_stats_user_no_sitewide");
     setup_users(&app.db).await;
     login(&app.server, "user").await;
 
-    let response = app.server.get("/api/statistics").await;
+    let response = app.server.get("/statistics").await;
     response.assert_status_ok();
-    let body: Value = response.json();
-    assert!(body["admin"].is_null());
+    let body = response.text();
+    assert!(!body.contains("Site-wide Statistics"));
 }
 
 #[tokio::test]
-async fn test_api_statistics_custom_period() {
-    let app = create_test_app("test_api_stats_custom");
+async fn test_statistics_page_custom_period() {
+    let app = create_test_app("test_stats_custom");
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
     let response = app
         .server
-        .get("/api/statistics?period=custom&from=2026-03-01&to=2026-03-31")
+        .get("/statistics?period=custom&from=2026-03-01&to=2026-03-31")
         .await;
     response.assert_status_ok();
-    let body: Value = response.json();
-    assert_eq!(body["active_period"], "custom");
-    assert_eq!(body["custom_from"], "2026-03-01");
-    assert_eq!(body["custom_to"], "2026-03-31");
+    let body = response.text();
+    // Custom dates are reflected in the form's date inputs.
+    assert!(body.contains("value=\"2026-03-01\""));
+    assert!(body.contains("value=\"2026-03-31\""));
 }
 
 #[tokio::test]
-async fn test_api_statistics_invalid_custom_range_falls_back() {
-    let app = create_test_app("test_api_stats_bad_custom");
+async fn test_statistics_page_invalid_custom_range_falls_back() {
+    let app = create_test_app("test_stats_bad_custom");
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
     let response = app
         .server
-        .get("/api/statistics?period=custom&from=2026-12-01&to=2026-01-01")
+        .get("/statistics?period=custom&from=2026-12-01&to=2026-01-01")
         .await;
     response.assert_status_ok();
-    let body: Value = response.json();
-    assert_eq!(body["active_period"], "7d");
+    let body = response.text();
+    // Falls back to 7d.
+    assert!(body.contains("class=\"stats-period-btn active\">7d"));
 }
 
 #[tokio::test]
-async fn test_api_statistics_masquerade_hides_admin_section() {
-    let app = create_test_app("test_api_stats_masq");
+async fn test_statistics_page_masquerade_hides_admin_section() {
+    let app = create_test_app("test_stats_masq");
     let (_admin_id, user_id) = setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -308,10 +273,47 @@ async fn test_api_statistics_masquerade_hides_admin_section() {
         .await
         .assert_status(axum::http::StatusCode::SEE_OTHER);
 
-    let response = app.server.get("/api/statistics").await;
+    let response = app.server.get("/statistics").await;
     response.assert_status_ok();
-    let body: Value = response.json();
-    assert!(body["admin"].is_null());
+    let body = response.text();
+    assert!(!body.contains("Site-wide Statistics"));
+}
+
+#[tokio::test]
+async fn test_statistics_page_embeds_sidebar_bootstrap() {
+    let app = create_test_app("test_stats_sidebar_bootstrap");
+    let (admin_id, _user_id) = setup_users(&app.db).await;
+    seed_entries(&app.db, admin_id).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/statistics").await;
+    response.assert_status_ok();
+    let body = response.text();
+    // The page embeds the sidebar payload inline so the sidebar paints
+    // without a round trip on first visit.
+    assert!(body.contains("id=\"rdrs-sidebar-bootstrap\""));
+    assert!(body.contains("\"username\":\"admin\""));
+    assert!(body.contains("\"is_admin\":true"));
+    // Categories from seed appear in the bootstrap payload.
+    assert!(body.contains("\"name\":\"Tech\""));
+}
+
+#[tokio::test]
+async fn test_statistics_page_renders_overview_counts() {
+    let app = create_test_app("test_stats_overview");
+    let (admin_id, _user_id) = setup_users(&app.db).await;
+    seed_entries(&app.db, admin_id).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/statistics?period=all").await;
+    response.assert_status_ok();
+    let body = response.text();
+    // Seeded data: 5 total entries, 3 read, 1 starred.
+    assert!(body.contains("Total Entries"));
+    // Quick sanity check — the seeded values appear in the page.
+    assert!(body.contains(">5</div>"));
+    assert!(body.contains(">3</div>"));
+    assert!(body.contains(">1</div>"));
 }
 
 // ----- /api/me + /api/sidebar -----

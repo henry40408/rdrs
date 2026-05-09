@@ -10,5 +10,4 @@ pub mod pages;
 pub mod passkey;
 pub mod proxy;
 pub mod static_assets;
-pub mod statistics;
 pub mod user;

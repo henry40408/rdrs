@@ -1,9 +1,133 @@
 {% extends "app_layout.html" %}
 
-{% block page_script %}
-    <script type="module" src="/static/js/pages/statistics.js?v={{ layout.git_version }}"></script>
-{% endblock %}
-
 {% block page %}
-    <rdrs-statistics-page></rdrs-statistics-page>
+    <div class="app-layout">
+        <rdrs-sidebar active="statistics"></rdrs-sidebar>
+        <main class="main-content">
+            <div class="page-content">
+                <rdrs-flash class="flash-container"></rdrs-flash>
+                <div class="stats-header">
+                    <h1>Statistics</h1>
+                    <form class="stats-period" method="get" action="/statistics">
+                        <a href="/statistics?period=7d" class="stats-period-btn{% if active_period == "7d" %} active{% endif %}">7d</a>
+                        <a href="/statistics?period=30d" class="stats-period-btn{% if active_period == "30d" %} active{% endif %}">30d</a>
+                        <a href="/statistics?period=90d" class="stats-period-btn{% if active_period == "90d" %} active{% endif %}">90d</a>
+                        <a href="/statistics?period=all" class="stats-period-btn{% if active_period == "all" %} active{% endif %}">All</a>
+                        <span class="stats-period-divider">|</span>
+                        <input type="hidden" name="period" value="custom">
+                        <input type="date" name="from" value="{{ custom_from }}" class="stats-date-input">
+                        <span class="stats-period-dash">&mdash;</span>
+                        <input type="date" name="to" value="{{ custom_to }}" class="stats-date-input">
+                        <button type="submit" class="stats-period-btn">Apply</button>
+                    </form>
+                </div>
+
+                <div class="stats-cards">
+                    <div class="stats-card">
+                        <div class="stats-card-value">{{ total_entries }}</div>
+                        <div class="stats-card-label">Total Entries</div>
+                    </div>
+                    <div class="stats-card">
+                        <div class="stats-card-value stats-card-success">{{ read_entries }}</div>
+                        <div class="stats-card-label">Read</div>
+                    </div>
+                    <div class="stats-card">
+                        <div class="stats-card-value stats-card-warning">{{ unread_entries }}</div>
+                        <div class="stats-card-label">Unread</div>
+                    </div>
+                    <div class="stats-card">
+                        <div class="stats-card-value">{{ read_rate_fmt }}%</div>
+                        <div class="stats-card-label">Read Rate</div>
+                    </div>
+                    <div class="stats-card">
+                        <div class="stats-card-value">{{ starred_entries }}</div>
+                        <div class="stats-card-label">Starred</div>
+                    </div>
+                    <div class="stats-card">
+                        <div class="stats-card-value">{{ summaries }}</div>
+                        <div class="stats-card-label">Summaries</div>
+                    </div>
+                </div>
+
+                <div class="stats-section">
+                    <h2>Daily Read Articles</h2>
+                    {% if daily_max == 0 %}
+                        <p class="muted">No read activity in this period</p>
+                    {% else %}
+                        <div class="stats-chart">
+                            {% for d in daily_read_counts %}
+                                <div class="stats-bar-col" title="{{ d.date }}: {{ d.count }}">
+                                    <div class="stats-bar" style="height: {{ d.height_percent }}%"></div>
+                                    <div class="stats-bar-label">{{ d.short_label }}</div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+
+                <div class="stats-columns">
+                    <div class="stats-section">
+                        <h2>Entries by Category</h2>
+                        {% if categories.is_empty() %}
+                            <p class="muted">No entries in this period</p>
+                        {% else %}
+                            {% for c in categories %}
+                                <div class="stats-bar-row">
+                                    <div class="stats-bar-row-header">
+                                        <span>{{ c.name }}</span>
+                                        <span class="muted">{{ c.count }}</span>
+                                    </div>
+                                    <div class="stats-progress">
+                                        <div class="stats-progress-fill" style="width: {{ c.width_percent }}%"></div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        {% endif %}
+                    </div>
+                    <div class="stats-section">
+                        <h2>Top Feeds</h2>
+                        {% if top_feeds.is_empty() %}
+                            <p class="muted">No entries in this period</p>
+                        {% else %}
+                            {% for f in top_feeds %}
+                                <div class="stats-bar-row">
+                                    <div class="stats-bar-row-header">
+                                        <span>{{ f.title }}</span>
+                                        <span class="muted">{{ f.count }}</span>
+                                    </div>
+                                    <div class="stats-progress">
+                                        <div class="stats-progress-fill" style="width: {{ f.width_percent }}%"></div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        {% endif %}
+                    </div>
+                </div>
+
+                {% if let Some(a) = admin %}
+                <div class="stats-admin-section">
+                    <h2>Site-wide Statistics</h2>
+                    <div class="stats-cards">
+                        <div class="stats-card stats-card-admin">
+                            <div class="stats-card-value">{{ a.total_users }}</div>
+                            <div class="stats-card-label">Total Users</div>
+                        </div>
+                        <div class="stats-card stats-card-admin">
+                            <div class="stats-card-value">{{ a.total_entries }}</div>
+                            <div class="stats-card-label">Site Entries</div>
+                        </div>
+                        <div class="stats-card stats-card-admin">
+                            <div class="stats-card-value">{{ a.total_feeds }}</div>
+                            <div class="stats-card-label">Total Feeds</div>
+                        </div>
+                        <div class="stats-card stats-card-admin">
+                            <div class="stats-card-value">{{ a.read_rate_fmt }}%</div>
+                            <div class="stats-card-label">Site Read Rate</div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </main>
+    </div>
 {% endblock %}
