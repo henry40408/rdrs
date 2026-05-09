@@ -20,57 +20,59 @@ test.describe("Category Management", () => {
     await page.getByTestId("category-name-input").fill("New Test Category");
     await page.getByTestId("add-category-btn").click();
 
-    // Wait for the flash message
-    await expect(page.getByTestId("flash-message")).toContainText(
+    await expect(page.getByTestId("flash-message").first()).toContainText(
       "Category created"
     );
 
-    // Category should appear in the table
-    await expect(page.getByTestId("categories-table")).toContainText(
-      "New Test Category"
-    );
+    // Each row's name now lives in <input value="..."> inside a rename form.
+    await expect(
+      page
+        .getByTestId("categories-table")
+        .locator('input[value="New Test Category"]')
+    ).toBeVisible();
   });
 
   test("rename category updates name", async ({ page }) => {
-    // First create a category
+    // Create a category first
     await page.getByTestId("category-name-input").fill("Rename Me");
     await page.getByTestId("add-category-btn").click();
-    await expect(page.getByTestId("flash-message")).toContainText(
+    await expect(page.getByTestId("flash-message").first()).toContainText(
       "Category created"
     );
 
-    // Click rename link
-    await page.getByRole("link", { name: "rename" }).first().click();
-
-    // Edit inline input
-    const editInput = page.locator(".cat-edit-input").first();
-    await expect(editInput).toBeVisible();
-    await editInput.fill("Renamed Category");
-
-    // Click save
-    await page.getByRole("link", { name: "save" }).first().click();
+    // Rename via the inline form (each row is its own POST form).
+    const row = page
+      .getByTestId("categories-table")
+      .locator("tr", { has: page.locator('input[value="Rename Me"]') });
+    const input = row.locator('input[name="name"]');
+    await input.fill("Renamed Category");
+    await row.getByRole("button", { name: "save" }).click();
 
     await expect(page.getByTestId("flash-message").last()).toContainText(
       "Category renamed"
     );
-    await expect(page.getByTestId("categories-table")).toContainText(
-      "Renamed Category"
-    );
+    await expect(
+      page
+        .getByTestId("categories-table")
+        .locator('input[value="Renamed Category"]')
+    ).toBeVisible();
   });
 
   test("delete category removes from list", async ({ page }) => {
-    // Create a category to delete
     await page.getByTestId("category-name-input").fill("Delete Me");
     await page.getByTestId("add-category-btn").click();
-    await expect(page.getByTestId("flash-message")).toContainText(
+    await expect(page.getByTestId("flash-message").first()).toContainText(
       "Category created"
     );
 
-    // Accept the confirm dialog
+    // Inline `onsubmit="return confirm(...)"` shows a native dialog;
+    // accept it before submit.
     page.on("dialog", (dialog) => dialog.accept());
 
-    // Click delete
-    await page.getByRole("link", { name: "delete" }).first().click();
+    const row = page
+      .getByTestId("categories-table")
+      .locator("tr", { has: page.locator('input[value="Delete Me"]') });
+    await row.getByRole("button", { name: "delete" }).click();
 
     await expect(page.getByTestId("flash-message").last()).toContainText(
       "deleted"
