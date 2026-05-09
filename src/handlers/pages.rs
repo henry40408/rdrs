@@ -850,6 +850,13 @@ impl IntoResponse for StatisticsTemplate {
     }
 }
 
+/// One row of the SSR `/categories` table.
+pub struct CategoryRowView {
+    pub id: i64,
+    pub name: String,
+    pub feed_count: i64,
+}
+
 /// Per-route template for `/categories`.
 #[derive(Template)]
 #[template(path = "categories.html")]
@@ -857,6 +864,7 @@ pub struct CategoriesTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub categories: Vec<CategoryRowView>,
 }
 
 impl IntoResponse for CategoriesTemplate {
@@ -1217,15 +1225,43 @@ pub async fn statistics_page(
     )
 }
 
-/// Serves the CSR shell for `/categories`. The category list is fetched by
-/// `<rdrs-categories-page>` from the existing GReader endpoints
-/// (`/reader/api/0/tag/list` + `/reader/api/0/subscription/list`).
+/// Serves `/categories` rendered fully server-side. The category list is
+/// loaded directly from the DB (`category::list_by_user` + per-category
+/// feed counts derived from `feed::list_by_user`). Each row carries its
+/// own POST forms targeting `/categories/{id}/rename` and
+/// `/categories/{id}/delete` (PR-7 T1 form-action endpoints), and a
+/// top-of-page POST form targets `/categories` for creation.
 pub async fn categories_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, CategoriesTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let user_id = auth_user.user.id;
+
+    let categories = state
+        .db
+        .read_user(move |conn| {
+            let cats = crate::models::category::list_by_user(conn, user_id)?;
+            let feeds = crate::models::feed::list_by_user(conn, user_id)?;
+            let mut counts: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+            for f in &feeds {
+                *counts.entry(f.category_id).or_insert(0) += 1;
+            }
+            Ok::<_, AppError>(
+                cats.into_iter()
+                    .map(|c| CategoryRowView {
+                        feed_count: *counts.get(&c.id).unwrap_or(&0),
+                        id: c.id,
+                        name: c.name,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
 
     (
         flash,
@@ -1233,6 +1269,7 @@ pub async fn categories_page(
             title: "Categories",
             git_version: crate::GIT_VERSION,
             layout,
+            categories,
         },
     )
 }

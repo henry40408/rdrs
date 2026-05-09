@@ -1,9 +1,56 @@
 {% extends "app_layout.html" %}
 
-{% block page_script %}
-    <script type="module" src="/static/js/pages/categories.js?v={{ layout.git_version }}"></script>
-{% endblock %}
-
 {% block page %}
-    <rdrs-categories-page></rdrs-categories-page>
+    <div class="app-layout">
+        <rdrs-sidebar active="categories"></rdrs-sidebar>
+        <main class="main-content">
+            <div class="page-content">
+                <rdrs-flash class="flash-container"></rdrs-flash>
+                <h1>Categories</h1>
+
+                <form method="post" action="/categories">
+                    <div class="form-group">
+                        <label for="name">New Category</label>
+                        <input type="text" id="name" name="name" placeholder="Category name" required maxlength="100" data-testid="category-name-input">
+                    </div>
+                    <button type="submit" data-testid="add-category-btn">Add Category</button>
+                </form>
+
+                <hr>
+
+                <table class="mobile-cards">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Feeds</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody data-testid="categories-table">
+                        {% for c in categories %}
+                        <tr>
+                            <td data-label="Name">
+                                <form method="post" action="/categories/{{ c.id }}/rename" style="display:inline">
+                                    <input type="text" name="name" value="{{ c.name }}" maxlength="100" required>
+                                    <button type="submit" class="link-button">save</button>
+                                </form>
+                            </td>
+                            <td data-label="Feeds">{{ c.feed_count }}</td>
+                            <td class="actions">
+                                <a href="/feeds?category={{ c.id }}">feeds</a>
+                                <a href="/categories/{{ c.id }}/entries">entries</a>
+                                <form method="post" action="/categories/{{ c.id }}/delete" style="display:inline" onsubmit="return confirm('Delete category? This cannot be undone.')">
+                                    <button type="submit" class="link-button">delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% if categories.is_empty() %}
+                        <tr><td colspan="3" class="muted">No categories yet.</td></tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </main>
+    </div>
 {% endblock %}

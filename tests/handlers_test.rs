@@ -1211,9 +1211,12 @@ async fn test_categories_page() {
     let response = server.get("/categories").await;
     response.assert_status_ok();
     let body = response.text();
-    // CSR shell: contains the page custom element + module path.
-    assert!(body.contains("<rdrs-categories-page>"));
-    assert!(body.contains("/static/js/pages/categories.js"));
+    // SSR page: heading + create form + row table rendered server-side.
+    assert!(!body.contains("<rdrs-categories-page>"));
+    assert!(!body.contains("/static/js/pages/categories.js"));
+    assert!(body.contains("<h1>Categories</h1>"));
+    assert!(body.contains("<form method=\"post\" action=\"/categories\">"));
+    assert!(body.contains("data-testid=\"categories-table\""));
 }
 
 #[tokio::test]
