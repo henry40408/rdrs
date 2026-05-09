@@ -88,19 +88,26 @@ pub fn create_router(state: AppState) -> Router {
             "/user-settings/kagi",
             post(handlers::user::update_kagi_form),
         )
-        .route("/api/admin/users", get(handlers::admin::list_users))
-        .route("/api/admin/users/{id}", put(handlers::admin::update_user))
-        .route(
-            "/api/admin/users/{id}",
-            delete(handlers::admin::delete_user),
-        )
-        .route(
-            "/api/admin/masquerade/{id}",
-            post(handlers::admin::start_masquerade),
-        )
         .route(
             "/api/admin/unmasquerade",
             post(handlers::admin::stop_masquerade),
+        )
+        // Form-action POST endpoints for the SSR /admin page (PR-5 T1).
+        .route(
+            "/admin/users/{id}/role",
+            post(handlers::admin::update_role_form),
+        )
+        .route(
+            "/admin/users/{id}/status",
+            post(handlers::admin::update_status_form),
+        )
+        .route(
+            "/admin/users/{id}/masquerade",
+            post(handlers::admin::start_masquerade_form),
+        )
+        .route(
+            "/admin/users/{id}/delete",
+            post(handlers::admin::delete_user_form),
         )
         // Page routes
         .route("/categories", get(handlers::pages::categories_page))

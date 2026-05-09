@@ -2826,3 +2826,155 @@ async fn test_update_kagi_form() {
     let location = response.header(header::LOCATION);
     assert_eq!(location, "/user-settings");
 }
+
+// ============================================================================
+// Form-action admin endpoint tests (PR-5 T1)
+// ============================================================================
+
+/// Helper to register the first user (becomes admin) and login.
+async fn setup_admin_user(server: &TestServer) {
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/session")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status_ok();
+}
+
+/// Helper to register a second (regular) user without logging in.
+async fn register_target_user(server: &TestServer) {
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "target",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn test_update_role_form_promotes_user() {
+    let server = create_test_server(default_test_config());
+    setup_admin_user(&server).await;
+    register_target_user(&server).await;
+
+    // Promote target (id=2) to admin role
+    let response = server
+        .post("/admin/users/2/role")
+        .form(&json!({ "role": "admin" }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/admin");
+
+    // Verify role change via the SSR /admin page — the target row should now
+    // show "demote" (i.e. target is admin) instead of "promote".
+    let admin_resp = server.get("/admin").await;
+    admin_resp.assert_status_ok();
+    let body = admin_resp.text();
+    assert!(body.contains("target"));
+    // Two admins now → both rows render; target row's role cell shows "admin".
+    // The action button on a non-self admin row says "demote".
+    assert!(body.contains("demote"));
+}
+
+#[tokio::test]
+async fn test_update_status_form_disables_user() {
+    let server = create_test_server(default_test_config());
+    setup_admin_user(&server).await;
+    register_target_user(&server).await;
+
+    // Disable target (id=2)
+    let response = server
+        .post("/admin/users/2/status")
+        .form(&json!({ "disabled": "true" }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/admin");
+
+    // Verify the user is now disabled — login should fail
+    let login_resp = server
+        .post("/api/session")
+        .json(&json!({
+            "username": "target",
+            "password": "password123"
+        }))
+        .await;
+    login_resp.assert_status_forbidden();
+}
+
+#[tokio::test]
+async fn test_start_masquerade_form_redirects_to_root() {
+    let server = create_test_server(default_test_config());
+    setup_admin_user(&server).await;
+    register_target_user(&server).await;
+
+    // Start masquerade as target (id=2)
+    let response = server.post("/admin/users/2/masquerade").await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/");
+}
+
+#[tokio::test]
+async fn test_delete_user_form_succeeds() {
+    let server = create_test_server(default_test_config());
+    setup_admin_user(&server).await;
+    register_target_user(&server).await;
+
+    // Delete target (id=2)
+    let response = server.post("/admin/users/2/delete").await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/admin");
+
+    // Verify the target user is gone — SSR /admin page should no longer
+    // contain a "target" row.
+    let admin_resp = server.get("/admin").await;
+    admin_resp.assert_status_ok();
+    let body = admin_resp.text();
+    assert!(!body.contains(">target<"));
+}
+
+#[tokio::test]
+async fn test_update_role_form_self_protection() {
+    let server = create_test_server(default_test_config());
+    setup_admin_user(&server).await;
+
+    // Admin (id=1) tries to change their own role — should be blocked
+    let response = server
+        .post("/admin/users/1/role")
+        .form(&json!({ "role": "user" }))
+        .await;
+
+    // Should still redirect to /admin (error flash), not a 400
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/admin");
+
+    // Verify the admin role is unchanged via the SSR /admin page.
+    // The admin's own row carries the "(you)" marker and no role-toggle form,
+    // and there are no rows that say "promote" because no non-admin exists.
+    let admin_resp = server.get("/admin").await;
+    admin_resp.assert_status_ok();
+    let body = admin_resp.text();
+    assert!(body.contains("(you)"));
+    assert!(!body.contains("promote"));
+}

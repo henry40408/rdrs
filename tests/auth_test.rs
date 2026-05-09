@@ -1,4 +1,4 @@
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum_test::TestServer;
 use chrono::{DateTime, Duration, Utc};
 use rdrs::{auth, create_router, db, services, AppState, Config, DbPool};
@@ -306,272 +306,10 @@ async fn test_logout() {
 // (test_change_password_form_*) since the JSON PUT endpoint was removed in
 // favour of the SSR form-action endpoint at POST /user-settings/password.
 
-#[tokio::test]
-async fn test_admin_list_users() {
-    let server = create_test_server(default_test_config());
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "user1",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/session")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status_ok();
-
-    let response = server.get("/api/admin/users").await;
-    response.assert_status_ok();
-    let body: Vec<serde_json::Value> = response.json();
-    assert_eq!(body.len(), 2);
-}
-
-#[tokio::test]
-async fn test_admin_list_users_forbidden() {
-    let server = create_test_server(default_test_config());
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "user1",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/session")
-        .json(&json!({
-            "username": "user1",
-            "password": "password123"
-        }))
-        .await
-        .assert_status_ok();
-
-    let response = server.get("/api/admin/users").await;
-    response.assert_status_forbidden();
-}
-
-#[tokio::test]
-async fn test_admin_disable_user() {
-    let server = create_test_server(default_test_config());
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "user1",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/session")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status_ok();
-
-    server
-        .put("/api/admin/users/2")
-        .json(&json!({
-            "disabled": true
-        }))
-        .await
-        .assert_status_ok();
-
-    server.delete("/api/session").await.assert_status_ok();
-
-    let response = server
-        .post("/api/session")
-        .json(&json!({
-            "username": "user1",
-            "password": "password123"
-        }))
-        .await;
-
-    response.assert_status_forbidden();
-}
-
-#[tokio::test]
-async fn test_admin_cannot_disable_self() {
-    let server = create_test_server(default_test_config());
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/session")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status_ok();
-
-    let response = server
-        .put("/api/admin/users/1")
-        .json(&json!({
-            "disabled": true
-        }))
-        .await;
-
-    response.assert_status_bad_request();
-}
-
-#[tokio::test]
-async fn test_admin_delete_user() {
-    let server = create_test_server(default_test_config());
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "user1",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/session")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status_ok();
-
-    server
-        .delete("/api/admin/users/2")
-        .await
-        .assert_status(StatusCode::NO_CONTENT);
-
-    let response = server.get("/api/admin/users").await;
-    let body: Vec<serde_json::Value> = response.json();
-    assert_eq!(body.len(), 1);
-}
-
-#[tokio::test]
-async fn test_admin_cannot_delete_self() {
-    let server = create_test_server(default_test_config());
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/session")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status_ok();
-
-    let response = server.delete("/api/admin/users/1").await;
-    response.assert_status_bad_request();
-}
-
-#[tokio::test]
-async fn test_admin_update_role() {
-    let server = create_test_server(default_test_config());
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "user1",
-            "password": "password123"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/session")
-        .json(&json!({
-            "username": "admin",
-            "password": "password123"
-        }))
-        .await
-        .assert_status_ok();
-
-    server
-        .put("/api/admin/users/2")
-        .json(&json!({
-            "role": "admin"
-        }))
-        .await
-        .assert_status_ok();
-
-    let response = server.get("/api/admin/users").await;
-    let body: Vec<serde_json::Value> = response.json();
-    assert_eq!(body[1]["role"], "admin");
-}
+// Admin user CRUD coverage (list / disable / delete / update role + self
+// protection) moved to tests/handlers_test.rs (test_*_form_*) when the JSON
+// `/api/admin/users*` endpoints were removed in favour of the SSR
+// form-action endpoints under POST /admin/users/{id}/* (PR-5 T2).
 
 #[tokio::test]
 async fn test_masquerade() {
@@ -605,9 +343,9 @@ async fn test_masquerade() {
         .assert_status_ok();
 
     server
-        .post("/api/admin/masquerade/2")
+        .post("/admin/users/2/masquerade")
         .await
-        .assert_status_ok();
+        .assert_status(StatusCode::SEE_OTHER);
 
     let response = server.get("/api/user").await;
     response.assert_status_ok();
@@ -656,13 +394,17 @@ async fn test_masquerade_already_masquerading() {
         .await
         .assert_status_ok();
 
-    server
-        .post("/api/admin/masquerade/2")
-        .await
-        .assert_status_ok();
+    // First masquerade succeeds and lands us on /.
+    let response = server.post("/admin/users/2/masquerade").await;
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/");
 
-    let response = server.post("/api/admin/masquerade/2").await;
-    response.assert_status_bad_request();
+    // Second masquerade attempt redirects back to /admin with an error flash
+    // (FlashRedirect::error) — never a 4xx because form endpoints always
+    // respond with 303 See Other.
+    let response = server.post("/admin/users/2/masquerade").await;
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/admin");
 }
 
 #[tokio::test]

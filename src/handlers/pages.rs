@@ -251,24 +251,46 @@ pub async fn unread_page(
     )
 }
 
-/// Serves the CSR shell for `/admin`. The user list is loaded by
-/// `<rdrs-admin-page>` from the existing `GET /api/admin/users` endpoint.
-/// The page also calls `/api/me` to know which rows are the current admin
-/// (and the original admin under masquerade) and disable destructive
-/// actions for them.
+/// Serves `/admin` rendered fully server-side. The user table is rendered
+/// directly from the DB via Askama, with self-detection in the handler so
+/// the template can hide destructive actions on rows that match either the
+/// effective admin or the original admin (under masquerade). Each row's
+/// action buttons are `<form>` elements posting to the `/admin/users/{id}/*`
+/// form-action endpoints added in PR-5 T1.
 pub async fn admin_page(
     admin: PageAdminUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, AdminTemplate) {
-    // Reuse the same shell helpers as other pages by adapting the admin
-    // extractor into a PageAuthUser shape (sidebar/flash bootstrap don't
-    // care which it is, only about user + session).
     let auth_user = PageAuthUser {
-        user: admin.user,
-        session: admin.session,
+        user: admin.user.clone(),
+        session: admin.session.clone(),
     };
     let layout = build_app_layout(&state, &auth_user, &flash).await;
+
+    let original_admin_id = admin.session.original_user_id.unwrap_or(admin.user.id);
+    let effective_admin_id = admin.user.id;
+
+    let users = state
+        .db
+        .read_user(crate::models::user::list_all)
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|u| {
+            let disabled = u.is_disabled();
+            AdminUserView {
+                id: u.id,
+                username: u.username,
+                role: u.role.as_str().to_string(),
+                disabled,
+                created_at: u.created_at.format("%Y-%m-%d").to_string(),
+                is_self: u.id == effective_admin_id || u.id == original_admin_id,
+            }
+        })
+        .collect();
 
     (
         flash,
@@ -276,6 +298,7 @@ pub async fn admin_page(
             title: "Admin Panel",
             git_version: crate::GIT_VERSION,
             layout,
+            users,
         },
     )
 }
@@ -736,6 +759,16 @@ impl IntoResponse for UserSettingsTemplate {
     }
 }
 
+/// One row of the SSR `/admin` user table.
+pub struct AdminUserView {
+    pub id: i64,
+    pub username: String,
+    pub role: String,
+    pub disabled: bool,
+    pub created_at: String,
+    pub is_self: bool,
+}
+
 /// Per-route template for `/admin`.
 #[derive(Template)]
 #[template(path = "admin.html")]
@@ -743,6 +776,7 @@ pub struct AdminTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub users: Vec<AdminUserView>,
 }
 
 impl IntoResponse for AdminTemplate {
