@@ -30,9 +30,9 @@
                         {% for c in categories %}
                         <tr>
                             <td data-label="Name">
-                                <form method="post" action="/categories/{{ c.id }}/rename" style="display:inline">
+                                <form method="post" action="/categories/{{ c.id }}/rename" class="cat-rename">
                                     <input type="text" name="name" value="{{ c.name }}" maxlength="100" required>
-                                    <button type="submit" class="link-button">save</button>
+                                    <button type="submit" class="action-link cat-rename-save">save</button>
                                 </form>
                             </td>
                             <td data-label="Feeds">{{ c.feed_count }}</td>
@@ -40,7 +40,7 @@
                                 <a href="/feeds?category={{ c.id }}">feeds</a>
                                 <a href="/categories/{{ c.id }}/entries">entries</a>
                                 <form method="post" action="/categories/{{ c.id }}/delete" style="display:inline" onsubmit="return confirm('Delete category? This cannot be undone.')">
-                                    <button type="submit" class="link-button">delete</button>
+                                    <button type="submit" class="action-link action-link-danger">delete</button>
                                 </form>
                             </td>
                         </tr>
