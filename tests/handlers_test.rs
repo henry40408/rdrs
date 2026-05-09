@@ -2978,3 +2978,176 @@ async fn test_update_role_form_self_protection() {
     assert!(body.contains("(you)"));
     assert!(!body.contains("promote"));
 }
+
+// ============================================================================
+// /categories form-action POST endpoint tests (SSR PR-7 T1)
+// ============================================================================
+
+#[tokio::test]
+async fn test_create_category_form_succeeds() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+
+    let response = app
+        .server
+        .post("/categories")
+        .form(&json!({ "name": "Tech" }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/categories");
+
+    // Verify the category exists in the DB
+    let exists: bool = app
+        .db
+        .user(|conn| {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM category WHERE name = ?1",
+                    rusqlite::params!["Tech"],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            count > 0
+        })
+        .await
+        .unwrap();
+    assert!(
+        exists,
+        "category 'Tech' should exist in the DB after creation"
+    );
+}
+
+#[tokio::test]
+async fn test_create_category_form_empty_name() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+
+    let response = app
+        .server
+        .post("/categories")
+        .form(&json!({ "name": "" }))
+        .await;
+
+    // Error flash redirect — still 303 to /categories, no DB write
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/categories");
+
+    // Confirm nothing was inserted
+    let count: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM category", [], |row| row.get(0))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "no category should be created for an empty name");
+}
+
+#[tokio::test]
+async fn test_rename_category_form_succeeds() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+
+    // Create a category via the new form endpoint
+    app.server
+        .post("/categories")
+        .form(&json!({ "name": "OldName" }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    // Fetch the inserted ID
+    let cat_id: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row(
+                "SELECT id FROM category WHERE name = ?1",
+                rusqlite::params!["OldName"],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+
+    // Rename it
+    let response = app
+        .server
+        .post(&format!("/categories/{}/rename", cat_id))
+        .form(&json!({ "name": "NewName" }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/categories");
+
+    // Verify the rename in the DB
+    let new_name: String = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT name FROM category WHERE id = ?1",
+                rusqlite::params![cat_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(new_name, "NewName");
+}
+
+#[tokio::test]
+async fn test_delete_category_form_succeeds() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+
+    // Create a category via the new form endpoint
+    app.server
+        .post("/categories")
+        .form(&json!({ "name": "ToDelete" }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    // Fetch the inserted ID
+    let cat_id: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row(
+                "SELECT id FROM category WHERE name = ?1",
+                rusqlite::params!["ToDelete"],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+
+    // Delete it
+    let response = app
+        .server
+        .post(&format!("/categories/{}/delete", cat_id))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/categories");
+
+    // Verify it's gone from the DB
+    let count: i64 = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM category WHERE id = ?1",
+                rusqlite::params![cat_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "category should be deleted from the DB");
+}

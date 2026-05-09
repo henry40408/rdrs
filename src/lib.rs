@@ -109,7 +109,18 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::admin::delete_user_form),
         )
         // Page routes
-        .route("/categories", get(handlers::pages::categories_page))
+        .route(
+            "/categories",
+            get(handlers::pages::categories_page).post(handlers::categories::create_category_form),
+        )
+        .route(
+            "/categories/{id}/rename",
+            post(handlers::categories::rename_category_form),
+        )
+        .route(
+            "/categories/{id}/delete",
+            post(handlers::categories::delete_category_form),
+        )
         .route("/feeds", get(handlers::pages::feeds_page))
         .route("/entries", get(handlers::pages::entries_page))
         .route("/entries/read", get(handlers::pages::read_entries_page))
