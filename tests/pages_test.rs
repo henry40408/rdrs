@@ -339,7 +339,7 @@ async fn test_categories_page_with_flash() {
 
     response.assert_status_ok();
     let body = response.text();
-    // CSR shell embeds pending flash messages as inline JSON for
+    // SSR page embeds pending flash messages as inline JSON for
     // `<rdrs-flash>` to display on first paint.
     assert!(body.contains("id=\"rdrs-flash-bootstrap\""));
     assert!(body.contains("Category created successfully"));
@@ -826,7 +826,7 @@ async fn test_api_feeds_returns_rows_with_unread() {
 }
 
 #[tokio::test]
-async fn test_categories_page_csr_shell_does_not_embed_rows() {
+async fn test_categories_page_renders_ssr_content() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -834,12 +834,12 @@ async fn test_categories_page_csr_shell_does_not_embed_rows() {
         .user(move |conn| {
             conn.execute(
                 "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Cats CSR"],
+                rusqlite::params![1, "Cats SSR"],
             )
             .unwrap();
             conn.execute(
                 "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/cats-csr.xml", "A Feed"],
+                rusqlite::params![1, "https://example.com/cats-ssr.xml", "A Feed"],
             )
             .unwrap();
         })
@@ -852,16 +852,37 @@ async fn test_categories_page_csr_shell_does_not_embed_rows() {
     response.assert_status_ok();
     let body = response.text();
 
-    // After migration to CSR, the shell does NOT embed category table
-    // rows — the custom element fetches them via the GReader API after
-    // mount. The category name does still appear inside the sidebar
-    // bootstrap JSON (sidebar lists every category by name), so check
-    // for the row-specific markup rather than the bare name.
-    assert!(body.contains("<rdrs-categories-page>"));
-    assert!(!body.contains("data-tag-id"));
-    assert!(!body.contains("cat-edit-input"));
+    // Old CSR markers gone.
+    assert!(!body.contains("<rdrs-categories-page>"));
+    assert!(!body.contains("/static/js/pages/categories.js"));
+
+    // SSR content present: page heading, create form, and the row table
+    // with the seeded category name rendered server-side.
+    assert!(body.contains("<h1>Categories</h1>"));
+    assert!(body.contains("<form method=\"post\" action=\"/categories\">"));
+    assert!(body.contains("data-testid=\"categories-table\""));
+    assert!(body.contains("Cats SSR"));
+    // Per-row form actions are wired to the PR-7 T1 endpoints.
+    assert!(body.contains("/rename"));
+    assert!(body.contains("/delete"));
     // The sidebar bootstrap (per-user chrome) is still embedded.
     assert!(body.contains("id=\"rdrs-sidebar-bootstrap\""));
+}
+
+#[tokio::test]
+async fn test_categories_page_renders_empty_state() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/categories").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    // No CSR shell on the SSR page.
+    assert!(!body.contains("<rdrs-categories-page>"));
+    // Empty state renders directly from the template.
+    assert!(body.contains("No categories yet."));
 }
 
 #[tokio::test]
