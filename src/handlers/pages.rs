@@ -850,40 +850,74 @@ pub async fn search_page(
             .db
             .read_user(move |conn| {
                 let filter = entry::EntryFilter {
-                    search: Some(q_for_filter),
+                    search: Some(q_for_filter.clone()),
                     ..Default::default()
                 };
-                let entries = entry::list_by_user(
-                    conn,
-                    user_id,
-                    &filter,
-                    entry::EntrySortOrder::PublishedAt,
-                    50,
-                    0,
-                )?;
-                Ok::<_, AppError>(
-                    entries
-                        .into_iter()
-                        .map(|e| SearchResultView {
-                            link: e
-                                .entry
-                                .link
-                                .clone()
-                                .unwrap_or_else(|| format!("/entries/{}", e.entry.id)),
-                            title: e
-                                .entry
-                                .title
-                                .clone()
-                                .unwrap_or_else(|| "(no title)".to_string()),
+                // SQL search hits inside HTML attributes (`<a href="…bitcoin…">`),
+                // so a fraction of rows are "phantom matches" with no visible
+                // <mark>. Walk the result set in OFFSET-paged batches and keep
+                // only rows where the query appears in the visible title or
+                // stripped snippet, until we hit the display cap, exhaust the
+                // upstream result set, or trip a safety bound.
+                const TARGET: usize = 50;
+                const BATCH: i64 = 100;
+                const MAX_ITERATIONS: usize = 5;
+                const MAX_SCANNED: usize = 1000;
+                let q_lower = q_for_filter.to_ascii_lowercase();
+                let mut visible: Vec<SearchResultView> = Vec::with_capacity(TARGET);
+                let mut offset: i64 = 0;
+                let mut scanned: usize = 0;
+
+                for _ in 0..MAX_ITERATIONS {
+                    if visible.len() >= TARGET || scanned >= MAX_SCANNED {
+                        break;
+                    }
+                    let batch = entry::list_by_user(
+                        conn,
+                        user_id,
+                        &filter,
+                        entry::EntrySortOrder::PublishedAt,
+                        BATCH,
+                        offset,
+                    )?;
+                    let batch_len = batch.len();
+                    scanned += batch_len;
+                    offset += batch_len as i64;
+
+                    for e in batch {
+                        let title = e
+                            .entry
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| "(no title)".to_string());
+                        let snippet = build_snippet(
+                            e.entry.content.as_deref().or(e.entry.summary.as_deref()),
+                            &q_for_filter,
+                            200,
+                        );
+                        let visible_hit = title.to_ascii_lowercase().contains(&q_lower)
+                            || snippet.to_ascii_lowercase().contains(&q_lower);
+                        if !visible_hit {
+                            continue;
+                        }
+                        visible.push(SearchResultView {
+                            entry_id: e.entry.id,
+                            title_html: highlight_html(&title, &q_for_filter),
                             feed_title: e.feed_title.clone().unwrap_or_else(|| e.feed_url.clone()),
                             published_relative: format_relative_time(e.entry.published_at).0,
-                            snippet: build_snippet(
-                                e.entry.content.as_deref().or(e.entry.summary.as_deref()),
-                                200,
-                            ),
-                        })
-                        .collect::<Vec<_>>(),
-                )
+                            snippet_html: highlight_html(&snippet, &q_for_filter),
+                        });
+                        if visible.len() >= TARGET {
+                            break;
+                        }
+                    }
+
+                    if batch_len < BATCH as usize {
+                        break; // upstream exhausted
+                    }
+                }
+
+                Ok::<_, AppError>(visible)
             })
             .await
             .ok()
@@ -903,47 +937,182 @@ pub async fn search_page(
     )
 }
 
-/// Strip HTML tags and collapse whitespace, returning at most `max_chars`
-/// characters of plain text. Appends an ellipsis if truncated. Empty input
-/// returns an empty string.
-fn build_snippet(html: Option<&str>, max_chars: usize) -> String {
-    let raw = match html {
-        Some(s) if !s.is_empty() => s,
-        _ => return String::new(),
-    };
-    let mut out = String::with_capacity(raw.len().min(max_chars * 2));
+/// Strip HTML tags (including `<script>` / `<style>` bodies) and collapse
+/// whitespace into a single line of plain text.
+fn strip_to_plain_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
     let mut in_tag = false;
+    let mut skip_until: Option<&'static str> = None;
     let mut last_space = true;
-    for ch in raw.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => {
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if let Some(end_tag) = skip_until {
+            if let Some(pos) = raw[i..].to_ascii_lowercase().find(end_tag) {
+                i += pos + end_tag.len();
+                skip_until = None;
                 in_tag = false;
                 if !last_space {
                     out.push(' ');
                     last_space = true;
                 }
+                continue;
+            } else {
+                break;
             }
-            _ if in_tag => {}
+        }
+        let ch = bytes[i] as char;
+        match ch {
+            '<' => {
+                let lower = raw[i..].to_ascii_lowercase();
+                if lower.starts_with("<script") {
+                    skip_until = Some("</script>");
+                    i += 1;
+                    continue;
+                }
+                if lower.starts_with("<style") {
+                    skip_until = Some("</style>");
+                    i += 1;
+                    continue;
+                }
+                if lower.starts_with("<!--") {
+                    if let Some(pos) = raw[i + 4..].find("-->") {
+                        i += 4 + pos + 3;
+                        if !last_space {
+                            out.push(' ');
+                            last_space = true;
+                        }
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+                in_tag = true;
+                i += 1;
+            }
+            '>' if in_tag => {
+                in_tag = false;
+                if !last_space {
+                    out.push(' ');
+                    last_space = true;
+                }
+                i += 1;
+            }
+            _ if in_tag => {
+                i += 1;
+            }
             c if c.is_whitespace() => {
                 if !last_space {
                     out.push(' ');
                     last_space = true;
                 }
+                i += 1;
             }
-            c => {
-                out.push(c);
+            _ => {
+                let ch_len = raw[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                out.push_str(&raw[i..i + ch_len]);
                 last_space = false;
+                i += ch_len;
             }
         }
     }
-    let trimmed = out.trim();
-    if trimmed.chars().count() <= max_chars {
-        trimmed.to_string()
-    } else {
-        let truncated: String = trimmed.chars().take(max_chars).collect();
-        format!("{}…", truncated.trim_end())
+    out.trim().to_string()
+}
+
+/// Build a query-aware snippet: returns a `max_chars`-wide window centered on
+/// the first case-insensitive match of `query` in the plain-text content, with
+/// `…` prefix/suffix where the window doesn't reach the original boundaries.
+/// Falls back to the leading `max_chars` characters if no match is found
+/// (or if `query` is empty).
+fn build_snippet(html: Option<&str>, query: &str, max_chars: usize) -> String {
+    let raw = match html {
+        Some(s) if !s.is_empty() => s,
+        _ => return String::new(),
+    };
+    let plain = strip_to_plain_text(raw);
+    let total_chars = plain.chars().count();
+    if total_chars <= max_chars {
+        return plain;
     }
+
+    // Try to center on the first match (ASCII-case-insensitive).
+    let q = query.trim();
+    if !q.is_empty() {
+        let plain_lower = plain.to_ascii_lowercase();
+        let q_lower = q.to_ascii_lowercase();
+        if let Some(byte_pos) = plain_lower.find(&q_lower) {
+            // Convert byte position → char index.
+            let match_char_idx = plain[..byte_pos].chars().count();
+            let context_before = max_chars / 3;
+            let start_char = match_char_idx.saturating_sub(context_before);
+            let end_char = (start_char + max_chars).min(total_chars);
+            // Recompute start to fill the window if we hit the tail.
+            let start_char = end_char.saturating_sub(max_chars);
+
+            let window: String = plain
+                .chars()
+                .skip(start_char)
+                .take(end_char - start_char)
+                .collect();
+            let prefix = if start_char > 0 { "…" } else { "" };
+            let suffix = if end_char < total_chars { "…" } else { "" };
+            return format!("{}{}{}", prefix, window.trim(), suffix);
+        }
+    }
+
+    // Fallback: leading window.
+    let truncated: String = plain.chars().take(max_chars).collect();
+    format!("{}…", truncated.trim_end())
+}
+
+/// Wrap case-insensitive (ASCII-only — matches the SQLite LIKE COLLATE NOCASE
+/// behavior of the search query) matches of `query` in `<mark>` tags. Returns
+/// HTML with the non-match parts and the matched text both escaped, plus the
+/// `<mark>...</mark>` wrappers around hits. Use with `|safe` in templates.
+fn highlight_html(text: &str, query: &str) -> String {
+    if query.is_empty() {
+        return html_escape_minimal(text);
+    }
+    let q_lower = query.to_ascii_lowercase();
+    let q_bytes = q_lower.len();
+    if q_bytes == 0 {
+        return html_escape_minimal(text);
+    }
+    let t_lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len() + 16);
+    let mut last = 0;
+    let mut start = 0;
+    while start <= t_lower.len() {
+        match t_lower[start..].find(&q_lower) {
+            Some(rel) => {
+                let abs = start + rel;
+                out.push_str(&html_escape_minimal(&text[last..abs]));
+                out.push_str("<mark>");
+                out.push_str(&html_escape_minimal(&text[abs..abs + q_bytes]));
+                out.push_str("</mark>");
+                last = abs + q_bytes;
+                start = last;
+            }
+            None => break,
+        }
+    }
+    out.push_str(&html_escape_minimal(&text[last..]));
+    out
+}
+
+fn html_escape_minimal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Serves the CSR shell for `/feeds/{id}/entries`. Mode `feed` in
@@ -1430,13 +1599,15 @@ impl IntoResponse for CategoryEntriesTemplate {
     }
 }
 
-/// One row of the SSR `/search` results list.
+/// One row of the SSR `/search` results list. `title_html` and `snippet_html`
+/// are pre-escaped strings with `<mark>` tags wrapping case-insensitive
+/// matches of the query — render them with the `|safe` Askama filter.
 pub struct SearchResultView {
-    pub link: String,
-    pub title: String,
+    pub entry_id: i64,
+    pub title_html: String,
     pub feed_title: String,
     pub published_relative: String,
-    pub snippet: String,
+    pub snippet_html: String,
 }
 
 /// Per-route template for `/search`.
@@ -1693,4 +1864,82 @@ pub async fn categories_page(
             categories,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_snippet, highlight_html};
+
+    #[test]
+    fn highlight_wraps_simple_match() {
+        let out = highlight_html("Bitcoin Price Soars", "bitcoin");
+        assert_eq!(out, "<mark>Bitcoin</mark> Price Soars");
+    }
+
+    #[test]
+    fn highlight_wraps_multiple_matches_case_insensitive() {
+        let out = highlight_html("BITCOIN bitcoin Bitcoin", "bitcoin");
+        assert_eq!(
+            out,
+            "<mark>BITCOIN</mark> <mark>bitcoin</mark> <mark>Bitcoin</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_no_match_returns_escaped_only() {
+        let out = highlight_html("Ethereum news", "bitcoin");
+        assert_eq!(out, "Ethereum news");
+    }
+
+    #[test]
+    fn highlight_escapes_html_special_chars() {
+        let out = highlight_html("<b>bitcoin</b>", "bitcoin");
+        assert_eq!(out, "&lt;b&gt;<mark>bitcoin</mark>&lt;/b&gt;");
+    }
+
+    #[test]
+    fn highlight_empty_query_returns_escaped() {
+        let out = highlight_html("Hi <world>", "");
+        assert_eq!(out, "Hi &lt;world&gt;");
+    }
+
+    #[test]
+    fn build_snippet_strips_script_and_style_bodies() {
+        let out = build_snippet(
+            Some("<p>hello</p><script>alert('x')</script><style>.a{}</style> world"),
+            "",
+            200,
+        );
+        assert!(out.contains("hello"));
+        assert!(out.contains("world"));
+        assert!(!out.contains("alert"));
+        assert!(!out.contains(".a{"));
+    }
+
+    #[test]
+    fn build_snippet_centers_window_on_match() {
+        // Match buried far past the leading 200 chars.
+        let lead = "lorem ipsum ".repeat(40);
+        let html = format!("<p>{}Bitcoin price soars today across exchanges.</p>", lead);
+        let out = build_snippet(Some(&html), "bitcoin", 80);
+        assert!(
+            out.contains("Bitcoin"),
+            "snippet should include match: {out}"
+        );
+        assert!(out.starts_with('…'), "should ellipsis-prefix: {out}");
+    }
+
+    #[test]
+    fn build_snippet_falls_back_to_lead_when_no_match() {
+        let html = "<p>Ethereum dominated headlines this week as the merge approached.</p>";
+        let out = build_snippet(Some(html), "bitcoin", 30);
+        assert!(out.starts_with("Ethereum"));
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn build_snippet_strips_html_comments() {
+        let out = build_snippet(Some("hello <!-- secret note --> world"), "", 200);
+        assert_eq!(out, "hello world");
+    }
 }

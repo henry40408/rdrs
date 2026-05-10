@@ -8,9 +8,10 @@
                 <rdrs-flash class="flash-container"></rdrs-flash>
                 <h1>Search</h1>
 
-                <form method="get" action="/search" class="search-form">
+                <form method="get" action="/search">
                     <div class="form-group">
-                        <input type="text" name="q" value="{{ q }}" placeholder="Search entries..." autofocus required data-testid="search-input">
+                        <label for="search-q">Keywords</label>
+                        <input type="text" id="search-q" name="q" value="{{ q }}" placeholder="Find entries by title or content" autofocus required data-testid="search-input">
                     </div>
                     <button type="submit" data-testid="search-btn">Search</button>
                 </form>
@@ -37,15 +38,15 @@
                     <ul class="search-results" data-testid="search-results">
                         {% for r in results %}
                             <li class="search-result">
-                                <a href="{{ r.link }}" target="_blank" rel="noopener noreferrer" class="search-result-title">{{ r.title }}</a>
+                                <a href="/entries/{{ r.entry_id }}" class="search-result-title">{{ r.title_html|safe }}</a>
                                 <div class="search-result-meta">
                                     <span class="muted">{{ r.feed_title }}</span>
                                     {% if !r.published_relative.is_empty() %}
                                         <span class="muted">&middot; {{ r.published_relative }}</span>
                                     {% endif %}
                                 </div>
-                                {% if !r.snippet.is_empty() %}
-                                    <p class="search-result-snippet">{{ r.snippet }}</p>
+                                {% if !r.snippet_html.is_empty() %}
+                                    <p class="search-result-snippet">{{ r.snippet_html|safe }}</p>
                                 {% endif %}
                             </li>
                         {% endfor %}

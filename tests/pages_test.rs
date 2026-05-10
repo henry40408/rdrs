@@ -653,11 +653,18 @@ async fn test_search_page_with_results() {
     response.assert_status_ok();
     let body = response.text();
     assert!(body.contains("data-testid=\"search-results\""));
-    assert!(body.contains("Quokka Discovery"));
-    assert!(body.contains("https://example.com/quokka"));
+    // Title and snippet wrap query matches in <mark>; the un-matched fragment
+    // ("Discovery in Western Australia") still appears verbatim.
+    assert!(body.contains("<mark>Quokka</mark>"));
+    assert!(body.contains("Discovery in Western Australia"));
+    // Result links go to the in-app entry route (which redirects to
+    // a list page with ?entry={id}), not the original article URL.
+    assert!(body.contains("href=\"/entries/1\""));
+    assert!(!body.contains("https://example.com/quokka"));
     assert!(body.contains("Search Feed"));
-    // Snippet: HTML stripped.
-    assert!(body.contains("The quokka is a small marsupial."));
+    // Case-insensitive match preserves snippet's lowercase 'quokka'.
+    assert!(body.contains("<mark>quokka</mark>"));
+    assert!(body.contains("is a small marsupial."));
     // Other entry must not appear.
     assert!(!body.contains("Other Topic"));
 }

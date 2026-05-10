@@ -50,15 +50,27 @@ fn content_type_for(path: &str) -> &'static str {
 
 pub async fn serve(Path(path): Path<String>) -> Response {
     match FILES.iter().find(|(name, _)| *name == path) {
-        Some((name, content)) => (
-            StatusCode::OK,
-            [
-                (header::CONTENT_TYPE, content_type_for(name)),
-                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-            ],
-            *content,
-        )
-            .into_response(),
+        Some((name, content)) => {
+            // `?v=…-dirty` URLs are emitted from a working tree with
+            // uncommitted changes; the suffix is identical across consecutive
+            // dev edits, so browsers would serve a stale cached copy under
+            // the long-lived immutable header. Switch to `no-cache` for that
+            // case so dev iteration sees fresh assets without a hard refresh.
+            let cache_control = if crate::GIT_VERSION.ends_with("-dirty") {
+                "no-cache"
+            } else {
+                "public, max-age=31536000, immutable"
+            };
+            (
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, content_type_for(name)),
+                    (header::CACHE_CONTROL, cache_control),
+                ],
+                *content,
+            )
+                .into_response()
+        }
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
