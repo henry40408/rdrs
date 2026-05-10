@@ -594,9 +594,92 @@ async fn test_search_page() {
     let response = app.server.get("/search").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("<rdrs-entries-page>"));
-    assert!(body.contains("/static/js/pages/entries.js"));
-    assert!(!body.contains(r#"class="ssr-entries""#));
+    // SSR page: form + empty-state hint, no CSR shell.
+    assert!(body.contains("<h1>Search</h1>"));
+    assert!(body.contains("<form method=\"get\" action=\"/search\""));
+    assert!(body.contains("data-testid=\"search-input\""));
+    assert!(body.contains("Enter a search term"));
+    assert!(body.contains("class=\"search-status\""));
+    assert!(!body.contains("<rdrs-entries-page>"));
+    assert!(!body.contains("/static/js/pages/entries.js"));
+}
+
+#[tokio::test]
+async fn test_search_page_with_results() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+                rusqlite::params![1, "Search Cat"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+                rusqlite::params![1, "https://example.com/search-feed.xml", "Search Feed"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, title, link, content) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    1,
+                    "search-guid-1",
+                    "Quokka Discovery in Western Australia",
+                    "https://example.com/quokka",
+                    "<p>The quokka is a small marsupial.</p>"
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, title, link, content) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    1,
+                    "search-guid-2",
+                    "Other Topic",
+                    "https://example.com/other",
+                    "<p>Unrelated article.</p>"
+                ],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/search?q=Quokka").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("data-testid=\"search-results\""));
+    // Title and snippet wrap query matches in <mark>; the un-matched fragment
+    // ("Discovery in Western Australia") still appears verbatim.
+    assert!(body.contains("<mark>Quokka</mark>"));
+    assert!(body.contains("Discovery in Western Australia"));
+    // Result links go to the in-app entry route (which redirects to
+    // a list page with ?entry={id}), not the original article URL.
+    assert!(body.contains("href=\"/entries/1\""));
+    assert!(!body.contains("https://example.com/quokka"));
+    assert!(body.contains("Search Feed"));
+    // Case-insensitive match preserves snippet's lowercase 'quokka'.
+    assert!(body.contains("<mark>quokka</mark>"));
+    assert!(body.contains("is a small marsupial."));
+    // Other entry must not appear.
+    assert!(!body.contains("Other Topic"));
+}
+
+#[tokio::test]
+async fn test_search_page_no_results() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/search?q=zzznotfoundzzz").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Nothing matched"));
+    assert!(body.contains("zzznotfoundzzz"));
 }
 
 // ============================================================================

@@ -1,9 +1,58 @@
 {% extends "app_layout.html" %}
 
-{% block page_script %}
-    <script type="module" src="/static/js/pages/entries.js?v={{ layout.git_version }}"></script>
-{% endblock %}
-
 {% block page %}
-    <rdrs-entries-page></rdrs-entries-page>
+    <div class="app-layout">
+        <rdrs-sidebar active="search"></rdrs-sidebar>
+        <main class="main-content">
+            <div class="page-content">
+                <rdrs-flash class="flash-container"></rdrs-flash>
+                <h1>Search</h1>
+
+                <form method="get" action="/search">
+                    <div class="form-group">
+                        <label for="search-q">Keywords</label>
+                        <input type="text" id="search-q" name="q" value="{{ q }}" placeholder="Find entries by title or content" autofocus required data-testid="search-input">
+                    </div>
+                    <button type="submit" data-testid="search-btn">Search</button>
+                </form>
+                <script>
+                    // `/` focuses the search input (matches the legacy entries.js
+                    // mode='search' shortcut). Pure SSR page otherwise — no JS load.
+                    document.addEventListener('keydown', (e) => {
+                        if (e.key !== '/') return;
+                        const t = document.activeElement;
+                        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+                        const input = document.querySelector('[data-testid="search-input"]');
+                        if (input) {
+                            e.preventDefault();
+                            input.focus();
+                        }
+                    });
+                </script>
+
+                {% if q.is_empty() %}
+                    <p class="search-status">Enter a search term and press <kbd class="search-status-kbd">Enter</kbd> to search.</p>
+                {% else if results.is_empty() %}
+                    <p class="search-status">Nothing matched &ldquo;{{ q }}&rdquo;.</p>
+                {% else %}
+                    <ul class="search-results" data-testid="search-results">
+                        {% for r in results %}
+                            <li class="search-result">
+                                <a href="/entries/{{ r.entry_id }}" class="search-result-title">{{ r.title_html|safe }}</a>
+                                <div class="search-result-meta">
+                                    <span class="muted">{{ r.feed_title }}</span>
+                                    {% if !r.published_relative.is_empty() %}
+                                        <span class="muted">&middot; {{ r.published_relative }}</span>
+                                    {% endif %}
+                                </div>
+                                {% if !r.snippet_html.is_empty() %}
+                                    <p class="search-result-snippet">{{ r.snippet_html|safe }}</p>
+                                {% endif %}
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+            </div>
+        </main>
+    </div>
 {% endblock %}
