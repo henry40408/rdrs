@@ -1234,6 +1234,166 @@ dialog::backdrop {
     box-shadow: 0 1px 0 var(--color-border);
 }
 
+/* ===== /search page — editorial citation index ===== */
+.search-form {
+    display: flex;
+    gap: var(--space-3);
+    align-items: stretch;
+    margin: var(--space-6) 0 var(--space-10);
+    border-bottom: 1px solid var(--color-border);
+    padding-bottom: var(--space-2);
+}
+.search-form .form-group {
+    flex: 1;
+    margin: 0;
+}
+.search-form input[type="text"] {
+    border: none;
+    background: transparent;
+    border-radius: 0;
+    padding: var(--space-3) 0;
+    font-family: var(--font-display);
+    font-size: var(--font-2xl);
+    font-weight: 500;
+    line-height: 1.2;
+    color: var(--color-text);
+    letter-spacing: -0.01em;
+}
+.search-form input[type="text"]::placeholder {
+    color: var(--color-text-muted);
+    font-style: italic;
+    opacity: 0.6;
+}
+.search-form input[type="text"]:focus {
+    outline: none;
+    box-shadow: none;
+    border: none;
+}
+.search-form button {
+    align-self: stretch;
+    background: transparent;
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 0;
+    padding: 0 var(--space-5);
+    font-family: var(--font-ui);
+    font-size: var(--font-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-weight: 500;
+    transition: color 0.18s, background 0.18s, border-color 0.18s;
+}
+.search-form button:hover {
+    background: var(--color-text);
+    color: var(--color-bg);
+    border-color: var(--color-text);
+    opacity: 1;
+}
+
+.search-results {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: search-result;
+}
+
+@keyframes searchResultIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.search-result {
+    display: grid;
+    grid-template-columns: 2.25rem minmax(0, 62ch);
+    column-gap: var(--space-5);
+    padding: var(--space-7) 0;
+    border-bottom: 1px solid var(--color-border-light);
+    animation: searchResultIn 0.45s ease backwards;
+}
+.search-result:first-child {
+    border-top: 1px solid var(--color-border-light);
+}
+.search-result:nth-child(1) { animation-delay: 0.04s; }
+.search-result:nth-child(2) { animation-delay: 0.08s; }
+.search-result:nth-child(3) { animation-delay: 0.12s; }
+.search-result:nth-child(4) { animation-delay: 0.16s; }
+.search-result:nth-child(5) { animation-delay: 0.20s; }
+.search-result:nth-child(6) { animation-delay: 0.24s; }
+.search-result:nth-child(n+7) { animation-delay: 0.28s; }
+
+.search-result::before {
+    content: counter(search-result, decimal-leading-zero);
+    counter-increment: search-result;
+    font-family: var(--font-mono);
+    font-size: var(--font-xs);
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    color: var(--color-text-muted);
+    padding-top: 0.6em;
+    grid-row: 1 / -1;
+}
+
+.search-result-title {
+    display: block;
+    font-family: var(--font-display);
+    font-size: var(--font-2xl);
+    font-weight: 500;
+    color: var(--color-text);
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    margin-bottom: var(--space-3);
+    text-decoration: none;
+    transition: color 0.2s;
+}
+.search-result-title:hover {
+    color: var(--color-accent-hover);
+}
+.search-result-title::after {
+    content: " ↗";
+    color: var(--color-text-muted);
+    font-size: 0.7em;
+    font-weight: 400;
+    margin-left: 0.3em;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+.search-result-title:hover::after {
+    opacity: 0.65;
+}
+
+.search-result-meta {
+    font-family: var(--font-ui);
+    font-size: var(--font-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--color-text-muted);
+    margin-bottom: var(--space-3);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5ch;
+}
+.search-result-meta .muted {
+    color: inherit;
+}
+
+.search-result-snippet {
+    font-family: var(--font-body);
+    font-size: var(--font-base);
+    line-height: 1.7;
+    color: var(--color-text-secondary);
+    margin: 0;
+}
+
+@media (max-width: 600px) {
+    .search-form input[type="text"] { font-size: var(--font-xl); }
+    .search-result {
+        grid-template-columns: 1.75rem minmax(0, 1fr);
+        column-gap: var(--space-3);
+        padding: var(--space-5) 0;
+    }
+    .search-result-title { font-size: var(--font-xl); }
+}
+
 .success-text {
     color: var(--color-success);
 }
