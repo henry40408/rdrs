@@ -121,7 +121,24 @@ pub fn create_router(state: AppState) -> Router {
             "/categories/{id}/delete",
             post(handlers::categories::delete_category_form),
         )
-        .route("/feeds", get(handlers::pages::feeds_page))
+        .route(
+            "/feeds",
+            get(handlers::pages::feeds_page).post(handlers::feeds::create_feed_form),
+        )
+        .route("/feeds/{id}/edit", post(handlers::feeds::edit_feed_form))
+        .route(
+            "/feeds/{id}/delete",
+            post(handlers::feeds::delete_feed_form),
+        )
+        .route(
+            "/feeds/{id}/refresh",
+            post(handlers::feeds::refresh_feed_form),
+        )
+        .route(
+            "/feeds/{id}/fetch-metadata",
+            post(handlers::feeds::fetch_metadata_form),
+        )
+        .route("/feeds/import", post(handlers::feeds::import_opml_form))
         .route("/entries", get(handlers::pages::entries_page))
         .route("/entries/read", get(handlers::pages::read_entries_page))
         .route(

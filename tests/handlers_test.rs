@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use axum::http::{header, HeaderValue, StatusCode};
+use axum_test::multipart::{MultipartForm, Part};
 use axum_test::TestServer;
 use rdrs::{auth, create_router, db, services, AppState, Config, DbPool, Role};
 use rusqlite::Connection;
@@ -3153,4 +3154,389 @@ async fn test_delete_category_form_succeeds() {
         .await
         .unwrap();
     assert_eq!(count, 0, "category should be deleted from the DB");
+}
+
+// ============================================================================
+// /feeds form-action POST endpoint tests (SSR PR-8 T1)
+// ============================================================================
+
+/// Helper: insert a feed directly via the model (skips network discovery).
+/// Returns (category_id, feed_id).
+async fn insert_test_feed(app: &TestApp, category_name: &str, feed_url: &str) -> (i64, i64) {
+    let cat_name = category_name.to_string();
+    let url = feed_url.to_string();
+    app.db
+        .user(move |conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, &cat_name).unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: &url,
+                    title: Some("Test Feed"),
+                    description: None,
+                    site_url: Some("https://example.com"),
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            (cat.id, feed.id)
+        })
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn test_create_feed_form_empty_url() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+
+    let response = app
+        .server
+        .post("/feeds")
+        .form(&json!({ "url": "", "category_id": 1 }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds");
+
+    let count: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM feed", [], |row| row.get(0))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn test_create_feed_form_invalid_category() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+
+    let response = app
+        .server
+        .post("/feeds")
+        .form(&json!({ "url": "https://example.com/feed.xml", "category_id": 999999 }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds");
+
+    let count: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM feed", [], |row| row.get(0))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "no feed should be created when category is invalid"
+    );
+}
+
+#[tokio::test]
+async fn test_edit_feed_form_succeeds() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+    let (cat_id, feed_id) = insert_test_feed(&app, "Tech", "https://example.com/feed.xml").await;
+
+    let response = app
+        .server
+        .post(&format!("/feeds/{}/edit", feed_id))
+        .form(&json!({
+            "url": "https://example.com/feed.xml",
+            "title": "Renamed Feed",
+            "description": "New description",
+            "site_url": "https://example.com",
+            "category_id": cat_id,
+            "custom_user_agent": "",
+            "custom_referrer": "",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.header(header::LOCATION),
+        format!("/feeds/{}/edit", feed_id)
+    );
+
+    let (title, description): (String, String) = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT title, description FROM feed WHERE id = ?1",
+                rusqlite::params![feed_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(title, "Renamed Feed");
+    assert_eq!(description, "New description");
+}
+
+#[tokio::test]
+async fn test_edit_feed_form_changes_category() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+    let (_cat_a, feed_id) = insert_test_feed(&app, "Tech", "https://example.com/feed.xml").await;
+
+    // Add a second category for the same user.
+    let cat_b_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            rdrs::models::category::create_category(conn, user_id, "Other")
+                .unwrap()
+                .id
+        })
+        .await
+        .unwrap();
+
+    let response = app
+        .server
+        .post(&format!("/feeds/{}/edit", feed_id))
+        .form(&json!({
+            "url": "https://example.com/feed.xml",
+            "title": "Test Feed",
+            "description": "",
+            "site_url": "",
+            "category_id": cat_b_id,
+            "custom_user_agent": "",
+            "custom_referrer": "",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+
+    let new_cat_id: i64 = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT category_id FROM feed WHERE id = ?1",
+                rusqlite::params![feed_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(new_cat_id, cat_b_id);
+}
+
+#[tokio::test]
+async fn test_delete_feed_form_succeeds() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+    let (_cat_id, feed_id) = insert_test_feed(&app, "Tech", "https://example.com/feed.xml").await;
+
+    let response = app.server.post(&format!("/feeds/{}/delete", feed_id)).await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds");
+
+    let count: i64 = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM feed WHERE id = ?1",
+                rusqlite::params![feed_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn test_delete_feed_form_not_owned() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+    // Insert a feed under another user (not the logged-in one).
+    let other_feed_id: i64 = app
+        .db
+        .user(|conn| {
+            let other_user_id: i64 = rusqlite::Connection::execute(
+                conn,
+                "INSERT INTO user (username, password_hash, role) VALUES ('other', 'x', 'user')",
+                [],
+            )
+            .map(|_| conn.last_insert_rowid())
+            .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, other_user_id, "Other").unwrap();
+            rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://other.example.com/feed.xml",
+                    title: Some("Other"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap()
+            .id
+        })
+        .await
+        .unwrap();
+
+    let response = app
+        .server
+        .post(&format!("/feeds/{}/delete", other_feed_id))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds");
+
+    // Other user's feed must still exist.
+    let count: i64 = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM feed WHERE id = ?1",
+                rusqlite::params![other_feed_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "non-owner delete must not remove the feed");
+}
+
+#[tokio::test]
+async fn test_refresh_feed_form_not_owned() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+    // Insert a feed under another user.
+    let other_feed_id: i64 = app
+        .db
+        .user(|conn| {
+            let other_user_id: i64 = rusqlite::Connection::execute(
+                conn,
+                "INSERT INTO user (username, password_hash, role) VALUES ('other2', 'x', 'user')",
+                [],
+            )
+            .map(|_| conn.last_insert_rowid())
+            .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, other_user_id, "Other").unwrap();
+            rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://other2.example.com/feed.xml",
+                    title: Some("Other"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap()
+            .id
+        })
+        .await
+        .unwrap();
+
+    let response = app
+        .server
+        .post(&format!("/feeds/{}/refresh", other_feed_id))
+        .await;
+
+    // Ownership check fails first → no network call attempted.
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds");
+}
+
+#[tokio::test]
+async fn test_import_opml_form_empty() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+
+    let form = MultipartForm::new();
+    let response = app.server.post("/feeds/import").multipart(form).await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds/import");
+
+    let count: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM feed", [], |row| row.get(0))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn test_import_opml_form_succeeds() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app.server).await;
+
+    let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>Test Subscriptions</title></head>
+  <body>
+    <outline text="Tech" title="Tech">
+      <outline type="rss" text="Example Feed" title="Example Feed"
+               xmlUrl="https://example.com/feed.xml" htmlUrl="https://example.com"/>
+    </outline>
+  </body>
+</opml>"#;
+
+    let part = Part::bytes(opml_content.as_bytes())
+        .file_name("subscriptions.opml")
+        .mime_type("application/xml");
+    let form = MultipartForm::new().add_part("file", part);
+    let response = app.server.post("/feeds/import").multipart(form).await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds");
+
+    let (cat_count, feed_count): (i64, i64) = app
+        .db
+        .user(|conn| {
+            let cats: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM category WHERE name = 'Tech'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let feeds: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM feed WHERE url = 'https://example.com/feed.xml'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            (cats, feeds)
+        })
+        .await
+        .unwrap();
+    assert_eq!(cat_count, 1);
+    assert_eq!(feed_count, 1);
 }
