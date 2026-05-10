@@ -1290,11 +1290,13 @@ dialog::backdrop {
     opacity: 1;
 }
 
+/* Stacked letterpress: strong hairlines top + bottom on each result, flush-
+   left display-font title, single-line uppercase byline, serif snippet. No
+   counter, no gutter — the rules carry the rhythm. */
 .search-results {
     list-style: none;
     margin: 0;
     padding: 0;
-    counter-reset: search-result;
 }
 
 @keyframes searchResultIn {
@@ -1303,15 +1305,13 @@ dialog::backdrop {
 }
 
 .search-result {
-    display: grid;
-    grid-template-columns: 2.25rem minmax(0, 62ch);
-    column-gap: var(--space-5);
     padding: var(--space-7) 0;
-    border-bottom: 1px solid var(--color-border-light);
+    border-bottom: 1px solid var(--color-border);
+    max-width: 64ch;
     animation: searchResultIn 0.45s ease backwards;
 }
 .search-result:first-child {
-    border-top: 1px solid var(--color-border-light);
+    border-top: 1px solid var(--color-border);
 }
 .search-result:nth-child(1) { animation-delay: 0.04s; }
 .search-result:nth-child(2) { animation-delay: 0.08s; }
@@ -1321,18 +1321,6 @@ dialog::backdrop {
 .search-result:nth-child(6) { animation-delay: 0.24s; }
 .search-result:nth-child(n+7) { animation-delay: 0.28s; }
 
-.search-result::before {
-    content: counter(search-result, decimal-leading-zero);
-    counter-increment: search-result;
-    font-family: var(--font-mono);
-    font-size: var(--font-xs);
-    font-weight: 500;
-    letter-spacing: 0.1em;
-    color: var(--color-text-muted);
-    padding-top: 0.6em;
-    grid-row: 1 / -1;
-}
-
 .search-result-title {
     display: block;
     font-family: var(--font-display);
@@ -1341,7 +1329,7 @@ dialog::backdrop {
     color: var(--color-text);
     line-height: 1.25;
     letter-spacing: -0.01em;
-    margin-bottom: var(--space-3);
+    margin-bottom: var(--space-2);
     text-decoration: none;
     transition: color 0.2s;
 }
@@ -1351,26 +1339,24 @@ dialog::backdrop {
 .search-result-title::after {
     content: " ↗";
     color: var(--color-text-muted);
-    font-size: 0.7em;
+    font-size: 0.65em;
     font-weight: 400;
     margin-left: 0.3em;
     opacity: 0;
     transition: opacity 0.2s;
+    vertical-align: 0.15em;
 }
 .search-result-title:hover::after {
-    opacity: 0.65;
+    opacity: 0.6;
 }
 
 .search-result-meta {
     font-family: var(--font-ui);
     font-size: var(--font-xs);
     text-transform: uppercase;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.14em;
     color: var(--color-text-muted);
-    margin-bottom: var(--space-3);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5ch;
+    margin-bottom: var(--space-4);
 }
 .search-result-meta .muted {
     color: inherit;
@@ -1386,11 +1372,7 @@ dialog::backdrop {
 
 @media (max-width: 600px) {
     .search-form input[type="text"] { font-size: var(--font-xl); }
-    .search-result {
-        grid-template-columns: 1.75rem minmax(0, 1fr);
-        column-gap: var(--space-3);
-        padding: var(--space-5) 0;
-    }
+    .search-result { padding: var(--space-5) 0; }
     .search-result-title { font-size: var(--font-xl); }
 }
 
