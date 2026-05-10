@@ -1,9 +1,43 @@
 {% extends "app_layout.html" %}
 
-{% block page_script %}
-    <script type="module" src="/static/js/pages/entries.js?v={{ layout.git_version }}"></script>
-{% endblock %}
-
 {% block page %}
-    <rdrs-entries-page></rdrs-entries-page>
+    <div class="app-layout">
+        <rdrs-sidebar active="search"></rdrs-sidebar>
+        <main class="main-content">
+            <div class="page-content">
+                <rdrs-flash class="flash-container"></rdrs-flash>
+                <h1>Search</h1>
+
+                <form method="get" action="/search" class="search-form">
+                    <div class="form-group">
+                        <input type="text" name="q" value="{{ q }}" placeholder="Search entries..." autofocus required data-testid="search-input">
+                    </div>
+                    <button type="submit" data-testid="search-btn">Search</button>
+                </form>
+
+                {% if q.is_empty() %}
+                    <p class="muted">Enter a search term and press Enter to search.</p>
+                {% else if results.is_empty() %}
+                    <p class="muted">No results for &ldquo;{{ q }}&rdquo;.</p>
+                {% else %}
+                    <ul class="search-results" data-testid="search-results">
+                        {% for r in results %}
+                            <li class="search-result">
+                                <a href="{{ r.link }}" target="_blank" rel="noopener noreferrer" class="search-result-title">{{ r.title }}</a>
+                                <div class="search-result-meta">
+                                    <span class="muted">{{ r.feed_title }}</span>
+                                    {% if !r.published_relative.is_empty() %}
+                                        <span class="muted">&middot; {{ r.published_relative }}</span>
+                                    {% endif %}
+                                </div>
+                                {% if !r.snippet.is_empty() %}
+                                    <p class="search-result-snippet">{{ r.snippet }}</p>
+                                {% endif %}
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+            </div>
+        </main>
+    </div>
 {% endblock %}

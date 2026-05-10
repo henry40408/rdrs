@@ -822,14 +822,74 @@ pub async fn category_entries_page(
     ))
 }
 
-/// Serves the CSR shell for `/search`. The query input + URL state
-/// are managed client-side by `<rdrs-entries-page>` (mode `search`).
+#[derive(serde::Deserialize)]
+pub struct SearchQuery {
+    pub q: Option<String>,
+}
+
+/// Serves `/search` rendered fully server-side. With no `?q=`, shows an empty
+/// search form. With a non-empty `q`, runs `entry::list_by_user` filtered on
+/// the search term (LIKE `%q%` over title + content, case-insensitive),
+/// limited to 50 results sorted by published_at DESC. No pagination —
+/// reading-pane integration arrives in PR-10's swap helper.
 pub async fn search_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
+    Query(query): Query<SearchQuery>,
 ) -> (Flash, SearchTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let q = query.q.unwrap_or_default().trim().to_string();
+    let user_id = auth_user.user.id;
+
+    let results = if q.is_empty() {
+        Vec::new()
+    } else {
+        let q_for_filter = q.clone();
+        state
+            .db
+            .read_user(move |conn| {
+                let filter = entry::EntryFilter {
+                    search: Some(q_for_filter),
+                    ..Default::default()
+                };
+                let entries = entry::list_by_user(
+                    conn,
+                    user_id,
+                    &filter,
+                    entry::EntrySortOrder::PublishedAt,
+                    50,
+                    0,
+                )?;
+                Ok::<_, AppError>(
+                    entries
+                        .into_iter()
+                        .map(|e| SearchResultView {
+                            link: e
+                                .entry
+                                .link
+                                .clone()
+                                .unwrap_or_else(|| format!("/entries/{}", e.entry.id)),
+                            title: e
+                                .entry
+                                .title
+                                .clone()
+                                .unwrap_or_else(|| "(no title)".to_string()),
+                            feed_title: e.feed_title.clone().unwrap_or_else(|| e.feed_url.clone()),
+                            published_relative: format_relative_time(e.entry.published_at).0,
+                            snippet: build_snippet(
+                                e.entry.content.as_deref().or(e.entry.summary.as_deref()),
+                                200,
+                            ),
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or_default()
+    };
 
     (
         flash,
@@ -837,8 +897,53 @@ pub async fn search_page(
             title: "Search",
             git_version: crate::GIT_VERSION,
             layout,
+            q,
+            results,
         },
     )
+}
+
+/// Strip HTML tags and collapse whitespace, returning at most `max_chars`
+/// characters of plain text. Appends an ellipsis if truncated. Empty input
+/// returns an empty string.
+fn build_snippet(html: Option<&str>, max_chars: usize) -> String {
+    let raw = match html {
+        Some(s) if !s.is_empty() => s,
+        _ => return String::new(),
+    };
+    let mut out = String::with_capacity(raw.len().min(max_chars * 2));
+    let mut in_tag = false;
+    let mut last_space = true;
+    for ch in raw.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                if !last_space {
+                    out.push(' ');
+                    last_space = true;
+                }
+            }
+            _ if in_tag => {}
+            c if c.is_whitespace() => {
+                if !last_space {
+                    out.push(' ');
+                    last_space = true;
+                }
+            }
+            c => {
+                out.push(c);
+                last_space = false;
+            }
+        }
+    }
+    let trimmed = out.trim();
+    if trimmed.chars().count() <= max_chars {
+        trimmed.to_string()
+    } else {
+        let truncated: String = trimmed.chars().take(max_chars).collect();
+        format!("{}…", truncated.trim_end())
+    }
 }
 
 /// Serves the CSR shell for `/feeds/{id}/entries`. Mode `feed` in
@@ -1325,6 +1430,15 @@ impl IntoResponse for CategoryEntriesTemplate {
     }
 }
 
+/// One row of the SSR `/search` results list.
+pub struct SearchResultView {
+    pub link: String,
+    pub title: String,
+    pub feed_title: String,
+    pub published_relative: String,
+    pub snippet: String,
+}
+
 /// Per-route template for `/search`.
 #[derive(Template)]
 #[template(path = "search.html")]
@@ -1332,6 +1446,8 @@ pub struct SearchTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub q: String,
+    pub results: Vec<SearchResultView>,
 }
 
 impl IntoResponse for SearchTemplate {
