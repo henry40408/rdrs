@@ -1561,22 +1561,6 @@ async fn test_cannot_rename_other_user_category() {
 }
 
 #[tokio::test]
-async fn test_cannot_refresh_other_user_feed() {
-    let app = create_test_app(default_test_config());
-    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
-    let (_other_user_id, _other_cat_id, other_feed_id, _other_entry_ids) =
-        setup_second_user_data(&app.db).await;
-    login(&app.server).await;
-
-    // Try to refresh other user's feed
-    let response = app
-        .server
-        .post(&format!("/api/feeds/{}/refresh", other_feed_id))
-        .await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
 async fn test_cannot_fetch_full_content_other_user_entry() {
     let app = create_test_app(default_test_config());
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;

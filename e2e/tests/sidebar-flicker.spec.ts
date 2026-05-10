@@ -45,7 +45,7 @@ test.describe("sidebar unread badge does not flicker", () => {
     // SPA-navigate to /feeds. New <rdrs-sidebar> mounts and renders synchronously
     // from whatever client-side cache it picked up.
     await page.getByTestId("nav-feeds").click();
-    await expect(page.locator("rdrs-feeds-page")).toBeVisible();
+    await expect(page.getByTestId("feeds-table")).toBeVisible();
 
     // Sample the badge while /api/sidebar is still in flight. The bug we're
     // fixing is: the new sidebar paints the *stale* "3" from the bootstrap

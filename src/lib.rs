@@ -64,6 +64,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/me", get(handlers::user::get_me))
         .route("/api/sidebar", get(handlers::user::get_sidebar))
         .route("/api/user-settings", get(handlers::user::get_user_settings))
+        // GET /api/feeds is still consumed by static/js/pages/entries.js
+        // (feed-icon column on entries list). PR-10 (entries SSR) is the last
+        // consumer; the endpoint stays alive until then.
         .route("/api/feeds", get(handlers::feeds::list_feeds))
         .route("/api/user/settings/theme", get(handlers::user::get_theme))
         .route(
@@ -121,7 +124,30 @@ pub fn create_router(state: AppState) -> Router {
             "/categories/{id}/delete",
             post(handlers::categories::delete_category_form),
         )
-        .route("/feeds", get(handlers::pages::feeds_page))
+        .route(
+            "/feeds",
+            get(handlers::pages::feeds_page).post(handlers::feeds::create_feed_form),
+        )
+        .route(
+            "/feeds/{id}/edit",
+            get(handlers::pages::feed_edit_page).post(handlers::feeds::edit_feed_form),
+        )
+        .route(
+            "/feeds/{id}/delete",
+            post(handlers::feeds::delete_feed_form),
+        )
+        .route(
+            "/feeds/{id}/refresh",
+            post(handlers::feeds::refresh_feed_form),
+        )
+        .route(
+            "/feeds/{id}/fetch-metadata",
+            post(handlers::feeds::fetch_metadata_form),
+        )
+        .route(
+            "/feeds/import",
+            get(handlers::pages::feeds_import_page).post(handlers::feeds::import_opml_form),
+        )
         .route("/entries", get(handlers::pages::entries_page))
         .route("/entries/read", get(handlers::pages::read_entries_page))
         .route(
@@ -143,16 +169,10 @@ pub fn create_router(state: AppState) -> Router {
             "/feeds/{id}/entries",
             get(handlers::pages::feed_entries_page),
         )
-        // RDRS-specific feed endpoints (not replaced by GReader API)
-        .route(
-            "/api/feeds/fetch-metadata",
-            post(handlers::feed::fetch_metadata),
-        )
+        // RDRS-specific feed endpoints (not replaced by GReader API).
+        // Icon URL is referenced from `<img src="…">` in the SSR /feeds page;
+        // mutation goes through the form-action endpoints under /feeds/*.
         .route("/api/feeds/{id}/icon", get(handlers::feed::get_feed_icon))
-        .route(
-            "/api/feeds/{id}/refresh",
-            post(handlers::entry::refresh_feed_handler),
-        )
         // RDRS-specific entry endpoints (not replaced by GReader API)
         .route("/api/entries/{id}", get(handlers::entry::get_entry_detail))
         .route(

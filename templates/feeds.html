@@ -1,9 +1,122 @@
 {% extends "app_layout.html" %}
 
-{% block page_script %}
-    <script type="module" src="/static/js/pages/feeds.js?v={{ layout.git_version }}"></script>
-{% endblock %}
-
 {% block page %}
-    <rdrs-feeds-page></rdrs-feeds-page>
+    <div class="app-layout">
+        <rdrs-sidebar active="feeds"></rdrs-sidebar>
+        <main class="main-content">
+            <div class="page-content">
+                <rdrs-flash class="flash-container"></rdrs-flash>
+                <h1>Feeds</h1>
+
+                <div class="feeds-toolbar">
+                    <a href="/reader/api/0/subscription/export" class="btn btn-secondary">Export OPML</a>
+                    <a href="/feeds/import" class="btn btn-secondary">Import OPML</a>
+                </div>
+
+                <hr>
+
+                <form method="post" action="/feeds">
+                    <div class="form-group">
+                        <label for="url">Feed URL</label>
+                        <input type="text" id="url" name="url" placeholder="https://example.com/feed.xml or https://example.com" required data-testid="feed-url-input">
+                    </div>
+                    <div class="form-group">
+                        <label for="category_id">Category</label>
+                        <select id="category_id" name="category_id" required data-testid="feed-category-select">
+                            {% if categories.is_empty() %}
+                                <option value="">No categories available</option>
+                            {% else %}
+                                {% for c in categories %}
+                                    <option value="{{ c.id }}">{{ c.name }}</option>
+                                {% endfor %}
+                            {% endif %}
+                        </select>
+                    </div>
+                    <button type="submit" data-testid="add-feed-btn">Add Feed</button>
+                </form>
+
+                <hr>
+
+                <form method="get" action="/feeds" class="filter-bar">
+                    <div class="form-group form-group-inline">
+                        <label for="filter-category">Category</label>
+                        <select id="filter-category" name="category" class="select-auto" onchange="this.form.submit()">
+                            <option value="">All Categories ({{ total_feed_count }})</option>
+                            {% for c in categories %}
+                                <option value="{{ c.id }}"{% if c.id == active_category_id %} selected{% endif %}>{{ c.name }} ({{ c.feed_count }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group form-group-inline">
+                        <label for="sort-by">Sort</label>
+                        <select id="sort-by" name="sort" class="select-auto" onchange="this.form.submit()">
+                            <option value="title"{% if active_sort == "title" %} selected{% endif %}>Title</option>
+                            <option value="unread"{% if active_sort == "unread" %} selected{% endif %}>Unread Count</option>
+                            <option value="category"{% if active_sort == "category" %} selected{% endif %}>Category</option>
+                        </select>
+                    </div>
+                    <div class="form-group form-group-inline feed-filter-links">
+                        {% for f in filter_links %}
+                            <a href="{{ f.href }}" class="feed-filter-link{% if f.active %} active{% endif %}">{{ f.label }}</a>
+                        {% endfor %}
+                    </div>
+                    <input type="hidden" name="filter" value="{{ active_filter }}">
+                </form>
+
+                <table class="mobile-cards">
+                    <thead>
+                        <tr>
+                            <th>Title</th>
+                            <th>Category</th>
+                            <th>Unread</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody data-testid="feeds-table">
+                        {% for feed in feeds %}
+                            <tr id="row-feed-{{ feed.id }}" data-feed-id="{{ feed.id }}"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>
+                                <td data-label="Title"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>
+                                    <div class="feed-title-cell">
+                                        <div>
+                                            {% if feed.has_icon %}
+                                                <img src="/api/feeds/{{ feed.id }}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">
+                                            {% endif %}
+                                            <span title="{{ feed.url }}">{{ feed.title }}</span>
+                                        </div>
+                                        <div class="feed-health-info">
+                                            <span class="muted" title="{{ feed.fetched_at_datetime }}">Fetched: {{ feed.fetched_at_relative }}</span>
+                                            &middot;
+                                            <span class="{{ feed.freshness_class }}" title="{{ feed.feed_updated_at_datetime }}">Updated: {{ feed.feed_updated_at_relative }}</span>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td data-label="Category"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>{{ feed.category_name }}</td>
+                                <td data-label="Unread"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>
+                                    {% if feed.unread_count > 0 %}<strong>{{ feed.unread_count }}</strong>{% else %}0{% endif %}
+                                </td>
+                                <td class="actions{% if feed.fetch_error.is_some() %} feed-error-no-border{% endif %}">
+                                    <a href="/feeds/{{ feed.id }}/entries">entries</a>
+                                    <form method="post" action="/feeds/{{ feed.id }}/refresh" style="display:inline">
+                                        <button type="submit" class="action-link">refresh</button>
+                                    </form>
+                                    <a href="/feeds/{{ feed.id }}/edit">edit</a>
+                                    <form method="post" action="/feeds/{{ feed.id }}/delete" style="display:inline" onsubmit="return confirm('Delete this feed? This cannot be undone.')">
+                                        <button type="submit" class="action-link action-link-danger">delete</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% if let Some(err) = feed.fetch_error %}
+                                <tr class="error-row" data-feed-id="{{ feed.id }}" data-is-error-row="true">
+                                    <td colspan="4" class="error-text feed-error-cell">Error: {{ err }}</td>
+                                </tr>
+                            {% endif %}
+                        {% endfor %}
+                        {% if feeds.is_empty() %}
+                            <tr><td colspan="4" class="muted">No feeds yet.</td></tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </main>
+    </div>
 {% endblock %}
