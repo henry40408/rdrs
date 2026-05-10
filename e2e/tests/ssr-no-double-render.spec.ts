@@ -95,12 +95,8 @@ test.describe("First paint fires exactly one stream/contents fetch", () => {
     expect(count).toBe(1);
   });
 
-  test("/search?q=Quokka", async ({ page, serverUrl }) => {
-    await login(page, serverUrl);
-    const count = await gotoCounting(page, `${serverUrl}/search?q=Quokka`);
-    expect(count).toBe(1);
-    await expect(page.getByText("Quokka Discovery")).toBeVisible();
-  });
+  // /search migrated to SSR in PR-9 — no client-side stream/contents fetch
+  // and no <rdrs-entry-list>; this regression no longer applies.
 });
 
 /**
@@ -257,13 +253,7 @@ test.describe("Load More appends without duplicates on every list route", () => 
     );
   });
 
-  test("/search?q=TestEntry", async ({ page, serverUrl }) => {
-    await login(page, serverUrl);
-    await expectNoDuplicatesAfterLoadMore(
-      page,
-      `${serverUrl}/search?q=TestEntry`
-    );
-  });
+  // /search migrated to SSR in PR-9 — no Load More, results capped at 50.
 });
 
 /**

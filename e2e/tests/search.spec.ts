@@ -52,10 +52,13 @@ test.describe("Search", () => {
     await page.getByTestId("search-input").fill("Rust");
     await page.keyboard.press("Enter");
 
-    // Should show entries matching "Rust"
-    await expect(page.getByTestId("entry-item").first()).toBeVisible();
-    const count = await page.getByTestId("entry-item").count();
+    // SSR navigation lands on /search?q=Rust with the result list rendered
+    // server-side. Each result is a <li class="search-result">.
+    await expect(page.getByTestId("search-results")).toBeVisible();
+    const count = await page.locator(".search-result").count();
     expect(count).toBe(2); // "Rust Programming Guide" and "Rust Async Runtime"
+    await expect(page.getByText("Rust Programming Guide")).toBeVisible();
+    await expect(page.getByText("Rust Async Runtime")).toBeVisible();
   });
 
   test("/ shortcut focuses search input", async ({ page }) => {
