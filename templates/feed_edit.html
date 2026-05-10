@@ -1,0 +1,71 @@
+{% extends "app_layout.html" %}
+
+{% block page %}
+    <div class="app-layout">
+        <rdrs-sidebar active="feeds"></rdrs-sidebar>
+        <main class="main-content">
+            <div class="page-content">
+                <rdrs-flash class="flash-container"></rdrs-flash>
+                <h1>Edit Feed</h1>
+
+                <form method="post" action="/feeds/{{ feed.id }}/edit">
+                    <div class="form-group">
+                        <label for="url">Feed URL</label>
+                        <input type="text" id="url" name="url" value="{{ feed.url }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="title">Title</label>
+                        <input type="text" id="title" name="title" value="{{ feed.title }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="description">Description</label>
+                        <input type="text" id="description" name="description" value="{{ feed.description }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="site_url">Site URL</label>
+                        <input type="text" id="site_url" name="site_url" value="{{ feed.site_url }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="category_id">Category</label>
+                        <select id="category_id" name="category_id" required>
+                            {% for c in categories %}
+                                <option value="{{ c.id }}"{% if c.id == feed.category_id %} selected{% endif %}>{{ c.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <details class="feed-http-settings">
+                        <summary>HTTP Settings</summary>
+                        <div class="feed-http-settings-body">
+                            <div class="form-group">
+                                <label for="custom_user_agent">Custom User Agent</label>
+                                <input type="text" id="custom_user_agent" name="custom_user_agent" placeholder="Leave empty to use global default" value="{{ feed.custom_user_agent }}">
+                            </div>
+                            <div class="form-group">
+                                <label for="custom_referrer">Custom Referrer</label>
+                                <input type="text" id="custom_referrer" name="custom_referrer" placeholder="Leave empty to not send Referer header" value="{{ feed.custom_referrer }}">
+                                <div class="feed-http-hint">Some image servers require a specific Referer header to serve images</div>
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="http2_disabled" name="http2_disabled"{% if feed.http2_disabled %} checked{% endif %}>
+                                    Disable HTTP/2
+                                </label>
+                                <div class="feed-http-hint">Enable this if the feed server has HTTP/2 compatibility issues</div>
+                            </div>
+                        </div>
+                    </details>
+                    <div class="modal-actions">
+                        <button type="submit">Save</button>
+                        <a href="/feeds" class="btn-secondary">Cancel</a>
+                    </div>
+                </form>
+
+                <hr>
+
+                <form method="post" action="/feeds/{{ feed.id }}/fetch-metadata" onsubmit="return confirm('Re-fetch metadata from the feed URL? This will overwrite current title/description/site URL.')">
+                    <button type="submit" class="btn-secondary">Re-fetch Metadata</button>
+                </form>
+            </div>
+        </main>
+    </div>
+{% endblock %}

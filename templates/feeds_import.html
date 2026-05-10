@@ -1,0 +1,28 @@
+{% extends "app_layout.html" %}
+
+{% block page %}
+    <div class="app-layout">
+        <rdrs-sidebar active="feeds"></rdrs-sidebar>
+        <main class="main-content">
+            <div class="page-content">
+                <rdrs-flash class="flash-container"></rdrs-flash>
+                <h1>Import OPML</h1>
+
+                <form method="post" action="/feeds/import" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="file">Upload .opml file</label>
+                        <input type="file" id="file" name="file" accept=".opml,.xml">
+                    </div>
+                    <div class="form-group">
+                        <label for="content">Or paste OPML content</label>
+                        <textarea id="content" name="content" rows="10" class="textarea-full"></textarea>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="submit">Import</button>
+                        <a href="/feeds" class="btn-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </main>
+    </div>
+{% endblock %}

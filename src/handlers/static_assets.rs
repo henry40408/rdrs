@@ -33,10 +33,6 @@ const FILES: &[(&str, &str)] = &[
         include_str!("../../static/js/components/rdrs-sidebar.js"),
     ),
     (
-        "js/pages/feeds.js",
-        include_str!("../../static/js/pages/feeds.js"),
-    ),
-    (
         "js/pages/entries.js",
         include_str!("../../static/js/pages/entries.js"),
     ),

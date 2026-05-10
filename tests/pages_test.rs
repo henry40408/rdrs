@@ -362,7 +362,7 @@ async fn test_feeds_page_with_flash() {
 
     response.assert_status_ok();
     let body = response.text();
-    // CSR shell embeds pending flash messages inline.
+    // SSR page still embeds pending flash messages inline.
     assert!(body.contains("id=\"rdrs-flash-bootstrap\""));
     assert!(body.contains("Failed to add feed"));
 }
@@ -752,7 +752,7 @@ async fn test_feed_entries_page_other_user() {
 // which exercises the same `/reader/api/0/stream/contents` cursor end-to-end.
 
 #[tokio::test]
-async fn test_feeds_page_csr_shell_does_not_embed_rows() {
+async fn test_feeds_page_renders_ssr_rows() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -760,12 +760,12 @@ async fn test_feeds_page_csr_shell_does_not_embed_rows() {
         .user(move |conn| {
             conn.execute(
                 "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Feeds CSR Cat"],
+                rusqlite::params![1, "Feeds SSR Cat"],
             )
             .unwrap();
             conn.execute(
                 "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/feeds-csr.xml", "Feeds CSR Title"],
+                rusqlite::params![1, "https://example.com/feeds-ssr.xml", "Feeds SSR Title"],
             )
             .unwrap();
         })
@@ -778,15 +778,22 @@ async fn test_feeds_page_csr_shell_does_not_embed_rows() {
     response.assert_status_ok();
     let body = response.text();
 
-    // After CSR migration the shell does NOT embed feed rows; the custom
-    // element fetches them from /api/feeds after mount.
-    assert!(body.contains("<rdrs-feeds-page>"));
-    assert!(!body.contains("Feeds CSR Title"));
-    assert!(!body.contains("feeds-csr.xml"));
+    // SSR content includes the seeded feed title, category, and per-row
+    // form actions wired to the PR-8 T1 endpoints.
+    assert!(body.contains("<h1>Feeds</h1>"));
+    assert!(body.contains("data-testid=\"feeds-table\""));
+    assert!(body.contains("Feeds SSR Title"));
+    assert!(body.contains("Feeds SSR Cat"));
+    assert!(body.contains("/refresh"));
+    assert!(body.contains("/edit"));
+    assert!(body.contains("/delete"));
+    // Old CSR markers gone.
+    assert!(!body.contains("<rdrs-feeds-page>"));
+    assert!(!body.contains("/static/js/pages/feeds.js"));
 }
 
 #[tokio::test]
-async fn test_api_feeds_returns_rows_with_unread() {
+async fn test_feed_edit_page_renders() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -794,17 +801,17 @@ async fn test_api_feeds_returns_rows_with_unread() {
         .user(move |conn| {
             conn.execute(
                 "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "API Feeds Cat"],
+                rusqlite::params![1, "Edit Cat"],
             )
             .unwrap();
             conn.execute(
-                "INSERT INTO feed (category_id, url, title, description, site_url) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![1, "https://example.com/api-feeds.xml", "API Feed Title", "desc", "https://example.com"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "api-feeds-guid", "Unread Entry"],
+                "INSERT INTO feed (category_id, url, title, description) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![
+                    1,
+                    "https://example.com/edit.xml",
+                    "Editable Feed",
+                    "Some desc"
+                ],
             )
             .unwrap();
         })
@@ -813,16 +820,35 @@ async fn test_api_feeds_returns_rows_with_unread() {
 
     login(&app.server, "admin").await;
 
-    let response = app.server.get("/api/feeds").await;
+    let response = app.server.get("/feeds/1/edit").await;
     response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    let feeds = body["feeds"].as_array().unwrap();
-    assert_eq!(feeds.len(), 1);
-    assert_eq!(feeds[0]["title"], "API Feed Title");
-    assert_eq!(feeds[0]["category_name"], "API Feeds Cat");
-    assert_eq!(feeds[0]["url"], "https://example.com/api-feeds.xml");
-    assert_eq!(feeds[0]["unread_count"], 1);
-    assert_eq!(body["total_feed_count"], 1);
+    let body = response.text();
+
+    assert!(body.contains("<h1>Edit Feed</h1>"));
+    assert!(body.contains("<form method=\"post\" action=\"/feeds/1/edit\">"));
+    assert!(body.contains("https://example.com/edit.xml"));
+    assert!(body.contains("Editable Feed"));
+    assert!(body.contains("Some desc"));
+    // Re-fetch metadata form is its own form.
+    assert!(body.contains("/feeds/1/fetch-metadata"));
+    // Edit Cat is the only category and should be rendered as an option.
+    assert!(body.contains("Edit Cat"));
+}
+
+#[tokio::test]
+async fn test_feeds_import_page_renders() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/feeds/import").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(body.contains("<h1>Import OPML</h1>"));
+    assert!(body.contains("enctype=\"multipart/form-data\""));
+    assert!(body.contains("name=\"file\""));
+    assert!(body.contains("name=\"content\""));
 }
 
 #[tokio::test]
@@ -907,50 +933,11 @@ async fn test_admin_page_renders_ssr_content() {
 }
 
 // ============================================================================
-// /api/feeds tests (filter, sort, category, freshness, health)
+// SSR /feeds filter / sort tests
 // ============================================================================
 
 #[tokio::test]
-async fn test_api_feeds_includes_health_fields() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Health Test"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title, fetched_at, feed_updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![
-                    1,
-                    "https://example.com/health.xml",
-                    "Health Feed",
-                    "2026-03-18T10:00:00Z",
-                    "2026-03-17T10:00:00Z"
-                ],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/api/feeds").await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    let f = &body["feeds"][0];
-    assert!(f["fetched_at_relative"].as_str().unwrap().len() > 0);
-    assert!(f["feed_updated_at_relative"].as_str().unwrap().len() > 0);
-    assert!(f["freshness_class"].is_string());
-    assert!(f["freshness_key"].is_string());
-}
-
-#[tokio::test]
-async fn test_api_feeds_filter_errors() {
+async fn test_feeds_page_filter_errors_only_renders_error_rows() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -982,151 +969,17 @@ async fn test_api_feeds_filter_errors() {
 
     login(&app.server, "admin").await;
 
-    let response = app.server.get("/api/feeds?filter=errors").await;
+    let response = app.server.get("/feeds?filter=errors").await;
     response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    let titles: Vec<&str> = body["feeds"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|f| f["title"].as_str().unwrap())
-        .collect();
-    assert!(titles.contains(&"Bad Feed"));
-    assert!(!titles.contains(&"Good Feed"));
-    assert_eq!(body["active_filter"], "errors");
+    let body = response.text();
+    assert!(body.contains("Bad Feed"));
+    assert!(!body.contains("Good Feed"));
+    // Active filter pill is marked.
+    assert!(body.contains("feed-filter-link active"));
 }
 
 #[tokio::test]
-async fn test_api_feeds_filter_stale() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Stale Test"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title, feed_updated_at) VALUES (?1, ?2, ?3, datetime('now', '-100 days'))",
-                rusqlite::params![1, "https://stale.com/feed.xml", "Stale Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title, feed_updated_at) VALUES (?1, ?2, ?3, datetime('now'))",
-                rusqlite::params![1, "https://fresh.com/feed.xml", "Fresh Feed"],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/api/feeds?filter=stale").await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    let titles: Vec<&str> = body["feeds"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|f| f["title"].as_str().unwrap())
-        .collect();
-    assert!(titles.contains(&"Stale Feed"));
-    assert!(!titles.contains(&"Fresh Feed"));
-}
-
-#[tokio::test]
-async fn test_api_feeds_sort_unread() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Sort Test"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://a.com/feed.xml", "AAA Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://b.com/feed.xml", "BBB Feed"],
-            )
-            .unwrap();
-            for i in 1..=3 {
-                conn.execute(
-                    "INSERT INTO entry (feed_id, guid, title) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![2, format!("guid-{}", i), format!("Entry {}", i)],
-                )
-                .unwrap();
-            }
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/api/feeds?sort=unread").await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    let titles: Vec<&str> = body["feeds"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|f| f["title"].as_str().unwrap())
-        .collect();
-    assert_eq!(titles, vec!["BBB Feed", "AAA Feed"]);
-}
-
-#[tokio::test]
-async fn test_api_feeds_freshness_classes() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Freshness Test"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title, feed_updated_at) VALUES (?1, ?2, ?3, datetime('now', '-50 days'))",
-                rusqlite::params![1, "https://warn.com/feed.xml", "Warning Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title, feed_updated_at) VALUES (?1, ?2, ?3, datetime('now', '-100 days'))",
-                rusqlite::params![1, "https://stale.com/feed.xml", "Old Feed"],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
-
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/api/feeds").await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    let classes: Vec<&str> = body["feeds"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|f| f["freshness_class"].as_str().unwrap())
-        .collect();
-    assert!(classes.iter().any(|c| c.contains("feed-freshness-warning")));
-    assert!(classes.iter().any(|c| c.contains("feed-freshness-stale")));
-}
-
-#[tokio::test]
-async fn test_api_feeds_filter_by_category() {
+async fn test_feeds_page_filter_by_category_excludes_other_rows() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -1158,33 +1011,11 @@ async fn test_api_feeds_filter_by_category() {
 
     login(&app.server, "admin").await;
 
-    let response = app.server.get("/api/feeds?category=1").await;
+    let response = app.server.get("/feeds?category=1").await;
     response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    let titles: Vec<&str> = body["feeds"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|f| f["title"].as_str().unwrap())
-        .collect();
-    assert!(titles.contains(&"Feed In A"));
-    assert!(!titles.contains(&"Feed In B"));
-    assert_eq!(body["active_category"], 1);
-    // total_feed_count is the unfiltered total (drives the
-    // "All Categories (N)" select option).
-    assert_eq!(body["total_feed_count"], 2);
-}
-
-#[tokio::test]
-async fn test_api_feeds_invalid_filter_defaults_to_all() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-    login(&app.server, "admin").await;
-
-    let response = app.server.get("/api/feeds?filter=invalid").await;
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["active_filter"], "all");
+    let body = response.text();
+    assert!(body.contains("Feed In A"));
+    assert!(!body.contains("Feed In B"));
 }
 
 // ============================================================================

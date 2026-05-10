@@ -984,15 +984,6 @@ async fn test_list_feed_entries_not_found() {
 }
 
 #[tokio::test]
-async fn test_refresh_feed_not_found() {
-    let server = create_test_server(default_test_config());
-    setup_authenticated_user(&server).await;
-
-    let response = server.post("/api/feeds/9999/refresh").await;
-    response.assert_status_not_found();
-}
-
-#[tokio::test]
 async fn test_get_unread_stats() {
     let server = create_test_server(default_test_config());
     setup_authenticated_user(&server).await;
@@ -1236,9 +1227,14 @@ async fn test_feeds_page() {
     let response = server.get("/feeds").await;
     response.assert_status_ok();
     let body = response.text();
-    // CSR shell: contains the page custom element + module path.
-    assert!(body.contains("<rdrs-feeds-page>"));
-    assert!(body.contains("/static/js/pages/feeds.js"));
+    // SSR page: heading, add form, table, filter bar.
+    assert!(body.contains("<h1>Feeds</h1>"));
+    assert!(body.contains("<form method=\"post\" action=\"/feeds\">"));
+    assert!(body.contains("data-testid=\"feeds-table\""));
+    assert!(body.contains("data-testid=\"feed-url-input\""));
+    // Old CSR markers gone.
+    assert!(!body.contains("<rdrs-feeds-page>"));
+    assert!(!body.contains("/static/js/pages/feeds.js"));
 }
 
 #[tokio::test]
@@ -1524,48 +1520,6 @@ async fn test_get_feed_icon_no_icon() {
 
     // Also verify the subscription's iconUrl is empty (no icon)
     assert_eq!(subscriptions[0]["iconUrl"], "");
-}
-
-// ============================================================================
-// Fetch Metadata Tests
-// ============================================================================
-
-#[tokio::test]
-async fn test_fetch_metadata_empty_url() {
-    let server = create_test_server(default_test_config());
-    setup_authenticated_user(&server).await;
-
-    let response = server
-        .post("/api/feeds/fetch-metadata")
-        .json(&json!({ "url": "" }))
-        .await;
-
-    response.assert_status_bad_request();
-}
-
-#[tokio::test]
-async fn test_fetch_metadata_whitespace_url() {
-    let server = create_test_server(default_test_config());
-    setup_authenticated_user(&server).await;
-
-    let response = server
-        .post("/api/feeds/fetch-metadata")
-        .json(&json!({ "url": "   " }))
-        .await;
-
-    response.assert_status_bad_request();
-}
-
-#[tokio::test]
-async fn test_fetch_metadata_unauthorized() {
-    let server = create_test_server(default_test_config());
-
-    let response = server
-        .post("/api/feeds/fetch-metadata")
-        .json(&json!({ "url": "https://example.com" }))
-        .await;
-
-    response.assert_status_unauthorized();
 }
 
 // ============================================================================

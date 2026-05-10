@@ -5,11 +5,11 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
 };
 
-use crate::error::AppError;
+use crate::error::{AppError, AppResult};
 use crate::middleware::auth::{PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
 use crate::models::user_settings;
-use crate::models::{category, feed};
+use crate::models::{category, entry, feed};
 use crate::AppState;
 
 /// Escape a JSON string for safe embedding inside HTML `<script>` tags.
@@ -406,8 +406,8 @@ pub async fn user_settings_page(
 // `CategoriesTemplate` + SSR-rendered `templates/categories.html` were
 // removed during the SSR-to-CSR migration (PR #170 follow-up).
 
-/// Query parameters for `/feeds` and the `GET /api/feeds` JSON endpoint.
-/// Used by the CSR `<rdrs-feeds-page>` to drive server-side filter / sort.
+/// Query parameters for `/feeds`. Drives server-side filter / sort so the
+/// URL stays the stable source of truth.
 #[derive(serde::Deserialize)]
 pub struct FeedsQuery {
     pub category: Option<String>,
@@ -415,20 +415,233 @@ pub struct FeedsQuery {
     pub sort: Option<String>,
 }
 
-/// Serves the CSR shell for `/feeds`. The feed list itself is fetched by
-/// `<rdrs-feeds-page>` from `GET /api/feeds`. CRUD (add / edit / delete /
-/// import / export) goes through the existing GReader endpoints.
+/// Serves `/feeds` rendered fully server-side. Feed rows, category options,
+/// and filter pills are computed from the DB. Mutating actions go through
+/// the form-action endpoints under `/feeds/*` (PR-8 T1). Re-fetch icons via
+/// the `<img src="/api/feeds/{id}/icon">` endpoint, which stays alive.
 pub async fn feeds_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
+    Query(query): Query<FeedsQuery>,
 ) -> (Flash, FeedsTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let user_id = auth_user.user.id;
+
+    let (mut rows, categories, total_feed_count) = state
+        .db
+        .read_user(move |conn| {
+            let cats = category::list_by_user(conn, user_id).unwrap_or_default();
+            let all_feeds = feed::list_by_user(conn, user_id).unwrap_or_default();
+            let unread_map = entry::count_unread_by_feed(conn, user_id).unwrap_or_default();
+
+            let cat_map: std::collections::HashMap<i64, String> = cats
+                .iter()
+                .map(|cat| (cat.id, cat.name.clone()))
+                .collect();
+            let mut count_by_cat: std::collections::HashMap<i64, i64> =
+                std::collections::HashMap::new();
+            for f in &all_feeds {
+                *count_by_cat.entry(f.category_id).or_insert(0) += 1;
+            }
+
+            let total_feed_count = all_feeds.len() as i64;
+
+            let row_views: Vec<FeedRowView> = all_feeds
+                .into_iter()
+                .map(|f| {
+                    let has_icon: i64 = conn
+                        .query_row(
+                            "SELECT COUNT(*) FROM image WHERE entity_type = 'feed' AND entity_id = ?1",
+                            [f.id],
+                            |row| row.get(0),
+                        )
+                        .unwrap_or(0);
+                    let (fetched_rel, fetched_dt) = format_relative_time(f.fetched_at);
+                    let (updated_rel, updated_dt) = if f.feed_updated_at.is_some() {
+                        format_relative_time(f.feed_updated_at)
+                    } else if f
+                        .fetched_at
+                        .map(|ft| (chrono::Utc::now() - ft).num_days() <= 30)
+                        .unwrap_or(false)
+                    {
+                        ("No date info".to_string(), String::new())
+                    } else {
+                        ("Never".to_string(), String::new())
+                    };
+                    let (freshness_class, freshness_key) =
+                        compute_freshness(f.feed_updated_at, f.fetched_at);
+                    FeedRowView {
+                        title: f.title.clone().unwrap_or_else(|| f.url.clone()),
+                        category_name: cat_map
+                            .get(&f.category_id)
+                            .cloned()
+                            .unwrap_or_else(|| "Unknown".to_string()),
+                        has_icon: has_icon > 0,
+                        unread_count: *unread_map.get(&f.id).unwrap_or(&0),
+                        id: f.id,
+                        url: f.url,
+                        category_id: f.category_id,
+                        fetch_error: f.fetch_error,
+                        fetched_at_relative: fetched_rel,
+                        fetched_at_datetime: fetched_dt,
+                        feed_updated_at_relative: updated_rel,
+                        feed_updated_at_datetime: updated_dt,
+                        freshness_class,
+                        freshness_key,
+                    }
+                })
+                .collect();
+
+            let cat_options: Vec<FeedCategoryOption> = cats
+                .into_iter()
+                .map(|cat| FeedCategoryOption {
+                    feed_count: count_by_cat.get(&cat.id).copied().unwrap_or(0),
+                    id: cat.id,
+                    name: cat.name,
+                })
+                .collect();
+
+            Ok::<_, AppError>((row_views, cat_options, total_feed_count))
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+
+    let active_filter_raw = query.filter.as_deref().unwrap_or("all").to_string();
+    let active_sort = query.sort.as_deref().unwrap_or("title").to_string();
+    let active_category = query.category.as_deref().and_then(|s| {
+        if s.is_empty() {
+            None
+        } else {
+            s.parse::<i64>().ok()
+        }
+    });
+
+    if let Some(cid) = active_category {
+        rows.retain(|r| r.category_id == cid);
+    }
+    match active_filter_raw.as_str() {
+        "errors" => rows.retain(|r| r.fetch_error.is_some()),
+        "stale" => rows.retain(|r| r.freshness_key == "stale"),
+        _ => {}
+    }
+    match active_sort.as_str() {
+        "unread" => rows.sort_by(|a, b| b.unread_count.cmp(&a.unread_count)),
+        "category" => rows.sort_by(|a, b| a.category_name.cmp(&b.category_name)),
+        _ => rows.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
+    }
+    let active_filter = match active_filter_raw.as_str() {
+        "errors" | "stale" | "all" => active_filter_raw,
+        _ => "all".to_string(),
+    };
+
+    let cat_param = active_category
+        .map(|c| format!("category={c}&"))
+        .unwrap_or_default();
+    let filter_links = vec![
+        FeedFilterLink {
+            label: "All",
+            href: format!("/feeds?{}sort={}&filter=all", cat_param, active_sort),
+            active: active_filter == "all",
+        },
+        FeedFilterLink {
+            label: "Errors",
+            href: format!("/feeds?{}sort={}&filter=errors", cat_param, active_sort),
+            active: active_filter == "errors",
+        },
+        FeedFilterLink {
+            label: "Stale",
+            href: format!("/feeds?{}sort={}&filter=stale", cat_param, active_sort),
+            active: active_filter == "stale",
+        },
+    ];
 
     (
         flash,
         FeedsTemplate {
             title: "Feeds",
+            git_version: crate::GIT_VERSION,
+            layout,
+            feeds: rows,
+            categories,
+            total_feed_count,
+            active_filter,
+            active_sort,
+            active_category_id: active_category.unwrap_or(-1),
+            filter_links,
+        },
+    )
+}
+
+/// Serves `/feeds/{id}/edit` rendered fully server-side. The form posts to
+/// `POST /feeds/{id}/edit` (T1 form-action endpoint). A second form on the
+/// page posts to `/feeds/{id}/fetch-metadata` to re-discover and persist
+/// title/description/site_url.
+pub async fn feed_edit_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+    Path(id): Path<i64>,
+) -> AppResult<(Flash, FeedEditTemplate)> {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let user_id = auth_user.user.id;
+
+    let (feed_view, cats) = state
+        .db
+        .read_user(move |conn| {
+            let f = feed::find_by_id(conn, id)?.ok_or(AppError::FeedNotFound)?;
+            category::find_by_id_and_user(conn, f.category_id, user_id)?
+                .ok_or(AppError::FeedNotFound)?;
+            let cats = category::list_by_user(conn, user_id)?;
+            Ok::<_, AppError>((
+                FeedEditView {
+                    id: f.id,
+                    url: f.url,
+                    title: f.title.unwrap_or_default(),
+                    description: f.description.unwrap_or_default(),
+                    site_url: f.site_url.unwrap_or_default(),
+                    category_id: f.category_id,
+                    custom_user_agent: f.custom_user_agent.unwrap_or_default(),
+                    http2_disabled: f.http2_disabled,
+                    custom_referrer: f.custom_referrer.unwrap_or_default(),
+                },
+                cats.into_iter()
+                    .map(|c| FeedCategoryOption {
+                        id: c.id,
+                        name: c.name,
+                        feed_count: 0,
+                    })
+                    .collect::<Vec<_>>(),
+            ))
+        })
+        .await??;
+
+    Ok((
+        flash,
+        FeedEditTemplate {
+            title: "Edit Feed",
+            git_version: crate::GIT_VERSION,
+            layout,
+            feed: feed_view,
+            categories: cats,
+        },
+    ))
+}
+
+/// Serves `/feeds/import` rendered fully server-side. Multipart form posts to
+/// `POST /feeds/import` (T1 form-action endpoint).
+pub async fn feeds_import_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, FeedsImportTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    (
+        flash,
+        FeedsImportTemplate {
+            title: "Import OPML",
             git_version: crate::GIT_VERSION,
             layout,
         },
@@ -876,6 +1089,38 @@ impl IntoResponse for CategoriesTemplate {
     }
 }
 
+/// One row of the SSR `/feeds` table.
+pub struct FeedRowView {
+    pub id: i64,
+    pub url: String,
+    pub title: String,
+    pub category_id: i64,
+    pub category_name: String,
+    pub has_icon: bool,
+    pub fetch_error: Option<String>,
+    pub unread_count: i64,
+    pub fetched_at_relative: String,
+    pub fetched_at_datetime: String,
+    pub feed_updated_at_relative: String,
+    pub feed_updated_at_datetime: String,
+    pub freshness_class: String,
+    pub freshness_key: String,
+}
+
+/// Category option for selects + sidebar counts on `/feeds`.
+pub struct FeedCategoryOption {
+    pub id: i64,
+    pub name: String,
+    pub feed_count: i64,
+}
+
+/// Filter pill (All / Errors / Stale) on the `/feeds` filter bar.
+pub struct FeedFilterLink {
+    pub label: &'static str,
+    pub href: String,
+    pub active: bool,
+}
+
 /// Per-route template for `/feeds`.
 #[derive(Template)]
 #[template(path = "feeds.html")]
@@ -883,9 +1128,69 @@ pub struct FeedsTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub feeds: Vec<FeedRowView>,
+    pub categories: Vec<FeedCategoryOption>,
+    pub total_feed_count: i64,
+    pub active_filter: String,
+    pub active_sort: String,
+    /// `-1` sentinel for "no category filter" — keeps Askama integer
+    /// comparisons straightforward in the filter dropdown.
+    pub active_category_id: i64,
+    pub filter_links: Vec<FeedFilterLink>,
 }
 
 impl IntoResponse for FeedsTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Editable view of a single feed for `/feeds/{id}/edit`.
+pub struct FeedEditView {
+    pub id: i64,
+    pub url: String,
+    pub title: String,
+    pub description: String,
+    pub site_url: String,
+    pub category_id: i64,
+    pub custom_user_agent: String,
+    pub http2_disabled: bool,
+    pub custom_referrer: String,
+}
+
+/// Per-route template for `/feeds/{id}/edit`.
+#[derive(Template)]
+#[template(path = "feed_edit.html")]
+pub struct FeedEditTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+    pub feed: FeedEditView,
+    pub categories: Vec<FeedCategoryOption>,
+}
+
+impl IntoResponse for FeedEditTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/feeds/import`.
+#[derive(Template)]
+#[template(path = "feeds_import.html")]
+pub struct FeedsImportTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+}
+
+impl IntoResponse for FeedsImportTemplate {
     fn into_response(self) -> Response {
         match self.render() {
             Ok(html) => Html(html).into_response(),

@@ -6,35 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
-use crate::models::{category, entry, entry_summary, feed, user_settings, SummaryStatus};
+use crate::models::{category, entry, entry_summary, user_settings, SummaryStatus};
 use crate::services::http::JOB_QUEUE_TIMEOUT;
 use crate::services::save::{linkding, BookmarkData, SaveResult};
-use crate::services::{fetch_and_extract, refresh_feed, sanitize_html, SummaryJob, SyncResult};
+use crate::services::{fetch_and_extract, sanitize_html, SummaryJob};
 use crate::AppState;
-
-pub async fn refresh_feed_handler(
-    auth_user: AuthUser,
-    State(state): State<AppState>,
-    Path(feed_id): Path<i64>,
-) -> AppResult<Json<SyncResult>> {
-    // Verify feed belongs to user
-    let user_id = auth_user.user.id;
-    state
-        .db
-        .read_user(move |conn| {
-            let f = feed::find_by_id(conn, feed_id)?.ok_or(AppError::FeedNotFound)?;
-            let cat =
-                category::find_by_id(conn, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
-            if cat.user_id != user_id {
-                return Err(AppError::FeedNotFound);
-            }
-            Ok::<_, AppError>(())
-        })
-        .await??;
-
-    let result = refresh_feed(state.db.clone(), feed_id, &state.config.user_agent).await?;
-    Ok(Json(result))
-}
 
 #[derive(Debug, Serialize)]
 pub struct FetchFullContentResponse {
