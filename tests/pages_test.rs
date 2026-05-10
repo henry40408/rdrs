@@ -599,6 +599,7 @@ async fn test_search_page() {
     assert!(body.contains("<form method=\"get\" action=\"/search\""));
     assert!(body.contains("data-testid=\"search-input\""));
     assert!(body.contains("Enter a search term"));
+    assert!(body.contains("class=\"search-status\""));
     assert!(!body.contains("<rdrs-entries-page>"));
     assert!(!body.contains("/static/js/pages/entries.js"));
 }
@@ -670,7 +671,7 @@ async fn test_search_page_no_results() {
     let response = app.server.get("/search?q=zzznotfoundzzz").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("No results for"));
+    assert!(body.contains("Nothing matched"));
     assert!(body.contains("zzznotfoundzzz"));
 }
 

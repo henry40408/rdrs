@@ -30,9 +30,9 @@
                 </script>
 
                 {% if q.is_empty() %}
-                    <p class="muted">Enter a search term and press Enter to search.</p>
+                    <p class="search-status">Enter a search term and press <kbd class="search-status-kbd">Enter</kbd> to search.</p>
                 {% else if results.is_empty() %}
-                    <p class="muted">No results for &ldquo;{{ q }}&rdquo;.</p>
+                    <p class="search-status">Nothing matched &ldquo;{{ q }}&rdquo;.</p>
                 {% else %}
                     <ul class="search-results" data-testid="search-results">
                         {% for r in results %}
