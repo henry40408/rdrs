@@ -43,12 +43,20 @@ function installSwap() {
         const target = form.getAttribute('data-swap');
         event.preventDefault();
         const method = (form.method || 'GET').toUpperCase();
-        const action = form.action;
         const init = { method };
-        if (method !== 'GET') {
+        let url = form.action;
+        if (method === 'GET') {
+            // GET requests carry form data in the query string, not the
+            // body. Without this, hidden inputs like `after=…` on the
+            // Load-More form silently drop and the server falls through
+            // to the full-page render.
+            const params = new URLSearchParams(new FormData(form));
+            const sep = url.includes('?') ? '&' : '?';
+            url = url + sep + params.toString();
+        } else {
             init.body = new FormData(form);
         }
-        await performSwap(action, init, target);
+        await performSwap(url, init, target);
     });
 }
 

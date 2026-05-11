@@ -5,7 +5,7 @@
             <form id="load-more" method="get" action="{{ path }}" data-swap="[data-entries-list]" class="load-more-form">
                 <input type="hidden" name="after" value="{{ after }}">
                 <input type="hidden" name="fragment" value="1">
-                <button type="submit" data-testid="load-more-btn">Load more</button>
+                <button type="submit" class="btn btn-secondary btn-sm" data-testid="load-more-btn">Load more</button>
             </form>
         {% endif %}
     </div>
