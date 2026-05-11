@@ -3994,6 +3994,7 @@ async fn test_entries_load_more_returns_row_fragments() {
             Ok::<_, rdrs::error::AppError>(())
         })
         .await
+        .unwrap()
         .unwrap();
 
     // GET /entries?fragment=1&after=50 — prefix-rerender: rows 0..74 (all 75).
