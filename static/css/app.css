@@ -2119,3 +2119,6 @@ summary {
 .cat-rename:focus-within .cat-rename-save {
     opacity: 1;
 }
+
+/* ── Entries keyboard focus ───────────────────────────────────────────── */
+.entry-row-focused { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; }
