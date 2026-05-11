@@ -149,14 +149,24 @@ pub async fn star_entry_form(
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<EntryActionMulti> {
     let user_id = auth_user.user.id;
-    let ewf = state
+    let (ewf, status) = state
         .db
-        .user(move |conn| entry::toggle_starred(conn, user_id, entry_id))
-        .await??
-        .ok_or(AppError::EntryNotFound)?;
+        .user(move |conn| {
+            let ewf = entry::toggle_starred(conn, user_id, entry_id)?;
+            let status = if let Some(ref e) = ewf {
+                entry_summary::get_statuses_for_entries(conn, user_id, &[e.entry.id])?
+                    .get(&e.entry.id)
+                    .copied()
+            } else {
+                None
+            };
+            Ok::<_, AppError>((ewf, status))
+        })
+        .await??;
+    let ewf = ewf.ok_or(AppError::EntryNotFound)?;
     let payload_json = build_sidebar_unread(&state, user_id).await?;
     Ok(EntryActionMulti {
-        r: row_view_from(&ewf),
+        r: row_view_from(&ewf, status),
         sidebar_unread_payload_json: payload_json,
     })
 }
@@ -169,14 +179,24 @@ pub async fn read_entry_form(
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<EntryActionMulti> {
     let user_id = auth_user.user.id;
-    let ewf = state
+    let (ewf, status) = state
         .db
-        .user(move |conn| entry::toggle_read(conn, user_id, entry_id))
-        .await??
-        .ok_or(AppError::EntryNotFound)?;
+        .user(move |conn| {
+            let ewf = entry::toggle_read(conn, user_id, entry_id)?;
+            let status = if let Some(ref e) = ewf {
+                entry_summary::get_statuses_for_entries(conn, user_id, &[e.entry.id])?
+                    .get(&e.entry.id)
+                    .copied()
+            } else {
+                None
+            };
+            Ok::<_, AppError>((ewf, status))
+        })
+        .await??;
+    let ewf = ewf.ok_or(AppError::EntryNotFound)?;
     let payload_json = build_sidebar_unread(&state, user_id).await?;
     Ok(EntryActionMulti {
-        r: row_view_from(&ewf),
+        r: row_view_from(&ewf, status),
         sidebar_unread_payload_json: payload_json,
     })
 }

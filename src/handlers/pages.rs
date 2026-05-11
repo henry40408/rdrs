@@ -5,11 +5,14 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
 };
 
+use std::collections::HashMap;
+
 use crate::error::{AppError, AppResult};
 use crate::middleware::auth::{PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
 use crate::models::user_settings;
-use crate::models::{category, entry, feed};
+use crate::models::SummaryStatus;
+use crate::models::{category, entry, entry_summary, feed};
 use crate::AppState;
 
 /// Escape a JSON string for safe embedding inside HTML `<script>` tags.
@@ -34,6 +37,16 @@ pub struct EntryRowView {
     pub published_relative: String,
     pub is_read: bool,
     pub is_starred: bool,
+    pub summary_status: Option<SummaryStatus>,
+}
+
+impl EntryRowView {
+    /// Stringified summary status for the Askama template `{% match %}` branch.
+    /// Returns `Some("completed" | "pending" | "processing" | "failed")` when a
+    /// summary row exists for this entry, else `None`.
+    pub fn summary_status_str(&self) -> Option<&'static str> {
+        self.summary_status.map(|s| s.as_str())
+    }
 }
 
 /// View-model for the reading pane (`_reading_pane.html`).
@@ -62,8 +75,11 @@ pub struct EntriesLayoutContext {
     pub path: &'static str,
 }
 
-/// Map an `EntryWithFeed` to an `EntryRowView`.
-pub(crate) fn row_view_from(e: &entry::EntryWithFeed) -> EntryRowView {
+/// Map an `EntryWithFeed` (+ optional summary status) to an `EntryRowView`.
+pub(crate) fn row_view_from(
+    e: &entry::EntryWithFeed,
+    summary_status: Option<SummaryStatus>,
+) -> EntryRowView {
     let title = e
         .entry
         .title
@@ -83,6 +99,7 @@ pub(crate) fn row_view_from(e: &entry::EntryWithFeed) -> EntryRowView {
         published_relative: format_relative_time(Some(published_at)).0,
         is_read: e.entry.read_at.is_some(),
         is_starred: e.entry.starred_at.is_some(),
+        summary_status,
     }
 }
 
@@ -97,15 +114,20 @@ pub(crate) async fn build_entries_page(
     page_size: i64,
     offset: i64,
 ) -> (Vec<EntryRowView>, Option<i64>) {
-    let rows = state
+    let result = state
         .db
         .read_user(move |conn| {
-            entry::list_by_user(conn, user_id, &filter, sort, page_size + 1, offset)
+            let rows =
+                entry::list_by_user(conn, user_id, &filter, sort, page_size + 1, offset)?;
+            let ids: Vec<i64> = rows.iter().map(|e| e.entry.id).collect();
+            let statuses = entry_summary::get_statuses_for_entries(conn, user_id, &ids)?;
+            Ok::<_, AppError>((rows, statuses))
         })
         .await
         .ok()
         .and_then(|r| r.ok())
-        .unwrap_or_default();
+        .unwrap_or_else(|| (Vec::new(), HashMap::new()));
+    let (rows, statuses) = result;
 
     let next_cursor = if rows.len() as i64 > page_size {
         Some(offset + page_size)
@@ -115,7 +137,7 @@ pub(crate) async fn build_entries_page(
     let views = rows
         .iter()
         .take(page_size as usize)
-        .map(row_view_from)
+        .map(|e| row_view_from(e, statuses.get(&e.entry.id).copied()))
         .collect();
     (views, next_cursor)
 }
