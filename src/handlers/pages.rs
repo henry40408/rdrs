@@ -32,8 +32,6 @@ pub struct EntryRowView {
     pub feed_id: i64,
     pub feed_title: String,
     pub feed_has_icon: bool,
-    pub category_id: i64,
-    pub category_name: String,
     pub title: String,
     pub published_at_iso: String,
     pub published_relative: String,
@@ -104,8 +102,6 @@ pub(crate) fn row_view_from(
             .clone()
             .unwrap_or_else(|| "(no feed)".to_string()),
         feed_has_icon: e.feed_has_icon,
-        category_id: e.category_id,
-        category_name: e.category_name.clone(),
         title,
         published_at_iso: published_at.to_rfc3339(),
         published_relative: format_relative_time(Some(published_at)).0,
