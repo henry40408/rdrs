@@ -174,17 +174,18 @@ function installEntriesKeyboard() {
         const next = Math.max(0, Math.min(all.length - 1, idx + delta));
         focusRow(all[next]);
     };
-    document.addEventListener('keydown', async (e) => {
+    document.addEventListener('keydown', (e) => {
         if (e.target.matches('input, textarea, select')) return;
         if (e.metaKey || e.ctrlKey || e.altKey) return;
         switch (e.key) {
             case 'j': e.preventDefault(); move(1); break;
             case 'k': e.preventDefault(); move(-1); break;
-            case 'o':
-            case 'Enter': {
+            case 'Enter':
+            case 'o': {
                 if (!active) return;
+                e.preventDefault();
                 const link = active.querySelector('a[data-swap]');
-                if (link) { e.preventDefault(); link.click(); }
+                if (link) link.click();
                 break;
             }
             case 's': {
