@@ -509,12 +509,12 @@ async fn test_unread_page() {
     let response = server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    // CSR shell — sidebar (incl. username + Sign Out) is rendered client-side
-    // by <rdrs-sidebar>. The initial HTML carries the username inside the
-    // sidebar bootstrap JSON.
-    assert!(body.contains("<rdrs-entries-page>"));
+    // SSR layout (PR-10) — sidebar bootstrap JSON still inlined; no CSR shell.
+    assert!(!body.contains("<rdrs-entries-page>"));
     assert!(body.contains(r#"id="rdrs-sidebar-bootstrap""#));
     assert!(body.contains(r#""username":"admin""#));
+    // Two-pane layout rendered server-side.
+    assert!(body.contains("data-entries-list"));
 }
 
 #[tokio::test]

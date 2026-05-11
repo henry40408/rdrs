@@ -1,0 +1,30 @@
+{# Reading pane content. `pane` is `ReadingPaneView`, provided either from the
+   surrounding `{% if let Some(pane) = reading_pane %}` in _entries_layout.html
+   or directly from a fragment-endpoint template struct. #}
+<article id="reading-pane" class="reading-pane">
+    <header class="reading-pane-header">
+        <h1 class="reading-pane-title">
+            {% if let Some(link) = pane.link.as_ref() %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer">{{ pane.title }}</a>{% else %}{{ pane.title }}{% endif %}
+        </h1>
+        <div class="reading-pane-meta">
+            <span class="muted">{{ pane.feed_title }}</span>
+            {% if let Some(author) = pane.author.as_ref() %} &middot; <span class="muted">{{ author }}</span>{% endif %}
+            {% if let Some(ts) = pane.published_at_iso.as_ref() %} &middot; <time datetime="{{ ts }}" class="muted">{{ pane.published_relative }}</time>{% endif %}
+        </div>
+        <div class="reading-pane-actions">
+            <form method="post" action="/entries/{{ pane.id }}/star" data-swap="#entry-row-{{ pane.id }}" class="reading-pane-action">
+                <button type="submit">{% if pane.is_starred %}Unstar{% else %}Star{% endif %}</button>
+            </form>
+            <form method="post" action="/entries/{{ pane.id }}/read" data-swap="#entry-row-{{ pane.id }}" class="reading-pane-action">
+                <button type="submit">{% if pane.is_read %}Mark unread{% else %}Mark read{% endif %}</button>
+            </form>
+            <form method="post" action="/entries/{{ pane.id }}/summarize" data-swap="#reading-pane" class="reading-pane-action">
+                <button type="submit"{% if pane.summary_in_flight %} disabled{% endif %}>Summarize</button>
+            </form>
+        </div>
+    </header>
+    {% if let Some(summary) = pane.summary_text.as_ref() %}
+        <section class="reading-pane-summary"><h2>Summary</h2><div>{{ summary|safe }}</div></section>
+    {% endif %}
+    <section class="reading-pane-body">{{ pane.content_html|safe }}</section>
+</article>

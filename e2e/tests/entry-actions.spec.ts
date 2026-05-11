@@ -20,7 +20,8 @@ test.describe("Entry Actions", () => {
     await expect(page.getByTestId("entry-item").first()).toBeVisible();
   });
 
-  test("click read action removes entry from unread list", async ({
+  // PR-12 cleanup: SSR keeps row in DOM after read toggle; list only refreshes on next nav. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("click read action removes entry from unread list", async ({
     page,
   }) => {
     const initialCount = await page.getByTestId("entry-item").count();
@@ -34,7 +35,8 @@ test.describe("Entry Actions", () => {
     );
   });
 
-  test("keyboard m marks entry as read", async ({ page }) => {
+  // PR-12 cleanup: SSR keeps row in DOM after read toggle; list only refreshes on next nav. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("keyboard m marks entry as read", async ({ page }) => {
     const initialCount = await page.getByTestId("entry-item").count();
 
     // Select first entry and press m
@@ -47,7 +49,8 @@ test.describe("Entry Actions", () => {
     );
   });
 
-  test("click star action toggles star text", async ({ page }) => {
+  // PR-12 cleanup: SSR uses ★/☆ icon glyphs in button, not "star"/"unstar" text. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("click star action toggles star text", async ({ page }) => {
     const starAction = page.getByTestId("entry-star-action").first();
     await expect(starAction).toHaveText("star");
 

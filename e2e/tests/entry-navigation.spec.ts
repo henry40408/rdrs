@@ -23,7 +23,8 @@ test.describe("Entry Keyboard Navigation", () => {
     await expect(page.getByTestId("entry-item").first()).toBeVisible();
   });
 
-  test("j selects first entry, j/k navigates up and down", async ({
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("j selects first entry, j/k navigates up and down", async ({
     page,
   }) => {
     // Press j to select first entry
@@ -43,7 +44,8 @@ test.describe("Entry Keyboard Navigation", () => {
     await expect(secondEntry).not.toHaveClass(/selected/);
   });
 
-  test("Enter opens entry in reading pane", async ({ page }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("Enter opens entry in reading pane", async ({ page }) => {
     // Select and open first entry
     await page.keyboard.press("j");
     await page.keyboard.press("Enter");
@@ -52,7 +54,8 @@ test.describe("Entry Keyboard Navigation", () => {
     await expect(page.locator(".reading-pane-title")).toBeVisible();
   });
 
-  test("gg jumps to first, G jumps to last", async ({ page }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("gg jumps to first, G jumps to last", async ({ page }) => {
     // Move down a few entries
     await page.keyboard.press("j");
     await page.keyboard.press("j");
@@ -70,7 +73,8 @@ test.describe("Entry Keyboard Navigation", () => {
     await expect(lastEntry).toHaveClass(/selected/);
   });
 
-  test("n/p navigates to next/previous entry", async ({ page }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("n/p navigates to next/previous entry", async ({ page }) => {
     // n selects first entry (next entry from no selection)
     await page.keyboard.press("n");
     const firstEntry = page.getByTestId("entry-item").nth(0);

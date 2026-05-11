@@ -3494,3 +3494,790 @@ async fn test_import_opml_form_succeeds() {
     assert_eq!(cat_count, 1);
     assert_eq!(feed_count, 1);
 }
+
+// ============================================================================
+// GET /entries/{id}/fragment — PR-10 T3
+// ============================================================================
+
+/// Isolated app factory used by the fragment tests so they don't share the
+/// `test_handlers_app` SQLite in-memory database with the rest of the suite.
+fn create_test_app_named(config: Config, name: &str) -> TestApp {
+    let write_conn = open_shared_memory(name);
+    db::init_db(&write_conn).unwrap();
+    let read_conn = open_shared_memory(name);
+
+    let (db, _handle) = DbPool::new(write_conn, read_conn);
+    let webauthn = auth::create_webauthn(&config).unwrap();
+    let summary_cache = services::create_summary_cache(100, 24);
+    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
+
+    let state = AppState {
+        db: db.clone(),
+        config: Arc::new(config),
+        webauthn: Arc::new(webauthn),
+        summary_cache,
+        summary_tx,
+    };
+
+    let app = create_router(state);
+    let server = TestServer::builder().save_cookies().build(app);
+
+    TestApp { server, db }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_entry_fragment_renders_reading_pane() {
+    let app = create_test_app_named(default_test_config(), "test_entry_fragment_happy");
+
+    // Register and log in as alice.
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_frag", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_frag", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed: category + feed + entry with content.
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/feed",
+                    title: Some("Test Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-frag-test",
+                Some("Hello World"),
+                Some("https://x/post"),
+                Some("<p>Body text here</p>"),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    let response = app
+        .server
+        .get(&format!("/entries/{}/fragment", entry_id))
+        .await;
+
+    assert_eq!(response.status_code(), StatusCode::OK);
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.starts_with("text/html"),
+        "expected text/html, got: {content_type}"
+    );
+    let html = response.text();
+    assert!(
+        html.contains(r#"id="reading-pane""#),
+        "reading-pane id must be present"
+    );
+    assert!(html.contains("Hello World"), "entry title must appear");
+    assert!(html.contains("Body text here"), "entry body must appear");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_entry_fragment_404_for_other_user() {
+    let app = create_test_app_named(default_test_config(), "test_entry_fragment_404");
+
+    // Register alice (will be logged in).
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_404", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_404", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Insert bob + bob's entry directly via the DB — bob never logs in via the
+    // test server so alice's session cookie stays active.
+    let bob_entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let bob_id: i64 = conn
+                .execute(
+                    "INSERT INTO user (username, password_hash, role) VALUES ('bob_404', 'x', 'user')",
+                    [],
+                )
+                .map(|_| conn.last_insert_rowid())
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, bob_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://b/feed",
+                    title: Some("Bob Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-bob-entry",
+                Some("Bob's Entry"),
+                Some("https://b/post"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // Alice tries to read Bob's entry — must get 404, not 200.
+    let response = app
+        .server
+        .get(&format!("/entries/{}/fragment", bob_entry_id))
+        .await;
+
+    assert_eq!(
+        response.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user access must return 404"
+    );
+}
+
+// ============================================================================
+// POST /entries/{id}/star — PR-10 T4
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_star_entry_form_toggles_and_returns_multi_target() {
+    let app = create_test_app_named(default_test_config(), "test_star_entry_form");
+
+    // Register and log in as alice.
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_star", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_star", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed: category + feed + one unread entry.
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/star-feed",
+                    title: Some("Star Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-star-test",
+                Some("E"),
+                Some("https://x/p"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // First POST — should star the entry.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/star", entry_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        html.contains("data-swap-target=\"#entry-row-"),
+        "multi-target row block must be present"
+    );
+    assert!(
+        html.contains("data-swap-target=\"#sidebar-unread\""),
+        "multi-target sidebar block must be present"
+    );
+    assert!(
+        html.contains("entry-row-starred"),
+        "row must reflect starred state after first toggle"
+    );
+
+    // Second POST — should unstar.
+    let resp2 = app
+        .server
+        .post(&format!("/entries/{}/star", entry_id))
+        .await;
+    assert_eq!(resp2.status_code(), StatusCode::OK);
+    let html2 = resp2.text();
+    assert!(
+        !html2.contains("entry-row-starred"),
+        "row must not have starred class after second toggle"
+    );
+}
+
+// ============================================================================
+// POST /entries/{id}/read — PR-10 T4
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_read_entry_form_toggles_and_returns_multi_target() {
+    let app = create_test_app_named(default_test_config(), "test_read_entry_form");
+
+    // Register and log in as alice.
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_read", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_read", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed: category + feed + one unread entry.
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/read-feed",
+                    title: Some("Read Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-read-test",
+                Some("E"),
+                Some("https://x/r"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // First POST — should mark read.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/read", entry_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        html.contains("data-swap-target=\"#entry-row-"),
+        "multi-target row block must be present"
+    );
+    assert!(
+        html.contains("data-swap-target=\"#sidebar-unread\""),
+        "multi-target sidebar block must be present"
+    );
+    assert!(
+        html.contains("entry-row-read"),
+        "row must reflect read state after first toggle"
+    );
+
+    // Second POST — should mark unread.
+    let resp2 = app
+        .server
+        .post(&format!("/entries/{}/read", entry_id))
+        .await;
+    assert_eq!(resp2.status_code(), StatusCode::OK);
+    let html2 = resp2.text();
+    assert!(
+        !html2.contains("entry-row-read"),
+        "row must not have read class after second toggle (unread)"
+    );
+}
+
+// ============================================================================
+// POST /entries/{id}/star — cross-tenant 404 (PR-10 review)
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_star_entry_form_404_for_other_user() {
+    let app = create_test_app_named(default_test_config(), "test_star_entry_form_404");
+
+    // Register + login alice (session cookie is now alice's).
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_s404", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_s404", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Insert bob + bob's entry directly via DB — bob never logs in via the test
+    // server so alice's session cookie stays active.
+    let bob_entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let bob_id: i64 = conn
+                .execute(
+                    "INSERT INTO user (username, password_hash, role) VALUES ('bob_s404', 'x', 'user')",
+                    [],
+                )
+                .map(|_| conn.last_insert_rowid())
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, bob_id, "Bob Cat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://bob/star-feed",
+                    title: Some("Bob Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-bob-star",
+                Some("Bob Entry"),
+                Some("https://bob/entry"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // Alice tries to star bob's entry → 404.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/star", bob_entry_id))
+        .await;
+    assert_eq!(
+        resp.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user star must return 404"
+    );
+}
+
+// ============================================================================
+// POST /entries/{id}/read — cross-tenant 404 (PR-10 review)
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_read_entry_form_404_for_other_user() {
+    let app = create_test_app_named(default_test_config(), "test_read_entry_form_404");
+
+    // Register + login alice (session cookie is now alice's).
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_r404", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_r404", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Insert bob + bob's entry directly via DB — bob never logs in via the test
+    // server so alice's session cookie stays active.
+    let bob_entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let bob_id: i64 = conn
+                .execute(
+                    "INSERT INTO user (username, password_hash, role) VALUES ('bob_r404', 'x', 'user')",
+                    [],
+                )
+                .map(|_| conn.last_insert_rowid())
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, bob_id, "Bob Cat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://bob/read-feed",
+                    title: Some("Bob Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-bob-read",
+                Some("Bob Entry"),
+                Some("https://bob/entry"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // Alice tries to mark bob's entry as read → 404.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/read", bob_entry_id))
+        .await;
+    assert_eq!(
+        resp.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user read must return 404"
+    );
+}
+
+// POST /entries/{id}/summarize — PR-10 T5
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_summarize_entry_form_renders_reading_pane() {
+    let app = create_test_app_named(default_test_config(), "test_summarize_entry_form");
+
+    // Register and log in as alice.
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_sum", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_sum", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed: category + feed + entry with a link.
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/sum-feed",
+                    title: Some("Sum Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-sum-test",
+                Some("Summarizable Entry"),
+                Some("https://x/sum-post"),
+                Some("<p>Content to summarize</p>"),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // POST /entries/{id}/summarize — should return reading pane with button disabled.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/summarize", entry_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        html.contains("id=\"reading-pane\""),
+        "response must contain the reading pane element"
+    );
+    assert!(
+        html.contains("disabled"),
+        "Summarize button must be disabled while summary is in-flight"
+    );
+}
+
+// ============================================================================
+// GET /entries?fragment=1&after=... — PR-10 T6 Load-More fragment
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_entries_load_more_returns_row_fragments() {
+    let app = create_test_app_named(default_test_config(), "test_load_more_fragment");
+
+    // Register and log in as alice.
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_lm", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_lm", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed: category + feed + 75 entries.
+    app.db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, user_id, "LoadMore Cat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://lm/feed",
+                    title: Some("LM Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            for i in 0..75i64 {
+                rdrs::models::entry::upsert_entry(
+                    conn,
+                    feed.id,
+                    &format!("guid-lm-{i}"),
+                    Some(&format!("LM Entry {i}")),
+                    Some(&format!("https://lm/{i}")),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+            }
+            Ok::<_, rdrs::error::AppError>(())
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    // GET /entries?fragment=1&after=50 — prefix-rerender: rows 0..74 (all 75).
+    let resp = app
+        .server
+        .get("/entries")
+        .add_query_param("fragment", "1")
+        .add_query_param("after", "50")
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+
+    // Prefix-rerender: should contain all 75 rows (0 to 74).
+    let row_count = html.matches("data-entry-row").count();
+    assert_eq!(
+        row_count, 75,
+        "prefix-rerender should return all 75 rows (0..74)"
+    );
+
+    // No more pages — load-more form should be absent.
+    assert!(
+        !html.contains("id=\"load-more\""),
+        "no more pages → load-more form must be absent"
+    );
+
+    // Response must be wrapped in a <template data-swap-target="[data-entries-list]">.
+    assert!(
+        html.contains("data-swap-target=\"[data-entries-list]\""),
+        "fragment must use multi-target template swap"
+    );
+}
+
+// ============================================================================
+// GET /sidebar/unread — PR-10 T7
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_sidebar_unread_returns_payload() {
+    let app = create_test_app_named(default_test_config(), "test_sidebar_unread_payload");
+
+    // Register and log in as alice.
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_su", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_su", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed: category + feed + 2 unread entries.
+    let feed_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T7 Cat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://su/feed",
+                    title: Some("SU Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            // 2 unread entries.
+            rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-su-1",
+                Some("SU Entry 1"),
+                Some("https://su/1"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-su-2",
+                Some("SU Entry 2"),
+                Some("https://su/2"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            feed.id
+        })
+        .await
+        .unwrap();
+
+    let response = app.server.get("/sidebar/unread").await;
+
+    assert_eq!(response.status_code(), StatusCode::OK);
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.starts_with("text/html"),
+        "expected text/html, got: {content_type}"
+    );
+    let html = response.text();
+    assert!(
+        html.contains(r#"id="sidebar-unread""#),
+        "sidebar-unread id must be present in: {html}"
+    );
+    // The data-payload attribute contains JSON with feed_id and unread:2.
+    let feed_id_str = feed_id.to_string();
+    assert!(
+        html.contains(&format!(r#""feed_id":{feed_id_str}"#)),
+        "payload must contain feed_id={feed_id_str} in: {html}"
+    );
+    assert!(
+        html.contains(r#""unread":2"#),
+        "payload must contain unread:2 in: {html}"
+    );
+}

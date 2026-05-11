@@ -29,10 +29,10 @@ fn open_shared_memory(name: &str) -> Connection {
     .unwrap()
 }
 
-fn create_test_app(config: Config) -> TestApp {
-    let write_conn = open_shared_memory("test_pages");
+fn create_test_app_named(config: Config, name: &str) -> TestApp {
+    let write_conn = open_shared_memory(name);
     db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory("test_pages");
+    let read_conn = open_shared_memory(name);
 
     let (db, _handle) = DbPool::new(write_conn, read_conn);
     let webauthn = auth::create_webauthn(&config).unwrap();
@@ -51,6 +51,10 @@ fn create_test_app(config: Config) -> TestApp {
     let server = TestServer::builder().save_cookies().build(app);
 
     TestApp { server, db }
+}
+
+fn create_test_app(config: Config) -> TestApp {
+    create_test_app_named(config, "test_pages")
 }
 
 fn default_test_config() -> Config {
@@ -112,7 +116,7 @@ async fn login(server: &TestServer, username: &str) {
 // ============================================================================
 
 #[tokio::test]
-async fn test_unread_page_returns_shell() {
+async fn test_unread_page_renders_ssr_layout() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -122,12 +126,13 @@ async fn test_unread_page_returns_shell() {
     response.assert_status_ok();
     let body = response.text();
 
-    // Shell shape — no SSR entry markup.
-    assert!(body.contains("<rdrs-entries-page>"));
-    assert!(body.contains("/static/js/pages/entries.js"));
-    // SSR machinery for entries must be gone from this route.
-    assert!(!body.contains(r#"class="ssr-entries""#));
-    assert!(!body.contains(r#"class="ssr-reading-pane""#));
+    // CSR shell must be gone from this route (SSR-first PR-10).
+    assert!(!body.contains("<rdrs-entries-page>"));
+    assert!(!body.contains("/static/js/pages/entries.js"));
+    // SSR two-pane layout present.
+    assert!(body.contains("data-entries-list"));
+    assert!(body.contains(r#"id="reading-pane""#));
+    assert!(body.contains("Select an entry"));
 }
 
 #[tokio::test]
@@ -146,8 +151,8 @@ async fn test_unread_page_while_masquerading() {
     let response = app.server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    // CSR shell with sidebar bootstrap inlined.
-    assert!(body.contains("<rdrs-entries-page>"));
+    // SSR layout with sidebar bootstrap inlined.
+    assert!(!body.contains("<rdrs-entries-page>"));
     assert!(body.contains(r#"id="rdrs-sidebar-bootstrap""#));
     // Bootstrap JSON marks the original admin so the rdrs-sidebar element
     // can show the Admin nav link client-side even under masquerade.
@@ -384,13 +389,14 @@ async fn test_entries_page_with_flash() {
 
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("<rdrs-entries-page>"));
+    // Post-SSR migration: flash is embedded inline, no CSR shell.
+    assert!(!body.contains("<rdrs-entries-page>"));
     assert!(body.contains(r#"id="rdrs-flash-bootstrap""#));
     assert!(body.contains("Entries refreshed"));
 }
 
 #[tokio::test]
-async fn test_entries_page_returns_shell() {
+async fn test_entries_page_renders_ssr_layout() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
@@ -398,13 +404,14 @@ async fn test_entries_page_returns_shell() {
     let response = app.server.get("/entries").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("<rdrs-entries-page>"));
-    assert!(body.contains("/static/js/pages/entries.js"));
-    assert!(!body.contains(r#"class="ssr-entries""#));
+    // SSR layout: no CSR shell, no entries.js page script.
+    assert!(!body.contains("<rdrs-entries-page>"));
+    assert!(!body.contains("/static/js/pages/entries.js"));
+    assert!(body.contains(r#"id="reading-pane""#));
 }
 
 #[tokio::test]
-async fn test_summarized_entries_page_returns_shell() {
+async fn test_summarized_entries_page_renders_ssr_layout() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
@@ -412,9 +419,10 @@ async fn test_summarized_entries_page_returns_shell() {
     let response = app.server.get("/entries/summarized").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("<rdrs-entries-page>"));
-    assert!(body.contains("/static/js/pages/entries.js"));
-    assert!(!body.contains(r#"class="ssr-entries""#));
+    // SSR layout: no CSR shell, no entries.js page script.
+    assert!(!body.contains("<rdrs-entries-page>"));
+    assert!(!body.contains("/static/js/pages/entries.js"));
+    assert!(body.contains(r#"id="reading-pane""#));
 }
 
 #[tokio::test]
@@ -558,6 +566,8 @@ async fn test_read_entries_page() {
     let response = app.server.get("/entries/read").await;
     response.assert_status_ok();
     let body = response.text();
+    // SSR layout: no CSR shell.
+    assert!(!body.contains("<rdrs-entries-page>"));
     assert!(body.contains("Read Entries") || body.contains("read"));
 }
 
@@ -570,6 +580,8 @@ async fn test_starred_entries_page() {
     let response = app.server.get("/entries/starred").await;
     response.assert_status_ok();
     let body = response.text();
+    // SSR layout: no CSR shell.
+    assert!(!body.contains("<rdrs-entries-page>"));
     assert!(body.contains("Starred Entries") || body.contains("starred"));
 }
 
@@ -582,6 +594,8 @@ async fn test_summarized_entries_page() {
     let response = app.server.get("/entries/summarized").await;
     response.assert_status_ok();
     let body = response.text();
+    // SSR layout: no CSR shell.
+    assert!(!body.contains("<rdrs-entries-page>"));
     assert!(body.contains("Summarized Entries") || body.contains("summarized"));
 }
 
@@ -1174,4 +1188,605 @@ async fn test_logged_in_page_loads_full_chrome() {
     // Both keyboard helper custom elements must be mounted.
     assert!(body.contains("<rdrs-kb-help>"));
     assert!(body.contains("<rdrs-kb-pending>"));
+}
+
+// ============================================================================
+// SSR / (unread) — PR-10 T1
+// ============================================================================
+
+#[tokio::test]
+async fn test_unread_page_renders_entry_rows() {
+    let app = create_test_app_named(default_test_config(), "test_pages_unread_ssr");
+
+    // Register and login as alice
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_unread", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_unread", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Get user id
+    let user_id: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row(
+                "SELECT id FROM user WHERE username = 'alice_unread'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Seed: category + feed + 3 entries (2 unread, 1 read)
+    let (_, entry_three_id) = app
+        .db
+        .user(move |conn| {
+            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://blog.example/feed",
+                    title: Some("Example Blog"),
+                    description: None,
+                    site_url: Some("https://blog.example"),
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+
+            let (e1, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-entry-one",
+                Some("Entry One"),
+                Some("https://blog.example/one"),
+                Some("<p>Content one</p>"),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (_, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-entry-two",
+                Some("Entry Two"),
+                Some("https://blog.example/two"),
+                Some("<p>Content two</p>"),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (e3, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-entry-three",
+                Some("Read Already"),
+                Some("https://blog.example/three"),
+                Some("<p>Content three</p>"),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            (e1.id, e3.id)
+        })
+        .await
+        .unwrap();
+
+    // Mark entry three as read
+    let _ = app
+        .db
+        .user(move |conn| rdrs::models::entry::mark_as_read(conn, entry_three_id))
+        .await
+        .unwrap();
+
+    let response = app.server.get("/").await;
+    assert_eq!(response.status_code(), StatusCode::OK);
+    let html = response.text();
+
+    // SSR rows present (CSR shell must be gone)
+    assert!(
+        !html.contains("<rdrs-entries-page"),
+        "CSR shell should be gone"
+    );
+    assert!(html.contains("data-entry-row"), "rows should be SSR'd");
+    assert!(html.contains("Entry One"), "unread entry should appear");
+    assert!(html.contains("Entry Two"), "unread entry should appear");
+    assert!(
+        !html.contains("Read Already"),
+        "read entries should be filtered out on /"
+    );
+
+    // Reading pane placeholder + swap target
+    assert!(html.contains(r#"id="reading-pane""#));
+    assert!(html.contains("Select an entry"));
+}
+
+// ============================================================================
+// SSR entries family — PR-10 T2
+// ============================================================================
+
+#[tokio::test]
+async fn test_entries_page_renders_ssr_rows() {
+    let app = create_test_app_named(default_test_config(), "test_pages_entries_ssr");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_entries", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_entries", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let user_id: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row(
+                "SELECT id FROM user WHERE username = 'alice_entries'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Seed: 3 entries — all visible on /entries (no filter exclusions).
+    app.db
+        .user(move |conn| {
+            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://entries.example/feed",
+                    title: Some("Entries Blog"),
+                    description: None,
+                    site_url: Some("https://entries.example"),
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-e1",
+                Some("Entries Alpha"),
+                Some("https://entries.example/alpha"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-e2",
+                Some("Entries Beta"),
+                Some("https://entries.example/beta"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-e3",
+                Some("Entries Gamma"),
+                Some("https://entries.example/gamma"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    let response = app.server.get("/entries").await;
+    assert_eq!(response.status_code(), StatusCode::OK);
+    let html = response.text();
+
+    assert!(
+        !html.contains("<rdrs-entries-page"),
+        "CSR shell should be gone"
+    );
+    assert!(html.contains("data-entry-row"), "rows should be SSR'd");
+    assert!(html.contains("Entries Alpha"), "entry should appear");
+    assert!(html.contains("Entries Beta"), "entry should appear");
+    assert!(html.contains("Entries Gamma"), "entry should appear");
+    assert!(html.contains(r#"id="reading-pane""#));
+    assert!(html.contains("Select an entry"));
+}
+
+#[tokio::test]
+async fn test_read_entries_page_renders_ssr_rows() {
+    let app = create_test_app_named(default_test_config(), "test_pages_read_ssr");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_read", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_read", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let user_id: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row(
+                "SELECT id FROM user WHERE username = 'alice_read'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    let (read_one_id, read_two_id, unread_id) = app
+        .db
+        .user(move |conn| {
+            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://read.example/feed",
+                    title: Some("Read Blog"),
+                    description: None,
+                    site_url: Some("https://read.example"),
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (e1, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-r1",
+                Some("Read Alpha"),
+                Some("https://read.example/alpha"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (e2, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-r2",
+                Some("Read Beta"),
+                Some("https://read.example/beta"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (e3, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-r3",
+                Some("Unread One"),
+                Some("https://read.example/unread"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            (e1.id, e2.id, e3.id)
+        })
+        .await
+        .unwrap();
+
+    // Mark two entries as read; leave one unread.
+    let _ = app
+        .db
+        .user(move |conn| rdrs::models::entry::mark_as_read(conn, read_one_id))
+        .await
+        .unwrap();
+    let _ = app
+        .db
+        .user(move |conn| rdrs::models::entry::mark_as_read(conn, read_two_id))
+        .await
+        .unwrap();
+    let _ = unread_id; // suppress warning
+
+    let response = app.server.get("/entries/read").await;
+    assert_eq!(response.status_code(), StatusCode::OK);
+    let html = response.text();
+
+    assert!(
+        !html.contains("<rdrs-entries-page"),
+        "CSR shell should be gone"
+    );
+    assert!(html.contains("data-entry-row"), "rows should be SSR'd");
+    assert!(html.contains("Read Alpha"), "read entry should appear");
+    assert!(html.contains("Read Beta"), "read entry should appear");
+    assert!(
+        !html.contains("Unread One"),
+        "unread entry should be filtered out on /entries/read"
+    );
+    assert!(html.contains(r#"id="reading-pane""#));
+    assert!(html.contains("Select an entry"));
+}
+
+#[tokio::test]
+async fn test_starred_entries_page_renders_ssr_rows() {
+    let app = create_test_app_named(default_test_config(), "test_pages_starred_ssr");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_starred", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_starred", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let user_id: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row(
+                "SELECT id FROM user WHERE username = 'alice_starred'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    let (starred_one_id, starred_two_id) = app
+        .db
+        .user(move |conn| {
+            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://starred.example/feed",
+                    title: Some("Starred Blog"),
+                    description: None,
+                    site_url: Some("https://starred.example"),
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (e1, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-s1",
+                Some("Starred Alpha"),
+                Some("https://starred.example/alpha"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (e2, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-s2",
+                Some("Starred Beta"),
+                Some("https://starred.example/beta"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-s3",
+                Some("Unstarred One"),
+                Some("https://starred.example/unstarred"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            (e1.id, e2.id)
+        })
+        .await
+        .unwrap();
+
+    // Star the two matching entries.
+    let _ = app
+        .db
+        .user(move |conn| rdrs::models::entry::star_entry(conn, starred_one_id))
+        .await
+        .unwrap();
+    let _ = app
+        .db
+        .user(move |conn| rdrs::models::entry::star_entry(conn, starred_two_id))
+        .await
+        .unwrap();
+
+    let response = app.server.get("/entries/starred").await;
+    assert_eq!(response.status_code(), StatusCode::OK);
+    let html = response.text();
+
+    assert!(
+        !html.contains("<rdrs-entries-page"),
+        "CSR shell should be gone"
+    );
+    assert!(html.contains("data-entry-row"), "rows should be SSR'd");
+    assert!(
+        html.contains("Starred Alpha"),
+        "starred entry should appear"
+    );
+    assert!(html.contains("Starred Beta"), "starred entry should appear");
+    assert!(
+        !html.contains("Unstarred One"),
+        "unstarred entry should be filtered out on /entries/starred"
+    );
+    assert!(html.contains(r#"id="reading-pane""#));
+    assert!(html.contains("Select an entry"));
+}
+
+#[tokio::test]
+async fn test_summarized_entries_page_renders_ssr_rows() {
+    let app = create_test_app_named(default_test_config(), "test_pages_summarized_ssr");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_summarized", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_summarized", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let user_id: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row(
+                "SELECT id FROM user WHERE username = 'alice_summarized'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    let (sum_one_id, sum_two_id) = app
+        .db
+        .user(move |conn| {
+            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://sum.example/feed",
+                    title: Some("Summary Blog"),
+                    description: None,
+                    site_url: Some("https://sum.example"),
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (e1, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-sum1",
+                Some("Summarized Alpha"),
+                Some("https://sum.example/alpha"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (e2, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-sum2",
+                Some("Summarized Beta"),
+                Some("https://sum.example/beta"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-sum3",
+                Some("No Summary One"),
+                Some("https://sum.example/nosummary"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            (e1.id, e2.id)
+        })
+        .await
+        .unwrap();
+
+    // Insert entry_summary rows for the two matching entries.
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "INSERT INTO entry_summary (user_id, entry_id, status, summary_text) \
+                 VALUES (?1, ?2, 'completed', 'Summary text alpha')",
+                rusqlite::params![user_id, sum_one_id],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO entry_summary (user_id, entry_id, status, summary_text) \
+                 VALUES (?1, ?2, 'completed', 'Summary text beta')",
+                rusqlite::params![user_id, sum_two_id],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    let response = app.server.get("/entries/summarized").await;
+    assert_eq!(response.status_code(), StatusCode::OK);
+    let html = response.text();
+
+    assert!(
+        !html.contains("<rdrs-entries-page"),
+        "CSR shell should be gone"
+    );
+    assert!(html.contains("data-entry-row"), "rows should be SSR'd");
+    assert!(
+        html.contains("Summarized Alpha"),
+        "summarized entry should appear"
+    );
+    assert!(
+        html.contains("Summarized Beta"),
+        "summarized entry should appear"
+    );
+    assert!(
+        !html.contains("No Summary One"),
+        "entry without summary should be filtered out on /entries/summarized"
+    );
+    assert!(html.contains(r#"id="reading-pane""#));
+    assert!(html.contains("Select an entry"));
 }

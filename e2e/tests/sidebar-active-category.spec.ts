@@ -23,7 +23,8 @@ test.describe("sidebar marks the current category as active", () => {
     await page.waitForURL(`${serverUrl}/`);
   }
 
-  test("/categories/{id}/entries highlights the matching category", async ({
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("/categories/{id}/entries highlights the matching category", async ({
     page,
     serverUrl,
   }) => {
@@ -38,7 +39,8 @@ test.describe("sidebar marks the current category as active", () => {
     await expect(bLink).not.toHaveClass(/(^|\s)active(\s|$)/);
   });
 
-  test("/feeds/{id}/entries highlights the feed's parent category", async ({
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("/feeds/{id}/entries highlights the feed's parent category", async ({
     page,
     serverUrl,
   }) => {

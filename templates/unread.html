@@ -1,9 +1,1 @@
-{% extends "app_layout.html" %}
-
-{% block page_script %}
-    <script type="module" src="/static/js/pages/entries.js?v={{ layout.git_version }}"></script>
-{% endblock %}
-
-{% block page %}
-    <rdrs-entries-page></rdrs-entries-page>
-{% endblock %}
+{% extends "_entries_layout.html" %}

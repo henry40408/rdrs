@@ -63,6 +63,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/user", get(handlers::user::get_current_user))
         .route("/api/me", get(handlers::user::get_me))
         .route("/api/sidebar", get(handlers::user::get_sidebar))
+        // GET /sidebar/unread — SSR polling target for the sidebar unread-count
+        // block. Polled by app.js every 20 s; returns `_sidebar_unread.html`.
+        .route(
+            "/sidebar/unread",
+            get(handlers::entries::sidebar_unread_fragment),
+        )
         .route("/api/user-settings", get(handlers::user::get_user_settings))
         // GET /api/feeds is still consumed by static/js/pages/entries.js
         // (feed-icon column on entries list). PR-10 (entries SSR) is the last
@@ -159,6 +165,30 @@ pub fn create_router(state: AppState) -> Router {
             get(handlers::pages::summarized_entries_page),
         )
         .route("/entries/{id}", get(handlers::pages::entry_page))
+        // Fragment endpoint for the reading pane. Registered after /entries/{id} so
+        // Axum's trie router resolves the literal `/fragment` segment before the
+        // bare `{id}` parameter catch-all. JSON /api/entries/{id} stays alive until
+        // PR-11 deletes its last consumer.
+        .route(
+            "/entries/{id}/fragment",
+            get(handlers::entries::entry_fragment),
+        )
+        // Star / read toggle action endpoints. Return multi-target HTML
+        // (`_entry_actions_multi.html`) swapping the row + sidebar-unread.
+        // Registered after /entries/{id}/fragment so literal path segments
+        // (`star`, `read`) resolve before any future `{action}` wildcard.
+        .route(
+            "/entries/{id}/star",
+            post(handlers::entries::star_entry_form),
+        )
+        .route(
+            "/entries/{id}/read",
+            post(handlers::entries::read_entry_form),
+        )
+        .route(
+            "/entries/{id}/summarize",
+            post(handlers::entries::summarize_entry_form),
+        )
         .route("/search", get(handlers::pages::search_page))
         .route("/statistics", get(handlers::pages::statistics_page))
         .route(

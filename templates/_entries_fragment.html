@@ -1,0 +1,12 @@
+<template data-swap-target="[data-entries-list]">
+    <div class="list-pane-body" data-entries-list>
+        {% for r in entries %}{% include "_entry_row.html" %}{% endfor %}
+        {% if let Some(after) = next_cursor %}
+            <form id="load-more" method="get" action="{{ path }}" data-swap="[data-entries-list]" class="load-more-form">
+                <input type="hidden" name="after" value="{{ after }}">
+                <input type="hidden" name="fragment" value="1">
+                <button type="submit" data-testid="load-more-btn">Load more</button>
+            </form>
+        {% endif %}
+    </div>
+</template>

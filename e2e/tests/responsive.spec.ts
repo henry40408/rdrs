@@ -49,7 +49,8 @@ test.describe("Mobile layout", () => {
     await expect(sidebar).not.toHaveClass(/open/);
   });
 
-  test("reading pane shows back button and prev/next nav", async ({
+  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen overlay route with back/prev/next nav. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("reading pane shows back button and prev/next nav", async ({
     page,
   }) => {
     // Open first entry in reading pane
@@ -70,7 +71,8 @@ test.describe("Mobile layout", () => {
     await expect(nextBtn).toBeEnabled();
   });
 
-  test("prev/next buttons navigate between entries", async ({ page }) => {
+  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen overlay route with prev/next nav buttons. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("prev/next buttons navigate between entries", async ({ page }) => {
     // Open first entry
     await page.getByTestId("entry-title-link").first().click();
     await expect(page.locator(".reading-pane-title")).toBeVisible();
@@ -91,7 +93,8 @@ test.describe("Mobile layout", () => {
     await expect(page.locator(".reading-pane-title")).toHaveText(title1!);
   });
 
-  test("back button returns to entry list from reading pane", async ({
+  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen overlay route with back button. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("back button returns to entry list from reading pane", async ({
     page,
   }) => {
     // Open first entry
@@ -128,7 +131,8 @@ test.describe("Mobile layout", () => {
     await expect(page.locator(".reading-pane-title")).not.toBeVisible();
   });
 
-  test("reading pane is full-screen overlay", async ({ page }) => {
+  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen fixed overlay. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("reading pane is full-screen overlay", async ({ page }) => {
     await page.getByTestId("entry-title-link").first().click();
     await expect(page.locator(".reading-pane-title")).toBeVisible();
 
@@ -145,7 +149,8 @@ test.describe("Mobile layout", () => {
     expect(box!.width).toBeGreaterThan(370);
   });
 
-  test("sidebar toggle is hidden when reading pane is active", async ({
+  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen overlay; hamburger visibility follows different rules. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("sidebar toggle is hidden when reading pane is active", async ({
     page,
   }) => {
     await page.getByTestId("entry-title-link").first().click();
@@ -235,7 +240,8 @@ test.describe("Tablet layout", () => {
     await expect(sidebar).toHaveClass(/open/);
   });
 
-  test("reading pane is full-screen overlay", async ({ page }) => {
+  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen fixed overlay. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("reading pane is full-screen overlay", async ({ page }) => {
     await page.getByTestId("entry-title-link").first().click();
     await expect(page.locator(".reading-pane-title")).toBeVisible();
 
@@ -244,7 +250,8 @@ test.describe("Tablet layout", () => {
     await expect(pane).toHaveCSS("position", "fixed");
   });
 
-  test("reading pane has back and prev/next buttons", async ({ page }) => {
+  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen overlay route with back/prev/next nav. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("reading pane has back and prev/next buttons", async ({ page }) => {
     await page.getByTestId("entry-title-link").first().click();
     await expect(page.locator(".reading-pane-title")).toBeVisible();
 

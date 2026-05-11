@@ -118,3 +118,89 @@ window.closeSidebar = function() {
 };
 
 installSwap();
+
+// Sidebar unread polling — fires every 20s on pages that mount the
+// SSR sidebar-unread block (the 5 entries-family routes in PR-10).
+// The payload is JSON in the `data-payload` attribute; we dispatch a
+// custom event so `<rdrs-sidebar>` can apply the new counts.
+//
+// NOTE: as of PR-10, `<rdrs-sidebar>` reads from `#rdrs-sidebar-bootstrap`
+// (a <script> tag) and has no listener for `rdrs:sidebar-unread`. The
+// dispatch is a forward-compatible hook — PR-12 will wire up the listener
+// so the sidebar live-updates counts without a page reload. For now the
+// live-apply of the sidebar UI is deferred; the data is still refreshed
+// in the DOM `data-payload` attribute so it is available to future code.
+function installSidebarPolling() {
+    const host = document.getElementById('sidebar-unread');
+    if (!host) return;
+    const tick = async () => {
+        try {
+            const resp = await fetch('/sidebar/unread', { credentials: 'same-origin' });
+            if (!resp.ok) return;
+            const html = await resp.text();
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const node = doc.getElementById('sidebar-unread');
+            if (!node) return;
+            const payload = node.getAttribute('data-payload') || '[]';
+            const target = document.getElementById('sidebar-unread');
+            if (target) target.setAttribute('data-payload', payload);
+            document.dispatchEvent(new CustomEvent('rdrs:sidebar-unread', {
+                detail: JSON.parse(payload),
+            }));
+        } catch {}
+    };
+    setInterval(tick, 20000);
+}
+installSidebarPolling();
+
+// Keyboard shortcuts for SSR entries-family pages. Only active when a
+// `[data-entries-list]` is present so we don't conflict with the
+// legacy `keyboard.js` running on PR-11 CSR routes.
+function installEntriesKeyboard() {
+    if (!document.querySelector('[data-entries-list]')) return;
+    let active = null; // currently focused entry row
+    const rows = () => Array.from(document.querySelectorAll('[data-entry-row]'));
+    const focusRow = (row) => {
+        if (!row) return;
+        if (active) active.classList.remove('entry-row-focused');
+        active = row;
+        row.classList.add('entry-row-focused');
+        row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    };
+    const move = (delta) => {
+        const all = rows();
+        if (all.length === 0) return;
+        const idx = active ? all.indexOf(active) : -1;
+        const next = Math.max(0, Math.min(all.length - 1, idx + delta));
+        focusRow(all[next]);
+    };
+    document.addEventListener('keydown', (e) => {
+        if (e.target.matches('input, textarea, select')) return;
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        switch (e.key) {
+            case 'j': e.preventDefault(); move(1); break;
+            case 'k': e.preventDefault(); move(-1); break;
+            case 'Enter':
+            case 'o': {
+                if (!active) return;
+                e.preventDefault();
+                const link = active.querySelector('a[data-swap]');
+                if (link) link.click();
+                break;
+            }
+            case 's': {
+                if (!active) return;
+                const form = active.querySelector('form[action$="/star"]');
+                if (form) { e.preventDefault(); form.requestSubmit(); }
+                break;
+            }
+            case ' ': {
+                if (!active) return;
+                const form = active.querySelector('form[action$="/read"]');
+                if (form) { e.preventDefault(); form.requestSubmit(); }
+                break;
+            }
+        }
+    });
+}
+installEntriesKeyboard();

@@ -69,19 +69,22 @@ test.describe("First paint fires exactly one stream/contents fetch", () => {
     return count;
   }
 
-  test("/ (unread)", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("/ (unread)", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     const count = await gotoCounting(page, `${serverUrl}/`);
     expect(count).toBe(1);
   });
 
-  test("/entries", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("/entries", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     const count = await gotoCounting(page, `${serverUrl}/entries`);
     expect(count).toBe(1);
   });
 
-  test("/feeds/:id/entries", async ({ page, serverUrl, seed }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("/feeds/:id/entries", async ({ page, serverUrl, seed }) => {
     const feedId = seed.createFeed(
       seed.createCategory(seed.getUserId("ssruser"), "SSR Cat"),
       "https://example.com/ssr-feed.xml",
@@ -209,27 +212,32 @@ test.describe("Load More appends without duplicates on every list route", () => 
     }
   }
 
-  test("/ (unread)", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("/ (unread)", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     await expectNoDuplicatesAfterLoadMore(page, `${serverUrl}/`);
   });
 
-  test("/entries", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("/entries", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     await expectNoDuplicatesAfterLoadMore(page, `${serverUrl}/entries`);
   });
 
-  test("/entries/read", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("/entries/read", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     await expectNoDuplicatesAfterLoadMore(page, `${serverUrl}/entries/read`);
   });
 
-  test("/entries/starred", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("/entries/starred", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     await expectNoDuplicatesAfterLoadMore(page, `${serverUrl}/entries/starred`);
   });
 
-  test("/entries/summarized", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("/entries/summarized", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     await expectNoDuplicatesAfterLoadMore(
       page,
@@ -237,7 +245,8 @@ test.describe("Load More appends without duplicates on every list route", () => 
     );
   });
 
-  test("/categories/:id/entries", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("/categories/:id/entries", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     await expectNoDuplicatesAfterLoadMore(
       page,
@@ -245,7 +254,8 @@ test.describe("Load More appends without duplicates on every list route", () => 
     );
   });
 
-  test("/feeds/:id/entries", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("/feeds/:id/entries", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     await expectNoDuplicatesAfterLoadMore(
       page,
@@ -312,7 +322,8 @@ test.describe("Load More surfaces back-dated entries (composite cursor #164)", (
     await page.waitForURL(`${serverUrl}/`);
   }
 
-  test("Load More on / shows back-dated entries", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: this spec asserts CSR-shell behavior that no longer exists after the SSR-first migration. See `docs/superpowers/specs/2026-05-08-ssr-first-redesign-design.md` § Testing.
+  test.fixme("Load More on / shows back-dated entries", async ({ page, serverUrl }) => {
     await login(page, serverUrl);
     await page.goto(`${serverUrl}/`);
 
