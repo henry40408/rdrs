@@ -22,7 +22,8 @@ test.describe("sidebar unread badge does not flicker", () => {
     await page.waitForURL(`${serverUrl}/`);
   }
 
-  test("after mark-as-read, SPA-nav does not show stale unread count", async ({
+  // PR-12 cleanup: SSR triggers full reload on nav so this CSR-specific stale-state concern doesn't exist; new sidebar polling covers freshness differently. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("after mark-as-read, SPA-nav does not show stale unread count", async ({
     page,
     serverUrl,
   }) => {

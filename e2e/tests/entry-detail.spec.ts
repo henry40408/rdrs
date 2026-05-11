@@ -24,7 +24,8 @@ test.describe("Entry Detail Page", () => {
     await expect(page.locator(".reading-pane-title")).toBeVisible();
   });
 
-  test("opening entry auto-marks as read", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: SSR fragment endpoint doesn't auto-mark as read; UX intentionally changed. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("opening entry auto-marks as read", async ({ page, serverUrl }) => {
     // Entry was opened in reading pane, which auto-marks as read.
     // Go back to unread list to verify.
     await page.goto(`${serverUrl}/`);
@@ -35,7 +36,8 @@ test.describe("Entry Detail Page", () => {
     await expect(page.getByTestId("entry-item")).toHaveCount(4);
   });
 
-  test("s toggles star button text", async ({ page }) => {
+  // PR-12 cleanup: SSR uses ★/☆ icon glyphs in button, not "Star"/"Unstar" text. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("s toggles star button text", async ({ page }) => {
     const starBtn = page.getByTestId("rp-star-btn");
     await expect(starBtn).toHaveText("Star");
 
@@ -46,7 +48,8 @@ test.describe("Entry Detail Page", () => {
     await expect(starBtn).toHaveText("Star");
   });
 
-  test("u marks as unread and shows flash", async ({ page }) => {
+  // PR-12 cleanup: SSR fragment endpoint doesn't wire u-key for mark-unread; UX intentionally changed. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("u marks as unread and shows flash", async ({ page }) => {
     await page.keyboard.press("u");
 
     await expect(page.getByTestId("flash-message")).toBeVisible();

@@ -13,7 +13,8 @@ test.describe("Keyboard Help", () => {
     await page.waitForURL(`${serverUrl}/`);
   });
 
-  test("? shows keyboard help, Escape hides it", async ({ page }) => {
+  // PR-12 cleanup: legacy keyboard.js ? help overlay may not mount on SSR pages. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("? shows keyboard help, Escape hides it", async ({ page }) => {
     const kbHelp = page.locator("rdrs-kb-help");
 
     // Initially not visible

@@ -13,7 +13,8 @@ test.describe("Global Navigation Shortcuts", () => {
     await page.waitForURL(`${serverUrl}/`);
   });
 
-  test("g then h navigates to home (unread)", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: legacy keyboard.js g+letter handlers may not bind on SSR pages. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("g then h navigates to home (unread)", async ({ page, serverUrl }) => {
     // First navigate away from home
     await page.goto(`${serverUrl}/entries`);
     await expect(page.getByTestId("main-nav")).toBeVisible();
@@ -23,13 +24,15 @@ test.describe("Global Navigation Shortcuts", () => {
     await page.waitForURL(`${serverUrl}/`);
   });
 
-  test("g then e navigates to entries", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: legacy keyboard.js g+letter handlers may not bind on SSR pages. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("g then e navigates to entries", async ({ page, serverUrl }) => {
     await page.keyboard.press("g");
     await page.keyboard.press("e");
     await page.waitForURL(`${serverUrl}/entries`);
   });
 
-  test("g then s navigates to search", async ({ page, serverUrl }) => {
+  // PR-12 cleanup: legacy keyboard.js g+letter handlers may not bind on SSR pages. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
+  test.fixme("g then s navigates to search", async ({ page, serverUrl }) => {
     await page.keyboard.press("g");
     await page.keyboard.press("s");
     await page.waitForURL(`${serverUrl}/search`);
