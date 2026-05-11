@@ -179,6 +179,10 @@ pub fn create_router(state: AppState) -> Router {
             "/entries/{id}/read",
             post(handlers::entries::read_entry_form),
         )
+        .route(
+            "/entries/{id}/summarize",
+            post(handlers::entries::summarize_entry_form),
+        )
         .route("/search", get(handlers::pages::search_page))
         .route("/statistics", get(handlers::pages::statistics_page))
         .route(

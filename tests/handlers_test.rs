@@ -3861,3 +3861,76 @@ async fn test_read_entry_form_toggles_and_returns_multi_target() {
         "row must not have read class after second toggle (unread)"
     );
 }
+
+// POST /entries/{id}/summarize — PR-10 T5
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_summarize_entry_form_renders_reading_pane() {
+    let app = create_test_app_named(default_test_config(), "test_summarize_entry_form");
+
+    // Register and log in as alice.
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_sum", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_sum", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed: category + feed + entry with a link.
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/sum-feed",
+                    title: Some("Sum Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-sum-test",
+                Some("Summarizable Entry"),
+                Some("https://x/sum-post"),
+                Some("<p>Content to summarize</p>"),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // POST /entries/{id}/summarize — should return reading pane with button disabled.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/summarize", entry_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        html.contains("id=\"reading-pane\""),
+        "response must contain the reading pane element"
+    );
+    assert!(
+        html.contains("disabled"),
+        "Summarize button must be disabled while summary is in-flight"
+    );
+}

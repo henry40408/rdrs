@@ -9,8 +9,8 @@ use crate::{
     error::{AppError, AppResult},
     handlers::pages::{format_relative_time, row_view_from, EntryRowView, ReadingPaneView},
     middleware::auth::PageAuthUser,
-    models::entry,
-    services::{sanitize_html, SummaryStatus},
+    models::{entry, entry_summary},
+    services::{sanitize_html, SummaryJob, SummaryStatus},
     AppState,
 };
 
@@ -179,4 +179,57 @@ pub async fn read_entry_form(
         r: row_view_from(&ewf),
         sidebar_unread_payload_json: payload_json,
     })
+}
+
+/// `POST /entries/{id}/summarize` — queue a summarization job for the entry
+/// and return the reading-pane fragment with `summary_in_flight = true` so the
+/// Summarize button is rendered disabled while the job is in flight.
+///
+/// Ownership is validated via `find_by_id_for_user` (returns 404 for entries
+/// not belonging to the user). The pending DB record is created before the
+/// cache is marked so the background worker always sees a consistent state.
+/// Kagi-config validation is deferred to the background worker.
+pub async fn summarize_entry_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<ReadingPaneFragment> {
+    let user_id = auth_user.user.id;
+
+    // Fetch the entry and extract the link needed by SummaryJob. Ownership is
+    // enforced by find_by_id_for_user's `c.user_id = ?2` join constraint.
+    let entry_link = state
+        .db
+        .user(move |conn| {
+            let ewf = entry::find_by_id_for_user(conn, user_id, entry_id)?
+                .ok_or(AppError::EntryNotFound)?;
+
+            // Create / reset the pending record in the DB before setting the
+            // in-memory cache so the state is always consistent.
+            entry_summary::upsert_pending(conn, user_id, entry_id)?;
+
+            // The link may be absent; the background worker will surface an error
+            // if so. We use an empty string as a sentinel to let the queue accept
+            // the job and fail gracefully rather than returning 400 here.
+            Ok::<_, crate::error::AppError>(ewf.entry.link.clone().unwrap_or_default())
+        })
+        .await??;
+
+    // Mark pending in the in-memory cache BEFORE enqueuing so the background
+    // worker cannot complete before the cache entry exists.
+    state.summary_cache.set_pending(user_id, entry_id);
+
+    // Best-effort enqueue: if the channel is full or closed, we still return
+    // the in-flight reading pane (the DB record is already pending).
+    let _ = state
+        .summary_tx
+        .send(SummaryJob {
+            user_id,
+            entry_id,
+            entry_link,
+        })
+        .await;
+
+    let pane = load_reading_pane(&state, user_id, entry_id).await?;
+    Ok(ReadingPaneFragment { pane })
 }
