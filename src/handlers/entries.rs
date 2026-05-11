@@ -181,6 +181,35 @@ pub async fn read_entry_form(
     })
 }
 
+/// Fragment template for the sidebar-unread polling block — renders `_sidebar_unread.html`
+/// and is returned by `GET /sidebar/unread`.
+#[derive(Template)]
+#[template(path = "_sidebar_unread.html")]
+pub struct SidebarUnreadFragment {
+    pub payload_json: String,
+}
+
+impl IntoResponse for SidebarUnreadFragment {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// `GET /sidebar/unread` — returns the `_sidebar_unread.html` partial with the
+/// current unread-count payload. Used by `app.js` as the polling target for the
+/// sidebar unread-count display (polled every 20 s via `setInterval`).
+pub async fn sidebar_unread_fragment(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+) -> AppResult<SidebarUnreadFragment> {
+    let user_id = auth_user.user.id;
+    let payload_json = build_sidebar_unread(&state, user_id).await?;
+    Ok(SidebarUnreadFragment { payload_json })
+}
+
 /// `POST /entries/{id}/summarize` — queue a summarization job for the entry
 /// and return the reading-pane fragment with `summary_in_flight = true` so the
 /// Summarize button is rendered disabled while the job is in flight.

@@ -63,6 +63,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/user", get(handlers::user::get_current_user))
         .route("/api/me", get(handlers::user::get_me))
         .route("/api/sidebar", get(handlers::user::get_sidebar))
+        // GET /sidebar/unread — SSR polling target for the sidebar unread-count
+        // block. Polled by app.js every 20 s; returns `_sidebar_unread.html`.
+        .route(
+            "/sidebar/unread",
+            get(handlers::entries::sidebar_unread_fragment),
+        )
         .route("/api/user-settings", get(handlers::user::get_user_settings))
         // GET /api/feeds is still consumed by static/js/pages/entries.js
         // (feed-icon column on entries list). PR-10 (entries SSR) is the last
