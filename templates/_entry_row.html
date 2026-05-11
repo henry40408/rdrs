@@ -1,8 +1,8 @@
 {# Single entry row. Rendered from `for r in entries` loop via _entries_layout.html.
    `data-swap` on the title link instructs app.js to swap the reading pane in-place.
    Star/read forms use `data-swap` to target the row for multi-target swap responses. #}
-<article id="entry-row-{{ r.id }}" class="entry-row{% if r.is_read %} entry-row-read{% endif %}{% if r.is_starred %} entry-row-starred{% endif %}" data-entry-row data-entry-id="{{ r.id }}">
-    <a class="entry-row-title" href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane">
+<article id="entry-row-{{ r.id }}" class="entry-row{% if r.is_read %} entry-row-read{% endif %}{% if r.is_starred %} entry-row-starred{% endif %}" data-entry-row data-entry-id="{{ r.id }}" data-testid="entry-item">
+    <a class="entry-row-title" href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" data-testid="entry-title-link">
         {% if r.feed_has_icon %}<img class="entry-row-feed-icon" src="/api/feeds/{{ r.feed_id }}/icon" alt="" loading="lazy" width="16" height="16">{% endif %}
         <span class="entry-row-feed">{{ r.feed_title }}</span>
         <span class="entry-row-headline">{{ r.title }}</span>
@@ -10,10 +10,10 @@
     </a>
     <div class="entry-row-actions">
         <form method="post" action="/entries/{{ r.id }}/star" data-swap="#entry-row-{{ r.id }}" class="entry-row-action">
-            <button type="submit" aria-label="{% if r.is_starred %}Unstar{% else %}Star{% endif %}" data-testid="star-btn-{{ r.id }}">{% if r.is_starred %}★{% else %}☆{% endif %}</button>
+            <button type="submit" aria-label="{% if r.is_starred %}Unstar{% else %}Star{% endif %}" data-testid="entry-star-action">{% if r.is_starred %}★{% else %}☆{% endif %}</button>
         </form>
         <form method="post" action="/entries/{{ r.id }}/read" data-swap="#entry-row-{{ r.id }}" class="entry-row-action">
-            <button type="submit" aria-label="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %}" data-testid="read-btn-{{ r.id }}">{% if r.is_read %}●{% else %}○{% endif %}</button>
+            <button type="submit" aria-label="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %}" data-testid="entry-read-action">{% if r.is_read %}●{% else %}○{% endif %}</button>
         </form>
     </div>
 </article>
