@@ -134,7 +134,7 @@ pub struct EntriesQuery {
 /// so `app.js` swap() replaces `[data-entries-list]` in-place.
 #[derive(Template)]
 #[template(path = "_entries_fragment.html")]
-pub struct EntriesFragmentTemplate {
+pub(crate) struct EntriesFragmentTemplate {
     pub entries: Vec<EntryRowView>,
     pub next_cursor: Option<i64>,
     pub path: &'static str,
@@ -395,12 +395,15 @@ pub async fn unread_page(
             0,
         )
         .await;
-        return EntriesFragmentTemplate {
-            entries,
-            next_cursor,
-            path: "/",
-        }
-        .into_response();
+        return (
+            flash,
+            EntriesFragmentTemplate {
+                entries,
+                next_cursor,
+                path: "/",
+            },
+        )
+            .into_response();
     }
 
     let layout = build_app_layout(&state, &auth_user, &flash).await;
@@ -861,12 +864,15 @@ pub async fn entries_page(
             0,
         )
         .await;
-        return EntriesFragmentTemplate {
-            entries,
-            next_cursor,
-            path: "/entries",
-        }
-        .into_response();
+        return (
+            flash,
+            EntriesFragmentTemplate {
+                entries,
+                next_cursor,
+                path: "/entries",
+            },
+        )
+            .into_response();
     }
 
     let layout = build_app_layout(&state, &auth_user, &flash).await;
@@ -1001,12 +1007,15 @@ pub async fn read_entries_page(
             0,
         )
         .await;
-        return EntriesFragmentTemplate {
-            entries,
-            next_cursor,
-            path: "/entries/read",
-        }
-        .into_response();
+        return (
+            flash,
+            EntriesFragmentTemplate {
+                entries,
+                next_cursor,
+                path: "/entries/read",
+            },
+        )
+            .into_response();
     }
 
     let layout = build_app_layout(&state, &auth_user, &flash).await;
@@ -1070,12 +1079,15 @@ pub async fn starred_entries_page(
             0,
         )
         .await;
-        return EntriesFragmentTemplate {
-            entries,
-            next_cursor,
-            path: "/entries/starred",
-        }
-        .into_response();
+        return (
+            flash,
+            EntriesFragmentTemplate {
+                entries,
+                next_cursor,
+                path: "/entries/starred",
+            },
+        )
+            .into_response();
     }
 
     let layout = build_app_layout(&state, &auth_user, &flash).await;
@@ -1139,12 +1151,15 @@ pub async fn summarized_entries_page(
             0,
         )
         .await;
-        return EntriesFragmentTemplate {
-            entries,
-            next_cursor,
-            path: "/entries/summarized",
-        }
-        .into_response();
+        return (
+            flash,
+            EntriesFragmentTemplate {
+                entries,
+                next_cursor,
+                path: "/entries/summarized",
+            },
+        )
+            .into_response();
     }
 
     let layout = build_app_layout(&state, &auth_user, &flash).await;
