@@ -162,9 +162,9 @@ function installEntriesKeyboard() {
     const rows = () => Array.from(document.querySelectorAll('[data-entry-row]'));
     const focusRow = (row) => {
         if (!row) return;
-        if (active) active.classList.remove('entry-row-focused');
+        if (active) active.classList.remove('selected');
         active = row;
-        row.classList.add('entry-row-focused');
+        row.classList.add('selected');
         row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     };
     const move = (delta) => {

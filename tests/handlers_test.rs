@@ -3753,8 +3753,8 @@ async fn test_star_entry_form_toggles_and_returns_multi_target() {
         "multi-target sidebar block must be present"
     );
     assert!(
-        html.contains("entry-row-starred"),
-        "row must reflect starred state after first toggle"
+        html.contains("star-icon"),
+        "row must reflect starred state via the .star-icon span after first toggle"
     );
 
     // Second POST — should unstar.
@@ -3765,8 +3765,8 @@ async fn test_star_entry_form_toggles_and_returns_multi_target() {
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
     assert!(
-        !html2.contains("entry-row-starred"),
-        "row must not have starred class after second toggle"
+        !html2.contains("star-icon"),
+        "row must not have starred indicator after second toggle"
     );
 }
 
@@ -3845,8 +3845,8 @@ async fn test_read_entry_form_toggles_and_returns_multi_target() {
         "multi-target sidebar block must be present"
     );
     assert!(
-        html.contains("entry-row-read"),
-        "row must reflect read state after first toggle"
+        html.contains(r#"class="entry-item entry-read""#),
+        "row must reflect read state via the .entry-read class after first toggle"
     );
 
     // Second POST — should mark unread.
@@ -3857,8 +3857,8 @@ async fn test_read_entry_form_toggles_and_returns_multi_target() {
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
     assert!(
-        !html2.contains("entry-row-read"),
-        "row must not have read class after second toggle (unread)"
+        !html2.contains(r#"class="entry-item entry-read""#),
+        "row must not have .entry-read class after second toggle (unread)"
     );
 }
 

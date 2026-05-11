@@ -4,35 +4,29 @@
     <div class="app-layout">
         <rdrs-sidebar active="{{ entries_layout.active }}"></rdrs-sidebar>
         <main class="main-content">
+            <rdrs-flash class="flash-container"></rdrs-flash>
             <div class="split-view">
                 <div class="list-pane">
-                    <div class="list-pane-header">
-                        <rdrs-flash class="flash-container"></rdrs-flash>
-                        <h1 class="page-title">{{ title }}</h1>
-                        {% if let Some(desc) = entries_layout.description.as_ref() %}<p class="muted">{{ desc }}</p>{% endif %}
-                    </div>
                     <div class="list-pane-body" data-entries-list>
                         {% if entries.is_empty() %}
-                            <p class="muted">{{ entries_layout.empty_message }}</p>
+                            <p class="muted" style="padding: var(--space-4);">{{ entries_layout.empty_message }}</p>
                         {% else %}
                             {% for r in entries %}{% include "_entry_row.html" %}{% endfor %}
                             {% if let Some(after) = next_cursor %}
                                 <form id="load-more" method="get" action="{{ entries_layout.path }}" data-swap="[data-entries-list]" class="load-more-form">
                                     <input type="hidden" name="after" value="{{ after }}">
                                     <input type="hidden" name="fragment" value="1">
-                                    <button type="submit" data-testid="load-more-btn">Load more</button>
+                                    <button type="submit" class="btn btn-secondary btn-sm" data-testid="load-more-btn">Load more</button>
                                 </form>
                             {% endif %}
                         {% endif %}
                     </div>
                 </div>
-                <div class="reading-pane-host">
-                    {% if let Some(pane) = reading_pane.as_ref() %}
-                        {% include "_reading_pane.html" %}
-                    {% else %}
-                        <div id="reading-pane" class="reading-pane reading-pane-empty"><p class="muted">Select an entry to read.</p></div>
-                    {% endif %}
-                </div>
+                {% if let Some(pane) = reading_pane.as_ref() %}
+                    {% include "_reading_pane.html" %}
+                {% else %}
+                    <div id="reading-pane" class="reading-pane reading-pane-empty"><p>Select an entry to read.</p></div>
+                {% endif %}
             </div>
         </main>
     </div>

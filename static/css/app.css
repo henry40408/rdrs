@@ -2121,4 +2121,24 @@ summary {
 }
 
 /* ── Entries keyboard focus ───────────────────────────────────────────── */
-.entry-row-focused { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; }
+/* SSR form-button actions inside `.entry-item-actions`. Mirrors the
+   muted-text + accent-on-hover styling of `.entry-item-actions a` so
+   form-wrapped read/star buttons read as inline action links. */
+.entry-item-actions form {
+    display: inline;
+    margin: 0;
+    padding: 0;
+}
+
+.entry-item-actions .entry-action-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--color-text-muted);
+    font: inherit;
+    cursor: pointer;
+}
+
+.entry-item-actions .entry-action-btn:hover {
+    color: var(--color-accent);
+}

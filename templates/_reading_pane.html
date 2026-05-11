@@ -1,30 +1,35 @@
-{# Reading pane content. `pane` is `ReadingPaneView`, provided either from the
-   surrounding `{% if let Some(pane) = reading_pane %}` in _entries_layout.html
-   or directly from a fragment-endpoint template struct. #}
-<article id="reading-pane" class="reading-pane">
-    <header class="reading-pane-header">
+{# Reading pane content. Matches the pre-SSR `.reading-pane-content` +
+   `.reading-pane-article` + `.reading-pane-actions` DOM the existing
+   CSS rules target. `id="reading-pane"` is the swap target. #}
+<div id="reading-pane" class="reading-pane">
+    <div class="reading-pane-content">
         <h1 class="reading-pane-title">
             {% if let Some(link) = pane.link.as_ref() %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer">{{ pane.title }}</a>{% else %}{{ pane.title }}{% endif %}
         </h1>
         <div class="reading-pane-meta">
-            <span class="muted">{{ pane.feed_title }}</span>
-            {% if let Some(author) = pane.author.as_ref() %} &middot; <span class="muted">{{ author }}</span>{% endif %}
-            {% if let Some(ts) = pane.published_at_iso.as_ref() %} &middot; <time datetime="{{ ts }}" class="muted">{{ pane.published_relative }}</time>{% endif %}
+            <span>{{ pane.feed_title }}</span>
+            {% if let Some(author) = pane.author.as_ref() %}<span>{{ author }}</span>{% endif %}
+            {% if let Some(ts) = pane.published_at_iso.as_ref() %}<time datetime="{{ ts }}">{{ pane.published_relative }}</time>{% endif %}
         </div>
         <div class="reading-pane-actions">
-            <form method="post" action="/entries/{{ pane.id }}/star" data-swap="#entry-row-{{ pane.id }}" class="reading-pane-action">
-                <button type="submit">{% if pane.is_starred %}Unstar{% else %}Star{% endif %}</button>
+            <form method="post" action="/entries/{{ pane.id }}/star" data-swap="#entry-row-{{ pane.id }}">
+                <button type="submit" class="btn-secondary btn-sm">{% if pane.is_starred %}Unstar{% else %}Star{% endif %}</button>
             </form>
-            <form method="post" action="/entries/{{ pane.id }}/read" data-swap="#entry-row-{{ pane.id }}" class="reading-pane-action">
-                <button type="submit">{% if pane.is_read %}Mark unread{% else %}Mark read{% endif %}</button>
+            <form method="post" action="/entries/{{ pane.id }}/read" data-swap="#entry-row-{{ pane.id }}">
+                <button type="submit" class="btn-secondary btn-sm">{% if pane.is_read %}Mark Unread{% else %}Mark Read{% endif %}</button>
             </form>
-            <form method="post" action="/entries/{{ pane.id }}/summarize" data-swap="#reading-pane" class="reading-pane-action">
-                <button type="submit"{% if pane.summary_in_flight %} disabled{% endif %}>Summarize</button>
+            <form method="post" action="/entries/{{ pane.id }}/summarize" data-swap="#reading-pane">
+                <button type="submit" class="btn-secondary btn-sm"{% if pane.summary_in_flight %} disabled{% endif %}>Summarize</button>
             </form>
+            {% if let Some(link) = pane.link.as_ref() %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">View Original</a>{% endif %}
         </div>
-    </header>
-    {% if let Some(summary) = pane.summary_text.as_ref() %}
-        <section class="reading-pane-summary"><h2>Summary</h2><div>{{ summary|safe }}</div></section>
-    {% endif %}
-    <section class="reading-pane-body">{{ pane.content_html|safe }}</section>
-</article>
+        {% if let Some(summary) = pane.summary_text.as_ref() %}
+        <div class="rp-summary-container">
+            <div class="summary-box">
+                <blockquote class="rp-summary-content">{{ summary|safe }}</blockquote>
+            </div>
+        </div>
+        {% endif %}
+        <article class="reading-pane-article">{{ pane.content_html|safe }}</article>
+    </div>
+</div>
