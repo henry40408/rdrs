@@ -250,3 +250,28 @@ function installMarkAsReadDropdown() {
     });
 }
 installMarkAsReadDropdown();
+
+// Entry-row click delegation. Clicking anywhere on a row (not just the
+// title link) opens the entry — matches the pre-SSR `<rdrs-entry-list>`
+// UX. We delegate to the title's `<a data-swap="#reading-pane">` so the
+// existing `installSwap()` handler picks it up (multi-target response,
+// auto-mark-as-read, sidebar update).
+function installRowClickToOpen() {
+    document.addEventListener('click', (event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey ||
+            event.shiftKey || event.altKey) return;
+        const row = event.target.closest('[data-entry-row]');
+        if (!row) return;
+        // Already-handled targets: action buttons + the title link itself.
+        if (event.target.closest('.entry-item-actions')) return;
+        if (event.target.closest('a[data-swap="#reading-pane"]')) return;
+        // Defer to any other link the user clicked (e.g. feed-title link
+        // in the meta row, if/when one is added).
+        if (event.target.closest('a')) return;
+        const link = row.querySelector('a[data-swap="#reading-pane"]');
+        if (!link) return;
+        event.preventDefault();
+        link.click();
+    });
+}
+installRowClickToOpen();
