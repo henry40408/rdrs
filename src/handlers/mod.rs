@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod auth;
 pub mod categories;
+pub mod entries;
 pub mod entry;
 pub mod favicon;
 pub mod feed;

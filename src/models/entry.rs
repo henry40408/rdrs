@@ -198,6 +198,34 @@ pub fn find_by_id_with_feed(conn: &Connection, id: i64) -> AppResult<Option<Entr
     .map_err(AppError::Database)
 }
 
+/// Fetch a single entry by id, scoped to a specific user via the feed→category
+/// ownership join. Returns `None` if the entry does not exist or belongs to a
+/// different user (callers should treat both as 404).
+pub fn find_by_id_for_user(
+    conn: &Connection,
+    user_id: i64,
+    entry_id: i64,
+) -> AppResult<Option<EntryWithFeed>> {
+    conn.query_row(
+        r#"
+        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
+               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
+               f.title, f.url, f.site_url, c.id, c.name,
+               CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon,
+               f.custom_referrer
+        FROM entry e
+        INNER JOIN feed f ON e.feed_id = f.id
+        INNER JOIN category c ON f.category_id = c.id
+        LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
+        WHERE e.id = ?1 AND c.user_id = ?2
+        "#,
+        params![entry_id, user_id],
+        row_to_entry_with_feed,
+    )
+    .optional()
+    .map_err(AppError::Database)
+}
+
 /// Fetch the sort-field value (as the exact TEXT string SQLite stores) for
 /// emitting a composite cursor. Returns `None` if the entry doesn't exist.
 pub fn fetch_sort_ts(

@@ -159,6 +159,14 @@ pub fn create_router(state: AppState) -> Router {
             get(handlers::pages::summarized_entries_page),
         )
         .route("/entries/{id}", get(handlers::pages::entry_page))
+        // Fragment endpoint for the reading pane. Registered after /entries/{id} so
+        // Axum's trie router resolves the literal `/fragment` segment before the
+        // bare `{id}` parameter catch-all. JSON /api/entries/{id} stays alive until
+        // PR-11 deletes its last consumer.
+        .route(
+            "/entries/{id}/fragment",
+            get(handlers::entries::entry_fragment),
+        )
         .route("/search", get(handlers::pages::search_page))
         .route("/statistics", get(handlers::pages::statistics_page))
         .route(

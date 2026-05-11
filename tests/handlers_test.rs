@@ -3494,3 +3494,186 @@ async fn test_import_opml_form_succeeds() {
     assert_eq!(cat_count, 1);
     assert_eq!(feed_count, 1);
 }
+
+// ============================================================================
+// GET /entries/{id}/fragment — PR-10 T3
+// ============================================================================
+
+/// Isolated app factory used by the fragment tests so they don't share the
+/// `test_handlers_app` SQLite in-memory database with the rest of the suite.
+fn create_test_app_named(config: Config, name: &str) -> TestApp {
+    let write_conn = open_shared_memory(name);
+    db::init_db(&write_conn).unwrap();
+    let read_conn = open_shared_memory(name);
+
+    let (db, _handle) = DbPool::new(write_conn, read_conn);
+    let webauthn = auth::create_webauthn(&config).unwrap();
+    let summary_cache = services::create_summary_cache(100, 24);
+    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
+
+    let state = AppState {
+        db: db.clone(),
+        config: Arc::new(config),
+        webauthn: Arc::new(webauthn),
+        summary_cache,
+        summary_tx,
+    };
+
+    let app = create_router(state);
+    let server = TestServer::builder().save_cookies().build(app);
+
+    TestApp { server, db }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_entry_fragment_renders_reading_pane() {
+    let app = create_test_app_named(default_test_config(), "test_entry_fragment_happy");
+
+    // Register and log in as alice.
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_frag", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_frag", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed: category + feed + entry with content.
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/feed",
+                    title: Some("Test Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-frag-test",
+                Some("Hello World"),
+                Some("https://x/post"),
+                Some("<p>Body text here</p>"),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    let response = app
+        .server
+        .get(&format!("/entries/{}/fragment", entry_id))
+        .await;
+
+    assert_eq!(response.status_code(), StatusCode::OK);
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.starts_with("text/html"),
+        "expected text/html, got: {content_type}"
+    );
+    let html = response.text();
+    assert!(
+        html.contains(r#"id="reading-pane""#),
+        "reading-pane id must be present"
+    );
+    assert!(html.contains("Hello World"), "entry title must appear");
+    assert!(html.contains("Body text here"), "entry body must appear");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_entry_fragment_404_for_other_user() {
+    let app = create_test_app_named(default_test_config(), "test_entry_fragment_404");
+
+    // Register alice (will be logged in).
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_404", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_404", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Insert bob + bob's entry directly via the DB — bob never logs in via the
+    // test server so alice's session cookie stays active.
+    let bob_entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let bob_id: i64 = conn
+                .execute(
+                    "INSERT INTO user (username, password_hash, role) VALUES ('bob_404', 'x', 'user')",
+                    [],
+                )
+                .map(|_| conn.last_insert_rowid())
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, bob_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://b/feed",
+                    title: Some("Bob Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-bob-entry",
+                Some("Bob's Entry"),
+                Some("https://b/post"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // Alice tries to read Bob's entry — must get 404, not 200.
+    let response = app
+        .server
+        .get(&format!("/entries/{}/fragment", bob_entry_id))
+        .await;
+
+    assert_eq!(
+        response.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user access must return 404"
+    );
+}
