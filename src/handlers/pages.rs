@@ -777,12 +777,26 @@ pub async fn feeds_import_page(
 
 /// Serves the CSR shell for `/entries` (all). The list itself is loaded by
 /// `<rdrs-entries-page>` (mode `all`) from `/reader/api/0/stream/contents`.
+/// Serves `/entries` rendered fully server-side. All entries (no filter) are
+/// fetched and rendered via `_entries_layout.html`. The reading pane is an empty
+/// placeholder until the user selects an entry.
 pub async fn entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, EntriesTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let user_id = auth_user.user.id;
+
+    let (entries, next_cursor) = build_entries_page(
+        &state,
+        user_id,
+        entry::EntryFilter::default(),
+        entry::EntrySortOrder::PublishedAt,
+        50,
+        0,
+    )
+    .await;
 
     (
         flash,
@@ -790,6 +804,15 @@ pub async fn entries_page(
             title: "Entries",
             git_version: crate::GIT_VERSION,
             layout,
+            entries,
+            reading_pane: None,
+            next_cursor,
+            entries_layout: EntriesLayoutContext {
+                active: "all",
+                description: None,
+                empty_message: "No entries.",
+                path: "/entries",
+            },
         },
     )
 }
@@ -865,13 +888,28 @@ pub async fn settings_page(
     )
 }
 
-/// Serves the CSR shell for `/entries/read`. Mode `read` in `<rdrs-entries-page>`.
+/// Serves `/entries/read` rendered fully server-side. Read-only entries are
+/// fetched and rendered via `_entries_layout.html`.
 pub async fn read_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, ReadEntriesTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let user_id = auth_user.user.id;
+
+    let (entries, next_cursor) = build_entries_page(
+        &state,
+        user_id,
+        entry::EntryFilter {
+            read_only: true,
+            ..Default::default()
+        },
+        entry::EntrySortOrder::PublishedAt,
+        50,
+        0,
+    )
+    .await;
 
     (
         flash,
@@ -879,17 +917,41 @@ pub async fn read_entries_page(
             title: "Read Entries",
             git_version: crate::GIT_VERSION,
             layout,
+            entries,
+            reading_pane: None,
+            next_cursor,
+            entries_layout: EntriesLayoutContext {
+                active: "read",
+                description: None,
+                empty_message: "No read entries.",
+                path: "/entries/read",
+            },
         },
     )
 }
 
-/// Serves the CSR shell for `/entries/starred`. Mode `starred` in `<rdrs-entries-page>`.
+/// Serves `/entries/starred` rendered fully server-side. Starred entries are
+/// fetched and rendered via `_entries_layout.html`.
 pub async fn starred_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, StarredEntriesTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let user_id = auth_user.user.id;
+
+    let (entries, next_cursor) = build_entries_page(
+        &state,
+        user_id,
+        entry::EntryFilter {
+            starred_only: true,
+            ..Default::default()
+        },
+        entry::EntrySortOrder::PublishedAt,
+        50,
+        0,
+    )
+    .await;
 
     (
         flash,
@@ -897,17 +959,41 @@ pub async fn starred_entries_page(
             title: "Starred Entries",
             git_version: crate::GIT_VERSION,
             layout,
+            entries,
+            reading_pane: None,
+            next_cursor,
+            entries_layout: EntriesLayoutContext {
+                active: "starred",
+                description: None,
+                empty_message: "No starred entries.",
+                path: "/entries/starred",
+            },
         },
     )
 }
 
-/// Serves the CSR shell for `/entries/summarized`. Mode `summarized` in `<rdrs-entries-page>`.
+/// Serves `/entries/summarized` rendered fully server-side. Entries that have
+/// an associated summary are fetched and rendered via `_entries_layout.html`.
 pub async fn summarized_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, SummarizedEntriesTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let user_id = auth_user.user.id;
+
+    let (entries, next_cursor) = build_entries_page(
+        &state,
+        user_id,
+        entry::EntryFilter {
+            has_summary: Some(true),
+            ..Default::default()
+        },
+        entry::EntrySortOrder::PublishedAt,
+        50,
+        0,
+    )
+    .await;
 
     (
         flash,
@@ -915,6 +1001,15 @@ pub async fn summarized_entries_page(
             title: "Summarized Entries",
             git_version: crate::GIT_VERSION,
             layout,
+            entries,
+            reading_pane: None,
+            next_cursor,
+            entries_layout: EntriesLayoutContext {
+                active: "summarized",
+                description: None,
+                empty_message: "No summarized entries.",
+                path: "/entries/summarized",
+            },
         },
     )
 }
@@ -1632,6 +1727,10 @@ pub struct EntriesTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub entries: Vec<EntryRowView>,
+    pub reading_pane: Option<ReadingPaneView>,
+    pub next_cursor: Option<i64>,
+    pub entries_layout: EntriesLayoutContext,
 }
 
 impl IntoResponse for EntriesTemplate {
@@ -1650,6 +1749,10 @@ pub struct ReadEntriesTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub entries: Vec<EntryRowView>,
+    pub reading_pane: Option<ReadingPaneView>,
+    pub next_cursor: Option<i64>,
+    pub entries_layout: EntriesLayoutContext,
 }
 
 impl IntoResponse for ReadEntriesTemplate {
@@ -1668,6 +1771,10 @@ pub struct StarredEntriesTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub entries: Vec<EntryRowView>,
+    pub reading_pane: Option<ReadingPaneView>,
+    pub next_cursor: Option<i64>,
+    pub entries_layout: EntriesLayoutContext,
 }
 
 impl IntoResponse for StarredEntriesTemplate {
@@ -1686,6 +1793,10 @@ pub struct SummarizedEntriesTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub entries: Vec<EntryRowView>,
+    pub reading_pane: Option<ReadingPaneView>,
+    pub next_cursor: Option<i64>,
+    pub entries_layout: EntriesLayoutContext,
 }
 
 impl IntoResponse for SummarizedEntriesTemplate {
