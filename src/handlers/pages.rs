@@ -120,6 +120,35 @@ pub(crate) async fn build_entries_page(
     (views, next_cursor)
 }
 
+/// Query parameters for the Load-More fragment dispatch on the 5 entries pages.
+/// When `fragment == Some(1)`, the handler returns an `EntriesFragmentTemplate`
+/// (prefix-rerender from offset 0 to `after + page_size`) instead of the full page.
+#[derive(serde::Deserialize, Default)]
+pub struct EntriesQuery {
+    pub fragment: Option<u8>,
+    pub after: Option<i64>,
+}
+
+/// Fragment template for the Load-More response.
+/// Wraps a re-rendered `data-entries-list` div in a multi-target `<template>` block
+/// so `app.js` swap() replaces `[data-entries-list]` in-place.
+#[derive(Template)]
+#[template(path = "_entries_fragment.html")]
+pub struct EntriesFragmentTemplate {
+    pub entries: Vec<EntryRowView>,
+    pub next_cursor: Option<i64>,
+    pub path: &'static str,
+}
+
+impl IntoResponse for EntriesFragmentTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
 /// Format a datetime as a human-readable relative time string.
 /// Returns (relative_text, iso_datetime_for_tooltip).
 pub fn format_relative_time(dt: Option<chrono::DateTime<chrono::Utc>>) -> (String, String) {
@@ -338,23 +367,49 @@ pub async fn register_page(
 /// from the DB, mapped to `EntryRowView`s, and rendered via `_entries_layout.html`
 /// which includes `_entry_row.html` per row. The reading pane is an empty
 /// placeholder until the user selects an entry (swap via `app.js`).
+///
+/// When `?fragment=1&after=<offset>` is present the handler returns a
+/// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`).
 pub async fn unread_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, UnreadTemplate) {
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    Query(query): Query<EntriesQuery>,
+) -> Response {
+    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
+    let filter = entry::EntryFilter {
+        unread_only: true,
+        ..Default::default()
+    };
 
+    if query.fragment == Some(1) {
+        let after = query.after.unwrap_or(0).max(0);
+        let limit = after + PAGE_SIZE;
+        let (entries, next_cursor) = build_entries_page(
+            &state,
+            user_id,
+            filter,
+            entry::EntrySortOrder::PublishedAt,
+            limit,
+            0,
+        )
+        .await;
+        return EntriesFragmentTemplate {
+            entries,
+            next_cursor,
+            path: "/",
+        }
+        .into_response();
+    }
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
     let (entries, next_cursor) = build_entries_page(
         &state,
         user_id,
-        entry::EntryFilter {
-            unread_only: true,
-            ..Default::default()
-        },
+        filter,
         entry::EntrySortOrder::PublishedAt,
-        50,
+        PAGE_SIZE,
         0,
     )
     .await;
@@ -376,6 +431,7 @@ pub async fn unread_page(
             },
         },
     )
+        .into_response()
 }
 
 /// Serves `/admin` rendered fully server-side. The user table is rendered
@@ -780,20 +836,46 @@ pub async fn feeds_import_page(
 /// Serves `/entries` rendered fully server-side. All entries (no filter) are
 /// fetched and rendered via `_entries_layout.html`. The reading pane is an empty
 /// placeholder until the user selects an entry.
+///
+/// When `?fragment=1&after=<offset>` is present the handler returns a
+/// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`).
 pub async fn entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, EntriesTemplate) {
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    Query(query): Query<EntriesQuery>,
+) -> Response {
+    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
+    let filter = entry::EntryFilter::default();
 
+    if query.fragment == Some(1) {
+        let after = query.after.unwrap_or(0).max(0);
+        let limit = after + PAGE_SIZE;
+        let (entries, next_cursor) = build_entries_page(
+            &state,
+            user_id,
+            filter,
+            entry::EntrySortOrder::PublishedAt,
+            limit,
+            0,
+        )
+        .await;
+        return EntriesFragmentTemplate {
+            entries,
+            next_cursor,
+            path: "/entries",
+        }
+        .into_response();
+    }
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
     let (entries, next_cursor) = build_entries_page(
         &state,
         user_id,
-        entry::EntryFilter::default(),
+        filter,
         entry::EntrySortOrder::PublishedAt,
-        50,
+        PAGE_SIZE,
         0,
     )
     .await;
@@ -815,6 +897,7 @@ pub async fn entries_page(
             },
         },
     )
+        .into_response()
 }
 
 /// Query parameters for the entry page redirect.
@@ -890,23 +973,49 @@ pub async fn settings_page(
 
 /// Serves `/entries/read` rendered fully server-side. Read-only entries are
 /// fetched and rendered via `_entries_layout.html`.
+///
+/// When `?fragment=1&after=<offset>` is present the handler returns a
+/// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`).
 pub async fn read_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, ReadEntriesTemplate) {
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    Query(query): Query<EntriesQuery>,
+) -> Response {
+    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
+    let filter = entry::EntryFilter {
+        read_only: true,
+        ..Default::default()
+    };
 
+    if query.fragment == Some(1) {
+        let after = query.after.unwrap_or(0).max(0);
+        let limit = after + PAGE_SIZE;
+        let (entries, next_cursor) = build_entries_page(
+            &state,
+            user_id,
+            filter,
+            entry::EntrySortOrder::PublishedAt,
+            limit,
+            0,
+        )
+        .await;
+        return EntriesFragmentTemplate {
+            entries,
+            next_cursor,
+            path: "/entries/read",
+        }
+        .into_response();
+    }
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
     let (entries, next_cursor) = build_entries_page(
         &state,
         user_id,
-        entry::EntryFilter {
-            read_only: true,
-            ..Default::default()
-        },
+        filter,
         entry::EntrySortOrder::PublishedAt,
-        50,
+        PAGE_SIZE,
         0,
     )
     .await;
@@ -928,27 +1037,54 @@ pub async fn read_entries_page(
             },
         },
     )
+        .into_response()
 }
 
 /// Serves `/entries/starred` rendered fully server-side. Starred entries are
 /// fetched and rendered via `_entries_layout.html`.
+///
+/// When `?fragment=1&after=<offset>` is present the handler returns a
+/// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`).
 pub async fn starred_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, StarredEntriesTemplate) {
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    Query(query): Query<EntriesQuery>,
+) -> Response {
+    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
+    let filter = entry::EntryFilter {
+        starred_only: true,
+        ..Default::default()
+    };
 
+    if query.fragment == Some(1) {
+        let after = query.after.unwrap_or(0).max(0);
+        let limit = after + PAGE_SIZE;
+        let (entries, next_cursor) = build_entries_page(
+            &state,
+            user_id,
+            filter,
+            entry::EntrySortOrder::PublishedAt,
+            limit,
+            0,
+        )
+        .await;
+        return EntriesFragmentTemplate {
+            entries,
+            next_cursor,
+            path: "/entries/starred",
+        }
+        .into_response();
+    }
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
     let (entries, next_cursor) = build_entries_page(
         &state,
         user_id,
-        entry::EntryFilter {
-            starred_only: true,
-            ..Default::default()
-        },
+        filter,
         entry::EntrySortOrder::PublishedAt,
-        50,
+        PAGE_SIZE,
         0,
     )
     .await;
@@ -970,27 +1106,54 @@ pub async fn starred_entries_page(
             },
         },
     )
+        .into_response()
 }
 
 /// Serves `/entries/summarized` rendered fully server-side. Entries that have
 /// an associated summary are fetched and rendered via `_entries_layout.html`.
+///
+/// When `?fragment=1&after=<offset>` is present the handler returns a
+/// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`).
 pub async fn summarized_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
-) -> (Flash, SummarizedEntriesTemplate) {
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    Query(query): Query<EntriesQuery>,
+) -> Response {
+    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
+    let filter = entry::EntryFilter {
+        has_summary: Some(true),
+        ..Default::default()
+    };
 
+    if query.fragment == Some(1) {
+        let after = query.after.unwrap_or(0).max(0);
+        let limit = after + PAGE_SIZE;
+        let (entries, next_cursor) = build_entries_page(
+            &state,
+            user_id,
+            filter,
+            entry::EntrySortOrder::PublishedAt,
+            limit,
+            0,
+        )
+        .await;
+        return EntriesFragmentTemplate {
+            entries,
+            next_cursor,
+            path: "/entries/summarized",
+        }
+        .into_response();
+    }
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
     let (entries, next_cursor) = build_entries_page(
         &state,
         user_id,
-        entry::EntryFilter {
-            has_summary: Some(true),
-            ..Default::default()
-        },
+        filter,
         entry::EntrySortOrder::PublishedAt,
-        50,
+        PAGE_SIZE,
         0,
     )
     .await;
@@ -1012,6 +1175,7 @@ pub async fn summarized_entries_page(
             },
         },
     )
+        .into_response()
 }
 
 /// Serves the CSR shell for `/categories/{id}/entries`. Mode `category`
