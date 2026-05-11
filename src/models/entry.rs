@@ -581,6 +581,87 @@ pub fn toggle_star(conn: &Connection, id: i64) -> AppResult<Entry> {
     find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
 }
 
+/// Toggle the starred state for an entry, scoped to the owning user.
+///
+/// Returns `None` if the entry does not exist or belongs to a different user
+/// (callers treat both as 404). On success returns the updated `EntryWithFeed`.
+pub fn toggle_starred(
+    conn: &Connection,
+    user_id: i64,
+    entry_id: i64,
+) -> AppResult<Option<EntryWithFeed>> {
+    let cur = find_by_id_for_user(conn, user_id, entry_id)?;
+    let Some(e) = cur else {
+        return Ok(None);
+    };
+    if e.entry.starred_at.is_some() {
+        conn.execute(
+            "UPDATE entry SET starred_at = NULL, updated_at = datetime('now') WHERE id = ?1",
+            params![entry_id],
+        )?;
+    } else {
+        conn.execute(
+            "UPDATE entry SET starred_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1",
+            params![entry_id],
+        )?;
+    }
+    find_by_id_for_user(conn, user_id, entry_id)
+}
+
+/// Toggle the read state for an entry, scoped to the owning user.
+///
+/// Returns `None` if the entry does not exist or belongs to a different user.
+pub fn toggle_read(
+    conn: &Connection,
+    user_id: i64,
+    entry_id: i64,
+) -> AppResult<Option<EntryWithFeed>> {
+    let cur = find_by_id_for_user(conn, user_id, entry_id)?;
+    let Some(e) = cur else {
+        return Ok(None);
+    };
+    if e.entry.read_at.is_some() {
+        conn.execute(
+            "UPDATE entry SET read_at = NULL, updated_at = datetime('now') WHERE id = ?1",
+            params![entry_id],
+        )?;
+    } else {
+        conn.execute(
+            "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1",
+            params![entry_id],
+        )?;
+    }
+    find_by_id_for_user(conn, user_id, entry_id)
+}
+
+/// Unread count per feed for a user.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UnreadCount {
+    pub feed_id: i64,
+    pub unread: i64,
+}
+
+/// Return the unread entry count grouped by feed for the given user.
+pub fn unread_counts_per_feed(conn: &Connection, user_id: i64) -> AppResult<Vec<UnreadCount>> {
+    let mut stmt = conn.prepare(
+        "SELECT e.feed_id, COUNT(*) AS unread \
+         FROM entry e \
+         INNER JOIN feed f ON f.id = e.feed_id \
+         INNER JOIN category c ON c.id = f.category_id \
+         WHERE c.user_id = ?1 AND e.read_at IS NULL \
+         GROUP BY e.feed_id",
+    )?;
+    let rows = stmt
+        .query_map([user_id], |row| {
+            Ok(UnreadCount {
+                feed_id: row.get(0)?,
+                unread: row.get(1)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 /// Batch query entries by IDs with feed info, verifying user ownership.
 pub fn find_by_ids_with_feed(
     conn: &Connection,

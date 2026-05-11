@@ -7,7 +7,7 @@ use axum::{
 
 use crate::{
     error::{AppError, AppResult},
-    handlers::pages::{format_relative_time, ReadingPaneView},
+    handlers::pages::{format_relative_time, row_view_from, EntryRowView, ReadingPaneView},
     middleware::auth::PageAuthUser,
     models::entry,
     services::{sanitize_html, SummaryStatus},
@@ -109,5 +109,74 @@ pub(crate) async fn load_reading_pane(
         is_starred: ewf.entry.starred_at.is_some(),
         summary_text,
         summary_in_flight,
+    })
+}
+
+/// Multi-target action response template. Renders two `<template data-swap-target>` blocks:
+/// one for the updated entry row and one for the sidebar-unread payload.
+#[derive(Template)]
+#[template(path = "_entry_actions_multi.html")]
+pub struct EntryActionMulti {
+    pub r: EntryRowView,
+    pub sidebar_unread_payload_json: String,
+}
+
+impl IntoResponse for EntryActionMulti {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Build the JSON payload for the `#sidebar-unread` block by querying unread
+/// counts per feed for the given user. Used by star/read action endpoints and
+/// the dedicated `/sidebar/unread` polling endpoint (T7).
+pub(crate) async fn build_sidebar_unread(state: &AppState, user_id: i64) -> AppResult<String> {
+    let counts = state
+        .db
+        .read_user(move |conn| entry::unread_counts_per_feed(conn, user_id))
+        .await??;
+    Ok(serde_json::to_string(&counts).unwrap_or_else(|_| "[]".to_string()))
+}
+
+/// `POST /entries/{id}/star` — toggle the starred state for the entry, then
+/// return a multi-target HTML fragment updating the row + sidebar-unread block.
+pub async fn star_entry_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<EntryActionMulti> {
+    let user_id = auth_user.user.id;
+    let ewf = state
+        .db
+        .user(move |conn| entry::toggle_starred(conn, user_id, entry_id))
+        .await??
+        .ok_or(AppError::EntryNotFound)?;
+    let payload_json = build_sidebar_unread(&state, user_id).await?;
+    Ok(EntryActionMulti {
+        r: row_view_from(&ewf),
+        sidebar_unread_payload_json: payload_json,
+    })
+}
+
+/// `POST /entries/{id}/read` — toggle the read state for the entry, then
+/// return a multi-target HTML fragment updating the row + sidebar-unread block.
+pub async fn read_entry_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<EntryActionMulti> {
+    let user_id = auth_user.user.id;
+    let ewf = state
+        .db
+        .user(move |conn| entry::toggle_read(conn, user_id, entry_id))
+        .await??
+        .ok_or(AppError::EntryNotFound)?;
+    let payload_json = build_sidebar_unread(&state, user_id).await?;
+    Ok(EntryActionMulti {
+        r: row_view_from(&ewf),
+        sidebar_unread_payload_json: payload_json,
     })
 }

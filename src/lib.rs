@@ -167,6 +167,18 @@ pub fn create_router(state: AppState) -> Router {
             "/entries/{id}/fragment",
             get(handlers::entries::entry_fragment),
         )
+        // Star / read toggle action endpoints. Return multi-target HTML
+        // (`_entry_actions_multi.html`) swapping the row + sidebar-unread.
+        // Registered after /entries/{id}/fragment so literal path segments
+        // (`star`, `read`) resolve before any future `{action}` wildcard.
+        .route(
+            "/entries/{id}/star",
+            post(handlers::entries::star_entry_form),
+        )
+        .route(
+            "/entries/{id}/read",
+            post(handlers::entries::read_entry_form),
+        )
         .route("/search", get(handlers::pages::search_page))
         .route("/statistics", get(handlers::pages::statistics_page))
         .route(

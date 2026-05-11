@@ -3677,3 +3677,187 @@ async fn test_entry_fragment_404_for_other_user() {
         "cross-user access must return 404"
     );
 }
+
+// ============================================================================
+// POST /entries/{id}/star — PR-10 T4
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_star_entry_form_toggles_and_returns_multi_target() {
+    let app = create_test_app_named(default_test_config(), "test_star_entry_form");
+
+    // Register and log in as alice.
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_star", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_star", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed: category + feed + one unread entry.
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/star-feed",
+                    title: Some("Star Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-star-test",
+                Some("E"),
+                Some("https://x/p"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // First POST — should star the entry.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/star", entry_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        html.contains("data-swap-target=\"#entry-row-"),
+        "multi-target row block must be present"
+    );
+    assert!(
+        html.contains("data-swap-target=\"#sidebar-unread\""),
+        "multi-target sidebar block must be present"
+    );
+    assert!(
+        html.contains("entry-row-starred"),
+        "row must reflect starred state after first toggle"
+    );
+
+    // Second POST — should unstar.
+    let resp2 = app
+        .server
+        .post(&format!("/entries/{}/star", entry_id))
+        .await;
+    assert_eq!(resp2.status_code(), StatusCode::OK);
+    let html2 = resp2.text();
+    assert!(
+        !html2.contains("entry-row-starred"),
+        "row must not have starred class after second toggle"
+    );
+}
+
+// ============================================================================
+// POST /entries/{id}/read — PR-10 T4
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_read_entry_form_toggles_and_returns_multi_target() {
+    let app = create_test_app_named(default_test_config(), "test_read_entry_form");
+
+    // Register and log in as alice.
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_read", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_read", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed: category + feed + one unread entry.
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/read-feed",
+                    title: Some("Read Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-read-test",
+                Some("E"),
+                Some("https://x/r"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // First POST — should mark read.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/read", entry_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        html.contains("data-swap-target=\"#entry-row-"),
+        "multi-target row block must be present"
+    );
+    assert!(
+        html.contains("data-swap-target=\"#sidebar-unread\""),
+        "multi-target sidebar block must be present"
+    );
+    assert!(
+        html.contains("entry-row-read"),
+        "row must reflect read state after first toggle"
+    );
+
+    // Second POST — should mark unread.
+    let resp2 = app
+        .server
+        .post(&format!("/entries/{}/read", entry_id))
+        .await;
+    assert_eq!(resp2.status_code(), StatusCode::OK);
+    let html2 = resp2.text();
+    assert!(
+        !html2.contains("entry-row-read"),
+        "row must not have read class after second toggle (unread)"
+    );
+}
