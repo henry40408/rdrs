@@ -3862,6 +3862,160 @@ async fn test_read_entry_form_toggles_and_returns_multi_target() {
     );
 }
 
+// ============================================================================
+// POST /entries/{id}/star — cross-tenant 404 (PR-10 review)
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_star_entry_form_404_for_other_user() {
+    let app = create_test_app_named(default_test_config(), "test_star_entry_form_404");
+
+    // Register + login alice (session cookie is now alice's).
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_s404", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_s404", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Insert bob + bob's entry directly via DB — bob never logs in via the test
+    // server so alice's session cookie stays active.
+    let bob_entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let bob_id: i64 = conn
+                .execute(
+                    "INSERT INTO user (username, password_hash, role) VALUES ('bob_s404', 'x', 'user')",
+                    [],
+                )
+                .map(|_| conn.last_insert_rowid())
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, bob_id, "Bob Cat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://bob/star-feed",
+                    title: Some("Bob Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-bob-star",
+                Some("Bob Entry"),
+                Some("https://bob/entry"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // Alice tries to star bob's entry → 404.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/star", bob_entry_id))
+        .await;
+    assert_eq!(
+        resp.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user star must return 404"
+    );
+}
+
+// ============================================================================
+// POST /entries/{id}/read — cross-tenant 404 (PR-10 review)
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_read_entry_form_404_for_other_user() {
+    let app = create_test_app_named(default_test_config(), "test_read_entry_form_404");
+
+    // Register + login alice (session cookie is now alice's).
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_r404", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_r404", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Insert bob + bob's entry directly via DB — bob never logs in via the test
+    // server so alice's session cookie stays active.
+    let bob_entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let bob_id: i64 = conn
+                .execute(
+                    "INSERT INTO user (username, password_hash, role) VALUES ('bob_r404', 'x', 'user')",
+                    [],
+                )
+                .map(|_| conn.last_insert_rowid())
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, bob_id, "Bob Cat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://bob/read-feed",
+                    title: Some("Bob Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-bob-read",
+                Some("Bob Entry"),
+                Some("https://bob/entry"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // Alice tries to mark bob's entry as read → 404.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/read", bob_entry_id))
+        .await;
+    assert_eq!(
+        resp.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user read must return 404"
+    );
+}
+
 // POST /entries/{id}/summarize — PR-10 T5
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_summarize_entry_form_renders_reading_pane() {
