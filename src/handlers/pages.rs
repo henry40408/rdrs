@@ -73,6 +73,14 @@ pub struct EntriesLayoutContext {
     pub description: Option<String>,
     pub empty_message: &'static str,
     pub path: &'static str,
+    /// Render the All/Read/Starred/Summarized tab bar above the list. True
+    /// for the 4 entries-tabs (`active = "all" | "read" | "starred" |
+    /// "summarized"`), false for `/` (unread) since unread is not a tab.
+    pub show_tab_bar: bool,
+    /// Render the "Mark as Read..." dropdown above the list. True for `/`
+    /// (unread) and `/entries` (all) — the two views where bulk-marking
+    /// matters; false for read/starred/summarized.
+    pub show_mark_as_read: bool,
 }
 
 /// Map an `EntryWithFeed` (+ optional summary status) to an `EntryRowView`.
@@ -453,6 +461,8 @@ pub async fn unread_page(
                 description: None,
                 empty_message: "No unread entries — nice work.",
                 path: "/",
+                show_tab_bar: false,
+                show_mark_as_read: true,
             },
         },
     )
@@ -922,6 +932,8 @@ pub async fn entries_page(
                 description: None,
                 empty_message: "No entries.",
                 path: "/entries",
+                show_tab_bar: true,
+                show_mark_as_read: true,
             },
         },
     )
@@ -1065,6 +1077,8 @@ pub async fn read_entries_page(
                 description: None,
                 empty_message: "No read entries.",
                 path: "/entries/read",
+                show_tab_bar: true,
+                show_mark_as_read: false,
             },
         },
     )
@@ -1137,6 +1151,8 @@ pub async fn starred_entries_page(
                 description: None,
                 empty_message: "No starred entries.",
                 path: "/entries/starred",
+                show_tab_bar: true,
+                show_mark_as_read: false,
             },
         },
     )
@@ -1209,6 +1225,8 @@ pub async fn summarized_entries_page(
                 description: None,
                 empty_message: "No summarized entries.",
                 path: "/entries/summarized",
+                show_tab_bar: true,
+                show_mark_as_read: false,
             },
         },
     )

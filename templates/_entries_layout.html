@@ -7,6 +7,31 @@
             <rdrs-flash class="flash-container"></rdrs-flash>
             <div class="split-view">
                 <div class="list-pane">
+                    <div class="list-pane-header">
+                        <h1>{{ title }}</h1>
+                        {% if entries_layout.show_tab_bar %}
+                        <div class="tab-bar">
+                            <a href="/entries" data-testid="tab-all" data-tab="all"{% if entries_layout.active == "all" %} class="active"{% endif %}>All</a>
+                            <a href="/entries/read" data-testid="tab-read" data-tab="read"{% if entries_layout.active == "read" %} class="active"{% endif %}>Read</a>
+                            <a href="/entries/starred" data-testid="tab-starred" data-tab="starred"{% if entries_layout.active == "starred" %} class="active"{% endif %}>Starred</a>
+                            <a href="/entries/summarized" data-testid="tab-summarized" data-tab="summarized"{% if entries_layout.active == "summarized" %} class="active"{% endif %}>Summarized</a>
+                        </div>
+                        {% endif %}
+                        {% if entries_layout.show_mark_as_read %}
+                        <div class="filter-bar">
+                            <div class="form-group form-group-inline">
+                                <select id="mark-read-age" data-testid="mark-read-select" class="select-auto" data-mark-read-scope="reading-list">
+                                    <option value="">Mark as Read...</option>
+                                    <option value="1">Older than 1 day</option>
+                                    <option value="7">Older than 1 week</option>
+                                    <option value="30">Older than 1 month</option>
+                                    <option value="365">Older than 1 year</option>
+                                    <option value="all">All entries</option>
+                                </select>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
                     <div class="list-pane-body" data-entries-list>
                         {% if entries.is_empty() %}
                             <p class="muted" style="padding: var(--space-4);">{{ entries_layout.empty_message }}</p>

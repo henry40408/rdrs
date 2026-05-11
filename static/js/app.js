@@ -204,3 +204,49 @@ function installEntriesKeyboard() {
     });
 }
 installEntriesKeyboard();
+
+// "Mark as Read..." dropdown on /unread + /entries pages. Posts to the
+// GReader bulk-mark endpoint with an optional `ts=` cutoff in
+// microseconds, then full-reloads so the SSR row list refreshes. The
+// GReader API is permanent per the SSR-first spec, so this JS-glue is
+// the long-term home for the dropdown (the alternative — a native
+// form-POST — would navigate the user away to a JSON response).
+const AGE_LABELS = {
+    '1': 'older than 1 day',
+    '7': 'older than 1 week',
+    '30': 'older than 1 month',
+    '365': 'older than 1 year',
+    'all': 'all',
+};
+const READING_LIST_STREAM = 'user/-/state/com.google/reading-list';
+
+function installMarkAsReadDropdown() {
+    const select = document.getElementById('mark-read-age');
+    if (!select) return;
+    select.addEventListener('change', async () => {
+        const age = select.value;
+        select.selectedIndex = 0;
+        if (!age) return;
+        const ageLabel = AGE_LABELS[age] || age;
+        if (!confirm(`Mark ${ageLabel} entries as read?`)) return;
+        const body = new URLSearchParams();
+        body.set('s', READING_LIST_STREAM);
+        if (age !== 'all') {
+            const days = parseInt(age, 10);
+            const tsUsec = (Math.floor(Date.now() / 1000) - days * 86400) * 1000000;
+            body.set('ts', tsUsec.toString());
+        }
+        try {
+            const resp = await fetch('/reader/api/0/mark-all-as-read', {
+                method: 'POST',
+                body,
+                credentials: 'same-origin',
+            });
+            if (!resp.ok) throw new Error('Failed to mark as read');
+            window.location.reload();
+        } catch (err) {
+            alert(err.message || 'Failed to mark as read');
+        }
+    });
+}
+installMarkAsReadDropdown();
