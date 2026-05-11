@@ -17,7 +17,8 @@
     </div>
     <div class="muted entry-item-meta">
         {% if r.feed_has_icon %}<img class="feed-icon" src="/api/feeds/{{ r.feed_id }}/icon" alt="" loading="lazy" width="16" height="16">{% endif %}
-        <span>{{ r.feed_title }}</span> &middot;
+        <a href="/feeds/{{ r.feed_id }}/entries">{{ r.feed_title }}</a> &middot;
+        <a href="/categories/{{ r.category_id }}/entries">{{ r.category_name }}</a> &middot;
         <time datetime="{{ r.published_at_iso }}">{{ r.published_relative }}</time>
     </div>
     <div class="entry-item-actions">
