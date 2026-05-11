@@ -29,10 +29,10 @@ fn open_shared_memory(name: &str) -> Connection {
     .unwrap()
 }
 
-fn create_test_app(config: Config) -> TestApp {
-    let write_conn = open_shared_memory("test_pages");
+fn create_test_app_named(config: Config, name: &str) -> TestApp {
+    let write_conn = open_shared_memory(name);
     db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory("test_pages");
+    let read_conn = open_shared_memory(name);
 
     let (db, _handle) = DbPool::new(write_conn, read_conn);
     let webauthn = auth::create_webauthn(&config).unwrap();
@@ -51,6 +51,10 @@ fn create_test_app(config: Config) -> TestApp {
     let server = TestServer::builder().save_cookies().build(app);
 
     TestApp { server, db }
+}
+
+fn create_test_app(config: Config) -> TestApp {
+    create_test_app_named(config, "test_pages")
 }
 
 fn default_test_config() -> Config {
@@ -1181,33 +1185,9 @@ async fn test_logged_in_page_loads_full_chrome() {
 // SSR / (unread) — PR-10 T1
 // ============================================================================
 
-fn create_test_app_unread(config: Config) -> TestApp {
-    let write_conn = open_shared_memory("test_pages_unread_ssr");
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory("test_pages_unread_ssr");
-
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
-    let webauthn = auth::create_webauthn(&config).unwrap();
-    let summary_cache = services::create_summary_cache(100, 24);
-    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
-
-    let state = AppState {
-        db: db.clone(),
-        config: Arc::new(config),
-        webauthn: Arc::new(webauthn),
-        summary_cache,
-        summary_tx,
-    };
-
-    let app = create_router(state);
-    let server = TestServer::builder().save_cookies().build(app);
-
-    TestApp { server, db }
-}
-
 #[tokio::test]
 async fn test_unread_page_renders_entry_rows() {
-    let app = create_test_app_unread(default_test_config());
+    let app = create_test_app_named(default_test_config(), "test_pages_unread_ssr");
 
     // Register and login as alice
     app.server
@@ -1236,7 +1216,7 @@ async fn test_unread_page_renders_entry_rows() {
         .unwrap();
 
     // Seed: category + feed + 3 entries (2 unread, 1 read)
-    let (entry_one_id, entry_three_id) = app
+    let (_, entry_three_id) = app
         .db
         .user(move |conn| {
             let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
@@ -1302,8 +1282,6 @@ async fn test_unread_page_renders_entry_rows() {
         .user(move |conn| rdrs::models::entry::mark_as_read(conn, entry_three_id))
         .await
         .unwrap();
-
-    let _ = entry_one_id; // suppress unused warning
 
     let response = app.server.get("/").await;
     assert_eq!(response.status_code(), StatusCode::OK);

@@ -63,13 +63,13 @@ pub struct EntriesLayoutContext {
 }
 
 /// Map an `EntryWithFeed` to an `EntryRowView`.
-pub fn row_view_from(e: &entry::EntryWithFeed) -> EntryRowView {
+pub(crate) fn row_view_from(e: &entry::EntryWithFeed) -> EntryRowView {
     let title = e
         .entry
         .title
         .clone()
         .unwrap_or_else(|| "(no title)".to_string());
-    let published_at = e.entry.published_at.or(Some(e.entry.created_at));
+    let published_at = e.entry.published_at.unwrap_or(e.entry.created_at);
     EntryRowView {
         id: e.entry.id,
         feed_id: e.entry.feed_id,
@@ -79,8 +79,8 @@ pub fn row_view_from(e: &entry::EntryWithFeed) -> EntryRowView {
             .unwrap_or_else(|| "(no feed)".to_string()),
         feed_has_icon: e.feed_has_icon,
         title,
-        published_at_iso: published_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
-        published_relative: format_relative_time(published_at).0,
+        published_at_iso: published_at.to_rfc3339(),
+        published_relative: format_relative_time(Some(published_at)).0,
         is_read: e.entry.read_at.is_some(),
         is_starred: e.entry.starred_at.is_some(),
     }
