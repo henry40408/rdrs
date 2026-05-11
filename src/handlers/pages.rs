@@ -18,6 +18,108 @@ fn escape_json_for_script(json: &str) -> String {
     json.replace("</", "<\\/")
 }
 
+// ============================================================================
+// Entries-family shared view structs (PR-10)
+// ============================================================================
+
+/// View-model for one row in the entries list (`_entry_row.html`).
+#[derive(Debug, Clone)]
+pub struct EntryRowView {
+    pub id: i64,
+    pub feed_id: i64,
+    pub feed_title: String,
+    pub feed_has_icon: bool,
+    pub title: String,
+    pub published_at_iso: String,
+    pub published_relative: String,
+    pub is_read: bool,
+    pub is_starred: bool,
+}
+
+/// View-model for the reading pane (`_reading_pane.html`).
+#[derive(Debug, Clone)]
+pub struct ReadingPaneView {
+    pub id: i64,
+    pub title: String,
+    pub link: Option<String>,
+    pub feed_title: String,
+    pub author: Option<String>,
+    pub published_at_iso: Option<String>,
+    pub published_relative: String,
+    pub content_html: String,
+    pub is_read: bool,
+    pub is_starred: bool,
+    pub summary_text: Option<String>,
+    pub summary_in_flight: bool,
+}
+
+/// Layout context shared by all 5 entries-family pages (`_entries_layout.html`).
+#[derive(Debug, Clone)]
+pub struct EntriesLayoutContext {
+    pub active: &'static str,
+    pub description: Option<String>,
+    pub empty_message: &'static str,
+    pub path: &'static str,
+}
+
+/// Map an `EntryWithFeed` to an `EntryRowView`.
+pub fn row_view_from(e: &entry::EntryWithFeed) -> EntryRowView {
+    let title = e
+        .entry
+        .title
+        .clone()
+        .unwrap_or_else(|| "(no title)".to_string());
+    let published_at = e.entry.published_at.or(Some(e.entry.created_at));
+    EntryRowView {
+        id: e.entry.id,
+        feed_id: e.entry.feed_id,
+        feed_title: e
+            .feed_title
+            .clone()
+            .unwrap_or_else(|| "(no feed)".to_string()),
+        feed_has_icon: e.feed_has_icon,
+        title,
+        published_at_iso: published_at.map(|t| t.to_rfc3339()).unwrap_or_default(),
+        published_relative: format_relative_time(published_at).0,
+        is_read: e.entry.read_at.is_some(),
+        is_starred: e.entry.starred_at.is_some(),
+    }
+}
+
+/// Fetch a page of entries and map them to `EntryRowView`s.
+/// Returns `(rows, next_cursor)` where `next_cursor` is `Some(offset + page_size)`
+/// when more results exist beyond this page.
+pub(crate) async fn build_entries_page(
+    state: &AppState,
+    user_id: i64,
+    filter: entry::EntryFilter,
+    sort: entry::EntrySortOrder,
+    page_size: i64,
+    offset: i64,
+) -> (Vec<EntryRowView>, Option<i64>) {
+    let rows = state
+        .db
+        .read_user(move |conn| {
+            entry::list_by_user(conn, user_id, &filter, sort, page_size + 1, offset)
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+
+    let next_cursor = if rows.len() as i64 > page_size {
+        Some(offset + page_size)
+    } else {
+        None
+    };
+    let views = rows
+        .iter()
+        .take(page_size as usize)
+        .map(row_view_from)
+        .collect();
+    (views, next_cursor)
+}
+
 /// Format a datetime as a human-readable relative time string.
 /// Returns (relative_text, iso_datetime_for_tooltip).
 pub fn format_relative_time(dt: Option<chrono::DateTime<chrono::Utc>>) -> (String, String) {
@@ -232,14 +334,30 @@ pub async fn register_page(
     )
 }
 
-/// Serves the CSR shell for `/` (unread). The list itself is loaded by
-/// `<rdrs-entries-page>` (mode `unread`) from `/reader/api/0/stream/contents`.
+/// Serves `/` (unread) rendered fully server-side. Unread entries are fetched
+/// from the DB, mapped to `EntryRowView`s, and rendered via `_entries_layout.html`
+/// which includes `_entry_row.html` per row. The reading pane is an empty
+/// placeholder until the user selects an entry (swap via `app.js`).
 pub async fn unread_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, UnreadTemplate) {
     let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let user_id = auth_user.user.id;
+
+    let (entries, next_cursor) = build_entries_page(
+        &state,
+        user_id,
+        entry::EntryFilter {
+            unread_only: true,
+            ..Default::default()
+        },
+        entry::EntrySortOrder::PublishedAt,
+        50,
+        0,
+    )
+    .await;
 
     (
         flash,
@@ -247,6 +365,15 @@ pub async fn unread_page(
             title: "Unread",
             git_version: crate::GIT_VERSION,
             layout,
+            entries,
+            reading_pane: None,
+            next_cursor,
+            entries_layout: EntriesLayoutContext {
+                active: "unread",
+                description: None,
+                empty_message: "No unread entries — nice work.",
+                path: "/",
+            },
         },
     )
 }
@@ -1473,13 +1600,20 @@ impl IntoResponse for FeedsImportTemplate {
     }
 }
 
-/// Per-route template for `/` (unread).
+/// Per-route template for `/` (unread). Extends `_entries_layout.html`.
+/// `git_version` is duplicated at the leaf level because `base.html`
+/// references the bare `{{ git_version }}` outside the blocks owned by
+/// `app_layout.html` (Askama 0.15 quirk — see other templates for the pattern).
 #[derive(Template)]
 #[template(path = "unread.html")]
 pub struct UnreadTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub entries: Vec<EntryRowView>,
+    pub reading_pane: Option<ReadingPaneView>,
+    pub next_cursor: Option<i64>,
+    pub entries_layout: EntriesLayoutContext,
 }
 
 impl IntoResponse for UnreadTemplate {

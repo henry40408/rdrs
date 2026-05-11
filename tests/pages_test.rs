@@ -112,7 +112,7 @@ async fn login(server: &TestServer, username: &str) {
 // ============================================================================
 
 #[tokio::test]
-async fn test_unread_page_returns_shell() {
+async fn test_unread_page_renders_ssr_layout() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
 
@@ -122,12 +122,13 @@ async fn test_unread_page_returns_shell() {
     response.assert_status_ok();
     let body = response.text();
 
-    // Shell shape — no SSR entry markup.
-    assert!(body.contains("<rdrs-entries-page>"));
-    assert!(body.contains("/static/js/pages/entries.js"));
-    // SSR machinery for entries must be gone from this route.
-    assert!(!body.contains(r#"class="ssr-entries""#));
-    assert!(!body.contains(r#"class="ssr-reading-pane""#));
+    // CSR shell must be gone from this route (SSR-first PR-10).
+    assert!(!body.contains("<rdrs-entries-page>"));
+    assert!(!body.contains("/static/js/pages/entries.js"));
+    // SSR two-pane layout present.
+    assert!(body.contains("data-entries-list"));
+    assert!(body.contains(r#"id="reading-pane""#));
+    assert!(body.contains("Select an entry"));
 }
 
 #[tokio::test]
@@ -146,8 +147,8 @@ async fn test_unread_page_while_masquerading() {
     let response = app.server.get("/").await;
     response.assert_status_ok();
     let body = response.text();
-    // CSR shell with sidebar bootstrap inlined.
-    assert!(body.contains("<rdrs-entries-page>"));
+    // SSR layout with sidebar bootstrap inlined.
+    assert!(!body.contains("<rdrs-entries-page>"));
     assert!(body.contains(r#"id="rdrs-sidebar-bootstrap""#));
     // Bootstrap JSON marks the original admin so the rdrs-sidebar element
     // can show the Admin nav link client-side even under masquerade.
@@ -1174,4 +1175,154 @@ async fn test_logged_in_page_loads_full_chrome() {
     // Both keyboard helper custom elements must be mounted.
     assert!(body.contains("<rdrs-kb-help>"));
     assert!(body.contains("<rdrs-kb-pending>"));
+}
+
+// ============================================================================
+// SSR / (unread) — PR-10 T1
+// ============================================================================
+
+fn create_test_app_unread(config: Config) -> TestApp {
+    let write_conn = open_shared_memory("test_pages_unread_ssr");
+    db::init_db(&write_conn).unwrap();
+    let read_conn = open_shared_memory("test_pages_unread_ssr");
+
+    let (db, _handle) = DbPool::new(write_conn, read_conn);
+    let webauthn = auth::create_webauthn(&config).unwrap();
+    let summary_cache = services::create_summary_cache(100, 24);
+    let (summary_tx, _summary_rx) = services::create_summary_channel(10);
+
+    let state = AppState {
+        db: db.clone(),
+        config: Arc::new(config),
+        webauthn: Arc::new(webauthn),
+        summary_cache,
+        summary_tx,
+    };
+
+    let app = create_router(state);
+    let server = TestServer::builder().save_cookies().build(app);
+
+    TestApp { server, db }
+}
+
+#[tokio::test]
+async fn test_unread_page_renders_entry_rows() {
+    let app = create_test_app_unread(default_test_config());
+
+    // Register and login as alice
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_unread", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_unread", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Get user id
+    let user_id: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row(
+                "SELECT id FROM user WHERE username = 'alice_unread'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Seed: category + feed + 3 entries (2 unread, 1 read)
+    let (entry_one_id, entry_three_id) = app
+        .db
+        .user(move |conn| {
+            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://blog.example/feed",
+                    title: Some("Example Blog"),
+                    description: None,
+                    site_url: Some("https://blog.example"),
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+
+            let (e1, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-entry-one",
+                Some("Entry One"),
+                Some("https://blog.example/one"),
+                Some("<p>Content one</p>"),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (_, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-entry-two",
+                Some("Entry Two"),
+                Some("https://blog.example/two"),
+                Some("<p>Content two</p>"),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (e3, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-entry-three",
+                Some("Read Already"),
+                Some("https://blog.example/three"),
+                Some("<p>Content three</p>"),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            (e1.id, e3.id)
+        })
+        .await
+        .unwrap();
+
+    // Mark entry three as read
+    let _ = app
+        .db
+        .user(move |conn| rdrs::models::entry::mark_as_read(conn, entry_three_id))
+        .await
+        .unwrap();
+
+    let _ = entry_one_id; // suppress unused warning
+
+    let response = app.server.get("/").await;
+    assert_eq!(response.status_code(), StatusCode::OK);
+    let html = response.text();
+
+    // SSR rows present (CSR shell must be gone)
+    assert!(
+        !html.contains("<rdrs-entries-page"),
+        "CSR shell should be gone"
+    );
+    assert!(html.contains("data-entry-row"), "rows should be SSR'd");
+    assert!(html.contains("Entry One"), "unread entry should appear");
+    assert!(html.contains("Entry Two"), "unread entry should appear");
+    assert!(
+        !html.contains("Read Already"),
+        "read entries should be filtered out on /"
+    );
+
+    // Reading pane placeholder + swap target
+    assert!(html.contains(r#"id="reading-pane""#));
+    assert!(html.contains("Select an entry"));
 }

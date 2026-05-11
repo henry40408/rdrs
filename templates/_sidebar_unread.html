@@ -1,0 +1,4 @@
+{# Sidebar unread polling payload. The container element holds the JSON
+   in a `data-payload` attribute so the swap helper can replace by
+   selector and `app.js` can re-emit a custom event for `<rdrs-sidebar>`. #}
+<div id="sidebar-unread" data-payload='{{ payload_json|safe }}' hidden></div>
