@@ -39,10 +39,39 @@ pub async fn entry_fragment(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<ReadingPaneFragment> {
+) -> AppResult<OpenEntryMulti> {
     let user_id = auth_user.user.id;
-    let pane = load_reading_pane(&state, user_id, entry_id).await?;
-    Ok(ReadingPaneFragment { pane })
+
+    // Verify ownership, mark unread→read, re-fetch the entry to reflect the
+    // new state, and pick up the summary status — all in a single write
+    // transaction. Marking-as-read on a `GET` is unusual REST-wise, but it
+    // matches the feed-reader convention (Reeder / FreshRSS / etc. behave the
+    // same way) and the operation is idempotent on the read row.
+    let (ewf, status) = state
+        .db
+        .user(move |conn| {
+            let pre = entry::find_by_id_for_user(conn, user_id, entry_id)?
+                .ok_or(AppError::EntryNotFound)?;
+            if pre.entry.read_at.is_none() {
+                entry::mark_as_read(conn, entry_id)?;
+            }
+            let post = entry::find_by_id_for_user(conn, user_id, entry_id)?
+                .ok_or(AppError::EntryNotFound)?;
+            let status = entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])?
+                .get(&entry_id)
+                .copied();
+            Ok::<_, AppError>((post, status))
+        })
+        .await??;
+
+    let pane = build_reading_pane_view(&state, user_id, &ewf);
+    let row = row_view_from(&ewf, status);
+    let sidebar_unread_payload_json = build_sidebar_unread(&state, user_id).await?;
+    Ok(OpenEntryMulti {
+        pane,
+        r: row,
+        sidebar_unread_payload_json,
+    })
 }
 
 /// Build a `ReadingPaneView` for the given entry, scoped to `user_id`.
@@ -58,8 +87,19 @@ pub(crate) async fn load_reading_pane(
         .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
         .await??
         .ok_or(AppError::EntryNotFound)?;
+    Ok(build_reading_pane_view(state, user_id, &ewf))
+}
 
-    // Resolve content: prefer `content` field, fall back to `summary`.
+/// Build a `ReadingPaneView` from an already-loaded `EntryWithFeed`. The
+/// content sanitizer + summary-cache lookup happen here so callers that
+/// already have the entry (e.g. `entry_fragment`, which loads it inside its
+/// write transaction) don't re-hit the DB.
+pub(crate) fn build_reading_pane_view(
+    state: &AppState,
+    user_id: i64,
+    ewf: &entry::EntryWithFeed,
+) -> ReadingPaneView {
+    let entry_id = ewf.entry.id;
     let raw_content = ewf
         .entry
         .content
@@ -83,7 +123,6 @@ pub(crate) async fn load_reading_pane(
         proxy_base_url,
     );
 
-    // Look up summary from the in-memory cache.
     let cache_entry = state.summary_cache.get(user_id, entry_id);
     let (summary_text, summary_in_flight) = match cache_entry.as_ref().map(|e| &e.status) {
         Some(SummaryStatus::Completed) => (cache_entry.and_then(|e| e.summary_text.clone()), false),
@@ -92,8 +131,8 @@ pub(crate) async fn load_reading_pane(
     };
 
     let published_at = ewf.entry.published_at;
-    Ok(ReadingPaneView {
-        id: ewf.entry.id,
+    ReadingPaneView {
+        id: entry_id,
         title: ewf
             .entry
             .title
@@ -109,7 +148,7 @@ pub(crate) async fn load_reading_pane(
         is_starred: ewf.entry.starred_at.is_some(),
         summary_text,
         summary_in_flight,
-    })
+    }
 }
 
 /// Multi-target action response template. Renders two `<template data-swap-target>` blocks:
@@ -122,6 +161,28 @@ pub struct EntryActionMulti {
 }
 
 impl IntoResponse for EntryActionMulti {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Multi-target response for opening an entry. Renders three `<template
+/// data-swap-target>` blocks: the reading pane, the (now-read) entry row,
+/// and the sidebar-unread payload. Returned by `GET /entries/{id}/fragment`
+/// so the title-link click both shows the entry AND clears its unread
+/// state from the list + sidebar in one round trip.
+#[derive(Template)]
+#[template(path = "_open_entry_multi.html")]
+pub struct OpenEntryMulti {
+    pub pane: ReadingPaneView,
+    pub r: EntryRowView,
+    pub sidebar_unread_payload_json: String,
+}
+
+impl IntoResponse for OpenEntryMulti {
     fn into_response(self) -> Response {
         match self.render() {
             Ok(html) => Html(html).into_response(),

@@ -3602,6 +3602,33 @@ async fn test_entry_fragment_renders_reading_pane() {
     );
     assert!(html.contains("Hello World"), "entry title must appear");
     assert!(html.contains("Body text here"), "entry body must appear");
+    // Auto-mark-as-read: response carries the updated row + sidebar blocks.
+    assert!(
+        html.contains(&format!(r##"data-swap-target="#entry-row-{}""##, entry_id)),
+        "response must include a multi-target row block to clear unread state"
+    );
+    assert!(
+        html.contains(r##"data-swap-target="#sidebar-unread""##),
+        "response must include a multi-target sidebar block"
+    );
+    // Verify the entry is actually marked read in the DB.
+    let read_at: Option<String> = app
+        .db
+        .read_user(move |conn| {
+            conn.query_row(
+                "SELECT read_at FROM entry WHERE id = ?1",
+                [entry_id],
+                |row| row.get(0),
+            )
+            .map_err(rdrs::error::AppError::from)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        read_at.is_some(),
+        "opening fragment must auto-mark the entry as read"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
