@@ -32,6 +32,8 @@ pub struct EntryRowView {
     pub feed_id: i64,
     pub feed_title: String,
     pub feed_has_icon: bool,
+    pub category_id: i64,
+    pub category_name: String,
     pub title: String,
     pub published_at_iso: String,
     pub published_relative: String,
@@ -102,9 +104,11 @@ pub(crate) fn row_view_from(
             .clone()
             .unwrap_or_else(|| "(no feed)".to_string()),
         feed_has_icon: e.feed_has_icon,
+        category_id: e.category_id,
+        category_name: e.category_name.clone(),
         title,
         published_at_iso: published_at.to_rfc3339(),
-        published_relative: format_relative_time(Some(published_at)).0,
+        published_relative: format_relative_time_compact(Some(published_at)),
         is_read: e.entry.read_at.is_some(),
         is_starred: e.entry.starred_at.is_some(),
         summary_status,
@@ -176,6 +180,29 @@ impl IntoResponse for EntriesFragmentTemplate {
             Ok(html) => Html(html).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         }
+    }
+}
+
+/// Compact relative-time formatter for the entry list. Returns short
+/// forms like `now` / `46m` / `3h` / `2d` / `5mo` / `1y`. Long form
+/// (`format_relative_time`) is kept for places with more breathing
+/// room (reading pane, feeds page, admin tables).
+pub fn format_relative_time_compact(dt: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    let Some(dt) = dt else { return "—".to_string() };
+    let duration = chrono::Utc::now().signed_duration_since(dt);
+    let seconds = duration.num_seconds();
+    if seconds < 60 {
+        "now".to_string()
+    } else if seconds < 3600 {
+        format!("{}m", duration.num_minutes())
+    } else if seconds < 86400 {
+        format!("{}h", duration.num_hours())
+    } else if seconds < 2_592_000 {
+        format!("{}d", duration.num_days())
+    } else if seconds < 31_536_000 {
+        format!("{}mo", duration.num_days() / 30)
+    } else {
+        format!("{}y", duration.num_days() / 365)
     }
 }
 
