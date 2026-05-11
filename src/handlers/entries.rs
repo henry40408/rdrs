@@ -64,7 +64,7 @@ pub(crate) async fn load_reading_pane(
         .entry
         .content
         .as_deref()
-        .or_else(|| ewf.entry.summary.as_deref())
+        .or(ewf.entry.summary.as_deref())
         .unwrap_or("");
 
     let link_str = ewf.entry.link.clone().unwrap_or_default();

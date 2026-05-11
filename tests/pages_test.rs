@@ -1748,8 +1748,7 @@ async fn test_summarized_entries_page_renders_ssr_rows() {
         .unwrap();
 
     // Insert entry_summary rows for the two matching entries.
-    let _ = app
-        .db
+    app.db
         .user(move |conn| {
             conn.execute(
                 "INSERT INTO entry_summary (user_id, entry_id, status, summary_text) \
