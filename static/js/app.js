@@ -56,8 +56,53 @@ function installSwap() {
         } else {
             init.body = new FormData(form);
         }
-        await performSwap(url, init, target);
+        setFormBusy(form);
+        try {
+            await performSwap(url, init, target);
+        } finally {
+            // On success the form has been replaced by the swap so the
+            // call below is a no-op on the detached node. On failure
+            // (POST error → flash) the original form is still mounted
+            // and gets its button restored.
+            clearFormBusy(form);
+        }
     });
+}
+
+// Map slow form-swap actions to their busy-state button label. Anything not
+// listed keeps its existing label and just gets `disabled` while in-flight.
+const BUSY_LABELS = {
+    save: 'Saving…',
+    'fetch-full-content': 'Fetching…',
+    summarize: 'Summarizing…',
+};
+
+function deriveBusyLabel(actionUrl) {
+    const m = (actionUrl || '').match(/\/entries\/\d+\/([\w-]+)/);
+    return m ? BUSY_LABELS[m[1]] : null;
+}
+
+function setFormBusy(form) {
+    form.setAttribute('aria-busy', 'true');
+    const btn = form.querySelector('button[type="submit"], button:not([type])');
+    if (!btn) return;
+    btn.disabled = true;
+    const label = deriveBusyLabel(form.action);
+    if (label) {
+        btn.dataset.busyOriginalLabel = btn.textContent;
+        btn.textContent = label;
+    }
+}
+
+function clearFormBusy(form) {
+    form.removeAttribute('aria-busy');
+    const btn = form.querySelector('button[type="submit"], button:not([type])');
+    if (!btn) return;
+    btn.disabled = false;
+    if (btn.dataset.busyOriginalLabel != null) {
+        btn.textContent = btn.dataset.busyOriginalLabel;
+        delete btn.dataset.busyOriginalLabel;
+    }
 }
 
 async function performSwap(url, init, defaultTarget) {
@@ -284,6 +329,8 @@ function installMarkAsReadDropdown() {
             const tsUsec = (Math.floor(Date.now() / 1000) - days * 86400) * 1000000;
             body.set('ts', tsUsec.toString());
         }
+        select.disabled = true;
+        select.setAttribute('aria-busy', 'true');
         try {
             const resp = await fetch('/reader/api/0/mark-all-as-read', {
                 method: 'POST',
@@ -295,6 +342,7 @@ function installMarkAsReadDropdown() {
                 window.flash.set('success', `Marked ${ageLabel} entries as read.`);
             }
             window.location.reload();
+            return;
         } catch (err) {
             const message = err.message || 'Failed to mark as read';
             if (window.flash) {
@@ -302,6 +350,9 @@ function installMarkAsReadDropdown() {
             } else {
                 alert(message);
             }
+        } finally {
+            select.disabled = false;
+            select.removeAttribute('aria-busy');
         }
     });
 }
