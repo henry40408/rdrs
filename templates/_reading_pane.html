@@ -35,9 +35,6 @@
             <a href="{{ link }}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">View Original</a>
             {% endif %}
         </div>
-        {% if let Some(msg) = pane.status_message.as_ref() %}
-        <p class="reading-pane-status muted">{{ msg }}</p>
-        {% endif %}
         {% if let Some(summary) = pane.summary_text.as_ref() %}
         <div class="rp-summary-container">
             <div class="summary-box">

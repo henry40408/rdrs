@@ -11,9 +11,9 @@ use crate::{
     middleware::auth::PageAuthUser,
     models::{entry, entry_summary, user_settings},
     services::{
-        fetch_and_extract,
+        fetch_and_extract, sanitize_html,
         save::{linkding, BookmarkData},
-        sanitize_html, SummaryJob, SummaryStatus,
+        SummaryJob, SummaryStatus,
     },
     AppState,
 };
@@ -27,6 +27,34 @@ pub struct ReadingPaneFragment {
 }
 
 impl IntoResponse for ReadingPaneFragment {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// One-shot flash payload for the swap-helper `<template data-flash>` block.
+/// `level` is one of `success | error | info | warning` — matching the
+/// `<rdrs-flash>` API in `static/js/components/rdrs-flash.js`.
+#[derive(Debug, Clone)]
+pub struct FlashPayload {
+    pub level: &'static str,
+    pub message: String,
+}
+
+/// Multi-target response: swaps the reading pane and (optionally) pops a
+/// toast on the page-level `<rdrs-flash>`. Returned by the Save /
+/// Fetch-Full-Content form-actions.
+#[derive(Template)]
+#[template(path = "_reading_pane_with_flash.html")]
+pub struct ReadingPaneWithFlash {
+    pub pane: ReadingPaneView,
+    pub flash: Option<FlashPayload>,
+}
+
+impl IntoResponse for ReadingPaneWithFlash {
     fn into_response(self) -> Response {
         match self.render() {
             Ok(html) => Html(html).into_response(),
@@ -69,7 +97,7 @@ pub async fn entry_fragment(
         .await??;
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
-    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, None);
+    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi);
     let row = row_view_from(&ewf, status);
     let sidebar_unread_payload_json = build_sidebar_unread(&state, user_id).await?;
     Ok(OpenEntryMulti {
@@ -94,7 +122,7 @@ pub(crate) async fn load_reading_pane(
         .ok_or(AppError::EntryNotFound)?;
     let (has_save, has_kagi) = load_pane_action_flags(state, user_id).await?;
     Ok(build_reading_pane_view(
-        state, user_id, &ewf, has_save, has_kagi, None,
+        state, user_id, &ewf, has_save, has_kagi,
     ))
 }
 
@@ -123,15 +151,14 @@ pub(crate) async fn load_pane_action_flags(
 /// content sanitizer + summary-cache lookup happen here so callers that
 /// already have the entry (e.g. `entry_fragment`, which loads it inside its
 /// write transaction) don't re-hit the DB. `has_save` / `has_kagi` come
-/// from `load_pane_action_flags`. `status_message` is optional inline
-/// feedback rendered next to the action bar (None on a normal read).
+/// from `load_pane_action_flags`. Save / Fetch action feedback is delivered
+/// via flash (see `ReadingPaneWithFlash`), not inline status text.
 pub(crate) fn build_reading_pane_view(
     state: &AppState,
     user_id: i64,
     ewf: &entry::EntryWithFeed,
     has_save: bool,
     has_kagi: bool,
-    status_message: Option<String>,
 ) -> ReadingPaneView {
     let entry_id = ewf.entry.id;
     let raw_content = ewf
@@ -184,7 +211,6 @@ pub(crate) fn build_reading_pane_view(
         summary_in_flight,
         has_kagi,
         has_save,
-        status_message,
     }
 }
 
@@ -390,7 +416,7 @@ pub async fn fetch_full_content_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<ReadingPaneFragment> {
+) -> AppResult<ReadingPaneWithFlash> {
     let user_id = auth_user.user.id;
 
     let ewf = state
@@ -406,7 +432,7 @@ pub async fn fetch_full_content_form(
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
 
-    let pane = match fetch_and_extract(&link, &state.config.user_agent).await {
+    let (pane, flash) = match fetch_and_extract(&link, &state.config.user_agent).await {
         Ok(extracted) => {
             let sanitized = sanitize_html(
                 &extracted.content,
@@ -415,27 +441,28 @@ pub async fn fetch_full_content_form(
                 ewf.custom_referrer.as_deref(),
                 None,
             );
-            let mut pane = build_reading_pane_view(
-                &state,
-                user_id,
-                &ewf,
-                has_save,
-                has_kagi,
-                Some("Showing full content. Reload to restore feed body.".to_string()),
-            );
+            let mut pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi);
             pane.content_html = sanitized;
-            pane
+            (
+                pane,
+                FlashPayload {
+                    level: "success",
+                    message: "Fetched full content.".to_string(),
+                },
+            )
         }
-        Err(e) => build_reading_pane_view(
-            &state,
-            user_id,
-            &ewf,
-            has_save,
-            has_kagi,
-            Some(format!("Failed to fetch full content: {e}")),
+        Err(e) => (
+            build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi),
+            FlashPayload {
+                level: "error",
+                message: format!("Failed to fetch full content: {e}"),
+            },
         ),
     };
-    Ok(ReadingPaneFragment { pane })
+    Ok(ReadingPaneWithFlash {
+        pane,
+        flash: Some(flash),
+    })
 }
 
 /// `POST /entries/{id}/save` — send the entry to every configured save
@@ -445,7 +472,7 @@ pub async fn save_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<ReadingPaneFragment> {
+) -> AppResult<ReadingPaneWithFlash> {
     let user_id = auth_user.user.id;
 
     let (ewf, save_config) = state
@@ -490,19 +517,31 @@ pub async fn save_entry_form(
         }
     }
 
-    let status_message = if failed.is_empty() {
-        Some(format!("Saved to {}.", succeeded.join(", ")))
+    let flash = if failed.is_empty() {
+        FlashPayload {
+            level: "success",
+            message: format!("Saved to {}.", succeeded.join(", ")),
+        }
     } else if succeeded.is_empty() {
-        Some(format!("Save failed — {}", failed.join("; ")))
+        FlashPayload {
+            level: "error",
+            message: format!("Save failed — {}", failed.join("; ")),
+        }
     } else {
-        Some(format!(
-            "Saved to {}. Failed: {}",
-            succeeded.join(", "),
-            failed.join("; ")
-        ))
+        FlashPayload {
+            level: "warning",
+            message: format!(
+                "Saved to {}. Failed: {}",
+                succeeded.join(", "),
+                failed.join("; ")
+            ),
+        }
     };
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
-    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, status_message);
-    Ok(ReadingPaneFragment { pane })
+    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi);
+    Ok(ReadingPaneWithFlash {
+        pane,
+        flash: Some(flash),
+    })
 }

@@ -54,9 +54,9 @@ impl EntryRowView {
 
 /// View-model for the reading pane (`_reading_pane.html`).
 /// `has_kagi` / `has_save` gate the conditional Summarize / Save buttons.
-/// `status_message` carries inline feedback after a Save / Fetch action
-/// (None on a normal read, `Some("Saved to Linkding")` after success,
-/// `Some("Failed: …")` after error).
+/// Action feedback (Save / Fetch Full Content) is delivered as a flash
+/// message via the swap helper's `<template data-flash>` block — see
+/// `_reading_pane_with_flash.html`.
 #[derive(Debug, Clone)]
 pub struct ReadingPaneView {
     pub id: i64,
@@ -73,7 +73,6 @@ pub struct ReadingPaneView {
     pub summary_in_flight: bool,
     pub has_kagi: bool,
     pub has_save: bool,
-    pub status_message: Option<String>,
 }
 
 /// Layout context shared by all 5 entries-family pages (`_entries_layout.html`).
@@ -138,8 +137,7 @@ pub(crate) async fn build_entries_page(
     let result = state
         .db
         .read_user(move |conn| {
-            let rows =
-                entry::list_by_user(conn, user_id, &filter, sort, page_size + 1, offset)?;
+            let rows = entry::list_by_user(conn, user_id, &filter, sort, page_size + 1, offset)?;
             let ids: Vec<i64> = rows.iter().map(|e| e.entry.id).collect();
             let statuses = entry_summary::get_statuses_for_entries(conn, user_id, &ids)?;
             Ok::<_, AppError>((rows, statuses))
@@ -197,7 +195,9 @@ impl IntoResponse for EntriesFragmentTemplate {
 /// (`format_relative_time`) is kept for places with more breathing
 /// room (reading pane, feeds page, admin tables).
 pub fn format_relative_time_compact(dt: Option<chrono::DateTime<chrono::Utc>>) -> String {
-    let Some(dt) = dt else { return "—".to_string() };
+    let Some(dt) = dt else {
+        return "—".to_string();
+    };
     let duration = chrono::Utc::now().signed_duration_since(dt);
     let seconds = duration.num_seconds();
     if seconds < 60 {

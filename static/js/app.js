@@ -94,6 +94,7 @@ async function performSwap(url, init, defaultTarget) {
             }
             parent.removeChild(dst);
         }
+        applyFlashTemplates(parsed);
         return;
     }
 
@@ -102,6 +103,24 @@ async function performSwap(url, init, defaultTarget) {
     const incoming = parsed.body.firstElementChild;
     if (!incoming) return;
     dst.outerHTML = incoming.outerHTML;
+    applyFlashTemplates(parsed);
+}
+
+// Process `<template data-flash data-level="success|error|info|warning">message</template>`
+// blocks in a swap response. Each one becomes a toast on the page-level
+// `<rdrs-flash>` element (mounted by _entries_layout.html). Used for
+// post-action feedback that doesn't have a corresponding DOM state
+// change — e.g. Save / Fetch Full Content.
+function applyFlashTemplates(parsed) {
+    const flashes = parsed.querySelectorAll('template[data-flash]');
+    for (const tpl of flashes) {
+        const level = tpl.getAttribute('data-level') || 'info';
+        const message = (tpl.textContent || '').trim();
+        if (!message) continue;
+        if (window.flash && typeof window.flash.show === 'function') {
+            window.flash.show(level, message);
+        }
+    }
 }
 
 // Full-reload stub. The SPA router's `window.rdrsNavigate(path)` API
