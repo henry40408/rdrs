@@ -23,9 +23,17 @@
                 <button type="submit" class="btn-secondary btn-sm">Mark Unread</button>
             </form>
             {% if let Some(link) = pane.link.as_ref() %}
+            {% if pane.is_full_content %}
+            {# `GET /entries/{id}/fragment` returns the original feed-supplied
+               reading pane (plus row + sidebar-unread, which are already in
+               their post-open state, so the swap is effectively a no-op for
+               them). Lets the user revert from a Fetch-Full-Content view. #}
+            <a href="/entries/{{ pane.id }}/fragment" data-swap="#reading-pane" class="btn btn-secondary btn-sm">Show Original</a>
+            {% else %}
             <form method="post" action="/entries/{{ pane.id }}/fetch-full-content" data-swap="#reading-pane">
                 <button type="submit" class="btn-secondary btn-sm">Fetch Full Content</button>
             </form>
+            {% endif %}
             {% if pane.has_kagi || pane.summary_in_flight %}
             <form method="post" action="/entries/{{ pane.id }}/summarize" data-swap="#reading-pane">
                 <button type="submit" class="btn-secondary btn-sm"{% if pane.summary_in_flight %} disabled{% endif %}>Summarize</button>

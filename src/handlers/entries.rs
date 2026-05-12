@@ -211,6 +211,7 @@ pub(crate) fn build_reading_pane_view(
         summary_in_flight,
         has_kagi,
         has_save,
+        is_full_content: false,
     }
 }
 
@@ -484,8 +485,10 @@ pub async fn summarize_entry_form(
 
 /// `POST /entries/{id}/fetch-full-content` — fetch the source article from
 /// the entry's `link`, sanitize, and return the reading pane with the
-/// article body replaced by the new HTML. No toggle-back behavior; refresh
-/// the page to restore the original feed body.
+/// article body replaced by the new HTML. The response sets
+/// `pane.is_full_content = true` so the template swaps "Fetch Full
+/// Content" for a "Show Original" link; clicking it re-renders the pane
+/// via `GET /entries/{id}/fragment` which restores the feed-supplied body.
 pub async fn fetch_full_content_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -517,6 +520,7 @@ pub async fn fetch_full_content_form(
             );
             let mut pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi);
             pane.content_html = sanitized;
+            pane.is_full_content = true;
             (
                 pane,
                 FlashPayload {

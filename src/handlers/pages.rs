@@ -73,6 +73,12 @@ pub struct ReadingPaneView {
     pub summary_in_flight: bool,
     pub has_kagi: bool,
     pub has_save: bool,
+    /// `true` after `POST /entries/{id}/fetch-full-content` succeeds —
+    /// the `content_html` field then holds the externally-fetched
+    /// article body instead of the feed-supplied content. The reading
+    /// pane swaps "Fetch Full Content" for a "Show Original" link in
+    /// this case so the user can revert.
+    pub is_full_content: bool,
 }
 
 /// One segment of a breadcrumb trail rendered above the page `<h1>`. `href =
