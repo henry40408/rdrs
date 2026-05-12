@@ -9,8 +9,12 @@ use crate::{
     error::{AppError, AppResult},
     handlers::pages::{format_relative_time, row_view_from, EntryRowView, ReadingPaneView},
     middleware::auth::PageAuthUser,
-    models::{entry, entry_summary},
-    services::{sanitize_html, SummaryJob, SummaryStatus},
+    models::{entry, entry_summary, user_settings},
+    services::{
+        fetch_and_extract,
+        save::{linkding, BookmarkData},
+        sanitize_html, SummaryJob, SummaryStatus,
+    },
     AppState,
 };
 
@@ -64,7 +68,8 @@ pub async fn entry_fragment(
         })
         .await??;
 
-    let pane = build_reading_pane_view(&state, user_id, &ewf);
+    let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
+    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, None);
     let row = row_view_from(&ewf, status);
     let sidebar_unread_payload_json = build_sidebar_unread(&state, user_id).await?;
     Ok(OpenEntryMulti {
@@ -87,17 +92,46 @@ pub(crate) async fn load_reading_pane(
         .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
         .await??
         .ok_or(AppError::EntryNotFound)?;
-    Ok(build_reading_pane_view(state, user_id, &ewf))
+    let (has_save, has_kagi) = load_pane_action_flags(state, user_id).await?;
+    Ok(build_reading_pane_view(
+        state, user_id, &ewf, has_save, has_kagi, None,
+    ))
+}
+
+/// Read the user's save-services config + Kagi config to drive the
+/// conditional Save / Summarize buttons in the reading pane.
+pub(crate) async fn load_pane_action_flags(
+    state: &AppState,
+    user_id: i64,
+) -> AppResult<(bool, bool)> {
+    state
+        .db
+        .read_user(move |conn| {
+            let cfg = crate::models::user_settings::get_save_services_config(conn, user_id)?;
+            let has_save = cfg.has_any_service();
+            let has_kagi = cfg
+                .kagi
+                .as_ref()
+                .map(|c| c.is_configured())
+                .unwrap_or(false);
+            Ok::<_, AppError>((has_save, has_kagi))
+        })
+        .await?
 }
 
 /// Build a `ReadingPaneView` from an already-loaded `EntryWithFeed`. The
 /// content sanitizer + summary-cache lookup happen here so callers that
 /// already have the entry (e.g. `entry_fragment`, which loads it inside its
-/// write transaction) don't re-hit the DB.
+/// write transaction) don't re-hit the DB. `has_save` / `has_kagi` come
+/// from `load_pane_action_flags`. `status_message` is optional inline
+/// feedback rendered next to the action bar (None on a normal read).
 pub(crate) fn build_reading_pane_view(
     state: &AppState,
     user_id: i64,
     ewf: &entry::EntryWithFeed,
+    has_save: bool,
+    has_kagi: bool,
+    status_message: Option<String>,
 ) -> ReadingPaneView {
     let entry_id = ewf.entry.id;
     let raw_content = ewf
@@ -148,6 +182,9 @@ pub(crate) fn build_reading_pane_view(
         is_starred: ewf.entry.starred_at.is_some(),
         summary_text,
         summary_in_flight,
+        has_kagi,
+        has_save,
+        status_message,
     }
 }
 
@@ -341,5 +378,131 @@ pub async fn summarize_entry_form(
         .await;
 
     let pane = load_reading_pane(&state, user_id, entry_id).await?;
+    Ok(ReadingPaneFragment { pane })
+}
+
+/// `POST /entries/{id}/fetch-full-content` — fetch the source article from
+/// the entry's `link`, sanitize, and return the reading pane with the
+/// article body replaced by the new HTML. Mirrors the legacy
+/// `<rdrs-entry-list>` "Fetch Full Content" button without the toggle-back
+/// behavior (refresh the page to restore the original feed body).
+pub async fn fetch_full_content_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<ReadingPaneFragment> {
+    let user_id = auth_user.user.id;
+
+    let ewf = state
+        .db
+        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
+        .await??
+        .ok_or(AppError::EntryNotFound)?;
+    let link = ewf
+        .entry
+        .link
+        .clone()
+        .ok_or_else(|| AppError::Validation("Entry has no link".to_string()))?;
+
+    let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
+
+    let pane = match fetch_and_extract(&link, &state.config.user_agent).await {
+        Ok(extracted) => {
+            let sanitized = sanitize_html(
+                &extracted.content,
+                &state.config.image_proxy_secret,
+                Some(&link),
+                ewf.custom_referrer.as_deref(),
+                None,
+            );
+            let mut pane = build_reading_pane_view(
+                &state,
+                user_id,
+                &ewf,
+                has_save,
+                has_kagi,
+                Some("Showing full content. Reload to restore feed body.".to_string()),
+            );
+            pane.content_html = sanitized;
+            pane
+        }
+        Err(e) => build_reading_pane_view(
+            &state,
+            user_id,
+            &ewf,
+            has_save,
+            has_kagi,
+            Some(format!("Failed to fetch full content: {e}")),
+        ),
+    };
+    Ok(ReadingPaneFragment { pane })
+}
+
+/// `POST /entries/{id}/save` — send the entry to every configured save
+/// service (currently Linkding) and return the reading pane with an inline
+/// status message. Mirrors the legacy `<rdrs-entry-list>` "Save" button.
+pub async fn save_entry_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<ReadingPaneFragment> {
+    let user_id = auth_user.user.id;
+
+    let (ewf, save_config) = state
+        .db
+        .read_user(move |conn| {
+            let ewf = entry::find_by_id_for_user(conn, user_id, entry_id)?
+                .ok_or(AppError::EntryNotFound)?;
+            let cfg = user_settings::get_save_services_config(conn, user_id)?;
+            Ok::<_, AppError>((ewf, cfg))
+        })
+        .await??;
+
+    let link = ewf
+        .entry
+        .link
+        .clone()
+        .ok_or_else(|| AppError::Validation("Entry has no link to save".to_string()))?;
+    if !save_config.has_any_service() {
+        return Err(AppError::Validation(
+            "No save services configured".to_string(),
+        ));
+    }
+
+    let bookmark = BookmarkData {
+        url: link,
+        title: ewf.entry.title.clone(),
+        description: ewf.entry.summary.clone(),
+        tags: vec![],
+    };
+
+    let mut succeeded: Vec<String> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+    if let Some(linkding_cfg) = save_config.linkding.as_ref() {
+        if linkding_cfg.is_configured() {
+            match linkding::save_to_linkding(linkding_cfg, &bookmark).await {
+                Ok(result) if result.success => {
+                    succeeded.push("Linkding".to_string());
+                }
+                Ok(result) => failed.push(format!("Linkding: {}", result.message)),
+                Err(e) => failed.push(format!("Linkding: {e}")),
+            }
+        }
+    }
+
+    let status_message = if failed.is_empty() {
+        Some(format!("Saved to {}.", succeeded.join(", ")))
+    } else if succeeded.is_empty() {
+        Some(format!("Save failed — {}", failed.join("; ")))
+    } else {
+        Some(format!(
+            "Saved to {}. Failed: {}",
+            succeeded.join(", "),
+            failed.join("; ")
+        ))
+    };
+
+    let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
+    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, status_message);
     Ok(ReadingPaneFragment { pane })
 }

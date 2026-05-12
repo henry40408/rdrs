@@ -53,6 +53,10 @@ impl EntryRowView {
 }
 
 /// View-model for the reading pane (`_reading_pane.html`).
+/// `has_kagi` / `has_save` gate the conditional Summarize / Save buttons.
+/// `status_message` carries inline feedback after a Save / Fetch action
+/// (None on a normal read, `Some("Saved to Linkding")` after success,
+/// `Some("Failed: …")` after error).
 #[derive(Debug, Clone)]
 pub struct ReadingPaneView {
     pub id: i64,
@@ -67,6 +71,9 @@ pub struct ReadingPaneView {
     pub is_starred: bool,
     pub summary_text: Option<String>,
     pub summary_in_flight: bool,
+    pub has_kagi: bool,
+    pub has_save: bool,
+    pub status_message: Option<String>,
 }
 
 /// Layout context shared by all 5 entries-family pages (`_entries_layout.html`).
