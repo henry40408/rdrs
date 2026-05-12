@@ -182,12 +182,28 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::entries::star_entry_form),
         )
         .route(
+            "/entries/{id}/unstar",
+            post(handlers::entries::unstar_entry_form),
+        )
+        .route(
             "/entries/{id}/read",
             post(handlers::entries::read_entry_form),
         )
         .route(
+            "/entries/{id}/unread",
+            post(handlers::entries::unread_entry_form),
+        )
+        .route(
             "/entries/{id}/summarize",
             post(handlers::entries::summarize_entry_form),
+        )
+        .route(
+            "/entries/{id}/fetch-full-content",
+            post(handlers::entries::fetch_full_content_form),
+        )
+        .route(
+            "/entries/{id}/save",
+            post(handlers::entries::save_entry_form),
         )
         .route("/search", get(handlers::pages::search_page))
         .route("/statistics", get(handlers::pages::statistics_page))

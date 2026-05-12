@@ -3602,6 +3602,33 @@ async fn test_entry_fragment_renders_reading_pane() {
     );
     assert!(html.contains("Hello World"), "entry title must appear");
     assert!(html.contains("Body text here"), "entry body must appear");
+    // Auto-mark-as-read: response carries the updated row + sidebar blocks.
+    assert!(
+        html.contains(&format!(r##"data-swap-target="#entry-row-{}""##, entry_id)),
+        "response must include a multi-target row block to clear unread state"
+    );
+    assert!(
+        html.contains(r##"data-swap-target="#sidebar-unread""##),
+        "response must include a multi-target sidebar block"
+    );
+    // Verify the entry is actually marked read in the DB.
+    let read_at: Option<String> = app
+        .db
+        .read_user(move |conn| {
+            conn.query_row(
+                "SELECT read_at FROM entry WHERE id = ?1",
+                [entry_id],
+                |row| row.get(0),
+            )
+            .map_err(rdrs::error::AppError::from)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        read_at.is_some(),
+        "opening fragment must auto-mark the entry as read"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -3683,7 +3710,7 @@ async fn test_entry_fragment_404_for_other_user() {
 // ============================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_star_entry_form_toggles_and_returns_multi_target() {
+async fn test_star_entry_form_is_idempotent_mark_starred() {
     let app = create_test_app_named(default_test_config(), "test_star_entry_form");
 
     // Register and log in as alice.
@@ -3698,7 +3725,7 @@ async fn test_star_entry_form_toggles_and_returns_multi_target() {
         .await
         .assert_status_ok();
 
-    // Seed: category + feed + one unread entry.
+    // Seed: category + feed + one unread, unstarred entry.
     let entry_id: i64 = app
         .db
         .user(|conn| {
@@ -3737,7 +3764,7 @@ async fn test_star_entry_form_toggles_and_returns_multi_target() {
         .await
         .unwrap();
 
-    // First POST — should star the entry.
+    // First /star — real state change, must star the entry.
     let resp = app
         .server
         .post(&format!("/entries/{}/star", entry_id))
@@ -3753,11 +3780,21 @@ async fn test_star_entry_form_toggles_and_returns_multi_target() {
         "multi-target sidebar block must be present"
     );
     assert!(
-        html.contains("entry-row-starred"),
-        "row must reflect starred state after first toggle"
+        html.contains("star-icon"),
+        "row must reflect starred state via the .star-icon span after first call"
+    );
+    // Pane Star button swap must be present so the reading-pane button label
+    // can flip to "Unstar" when the pane is visible.
+    assert!(
+        html.contains("data-swap-target=\"#reading-pane-star-form-"),
+        "multi-target response must include the pane-star-form swap"
+    );
+    assert!(
+        html.contains(">Unstar<"),
+        "pane-star-form swap payload must render the Unstar label"
     );
 
-    // Second POST — should unstar.
+    // Second /star — idempotent, entry stays starred (no toggle back).
     let resp2 = app
         .server
         .post(&format!("/entries/{}/star", entry_id))
@@ -3765,8 +3802,97 @@ async fn test_star_entry_form_toggles_and_returns_multi_target() {
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
     assert!(
-        !html2.contains("entry-row-starred"),
-        "row must not have starred class after second toggle"
+        html2.contains("star-icon"),
+        "second /star call must be a no-op — row must still carry .star-icon"
+    );
+    assert!(
+        html2.contains(">Unstar<"),
+        "pane-star-form payload must still show Unstar after no-op"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
+    let app = create_test_app_named(default_test_config(), "test_unstar_entry_form");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_unstar", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_unstar", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed one already-starred entry so /unstar's first call is a real
+    // state change and the second call exercises the no-op path.
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/unstar-feed",
+                    title: Some("Unstar Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-unstar-test",
+                Some("E"),
+                Some("https://x/u"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rdrs::models::entry::star_entry(conn, entry.id).unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // First /unstar — real state change.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/unstar", entry_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        !html.contains("star-icon"),
+        "row must drop .star-icon after /unstar"
+    );
+    assert!(
+        html.contains(">Star<"),
+        "pane-star-form swap must render the Star label after unstar"
+    );
+
+    // Second /unstar — no-op. Row must still be unstarred.
+    let resp2 = app
+        .server
+        .post(&format!("/entries/{}/unstar", entry_id))
+        .await;
+    assert_eq!(resp2.status_code(), StatusCode::OK);
+    let html2 = resp2.text();
+    assert!(
+        !html2.contains("star-icon"),
+        "second /unstar call must be a no-op — row must still be unstarred"
     );
 }
 
@@ -3775,7 +3901,7 @@ async fn test_star_entry_form_toggles_and_returns_multi_target() {
 // ============================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_read_entry_form_toggles_and_returns_multi_target() {
+async fn test_read_entry_form_is_idempotent_mark_read() {
     let app = create_test_app_named(default_test_config(), "test_read_entry_form");
 
     // Register and log in as alice.
@@ -3845,11 +3971,11 @@ async fn test_read_entry_form_toggles_and_returns_multi_target() {
         "multi-target sidebar block must be present"
     );
     assert!(
-        html.contains("entry-row-read"),
-        "row must reflect read state after first toggle"
+        html.contains(r#"class="entry-item entry-read""#),
+        "row must reflect read state via the .entry-read class after first call"
     );
 
-    // Second POST — should mark unread.
+    // Second POST — idempotent, entry stays read (no toggle back).
     let resp2 = app
         .server
         .post(&format!("/entries/{}/read", entry_id))
@@ -3857,8 +3983,98 @@ async fn test_read_entry_form_toggles_and_returns_multi_target() {
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
     assert!(
-        !html2.contains("entry-row-read"),
-        "row must not have read class after second toggle (unread)"
+        html2.contains(r#"class="entry-item entry-read""#),
+        "second /read call must be a no-op — row must still carry .entry-read"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_unread_entry_form_is_idempotent_mark_unread() {
+    let app = create_test_app_named(default_test_config(), "test_unread_entry_form");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_unr", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_unr", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed one entry already in the read state so the first /unread is a real
+    // state change and the second one is a no-op.
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/unread-feed",
+                    title: Some("Unread Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-unread-test",
+                Some("E"),
+                Some("https://x/u"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rdrs::models::entry::mark_as_read(conn, entry.id).unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // First /unread — real state change, must mark unread + emit flash.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/unread", entry_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        !html.contains(r#"class="entry-item entry-read""#),
+        "row must drop .entry-read after /unread"
+    );
+    assert!(
+        html.contains("Marked as unread."),
+        "real state change must emit the Marked-as-unread flash payload"
+    );
+
+    // Second /unread — no-op. Must NOT re-toggle to read and must NOT
+    // re-emit the flash (that would spam the user on stale-label re-clicks).
+    let resp2 = app
+        .server
+        .post(&format!("/entries/{}/unread", entry_id))
+        .await;
+    assert_eq!(resp2.status_code(), StatusCode::OK);
+    let html2 = resp2.text();
+    assert!(
+        !html2.contains(r#"class="entry-item entry-read""#),
+        "second /unread call must be a no-op — row must still be unread"
+    );
+    assert!(
+        !html2.contains("Marked as unread."),
+        "no-op /unread must not re-emit the flash"
     );
 }
 
@@ -3937,6 +4153,17 @@ async fn test_star_entry_form_404_for_other_user() {
         StatusCode::NOT_FOUND,
         "cross-user star must return 404"
     );
+
+    // Same ownership guard for the /unstar endpoint.
+    let resp_unstar = app
+        .server
+        .post(&format!("/entries/{}/unstar", bob_entry_id))
+        .await;
+    assert_eq!(
+        resp_unstar.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user unstar must return 404"
+    );
 }
 
 // ============================================================================
@@ -4013,6 +4240,17 @@ async fn test_read_entry_form_404_for_other_user() {
         resp.status_code(),
         StatusCode::NOT_FOUND,
         "cross-user read must return 404"
+    );
+
+    // Same ownership guard for the /unread endpoint.
+    let resp_unread = app
+        .server
+        .post(&format!("/entries/{}/unread", bob_entry_id))
+        .await;
+    assert_eq!(
+        resp_unread.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user unread must return 404"
     );
 }
 
@@ -4151,7 +4389,7 @@ async fn test_entries_load_more_returns_row_fragments() {
         .unwrap()
         .unwrap();
 
-    // GET /entries?fragment=1&after=50 — prefix-rerender: rows 0..74 (all 75).
+    // GET /entries?fragment=1&after=50 — append semantics: rows 50..74 only.
     let resp = app
         .server
         .get("/entries")
@@ -4161,11 +4399,11 @@ async fn test_entries_load_more_returns_row_fragments() {
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
 
-    // Prefix-rerender: should contain all 75 rows (0 to 74).
+    // Append semantics: should contain only the new slice (rows 50..74 = 25 rows).
     let row_count = html.matches("data-entry-row").count();
     assert_eq!(
-        row_count, 75,
-        "prefix-rerender should return all 75 rows (0..74)"
+        row_count, 25,
+        "append semantics should return only the new slice (rows 50..74)"
     );
 
     // No more pages — load-more form should be absent.
@@ -4174,10 +4412,10 @@ async fn test_entries_load_more_returns_row_fragments() {
         "no more pages → load-more form must be absent"
     );
 
-    // Response must be wrapped in a <template data-swap-target="[data-entries-list]">.
+    // Response must be wrapped in a <template data-swap-target="#load-more">.
     assert!(
-        html.contains("data-swap-target=\"[data-entries-list]\""),
-        "fragment must use multi-target template swap"
+        html.contains("data-swap-target=\"#load-more\""),
+        "fragment must use multi-target template swap that targets #load-more"
     );
 }
 

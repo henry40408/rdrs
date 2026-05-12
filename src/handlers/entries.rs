@@ -9,8 +9,12 @@ use crate::{
     error::{AppError, AppResult},
     handlers::pages::{format_relative_time, row_view_from, EntryRowView, ReadingPaneView},
     middleware::auth::PageAuthUser,
-    models::{entry, entry_summary},
-    services::{sanitize_html, SummaryJob, SummaryStatus},
+    models::{entry, entry_summary, user_settings},
+    services::{
+        fetch_and_extract, sanitize_html,
+        save::{linkding, BookmarkData},
+        SummaryJob, SummaryStatus,
+    },
     AppState,
 };
 
@@ -31,6 +35,34 @@ impl IntoResponse for ReadingPaneFragment {
     }
 }
 
+/// One-shot flash payload for the swap-helper `<template data-flash>` block.
+/// `level` is one of `success | error | info | warning` — matching the
+/// `<rdrs-flash>` API in `static/js/components/rdrs-flash.js`.
+#[derive(Debug, Clone)]
+pub struct FlashPayload {
+    pub level: &'static str,
+    pub message: String,
+}
+
+/// Multi-target response: swaps the reading pane and (optionally) pops a
+/// toast on the page-level `<rdrs-flash>`. Returned by the Save /
+/// Fetch-Full-Content form-actions.
+#[derive(Template)]
+#[template(path = "_reading_pane_with_flash.html")]
+pub struct ReadingPaneWithFlash {
+    pub pane: ReadingPaneView,
+    pub flash: Option<FlashPayload>,
+}
+
+impl IntoResponse for ReadingPaneWithFlash {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
 /// `GET /entries/{id}/fragment` — returns the reading-pane HTML fragment for
 /// the given entry. The entry must belong to the authenticated user; otherwise
 /// a 404 is returned (same semantics as the JSON `/api/entries/{id}` endpoint
@@ -39,10 +71,40 @@ pub async fn entry_fragment(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<ReadingPaneFragment> {
+) -> AppResult<OpenEntryMulti> {
     let user_id = auth_user.user.id;
-    let pane = load_reading_pane(&state, user_id, entry_id).await?;
-    Ok(ReadingPaneFragment { pane })
+
+    // Verify ownership, mark unread→read, re-fetch the entry to reflect the
+    // new state, and pick up the summary status — all in a single write
+    // transaction. Marking-as-read on a `GET` is unusual REST-wise, but it
+    // matches the feed-reader convention (Reeder / FreshRSS / etc. behave the
+    // same way) and the operation is idempotent on the read row.
+    let (ewf, status) = state
+        .db
+        .user(move |conn| {
+            let pre = entry::find_by_id_for_user(conn, user_id, entry_id)?
+                .ok_or(AppError::EntryNotFound)?;
+            if pre.entry.read_at.is_none() {
+                entry::mark_as_read(conn, entry_id)?;
+            }
+            let post = entry::find_by_id_for_user(conn, user_id, entry_id)?
+                .ok_or(AppError::EntryNotFound)?;
+            let status = entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])?
+                .get(&entry_id)
+                .copied();
+            Ok::<_, AppError>((post, status))
+        })
+        .await??;
+
+    let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
+    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi);
+    let row = row_view_from(&ewf, status);
+    let sidebar_unread_payload_json = build_sidebar_unread(&state, user_id).await?;
+    Ok(OpenEntryMulti {
+        pane,
+        r: row,
+        sidebar_unread_payload_json,
+    })
 }
 
 /// Build a `ReadingPaneView` for the given entry, scoped to `user_id`.
@@ -58,8 +120,47 @@ pub(crate) async fn load_reading_pane(
         .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
         .await??
         .ok_or(AppError::EntryNotFound)?;
+    let (has_save, has_kagi) = load_pane_action_flags(state, user_id).await?;
+    Ok(build_reading_pane_view(
+        state, user_id, &ewf, has_save, has_kagi,
+    ))
+}
 
-    // Resolve content: prefer `content` field, fall back to `summary`.
+/// Read the user's save-services config + Kagi config to drive the
+/// conditional Save / Summarize buttons in the reading pane.
+pub(crate) async fn load_pane_action_flags(
+    state: &AppState,
+    user_id: i64,
+) -> AppResult<(bool, bool)> {
+    state
+        .db
+        .read_user(move |conn| {
+            let cfg = crate::models::user_settings::get_save_services_config(conn, user_id)?;
+            let has_save = cfg.has_any_service();
+            let has_kagi = cfg
+                .kagi
+                .as_ref()
+                .map(|c| c.is_configured())
+                .unwrap_or(false);
+            Ok::<_, AppError>((has_save, has_kagi))
+        })
+        .await?
+}
+
+/// Build a `ReadingPaneView` from an already-loaded `EntryWithFeed`. The
+/// content sanitizer + summary-cache lookup happen here so callers that
+/// already have the entry (e.g. `entry_fragment`, which loads it inside its
+/// write transaction) don't re-hit the DB. `has_save` / `has_kagi` come
+/// from `load_pane_action_flags`. Save / Fetch action feedback is delivered
+/// via flash (see `ReadingPaneWithFlash`), not inline status text.
+pub(crate) fn build_reading_pane_view(
+    state: &AppState,
+    user_id: i64,
+    ewf: &entry::EntryWithFeed,
+    has_save: bool,
+    has_kagi: bool,
+) -> ReadingPaneView {
+    let entry_id = ewf.entry.id;
     let raw_content = ewf
         .entry
         .content
@@ -83,7 +184,6 @@ pub(crate) async fn load_reading_pane(
         proxy_base_url,
     );
 
-    // Look up summary from the in-memory cache.
     let cache_entry = state.summary_cache.get(user_id, entry_id);
     let (summary_text, summary_in_flight) = match cache_entry.as_ref().map(|e| &e.status) {
         Some(SummaryStatus::Completed) => (cache_entry.and_then(|e| e.summary_text.clone()), false),
@@ -92,8 +192,8 @@ pub(crate) async fn load_reading_pane(
     };
 
     let published_at = ewf.entry.published_at;
-    Ok(ReadingPaneView {
-        id: ewf.entry.id,
+    ReadingPaneView {
+        id: entry_id,
         title: ewf
             .entry
             .title
@@ -109,19 +209,58 @@ pub(crate) async fn load_reading_pane(
         is_starred: ewf.entry.starred_at.is_some(),
         summary_text,
         summary_in_flight,
-    })
+        has_kagi,
+        has_save,
+    }
 }
 
-/// Multi-target action response template. Renders two `<template data-swap-target>` blocks:
-/// one for the updated entry row and one for the sidebar-unread payload.
+/// Just enough state to re-render the reading-pane Star button form. Set by
+/// star/unstar handlers so the multi-target response can refresh the pane's
+/// button label + action URL after a toggle without round-tripping the
+/// whole reading pane.
+#[derive(Debug, Clone)]
+pub struct PaneStarFormView {
+    pub id: i64,
+    pub is_starred: bool,
+}
+
+/// Multi-target action response template. Renders the updated entry row, the
+/// sidebar-unread payload, (optionally) a `<template data-flash>` block for
+/// actions that want toast feedback (e.g. Mark Unread), and (optionally) a
+/// pane-star-form swap block (Star / Unstar — keeps the pane button label in
+/// sync with the new starred state).
 #[derive(Template)]
 #[template(path = "_entry_actions_multi.html")]
 pub struct EntryActionMulti {
     pub r: EntryRowView,
     pub sidebar_unread_payload_json: String,
+    pub flash: Option<FlashPayload>,
+    pub pane_star_form: Option<PaneStarFormView>,
 }
 
 impl IntoResponse for EntryActionMulti {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Multi-target response for opening an entry. Renders three `<template
+/// data-swap-target>` blocks: the reading pane, the (now-read) entry row,
+/// and the sidebar-unread payload. Returned by `GET /entries/{id}/fragment`
+/// so the title-link click both shows the entry AND clears its unread
+/// state from the list + sidebar in one round trip.
+#[derive(Template)]
+#[template(path = "_open_entry_multi.html")]
+pub struct OpenEntryMulti {
+    pub pane: ReadingPaneView,
+    pub r: EntryRowView,
+    pub sidebar_unread_payload_json: String,
+}
+
+impl IntoResponse for OpenEntryMulti {
     fn into_response(self) -> Response {
         match self.render() {
             Ok(html) => Html(html).into_response(),
@@ -141,43 +280,123 @@ pub(crate) async fn build_sidebar_unread(state: &AppState, user_id: i64) -> AppR
     Ok(serde_json::to_string(&counts).unwrap_or_else(|_| "[]".to_string()))
 }
 
-/// `POST /entries/{id}/star` — toggle the starred state for the entry, then
-/// return a multi-target HTML fragment updating the row + sidebar-unread block.
+/// `POST /entries/{id}/star` — idempotently mark the entry as starred.
+/// No-op when the entry is already starred. Response includes the pane-
+/// star-form swap so the reading pane button label flips to "Unstar"
+/// if the pane is visible.
 pub async fn star_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<EntryActionMulti> {
-    let user_id = auth_user.user.id;
-    let ewf = state
+    set_starred_state(state, auth_user.user.id, entry_id, true).await
+}
+
+/// `POST /entries/{id}/unstar` — idempotently mark the entry as unstarred.
+/// No-op when the entry is already unstarred. Same pane-star-form swap
+/// so the pane button can flip back to "Star".
+pub async fn unstar_entry_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<EntryActionMulti> {
+    set_starred_state(state, auth_user.user.id, entry_id, false).await
+}
+
+/// Shared core for the idempotent star/unstar handlers.
+async fn set_starred_state(
+    state: AppState,
+    user_id: i64,
+    entry_id: i64,
+    desired_starred: bool,
+) -> AppResult<EntryActionMulti> {
+    let (result, status) = state
         .db
-        .user(move |conn| entry::toggle_starred(conn, user_id, entry_id))
-        .await??
-        .ok_or(AppError::EntryNotFound)?;
+        .user(move |conn| {
+            let result = entry::set_starred_for_user(conn, user_id, entry_id, desired_starred)?;
+            let status = if let Some((ref e, _)) = result {
+                entry_summary::get_statuses_for_entries(conn, user_id, &[e.entry.id])?
+                    .get(&e.entry.id)
+                    .copied()
+            } else {
+                None
+            };
+            Ok::<_, AppError>((result, status))
+        })
+        .await??;
+    let (ewf, _changed) = result.ok_or(AppError::EntryNotFound)?;
     let payload_json = build_sidebar_unread(&state, user_id).await?;
+    let pane_star_form = Some(PaneStarFormView {
+        id: ewf.entry.id,
+        is_starred: ewf.entry.starred_at.is_some(),
+    });
     Ok(EntryActionMulti {
-        r: row_view_from(&ewf),
+        r: row_view_from(&ewf, status),
         sidebar_unread_payload_json: payload_json,
+        flash: None,
+        pane_star_form,
     })
 }
 
-/// `POST /entries/{id}/read` — toggle the read state for the entry, then
-/// return a multi-target HTML fragment updating the row + sidebar-unread block.
+/// `POST /entries/{id}/read` — idempotently mark the entry as read, then
+/// return a multi-target HTML fragment updating the row + sidebar-unread
+/// block. No-op if the entry is already read. No flash toast — marking
+/// read is the normal reading flow and doesn't need explicit feedback.
 pub async fn read_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<EntryActionMulti> {
-    let user_id = auth_user.user.id;
-    let ewf = state
+    set_read_state(state, auth_user.user.id, entry_id, true).await
+}
+
+/// `POST /entries/{id}/unread` — idempotently mark the entry as unread.
+/// Emits a "Marked as unread." flash *only* when the call actually changed
+/// state, so a stale-label double-click doesn't re-toast.
+pub async fn unread_entry_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<EntryActionMulti> {
+    set_read_state(state, auth_user.user.id, entry_id, false).await
+}
+
+/// Shared core for the two idempotent read/unread handlers.
+async fn set_read_state(
+    state: AppState,
+    user_id: i64,
+    entry_id: i64,
+    desired_read: bool,
+) -> AppResult<EntryActionMulti> {
+    let (result, status) = state
         .db
-        .user(move |conn| entry::toggle_read(conn, user_id, entry_id))
-        .await??
-        .ok_or(AppError::EntryNotFound)?;
+        .user(move |conn| {
+            let result = entry::set_read_for_user(conn, user_id, entry_id, desired_read)?;
+            let status = if let Some((ref e, _)) = result {
+                entry_summary::get_statuses_for_entries(conn, user_id, &[e.entry.id])?
+                    .get(&e.entry.id)
+                    .copied()
+            } else {
+                None
+            };
+            Ok::<_, AppError>((result, status))
+        })
+        .await??;
+    let (ewf, changed) = result.ok_or(AppError::EntryNotFound)?;
     let payload_json = build_sidebar_unread(&state, user_id).await?;
+    let flash = if !desired_read && changed {
+        Some(FlashPayload {
+            level: "success",
+            message: "Marked as unread.".to_string(),
+        })
+    } else {
+        None
+    };
     Ok(EntryActionMulti {
-        r: row_view_from(&ewf),
+        r: row_view_from(&ewf, status),
         sidebar_unread_payload_json: payload_json,
+        flash,
+        pane_star_form: None,
     })
 }
 
@@ -261,4 +480,143 @@ pub async fn summarize_entry_form(
 
     let pane = load_reading_pane(&state, user_id, entry_id).await?;
     Ok(ReadingPaneFragment { pane })
+}
+
+/// `POST /entries/{id}/fetch-full-content` — fetch the source article from
+/// the entry's `link`, sanitize, and return the reading pane with the
+/// article body replaced by the new HTML. Mirrors the legacy
+/// `<rdrs-entry-list>` "Fetch Full Content" button without the toggle-back
+/// behavior (refresh the page to restore the original feed body).
+pub async fn fetch_full_content_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<ReadingPaneWithFlash> {
+    let user_id = auth_user.user.id;
+
+    let ewf = state
+        .db
+        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
+        .await??
+        .ok_or(AppError::EntryNotFound)?;
+    let link = ewf
+        .entry
+        .link
+        .clone()
+        .ok_or_else(|| AppError::Validation("Entry has no link".to_string()))?;
+
+    let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
+
+    let (pane, flash) = match fetch_and_extract(&link, &state.config.user_agent).await {
+        Ok(extracted) => {
+            let sanitized = sanitize_html(
+                &extracted.content,
+                &state.config.image_proxy_secret,
+                Some(&link),
+                ewf.custom_referrer.as_deref(),
+                None,
+            );
+            let mut pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi);
+            pane.content_html = sanitized;
+            (
+                pane,
+                FlashPayload {
+                    level: "success",
+                    message: "Fetched full content.".to_string(),
+                },
+            )
+        }
+        Err(e) => (
+            build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi),
+            FlashPayload {
+                level: "error",
+                message: format!("Failed to fetch full content: {e}"),
+            },
+        ),
+    };
+    Ok(ReadingPaneWithFlash {
+        pane,
+        flash: Some(flash),
+    })
+}
+
+/// `POST /entries/{id}/save` — send the entry to every configured save
+/// service (currently Linkding) and return the reading pane with an inline
+/// status message. Mirrors the legacy `<rdrs-entry-list>` "Save" button.
+pub async fn save_entry_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<ReadingPaneWithFlash> {
+    let user_id = auth_user.user.id;
+
+    let (ewf, save_config) = state
+        .db
+        .read_user(move |conn| {
+            let ewf = entry::find_by_id_for_user(conn, user_id, entry_id)?
+                .ok_or(AppError::EntryNotFound)?;
+            let cfg = user_settings::get_save_services_config(conn, user_id)?;
+            Ok::<_, AppError>((ewf, cfg))
+        })
+        .await??;
+
+    let link = ewf
+        .entry
+        .link
+        .clone()
+        .ok_or_else(|| AppError::Validation("Entry has no link to save".to_string()))?;
+    if !save_config.has_any_service() {
+        return Err(AppError::Validation(
+            "No save services configured".to_string(),
+        ));
+    }
+
+    let bookmark = BookmarkData {
+        url: link,
+        title: ewf.entry.title.clone(),
+        description: ewf.entry.summary.clone(),
+        tags: vec![],
+    };
+
+    let mut succeeded: Vec<String> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+    if let Some(linkding_cfg) = save_config.linkding.as_ref() {
+        if linkding_cfg.is_configured() {
+            match linkding::save_to_linkding(linkding_cfg, &bookmark).await {
+                Ok(result) if result.success => {
+                    succeeded.push("Linkding".to_string());
+                }
+                Ok(result) => failed.push(format!("Linkding: {}", result.message)),
+                Err(e) => failed.push(format!("Linkding: {e}")),
+            }
+        }
+    }
+
+    let flash = if failed.is_empty() {
+        FlashPayload {
+            level: "success",
+            message: format!("Saved to {}.", succeeded.join(", ")),
+        }
+    } else if succeeded.is_empty() {
+        FlashPayload {
+            level: "error",
+            message: format!("Save failed — {}", failed.join("; ")),
+        }
+    } else {
+        FlashPayload {
+            level: "warning",
+            message: format!(
+                "Saved to {}. Failed: {}",
+                succeeded.join(", "),
+                failed.join("; ")
+            ),
+        }
+    };
+
+    let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
+    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi);
+    Ok(ReadingPaneWithFlash {
+        pane,
+        flash: Some(flash),
+    })
 }

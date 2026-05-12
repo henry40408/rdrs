@@ -5,11 +5,14 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
 };
 
+use std::collections::HashMap;
+
 use crate::error::{AppError, AppResult};
 use crate::middleware::auth::{PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
 use crate::models::user_settings;
-use crate::models::{category, entry, feed};
+use crate::models::SummaryStatus;
+use crate::models::{category, entry, entry_summary, feed};
 use crate::AppState;
 
 /// Escape a JSON string for safe embedding inside HTML `<script>` tags.
@@ -29,14 +32,31 @@ pub struct EntryRowView {
     pub feed_id: i64,
     pub feed_title: String,
     pub feed_has_icon: bool,
+    pub category_id: i64,
+    pub category_name: String,
     pub title: String,
+    pub link: Option<String>,
     pub published_at_iso: String,
     pub published_relative: String,
     pub is_read: bool,
     pub is_starred: bool,
+    pub summary_status: Option<SummaryStatus>,
+}
+
+impl EntryRowView {
+    /// Stringified summary status for the Askama template `{% match %}` branch.
+    /// Returns `Some("completed" | "pending" | "processing" | "failed")` when a
+    /// summary row exists for this entry, else `None`.
+    pub fn summary_status_str(&self) -> Option<&'static str> {
+        self.summary_status.map(|s| s.as_str())
+    }
 }
 
 /// View-model for the reading pane (`_reading_pane.html`).
+/// `has_kagi` / `has_save` gate the conditional Summarize / Save buttons.
+/// Action feedback (Save / Fetch Full Content) is delivered as a flash
+/// message via the swap helper's `<template data-flash>` block — see
+/// `_reading_pane_with_flash.html`.
 #[derive(Debug, Clone)]
 pub struct ReadingPaneView {
     pub id: i64,
@@ -51,6 +71,8 @@ pub struct ReadingPaneView {
     pub is_starred: bool,
     pub summary_text: Option<String>,
     pub summary_in_flight: bool,
+    pub has_kagi: bool,
+    pub has_save: bool,
 }
 
 /// Layout context shared by all 5 entries-family pages (`_entries_layout.html`).
@@ -60,10 +82,21 @@ pub struct EntriesLayoutContext {
     pub description: Option<String>,
     pub empty_message: &'static str,
     pub path: &'static str,
+    /// Render the All/Read/Starred/Summarized tab bar above the list. True
+    /// for the 4 entries-tabs (`active = "all" | "read" | "starred" |
+    /// "summarized"`), false for `/` (unread) since unread is not a tab.
+    pub show_tab_bar: bool,
+    /// Render the "Mark as Read..." dropdown above the list. True for `/`
+    /// (unread) and `/entries` (all) — the two views where bulk-marking
+    /// matters; false for read/starred/summarized.
+    pub show_mark_as_read: bool,
 }
 
-/// Map an `EntryWithFeed` to an `EntryRowView`.
-pub(crate) fn row_view_from(e: &entry::EntryWithFeed) -> EntryRowView {
+/// Map an `EntryWithFeed` (+ optional summary status) to an `EntryRowView`.
+pub(crate) fn row_view_from(
+    e: &entry::EntryWithFeed,
+    summary_status: Option<SummaryStatus>,
+) -> EntryRowView {
     let title = e
         .entry
         .title
@@ -78,11 +111,15 @@ pub(crate) fn row_view_from(e: &entry::EntryWithFeed) -> EntryRowView {
             .clone()
             .unwrap_or_else(|| "(no feed)".to_string()),
         feed_has_icon: e.feed_has_icon,
+        category_id: e.category_id,
+        category_name: e.category_name.clone(),
         title,
+        link: e.entry.link.clone(),
         published_at_iso: published_at.to_rfc3339(),
-        published_relative: format_relative_time(Some(published_at)).0,
+        published_relative: format_relative_time_compact(Some(published_at)),
         is_read: e.entry.read_at.is_some(),
         is_starred: e.entry.starred_at.is_some(),
+        summary_status,
     }
 }
 
@@ -97,15 +134,19 @@ pub(crate) async fn build_entries_page(
     page_size: i64,
     offset: i64,
 ) -> (Vec<EntryRowView>, Option<i64>) {
-    let rows = state
+    let result = state
         .db
         .read_user(move |conn| {
-            entry::list_by_user(conn, user_id, &filter, sort, page_size + 1, offset)
+            let rows = entry::list_by_user(conn, user_id, &filter, sort, page_size + 1, offset)?;
+            let ids: Vec<i64> = rows.iter().map(|e| e.entry.id).collect();
+            let statuses = entry_summary::get_statuses_for_entries(conn, user_id, &ids)?;
+            Ok::<_, AppError>((rows, statuses))
         })
         .await
         .ok()
         .and_then(|r| r.ok())
-        .unwrap_or_default();
+        .unwrap_or_else(|| (Vec::new(), HashMap::new()));
+    let (rows, statuses) = result;
 
     let next_cursor = if rows.len() as i64 > page_size {
         Some(offset + page_size)
@@ -115,7 +156,7 @@ pub(crate) async fn build_entries_page(
     let views = rows
         .iter()
         .take(page_size as usize)
-        .map(row_view_from)
+        .map(|e| row_view_from(e, statuses.get(&e.entry.id).copied()))
         .collect();
     (views, next_cursor)
 }
@@ -146,6 +187,31 @@ impl IntoResponse for EntriesFragmentTemplate {
             Ok(html) => Html(html).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         }
+    }
+}
+
+/// Compact relative-time formatter for the entry list. Returns short
+/// forms like `now` / `46m` / `3h` / `2d` / `5mo` / `1y`. Long form
+/// (`format_relative_time`) is kept for places with more breathing
+/// room (reading pane, feeds page, admin tables).
+pub fn format_relative_time_compact(dt: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    let Some(dt) = dt else {
+        return "—".to_string();
+    };
+    let duration = chrono::Utc::now().signed_duration_since(dt);
+    let seconds = duration.num_seconds();
+    if seconds < 60 {
+        "now".to_string()
+    } else if seconds < 3600 {
+        format!("{}m", duration.num_minutes())
+    } else if seconds < 86400 {
+        format!("{}h", duration.num_hours())
+    } else if seconds < 2_592_000 {
+        format!("{}d", duration.num_days())
+    } else if seconds < 31_536_000 {
+        format!("{}mo", duration.num_days() / 30)
+    } else {
+        format!("{}y", duration.num_days() / 365)
     }
 }
 
@@ -385,14 +451,13 @@ pub async fn unread_page(
 
     if query.fragment == Some(1) {
         let after = query.after.unwrap_or(0).max(0);
-        let limit = after + PAGE_SIZE;
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            limit,
-            0,
+            PAGE_SIZE,
+            after,
         )
         .await;
         return (
@@ -431,6 +496,8 @@ pub async fn unread_page(
                 description: None,
                 empty_message: "No unread entries — nice work.",
                 path: "/",
+                show_tab_bar: false,
+                show_mark_as_read: true,
             },
         },
     )
@@ -854,14 +921,13 @@ pub async fn entries_page(
 
     if query.fragment == Some(1) {
         let after = query.after.unwrap_or(0).max(0);
-        let limit = after + PAGE_SIZE;
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            limit,
-            0,
+            PAGE_SIZE,
+            after,
         )
         .await;
         return (
@@ -900,6 +966,8 @@ pub async fn entries_page(
                 description: None,
                 empty_message: "No entries.",
                 path: "/entries",
+                show_tab_bar: true,
+                show_mark_as_read: true,
             },
         },
     )
@@ -997,14 +1065,13 @@ pub async fn read_entries_page(
 
     if query.fragment == Some(1) {
         let after = query.after.unwrap_or(0).max(0);
-        let limit = after + PAGE_SIZE;
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            limit,
-            0,
+            PAGE_SIZE,
+            after,
         )
         .await;
         return (
@@ -1043,6 +1110,8 @@ pub async fn read_entries_page(
                 description: None,
                 empty_message: "No read entries.",
                 path: "/entries/read",
+                show_tab_bar: true,
+                show_mark_as_read: false,
             },
         },
     )
@@ -1069,14 +1138,13 @@ pub async fn starred_entries_page(
 
     if query.fragment == Some(1) {
         let after = query.after.unwrap_or(0).max(0);
-        let limit = after + PAGE_SIZE;
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            limit,
-            0,
+            PAGE_SIZE,
+            after,
         )
         .await;
         return (
@@ -1115,6 +1183,8 @@ pub async fn starred_entries_page(
                 description: None,
                 empty_message: "No starred entries.",
                 path: "/entries/starred",
+                show_tab_bar: true,
+                show_mark_as_read: false,
             },
         },
     )
@@ -1141,14 +1211,13 @@ pub async fn summarized_entries_page(
 
     if query.fragment == Some(1) {
         let after = query.after.unwrap_or(0).max(0);
-        let limit = after + PAGE_SIZE;
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            limit,
-            0,
+            PAGE_SIZE,
+            after,
         )
         .await;
         return (
@@ -1187,6 +1256,8 @@ pub async fn summarized_entries_page(
                 description: None,
                 empty_message: "No summarized entries.",
                 path: "/entries/summarized",
+                show_tab_bar: true,
+                show_mark_as_read: false,
             },
         },
     )

@@ -2121,4 +2121,35 @@ summary {
 }
 
 /* ── Entries keyboard focus ───────────────────────────────────────────── */
-.entry-row-focused { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; }
+/* SSR Load-More form wrapper. Same shape as the legacy `.hidden-mt4`
+   wrapper around the load-more button — top margin separating it
+   from the last row, side padding aligning with the rest of the list,
+   and matching bottom margin so the button doesn't sit flush with
+   the .list-pane edge. */
+.load-more-form {
+    margin-top: var(--space-4);
+    margin-bottom: var(--space-4);
+    padding: 0 var(--space-5);
+}
+
+/* SSR form-button actions inside `.entry-item-actions`. Mirrors the
+   muted-text + accent-on-hover styling of `.entry-item-actions a` so
+   form-wrapped read/star buttons read as inline action links. */
+.entry-item-actions form {
+    display: inline;
+    margin: 0;
+    padding: 0;
+}
+
+.entry-item-actions .entry-action-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--color-text-muted);
+    font: inherit;
+    cursor: pointer;
+}
+
+.entry-item-actions .entry-action-btn:hover {
+    color: var(--color-accent);
+}

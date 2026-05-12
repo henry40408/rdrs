@@ -1,19 +1,33 @@
-{# Single entry row. Rendered from `for r in entries` loop via _entries_layout.html.
-   `data-swap` on the title link instructs app.js to swap the reading pane in-place.
-   Star/read forms use `data-swap` to target the row for multi-target swap responses. #}
-<article id="entry-row-{{ r.id }}" class="entry-row{% if r.is_read %} entry-row-read{% endif %}{% if r.is_starred %} entry-row-starred{% endif %}" data-entry-row data-entry-id="{{ r.id }}" data-testid="entry-item">
-    <a class="entry-row-title" href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" data-testid="entry-title-link">
-        {% if r.feed_has_icon %}<img class="entry-row-feed-icon" src="/api/feeds/{{ r.feed_id }}/icon" alt="" loading="lazy" width="16" height="16">{% endif %}
-        <span class="entry-row-feed">{{ r.feed_title }}</span>
-        <span class="entry-row-headline">{{ r.title }}</span>
-        <time class="entry-row-time" datetime="{{ r.published_at_iso }}">{{ r.published_relative }}</time>
-    </a>
-    <div class="entry-row-actions">
-        <form method="post" action="/entries/{{ r.id }}/star" data-swap="#entry-row-{{ r.id }}" class="entry-row-action">
-            <button type="submit" aria-label="{% if r.is_starred %}Unstar{% else %}Star{% endif %}" data-testid="entry-star-action">{% if r.is_starred %}★{% else %}☆{% endif %}</button>
-        </form>
-        <form method="post" action="/entries/{{ r.id }}/read" data-swap="#entry-row-{{ r.id }}" class="entry-row-action">
-            <button type="submit" aria-label="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %}" data-testid="entry-read-action">{% if r.is_read %}●{% else %}○{% endif %}</button>
-        </form>
+{# Single entry row. Matches the pre-SSR `.entry-item-*` DOM the existing
+   CSS rules target. The form-wrapped buttons in `.entry-item-actions`
+   are styled to read as inline action links via the `.entry-action-btn`
+   rule. `id="entry-row-{id}"` is the swap target used by the multi-target
+   star/read action endpoints. #}
+<div id="entry-row-{{ r.id }}" class="entry-item{% if r.is_read %} entry-read{% endif %}" data-entry-row data-entry-id="{{ r.id }}" data-testid="entry-item">
+    <div>
+        <a href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" class="entry-item-title {% if r.is_read %}entry-title-normal{% else %}entry-title-bold{% endif %}" data-testid="entry-title-link">{{ r.title }}</a>
+        {% if r.is_starred %}<span title="Starred" class="star-icon">⭐</span>{% endif %}
+        {% match r.summary_status_str() %}
+            {% when Some("completed") %}<span title="Has Summary" class="summary-badge">✅</span>
+            {% when Some("pending") %}<span title="Pending" class="summary-badge-pending">⏳</span>
+            {% when Some("processing") %}<span title="Processing" class="summary-badge-processing">🔄</span>
+            {% when Some("failed") %}<span title="Failed" class="summary-badge-failed">❌</span>
+            {% when _ %}
+        {% endmatch %}
     </div>
-</article>
+    <div class="muted entry-item-meta">
+        {% if r.feed_has_icon %}<img class="feed-icon" src="/api/feeds/{{ r.feed_id }}/icon" alt="" loading="lazy" width="16" height="16">{% endif %}
+        <a href="/feeds/{{ r.feed_id }}/entries">{{ r.feed_title }}</a> &middot;
+        <a href="/categories/{{ r.category_id }}/entries">{{ r.category_name }}</a> &middot;
+        <time datetime="{{ r.published_at_iso }}">{{ r.published_relative }}</time>
+    </div>
+    <div class="entry-item-actions">
+        <form method="post" action="/entries/{{ r.id }}/{% if r.is_read %}unread{% else %}read{% endif %}" data-swap="#entry-row-{{ r.id }}">
+            <button type="submit" class="entry-action-btn" data-testid="entry-read-action">{% if r.is_read %}unread{% else %}read{% endif %}</button>
+        </form>
+        <form method="post" action="/entries/{{ r.id }}/{% if r.is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ r.id }}">
+            <button type="submit" class="entry-action-btn" data-testid="entry-star-action">{% if r.is_starred %}unstar{% else %}star{% endif %}</button>
+        </form>
+        {% if let Some(link) = r.link.as_ref() %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer" data-testid="entry-original-link">original</a>{% endif %}
+    </div>
+</div>

@@ -1,0 +1,15 @@
+{# Multi-target swap response wrapping the reading pane + an optional
+   flash toast. Returned by the Save / Fetch-Full-Content form-actions.
+   The swap helper in `static/js/app.js`:
+     - swaps `#reading-pane` with the inner template content
+     - reads `<template data-flash data-level="…">` and calls
+       `window.flash.show(level, message)` on the page-level `<rdrs-flash>`
+   The flash block is the only user-visible feedback for these actions —
+   they don't mutate row state, so the toast is the signal that the
+   action succeeded / failed. #}
+<template data-swap-target="#reading-pane">
+{% include "_reading_pane.html" %}
+</template>
+{% if let Some(f) = flash.as_ref() %}
+<template data-flash data-level="{{ f.level }}">{{ f.message }}</template>
+{% endif %}
