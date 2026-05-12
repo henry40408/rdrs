@@ -5,6 +5,10 @@
 {% block title %}{{ title }} - RDRS{% endblock %}
 
 {% block head %}
+    <link rel="modulepreload" href="/static/js/components/rdrs-kb-pending.js?v={{ layout.git_version }}">
+    <link rel="modulepreload" href="/static/js/components/rdrs-kb-help.js?v={{ layout.git_version }}">
+    <link rel="modulepreload" href="/static/js/components/rdrs-sidebar.js?v={{ layout.git_version }}">
+    <link rel="modulepreload" href="/static/js/app.js?v={{ layout.git_version }}">
     <script type="module" src="/static/js/components/rdrs-kb-pending.js?v={{ layout.git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-kb-help.js?v={{ layout.git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-sidebar.js?v={{ layout.git_version }}"></script>
