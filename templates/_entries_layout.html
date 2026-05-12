@@ -59,6 +59,16 @@
                                     <button type="submit" data-testid="load-more-btn">Load More</button>
                                 </form>
                             {% endif %}
+                            {# Mark Above as Read — sits BELOW Load More so it stays put
+                               after the swap helper appends more rows + a fresh
+                               Load-More form (those land *before* the `#load-more`
+                               anchor, never below this button). Marks every
+                               currently-rendered row as read on click. #}
+                            {% if entries_layout.show_mark_above %}
+                            <div class="list-pane-footer">
+                                <button id="mark-above-read" type="button" class="btn-secondary" data-testid="mark-above-btn">Mark Above as Read</button>
+                            </div>
+                            {% endif %}
                         {% endif %}
                     </div>
                 </div>

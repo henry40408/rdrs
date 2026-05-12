@@ -131,6 +131,11 @@ pub struct EntriesLayoutContext {
     /// preserve the `?status=` query. Mirrors the same field on
     /// `EntriesFragmentTemplate`.
     pub status_filter: Option<String>,
+    /// When `true`, render a "Mark Above as Read" button at the bottom of
+    /// the list. Clicking it marks every entry currently in the DOM as
+    /// read (loaded + Load-More-appended rows; unloaded entries are
+    /// untouched). Only the feed + category entries pages set this true.
+    pub show_mark_above: bool,
 }
 
 /// Map an `EntryWithFeed` (+ optional summary status) to an `EntryRowView`.
@@ -554,6 +559,7 @@ pub async fn unread_page(
                 active_category_id: None,
                 filter_tabs: None,
                 status_filter: None,
+                show_mark_above: false,
             },
         },
     )
@@ -1030,6 +1036,7 @@ pub async fn entries_page(
                 active_category_id: None,
                 filter_tabs: None,
                 status_filter: None,
+                show_mark_above: false,
             },
         },
     )
@@ -1180,6 +1187,7 @@ pub async fn read_entries_page(
                 active_category_id: None,
                 filter_tabs: None,
                 status_filter: None,
+                show_mark_above: false,
             },
         },
     )
@@ -1259,6 +1267,7 @@ pub async fn starred_entries_page(
                 active_category_id: None,
                 filter_tabs: None,
                 status_filter: None,
+                show_mark_above: false,
             },
         },
     )
@@ -1338,6 +1347,7 @@ pub async fn summarized_entries_page(
                 active_category_id: None,
                 filter_tabs: None,
                 status_filter: None,
+                show_mark_above: false,
             },
         },
     )
@@ -1458,6 +1468,7 @@ pub async fn category_entries_page(
             active_category_id: Some(id),
             filter_tabs,
             status_filter,
+            show_mark_above: true,
         },
     };
 
@@ -1889,6 +1900,7 @@ pub async fn feed_entries_page(
             active_category_id: Some(cat_id),
             filter_tabs,
             status_filter,
+            show_mark_above: true,
         },
     };
 

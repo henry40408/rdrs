@@ -845,6 +845,12 @@ async fn test_category_entries_page() {
         html.contains(r#"data-mark-read-scope="user/-/label/Engineering""#),
         "Mark-as-Read scope must be the category's GReader label stream"
     );
+
+    // Mark Above as Read button must render at the bottom of the list.
+    assert!(
+        html.contains(r#"id="mark-above-read""#),
+        "category page must render the Mark Above as Read button"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -1152,6 +1158,12 @@ async fn test_feed_entries_page() {
     assert!(
         html.contains(r#"data-mark-read-scope="feed/https://x/fe-feed""#),
         "Mark-as-Read scope must be the feed's GReader stream ID"
+    );
+
+    // Mark Above as Read button must render at the bottom of the list.
+    assert!(
+        html.contains(r#"id="mark-above-read""#),
+        "feed page must render the Mark Above as Read button"
     );
 }
 

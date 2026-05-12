@@ -307,6 +307,17 @@ function installEntriesKeyboard() {
                 window.location.href = options[idx].value;
                 break;
             }
+            case 'A': {
+                // Mark Above as Read — only fires on pages that render
+                // the button (feed/category). Delegates to the button's
+                // click handler so the confirm + fetch flow lives in
+                // one place.
+                const btn = document.getElementById('mark-above-read');
+                if (!btn) return;
+                e.preventDefault();
+                btn.click();
+                break;
+            }
             case 'c': {
                 // On `/feeds/{id}/entries`, jump to the feed's parent
                 // category page. The category id is already on the
@@ -417,6 +428,52 @@ function installStatusFilterSelect() {
     });
 }
 installStatusFilterSelect();
+
+// "Mark Above as Read" button on feed + category pages. Sits at the
+// bottom of the list (below Load More) and marks every entry currently
+// rendered in the DOM — loaded rows + anything appended via Load More.
+// Entries that haven't been loaded yet stay untouched. Posts to the
+// GReader edit-tag endpoint with one `i=<id>` per visible row and
+// `a=user/-/state/com.google/read`.
+function installMarkAboveButton() {
+    const btn = document.getElementById('mark-above-read');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const rows = Array.from(document.querySelectorAll('[data-entry-row]'));
+        const ids = rows.map(r => r.dataset.entryId).filter(Boolean);
+        if (ids.length === 0) {
+            const msg = 'No entries to mark.';
+            if (window.flash) { window.flash.info(msg); } else { alert(msg); }
+            return;
+        }
+        if (!confirm(`Mark ${ids.length} loaded entries as read?`)) return;
+        const body = new URLSearchParams();
+        for (const id of ids) body.append('i', id);
+        body.set('a', 'user/-/state/com.google/read');
+        btn.disabled = true;
+        btn.setAttribute('aria-busy', 'true');
+        try {
+            const resp = await fetch('/reader/api/0/edit-tag', {
+                method: 'POST',
+                body,
+                credentials: 'same-origin',
+            });
+            if (!resp.ok) throw new Error('Failed to mark entries as read');
+            if (window.flash) {
+                window.flash.set('success', `Marked ${ids.length} loaded entries as read.`);
+            }
+            window.location.reload();
+            return;
+        } catch (err) {
+            const message = err.message || 'Failed to mark entries as read';
+            if (window.flash) { window.flash.error(message); } else { alert(message); }
+        } finally {
+            btn.disabled = false;
+            btn.removeAttribute('aria-busy');
+        }
+    });
+}
+installMarkAboveButton();
 
 // Entry-row click delegation. Clicking anywhere on a row (not just the
 // title link) opens the entry — matches the pre-SSR `<rdrs-entry-list>`
