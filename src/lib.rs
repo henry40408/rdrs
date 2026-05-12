@@ -182,6 +182,10 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::entries::star_entry_form),
         )
         .route(
+            "/entries/{id}/unstar",
+            post(handlers::entries::unstar_entry_form),
+        )
+        .route(
             "/entries/{id}/read",
             post(handlers::entries::read_entry_form),
         )

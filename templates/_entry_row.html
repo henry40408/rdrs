@@ -25,7 +25,7 @@
         <form method="post" action="/entries/{{ r.id }}/{% if r.is_read %}unread{% else %}read{% endif %}" data-swap="#entry-row-{{ r.id }}">
             <button type="submit" class="entry-action-btn" data-testid="entry-read-action">{% if r.is_read %}unread{% else %}read{% endif %}</button>
         </form>
-        <form method="post" action="/entries/{{ r.id }}/star" data-swap="#entry-row-{{ r.id }}">
+        <form method="post" action="/entries/{{ r.id }}/{% if r.is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ r.id }}">
             <button type="submit" class="entry-action-btn" data-testid="entry-star-action">{% if r.is_starred %}unstar{% else %}star{% endif %}</button>
         </form>
         {% if let Some(link) = r.link.as_ref() %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer" data-testid="entry-original-link">original</a>{% endif %}

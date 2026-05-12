@@ -214,15 +214,28 @@ pub(crate) fn build_reading_pane_view(
     }
 }
 
+/// Just enough state to re-render the reading-pane Star button form. Set by
+/// star/unstar handlers so the multi-target response can refresh the pane's
+/// button label + action URL after a toggle without round-tripping the
+/// whole reading pane.
+#[derive(Debug, Clone)]
+pub struct PaneStarFormView {
+    pub id: i64,
+    pub is_starred: bool,
+}
+
 /// Multi-target action response template. Renders the updated entry row, the
-/// sidebar-unread payload, and (optionally) a `<template data-flash>` block
-/// for actions that want post-action toast feedback (e.g. Mark Unread).
+/// sidebar-unread payload, (optionally) a `<template data-flash>` block for
+/// actions that want toast feedback (e.g. Mark Unread), and (optionally) a
+/// pane-star-form swap block (Star / Unstar — keeps the pane button label in
+/// sync with the new starred state).
 #[derive(Template)]
 #[template(path = "_entry_actions_multi.html")]
 pub struct EntryActionMulti {
     pub r: EntryRowView,
     pub sidebar_unread_payload_json: String,
     pub flash: Option<FlashPayload>,
+    pub pane_star_form: Option<PaneStarFormView>,
 }
 
 impl IntoResponse for EntryActionMulti {
@@ -267,34 +280,61 @@ pub(crate) async fn build_sidebar_unread(state: &AppState, user_id: i64) -> AppR
     Ok(serde_json::to_string(&counts).unwrap_or_else(|_| "[]".to_string()))
 }
 
-/// `POST /entries/{id}/star` — toggle the starred state for the entry, then
-/// return a multi-target HTML fragment updating the row + sidebar-unread block.
+/// `POST /entries/{id}/star` — idempotently mark the entry as starred.
+/// No-op when the entry is already starred. Response includes the pane-
+/// star-form swap so the reading pane button label flips to "Unstar"
+/// if the pane is visible.
 pub async fn star_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<EntryActionMulti> {
-    let user_id = auth_user.user.id;
-    let (ewf, status) = state
+    set_starred_state(state, auth_user.user.id, entry_id, true).await
+}
+
+/// `POST /entries/{id}/unstar` — idempotently mark the entry as unstarred.
+/// No-op when the entry is already unstarred. Same pane-star-form swap
+/// so the pane button can flip back to "Star".
+pub async fn unstar_entry_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<EntryActionMulti> {
+    set_starred_state(state, auth_user.user.id, entry_id, false).await
+}
+
+/// Shared core for the idempotent star/unstar handlers.
+async fn set_starred_state(
+    state: AppState,
+    user_id: i64,
+    entry_id: i64,
+    desired_starred: bool,
+) -> AppResult<EntryActionMulti> {
+    let (result, status) = state
         .db
         .user(move |conn| {
-            let ewf = entry::toggle_starred(conn, user_id, entry_id)?;
-            let status = if let Some(ref e) = ewf {
+            let result = entry::set_starred_for_user(conn, user_id, entry_id, desired_starred)?;
+            let status = if let Some((ref e, _)) = result {
                 entry_summary::get_statuses_for_entries(conn, user_id, &[e.entry.id])?
                     .get(&e.entry.id)
                     .copied()
             } else {
                 None
             };
-            Ok::<_, AppError>((ewf, status))
+            Ok::<_, AppError>((result, status))
         })
         .await??;
-    let ewf = ewf.ok_or(AppError::EntryNotFound)?;
+    let (ewf, _changed) = result.ok_or(AppError::EntryNotFound)?;
     let payload_json = build_sidebar_unread(&state, user_id).await?;
+    let pane_star_form = Some(PaneStarFormView {
+        id: ewf.entry.id,
+        is_starred: ewf.entry.starred_at.is_some(),
+    });
     Ok(EntryActionMulti {
         r: row_view_from(&ewf, status),
         sidebar_unread_payload_json: payload_json,
         flash: None,
+        pane_star_form,
     })
 }
 
@@ -356,6 +396,7 @@ async fn set_read_state(
         r: row_view_from(&ewf, status),
         sidebar_unread_payload_json: payload_json,
         flash,
+        pane_star_form: None,
     })
 }
 

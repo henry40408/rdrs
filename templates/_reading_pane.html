@@ -12,11 +12,15 @@
             {% if let Some(ts) = pane.published_at_iso.as_ref() %}<time datetime="{{ ts }}">{{ pane.published_relative }}</time>{% endif %}
         </div>
         <div class="reading-pane-actions">
-            <form method="post" action="/entries/{{ pane.id }}/star" data-swap="#entry-row-{{ pane.id }}">
+            <form id="reading-pane-star-form-{{ pane.id }}" method="post" action="/entries/{{ pane.id }}/{% if pane.is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ pane.id }}">
                 <button type="submit" class="btn-secondary btn-sm">{% if pane.is_starred %}Unstar{% else %}Star{% endif %}</button>
             </form>
-            <form method="post" action="/entries/{{ pane.id }}/{% if pane.is_read %}unread{% else %}read{% endif %}" data-swap="#entry-row-{{ pane.id }}">
-                <button type="submit" class="btn-secondary btn-sm">{% if pane.is_read %}Mark Unread{% else %}Mark Read{% endif %}</button>
+            {# Pane action is a fixed Mark-Unread: idempotent on /unread, no
+               "Mark Read" toggle. Reading an entry already auto-marks it as
+               read on open, so the only manual operation worth a button is
+               the override-back-to-unread. #}
+            <form method="post" action="/entries/{{ pane.id }}/unread" data-swap="#entry-row-{{ pane.id }}">
+                <button type="submit" class="btn-secondary btn-sm">Mark Unread</button>
             </form>
             {% if let Some(link) = pane.link.as_ref() %}
             <form method="post" action="/entries/{{ pane.id }}/fetch-full-content" data-swap="#reading-pane">

@@ -283,7 +283,10 @@ function installEntriesKeyboard() {
             }
             case 's': {
                 if (!active) return;
-                const form = active.querySelector('form[action$="/star"]');
+                // Row form's action is state-dependent now (`/star` or
+                // `/unstar`) — match either so the keystroke still flips
+                // the entry's starred state in one binding.
+                const form = active.querySelector('form[action$="/star"], form[action$="/unstar"]');
                 if (form) { e.preventDefault(); form.requestSubmit(); }
                 break;
             }

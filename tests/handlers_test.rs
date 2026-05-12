@@ -3710,7 +3710,7 @@ async fn test_entry_fragment_404_for_other_user() {
 // ============================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_star_entry_form_toggles_and_returns_multi_target() {
+async fn test_star_entry_form_is_idempotent_mark_starred() {
     let app = create_test_app_named(default_test_config(), "test_star_entry_form");
 
     // Register and log in as alice.
@@ -3725,7 +3725,7 @@ async fn test_star_entry_form_toggles_and_returns_multi_target() {
         .await
         .assert_status_ok();
 
-    // Seed: category + feed + one unread entry.
+    // Seed: category + feed + one unread, unstarred entry.
     let entry_id: i64 = app
         .db
         .user(|conn| {
@@ -3764,7 +3764,7 @@ async fn test_star_entry_form_toggles_and_returns_multi_target() {
         .await
         .unwrap();
 
-    // First POST — should star the entry.
+    // First /star — real state change, must star the entry.
     let resp = app
         .server
         .post(&format!("/entries/{}/star", entry_id))
@@ -3781,10 +3781,20 @@ async fn test_star_entry_form_toggles_and_returns_multi_target() {
     );
     assert!(
         html.contains("star-icon"),
-        "row must reflect starred state via the .star-icon span after first toggle"
+        "row must reflect starred state via the .star-icon span after first call"
+    );
+    // Pane Star button swap must be present so the reading-pane button label
+    // can flip to "Unstar" when the pane is visible.
+    assert!(
+        html.contains("data-swap-target=\"#reading-pane-star-form-"),
+        "multi-target response must include the pane-star-form swap"
+    );
+    assert!(
+        html.contains(">Unstar<"),
+        "pane-star-form swap payload must render the Unstar label"
     );
 
-    // Second POST — should unstar.
+    // Second /star — idempotent, entry stays starred (no toggle back).
     let resp2 = app
         .server
         .post(&format!("/entries/{}/star", entry_id))
@@ -3792,8 +3802,97 @@ async fn test_star_entry_form_toggles_and_returns_multi_target() {
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
     assert!(
+        html2.contains("star-icon"),
+        "second /star call must be a no-op — row must still carry .star-icon"
+    );
+    assert!(
+        html2.contains(">Unstar<"),
+        "pane-star-form payload must still show Unstar after no-op"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
+    let app = create_test_app_named(default_test_config(), "test_unstar_entry_form");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_unstar", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_unstar", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed one already-starred entry so /unstar's first call is a real
+    // state change and the second call exercises the no-op path.
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/unstar-feed",
+                    title: Some("Unstar Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-unstar-test",
+                Some("E"),
+                Some("https://x/u"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rdrs::models::entry::star_entry(conn, entry.id).unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // First /unstar — real state change.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/unstar", entry_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        !html.contains("star-icon"),
+        "row must drop .star-icon after /unstar"
+    );
+    assert!(
+        html.contains(">Star<"),
+        "pane-star-form swap must render the Star label after unstar"
+    );
+
+    // Second /unstar — no-op. Row must still be unstarred.
+    let resp2 = app
+        .server
+        .post(&format!("/entries/{}/unstar", entry_id))
+        .await;
+    assert_eq!(resp2.status_code(), StatusCode::OK);
+    let html2 = resp2.text();
+    assert!(
         !html2.contains("star-icon"),
-        "row must not have starred indicator after second toggle"
+        "second /unstar call must be a no-op — row must still be unstarred"
     );
 }
 
@@ -4053,6 +4152,17 @@ async fn test_star_entry_form_404_for_other_user() {
         resp.status_code(),
         StatusCode::NOT_FOUND,
         "cross-user star must return 404"
+    );
+
+    // Same ownership guard for the /unstar endpoint.
+    let resp_unstar = app
+        .server
+        .post(&format!("/entries/{}/unstar", bob_entry_id))
+        .await;
+    assert_eq!(
+        resp_unstar.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user unstar must return 404"
     );
 }
 

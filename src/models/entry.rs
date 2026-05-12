@@ -581,31 +581,32 @@ pub fn toggle_star(conn: &Connection, id: i64) -> AppResult<Entry> {
     find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
 }
 
-/// Toggle the starred state for an entry, scoped to the owning user.
-///
-/// Returns `None` if the entry does not exist or belongs to a different user
-/// (callers treat both as 404). On success returns the updated `EntryWithFeed`.
-pub fn toggle_starred(
+/// Set the starred state for an entry, scoped to the owning user. Idempotent
+/// — a no-op if the entry is already in the desired state. Returns the
+/// resulting `EntryWithFeed` plus a `changed` bool (parallels
+/// `set_read_for_user`). `None` when the entry does not exist or belongs to
+/// a different user (callers treat both as 404).
+pub fn set_starred_for_user(
     conn: &Connection,
     user_id: i64,
     entry_id: i64,
-) -> AppResult<Option<EntryWithFeed>> {
+    desired_starred: bool,
+) -> AppResult<Option<(EntryWithFeed, bool)>> {
     let cur = find_by_id_for_user(conn, user_id, entry_id)?;
     let Some(e) = cur else {
         return Ok(None);
     };
-    if e.entry.starred_at.is_some() {
-        conn.execute(
-            "UPDATE entry SET starred_at = NULL, updated_at = datetime('now') WHERE id = ?1",
-            params![entry_id],
-        )?;
-    } else {
-        conn.execute(
-            "UPDATE entry SET starred_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1",
-            params![entry_id],
-        )?;
+    let was_starred = e.entry.starred_at.is_some();
+    let changed = was_starred != desired_starred;
+    if changed {
+        let sql = if desired_starred {
+            "UPDATE entry SET starred_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1"
+        } else {
+            "UPDATE entry SET starred_at = NULL, updated_at = datetime('now') WHERE id = ?1"
+        };
+        conn.execute(sql, params![entry_id])?;
     }
-    find_by_id_for_user(conn, user_id, entry_id)
+    Ok(find_by_id_for_user(conn, user_id, entry_id)?.map(|ewf| (ewf, changed)))
 }
 
 /// Set the read state for an entry, scoped to the owning user. Idempotent —
