@@ -1849,10 +1849,9 @@ async fn test_feeds_page_filter_by_category_excludes_other_rows() {
 // Pre-login shell vs. logged-in chrome separation
 //
 // `templates/base.html` is the slim pre-login shell (only `rdrs-flash.js`).
-// All logged-in chrome (kb-pending, kb-help, keyboard, entry-list, sidebar,
-// app.js + the two body-mounted custom elements) lives in
-// `templates/app_layout.html` and ships only on per-route templates that
-// extend it.
+// All logged-in chrome (kb-help, sidebar, app.js + the body-mounted
+// `<rdrs-kb-help>` overlay) lives in `templates/app_layout.html` and ships
+// only on per-route templates that extend it.
 // ============================================================================
 
 #[tokio::test]
@@ -1863,14 +1862,10 @@ async fn test_login_page_does_not_load_logged_in_chrome() {
     let body = response.text();
 
     // None of the logged-in chrome should appear on the pre-login shell.
-    assert!(!body.contains("rdrs-kb-pending.js"));
     assert!(!body.contains("rdrs-kb-help.js"));
-    assert!(!body.contains("/keyboard.js"));
-    assert!(!body.contains("rdrs-entry-list.js"));
     assert!(!body.contains("rdrs-sidebar.js"));
     assert!(!body.contains("/static/js/app.js"));
     assert!(!body.contains("<rdrs-kb-help>"));
-    assert!(!body.contains("<rdrs-kb-pending>"));
 
     // Flash machinery is still needed (login/register use flash.redirect).
     assert!(body.contains("rdrs-flash.js"));
@@ -1883,14 +1878,10 @@ async fn test_register_page_does_not_load_logged_in_chrome() {
     response.assert_status_ok();
     let body = response.text();
 
-    assert!(!body.contains("rdrs-kb-pending.js"));
     assert!(!body.contains("rdrs-kb-help.js"));
-    assert!(!body.contains("/keyboard.js"));
-    assert!(!body.contains("rdrs-entry-list.js"));
     assert!(!body.contains("rdrs-sidebar.js"));
     assert!(!body.contains("/static/js/app.js"));
     assert!(!body.contains("<rdrs-kb-help>"));
-    assert!(!body.contains("<rdrs-kb-pending>"));
 
     assert!(body.contains("rdrs-flash.js"));
 }
@@ -1908,14 +1899,18 @@ async fn test_logged_in_page_loads_full_chrome() {
     let body = response.text();
 
     // All chrome scripts must be present.
-    assert!(body.contains("rdrs-kb-pending.js"));
     assert!(body.contains("rdrs-kb-help.js"));
     assert!(body.contains("rdrs-sidebar.js"));
     assert!(body.contains("/static/js/app.js"));
 
-    // Both keyboard helper custom elements must be mounted.
+    // The keyboard-help overlay element must be mounted on every
+    // logged-in page so the `?` shortcut can show it.
     assert!(body.contains("<rdrs-kb-help>"));
-    assert!(body.contains("<rdrs-kb-pending>"));
+    // The kb-pending dropdown indicator was a CSR-era artifact (chord
+    // prefix toast). No `g`-prefix sequences survive in the SSR world,
+    // so the element must NOT mount.
+    assert!(!body.contains("<rdrs-kb-pending>"));
+    assert!(!body.contains("rdrs-kb-pending.js"));
 }
 
 // ============================================================================

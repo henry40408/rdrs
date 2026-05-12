@@ -161,17 +161,6 @@ class RdrsKbHelp extends HTMLElement {
         const content = this.shadowRoot.getElementById('content');
         let html = '';
 
-        // Global shortcuts (always shown)
-        const globalItems = [
-            { key: 'g h', desc: 'Go to Unread' },
-            { key: 'g e', desc: 'Go to Entries' },
-            { key: 'g s', desc: 'Go to Search' },
-            { key: '?', desc: 'Toggle this help' },
-        ];
-
-        html += this._renderGroup('Navigation', globalItems);
-
-        // Group page-specific shortcuts by their `group` field
         if (helpItems && helpItems.length > 0) {
             const groups = new Map();
             for (const item of helpItems) {
@@ -187,7 +176,6 @@ class RdrsKbHelp extends HTMLElement {
         content.innerHTML = html;
         this.classList.add('visible');
 
-        // Focus close button
         this.shadowRoot.getElementById('close-btn').focus();
     }
 

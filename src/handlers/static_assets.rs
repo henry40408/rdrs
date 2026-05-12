@@ -19,10 +19,6 @@ const FILES: &[(&str, &str)] = &[
         include_str!("../../static/js/components/rdrs-kb-help.js"),
     ),
     (
-        "js/components/rdrs-kb-pending.js",
-        include_str!("../../static/js/components/rdrs-kb-pending.js"),
-    ),
-    (
         "js/components/rdrs-sidebar.js",
         include_str!("../../static/js/components/rdrs-sidebar.js"),
     ),
