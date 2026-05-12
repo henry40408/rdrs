@@ -963,8 +963,6 @@ pub async fn feeds_import_page(
     )
 }
 
-/// Serves the CSR shell for `/entries` (all). The list itself is loaded by
-/// `<rdrs-entries-page>` (mode `all`) from `/reader/api/0/stream/contents`.
 /// Serves `/entries` rendered fully server-side. All entries (no filter) are
 /// fetched and rendered via `_entries_layout.html`. The reading pane is an empty
 /// placeholder until the user selects an entry.
