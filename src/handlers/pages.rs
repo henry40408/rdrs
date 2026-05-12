@@ -1264,34 +1264,74 @@ pub async fn summarized_entries_page(
         .into_response()
 }
 
-/// Serves the CSR shell for `/categories/{id}/entries`. Mode `category`
-/// in `<rdrs-entries-page>` reads the category name from the inlined
-/// sidebar bootstrap blob. The handler verifies ownership (404 otherwise).
+/// `GET /categories/{id}/entries` — SSR list of entries from every feed
+/// in a single category. Supports `?fragment=1&after=N` Load-More.
 pub async fn category_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(query): Query<EntriesQuery>,
     flash: Flash,
-) -> Result<(Flash, CategoryEntriesTemplate), AppError> {
+) -> Result<Response, AppError> {
+    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
-    state
+
+    let category_name = state
         .db
         .read_user(move |c| {
-            category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
-            Ok::<_, AppError>(())
+            let cat =
+                category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
+            Ok::<_, AppError>(cat.name)
         })
         .await??;
 
+    let filter = entry::EntryFilter {
+        category_id: Some(id),
+        ..Default::default()
+    };
+    let offset = query.after.unwrap_or(0);
+
+    let (entries, next_cursor) = build_entries_page(
+        &state,
+        user_id,
+        filter,
+        entry::EntrySortOrder::PublishedAt,
+        PAGE_SIZE,
+        offset,
+    )
+    .await;
+
+    let path = format!("/categories/{}/entries", id);
+
+    if query.fragment == Some(1) {
+        let fragment = EntriesFragmentTemplate {
+            entries,
+            next_cursor,
+            path: Box::leak(path.into_boxed_str()),
+        };
+        return Ok((flash, fragment).into_response());
+    }
+
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
-    Ok((
-        flash,
-        CategoryEntriesTemplate {
-            title: "Category Entries",
-            git_version: crate::GIT_VERSION,
-            layout,
+    let template = CategoryEntriesTemplate {
+        title: category_name,
+        git_version: crate::GIT_VERSION,
+        layout,
+        entries,
+        reading_pane: None,
+        next_cursor,
+        entries_layout: EntriesLayoutContext {
+            active: "",
+            description: None,
+            empty_message: "No entries in this category.",
+            path,
+            show_tab_bar: false,
+            show_mark_as_read: false,
         },
-    ))
+    };
+
+    Ok((flash, template).into_response())
 }
 
 #[derive(serde::Deserialize)]
@@ -2123,9 +2163,13 @@ impl IntoResponse for FeedEntriesTemplate {
 #[derive(Template)]
 #[template(path = "category_entries.html")]
 pub struct CategoryEntriesTemplate {
-    pub title: &'static str,
+    pub title: String,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub entries: Vec<EntryRowView>,
+    pub reading_pane: Option<ReadingPaneView>,
+    pub next_cursor: Option<i64>,
+    pub entries_layout: EntriesLayoutContext,
 }
 
 impl IntoResponse for CategoryEntriesTemplate {
