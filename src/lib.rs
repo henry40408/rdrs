@@ -167,8 +167,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/entries/{id}", get(handlers::pages::entry_page))
         // Fragment endpoint for the reading pane. Registered after /entries/{id} so
         // Axum's trie router resolves the literal `/fragment` segment before the
-        // bare `{id}` parameter catch-all. JSON /api/entries/{id} stays alive until
-        // PR-11 deletes its last consumer.
+        // bare `{id}` parameter catch-all.
         .route(
             "/entries/{id}/fragment",
             get(handlers::entries::entry_fragment),
@@ -220,7 +219,6 @@ pub fn create_router(state: AppState) -> Router {
         // mutation goes through the form-action endpoints under /feeds/*.
         .route("/api/feeds/{id}/icon", get(handlers::feed::get_feed_icon))
         // RDRS-specific entry endpoints (not replaced by GReader API)
-        .route("/api/entries/{id}", get(handlers::entry::get_entry_detail))
         .route(
             "/api/entries/{id}/fetch-full-content",
             post(handlers::entry::fetch_full_content),
