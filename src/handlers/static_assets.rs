@@ -7,15 +7,9 @@ use axum::{
 // Embed all static assets at compile time for single-binary deployment
 const FILES: &[(&str, &str)] = &[
     ("css/app.css", include_str!("../../static/css/app.css")),
+    ("js/app.js", include_str!("../../static/js/app.js")),
+    ("js/passkey.js", include_str!("../../static/js/passkey.js")),
     ("js/utils.js", include_str!("../../static/js/utils.js")),
-    (
-        "js/keyboard.js",
-        include_str!("../../static/js/keyboard.js"),
-    ),
-    (
-        "js/components/rdrs-entry-list.js",
-        include_str!("../../static/js/components/rdrs-entry-list.js"),
-    ),
     (
         "js/components/rdrs-flash.js",
         include_str!("../../static/js/components/rdrs-flash.js"),
@@ -32,12 +26,6 @@ const FILES: &[(&str, &str)] = &[
         "js/components/rdrs-sidebar.js",
         include_str!("../../static/js/components/rdrs-sidebar.js"),
     ),
-    (
-        "js/pages/entries.js",
-        include_str!("../../static/js/pages/entries.js"),
-    ),
-    ("js/passkey.js", include_str!("../../static/js/passkey.js")),
-    ("js/app.js", include_str!("../../static/js/app.js")),
 ];
 
 fn content_type_for(path: &str) -> &'static str {
