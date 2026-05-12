@@ -70,10 +70,6 @@ pub fn create_router(state: AppState) -> Router {
             get(handlers::entries::sidebar_unread_fragment),
         )
         .route("/api/user-settings", get(handlers::user::get_user_settings))
-        // GET /api/feeds is still consumed by static/js/pages/entries.js
-        // (feed-icon column on entries list). PR-10 (entries SSR) is the last
-        // consumer; the endpoint stays alive until then.
-        .route("/api/feeds", get(handlers::feeds::list_feeds))
         .route("/api/user/settings/theme", get(handlers::user::get_theme))
         .route(
             "/api/user/settings/theme",
