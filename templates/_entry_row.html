@@ -28,5 +28,6 @@
         <form method="post" action="/entries/{{ r.id }}/star" data-swap="#entry-row-{{ r.id }}">
             <button type="submit" class="entry-action-btn" data-testid="entry-star-action">{% if r.is_starred %}unstar{% else %}star{% endif %}</button>
         </form>
+        {% if let Some(link) = r.link.as_ref() %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer" data-testid="entry-original-link">original</a>{% endif %}
     </div>
 </div>
