@@ -27,8 +27,9 @@
                             {% for tab in tabs %}<a href="{{ tab.href }}" data-status-tab{% if tab.active %} class="active"{% endif %}>{{ tab.label }}</a>{% endfor %}
                         </div>
                         {% endif %}
-                        {% if let Some(scope) = entries_layout.mark_as_read_scope.as_ref() %}
+                        {% if entries_layout.mark_as_read_scope.is_some() || entries_layout.show_mark_above %}
                         <div class="filter-bar">
+                            {% if let Some(scope) = entries_layout.mark_as_read_scope.as_ref() %}
                             <div class="form-group form-group-inline">
                                 <select id="mark-read-age" data-testid="mark-read-select" class="select-auto" data-mark-read-scope="{{ scope }}">
                                     <option value="">Mark as Read...</option>
@@ -39,6 +40,10 @@
                                     <option value="all">All entries</option>
                                 </select>
                             </div>
+                            {% endif %}
+                            {% if entries_layout.show_mark_above %}
+                            <button id="mark-above-read" type="button" class="btn-secondary" data-testid="mark-above-btn">Mark Above as Read</button>
+                            {% endif %}
                         </div>
                         {% endif %}
                     </div>

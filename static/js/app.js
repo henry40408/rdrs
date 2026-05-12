@@ -307,6 +307,17 @@ function installEntriesKeyboard() {
                 window.location.href = tabs[idx].getAttribute('href');
                 break;
             }
+            case 'A': {
+                // Mark-Above-as-Read — only fires on pages that render
+                // the button (feed/category). Delegates to the button's
+                // click handler so the prompt + fetch flow stays in one
+                // place.
+                const btn = document.getElementById('mark-above-read');
+                if (!btn) return;
+                e.preventDefault();
+                btn.click();
+                break;
+            }
             case ' ': {
                 if (!active) return;
                 // Row form is now state-dependent: `/read` when unread,
@@ -385,6 +396,61 @@ function installMarkAsReadDropdown() {
     });
 }
 installMarkAsReadDropdown();
+
+// "Mark Above as Read" button on feed + category pages. Posts to the
+// GReader edit-tag endpoint with one `i=<id>` per entry above the
+// currently-focused row + `a=user/-/state/com.google/read`. Matches the
+// pre-SSR `<rdrs-entry-list>` behaviour (mark-by-id, not by timestamp —
+// only entries currently in the DOM get marked).
+function installMarkAboveButton() {
+    const btn = document.getElementById('mark-above-read');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const selected = document.querySelector('[data-entry-row].selected');
+        if (!selected) {
+            const msg = 'Select an entry first (press j or click a row).';
+            if (window.flash) { window.flash.error(msg); } else { alert(msg); }
+            return;
+        }
+        const allRows = Array.from(document.querySelectorAll('[data-entry-row]'));
+        const idx = allRows.indexOf(selected);
+        if (idx <= 0) {
+            const msg = 'No entries above the selected one.';
+            if (window.flash) { window.flash.info(msg); } else { alert(msg); }
+            return;
+        }
+        const aboveIds = allRows.slice(0, idx)
+            .map(r => r.dataset.entryId)
+            .filter(Boolean);
+        if (aboveIds.length === 0) return;
+        if (!confirm(`Mark ${aboveIds.length} entries above as read?`)) return;
+        const body = new URLSearchParams();
+        for (const id of aboveIds) body.append('i', id);
+        body.set('a', 'user/-/state/com.google/read');
+        btn.disabled = true;
+        btn.setAttribute('aria-busy', 'true');
+        try {
+            const resp = await fetch('/reader/api/0/edit-tag', {
+                method: 'POST',
+                body,
+                credentials: 'same-origin',
+            });
+            if (!resp.ok) throw new Error('Failed to mark entries as read');
+            if (window.flash) {
+                window.flash.set('success', `Marked ${aboveIds.length} entries above as read.`);
+            }
+            window.location.reload();
+            return;
+        } catch (err) {
+            const message = err.message || 'Failed to mark entries as read';
+            if (window.flash) { window.flash.error(message); } else { alert(message); }
+        } finally {
+            btn.disabled = false;
+            btn.removeAttribute('aria-busy');
+        }
+    });
+}
+installMarkAboveButton();
 
 // Entry-row click delegation. Clicking anywhere on a row (not just the
 // title link) opens the entry — matches the pre-SSR `<rdrs-entry-list>`
