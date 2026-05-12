@@ -63,6 +63,23 @@ impl IntoResponse for ReadingPaneWithFlash {
     }
 }
 
+/// Multi-target response for `POST /entries/{id}/summarize`. Swaps only
+/// the `#rp-summary-container` block so the reading-pane article body
+/// (which may currently hold an externally-fetched full-content view)
+/// stays put.
+#[derive(Template)]
+#[template(path = "_summarize_pending.html")]
+pub struct SummarizePending;
+
+impl IntoResponse for SummarizePending {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
 /// `GET /entries/{id}/fragment` — returns the reading-pane HTML fragment for
 /// the given entry. The entry must belong to the authenticated user; otherwise
 /// a 404 is returned (same semantics as the JSON `/api/entries/{id}` endpoint
@@ -97,7 +114,7 @@ pub async fn entry_fragment(
         .await??;
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
-    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi);
+    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
     let row = row_view_from(&ewf, status);
     let sidebar_unread_payload_json = build_sidebar_unread(&state, user_id).await?;
     Ok(OpenEntryMulti {
@@ -105,25 +122,6 @@ pub async fn entry_fragment(
         r: row,
         sidebar_unread_payload_json,
     })
-}
-
-/// Build a `ReadingPaneView` for the given entry, scoped to `user_id`.
-/// Returns `AppError::EntryNotFound` if the entry does not exist or belongs
-/// to a different user.
-pub(crate) async fn load_reading_pane(
-    state: &AppState,
-    user_id: i64,
-    entry_id: i64,
-) -> AppResult<ReadingPaneView> {
-    let ewf = state
-        .db
-        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
-        .await??
-        .ok_or(AppError::EntryNotFound)?;
-    let (has_save, has_kagi) = load_pane_action_flags(state, user_id).await?;
-    Ok(build_reading_pane_view(
-        state, user_id, &ewf, has_save, has_kagi,
-    ))
 }
 
 /// Read the user's save-services config + Kagi config to drive the
@@ -148,18 +146,24 @@ pub(crate) async fn load_pane_action_flags(
 }
 
 /// Build a `ReadingPaneView` from an already-loaded `EntryWithFeed`. The
-/// content sanitizer + summary-cache lookup happen here so callers that
-/// already have the entry (e.g. `entry_fragment`, which loads it inside its
-/// write transaction) don't re-hit the DB. `has_save` / `has_kagi` come
-/// from `load_pane_action_flags`. Save / Fetch action feedback is delivered
-/// via flash (see `ReadingPaneWithFlash`), not inline status text.
-pub(crate) fn build_reading_pane_view(
+/// content sanitizer + summary lookup happen here so callers that already
+/// have the entry (e.g. `entry_fragment`, which loads it inside its write
+/// transaction) don't re-hit the DB for the entry itself. `has_save` /
+/// `has_kagi` come from `load_pane_action_flags`. Save / Fetch action
+/// feedback is delivered via flash (see `ReadingPaneWithFlash`), not
+/// inline status text.
+///
+/// Summary resolution prefers the in-memory cache and falls back to the
+/// persistent `entry_summary` table so a server restart (or any other
+/// path that bypassed the cache) does not hide an already-completed
+/// summary on the next entry open.
+pub(crate) async fn build_reading_pane_view(
     state: &AppState,
     user_id: i64,
     ewf: &entry::EntryWithFeed,
     has_save: bool,
     has_kagi: bool,
-) -> ReadingPaneView {
+) -> AppResult<ReadingPaneView> {
     let entry_id = ewf.entry.id;
     let raw_content = ewf
         .entry
@@ -184,15 +188,10 @@ pub(crate) fn build_reading_pane_view(
         proxy_base_url,
     );
 
-    let cache_entry = state.summary_cache.get(user_id, entry_id);
-    let (summary_text, summary_in_flight) = match cache_entry.as_ref().map(|e| &e.status) {
-        Some(SummaryStatus::Completed) => (cache_entry.and_then(|e| e.summary_text.clone()), false),
-        Some(SummaryStatus::Pending) | Some(SummaryStatus::Processing) => (None, true),
-        _ => (None, false),
-    };
+    let (summary_text, summary_in_flight) = resolve_summary(state, user_id, entry_id).await?;
 
     let published_at = ewf.entry.published_at;
-    ReadingPaneView {
+    Ok(ReadingPaneView {
         id: entry_id,
         title: ewf
             .entry
@@ -212,6 +211,39 @@ pub(crate) fn build_reading_pane_view(
         has_kagi,
         has_save,
         is_full_content: false,
+    })
+}
+
+/// Resolve `(summary_text, summary_in_flight)` for an entry. Reads the
+/// in-memory cache first; on miss or terminal-failed state falls back to
+/// the `entry_summary` table so a completed summary persisted in a
+/// previous session is still surfaced.
+async fn resolve_summary(
+    state: &AppState,
+    user_id: i64,
+    entry_id: i64,
+) -> AppResult<(Option<String>, bool)> {
+    if let Some(cached) = state.summary_cache.get(user_id, entry_id) {
+        match cached.status {
+            SummaryStatus::Completed => return Ok((cached.summary_text, false)),
+            SummaryStatus::Pending | SummaryStatus::Processing => return Ok((None, true)),
+            SummaryStatus::Failed => {
+                // Fall through to DB — the DB row may have been refreshed
+                // by a retry that hasn't been written into the cache yet.
+            }
+        }
+    }
+    let db_entry = state
+        .db
+        .read_user(move |conn| entry_summary::find_by_user_and_entry(conn, user_id, entry_id))
+        .await??;
+    match db_entry {
+        Some(s) => match s.status {
+            SummaryStatus::Completed => Ok((s.summary_text, false)),
+            SummaryStatus::Pending | SummaryStatus::Processing => Ok((None, true)),
+            SummaryStatus::Failed => Ok((None, false)),
+        },
+        None => Ok((None, false)),
     }
 }
 
@@ -442,7 +474,7 @@ pub async fn summarize_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<ReadingPaneFragment> {
+) -> AppResult<SummarizePending> {
     let user_id = auth_user.user.id;
 
     // Fetch the entry and extract the link needed by SummaryJob. Ownership is
@@ -469,7 +501,7 @@ pub async fn summarize_entry_form(
     state.summary_cache.set_pending(user_id, entry_id);
 
     // Best-effort enqueue: if the channel is full or closed, we still return
-    // the in-flight reading pane (the DB record is already pending).
+    // the in-flight pending fragment (the DB record is already pending).
     let _ = state
         .summary_tx
         .send(SummaryJob {
@@ -479,8 +511,7 @@ pub async fn summarize_entry_form(
         })
         .await;
 
-    let pane = load_reading_pane(&state, user_id, entry_id).await?;
-    Ok(ReadingPaneFragment { pane })
+    Ok(SummarizePending)
 }
 
 /// `POST /entries/{id}/fetch-full-content` — fetch the source article from
@@ -518,7 +549,8 @@ pub async fn fetch_full_content_form(
                 ewf.custom_referrer.as_deref(),
                 None,
             );
-            let mut pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi);
+            let mut pane =
+                build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
             pane.content_html = sanitized;
             pane.is_full_content = true;
             (
@@ -530,7 +562,7 @@ pub async fn fetch_full_content_form(
             )
         }
         Err(e) => (
-            build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi),
+            build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?,
             FlashPayload {
                 level: "error",
                 message: format!("Failed to fetch full content: {e}"),
@@ -617,7 +649,7 @@ pub async fn save_entry_form(
     };
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
-    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi);
+    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
     Ok(ReadingPaneWithFlash {
         pane,
         flash: Some(flash),

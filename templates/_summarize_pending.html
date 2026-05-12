@@ -1,0 +1,12 @@
+{# `POST /entries/{id}/summarize` response. Swaps ONLY the summary
+   container so a Fetch-Full-Content view stays put — the reading
+   pane's `<article>` is not touched. The full reading-pane render
+   on next page load will surface the completed summary once the
+   background worker finishes. #}
+<template data-swap-target="#rp-summary-container">
+    <div class="rp-summary-container" id="rp-summary-container" data-summary-container>
+        <div class="summary-box">
+            <p class="muted">Summarizing… (refresh to see the result)</p>
+        </div>
+    </div>
+</template>

@@ -521,6 +521,65 @@ function installEntriesKeyboard() {
 }
 installEntriesKeyboard();
 
+// Reading-pane summary controls (Kagi Universal Summarizer output).
+// Copy is a clipboard write; Dismiss DELETEs the cached summary and
+// strips the summary block + the entry row's summary badge so the
+// state matches what `/sidebar/unread` will report on the next mount.
+function installSummaryActions() {
+    document.addEventListener('click', async (e) => {
+        const copyBtn = e.target.closest('[data-summary-copy]');
+        if (copyBtn) {
+            const pane = document.getElementById('reading-pane');
+            if (!pane) return;
+            const titleEl = pane.querySelector('.reading-pane-title');
+            const summaryEl = pane.querySelector('.rp-summary-content');
+            if (!summaryEl) return;
+            const title = (titleEl?.textContent || '').trim();
+            const link = titleEl?.querySelector('a')?.getAttribute('href') || '';
+            const summary = summaryEl.textContent.trim();
+            const text = link
+                ? `${title}\n\n${link}\n\n${summary}`
+                : `${title}\n\n${summary}`;
+            try {
+                await navigator.clipboard.writeText(text);
+                const original = copyBtn.textContent;
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => { copyBtn.textContent = original; }, 2000);
+            } catch {
+                window.flash?.error('Failed to copy to clipboard');
+            }
+            return;
+        }
+        const dismissBtn = e.target.closest('[data-summary-dismiss]');
+        if (!dismissBtn) return;
+        const entryId = dismissBtn.getAttribute('data-entry-id');
+        if (!entryId) return;
+        dismissBtn.disabled = true;
+        try {
+            const r = await fetch(`/api/entries/${entryId}/summary`, {
+                method: 'DELETE',
+                credentials: 'same-origin',
+            });
+            if (!r.ok) throw new Error('delete failed');
+            // Clear the inner `.summary-box` but leave the wrapper in
+            // place — the swap target for a later summarize click is
+            // `#rp-summary-container`, so the wrapper has to stay.
+            const container = document.querySelector('[data-summary-container]');
+            if (container) container.replaceChildren();
+            const row = document.querySelector(
+                `[data-entry-row][data-entry-id="${entryId}"]`
+            );
+            row?.querySelector(
+                '.summary-badge, .summary-badge-pending, .summary-badge-processing, .summary-badge-failed'
+            )?.remove();
+        } catch {
+            window.flash?.error('Failed to dismiss summary');
+            dismissBtn.disabled = false;
+        }
+    });
+}
+installSummaryActions();
+
 // "Mark as Read..." dropdown on /unread + /entries pages. Posts to the
 // GReader bulk-mark endpoint with an optional `ts=` cutoff in
 // microseconds, then full-reloads so the SSR row list refreshes. The
