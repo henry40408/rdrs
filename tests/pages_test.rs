@@ -767,75 +767,264 @@ async fn test_category_entries_page_other_user() {
 // Feed Entries Page Tests
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page");
 
-    // Create category and feed
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Test Category"],
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_fe", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_fe", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let (feed_id, entry_a_id, entry_b_id) = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/fe-feed",
+                    title: Some("FE Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
             )
             .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/feed.xml", "Test Feed"],
+            let (a, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-fe-a",
+                Some("First Entry"),
+                Some("https://x/a"),
+                None,
+                None,
+                None,
+                None,
             )
             .unwrap();
+            let (b, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-fe-b",
+                Some("Second Entry"),
+                Some("https://x/b"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            (feed.id, a.id, b.id)
         })
         .await
         .unwrap();
 
-    login(&app.server, "admin").await;
+    let resp = app.server.get(&format!("/feeds/{}/entries", feed_id)).await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
 
-    let response = app.server.get("/feeds/1/entries").await;
-    response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("<rdrs-entries-page>"));
-    assert!(body.contains("/static/js/pages/entries.js"));
-    assert!(!body.contains(r#"class="ssr-entries""#));
+    assert!(
+        html.contains("FE Feed"),
+        "page title must render feed title"
+    );
+    assert!(
+        html.contains(&format!("id=\"entry-row-{}\"", entry_a_id)),
+        "row for first entry must be in the HTML"
+    );
+    assert!(
+        html.contains(&format!("id=\"entry-row-{}\"", entry_b_id)),
+        "row for second entry must be in the HTML"
+    );
+    assert!(
+        !html.contains("rdrs-entries-page"),
+        "SSR page must not mount the legacy <rdrs-entries-page> shell"
+    );
+    assert!(
+        !html.contains("/static/js/pages/entries.js"),
+        "SSR page must not load the legacy entries.js bundle"
+    );
+    assert!(
+        html.contains("Select an entry to read."),
+        "reading-pane placeholder must render when no entry is selected"
+    );
+    if html.contains("id=\"load-more\"") {
+        assert!(
+            html.contains(&format!("action=\"/feeds/{}/entries\"", feed_id)),
+            "Load-More form must POST back to the same feed-scoped URL"
+        );
+    }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_not_found() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_not_found");
 
-    let response = app.server.get("/feeds/999/entries").await;
-    response.assert_status_not_found();
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_fnf", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_fnf", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let resp = app.server.get("/feeds/999999/entries").await;
+    assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_other_user() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_other_user");
 
-    // Create category and feed for user 2
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![2, "User2 Category"],
+    // Register alice (owner of the feed)
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_fou", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    // Register bob (the cross-tenant user)
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "bob_fou", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    // Get alice's user_id and create her feed
+    let feed_id: i64 = app
+        .db
+        .user(|conn| {
+            let alice_id: i64 = conn
+                .query_row(
+                    "SELECT id FROM user WHERE username = 'alice_fou'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, alice_id, "Alice Cat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/alice-feed",
+                    title: Some("Alice Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
             )
             .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/feed.xml", "User2 Feed"],
-            )
-            .unwrap();
+            feed.id
         })
         .await
         .unwrap();
 
-    login(&app.server, "admin").await;
+    // Log in as bob
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "bob_fou", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
 
-    // Admin (user 1) should not see user 2's feed
-    let response = app.server.get("/feeds/1/entries").await;
-    response.assert_status_not_found();
+    // Bob tries to access alice's feed entries — must be 404
+    let resp = app.server.get(&format!("/feeds/{}/entries", feed_id)).await;
+    assert_eq!(
+        resp.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user feed entries must return 404"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_feed_entries_page_load_more_fragment() {
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_lm");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_fl", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_fl", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let feed_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/lm-feed",
+                    title: Some("LM Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            for i in 0..3 {
+                rdrs::models::entry::upsert_entry(
+                    conn,
+                    feed.id,
+                    &format!("guid-lm-{}", i),
+                    Some(&format!("Entry {}", i)),
+                    Some(&format!("https://x/lm/{}", i)),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+            }
+            feed.id
+        })
+        .await
+        .unwrap();
+
+    let resp = app
+        .server
+        .get(&format!("/feeds/{}/entries?fragment=1&after=0", feed_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        html.contains("data-entry-row"),
+        "fragment must include row markup"
+    );
+    assert!(
+        !html.contains("<rdrs-sidebar"),
+        "fragment must NOT include layout chrome"
+    );
+    assert!(
+        !html.contains("<h1>LM Feed</h1>"),
+        "fragment must NOT include the page title"
+    );
 }
 
 // ============================================================================

@@ -1587,18 +1587,20 @@ fn html_escape_minimal(s: &str) -> String {
     out
 }
 
-/// Serves the CSR shell for `/feeds/{id}/entries`. Mode `feed` in
-/// `<rdrs-entries-page>` resolves the stream-id, breadcrumb, and icon
-/// asynchronously from `GET /api/feeds`. The handler verifies that
-/// `id` belongs to the authenticated user (404 otherwise).
+/// `GET /feeds/{id}/entries` — SSR list of entries from a single feed.
+/// Supports the `?fragment=1&after=N` Load-More overload like the other
+/// entries-family pages.
 pub async fn feed_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(query): Query<EntriesQuery>,
     flash: Flash,
-) -> Result<(Flash, FeedEntriesTemplate), AppError> {
+) -> Result<Response, AppError> {
+    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
-    state
+
+    let feed_title = state
         .db
         .read_user(move |c| {
             let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
@@ -1606,20 +1608,57 @@ pub async fn feed_entries_page(
             if cat.user_id != user_id {
                 return Err(AppError::FeedNotFound);
             }
-            Ok::<_, AppError>(())
+            Ok::<_, AppError>(f.title.unwrap_or_else(|| "(untitled feed)".to_string()))
         })
         .await??;
 
+    let filter = entry::EntryFilter {
+        feed_id: Some(id),
+        ..Default::default()
+    };
+    let offset = query.after.unwrap_or(0);
+
+    let (entries, next_cursor) = build_entries_page(
+        &state,
+        user_id,
+        filter,
+        entry::EntrySortOrder::PublishedAt,
+        PAGE_SIZE,
+        offset,
+    )
+    .await;
+
+    let path = format!("/feeds/{}/entries", id);
+
+    if query.fragment == Some(1) {
+        let fragment = EntriesFragmentTemplate {
+            entries,
+            next_cursor,
+            path: Box::leak(path.into_boxed_str()),
+        };
+        return Ok((flash, fragment).into_response());
+    }
+
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
-    Ok((
-        flash,
-        FeedEntriesTemplate {
-            title: "Feed Entries",
-            git_version: crate::GIT_VERSION,
-            layout,
+    let template = FeedEntriesTemplate {
+        title: feed_title,
+        git_version: crate::GIT_VERSION,
+        layout,
+        entries,
+        reading_pane: None,
+        next_cursor,
+        entries_layout: EntriesLayoutContext {
+            active: "",
+            description: None,
+            empty_message: "No entries in this feed.",
+            path,
+            show_tab_bar: false,
+            show_mark_as_read: false,
         },
-    ))
+    };
+
+    Ok((flash, template).into_response())
 }
 
 /// Shared layout fields embedded in every per-route logged-in
@@ -2062,9 +2101,13 @@ impl IntoResponse for SummarizedEntriesTemplate {
 #[derive(Template)]
 #[template(path = "feed_entries.html")]
 pub struct FeedEntriesTemplate {
-    pub title: &'static str,
+    pub title: String,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub entries: Vec<EntryRowView>,
+    pub reading_pane: Option<ReadingPaneView>,
+    pub next_cursor: Option<i64>,
+    pub entries_layout: EntriesLayoutContext,
 }
 
 impl IntoResponse for FeedEntriesTemplate {
