@@ -22,13 +22,15 @@
                             <a href="/entries/summarized" data-testid="tab-summarized" data-tab="summarized"{% if entries_layout.active == "summarized" %} class="active"{% endif %}>Summarized</a>
                         </div>
                         {% endif %}
-                        {% if let Some(tabs) = entries_layout.filter_tabs.as_ref() %}
-                        <div class="tab-bar" data-status-filter>
-                            {% for tab in tabs %}<a href="{{ tab.href }}" data-status-tab{% if tab.active %} class="active"{% endif %}>{{ tab.label }}</a>{% endfor %}
-                        </div>
-                        {% endif %}
-                        {% if entries_layout.mark_as_read_scope.is_some() || entries_layout.show_mark_above %}
+                        {% if entries_layout.filter_tabs.is_some() || entries_layout.mark_as_read_scope.is_some() %}
                         <div class="filter-bar">
+                            {% if let Some(tabs) = entries_layout.filter_tabs.as_ref() %}
+                            <div class="form-group form-group-inline" data-status-filter>
+                                <select id="status-filter" data-testid="status-filter-select" data-status-select class="select-auto">
+                                    {% for tab in tabs %}<option value="{{ tab.href }}"{% if tab.active %} selected{% endif %}>{{ tab.label }}</option>{% endfor %}
+                                </select>
+                            </div>
+                            {% endif %}
                             {% if let Some(scope) = entries_layout.mark_as_read_scope.as_ref() %}
                             <div class="form-group form-group-inline">
                                 <select id="mark-read-age" data-testid="mark-read-select" class="select-auto" data-mark-read-scope="{{ scope }}">
@@ -40,9 +42,6 @@
                                     <option value="all">All entries</option>
                                 </select>
                             </div>
-                            {% endif %}
-                            {% if entries_layout.show_mark_above %}
-                            <button id="mark-above-read" type="button" class="btn-secondary" data-testid="mark-above-btn">Mark Above as Read</button>
                             {% endif %}
                         </div>
                         {% endif %}

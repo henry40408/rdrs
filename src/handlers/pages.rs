@@ -131,10 +131,6 @@ pub struct EntriesLayoutContext {
     /// preserve the `?status=` query. Mirrors the same field on
     /// `EntriesFragmentTemplate`.
     pub status_filter: Option<String>,
-    /// When `true`, render the "Mark Above as Read" button. Only the
-    /// feed + category entries pages set this — the legacy CSR
-    /// `<rdrs-entry-list>` exposed it there as a scoped bulk action.
-    pub show_mark_above: bool,
 }
 
 /// Map an `EntryWithFeed` (+ optional summary status) to an `EntryRowView`.
@@ -558,7 +554,6 @@ pub async fn unread_page(
                 active_category_id: None,
                 filter_tabs: None,
                 status_filter: None,
-                show_mark_above: false,
             },
         },
     )
@@ -1035,7 +1030,6 @@ pub async fn entries_page(
                 active_category_id: None,
                 filter_tabs: None,
                 status_filter: None,
-                show_mark_above: false,
             },
         },
     )
@@ -1186,7 +1180,6 @@ pub async fn read_entries_page(
                 active_category_id: None,
                 filter_tabs: None,
                 status_filter: None,
-                show_mark_above: false,
             },
         },
     )
@@ -1266,7 +1259,6 @@ pub async fn starred_entries_page(
                 active_category_id: None,
                 filter_tabs: None,
                 status_filter: None,
-                show_mark_above: false,
             },
         },
     )
@@ -1346,7 +1338,6 @@ pub async fn summarized_entries_page(
                 active_category_id: None,
                 filter_tabs: None,
                 status_filter: None,
-                show_mark_above: false,
             },
         },
     )
@@ -1375,15 +1366,16 @@ pub async fn category_entries_page(
         .await??;
 
     let status = query.status.as_deref();
+    let effective_status = status.unwrap_or("unread");
     let mut filter = entry::EntryFilter {
         category_id: Some(id),
         ..Default::default()
     };
-    match status {
-        Some("unread") => filter.unread_only = true,
-        Some("read") => filter.read_only = true,
-        Some("starred") => filter.starred_only = true,
-        _ => {}
+    match effective_status {
+        "all" => {}
+        "read" => filter.read_only = true,
+        "starred" => filter.starred_only = true,
+        _ => filter.unread_only = true,
     }
     let offset = query.after.unwrap_or(0);
 
@@ -1417,13 +1409,13 @@ pub async fn category_entries_page(
     let filter_tabs = Some(vec![
         FilterTab {
             label: "All".to_string(),
-            href: base.clone(),
-            active: status.is_none(),
+            href: format!("{}?status=all", base),
+            active: status == Some("all"),
         },
         FilterTab {
             label: "Unread".to_string(),
-            href: format!("{}?status=unread", base),
-            active: status == Some("unread"),
+            href: base.clone(),
+            active: status.is_none() || status == Some("unread"),
         },
         FilterTab {
             label: "Read".to_string(),
@@ -1466,7 +1458,6 @@ pub async fn category_entries_page(
             active_category_id: Some(id),
             filter_tabs,
             status_filter,
-            show_mark_above: true,
         },
     };
 
@@ -1798,16 +1789,20 @@ pub async fn feed_entries_page(
         })
         .await??;
 
+    // Default status is "unread": the base URL (no `?status=`) shows
+    // unread + starred-but-unread entries. `?status=all` explicitly
+    // overrides the default.
     let status = query.status.as_deref();
+    let effective_status = status.unwrap_or("unread");
     let mut filter = entry::EntryFilter {
         feed_id: Some(id),
         ..Default::default()
     };
-    match status {
-        Some("unread") => filter.unread_only = true,
-        Some("read") => filter.read_only = true,
-        Some("starred") => filter.starred_only = true,
-        _ => {}
+    match effective_status {
+        "all" => {}
+        "read" => filter.read_only = true,
+        "starred" => filter.starred_only = true,
+        _ => filter.unread_only = true,
     }
     let offset = query.after.unwrap_or(0);
 
@@ -1841,13 +1836,13 @@ pub async fn feed_entries_page(
     let filter_tabs = Some(vec![
         FilterTab {
             label: "All".to_string(),
-            href: base.clone(),
-            active: status.is_none(),
+            href: format!("{}?status=all", base),
+            active: status == Some("all"),
         },
         FilterTab {
             label: "Unread".to_string(),
-            href: format!("{}?status=unread", base),
-            active: status == Some("unread"),
+            href: base.clone(),
+            active: status.is_none() || status == Some("unread"),
         },
         FilterTab {
             label: "Read".to_string(),
@@ -1894,7 +1889,6 @@ pub async fn feed_entries_page(
             active_category_id: Some(cat_id),
             filter_tabs,
             status_filter,
-            show_mark_above: true,
         },
     };
 

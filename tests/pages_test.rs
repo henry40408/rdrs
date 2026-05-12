@@ -845,12 +845,6 @@ async fn test_category_entries_page() {
         html.contains(r#"data-mark-read-scope="user/-/label/Engineering""#),
         "Mark-as-Read scope must be the category's GReader label stream"
     );
-
-    // Mark Above as Read button must render on category pages.
-    assert!(
-        html.contains(r#"id="mark-above-read""#),
-        "category page must render the Mark Above as Read button"
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -1159,12 +1153,6 @@ async fn test_feed_entries_page() {
         html.contains(r#"data-mark-read-scope="feed/https://x/fe-feed""#),
         "Mark-as-Read scope must be the feed's GReader stream ID"
     );
-
-    // Mark Above as Read button must render on feed pages.
-    assert!(
-        html.contains(r#"id="mark-above-read""#),
-        "feed page must render the Mark Above as Read button"
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -1246,17 +1234,32 @@ async fn test_feed_entries_page_status_filter() {
         .await
         .unwrap();
 
-    // ?status=unread → only unread.
-    let resp = app
-        .server
-        .get(&format!("/feeds/{}/entries?status=unread", feed_id))
-        .await;
+    // Default URL (no ?status=) → unread is the default; read entry hidden,
+    // unread + starred (which is still unread) both visible.
+    let resp = app.server.get(&format!("/feeds/{}/entries", feed_id)).await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
+    assert!(
+        html.contains(&format!("id=\"entry-row-{}\"", unread_id)),
+        "default view should include the unread entry"
+    );
+    assert!(
+        !html.contains(&format!("id=\"entry-row-{}\"", read_id)),
+        "default view should hide the read entry (default = unread filter)"
+    );
+    assert!(
+        html.contains(&format!("id=\"entry-row-{}\"", starred_id)),
+        "default view should include the starred-but-unread entry"
+    );
+
+    // ?status=all → every entry visible.
+    let resp = app
+        .server
+        .get(&format!("/feeds/{}/entries?status=all", feed_id))
+        .await;
+    let html = resp.text();
     assert!(html.contains(&format!("id=\"entry-row-{}\"", unread_id)));
-    assert!(!html.contains(&format!("id=\"entry-row-{}\"", read_id)));
-    // The starred entry is also unread (never read), so it appears in
-    // unread too.
+    assert!(html.contains(&format!("id=\"entry-row-{}\"", read_id)));
     assert!(html.contains(&format!("id=\"entry-row-{}\"", starred_id)));
 
     // ?status=read → only read.
@@ -1278,17 +1281,47 @@ async fn test_feed_entries_page_status_filter() {
     assert!(!html.contains(&format!("id=\"entry-row-{}\"", read_id)));
     assert!(!html.contains(&format!("id=\"entry-row-{}\"", unread_id)));
 
-    // Filter tab bar present; the active tab matches the query.
+    // Filter <select> present; the active <option> matches the query.
     assert!(
         html.contains("data-status-filter"),
-        "filter tab bar must render on feed pages"
+        "filter select must render on feed pages"
+    );
+    assert!(
+        html.contains(r#"id="status-filter""#),
+        "filter <select> must have id=\"status-filter\""
     );
     assert!(
         html.contains(&format!(
-            r#"href="/feeds/{}/entries?status=starred" data-status-tab class="active""#,
+            r#"<option value="/feeds/{}/entries?status=starred" selected>Starred</option>"#,
             feed_id
         )),
-        "Starred tab must have class=\"active\" when ?status=starred"
+        "Starred <option> must be `selected` when ?status=starred"
+    );
+    // Option order: All, Unread, Read, Starred (Unread URL = base path).
+    let all_pos = html
+        .find(&format!(
+            r#"<option value="/feeds/{}/entries?status=all""#,
+            feed_id
+        ))
+        .expect("All option present");
+    let unread_pos = html
+        .find(&format!(r#"<option value="/feeds/{}/entries""#, feed_id))
+        .expect("Unread option present (base URL)");
+    let read_pos = html
+        .find(&format!(
+            r#"<option value="/feeds/{}/entries?status=read""#,
+            feed_id
+        ))
+        .expect("Read option present");
+    let starred_pos = html
+        .find(&format!(
+            r#"<option value="/feeds/{}/entries?status=starred""#,
+            feed_id
+        ))
+        .expect("Starred option present");
+    assert!(
+        all_pos < unread_pos && unread_pos < read_pos && read_pos < starred_pos,
+        "filter <option>s must be in order: All, Unread, Read, Starred"
     );
 
     // Load-More form preserves the status filter via a hidden input.
