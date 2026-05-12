@@ -2123,9 +2123,12 @@ summary {
 /* ── Entries keyboard focus ───────────────────────────────────────────── */
 /* SSR Load-More form wrapper. Same shape as the legacy `.hidden-mt4`
    wrapper around the load-more button — top margin separating it
-   from the last row, side padding aligning with the rest of the list. */
+   from the last row, side padding aligning with the rest of the list,
+   and matching bottom margin so the button doesn't sit flush with
+   the .list-pane edge. */
 .load-more-form {
     margin-top: var(--space-4);
+    margin-bottom: var(--space-4);
     padding: 0 var(--space-5);
 }
 
