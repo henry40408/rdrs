@@ -4266,8 +4266,12 @@ async fn test_read_entry_form_404_for_other_user() {
 }
 
 // POST /entries/{id}/summarize — PR-10 T5
+//
+// The handler returns a small multi-target swap that only updates the
+// `#rp-summary-container` block (not the whole reading pane), so a
+// Fetch-Full-Content view keeps its externally-fetched article body.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_summarize_entry_form_renders_reading_pane() {
+async fn test_summarize_entry_form_renders_summary_pending_fragment() {
     let app = create_test_app_named(default_test_config(), "test_summarize_entry_form");
 
     // Register and log in as alice.
@@ -4321,7 +4325,8 @@ async fn test_summarize_entry_form_renders_reading_pane() {
         .await
         .unwrap();
 
-    // POST /entries/{id}/summarize — should return reading pane with button disabled.
+    // POST /entries/{id}/summarize — should return only the
+    // `#rp-summary-container` swap fragment with a pending state.
     let resp = app
         .server
         .post(&format!("/entries/{}/summarize", entry_id))
@@ -4329,12 +4334,18 @@ async fn test_summarize_entry_form_renders_reading_pane() {
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
     assert!(
-        html.contains("id=\"reading-pane\""),
-        "response must contain the reading pane element"
+        html.contains("data-swap-target=\"#rp-summary-container\""),
+        "response must target the summary container, not the whole reading pane"
     );
     assert!(
-        html.contains("disabled"),
-        "Summarize button must be disabled while summary is in-flight"
+        html.contains("Summarizing"),
+        "pending fragment must show a 'Summarizing…' message"
+    );
+    // The article body should not be in the response — that is the whole
+    // point of the smaller swap target.
+    assert!(
+        !html.contains("reading-pane-article"),
+        "response must NOT swap the article body (would reset full-content view)"
     );
 }
 

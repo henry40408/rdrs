@@ -35,7 +35,7 @@
             </form>
             {% endif %}
             {% if pane.has_kagi || pane.summary_in_flight %}
-            <form method="post" action="/entries/{{ pane.id }}/summarize" data-swap="#reading-pane">
+            <form method="post" action="/entries/{{ pane.id }}/summarize" data-swap="#rp-summary-container">
                 <button type="submit" class="btn-secondary btn-sm"{% if pane.summary_in_flight %} disabled{% endif %}>Summarize</button>
             </form>
             {% endif %}
@@ -47,13 +47,25 @@
             <a href="{{ link }}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">View Original</a>
             {% endif %}
         </div>
-        {% if let Some(summary) = pane.summary_text.as_ref() %}
-        <div class="rp-summary-container">
+        {# Always render the wrapper so `POST /entries/{id}/summarize` can
+           swap into `#rp-summary-container` without touching the article
+           body — keeps a Fetch-Full-Content view from being reset back to
+           the feed-supplied content when the user kicks off a summary. #}
+        <div class="rp-summary-container" id="rp-summary-container" data-summary-container>
+            {% if pane.summary_in_flight %}
             <div class="summary-box">
+                <p class="muted">Summarizing… (refresh to see the result)</p>
+            </div>
+            {% else if let Some(summary) = pane.summary_text.as_ref() %}
+            <div class="summary-box">
+                <div class="summary-actions">
+                    <button type="button" class="btn-secondary btn-sm" data-summary-copy>Copy</button>
+                    <button type="button" class="btn-secondary btn-sm" data-summary-dismiss data-entry-id="{{ pane.id }}">Dismiss</button>
+                </div>
                 <blockquote class="rp-summary-content">{{ summary|safe }}</blockquote>
             </div>
+            {% endif %}
         </div>
-        {% endif %}
         <article class="reading-pane-article">{{ pane.content_html|safe }}</article>
     </div>
 </div>
