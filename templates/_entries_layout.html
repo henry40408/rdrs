@@ -63,10 +63,12 @@
                                after the swap helper appends more rows + a fresh
                                Load-More form (those land *before* the `#load-more`
                                anchor, never below this button). Marks every
-                               currently-rendered row as read on click. #}
+                               currently-rendered row as read on click. Same
+                               wrapper class as the Load-More form so the two
+                               buttons align consistently. #}
                             {% if entries_layout.show_mark_above %}
-                            <div class="list-pane-footer">
-                                <button id="mark-above-read" type="button" class="btn-secondary" data-testid="mark-above-btn">Mark Above as Read</button>
+                            <div class="mark-above-form">
+                                <button id="mark-above-read" type="button" class="btn-secondary btn-sm" data-testid="mark-above-btn">Mark Above as Read</button>
                             </div>
                             {% endif %}
                         {% endif %}
