@@ -7,7 +7,7 @@ use axum::{
 
 use std::collections::HashMap;
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppError;
 use crate::middleware::auth::{PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
 use crate::models::user_settings;
@@ -884,7 +884,7 @@ pub async fn feeds_page(
             total_feed_count,
             active_filter,
             active_sort,
-            active_category_id: active_category.unwrap_or(-1),
+            active_category_id: active_category,
             filter_links,
         },
     )
@@ -899,11 +899,10 @@ pub async fn feed_edit_page(
     State(state): State<AppState>,
     flash: Flash,
     Path(id): Path<i64>,
-) -> AppResult<(Flash, FeedEditTemplate)> {
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
+) -> Result<Response, AppError> {
     let user_id = auth_user.user.id;
 
-    let (feed_view, cats) = state
+    let lookup = state
         .db
         .read_user(move |conn| {
             let f = feed::find_by_id(conn, id)?.ok_or(AppError::FeedNotFound)?;
@@ -931,8 +930,25 @@ pub async fn feed_edit_page(
                     .collect::<Vec<_>>(),
             ))
         })
-        .await??;
+        .await?;
 
+    let (feed_view, cats) = match lookup {
+        Ok(v) => v,
+        Err(AppError::FeedNotFound) => {
+            let page = render_not_found(
+                &state,
+                &auth_user,
+                &flash,
+                "Feed not found",
+                "This feed doesn't exist or you don't have access to it.",
+            )
+            .await;
+            return Ok((flash, page).into_response());
+        }
+        Err(e) => return Err(e),
+    };
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
     Ok((
         flash,
         FeedEditTemplate {
@@ -942,7 +958,8 @@ pub async fn feed_edit_page(
             feed: feed_view,
             categories: cats,
         },
-    ))
+    )
+        .into_response())
 }
 
 /// Serves `/feeds/import` rendered fully server-side. Multipart form posts to
@@ -1364,14 +1381,30 @@ pub async fn category_entries_page(
     const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
 
-    let category_name = state
+    let lookup = state
         .db
         .read_user(move |c| {
             let cat =
                 category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
             Ok::<_, AppError>(cat.name)
         })
-        .await??;
+        .await?;
+
+    let category_name = match lookup {
+        Ok(name) => name,
+        Err(AppError::CategoryNotFound) => {
+            let page = render_not_found(
+                &state,
+                &auth_user,
+                &flash,
+                "Category not found",
+                "This category doesn't exist or you don't have access to it.",
+            )
+            .await;
+            return Ok((flash, page).into_response());
+        }
+        Err(e) => return Err(e),
+    };
 
     let status = query.status.as_deref();
     let effective_status = status.unwrap_or("unread");
@@ -1779,7 +1812,7 @@ pub async fn feed_entries_page(
     const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
 
-    let (feed_title, feed_url, feed_has_icon, cat_id, cat_name) = state
+    let lookup = state
         .db
         .read_user(move |c| {
             let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
@@ -1796,7 +1829,23 @@ pub async fn feed_entries_page(
                 cat.name,
             ))
         })
-        .await??;
+        .await?;
+
+    let (feed_title, feed_url, feed_has_icon, cat_id, cat_name) = match lookup {
+        Ok(v) => v,
+        Err(AppError::FeedNotFound) | Err(AppError::CategoryNotFound) => {
+            let page = render_not_found(
+                &state,
+                &auth_user,
+                &flash,
+                "Feed not found",
+                "This feed doesn't exist or you don't have access to it.",
+            )
+            .await;
+            return Ok((flash, page).into_response());
+        }
+        Err(e) => return Err(e),
+    };
 
     // Default status is "unread": the base URL (no `?status=`) shows
     // unread + starred-but-unread entries. `?status=all` explicitly
@@ -1903,6 +1952,48 @@ pub async fn feed_entries_page(
     };
 
     Ok((flash, template).into_response())
+}
+
+/// Shared HTML error page rendered for logged-in routes when a requested
+/// resource is missing (e.g. feed/category not found). Replaces the default
+/// `AppError` JSON 404 with a chrome-wrapped page.
+#[derive(Template)]
+#[template(path = "error.html")]
+pub struct ErrorTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+    pub heading: &'static str,
+    pub message: String,
+}
+
+impl IntoResponse for ErrorTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => (StatusCode::NOT_FOUND, Html(html)).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Build a chrome-wrapped 404 page for a logged-in route. The caller
+/// supplies a short heading and a longer message; both render inside the
+/// standard sidebar/flash chrome.
+pub async fn render_not_found(
+    state: &AppState,
+    auth_user: &PageAuthUser,
+    flash: &Flash,
+    heading: &'static str,
+    message: impl Into<String>,
+) -> ErrorTemplate {
+    let layout = build_app_layout(state, auth_user, flash).await;
+    ErrorTemplate {
+        title: "Not Found",
+        git_version: crate::GIT_VERSION,
+        layout,
+        heading,
+        message: message.into(),
+    }
 }
 
 /// Shared layout fields embedded in every per-route logged-in
@@ -2162,9 +2253,7 @@ pub struct FeedsTemplate {
     pub total_feed_count: i64,
     pub active_filter: String,
     pub active_sort: String,
-    /// `-1` sentinel for "no category filter" — keeps Askama integer
-    /// comparisons straightforward in the filter dropdown.
-    pub active_category_id: i64,
+    pub active_category_id: Option<i64>,
     pub filter_links: Vec<FeedFilterLink>,
 }
 
