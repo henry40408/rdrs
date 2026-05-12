@@ -1,17 +1,8 @@
 // static/js/app.js — shared module for the logged-in surface.
 //
-// Currently ships:
-//   - swap(): partial-swap helper used by per-page SSR PRs to replace
-//     a target element via fetch + outerHTML. Not yet used by any
-//     consumer in PR-2.
-//   - window.rdrsNavigate: full-reload stub. Replaces the SPA router's
-//     export of the same name so existing CSR call sites in
-//     keyboard.js / page modules continue to work after router.js is
-//     removed. Each call falls through to a full document load.
-//
-// Per-page SSR PRs (PR-3+) extend this module with keyboard shortcuts,
-// sidebar polling, flash dismiss, and theme controller code. Those
-// sections are intentionally absent here.
+// Ships: swap() partial-swap helper, sidebar polling, flash dismiss,
+// theme controller, entries-family keyboard shortcuts, Mark-as-Read
+// dropdown, Mark Above as Read, row-click-to-open delegation.
 
 /**
  * Intercept form / link interactions tagged with `data-swap="<selector>"`
@@ -247,8 +238,7 @@ function installSidebarPolling() {
 installSidebarPolling();
 
 // Keyboard shortcuts for SSR entries-family pages. Only active when a
-// `[data-entries-list]` is present so we don't conflict with the
-// legacy `keyboard.js` running on PR-11 CSR routes.
+// `[data-entries-list]` is present so other pages don't bind these keys.
 function installEntriesKeyboard() {
     if (!document.querySelector('[data-entries-list]')) return;
     let active = null; // currently focused entry row
@@ -476,10 +466,9 @@ function installMarkAboveButton() {
 installMarkAboveButton();
 
 // Entry-row click delegation. Clicking anywhere on a row (not just the
-// title link) opens the entry — matches the pre-SSR `<rdrs-entry-list>`
-// UX. We delegate to the title's `<a data-swap="#reading-pane">` so the
-// existing `installSwap()` handler picks it up (multi-target response,
-// auto-mark-as-read, sidebar update).
+// title link) opens the entry. Delegates to the title's
+// `<a data-swap="#reading-pane">` so `installSwap()` handles the
+// multi-target response (auto-mark-as-read, sidebar update).
 function installRowClickToOpen() {
     document.addEventListener('click', (event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey ||

@@ -484,9 +484,8 @@ pub async fn summarize_entry_form(
 
 /// `POST /entries/{id}/fetch-full-content` — fetch the source article from
 /// the entry's `link`, sanitize, and return the reading pane with the
-/// article body replaced by the new HTML. Mirrors the legacy
-/// `<rdrs-entry-list>` "Fetch Full Content" button without the toggle-back
-/// behavior (refresh the page to restore the original feed body).
+/// article body replaced by the new HTML. No toggle-back behavior; refresh
+/// the page to restore the original feed body.
 pub async fn fetch_full_content_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -542,7 +541,7 @@ pub async fn fetch_full_content_form(
 
 /// `POST /entries/{id}/save` — send the entry to every configured save
 /// service (currently Linkding) and return the reading pane with an inline
-/// status message. Mirrors the legacy `<rdrs-entry-list>` "Save" button.
+/// status message.
 pub async fn save_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,

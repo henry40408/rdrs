@@ -49,99 +49,6 @@ test.describe("Mobile layout", () => {
     await expect(sidebar).not.toHaveClass(/open/);
   });
 
-  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen overlay route with back/prev/next nav. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
-  test.fixme("reading pane shows back button and prev/next nav", async ({
-    page,
-  }) => {
-    // Open first entry in reading pane
-    await page.getByTestId("entry-title-link").first().click();
-    await expect(page.locator(".reading-pane-title")).toBeVisible();
-
-    // Back button and nav buttons should exist on mobile
-    const backLink = page.locator(".reading-pane-back-link");
-    await expect(backLink).toBeVisible();
-
-    const prevBtn = page.locator('[data-rp-action="prev-entry"]');
-    const nextBtn = page.locator('[data-rp-action="next-entry"]');
-    await expect(prevBtn).toBeVisible();
-    await expect(nextBtn).toBeVisible();
-
-    // First entry: prev should be disabled, next enabled
-    await expect(prevBtn).toBeDisabled();
-    await expect(nextBtn).toBeEnabled();
-  });
-
-  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen overlay route with prev/next nav buttons. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
-  test.fixme("prev/next buttons navigate between entries", async ({ page }) => {
-    // Open first entry
-    await page.getByTestId("entry-title-link").first().click();
-    await expect(page.locator(".reading-pane-title")).toBeVisible();
-
-    const title1 = await page.locator(".reading-pane-title").textContent();
-
-    // Click next
-    const nextBtn = page.locator('[data-rp-action="next-entry"]');
-    await nextBtn.click();
-    await expect(page.locator(".reading-pane-title")).not.toHaveText(title1!);
-
-    const title2 = await page.locator(".reading-pane-title").textContent();
-    expect(title2).not.toBe(title1);
-
-    // Click prev to go back
-    const prevBtn = page.locator('[data-rp-action="prev-entry"]');
-    await prevBtn.click();
-    await expect(page.locator(".reading-pane-title")).toHaveText(title1!);
-  });
-
-  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen overlay route with back button. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
-  test.fixme("back button returns to entry list from reading pane", async ({
-    page,
-  }) => {
-    // Open first entry
-    await page.getByTestId("entry-title-link").first().click();
-    await expect(page.locator(".reading-pane-title")).toBeVisible();
-
-    // Click back
-    await page.locator(".reading-pane-back-link").click();
-
-    // Should be back at the list
-    await expect(page.getByTestId("entry-item").first()).toBeVisible();
-    await expect(page.locator(".reading-pane-title")).not.toBeVisible();
-  });
-
-  // Pre-existing flake — the [data-rp-action="next-entry"] button is
-  // sometimes disabled when the test reaches it; the entry list hasn't
-  // resolved the next-entry index yet. Re-enable once we have a stable
-  // signal for "list ready".
-  test.fixme("back button works after prev/next navigation", async ({ page }) => {
-    // Open first entry, navigate to next, then back to list
-    await page.getByTestId("entry-title-link").first().click();
-    await expect(page.locator(".reading-pane-title")).toBeVisible();
-
-    // Navigate forward twice
-    const nextBtn = page.locator('[data-rp-action="next-entry"]');
-    await nextBtn.click();
-    await expect(page.locator(".reading-pane-title")).toBeVisible();
-    await nextBtn.click();
-    await expect(page.locator(".reading-pane-title")).toBeVisible();
-
-    // Back should return to list (not previous entry)
-    await page.locator(".reading-pane-back-link").click();
-    await expect(page.getByTestId("entry-item").first()).toBeVisible();
-    await expect(page.locator(".reading-pane-title")).not.toBeVisible();
-  });
-
-  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen fixed overlay. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
-  test.fixme("reading pane is full-screen overlay", async ({ page }) => {
-    await page.getByTestId("entry-title-link").first().click();
-    await expect(page.locator(".reading-pane-title")).toBeVisible();
-
-    // Reading pane should be a fixed overlay on mobile
-    const pane = page.locator(".reading-pane");
-    await expect(pane).toHaveClass(/reading-pane-active/);
-    await expect(pane).toHaveCSS("position", "fixed");
-  });
-
   test("entry list is full-width single column", async ({ page }) => {
     const listPane = page.locator(".list-pane");
     const box = await listPane.boundingBox();
@@ -149,17 +56,6 @@ test.describe("Mobile layout", () => {
     expect(box!.width).toBeGreaterThan(370);
   });
 
-  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen overlay; hamburger visibility follows different rules. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
-  test.fixme("sidebar toggle is hidden when reading pane is active", async ({
-    page,
-  }) => {
-    await page.getByTestId("entry-title-link").first().click();
-    await expect(page.locator(".reading-pane-title")).toBeVisible();
-
-    // Hamburger should be hidden behind reading pane overlay
-    const toggle = page.locator(".sidebar-toggle");
-    await expect(toggle).not.toBeVisible();
-  });
 });
 
 // ── Phone card layout tests (375×667) ───────────────────────────────
@@ -238,30 +134,6 @@ test.describe("Tablet layout", () => {
     // Open and verify it overlays
     await toggle.click();
     await expect(sidebar).toHaveClass(/open/);
-  });
-
-  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen fixed overlay. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
-  test.fixme("reading pane is full-screen overlay", async ({ page }) => {
-    await page.getByTestId("entry-title-link").first().click();
-    await expect(page.locator(".reading-pane-title")).toBeVisible();
-
-    const pane = page.locator(".reading-pane");
-    await expect(pane).toHaveClass(/reading-pane-active/);
-    await expect(pane).toHaveCSS("position", "fixed");
-  });
-
-  // PR-12 cleanup: different UX paradigm — SSR uses in-page swap, not full-screen overlay route with back/prev/next nav. SSR-first migration changed behavior; spec § Testing schedules this for deletion in PR-12.
-  test.fixme("reading pane has back and prev/next buttons", async ({ page }) => {
-    await page.getByTestId("entry-title-link").first().click();
-    await expect(page.locator(".reading-pane-title")).toBeVisible();
-
-    await expect(page.locator(".reading-pane-back-link")).toBeVisible();
-    await expect(
-      page.locator('[data-rp-action="prev-entry"]')
-    ).toBeVisible();
-    await expect(
-      page.locator('[data-rp-action="next-entry"]')
-    ).toBeVisible();
   });
 
   test("tables remain in table layout at tablet width", async ({

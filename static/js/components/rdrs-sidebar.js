@@ -8,9 +8,7 @@
 //      synchronously and paint — zero round trips, zero flash.
 //   2. After every successful /api/sidebar fetch we rewrite that <script>'s
 //      textContent and the sessionStorage mirror with the new payload, so
-//      the next SPA-mount reads fresh data. The bootstrap is the single
-//      source of truth shared by <rdrs-sidebar> and pages/entries.js's
-//      category-mode lookup, so we keep it live rather than removing it.
+//      the next mount reads fresh data.
 //   3. Background-revalidate via /api/sidebar after every mount, and surgically
 //      patch the unread badges (full-rerender only if identity / category set
 //      changed).
@@ -47,9 +45,8 @@ function writeCachedSidebar(data) {
     const json = JSON.stringify(data);
     try { sessionStorage.setItem(SIDEBAR_CACHE_KEY, json); }
     catch { /* quota / disabled storage — fine */ }
-    // Keep the embedded bootstrap <script> aligned with the latest payload,
-    // so SPA-mounts (which run after this) and pages/entries.js's category
-    // lookup both read the freshest state from a single source.
+    // Keep the embedded bootstrap <script> aligned with the latest payload
+    // so subsequent mounts read the freshest state from a single source.
     const node = document.getElementById('rdrs-sidebar-bootstrap');
     if (node) node.textContent = json;
 }
