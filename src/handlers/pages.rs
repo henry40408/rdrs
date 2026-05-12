@@ -442,14 +442,13 @@ pub async fn unread_page(
 
     if query.fragment == Some(1) {
         let after = query.after.unwrap_or(0).max(0);
-        let limit = after + PAGE_SIZE;
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            limit,
-            0,
+            PAGE_SIZE,
+            after,
         )
         .await;
         return (
@@ -913,14 +912,13 @@ pub async fn entries_page(
 
     if query.fragment == Some(1) {
         let after = query.after.unwrap_or(0).max(0);
-        let limit = after + PAGE_SIZE;
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            limit,
-            0,
+            PAGE_SIZE,
+            after,
         )
         .await;
         return (
@@ -1058,14 +1056,13 @@ pub async fn read_entries_page(
 
     if query.fragment == Some(1) {
         let after = query.after.unwrap_or(0).max(0);
-        let limit = after + PAGE_SIZE;
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            limit,
-            0,
+            PAGE_SIZE,
+            after,
         )
         .await;
         return (
@@ -1132,14 +1129,13 @@ pub async fn starred_entries_page(
 
     if query.fragment == Some(1) {
         let after = query.after.unwrap_or(0).max(0);
-        let limit = after + PAGE_SIZE;
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            limit,
-            0,
+            PAGE_SIZE,
+            after,
         )
         .await;
         return (
@@ -1206,14 +1202,13 @@ pub async fn summarized_entries_page(
 
     if query.fragment == Some(1) {
         let after = query.after.unwrap_or(0).max(0);
-        let limit = after + PAGE_SIZE;
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            limit,
-            0,
+            PAGE_SIZE,
+            after,
         )
         .await;
         return (

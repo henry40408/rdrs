@@ -4178,7 +4178,7 @@ async fn test_entries_load_more_returns_row_fragments() {
         .unwrap()
         .unwrap();
 
-    // GET /entries?fragment=1&after=50 — prefix-rerender: rows 0..74 (all 75).
+    // GET /entries?fragment=1&after=50 — append semantics: rows 50..74 only.
     let resp = app
         .server
         .get("/entries")
@@ -4188,11 +4188,11 @@ async fn test_entries_load_more_returns_row_fragments() {
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
 
-    // Prefix-rerender: should contain all 75 rows (0 to 74).
+    // Append semantics: should contain only the new slice (rows 50..74 = 25 rows).
     let row_count = html.matches("data-entry-row").count();
     assert_eq!(
-        row_count, 75,
-        "prefix-rerender should return all 75 rows (0..74)"
+        row_count, 25,
+        "append semantics should return only the new slice (rows 50..74)"
     );
 
     // No more pages — load-more form should be absent.
@@ -4201,10 +4201,10 @@ async fn test_entries_load_more_returns_row_fragments() {
         "no more pages → load-more form must be absent"
     );
 
-    // Response must be wrapped in a <template data-swap-target="[data-entries-list]">.
+    // Response must be wrapped in a <template data-swap-target="#load-more">.
     assert!(
-        html.contains("data-swap-target=\"[data-entries-list]\""),
-        "fragment must use multi-target template swap"
+        html.contains("data-swap-target=\"#load-more\""),
+        "fragment must use multi-target template swap that targets #load-more"
     );
 }
 

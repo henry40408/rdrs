@@ -1,12 +1,15 @@
-<template data-swap-target="[data-entries-list]">
-    <div class="list-pane-body" data-entries-list>
-        {% for r in entries %}{% include "_entry_row.html" %}{% endfor %}
-        {% if let Some(after) = next_cursor %}
-            <form id="load-more" method="get" action="{{ path }}" data-swap="[data-entries-list]" class="load-more-form">
-                <input type="hidden" name="after" value="{{ after }}">
-                <input type="hidden" name="fragment" value="1">
-                <button type="submit" class="btn btn-secondary btn-sm" data-testid="load-more-btn">Load more</button>
-            </form>
-        {% endif %}
-    </div>
+{# Append-style Load More response. The `<template data-swap-target="#load-more">`
+   block carries the new rows + a fresh load-more form (or nothing, when
+   `next_cursor` is `None`). The swap helper inserts every child of the
+   template before the old `#load-more`, then removes it — so prior rows
+   stay put and the .list-pane keeps its scroll position naturally. #}
+<template data-swap-target="#load-more">
+{% for r in entries %}{% include "_entry_row.html" %}{% endfor %}
+{% if let Some(after) = next_cursor %}
+<form id="load-more" method="get" action="{{ path }}" data-swap="#load-more" class="load-more-form">
+    <input type="hidden" name="after" value="{{ after }}">
+    <input type="hidden" name="fragment" value="1">
+    <button type="submit" data-testid="load-more-btn">Load More</button>
+</form>
+{% endif %}
 </template>

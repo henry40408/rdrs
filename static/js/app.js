@@ -81,9 +81,18 @@ async function performSwap(url, init, defaultTarget) {
             const sel = tpl.getAttribute('data-swap-target');
             const dst = document.querySelector(sel);
             if (!dst) continue;
-            const incoming = tpl.content.firstElementChild;
-            if (!incoming) continue;
-            dst.outerHTML = incoming.outerHTML;
+            const parent = dst.parentNode;
+            // Insert every child of the template content (including
+            // multi-element payloads — e.g. Load-More returns N rows + a
+            // new load-more form) before the swap target, then remove
+            // the target. Single-element templates collapse to the same
+            // outcome as the previous outerHTML-replace behaviour, so
+            // existing call sites stay correct.
+            const nodes = Array.from(tpl.content.childNodes);
+            for (const node of nodes) {
+                parent.insertBefore(node, dst);
+            }
+            parent.removeChild(dst);
         }
         return;
     }

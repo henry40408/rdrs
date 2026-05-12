@@ -38,10 +38,10 @@
                         {% else %}
                             {% for r in entries %}{% include "_entry_row.html" %}{% endfor %}
                             {% if let Some(after) = next_cursor %}
-                                <form id="load-more" method="get" action="{{ entries_layout.path }}" data-swap="[data-entries-list]" class="load-more-form">
+                                <form id="load-more" method="get" action="{{ entries_layout.path }}" data-swap="#load-more" class="load-more-form">
                                     <input type="hidden" name="after" value="{{ after }}">
                                     <input type="hidden" name="fragment" value="1">
-                                    <button type="submit" class="btn btn-secondary btn-sm" data-testid="load-more-btn">Load more</button>
+                                    <button type="submit" data-testid="load-more-btn">Load More</button>
                                 </form>
                             {% endif %}
                         {% endif %}
