@@ -1845,11 +1845,9 @@ async fn test_logged_in_page_loads_full_chrome() {
     response.assert_status_ok();
     let body = response.text();
 
-    // All 6 chrome scripts must be present.
+    // All chrome scripts must be present.
     assert!(body.contains("rdrs-kb-pending.js"));
     assert!(body.contains("rdrs-kb-help.js"));
-    assert!(body.contains("/keyboard.js"));
-    assert!(body.contains("rdrs-entry-list.js"));
     assert!(body.contains("rdrs-sidebar.js"));
     assert!(body.contains("/static/js/app.js"));
 

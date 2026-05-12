@@ -2131,7 +2131,7 @@ async fn test_static_js_serves_known_file() {
 async fn test_static_js_serves_component_file() {
     let server = create_test_server(default_test_config());
 
-    let response = server.get("/static/js/components/rdrs-entry-list.js").await;
+    let response = server.get("/static/js/components/rdrs-sidebar.js").await;
     response.assert_status_ok();
 
     let content_type = response

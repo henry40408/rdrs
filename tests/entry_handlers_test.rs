@@ -2301,4 +2301,3 @@ async fn test_delete_entry_summary() {
     let body: serde_json::Value = response.json();
     assert_eq!(body["success"], true);
 }
-
