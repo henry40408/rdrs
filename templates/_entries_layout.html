@@ -2,13 +2,18 @@
 
 {% block page %}
     <div class="app-layout">
-        <rdrs-sidebar active="{{ entries_layout.active }}"></rdrs-sidebar>
+        <rdrs-sidebar active="{{ entries_layout.active }}"{% if let Some(cat_id) = entries_layout.active_category_id %} active-category-id="{{ cat_id }}"{% endif %}></rdrs-sidebar>
         <main class="main-content">
             <rdrs-flash class="flash-container"></rdrs-flash>
             <div class="split-view">
                 <div class="list-pane">
                     <div class="list-pane-header">
-                        <h1>{{ title }}</h1>
+                        {% if !entries_layout.breadcrumb_items.is_empty() %}
+                        <nav class="breadcrumb" data-testid="breadcrumb">
+                            {% for item in entries_layout.breadcrumb_items %}{% if !loop.first %}<span class="breadcrumb-sep"> / </span>{% endif %}{% if let Some(href) = item.href.as_ref() %}<a href="{{ href }}">{{ item.label }}</a>{% else %}<span>{{ item.label }}</span>{% endif %}{% endfor %}
+                        </nav>
+                        {% endif %}
+                        <h1>{% if let Some(feed_id) = entries_layout.header_feed_icon_id %}<img class="feed-icon" src="/api/feeds/{{ feed_id }}/icon" alt="" width="20" height="20" loading="lazy">{% endif %}{{ title }}</h1>
                         {% if entries_layout.show_tab_bar %}
                         <div class="tab-bar">
                             <a href="/entries" data-testid="tab-all" data-tab="all"{% if entries_layout.active == "all" %} class="active"{% endif %}>All</a>

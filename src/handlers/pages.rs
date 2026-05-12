@@ -75,7 +75,15 @@ pub struct ReadingPaneView {
     pub has_save: bool,
 }
 
-/// Layout context shared by all 5 entries-family pages (`_entries_layout.html`).
+/// One segment of a breadcrumb trail rendered above the page `<h1>`. `href =
+/// None` marks the current page (rendered as plain text, no link).
+#[derive(Debug, Clone)]
+pub struct BreadcrumbItem {
+    pub label: String,
+    pub href: Option<String>,
+}
+
+/// Layout context shared by all entries-family pages (`_entries_layout.html`).
 #[derive(Debug, Clone)]
 pub struct EntriesLayoutContext {
     pub active: &'static str,
@@ -90,6 +98,17 @@ pub struct EntriesLayoutContext {
     /// (unread) and `/entries` (all) — the two views where bulk-marking
     /// matters; false for read/starred/summarized.
     pub show_mark_as_read: bool,
+    /// Breadcrumb trail rendered above the page title. Empty for the routes
+    /// that don't need one (all 5 PR-10 entries-family pages).
+    pub breadcrumb_items: Vec<BreadcrumbItem>,
+    /// When `Some(feed_id)`, render the feed's favicon next to the page
+    /// title via `/api/feeds/{id}/icon`. Only `/feeds/{id}/entries` uses
+    /// this — the rest pass `None`.
+    pub header_feed_icon_id: Option<i64>,
+    /// When `Some(category_id)`, sets `<rdrs-sidebar active-category-id="…">`
+    /// so the sidebar highlights the active category. Used by the feed +
+    /// category entries pages; `None` elsewhere.
+    pub active_category_id: Option<i64>,
 }
 
 /// Map an `EntryWithFeed` (+ optional summary status) to an `EntryRowView`.
@@ -498,6 +517,9 @@ pub async fn unread_page(
                 path: "/".to_string(),
                 show_tab_bar: false,
                 show_mark_as_read: true,
+                breadcrumb_items: vec![],
+                header_feed_icon_id: None,
+                active_category_id: None,
             },
         },
     )
@@ -968,6 +990,9 @@ pub async fn entries_page(
                 path: "/entries".to_string(),
                 show_tab_bar: true,
                 show_mark_as_read: true,
+                breadcrumb_items: vec![],
+                header_feed_icon_id: None,
+                active_category_id: None,
             },
         },
     )
@@ -1112,6 +1137,9 @@ pub async fn read_entries_page(
                 path: "/entries/read".to_string(),
                 show_tab_bar: true,
                 show_mark_as_read: false,
+                breadcrumb_items: vec![],
+                header_feed_icon_id: None,
+                active_category_id: None,
             },
         },
     )
@@ -1185,6 +1213,9 @@ pub async fn starred_entries_page(
                 path: "/entries/starred".to_string(),
                 show_tab_bar: true,
                 show_mark_as_read: false,
+                breadcrumb_items: vec![],
+                header_feed_icon_id: None,
+                active_category_id: None,
             },
         },
     )
@@ -1258,6 +1289,9 @@ pub async fn summarized_entries_page(
                 path: "/entries/summarized".to_string(),
                 show_tab_bar: true,
                 show_mark_as_read: false,
+                breadcrumb_items: vec![],
+                header_feed_icon_id: None,
+                active_category_id: None,
             },
         },
     )
@@ -1314,6 +1348,17 @@ pub async fn category_entries_page(
 
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
+    let breadcrumb_items = vec![
+        BreadcrumbItem {
+            label: "Categories".to_string(),
+            href: Some("/categories".to_string()),
+        },
+        BreadcrumbItem {
+            label: category_name.clone(),
+            href: None,
+        },
+    ];
+
     let template = CategoryEntriesTemplate {
         title: category_name,
         git_version: crate::GIT_VERSION,
@@ -1328,6 +1373,9 @@ pub async fn category_entries_page(
             path,
             show_tab_bar: false,
             show_mark_as_read: false,
+            breadcrumb_items,
+            header_feed_icon_id: None,
+            active_category_id: Some(id),
         },
     };
 
@@ -1640,7 +1688,7 @@ pub async fn feed_entries_page(
     const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
 
-    let feed_title = state
+    let (feed_title, feed_has_icon, cat_id, cat_name) = state
         .db
         .read_user(move |c| {
             let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
@@ -1648,7 +1696,13 @@ pub async fn feed_entries_page(
             if cat.user_id != user_id {
                 return Err(AppError::FeedNotFound);
             }
-            Ok::<_, AppError>(f.title.unwrap_or_else(|| "(untitled feed)".to_string()))
+            let has_icon = crate::models::image::exists(c, "feed", f.id)?;
+            Ok::<_, AppError>((
+                f.title.unwrap_or_else(|| "(untitled feed)".to_string()),
+                has_icon,
+                cat.id,
+                cat.name,
+            ))
         })
         .await??;
 
@@ -1681,6 +1735,21 @@ pub async fn feed_entries_page(
 
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
+    let breadcrumb_items = vec![
+        BreadcrumbItem {
+            label: "Feeds".to_string(),
+            href: Some("/feeds".to_string()),
+        },
+        BreadcrumbItem {
+            label: cat_name,
+            href: Some(format!("/categories/{}/entries", cat_id)),
+        },
+        BreadcrumbItem {
+            label: feed_title.clone(),
+            href: None,
+        },
+    ];
+
     let template = FeedEntriesTemplate {
         title: feed_title,
         git_version: crate::GIT_VERSION,
@@ -1695,6 +1764,9 @@ pub async fn feed_entries_page(
             path,
             show_tab_bar: false,
             show_mark_as_read: false,
+            breadcrumb_items,
+            header_feed_icon_id: if feed_has_icon { Some(id) } else { None },
+            active_category_id: Some(cat_id),
         },
     };
 

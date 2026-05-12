@@ -817,6 +817,22 @@ async fn test_category_entries_page() {
             "Load-More form must POST back to the category-scoped URL"
         );
     }
+
+    // Breadcrumb: `Categories / Engineering`.
+    assert!(
+        html.contains(r#"data-testid="breadcrumb""#),
+        "category page must render a breadcrumb nav"
+    );
+    assert!(
+        html.contains(r#"<a href="/categories">Categories</a>"#),
+        "breadcrumb must link to /categories"
+    );
+
+    // Sidebar must receive active-category-id so the category is highlighted.
+    assert!(
+        html.contains(&format!("active-category-id=\"{}\"", cat_id)),
+        "<rdrs-sidebar> must carry active-category-id for the current category"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -995,7 +1011,7 @@ async fn test_feed_entries_page() {
         .await
         .assert_status_ok();
 
-    let (feed_id, entry_a_id, entry_b_id) = app
+    let (cat_id, feed_id, entry_a_id, entry_b_id) = app
         .db
         .user(|conn| {
             let user_id: i64 = conn
@@ -1040,7 +1056,7 @@ async fn test_feed_entries_page() {
                 None,
             )
             .unwrap();
-            (feed.id, a.id, b.id)
+            (cat.id, feed.id, a.id, b.id)
         })
         .await
         .unwrap();
@@ -1079,6 +1095,40 @@ async fn test_feed_entries_page() {
             "Load-More form must POST back to the same feed-scoped URL"
         );
     }
+
+    // Breadcrumb: `Feeds / Tech / FE Feed`.
+    assert!(
+        html.contains(r#"data-testid="breadcrumb""#),
+        "feed page must render a breadcrumb nav"
+    );
+    assert!(
+        html.contains(r#"<a href="/feeds">Feeds</a>"#),
+        "breadcrumb must link to /feeds"
+    );
+    assert!(
+        html.contains(&format!(
+            r#"<a href="/categories/{}/entries">Tech</a>"#,
+            cat_id
+        )),
+        "breadcrumb must link to the parent category page"
+    );
+
+    // Sidebar must receive active-category-id so the parent category is highlighted.
+    assert!(
+        html.contains(&format!("active-category-id=\"{}\"", cat_id)),
+        "<rdrs-sidebar> must carry active-category-id for the feed's parent category"
+    );
+
+    // Feed has no icon seeded, so the header image must NOT render. (A
+    // parallel test could seed an image row + assert the <img> appears; we
+    // skip that variant to keep this test focused on layout-context wiring.)
+    assert!(
+        !html.contains(&format!(
+            "src=\"/api/feeds/{}/icon\" alt=\"\" width=\"20\"",
+            feed_id
+        )),
+        "header feed-icon img must not render when the feed has no icon row"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
