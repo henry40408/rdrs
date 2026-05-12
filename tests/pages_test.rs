@@ -1156,6 +1156,141 @@ async fn test_feed_entries_page() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_feed_entries_page_status_filter() {
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_status");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_fst", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_fst", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let (feed_id, unread_id, read_id, starred_id) = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "FST").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/fst-feed",
+                    title: Some("FST"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (u, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-fst-u",
+                Some("Unread Entry"),
+                Some("https://x/fst/u"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (r, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-fst-r",
+                Some("Read Entry"),
+                Some("https://x/fst/r"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (s, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-fst-s",
+                Some("Starred Entry"),
+                Some("https://x/fst/s"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rdrs::models::entry::mark_as_read(conn, r.id).unwrap();
+            rdrs::models::entry::star_entry(conn, s.id).unwrap();
+            (feed.id, u.id, r.id, s.id)
+        })
+        .await
+        .unwrap();
+
+    // ?status=unread → only unread.
+    let resp = app
+        .server
+        .get(&format!("/feeds/{}/entries?status=unread", feed_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(html.contains(&format!("id=\"entry-row-{}\"", unread_id)));
+    assert!(!html.contains(&format!("id=\"entry-row-{}\"", read_id)));
+    // The starred entry is also unread (never read), so it appears in
+    // unread too.
+    assert!(html.contains(&format!("id=\"entry-row-{}\"", starred_id)));
+
+    // ?status=read → only read.
+    let resp = app
+        .server
+        .get(&format!("/feeds/{}/entries?status=read", feed_id))
+        .await;
+    let html = resp.text();
+    assert!(html.contains(&format!("id=\"entry-row-{}\"", read_id)));
+    assert!(!html.contains(&format!("id=\"entry-row-{}\"", unread_id)));
+
+    // ?status=starred → only starred.
+    let resp = app
+        .server
+        .get(&format!("/feeds/{}/entries?status=starred", feed_id))
+        .await;
+    let html = resp.text();
+    assert!(html.contains(&format!("id=\"entry-row-{}\"", starred_id)));
+    assert!(!html.contains(&format!("id=\"entry-row-{}\"", read_id)));
+    assert!(!html.contains(&format!("id=\"entry-row-{}\"", unread_id)));
+
+    // Filter tab bar present; the active tab matches the query.
+    assert!(
+        html.contains("data-status-filter"),
+        "filter tab bar must render on feed pages"
+    );
+    assert!(
+        html.contains(&format!(
+            r#"href="/feeds/{}/entries?status=starred" data-status-tab class="active""#,
+            feed_id
+        )),
+        "Starred tab must have class=\"active\" when ?status=starred"
+    );
+
+    // Load-More form preserves the status filter via a hidden input.
+    // (The seeded feed has only 3 entries so the form may not appear; we
+    // assert only when present.)
+    if html.contains("id=\"load-more\"") {
+        assert!(
+            html.contains(r#"<input type="hidden" name="status" value="starred">"#),
+            "Load-More form must carry the active status filter"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_not_found() {
     let app = create_test_app_named(default_test_config(), "test_feed_entries_page_not_found");
 

@@ -22,6 +22,11 @@
                             <a href="/entries/summarized" data-testid="tab-summarized" data-tab="summarized"{% if entries_layout.active == "summarized" %} class="active"{% endif %}>Summarized</a>
                         </div>
                         {% endif %}
+                        {% if let Some(tabs) = entries_layout.filter_tabs.as_ref() %}
+                        <div class="tab-bar" data-status-filter>
+                            {% for tab in tabs %}<a href="{{ tab.href }}" data-status-tab{% if tab.active %} class="active"{% endif %}>{{ tab.label }}</a>{% endfor %}
+                        </div>
+                        {% endif %}
                         {% if let Some(scope) = entries_layout.mark_as_read_scope.as_ref() %}
                         <div class="filter-bar">
                             <div class="form-group form-group-inline">
@@ -46,6 +51,7 @@
                                 <form id="load-more" method="get" action="{{ entries_layout.path }}" data-swap="#load-more" class="load-more-form">
                                     <input type="hidden" name="after" value="{{ after }}">
                                     <input type="hidden" name="fragment" value="1">
+                                    {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
                                     <button type="submit" data-testid="load-more-btn">Load More</button>
                                 </form>
                             {% endif %}

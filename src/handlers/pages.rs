@@ -83,6 +83,16 @@ pub struct BreadcrumbItem {
     pub href: Option<String>,
 }
 
+/// One tab in the status-filter bar rendered on feed/category entries
+/// pages (`?status=unread|read|starred`). The keyboard `1`/`2`/`3`/`4`
+/// shortcuts navigate to the corresponding tab by position.
+#[derive(Debug, Clone)]
+pub struct FilterTab {
+    pub label: String,
+    pub href: String,
+    pub active: bool,
+}
+
 /// Layout context shared by all entries-family pages (`_entries_layout.html`).
 #[derive(Debug, Clone)]
 pub struct EntriesLayoutContext {
@@ -113,6 +123,14 @@ pub struct EntriesLayoutContext {
     /// so the sidebar highlights the active category. Used by the feed +
     /// category entries pages; `None` elsewhere.
     pub active_category_id: Option<i64>,
+    /// Optional status-filter tab bar (All / Unread / Read / Starred) for
+    /// feed + category pages. `None` on the 5 PR-10 routes — they use
+    /// path-based modes via the `show_tab_bar` flag instead.
+    pub filter_tabs: Option<Vec<FilterTab>>,
+    /// Forwarded into the Load-More form so subsequent Load-More fetches
+    /// preserve the `?status=` query. Mirrors the same field on
+    /// `EntriesFragmentTemplate`.
+    pub status_filter: Option<String>,
 }
 
 /// Map an `EntryWithFeed` (+ optional summary status) to an `EntryRowView`.
@@ -191,6 +209,11 @@ pub(crate) async fn build_entries_page(
 pub struct EntriesQuery {
     pub fragment: Option<u8>,
     pub after: Option<i64>,
+    /// Status filter: `unread` / `read` / `starred`. Only meaningful on the
+    /// feed + category entries pages (the 5 PR-10 routes have their own
+    /// path-based modes). Any other value (or absence) is treated as
+    /// "no filter" (show all).
+    pub status: Option<String>,
 }
 
 /// Fragment template for the Load-More response.
@@ -202,6 +225,10 @@ pub(crate) struct EntriesFragmentTemplate {
     pub entries: Vec<EntryRowView>,
     pub next_cursor: Option<i64>,
     pub path: &'static str,
+    /// Forwarded into the fragment's Load-More form so subsequent
+    /// Load-More fetches keep the current `?status=` filter. `None` for
+    /// the 5 PR-10 routes (their filters are path-based, not query).
+    pub status_filter: Option<String>,
 }
 
 impl IntoResponse for EntriesFragmentTemplate {
@@ -489,6 +516,7 @@ pub async fn unread_page(
                 entries,
                 next_cursor,
                 path: "/",
+                status_filter: None,
             },
         )
             .into_response();
@@ -524,6 +552,8 @@ pub async fn unread_page(
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
+                filter_tabs: None,
+                status_filter: None,
             },
         },
     )
@@ -962,6 +992,7 @@ pub async fn entries_page(
                 entries,
                 next_cursor,
                 path: "/entries",
+                status_filter: None,
             },
         )
             .into_response();
@@ -997,6 +1028,8 @@ pub async fn entries_page(
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
+                filter_tabs: None,
+                status_filter: None,
             },
         },
     )
@@ -1109,6 +1142,7 @@ pub async fn read_entries_page(
                 entries,
                 next_cursor,
                 path: "/entries/read",
+                status_filter: None,
             },
         )
             .into_response();
@@ -1144,6 +1178,8 @@ pub async fn read_entries_page(
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
+                filter_tabs: None,
+                status_filter: None,
             },
         },
     )
@@ -1185,6 +1221,7 @@ pub async fn starred_entries_page(
                 entries,
                 next_cursor,
                 path: "/entries/starred",
+                status_filter: None,
             },
         )
             .into_response();
@@ -1220,6 +1257,8 @@ pub async fn starred_entries_page(
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
+                filter_tabs: None,
+                status_filter: None,
             },
         },
     )
@@ -1261,6 +1300,7 @@ pub async fn summarized_entries_page(
                 entries,
                 next_cursor,
                 path: "/entries/summarized",
+                status_filter: None,
             },
         )
             .into_response();
@@ -1296,6 +1336,8 @@ pub async fn summarized_entries_page(
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
+                filter_tabs: None,
+                status_filter: None,
             },
         },
     )
@@ -1323,10 +1365,17 @@ pub async fn category_entries_page(
         })
         .await??;
 
-    let filter = entry::EntryFilter {
+    let status = query.status.as_deref();
+    let mut filter = entry::EntryFilter {
         category_id: Some(id),
         ..Default::default()
     };
+    match status {
+        Some("unread") => filter.unread_only = true,
+        Some("read") => filter.read_only = true,
+        Some("starred") => filter.starred_only = true,
+        _ => {}
+    }
     let offset = query.after.unwrap_or(0);
 
     let (entries, next_cursor) = build_entries_page(
@@ -1340,12 +1389,14 @@ pub async fn category_entries_page(
     .await;
 
     let path = format!("/categories/{}/entries", id);
+    let status_filter = query.status.clone();
 
     if query.fragment == Some(1) {
         let fragment = EntriesFragmentTemplate {
             entries,
             next_cursor,
             path: Box::leak(path.into_boxed_str()),
+            status_filter,
         };
         return Ok((flash, fragment).into_response());
     }
@@ -1353,6 +1404,29 @@ pub async fn category_entries_page(
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     let mark_as_read_scope = Some(format!("user/-/label/{}", category_name));
+    let base = format!("/categories/{}/entries", id);
+    let filter_tabs = Some(vec![
+        FilterTab {
+            label: "All".to_string(),
+            href: base.clone(),
+            active: status.is_none(),
+        },
+        FilterTab {
+            label: "Unread".to_string(),
+            href: format!("{}?status=unread", base),
+            active: status == Some("unread"),
+        },
+        FilterTab {
+            label: "Read".to_string(),
+            href: format!("{}?status=read", base),
+            active: status == Some("read"),
+        },
+        FilterTab {
+            label: "Starred".to_string(),
+            href: format!("{}?status=starred", base),
+            active: status == Some("starred"),
+        },
+    ]);
     let breadcrumb_items = vec![
         BreadcrumbItem {
             label: "Categories".to_string(),
@@ -1381,6 +1455,8 @@ pub async fn category_entries_page(
             breadcrumb_items,
             header_feed_icon_id: None,
             active_category_id: Some(id),
+            filter_tabs,
+            status_filter,
         },
     };
 
@@ -1712,10 +1788,17 @@ pub async fn feed_entries_page(
         })
         .await??;
 
-    let filter = entry::EntryFilter {
+    let status = query.status.as_deref();
+    let mut filter = entry::EntryFilter {
         feed_id: Some(id),
         ..Default::default()
     };
+    match status {
+        Some("unread") => filter.unread_only = true,
+        Some("read") => filter.read_only = true,
+        Some("starred") => filter.starred_only = true,
+        _ => {}
+    }
     let offset = query.after.unwrap_or(0);
 
     let (entries, next_cursor) = build_entries_page(
@@ -1729,12 +1812,14 @@ pub async fn feed_entries_page(
     .await;
 
     let path = format!("/feeds/{}/entries", id);
+    let status_filter = query.status.clone();
 
     if query.fragment == Some(1) {
         let fragment = EntriesFragmentTemplate {
             entries,
             next_cursor,
             path: Box::leak(path.into_boxed_str()),
+            status_filter,
         };
         return Ok((flash, fragment).into_response());
     }
@@ -1742,6 +1827,29 @@ pub async fn feed_entries_page(
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     let mark_as_read_scope = Some(format!("feed/{}", feed_url));
+    let base = format!("/feeds/{}/entries", id);
+    let filter_tabs = Some(vec![
+        FilterTab {
+            label: "All".to_string(),
+            href: base.clone(),
+            active: status.is_none(),
+        },
+        FilterTab {
+            label: "Unread".to_string(),
+            href: format!("{}?status=unread", base),
+            active: status == Some("unread"),
+        },
+        FilterTab {
+            label: "Read".to_string(),
+            href: format!("{}?status=read", base),
+            active: status == Some("read"),
+        },
+        FilterTab {
+            label: "Starred".to_string(),
+            href: format!("{}?status=starred", base),
+            active: status == Some("starred"),
+        },
+    ]);
     let breadcrumb_items = vec![
         BreadcrumbItem {
             label: "Feeds".to_string(),
@@ -1774,6 +1882,8 @@ pub async fn feed_entries_page(
             breadcrumb_items,
             header_feed_icon_id: if feed_has_icon { Some(id) } else { None },
             active_category_id: Some(cat_id),
+            filter_tabs,
+            status_filter,
         },
     };
 

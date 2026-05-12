@@ -290,6 +290,23 @@ function installEntriesKeyboard() {
                 if (form) { e.preventDefault(); form.requestSubmit(); }
                 break;
             }
+            case '1':
+            case '2':
+            case '3':
+            case '4': {
+                // Status-filter quick-nav on feed/category pages. The
+                // `[data-status-filter]` tab-bar carries 4 anchors in
+                // order: All / Unread / Read / Starred. `1`-`4` click
+                // the nth tab. On pages without filter tabs the keys
+                // are a no-op.
+                const tabs = document.querySelectorAll('[data-status-filter] [data-status-tab]');
+                if (tabs.length === 0) return;
+                const idx = parseInt(e.key, 10) - 1;
+                if (idx < 0 || idx >= tabs.length) return;
+                e.preventDefault();
+                window.location.href = tabs[idx].getAttribute('href');
+                break;
+            }
             case ' ': {
                 if (!active) return;
                 // Row form is now state-dependent: `/read` when unread,
