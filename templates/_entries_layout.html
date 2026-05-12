@@ -22,10 +22,10 @@
                             <a href="/entries/summarized" data-testid="tab-summarized" data-tab="summarized"{% if entries_layout.active == "summarized" %} class="active"{% endif %}>Summarized</a>
                         </div>
                         {% endif %}
-                        {% if entries_layout.show_mark_as_read %}
+                        {% if let Some(scope) = entries_layout.mark_as_read_scope.as_ref() %}
                         <div class="filter-bar">
                             <div class="form-group form-group-inline">
-                                <select id="mark-read-age" data-testid="mark-read-select" class="select-auto" data-mark-read-scope="reading-list">
+                                <select id="mark-read-age" data-testid="mark-read-select" class="select-auto" data-mark-read-scope="{{ scope }}">
                                     <option value="">Mark as Read...</option>
                                     <option value="1">Older than 1 day</option>
                                     <option value="7">Older than 1 week</option>

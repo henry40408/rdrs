@@ -94,10 +94,14 @@ pub struct EntriesLayoutContext {
     /// for the 4 entries-tabs (`active = "all" | "read" | "starred" |
     /// "summarized"`), false for `/` (unread) since unread is not a tab.
     pub show_tab_bar: bool,
-    /// Render the "Mark as Read..." dropdown above the list. True for `/`
-    /// (unread) and `/entries` (all) — the two views where bulk-marking
-    /// matters; false for read/starred/summarized.
-    pub show_mark_as_read: bool,
+    /// When `Some(stream_id)`, render the "Mark as Read..." dropdown
+    /// above the list with the given GReader stream as its scope. The
+    /// `<select>` carries `data-mark-read-scope` so `app.js` picks up
+    /// the scope dynamically. Stream IDs follow GReader format:
+    /// `user/-/state/com.google/reading-list` for global bulk,
+    /// `feed/<feed_url>` for per-feed, `user/-/label/<category_name>`
+    /// for per-category. `None` means the dropdown is not rendered.
+    pub mark_as_read_scope: Option<String>,
     /// Breadcrumb trail rendered above the page title. Empty for the routes
     /// that don't need one (all 5 PR-10 entries-family pages).
     pub breadcrumb_items: Vec<BreadcrumbItem>,
@@ -516,7 +520,7 @@ pub async fn unread_page(
                 empty_message: "No unread entries — nice work.",
                 path: "/".to_string(),
                 show_tab_bar: false,
-                show_mark_as_read: true,
+                mark_as_read_scope: Some("user/-/state/com.google/reading-list".to_string()),
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
@@ -989,7 +993,7 @@ pub async fn entries_page(
                 empty_message: "No entries.",
                 path: "/entries".to_string(),
                 show_tab_bar: true,
-                show_mark_as_read: true,
+                mark_as_read_scope: Some("user/-/state/com.google/reading-list".to_string()),
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
@@ -1136,7 +1140,7 @@ pub async fn read_entries_page(
                 empty_message: "No read entries.",
                 path: "/entries/read".to_string(),
                 show_tab_bar: true,
-                show_mark_as_read: false,
+                mark_as_read_scope: None,
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
@@ -1212,7 +1216,7 @@ pub async fn starred_entries_page(
                 empty_message: "No starred entries.",
                 path: "/entries/starred".to_string(),
                 show_tab_bar: true,
-                show_mark_as_read: false,
+                mark_as_read_scope: None,
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
@@ -1288,7 +1292,7 @@ pub async fn summarized_entries_page(
                 empty_message: "No summarized entries.",
                 path: "/entries/summarized".to_string(),
                 show_tab_bar: true,
-                show_mark_as_read: false,
+                mark_as_read_scope: None,
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
@@ -1348,6 +1352,7 @@ pub async fn category_entries_page(
 
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
+    let mark_as_read_scope = Some(format!("user/-/label/{}", category_name));
     let breadcrumb_items = vec![
         BreadcrumbItem {
             label: "Categories".to_string(),
@@ -1372,7 +1377,7 @@ pub async fn category_entries_page(
             empty_message: "No entries in this category.",
             path,
             show_tab_bar: false,
-            show_mark_as_read: false,
+            mark_as_read_scope,
             breadcrumb_items,
             header_feed_icon_id: None,
             active_category_id: Some(id),
@@ -1688,7 +1693,7 @@ pub async fn feed_entries_page(
     const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
 
-    let (feed_title, feed_has_icon, cat_id, cat_name) = state
+    let (feed_title, feed_url, feed_has_icon, cat_id, cat_name) = state
         .db
         .read_user(move |c| {
             let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
@@ -1699,6 +1704,7 @@ pub async fn feed_entries_page(
             let has_icon = crate::models::image::exists(c, "feed", f.id)?;
             Ok::<_, AppError>((
                 f.title.unwrap_or_else(|| "(untitled feed)".to_string()),
+                f.url,
                 has_icon,
                 cat.id,
                 cat.name,
@@ -1735,6 +1741,7 @@ pub async fn feed_entries_page(
 
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
+    let mark_as_read_scope = Some(format!("feed/{}", feed_url));
     let breadcrumb_items = vec![
         BreadcrumbItem {
             label: "Feeds".to_string(),
@@ -1763,7 +1770,7 @@ pub async fn feed_entries_page(
             empty_message: "No entries in this feed.",
             path,
             show_tab_bar: false,
-            show_mark_as_read: false,
+            mark_as_read_scope,
             breadcrumb_items,
             header_feed_icon_id: if feed_has_icon { Some(id) } else { None },
             active_category_id: Some(cat_id),

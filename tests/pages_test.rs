@@ -833,6 +833,18 @@ async fn test_category_entries_page() {
         html.contains(&format!("active-category-id=\"{}\"", cat_id)),
         "<rdrs-sidebar> must carry active-category-id for the current category"
     );
+
+    // Scoped Mark-as-Read dropdown must be visible and carry the
+    // category-scoped GReader stream ID so `app.js` only marks entries
+    // in *this* category, not the global inbox.
+    assert!(
+        html.contains(r#"id="mark-read-age""#),
+        "category page must render the Mark-as-Read dropdown"
+    );
+    assert!(
+        html.contains(r#"data-mark-read-scope="user/-/label/Engineering""#),
+        "Mark-as-Read scope must be the category's GReader label stream"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -1128,6 +1140,18 @@ async fn test_feed_entries_page() {
             feed_id
         )),
         "header feed-icon img must not render when the feed has no icon row"
+    );
+
+    // Scoped Mark-as-Read dropdown must be visible and carry the feed's
+    // GReader stream ID (`feed/<feed_url>`) so the bulk-mark only touches
+    // this feed.
+    assert!(
+        html.contains(r#"id="mark-read-age""#),
+        "feed page must render the Mark-as-Read dropdown"
+    );
+    assert!(
+        html.contains(r#"data-mark-read-scope="feed/https://x/fe-feed""#),
+        "Mark-as-Read scope must be the feed's GReader stream ID"
     );
 }
 

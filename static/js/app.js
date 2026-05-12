@@ -328,8 +328,13 @@ function installMarkAsReadDropdown() {
         if (!age) return;
         const ageLabel = AGE_LABELS[age] || age;
         if (!confirm(`Mark ${ageLabel} entries as read?`)) return;
+        // `data-mark-read-scope` on the <select> carries the GReader stream
+        // ID for the current page (e.g. `feed/<url>` or `user/-/label/<cat>`),
+        // letting the same dropdown scope mark-as-read to whatever list the
+        // user is currently viewing. Falls back to the global reading-list.
+        const scope = select.dataset.markReadScope || READING_LIST_STREAM;
         const body = new URLSearchParams();
-        body.set('s', READING_LIST_STREAM);
+        body.set('s', scope);
         if (age !== 'all') {
             const days = parseInt(age, 10);
             const tsUsec = (Math.floor(Date.now() / 1000) - days * 86400) * 1000000;
