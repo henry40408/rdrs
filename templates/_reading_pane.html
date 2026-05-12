@@ -15,7 +15,7 @@
             <form method="post" action="/entries/{{ pane.id }}/star" data-swap="#entry-row-{{ pane.id }}">
                 <button type="submit" class="btn-secondary btn-sm">{% if pane.is_starred %}Unstar{% else %}Star{% endif %}</button>
             </form>
-            <form method="post" action="/entries/{{ pane.id }}/read" data-swap="#entry-row-{{ pane.id }}">
+            <form method="post" action="/entries/{{ pane.id }}/{% if pane.is_read %}unread{% else %}read{% endif %}" data-swap="#entry-row-{{ pane.id }}">
                 <button type="submit" class="btn-secondary btn-sm">{% if pane.is_read %}Mark Unread{% else %}Mark Read{% endif %}</button>
             </form>
             {% if let Some(link) = pane.link.as_ref() %}

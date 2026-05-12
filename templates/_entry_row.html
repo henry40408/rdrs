@@ -22,7 +22,7 @@
         <time datetime="{{ r.published_at_iso }}">{{ r.published_relative }}</time>
     </div>
     <div class="entry-item-actions">
-        <form method="post" action="/entries/{{ r.id }}/read" data-swap="#entry-row-{{ r.id }}">
+        <form method="post" action="/entries/{{ r.id }}/{% if r.is_read %}unread{% else %}read{% endif %}" data-swap="#entry-row-{{ r.id }}">
             <button type="submit" class="entry-action-btn" data-testid="entry-read-action">{% if r.is_read %}unread{% else %}read{% endif %}</button>
         </form>
         <form method="post" action="/entries/{{ r.id }}/star" data-swap="#entry-row-{{ r.id }}">

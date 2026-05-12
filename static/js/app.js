@@ -289,7 +289,10 @@ function installEntriesKeyboard() {
             }
             case ' ': {
                 if (!active) return;
-                const form = active.querySelector('form[action$="/read"]');
+                // Row form is now state-dependent: `/read` when unread,
+                // `/unread` when already read. Either way, this single
+                // keyboard binding flips the entry's read state.
+                const form = active.querySelector('form[action$="/read"], form[action$="/unread"]');
                 if (form) { e.preventDefault(); form.requestSubmit(); }
                 break;
             }

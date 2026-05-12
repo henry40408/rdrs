@@ -608,30 +608,33 @@ pub fn toggle_starred(
     find_by_id_for_user(conn, user_id, entry_id)
 }
 
-/// Toggle the read state for an entry, scoped to the owning user.
-///
-/// Returns `None` if the entry does not exist or belongs to a different user.
-pub fn toggle_read(
+/// Set the read state for an entry, scoped to the owning user. Idempotent —
+/// a no-op if the entry is already in the desired state. Returns the
+/// resulting `EntryWithFeed` (or `None` if the entry does not exist or
+/// belongs to a different user), plus a bool indicating whether the call
+/// actually changed state (used by handlers to decide whether to emit a
+/// flash toast).
+pub fn set_read_for_user(
     conn: &Connection,
     user_id: i64,
     entry_id: i64,
-) -> AppResult<Option<EntryWithFeed>> {
+    desired_read: bool,
+) -> AppResult<Option<(EntryWithFeed, bool)>> {
     let cur = find_by_id_for_user(conn, user_id, entry_id)?;
     let Some(e) = cur else {
         return Ok(None);
     };
-    if e.entry.read_at.is_some() {
-        conn.execute(
-            "UPDATE entry SET read_at = NULL, updated_at = datetime('now') WHERE id = ?1",
-            params![entry_id],
-        )?;
-    } else {
-        conn.execute(
-            "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1",
-            params![entry_id],
-        )?;
+    let was_read = e.entry.read_at.is_some();
+    let changed = was_read != desired_read;
+    if changed {
+        let sql = if desired_read {
+            "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1"
+        } else {
+            "UPDATE entry SET read_at = NULL, updated_at = datetime('now') WHERE id = ?1"
+        };
+        conn.execute(sql, params![entry_id])?;
     }
-    find_by_id_for_user(conn, user_id, entry_id)
+    Ok(find_by_id_for_user(conn, user_id, entry_id)?.map(|ewf| (ewf, changed)))
 }
 
 /// Unread count per feed for a user.

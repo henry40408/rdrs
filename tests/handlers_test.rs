@@ -3802,7 +3802,7 @@ async fn test_star_entry_form_toggles_and_returns_multi_target() {
 // ============================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_read_entry_form_toggles_and_returns_multi_target() {
+async fn test_read_entry_form_is_idempotent_mark_read() {
     let app = create_test_app_named(default_test_config(), "test_read_entry_form");
 
     // Register and log in as alice.
@@ -3873,10 +3873,10 @@ async fn test_read_entry_form_toggles_and_returns_multi_target() {
     );
     assert!(
         html.contains(r#"class="entry-item entry-read""#),
-        "row must reflect read state via the .entry-read class after first toggle"
+        "row must reflect read state via the .entry-read class after first call"
     );
 
-    // Second POST — should mark unread.
+    // Second POST — idempotent, entry stays read (no toggle back).
     let resp2 = app
         .server
         .post(&format!("/entries/{}/read", entry_id))
@@ -3884,8 +3884,98 @@ async fn test_read_entry_form_toggles_and_returns_multi_target() {
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
     assert!(
+        html2.contains(r#"class="entry-item entry-read""#),
+        "second /read call must be a no-op — row must still carry .entry-read"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_unread_entry_form_is_idempotent_mark_unread() {
+    let app = create_test_app_named(default_test_config(), "test_unread_entry_form");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_unr", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_unr", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    // Seed one entry already in the read state so the first /unread is a real
+    // state change and the second one is a no-op.
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/unread-feed",
+                    title: Some("Unread Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-unread-test",
+                Some("E"),
+                Some("https://x/u"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rdrs::models::entry::mark_as_read(conn, entry.id).unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    // First /unread — real state change, must mark unread + emit flash.
+    let resp = app
+        .server
+        .post(&format!("/entries/{}/unread", entry_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        !html.contains(r#"class="entry-item entry-read""#),
+        "row must drop .entry-read after /unread"
+    );
+    assert!(
+        html.contains("Marked as unread."),
+        "real state change must emit the Marked-as-unread flash payload"
+    );
+
+    // Second /unread — no-op. Must NOT re-toggle to read and must NOT
+    // re-emit the flash (that would spam the user on stale-label re-clicks).
+    let resp2 = app
+        .server
+        .post(&format!("/entries/{}/unread", entry_id))
+        .await;
+    assert_eq!(resp2.status_code(), StatusCode::OK);
+    let html2 = resp2.text();
+    assert!(
         !html2.contains(r#"class="entry-item entry-read""#),
-        "row must not have .entry-read class after second toggle (unread)"
+        "second /unread call must be a no-op — row must still be unread"
+    );
+    assert!(
+        !html2.contains("Marked as unread."),
+        "no-op /unread must not re-emit the flash"
     );
 }
 
@@ -4040,6 +4130,17 @@ async fn test_read_entry_form_404_for_other_user() {
         resp.status_code(),
         StatusCode::NOT_FOUND,
         "cross-user read must return 404"
+    );
+
+    // Same ownership guard for the /unread endpoint.
+    let resp_unread = app
+        .server
+        .post(&format!("/entries/{}/unread", bob_entry_id))
+        .await;
+    assert_eq!(
+        resp_unread.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user unread must return 404"
     );
 }
 

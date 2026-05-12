@@ -298,33 +298,53 @@ pub async fn star_entry_form(
     })
 }
 
-/// `POST /entries/{id}/read` — toggle the read state for the entry, then
-/// return a multi-target HTML fragment updating the row + sidebar-unread block.
-/// Emits a "Marked as unread." flash when the toggle goes read→unread; the
-/// reverse (unread→read) is the normal reading flow so no toast is shown.
+/// `POST /entries/{id}/read` — idempotently mark the entry as read, then
+/// return a multi-target HTML fragment updating the row + sidebar-unread
+/// block. No-op if the entry is already read. No flash toast — marking
+/// read is the normal reading flow and doesn't need explicit feedback.
 pub async fn read_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<EntryActionMulti> {
-    let user_id = auth_user.user.id;
-    let (ewf, status) = state
+    set_read_state(state, auth_user.user.id, entry_id, true).await
+}
+
+/// `POST /entries/{id}/unread` — idempotently mark the entry as unread.
+/// Emits a "Marked as unread." flash *only* when the call actually changed
+/// state, so a stale-label double-click doesn't re-toast.
+pub async fn unread_entry_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<EntryActionMulti> {
+    set_read_state(state, auth_user.user.id, entry_id, false).await
+}
+
+/// Shared core for the two idempotent read/unread handlers.
+async fn set_read_state(
+    state: AppState,
+    user_id: i64,
+    entry_id: i64,
+    desired_read: bool,
+) -> AppResult<EntryActionMulti> {
+    let (result, status) = state
         .db
         .user(move |conn| {
-            let ewf = entry::toggle_read(conn, user_id, entry_id)?;
-            let status = if let Some(ref e) = ewf {
+            let result = entry::set_read_for_user(conn, user_id, entry_id, desired_read)?;
+            let status = if let Some((ref e, _)) = result {
                 entry_summary::get_statuses_for_entries(conn, user_id, &[e.entry.id])?
                     .get(&e.entry.id)
                     .copied()
             } else {
                 None
             };
-            Ok::<_, AppError>((ewf, status))
+            Ok::<_, AppError>((result, status))
         })
         .await??;
-    let ewf = ewf.ok_or(AppError::EntryNotFound)?;
+    let (ewf, changed) = result.ok_or(AppError::EntryNotFound)?;
     let payload_json = build_sidebar_unread(&state, user_id).await?;
-    let flash = if ewf.entry.read_at.is_none() {
+    let flash = if !desired_read && changed {
         Some(FlashPayload {
             level: "success",
             message: "Marked as unread.".to_string(),
