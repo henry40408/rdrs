@@ -2,13 +2,18 @@
 
 {% block page %}
     <div class="app-layout">
-        <rdrs-sidebar active="{{ entries_layout.active }}"></rdrs-sidebar>
+        <rdrs-sidebar active="{{ entries_layout.active }}"{% if let Some(cat_id) = entries_layout.active_category_id %} active-category-id="{{ cat_id }}"{% endif %}></rdrs-sidebar>
         <main class="main-content">
             <rdrs-flash class="flash-container"></rdrs-flash>
             <div class="split-view">
                 <div class="list-pane">
                     <div class="list-pane-header">
-                        <h1>{{ title }}</h1>
+                        {% if !entries_layout.breadcrumb_items.is_empty() %}
+                        <nav class="breadcrumb" data-testid="breadcrumb">
+                            {% for item in entries_layout.breadcrumb_items %}{% if !loop.first %}<span class="breadcrumb-sep"> / </span>{% endif %}{% if let Some(href) = item.href.as_ref() %}<a href="{{ href }}">{{ item.label }}</a>{% else %}<span>{{ item.label }}</span>{% endif %}{% endfor %}
+                        </nav>
+                        {% endif %}
+                        <h1>{% if let Some(feed_id) = entries_layout.header_feed_icon_id %}<img class="feed-icon" src="/api/feeds/{{ feed_id }}/icon" alt="" width="20" height="20" loading="lazy">{% endif %}{{ title }}</h1>
                         {% if entries_layout.show_tab_bar %}
                         <div class="tab-bar">
                             <a href="/entries" data-testid="tab-all" data-tab="all"{% if entries_layout.active == "all" %} class="active"{% endif %}>All</a>
@@ -17,10 +22,18 @@
                             <a href="/entries/summarized" data-testid="tab-summarized" data-tab="summarized"{% if entries_layout.active == "summarized" %} class="active"{% endif %}>Summarized</a>
                         </div>
                         {% endif %}
-                        {% if entries_layout.show_mark_as_read %}
+                        {% if entries_layout.filter_tabs.is_some() || entries_layout.mark_as_read_scope.is_some() %}
                         <div class="filter-bar">
+                            {% if let Some(tabs) = entries_layout.filter_tabs.as_ref() %}
+                            <div class="form-group form-group-inline" data-status-filter>
+                                <select id="status-filter" data-testid="status-filter-select" data-status-select class="select-auto">
+                                    {% for tab in tabs %}<option value="{{ tab.href }}"{% if tab.active %} selected{% endif %}>{{ tab.label }}</option>{% endfor %}
+                                </select>
+                            </div>
+                            {% endif %}
+                            {% if let Some(scope) = entries_layout.mark_as_read_scope.as_ref() %}
                             <div class="form-group form-group-inline">
-                                <select id="mark-read-age" data-testid="mark-read-select" class="select-auto" data-mark-read-scope="reading-list">
+                                <select id="mark-read-age" data-testid="mark-read-select" class="select-auto" data-mark-read-scope="{{ scope }}">
                                     <option value="">Mark as Read...</option>
                                     <option value="1">Older than 1 day</option>
                                     <option value="7">Older than 1 week</option>
@@ -29,6 +42,7 @@
                                     <option value="all">All entries</option>
                                 </select>
                             </div>
+                            {% endif %}
                         </div>
                         {% endif %}
                     </div>
@@ -41,8 +55,21 @@
                                 <form id="load-more" method="get" action="{{ entries_layout.path }}" data-swap="#load-more" class="load-more-form">
                                     <input type="hidden" name="after" value="{{ after }}">
                                     <input type="hidden" name="fragment" value="1">
+                                    {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
                                     <button type="submit" data-testid="load-more-btn">Load More</button>
                                 </form>
+                            {% endif %}
+                            {# Mark Above as Read — sits BELOW Load More so it stays put
+                               after the swap helper appends more rows + a fresh
+                               Load-More form (those land *before* the `#load-more`
+                               anchor, never below this button). Marks every
+                               currently-rendered row as read on click. Same
+                               wrapper class as the Load-More form so the two
+                               buttons align consistently. #}
+                            {% if entries_layout.show_mark_above %}
+                            <div class="mark-above-form">
+                                <button id="mark-above-read" type="button" class="btn-secondary btn-sm" data-testid="mark-above-btn">Mark Above as Read</button>
+                            </div>
                             {% endif %}
                         {% endif %}
                     </div>

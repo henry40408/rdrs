@@ -2132,6 +2132,15 @@ summary {
     padding: 0 var(--space-5);
 }
 
+/* Mark Above as Read wrapper — sits at the bottom of the list-pane
+   below the Load-More form on feed/category pages. Same spacing as
+   `.load-more-form` so the two buttons align. */
+.mark-above-form {
+    margin-top: var(--space-4);
+    margin-bottom: var(--space-4);
+    padding: 0 var(--space-5);
+}
+
 /* SSR form-button actions inside `.entry-item-actions`. Mirrors the
    muted-text + accent-on-hover styling of `.entry-item-actions a` so
    form-wrapped read/star buttons read as inline action links. */

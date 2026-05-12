@@ -700,142 +700,810 @@ async fn test_search_page_no_results() {
 // Category Entries Page Tests
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
+    let app = create_test_app_named(default_test_config(), "test_category_entries_page");
 
-    // Create category
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Test Category"],
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_ce", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_ce", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let (cat_id, entry_a_id, entry_b_id) = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, user_id, "Engineering").unwrap();
+            let feed1 = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/ce-feed-1",
+                    title: Some("Feed 1"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
             )
             .unwrap();
+            let feed2 = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/ce-feed-2",
+                    title: Some("Feed 2"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (a, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed1.id,
+                "guid-ce-a",
+                Some("Entry A"),
+                Some("https://x/ce/a"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (b, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed2.id,
+                "guid-ce-b",
+                Some("Entry B"),
+                Some("https://x/ce/b"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            (cat.id, a.id, b.id)
         })
         .await
         .unwrap();
 
-    login(&app.server, "admin").await;
+    let resp = app
+        .server
+        .get(&format!("/categories/{}/entries", cat_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
 
-    let response = app.server.get("/categories/1/entries").await;
-    response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("<rdrs-entries-page>"));
-    assert!(body.contains("/static/js/pages/entries.js"));
-    // Category name is read from the inlined sidebar bootstrap JSON.
-    assert!(body.contains("Test Category"));
-    assert!(!body.contains(r#"class="ssr-entries""#));
+    assert!(
+        html.contains("Engineering"),
+        "page title must render the category name"
+    );
+    assert!(
+        html.contains(&format!("id=\"entry-row-{}\"", entry_a_id)),
+        "row for entry from feed 1 must be present"
+    );
+    assert!(
+        html.contains(&format!("id=\"entry-row-{}\"", entry_b_id)),
+        "row for entry from feed 2 must be present"
+    );
+    assert!(
+        !html.contains("rdrs-entries-page"),
+        "SSR page must not mount the legacy CSR shell"
+    );
+    assert!(
+        !html.contains("/static/js/pages/entries.js"),
+        "SSR page must not load the legacy entries.js bundle"
+    );
+    assert!(
+        html.contains("Select an entry to read."),
+        "reading-pane placeholder must render"
+    );
+    if html.contains("id=\"load-more\"") {
+        assert!(
+            html.contains(&format!("action=\"/categories/{}/entries\"", cat_id)),
+            "Load-More form must POST back to the category-scoped URL"
+        );
+    }
+
+    // Breadcrumb: `Categories / Engineering`.
+    assert!(
+        html.contains(r#"data-testid="breadcrumb""#),
+        "category page must render a breadcrumb nav"
+    );
+    assert!(
+        html.contains(r#"<a href="/categories">Categories</a>"#),
+        "breadcrumb must link to /categories"
+    );
+
+    // Sidebar must receive active-category-id so the category is highlighted.
+    assert!(
+        html.contains(&format!("active-category-id=\"{}\"", cat_id)),
+        "<rdrs-sidebar> must carry active-category-id for the current category"
+    );
+
+    // Scoped Mark-as-Read dropdown must be visible and carry the
+    // category-scoped GReader stream ID so `app.js` only marks entries
+    // in *this* category, not the global inbox.
+    assert!(
+        html.contains(r#"id="mark-read-age""#),
+        "category page must render the Mark-as-Read dropdown"
+    );
+    assert!(
+        html.contains(r#"data-mark-read-scope="user/-/label/Engineering""#),
+        "Mark-as-Read scope must be the category's GReader label stream"
+    );
+
+    // Mark Above as Read button must render at the bottom of the list.
+    assert!(
+        html.contains(r#"id="mark-above-read""#),
+        "category page must render the Mark Above as Read button"
+    );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page_not_found() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    let app = create_test_app_named(
+        default_test_config(),
+        "test_category_entries_page_not_found",
+    );
 
-    let response = app.server.get("/categories/999/entries").await;
-    response.assert_status_not_found();
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_cnf", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_cnf", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let resp = app.server.get("/categories/999999/entries").await;
+    assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page_other_user() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
+    let app = create_test_app_named(
+        default_test_config(),
+        "test_category_entries_page_other_user",
+    );
 
-    // Create category for user 2
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![2, "User2 Category"],
-            )
-            .unwrap();
+    // Register alice (owner of the category)
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_cou", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    // Register bob (the cross-tenant user)
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "bob_cou", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    // Get alice's user_id and create her category
+    let cat_id: i64 = app
+        .db
+        .user(|conn| {
+            let alice_id: i64 = conn
+                .query_row(
+                    "SELECT id FROM user WHERE username = 'alice_cou'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, alice_id, "Alice Cat").unwrap();
+            cat.id
         })
         .await
         .unwrap();
 
-    login(&app.server, "admin").await;
+    // Log in as bob
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "bob_cou", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
 
-    // Admin (user 1) should not see user 2's category
-    let response = app.server.get("/categories/1/entries").await;
-    response.assert_status_not_found();
+    // Bob tries to access alice's category entries — must be 404
+    let resp = app
+        .server
+        .get(&format!("/categories/{}/entries", cat_id))
+        .await;
+    assert_eq!(
+        resp.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user category entries must return 404"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_category_entries_page_load_more_fragment() {
+    let app = create_test_app_named(default_test_config(), "test_category_entries_page_lm");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_cl", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_cl", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let cat_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "LMCat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/clm-feed",
+                    title: Some("CLM Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            for i in 0..3 {
+                rdrs::models::entry::upsert_entry(
+                    conn,
+                    feed.id,
+                    &format!("guid-clm-{}", i),
+                    Some(&format!("Entry {}", i)),
+                    Some(&format!("https://x/clm/{}", i)),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+            }
+            cat.id
+        })
+        .await
+        .unwrap();
+
+    let resp = app
+        .server
+        .get(&format!(
+            "/categories/{}/entries?fragment=1&after=0",
+            cat_id
+        ))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        html.contains("data-entry-row"),
+        "fragment must include row markup"
+    );
+    assert!(
+        !html.contains("<rdrs-sidebar"),
+        "fragment must NOT include layout chrome"
+    );
+    assert!(
+        !html.contains("<h1>LMCat</h1>"),
+        "fragment must NOT include the page title"
+    );
 }
 
 // ============================================================================
 // Feed Entries Page Tests
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page");
 
-    // Create category and feed
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Test Category"],
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_fe", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_fe", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let (cat_id, feed_id, entry_a_id, entry_b_id) = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/fe-feed",
+                    title: Some("FE Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
             )
             .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/feed.xml", "Test Feed"],
+            let (a, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-fe-a",
+                Some("First Entry"),
+                Some("https://x/a"),
+                None,
+                None,
+                None,
+                None,
             )
             .unwrap();
+            let (b, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-fe-b",
+                Some("Second Entry"),
+                Some("https://x/b"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            (cat.id, feed.id, a.id, b.id)
         })
         .await
         .unwrap();
 
-    login(&app.server, "admin").await;
+    let resp = app.server.get(&format!("/feeds/{}/entries", feed_id)).await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
 
-    let response = app.server.get("/feeds/1/entries").await;
-    response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("<rdrs-entries-page>"));
-    assert!(body.contains("/static/js/pages/entries.js"));
-    assert!(!body.contains(r#"class="ssr-entries""#));
+    assert!(
+        html.contains("FE Feed"),
+        "page title must render feed title"
+    );
+    assert!(
+        html.contains(&format!("id=\"entry-row-{}\"", entry_a_id)),
+        "row for first entry must be in the HTML"
+    );
+    assert!(
+        html.contains(&format!("id=\"entry-row-{}\"", entry_b_id)),
+        "row for second entry must be in the HTML"
+    );
+    assert!(
+        !html.contains("rdrs-entries-page"),
+        "SSR page must not mount the legacy <rdrs-entries-page> shell"
+    );
+    assert!(
+        !html.contains("/static/js/pages/entries.js"),
+        "SSR page must not load the legacy entries.js bundle"
+    );
+    assert!(
+        html.contains("Select an entry to read."),
+        "reading-pane placeholder must render when no entry is selected"
+    );
+    if html.contains("id=\"load-more\"") {
+        assert!(
+            html.contains(&format!("action=\"/feeds/{}/entries\"", feed_id)),
+            "Load-More form must POST back to the same feed-scoped URL"
+        );
+    }
+
+    // Breadcrumb: `Feeds / Tech / FE Feed`.
+    assert!(
+        html.contains(r#"data-testid="breadcrumb""#),
+        "feed page must render a breadcrumb nav"
+    );
+    assert!(
+        html.contains(r#"<a href="/feeds">Feeds</a>"#),
+        "breadcrumb must link to /feeds"
+    );
+    assert!(
+        html.contains(&format!(
+            r#"<a href="/categories/{}/entries">Tech</a>"#,
+            cat_id
+        )),
+        "breadcrumb must link to the parent category page"
+    );
+
+    // Sidebar must receive active-category-id so the parent category is highlighted.
+    assert!(
+        html.contains(&format!("active-category-id=\"{}\"", cat_id)),
+        "<rdrs-sidebar> must carry active-category-id for the feed's parent category"
+    );
+
+    // Feed has no icon seeded, so the header image must NOT render. (A
+    // parallel test could seed an image row + assert the <img> appears; we
+    // skip that variant to keep this test focused on layout-context wiring.)
+    assert!(
+        !html.contains(&format!(
+            "src=\"/api/feeds/{}/icon\" alt=\"\" width=\"20\"",
+            feed_id
+        )),
+        "header feed-icon img must not render when the feed has no icon row"
+    );
+
+    // Scoped Mark-as-Read dropdown must be visible and carry the feed's
+    // GReader stream ID (`feed/<feed_url>`) so the bulk-mark only touches
+    // this feed.
+    assert!(
+        html.contains(r#"id="mark-read-age""#),
+        "feed page must render the Mark-as-Read dropdown"
+    );
+    assert!(
+        html.contains(r#"data-mark-read-scope="feed/https://x/fe-feed""#),
+        "Mark-as-Read scope must be the feed's GReader stream ID"
+    );
+
+    // Mark Above as Read button must render at the bottom of the list.
+    assert!(
+        html.contains(r#"id="mark-above-read""#),
+        "feed page must render the Mark Above as Read button"
+    );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_feed_entries_page_status_filter() {
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_status");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_fst", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_fst", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let (feed_id, unread_id, read_id, starred_id) = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "FST").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/fst-feed",
+                    title: Some("FST"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (u, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-fst-u",
+                Some("Unread Entry"),
+                Some("https://x/fst/u"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (r, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-fst-r",
+                Some("Read Entry"),
+                Some("https://x/fst/r"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (s, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-fst-s",
+                Some("Starred Entry"),
+                Some("https://x/fst/s"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rdrs::models::entry::mark_as_read(conn, r.id).unwrap();
+            rdrs::models::entry::star_entry(conn, s.id).unwrap();
+            (feed.id, u.id, r.id, s.id)
+        })
+        .await
+        .unwrap();
+
+    // Default URL (no ?status=) → unread is the default; read entry hidden,
+    // unread + starred (which is still unread) both visible.
+    let resp = app.server.get(&format!("/feeds/{}/entries", feed_id)).await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        html.contains(&format!("id=\"entry-row-{}\"", unread_id)),
+        "default view should include the unread entry"
+    );
+    assert!(
+        !html.contains(&format!("id=\"entry-row-{}\"", read_id)),
+        "default view should hide the read entry (default = unread filter)"
+    );
+    assert!(
+        html.contains(&format!("id=\"entry-row-{}\"", starred_id)),
+        "default view should include the starred-but-unread entry"
+    );
+
+    // ?status=all → every entry visible.
+    let resp = app
+        .server
+        .get(&format!("/feeds/{}/entries?status=all", feed_id))
+        .await;
+    let html = resp.text();
+    assert!(html.contains(&format!("id=\"entry-row-{}\"", unread_id)));
+    assert!(html.contains(&format!("id=\"entry-row-{}\"", read_id)));
+    assert!(html.contains(&format!("id=\"entry-row-{}\"", starred_id)));
+
+    // ?status=read → only read.
+    let resp = app
+        .server
+        .get(&format!("/feeds/{}/entries?status=read", feed_id))
+        .await;
+    let html = resp.text();
+    assert!(html.contains(&format!("id=\"entry-row-{}\"", read_id)));
+    assert!(!html.contains(&format!("id=\"entry-row-{}\"", unread_id)));
+
+    // ?status=starred → only starred.
+    let resp = app
+        .server
+        .get(&format!("/feeds/{}/entries?status=starred", feed_id))
+        .await;
+    let html = resp.text();
+    assert!(html.contains(&format!("id=\"entry-row-{}\"", starred_id)));
+    assert!(!html.contains(&format!("id=\"entry-row-{}\"", read_id)));
+    assert!(!html.contains(&format!("id=\"entry-row-{}\"", unread_id)));
+
+    // Filter <select> present; the active <option> matches the query.
+    assert!(
+        html.contains("data-status-filter"),
+        "filter select must render on feed pages"
+    );
+    assert!(
+        html.contains(r#"id="status-filter""#),
+        "filter <select> must have id=\"status-filter\""
+    );
+    assert!(
+        html.contains(&format!(
+            r#"<option value="/feeds/{}/entries?status=starred" selected>Starred</option>"#,
+            feed_id
+        )),
+        "Starred <option> must be `selected` when ?status=starred"
+    );
+    // Option order: All, Unread, Read, Starred (Unread URL = base path).
+    let all_pos = html
+        .find(&format!(
+            r#"<option value="/feeds/{}/entries?status=all""#,
+            feed_id
+        ))
+        .expect("All option present");
+    let unread_pos = html
+        .find(&format!(r#"<option value="/feeds/{}/entries""#, feed_id))
+        .expect("Unread option present (base URL)");
+    let read_pos = html
+        .find(&format!(
+            r#"<option value="/feeds/{}/entries?status=read""#,
+            feed_id
+        ))
+        .expect("Read option present");
+    let starred_pos = html
+        .find(&format!(
+            r#"<option value="/feeds/{}/entries?status=starred""#,
+            feed_id
+        ))
+        .expect("Starred option present");
+    assert!(
+        all_pos < unread_pos && unread_pos < read_pos && read_pos < starred_pos,
+        "filter <option>s must be in order: All, Unread, Read, Starred"
+    );
+
+    // Load-More form preserves the status filter via a hidden input.
+    // (The seeded feed has only 3 entries so the form may not appear; we
+    // assert only when present.)
+    if html.contains("id=\"load-more\"") {
+        assert!(
+            html.contains(r#"<input type="hidden" name="status" value="starred">"#),
+            "Load-More form must carry the active status filter"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_not_found() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_not_found");
 
-    let response = app.server.get("/feeds/999/entries").await;
-    response.assert_status_not_found();
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_fnf", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_fnf", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let resp = app.server.get("/feeds/999999/entries").await;
+    assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_other_user() {
-    let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_other_user");
 
-    // Create category and feed for user 2
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![2, "User2 Category"],
+    // Register alice (owner of the feed)
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_fou", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    // Register bob (the cross-tenant user)
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "bob_fou", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    // Get alice's user_id and create her feed
+    let feed_id: i64 = app
+        .db
+        .user(|conn| {
+            let alice_id: i64 = conn
+                .query_row(
+                    "SELECT id FROM user WHERE username = 'alice_fou'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, alice_id, "Alice Cat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/alice-feed",
+                    title: Some("Alice Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
             )
             .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/feed.xml", "User2 Feed"],
-            )
-            .unwrap();
+            feed.id
         })
         .await
         .unwrap();
 
-    login(&app.server, "admin").await;
+    // Log in as bob
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "bob_fou", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
 
-    // Admin (user 1) should not see user 2's feed
-    let response = app.server.get("/feeds/1/entries").await;
-    response.assert_status_not_found();
+    // Bob tries to access alice's feed entries — must be 404
+    let resp = app.server.get(&format!("/feeds/{}/entries", feed_id)).await;
+    assert_eq!(
+        resp.status_code(),
+        StatusCode::NOT_FOUND,
+        "cross-user feed entries must return 404"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_feed_entries_page_load_more_fragment() {
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_lm");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_fl", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_fl", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let feed_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/lm-feed",
+                    title: Some("LM Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            for i in 0..3 {
+                rdrs::models::entry::upsert_entry(
+                    conn,
+                    feed.id,
+                    &format!("guid-lm-{}", i),
+                    Some(&format!("Entry {}", i)),
+                    Some(&format!("https://x/lm/{}", i)),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+            }
+            feed.id
+        })
+        .await
+        .unwrap();
+
+    let resp = app
+        .server
+        .get(&format!("/feeds/{}/entries?fragment=1&after=0", feed_id))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        html.contains("data-entry-row"),
+        "fragment must include row markup"
+    );
+    assert!(
+        !html.contains("<rdrs-sidebar"),
+        "fragment must NOT include layout chrome"
+    );
+    assert!(
+        !html.contains("<h1>LM Feed</h1>"),
+        "fragment must NOT include the page title"
+    );
 }
 
 // ============================================================================

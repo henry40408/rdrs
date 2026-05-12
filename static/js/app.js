@@ -290,6 +290,53 @@ function installEntriesKeyboard() {
                 if (form) { e.preventDefault(); form.requestSubmit(); }
                 break;
             }
+            case '1':
+            case '2':
+            case '3':
+            case '4': {
+                // Status-filter quick-nav on feed/category pages. The
+                // `[data-status-filter] <select>` has 4 options in
+                // order: All / Unread / Read / Starred. `1`-`4`
+                // navigate to the nth option's URL. No-op on pages
+                // without a filter select.
+                const options = document.querySelectorAll('[data-status-filter] option');
+                if (options.length === 0) return;
+                const idx = parseInt(e.key, 10) - 1;
+                if (idx < 0 || idx >= options.length) return;
+                e.preventDefault();
+                window.location.href = options[idx].value;
+                break;
+            }
+            case 'A': {
+                // Mark Above as Read — only fires on pages that render
+                // the button (feed/category). Delegates to the button's
+                // click handler so the confirm + fetch flow lives in
+                // one place.
+                const btn = document.getElementById('mark-above-read');
+                if (!btn) return;
+                e.preventDefault();
+                btn.click();
+                break;
+            }
+            case 'c': {
+                // On `/feeds/{id}/entries`, jump to the feed's parent
+                // category page. The category id is already on the
+                // sidebar via `active-category-id` so we reuse it.
+                if (!window.location.pathname.startsWith('/feeds/')) return;
+                const sb = document.querySelector('rdrs-sidebar');
+                const catId = sb && sb.getAttribute('active-category-id');
+                if (!catId) return;
+                e.preventDefault();
+                window.location.href = `/categories/${catId}/entries`;
+                break;
+            }
+            case 'x': {
+                // On `/categories/{id}/entries`, jump to the unread inbox.
+                if (!window.location.pathname.startsWith('/categories/')) return;
+                e.preventDefault();
+                window.location.href = '/';
+                break;
+            }
             case ' ': {
                 if (!active) return;
                 // Row form is now state-dependent: `/read` when unread,
@@ -328,8 +375,13 @@ function installMarkAsReadDropdown() {
         if (!age) return;
         const ageLabel = AGE_LABELS[age] || age;
         if (!confirm(`Mark ${ageLabel} entries as read?`)) return;
+        // `data-mark-read-scope` on the <select> carries the GReader stream
+        // ID for the current page (e.g. `feed/<url>` or `user/-/label/<cat>`),
+        // letting the same dropdown scope mark-as-read to whatever list the
+        // user is currently viewing. Falls back to the global reading-list.
+        const scope = select.dataset.markReadScope || READING_LIST_STREAM;
         const body = new URLSearchParams();
-        body.set('s', READING_LIST_STREAM);
+        body.set('s', scope);
         if (age !== 'all') {
             const days = parseInt(age, 10);
             const tsUsec = (Math.floor(Date.now() / 1000) - days * 86400) * 1000000;
@@ -363,6 +415,65 @@ function installMarkAsReadDropdown() {
     });
 }
 installMarkAsReadDropdown();
+
+// Status-filter <select> on feed + category pages. Each option's value
+// is the URL to navigate to; the active option is pre-selected by the
+// server. The 1-4 keys hit the same options by position.
+function installStatusFilterSelect() {
+    const select = document.getElementById('status-filter');
+    if (!select) return;
+    select.addEventListener('change', () => {
+        const url = select.value;
+        if (url) window.location.href = url;
+    });
+}
+installStatusFilterSelect();
+
+// "Mark Above as Read" button on feed + category pages. Sits at the
+// bottom of the list (below Load More) and marks every entry currently
+// rendered in the DOM — loaded rows + anything appended via Load More.
+// Entries that haven't been loaded yet stay untouched. Posts to the
+// GReader edit-tag endpoint with one `i=<id>` per visible row and
+// `a=user/-/state/com.google/read`.
+function installMarkAboveButton() {
+    const btn = document.getElementById('mark-above-read');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+        const rows = Array.from(document.querySelectorAll('[data-entry-row]'));
+        const ids = rows.map(r => r.dataset.entryId).filter(Boolean);
+        if (ids.length === 0) {
+            const msg = 'No entries to mark.';
+            if (window.flash) { window.flash.info(msg); } else { alert(msg); }
+            return;
+        }
+        if (!confirm(`Mark ${ids.length} loaded entries as read?`)) return;
+        const body = new URLSearchParams();
+        for (const id of ids) body.append('i', id);
+        body.set('a', 'user/-/state/com.google/read');
+        btn.disabled = true;
+        btn.setAttribute('aria-busy', 'true');
+        try {
+            const resp = await fetch('/reader/api/0/edit-tag', {
+                method: 'POST',
+                body,
+                credentials: 'same-origin',
+            });
+            if (!resp.ok) throw new Error('Failed to mark entries as read');
+            if (window.flash) {
+                window.flash.set('success', `Marked ${ids.length} loaded entries as read.`);
+            }
+            window.location.reload();
+            return;
+        } catch (err) {
+            const message = err.message || 'Failed to mark entries as read';
+            if (window.flash) { window.flash.error(message); } else { alert(message); }
+        } finally {
+            btn.disabled = false;
+            btn.removeAttribute('aria-busy');
+        }
+    });
+}
+installMarkAboveButton();
 
 // Entry-row click delegation. Clicking anywhere on a row (not just the
 // title link) opens the entry — matches the pre-SSR `<rdrs-entry-list>`

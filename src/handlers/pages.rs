@@ -75,21 +75,67 @@ pub struct ReadingPaneView {
     pub has_save: bool,
 }
 
-/// Layout context shared by all 5 entries-family pages (`_entries_layout.html`).
+/// One segment of a breadcrumb trail rendered above the page `<h1>`. `href =
+/// None` marks the current page (rendered as plain text, no link).
+#[derive(Debug, Clone)]
+pub struct BreadcrumbItem {
+    pub label: String,
+    pub href: Option<String>,
+}
+
+/// One tab in the status-filter bar rendered on feed/category entries
+/// pages (`?status=unread|read|starred`). The keyboard `1`/`2`/`3`/`4`
+/// shortcuts navigate to the corresponding tab by position.
+#[derive(Debug, Clone)]
+pub struct FilterTab {
+    pub label: String,
+    pub href: String,
+    pub active: bool,
+}
+
+/// Layout context shared by all entries-family pages (`_entries_layout.html`).
 #[derive(Debug, Clone)]
 pub struct EntriesLayoutContext {
     pub active: &'static str,
     pub description: Option<String>,
     pub empty_message: &'static str,
-    pub path: &'static str,
+    pub path: String,
     /// Render the All/Read/Starred/Summarized tab bar above the list. True
     /// for the 4 entries-tabs (`active = "all" | "read" | "starred" |
     /// "summarized"`), false for `/` (unread) since unread is not a tab.
     pub show_tab_bar: bool,
-    /// Render the "Mark as Read..." dropdown above the list. True for `/`
-    /// (unread) and `/entries` (all) — the two views where bulk-marking
-    /// matters; false for read/starred/summarized.
-    pub show_mark_as_read: bool,
+    /// When `Some(stream_id)`, render the "Mark as Read..." dropdown
+    /// above the list with the given GReader stream as its scope. The
+    /// `<select>` carries `data-mark-read-scope` so `app.js` picks up
+    /// the scope dynamically. Stream IDs follow GReader format:
+    /// `user/-/state/com.google/reading-list` for global bulk,
+    /// `feed/<feed_url>` for per-feed, `user/-/label/<category_name>`
+    /// for per-category. `None` means the dropdown is not rendered.
+    pub mark_as_read_scope: Option<String>,
+    /// Breadcrumb trail rendered above the page title. Empty for the routes
+    /// that don't need one (all 5 PR-10 entries-family pages).
+    pub breadcrumb_items: Vec<BreadcrumbItem>,
+    /// When `Some(feed_id)`, render the feed's favicon next to the page
+    /// title via `/api/feeds/{id}/icon`. Only `/feeds/{id}/entries` uses
+    /// this — the rest pass `None`.
+    pub header_feed_icon_id: Option<i64>,
+    /// When `Some(category_id)`, sets `<rdrs-sidebar active-category-id="…">`
+    /// so the sidebar highlights the active category. Used by the feed +
+    /// category entries pages; `None` elsewhere.
+    pub active_category_id: Option<i64>,
+    /// Optional status-filter tab bar (All / Unread / Read / Starred) for
+    /// feed + category pages. `None` on the 5 PR-10 routes — they use
+    /// path-based modes via the `show_tab_bar` flag instead.
+    pub filter_tabs: Option<Vec<FilterTab>>,
+    /// Forwarded into the Load-More form so subsequent Load-More fetches
+    /// preserve the `?status=` query. Mirrors the same field on
+    /// `EntriesFragmentTemplate`.
+    pub status_filter: Option<String>,
+    /// When `true`, render a "Mark Above as Read" button at the bottom of
+    /// the list. Clicking it marks every entry currently in the DOM as
+    /// read (loaded + Load-More-appended rows; unloaded entries are
+    /// untouched). Only the feed + category entries pages set this true.
+    pub show_mark_above: bool,
 }
 
 /// Map an `EntryWithFeed` (+ optional summary status) to an `EntryRowView`.
@@ -168,6 +214,11 @@ pub(crate) async fn build_entries_page(
 pub struct EntriesQuery {
     pub fragment: Option<u8>,
     pub after: Option<i64>,
+    /// Status filter: `unread` / `read` / `starred`. Only meaningful on the
+    /// feed + category entries pages (the 5 PR-10 routes have their own
+    /// path-based modes). Any other value (or absence) is treated as
+    /// "no filter" (show all).
+    pub status: Option<String>,
 }
 
 /// Fragment template for the Load-More response.
@@ -179,6 +230,10 @@ pub(crate) struct EntriesFragmentTemplate {
     pub entries: Vec<EntryRowView>,
     pub next_cursor: Option<i64>,
     pub path: &'static str,
+    /// Forwarded into the fragment's Load-More form so subsequent
+    /// Load-More fetches keep the current `?status=` filter. `None` for
+    /// the 5 PR-10 routes (their filters are path-based, not query).
+    pub status_filter: Option<String>,
 }
 
 impl IntoResponse for EntriesFragmentTemplate {
@@ -466,6 +521,7 @@ pub async fn unread_page(
                 entries,
                 next_cursor,
                 path: "/",
+                status_filter: None,
             },
         )
             .into_response();
@@ -495,9 +551,15 @@ pub async fn unread_page(
                 active: "unread",
                 description: None,
                 empty_message: "No unread entries — nice work.",
-                path: "/",
+                path: "/".to_string(),
                 show_tab_bar: false,
-                show_mark_as_read: true,
+                mark_as_read_scope: Some("user/-/state/com.google/reading-list".to_string()),
+                breadcrumb_items: vec![],
+                header_feed_icon_id: None,
+                active_category_id: None,
+                filter_tabs: None,
+                status_filter: None,
+                show_mark_above: false,
             },
         },
     )
@@ -936,6 +998,7 @@ pub async fn entries_page(
                 entries,
                 next_cursor,
                 path: "/entries",
+                status_filter: None,
             },
         )
             .into_response();
@@ -965,9 +1028,15 @@ pub async fn entries_page(
                 active: "all",
                 description: None,
                 empty_message: "No entries.",
-                path: "/entries",
+                path: "/entries".to_string(),
                 show_tab_bar: true,
-                show_mark_as_read: true,
+                mark_as_read_scope: Some("user/-/state/com.google/reading-list".to_string()),
+                breadcrumb_items: vec![],
+                header_feed_icon_id: None,
+                active_category_id: None,
+                filter_tabs: None,
+                status_filter: None,
+                show_mark_above: false,
             },
         },
     )
@@ -1080,6 +1149,7 @@ pub async fn read_entries_page(
                 entries,
                 next_cursor,
                 path: "/entries/read",
+                status_filter: None,
             },
         )
             .into_response();
@@ -1109,9 +1179,15 @@ pub async fn read_entries_page(
                 active: "read",
                 description: None,
                 empty_message: "No read entries.",
-                path: "/entries/read",
+                path: "/entries/read".to_string(),
                 show_tab_bar: true,
-                show_mark_as_read: false,
+                mark_as_read_scope: None,
+                breadcrumb_items: vec![],
+                header_feed_icon_id: None,
+                active_category_id: None,
+                filter_tabs: None,
+                status_filter: None,
+                show_mark_above: false,
             },
         },
     )
@@ -1153,6 +1229,7 @@ pub async fn starred_entries_page(
                 entries,
                 next_cursor,
                 path: "/entries/starred",
+                status_filter: None,
             },
         )
             .into_response();
@@ -1182,9 +1259,15 @@ pub async fn starred_entries_page(
                 active: "starred",
                 description: None,
                 empty_message: "No starred entries.",
-                path: "/entries/starred",
+                path: "/entries/starred".to_string(),
                 show_tab_bar: true,
-                show_mark_as_read: false,
+                mark_as_read_scope: None,
+                breadcrumb_items: vec![],
+                header_feed_icon_id: None,
+                active_category_id: None,
+                filter_tabs: None,
+                status_filter: None,
+                show_mark_above: false,
             },
         },
     )
@@ -1226,6 +1309,7 @@ pub async fn summarized_entries_page(
                 entries,
                 next_cursor,
                 path: "/entries/summarized",
+                status_filter: None,
             },
         )
             .into_response();
@@ -1255,43 +1339,140 @@ pub async fn summarized_entries_page(
                 active: "summarized",
                 description: None,
                 empty_message: "No summarized entries.",
-                path: "/entries/summarized",
+                path: "/entries/summarized".to_string(),
                 show_tab_bar: true,
-                show_mark_as_read: false,
+                mark_as_read_scope: None,
+                breadcrumb_items: vec![],
+                header_feed_icon_id: None,
+                active_category_id: None,
+                filter_tabs: None,
+                status_filter: None,
+                show_mark_above: false,
             },
         },
     )
         .into_response()
 }
 
-/// Serves the CSR shell for `/categories/{id}/entries`. Mode `category`
-/// in `<rdrs-entries-page>` reads the category name from the inlined
-/// sidebar bootstrap blob. The handler verifies ownership (404 otherwise).
+/// `GET /categories/{id}/entries` — SSR list of entries from every feed
+/// in a single category. Supports `?fragment=1&after=N` Load-More.
 pub async fn category_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(query): Query<EntriesQuery>,
     flash: Flash,
-) -> Result<(Flash, CategoryEntriesTemplate), AppError> {
+) -> Result<Response, AppError> {
+    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
-    state
+
+    let category_name = state
         .db
         .read_user(move |c| {
-            category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
-            Ok::<_, AppError>(())
+            let cat =
+                category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
+            Ok::<_, AppError>(cat.name)
         })
         .await??;
 
+    let status = query.status.as_deref();
+    let effective_status = status.unwrap_or("unread");
+    let mut filter = entry::EntryFilter {
+        category_id: Some(id),
+        ..Default::default()
+    };
+    match effective_status {
+        "all" => {}
+        "read" => filter.read_only = true,
+        "starred" => filter.starred_only = true,
+        _ => filter.unread_only = true,
+    }
+    let offset = query.after.unwrap_or(0);
+
+    let (entries, next_cursor) = build_entries_page(
+        &state,
+        user_id,
+        filter,
+        entry::EntrySortOrder::PublishedAt,
+        PAGE_SIZE,
+        offset,
+    )
+    .await;
+
+    let path = format!("/categories/{}/entries", id);
+    let status_filter = query.status.clone();
+
+    if query.fragment == Some(1) {
+        let fragment = EntriesFragmentTemplate {
+            entries,
+            next_cursor,
+            path: Box::leak(path.into_boxed_str()),
+            status_filter,
+        };
+        return Ok((flash, fragment).into_response());
+    }
+
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
-    Ok((
-        flash,
-        CategoryEntriesTemplate {
-            title: "Category Entries",
-            git_version: crate::GIT_VERSION,
-            layout,
+    let mark_as_read_scope = Some(format!("user/-/label/{}", category_name));
+    let base = format!("/categories/{}/entries", id);
+    let filter_tabs = Some(vec![
+        FilterTab {
+            label: "All".to_string(),
+            href: format!("{}?status=all", base),
+            active: status == Some("all"),
         },
-    ))
+        FilterTab {
+            label: "Unread".to_string(),
+            href: base.clone(),
+            active: status.is_none() || status == Some("unread"),
+        },
+        FilterTab {
+            label: "Read".to_string(),
+            href: format!("{}?status=read", base),
+            active: status == Some("read"),
+        },
+        FilterTab {
+            label: "Starred".to_string(),
+            href: format!("{}?status=starred", base),
+            active: status == Some("starred"),
+        },
+    ]);
+    let breadcrumb_items = vec![
+        BreadcrumbItem {
+            label: "Categories".to_string(),
+            href: Some("/categories".to_string()),
+        },
+        BreadcrumbItem {
+            label: category_name.clone(),
+            href: None,
+        },
+    ];
+
+    let template = CategoryEntriesTemplate {
+        title: category_name,
+        git_version: crate::GIT_VERSION,
+        layout,
+        entries,
+        reading_pane: None,
+        next_cursor,
+        entries_layout: EntriesLayoutContext {
+            active: "",
+            description: None,
+            empty_message: "No entries in this category.",
+            path,
+            show_tab_bar: false,
+            mark_as_read_scope,
+            breadcrumb_items,
+            header_feed_icon_id: None,
+            active_category_id: Some(id),
+            filter_tabs,
+            status_filter,
+            show_mark_above: true,
+        },
+    };
+
+    Ok((flash, template).into_response())
 }
 
 #[derive(serde::Deserialize)]
@@ -1587,18 +1768,20 @@ fn html_escape_minimal(s: &str) -> String {
     out
 }
 
-/// Serves the CSR shell for `/feeds/{id}/entries`. Mode `feed` in
-/// `<rdrs-entries-page>` resolves the stream-id, breadcrumb, and icon
-/// asynchronously from `GET /api/feeds`. The handler verifies that
-/// `id` belongs to the authenticated user (404 otherwise).
+/// `GET /feeds/{id}/entries` — SSR list of entries from a single feed.
+/// Supports the `?fragment=1&after=N` Load-More overload like the other
+/// entries-family pages.
 pub async fn feed_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(query): Query<EntriesQuery>,
     flash: Flash,
-) -> Result<(Flash, FeedEntriesTemplate), AppError> {
+) -> Result<Response, AppError> {
+    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
-    state
+
+    let (feed_title, feed_url, feed_has_icon, cat_id, cat_name) = state
         .db
         .read_user(move |c| {
             let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
@@ -1606,20 +1789,122 @@ pub async fn feed_entries_page(
             if cat.user_id != user_id {
                 return Err(AppError::FeedNotFound);
             }
-            Ok::<_, AppError>(())
+            let has_icon = crate::models::image::exists(c, "feed", f.id)?;
+            Ok::<_, AppError>((
+                f.title.unwrap_or_else(|| "(untitled feed)".to_string()),
+                f.url,
+                has_icon,
+                cat.id,
+                cat.name,
+            ))
         })
         .await??;
 
+    // Default status is "unread": the base URL (no `?status=`) shows
+    // unread + starred-but-unread entries. `?status=all` explicitly
+    // overrides the default.
+    let status = query.status.as_deref();
+    let effective_status = status.unwrap_or("unread");
+    let mut filter = entry::EntryFilter {
+        feed_id: Some(id),
+        ..Default::default()
+    };
+    match effective_status {
+        "all" => {}
+        "read" => filter.read_only = true,
+        "starred" => filter.starred_only = true,
+        _ => filter.unread_only = true,
+    }
+    let offset = query.after.unwrap_or(0);
+
+    let (entries, next_cursor) = build_entries_page(
+        &state,
+        user_id,
+        filter,
+        entry::EntrySortOrder::PublishedAt,
+        PAGE_SIZE,
+        offset,
+    )
+    .await;
+
+    let path = format!("/feeds/{}/entries", id);
+    let status_filter = query.status.clone();
+
+    if query.fragment == Some(1) {
+        let fragment = EntriesFragmentTemplate {
+            entries,
+            next_cursor,
+            path: Box::leak(path.into_boxed_str()),
+            status_filter,
+        };
+        return Ok((flash, fragment).into_response());
+    }
+
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
-    Ok((
-        flash,
-        FeedEntriesTemplate {
-            title: "Feed Entries",
-            git_version: crate::GIT_VERSION,
-            layout,
+    let mark_as_read_scope = Some(format!("feed/{}", feed_url));
+    let base = format!("/feeds/{}/entries", id);
+    let filter_tabs = Some(vec![
+        FilterTab {
+            label: "All".to_string(),
+            href: format!("{}?status=all", base),
+            active: status == Some("all"),
         },
-    ))
+        FilterTab {
+            label: "Unread".to_string(),
+            href: base.clone(),
+            active: status.is_none() || status == Some("unread"),
+        },
+        FilterTab {
+            label: "Read".to_string(),
+            href: format!("{}?status=read", base),
+            active: status == Some("read"),
+        },
+        FilterTab {
+            label: "Starred".to_string(),
+            href: format!("{}?status=starred", base),
+            active: status == Some("starred"),
+        },
+    ]);
+    let breadcrumb_items = vec![
+        BreadcrumbItem {
+            label: "Feeds".to_string(),
+            href: Some("/feeds".to_string()),
+        },
+        BreadcrumbItem {
+            label: cat_name,
+            href: Some(format!("/categories/{}/entries", cat_id)),
+        },
+        BreadcrumbItem {
+            label: feed_title.clone(),
+            href: None,
+        },
+    ];
+
+    let template = FeedEntriesTemplate {
+        title: feed_title,
+        git_version: crate::GIT_VERSION,
+        layout,
+        entries,
+        reading_pane: None,
+        next_cursor,
+        entries_layout: EntriesLayoutContext {
+            active: "",
+            description: None,
+            empty_message: "No entries in this feed.",
+            path,
+            show_tab_bar: false,
+            mark_as_read_scope,
+            breadcrumb_items,
+            header_feed_icon_id: if feed_has_icon { Some(id) } else { None },
+            active_category_id: Some(cat_id),
+            filter_tabs,
+            status_filter,
+            show_mark_above: true,
+        },
+    };
+
+    Ok((flash, template).into_response())
 }
 
 /// Shared layout fields embedded in every per-route logged-in
@@ -2062,9 +2347,13 @@ impl IntoResponse for SummarizedEntriesTemplate {
 #[derive(Template)]
 #[template(path = "feed_entries.html")]
 pub struct FeedEntriesTemplate {
-    pub title: &'static str,
+    pub title: String,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub entries: Vec<EntryRowView>,
+    pub reading_pane: Option<ReadingPaneView>,
+    pub next_cursor: Option<i64>,
+    pub entries_layout: EntriesLayoutContext,
 }
 
 impl IntoResponse for FeedEntriesTemplate {
@@ -2080,9 +2369,13 @@ impl IntoResponse for FeedEntriesTemplate {
 #[derive(Template)]
 #[template(path = "category_entries.html")]
 pub struct CategoryEntriesTemplate {
-    pub title: &'static str,
+    pub title: String,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub entries: Vec<EntryRowView>,
+    pub reading_pane: Option<ReadingPaneView>,
+    pub next_cursor: Option<i64>,
+    pub entries_layout: EntriesLayoutContext,
 }
 
 impl IntoResponse for CategoryEntriesTemplate {
