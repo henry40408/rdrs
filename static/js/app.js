@@ -251,7 +251,7 @@ const KB_SHORTCUTS = [
     { group: 'Entry list', key: 'Shift+Space', desc: 'Scroll reading pane up' },
     { group: 'Entry actions', key: 'v', desc: 'View original (new tab)' },
     { group: 'Entry actions', key: 'u', desc: 'Mark unread' },
-    { group: 'Entry actions', key: 'Shift+F', desc: 'Fetch full content' },
+    { group: 'Entry actions', key: 'Shift+F', desc: 'Fetch full content (toggle with original)' },
     { group: 'Entry actions', key: 'b', desc: 'Save (Linkding)' },
     { group: 'Entry actions', key: 'm', desc: 'Summarize (Kagi)' },
     { group: 'List filters', key: '1', desc: 'All' },
@@ -447,11 +447,16 @@ function installEntriesKeyboard() {
                 break;
             }
             case 'F': {
-                // Fetch Full Content. Reading-pane only.
+                // Toggle between feed-supplied and externally-fetched
+                // article body. When the pane already shows the full
+                // content the Fetch button is replaced by a "Show
+                // Original" link — fall through to that.
                 const form = paneForm('/fetch-full-content');
-                if (!form) return;
-                e.preventDefault();
-                form.requestSubmit();
+                if (form) { e.preventDefault(); form.requestSubmit(); break; }
+                const pane = document.getElementById('reading-pane');
+                if (!pane || pane.classList.contains('reading-pane-empty')) return;
+                const showOriginal = pane.querySelector('a[data-swap="#reading-pane"]');
+                if (showOriginal) { e.preventDefault(); showOriginal.click(); }
                 break;
             }
             case 'b': {
