@@ -43,7 +43,7 @@
                         <select id="filter-category" name="category" class="select-auto" onchange="this.form.submit()">
                             <option value="">All Categories ({{ total_feed_count }})</option>
                             {% for c in categories %}
-                                <option value="{{ c.id }}"{% if c.id == active_category_id %} selected{% endif %}>{{ c.name }} ({{ c.feed_count }})</option>
+                                <option value="{{ c.id }}"{% if let Some(cid) = active_category_id %}{% if c.id == *cid %} selected{% endif %}{% endif %}>{{ c.name }} ({{ c.feed_count }})</option>
                             {% endfor %}
                         </select>
                     </div>

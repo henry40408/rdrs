@@ -234,7 +234,10 @@ pub async fn delete_feed_form(
         .await;
     match result {
         Ok(Ok(())) => FlashRedirect::success("/feeds", "Feed deleted.").into_response(),
-        _ => FlashRedirect::error("/feeds", "Failed to delete feed").into_response(),
+        Ok(Err(AppError::FeedNotFound)) => {
+            FlashRedirect::error("/feeds", "Feed not found.").into_response()
+        }
+        _ => FlashRedirect::error("/feeds", "Failed to delete feed.").into_response(),
     }
 }
 

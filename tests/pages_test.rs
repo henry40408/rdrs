@@ -873,6 +873,15 @@ async fn test_category_entries_page_not_found() {
 
     let resp = app.server.get("/categories/999999/entries").await;
     assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
+    let body = resp.text();
+    assert!(
+        body.contains("Category not found"),
+        "404 page should render the not-found heading, got: {body}"
+    );
+    assert!(
+        body.contains("rdrs-sidebar"),
+        "404 page should render inside the app chrome (sidebar present), got: {body}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -1364,6 +1373,15 @@ async fn test_feed_entries_page_not_found() {
 
     let resp = app.server.get("/feeds/999999/entries").await;
     assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
+    let body = resp.text();
+    assert!(
+        body.contains("Feed not found"),
+        "404 page should render the not-found heading, got: {body}"
+    );
+    assert!(
+        body.contains("rdrs-sidebar"),
+        "404 page should render inside the app chrome (sidebar present), got: {body}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -1601,6 +1619,25 @@ async fn test_feed_edit_page_renders() {
 }
 
 #[tokio::test]
+async fn test_feed_edit_page_not_found_renders_error_page() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/feeds/999999/edit").await;
+    assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
+    let body = response.text();
+    assert!(
+        body.contains("Feed not found"),
+        "404 page should render the not-found heading, got: {body}"
+    );
+    assert!(
+        body.contains("rdrs-sidebar"),
+        "404 page should render inside the app chrome (sidebar present), got: {body}"
+    );
+}
+
+#[tokio::test]
 async fn test_feeds_import_page_renders() {
     let app = create_test_app(default_test_config());
     setup_users(&app.db).await;
@@ -1781,6 +1818,31 @@ async fn test_feeds_page_filter_by_category_excludes_other_rows() {
     let body = response.text();
     assert!(body.contains("Feed In A"));
     assert!(!body.contains("Feed In B"));
+    // The active category's <option> must carry `selected` so the filter
+    // dropdown reflects the URL query. Regression guard for the
+    // `active_category_id: Option<i64>` rendering branch in feeds.html.
+    assert!(
+        body.contains("value=\"1\" selected>Cat A"),
+        "Cat A option should be selected when ?category=1, got: {body}"
+    );
+    assert!(
+        !body.contains("value=\"2\" selected"),
+        "Cat B option must not be selected when ?category=1"
+    );
+
+    // With no `?category=` query the dropdown defaults to "All Categories" and
+    // no <option> should carry selected.
+    let response_default = app.server.get("/feeds").await;
+    response_default.assert_status_ok();
+    let body_default = response_default.text();
+    assert!(
+        !body_default.contains("value=\"1\" selected"),
+        "no category should be selected when ?category= is absent"
+    );
+    assert!(
+        !body_default.contains("value=\"2\" selected"),
+        "no category should be selected when ?category= is absent"
+    );
 }
 
 // ============================================================================

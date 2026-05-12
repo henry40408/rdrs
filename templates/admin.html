@@ -30,17 +30,17 @@
                                 {% else %}
                                     <form method="post" action="/admin/users/{{ u.id }}/role" style="display:inline">
                                         <input type="hidden" name="role" value="{% if u.role == "admin" %}user{% else %}admin{% endif %}">
-                                        <button type="submit" class="link-button">{% if u.role == "admin" %}demote{% else %}promote{% endif %}</button>
+                                        <button type="submit" class="action-link">{% if u.role == "admin" %}demote{% else %}promote{% endif %}</button>
                                     </form>
                                     <form method="post" action="/admin/users/{{ u.id }}/status" style="display:inline">
                                         <input type="hidden" name="disabled" value="{% if u.disabled %}false{% else %}true{% endif %}">
-                                        <button type="submit" class="link-button">{% if u.disabled %}enable{% else %}disable{% endif %}</button>
+                                        <button type="submit" class="action-link">{% if u.disabled %}enable{% else %}disable{% endif %}</button>
                                     </form>
                                     <form method="post" action="/admin/users/{{ u.id }}/masquerade" style="display:inline">
-                                        <button type="submit" class="link-button">view as</button>
+                                        <button type="submit" class="action-link">view as</button>
                                     </form>
                                     <form method="post" action="/admin/users/{{ u.id }}/delete" style="display:inline" onsubmit="return confirm('Delete user? This cannot be undone.')">
-                                        <button type="submit" class="link-button">delete</button>
+                                        <button type="submit" class="action-link action-link-danger">delete</button>
                                     </form>
                                 {% endif %}
                             </td>

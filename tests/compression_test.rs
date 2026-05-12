@@ -1,5 +1,5 @@
-//! Verifies that responses are gzip-compressed when the client advertises
-//! `Accept-Encoding: gzip`, and left untouched otherwise.
+//! Verifies that responses are brotli-compressed when the client advertises
+//! `Accept-Encoding: br`, and left untouched otherwise.
 
 use std::sync::Arc;
 

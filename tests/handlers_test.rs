@@ -22,6 +22,17 @@ struct TestApp {
     db: DbPool,
 }
 
+/// Static asset cache-control depends on whether the binary was built from a
+/// clean git tree. PR-9 switched to `no-cache` for `-dirty` builds so dev
+/// iteration sees fresh assets — production builds keep the immutable header.
+fn expected_static_cache_control() -> &'static str {
+    if rdrs::GIT_VERSION.ends_with("-dirty") {
+        "no-cache"
+    } else {
+        "public, max-age=31536000, immutable"
+    }
+}
+
 fn open_shared_memory(name: &str) -> Connection {
     let uri = format!("file:{}?mode=memory&cache=shared", name);
     Connection::open_with_flags(
@@ -2121,7 +2132,7 @@ async fn test_static_js_serves_known_file() {
         .unwrap()
         .to_str()
         .unwrap();
-    assert_eq!(cache_control, "public, max-age=31536000, immutable");
+    assert_eq!(cache_control, expected_static_cache_control());
 
     let body = response.text();
     assert!(!body.is_empty(), "JS file should not be empty");
@@ -2172,7 +2183,7 @@ async fn test_static_css_serves_app_css() {
         .unwrap()
         .to_str()
         .unwrap();
-    assert_eq!(cache_control, "public, max-age=31536000, immutable");
+    assert_eq!(cache_control, expected_static_cache_control());
 
     let body = response.text();
     assert!(!body.is_empty(), "CSS file should not be empty");
