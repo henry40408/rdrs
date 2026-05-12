@@ -61,14 +61,23 @@ function installSwap() {
 }
 
 async function performSwap(url, init, defaultTarget) {
+    const method = (init.method || 'GET').toUpperCase();
     let response;
     try {
         response = await fetch(url, init);
     } catch {
+        if (method !== 'GET' && window.flash) {
+            window.flash.error('Action failed — please try again.');
+            return;
+        }
         window.location.href = url;
         return;
     }
     if (!response.ok) {
+        if (method !== 'GET' && window.flash) {
+            window.flash.error('Action failed — please try again.');
+            return;
+        }
         window.location.href = url;
         return;
     }
@@ -279,9 +288,17 @@ function installMarkAsReadDropdown() {
                 credentials: 'same-origin',
             });
             if (!resp.ok) throw new Error('Failed to mark as read');
+            if (window.flash) {
+                window.flash.set('success', `Marked ${ageLabel} entries as read.`);
+            }
             window.location.reload();
         } catch (err) {
-            alert(err.message || 'Failed to mark as read');
+            const message = err.message || 'Failed to mark as read';
+            if (window.flash) {
+                window.flash.error(message);
+            } else {
+                alert(message);
+            }
         }
     });
 }

@@ -214,13 +214,15 @@ pub(crate) fn build_reading_pane_view(
     }
 }
 
-/// Multi-target action response template. Renders two `<template data-swap-target>` blocks:
-/// one for the updated entry row and one for the sidebar-unread payload.
+/// Multi-target action response template. Renders the updated entry row, the
+/// sidebar-unread payload, and (optionally) a `<template data-flash>` block
+/// for actions that want post-action toast feedback (e.g. Mark Unread).
 #[derive(Template)]
 #[template(path = "_entry_actions_multi.html")]
 pub struct EntryActionMulti {
     pub r: EntryRowView,
     pub sidebar_unread_payload_json: String,
+    pub flash: Option<FlashPayload>,
 }
 
 impl IntoResponse for EntryActionMulti {
@@ -292,11 +294,14 @@ pub async fn star_entry_form(
     Ok(EntryActionMulti {
         r: row_view_from(&ewf, status),
         sidebar_unread_payload_json: payload_json,
+        flash: None,
     })
 }
 
 /// `POST /entries/{id}/read` — toggle the read state for the entry, then
 /// return a multi-target HTML fragment updating the row + sidebar-unread block.
+/// Emits a "Marked as unread." flash when the toggle goes read→unread; the
+/// reverse (unread→read) is the normal reading flow so no toast is shown.
 pub async fn read_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -319,9 +324,18 @@ pub async fn read_entry_form(
         .await??;
     let ewf = ewf.ok_or(AppError::EntryNotFound)?;
     let payload_json = build_sidebar_unread(&state, user_id).await?;
+    let flash = if ewf.entry.read_at.is_none() {
+        Some(FlashPayload {
+            level: "success",
+            message: "Marked as unread.".to_string(),
+        })
+    } else {
+        None
+    };
     Ok(EntryActionMulti {
         r: row_view_from(&ewf, status),
         sidebar_unread_payload_json: payload_json,
+        flash,
     })
 }
 
