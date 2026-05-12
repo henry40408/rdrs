@@ -124,7 +124,10 @@ function applyFlashTemplates(parsed) {
     const flashes = parsed.querySelectorAll('template[data-flash]');
     for (const tpl of flashes) {
         const level = tpl.getAttribute('data-level') || 'info';
-        const message = (tpl.textContent || '').trim();
+        // `<template>` contents live in `.content` DocumentFragment, not in
+        // direct children — `tpl.textContent` returns '' here. Read from
+        // `tpl.content.textContent` instead.
+        const message = (tpl.content?.textContent || '').trim();
         if (!message) continue;
         if (window.flash && typeof window.flash.show === 'function') {
             window.flash.show(level, message);
