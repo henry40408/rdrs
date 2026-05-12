@@ -318,6 +318,25 @@ function installEntriesKeyboard() {
                 btn.click();
                 break;
             }
+            case 'c': {
+                // On `/feeds/{id}/entries`, jump to the feed's parent
+                // category page. The category id is already on the
+                // sidebar via `active-category-id` so we reuse it.
+                if (!window.location.pathname.startsWith('/feeds/')) return;
+                const sb = document.querySelector('rdrs-sidebar');
+                const catId = sb && sb.getAttribute('active-category-id');
+                if (!catId) return;
+                e.preventDefault();
+                window.location.href = `/categories/${catId}/entries`;
+                break;
+            }
+            case 'x': {
+                // On `/categories/{id}/entries`, jump to the unread inbox.
+                if (!window.location.pathname.startsWith('/categories/')) return;
+                e.preventDefault();
+                window.location.href = '/';
+                break;
+            }
             case ' ': {
                 if (!active) return;
                 // Row form is now state-dependent: `/read` when unread,
