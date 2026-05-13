@@ -1,15 +1,17 @@
 {
   "name": "rdrs-e2e",
   "private": true,
+  "type": "module",
   "scripts": {
     "test": "playwright test",
     "test:ui": "playwright test --ui",
     "test:headed": "playwright test --headed",
-    "screenshots": "playwright test scripts/screenshots.ts"
+    "screenshots": "node scripts/screenshots.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.50.0",
-    "@types/better-sqlite3": "^7.6.13",
-    "better-sqlite3": "^11.8.0"
+    "better-sqlite3": "^11.8.0",
+    "nanoid": "^5.0.0",
+    "playwright-bdd": "^8.0.0"
   }
 }
