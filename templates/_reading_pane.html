@@ -3,13 +3,13 @@
    CSS rules target. `id="reading-pane"` is the swap target. #}
 <div id="reading-pane" class="reading-pane">
     <div class="reading-pane-content">
-        <h1 class="reading-pane-title">
+        <h1 class="reading-pane-title" data-testid="reading-pane-title">
             {% if let Some(link) = pane.link.as_ref() %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer">{{ pane.title }}</a>{% else %}{{ pane.title }}{% endif %}
         </h1>
         <div class="reading-pane-meta">
-            <span>{{ pane.feed_title }}</span>
+            <span data-testid="reading-pane-feed-title">{{ pane.feed_title }}</span>
             {% if let Some(author) = pane.author.as_ref() %}<span>{{ author }}</span>{% endif %}
-            {% if let Some(ts) = pane.published_at_iso.as_ref() %}<time datetime="{{ ts }}">{{ pane.published_relative }}</time>{% endif %}
+            {% if let Some(ts) = pane.published_at_iso.as_ref() %}<time datetime="{{ ts }}" data-testid="reading-pane-published-at">{{ pane.published_relative }}</time>{% endif %}
         </div>
         <div class="reading-pane-actions">
             <form id="reading-pane-star-form-{{ pane.id }}" method="post" action="/entries/{{ pane.id }}/{% if pane.is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ pane.id }}">
@@ -66,6 +66,6 @@
             </div>
             {% endif %}
         </div>
-        <article class="reading-pane-article">{{ pane.content_html|safe }}</article>
+        <article class="reading-pane-article" data-testid="reading-pane-body" data-mode="{% if pane.is_full_content %}full{% else %}original{% endif %}">{{ pane.content_html|safe }}</article>
     </div>
 </div>

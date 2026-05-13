@@ -10,14 +10,12 @@ Feature: Reading entries
     Then I see 5 entries in the entry list
     And the first entry is titled "Test Entry 1"
 
-  @skip
   Scenario: Opening an entry swaps the reading pane to show its title and body
     When I open the inbox
     And I click the entry titled "Test Entry 1"
     Then the reading pane shows the title "Test Entry 1"
     And the reading pane shows the content "Content for test entry 1"
 
-  @skip
   Scenario: Reading pane shows feed title and published time
     When I open the inbox
     And I click the entry titled "Test Entry 1"
@@ -50,16 +48,15 @@ Feature: Reading entries
     When I open the entries page for category "Reading Category"
     Then I see 5 entries in the entry list
 
-  @skip
   Scenario: Load More appends the next page without scroll reset
-    Given the feed has 30 entries
+    Given the feed has 60 entries
     When I open the inbox
     And I click "Load more"
-    Then I see more than 20 entries in the entry list
+    Then I see more than 50 entries in the entry list
 
-  @skip
   Scenario: Keyboard j and k move selection between entries
     When I open the inbox
+    And I press the "j" key
     And I press the "j" key
     Then the second entry is selected
     When I press the "k" key
@@ -70,7 +67,6 @@ Feature: Reading entries
     And I press the "?" key
     Then the keyboard shortcut help overlay is visible
 
-  @skip
   Scenario: Reader can toggle between full content and original feed body
     When I open the inbox
     And I click the entry titled "Test Entry 1"
