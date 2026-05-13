@@ -40,13 +40,3 @@ Then("I can sign in with {string}", async ({ page, currentUser, serverUrl }, pas
   await page.getByTestId("login-submit").click();
   await page.waitForURL(`${serverUrl}/`);
 });
-
-When("I change my display name to {string}", async ({ page, serverUrl }, displayName) => {
-  await page.getByTestId("display-name-input").fill(displayName);
-  await page.locator('form[action="/user-settings/profile"] button[type=submit]').click();
-  await page.waitForURL(`${serverUrl}/user-settings`);
-});
-
-Then("the navbar greeting shows {string}", async ({ page }, displayName) => {
-  await expect(page.getByTestId("navbar-greeting")).toContainText(displayName);
-});

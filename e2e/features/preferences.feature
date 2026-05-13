@@ -22,8 +22,3 @@ Feature: Preferences
   Scenario: Changing my password lets me sign in with the new password
     When I change my password to "newpassword123"
     Then I can sign in with "newpassword123"
-
-  @skip
-  Scenario: Changing my display name updates the navbar greeting
-    When I change my display name to "Alex"
-    Then the navbar greeting shows "Alex"
