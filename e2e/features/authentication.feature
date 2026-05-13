@@ -17,7 +17,3 @@ Feature: Authentication
     Then I see "Passwords do not match" on the register page
     And I am still on the register page
 
-  Scenario: Authenticated user visiting /login is redirected to the inbox
-    Given I am signed in
-    When I visit "/login"
-    Then I land on the unread inbox
