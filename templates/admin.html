@@ -20,7 +20,7 @@
                             <td data-label="Username">{{ u.username }}</td>
                             <td data-label="Role">{{ u.role }}</td>
                             <td data-label="Status">
-                                {% if u.disabled %}<span class="error-text admin-user-disabled" data-testid="admin-user-disabled">disabled</span>
+                                {% if u.disabled %}<span class="error-text" data-testid="admin-user-disabled">disabled</span>
                                 {% else %}<span class="success-text">active</span>{% endif %}
                             </td>
                             <td data-label="Created">{{ u.created_at }}</td>

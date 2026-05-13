@@ -47,18 +47,18 @@ Then("I see my username in the users table", async ({ page, currentUser }) => {
   await expect(page.getByTestId("admin-users-table")).toContainText(currentUser.username);
 });
 
-Then("that user is shown as disabled", async ({ page }) => {
+Then("a user is shown as disabled in the table", async ({ page }) => {
   await expect(page.getByTestId("admin-user-disabled").first()).toBeVisible();
 });
 
 Then("the statistics show at least {int} feed", async ({ page }, n) => {
-  const text = await page.getByTestId("stat-feeds-total").innerText();
+  const text = await page.getByTestId("stat-site-feeds-total").innerText();
   const count = parseInt(text, 10);
   expect(count).toBeGreaterThanOrEqual(n);
 });
 
 Then("the statistics show at least {int} entries", async ({ page }, n) => {
-  const text = await page.getByTestId("stat-entries-total").innerText();
+  const text = await page.getByTestId("stat-site-entries-total").innerText();
   const count = parseInt(text, 10);
   expect(count).toBeGreaterThanOrEqual(n);
 });

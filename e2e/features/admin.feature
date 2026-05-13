@@ -19,7 +19,7 @@ Feature: Admin and statistics
     Given there is another registered user
     When I open the admin page
     And I disable the first non-self user
-    Then that user is shown as disabled
+    Then a user is shown as disabled in the table
 
   Scenario: Statistics page shows feed and entry counts
     Given I have a feed with 3 test entries
