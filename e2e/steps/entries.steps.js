@@ -1,0 +1,193 @@
+import { createBdd } from "playwright-bdd";
+import Database from "better-sqlite3";
+import { test, expect } from "../support/fixtures.js";
+
+const { Given, When, Then } = createBdd(test);
+
+function entryIdByTitle(seed, currentUser, title) {
+  const db = new Database(seed.dbPath);
+  try {
+    const userId = seed.getUserId(currentUser.username);
+    const row = db
+      .prepare(
+        `SELECT e.id FROM entry e
+         JOIN feed f ON e.feed_id = f.id
+         JOIN category c ON f.category_id = c.id
+         WHERE c.user_id = ? AND e.title = ?`
+      )
+      .get(userId, title);
+    if (!row) throw new Error(`Entry '${title}' not found`);
+    return row.id;
+  } finally {
+    db.close();
+  }
+}
+
+Given(
+  "I have a feed {string} with {int} test entries in category {string}",
+  async ({ seed, currentUser }, feedTitle, count, categoryName) => {
+    const userId = seed.getUserId(currentUser.username);
+    const categoryId = seed.createCategory(userId, categoryName);
+    const feedId = seed.createFeed(
+      categoryId,
+      `https://example.com/${currentUser.username}-${feedTitle}.xml`,
+      feedTitle
+    );
+    seed.seedTestEntries(feedId, count);
+  }
+);
+
+Given("the entry titled {string} is marked read", async ({ seed, currentUser }, title) => {
+  const id = entryIdByTitle(seed, currentUser, title);
+  seed.markRead(id);
+});
+
+Given("the entry titled {string} is starred", async ({ seed, currentUser }, title) => {
+  const id = entryIdByTitle(seed, currentUser, title);
+  seed.markStarred(id);
+});
+
+Given("the entry titled {string} has a summary", async ({ seed, currentUser }, title) => {
+  const id = entryIdByTitle(seed, currentUser, title);
+  const userId = seed.getUserId(currentUser.username);
+  seed.insertSummary(id, userId);
+});
+
+Given("the feed has {int} entries", async ({ seed, currentUser }, count) => {
+  const userId = seed.getUserId(currentUser.username);
+  const db = new Database(seed.dbPath);
+  let feedId;
+  try {
+    const row = db
+      .prepare(
+        `SELECT f.id FROM feed f JOIN category c ON f.category_id = c.id WHERE c.user_id = ? LIMIT 1`
+      )
+      .get(userId);
+    if (!row) throw new Error("No feed found for user");
+    feedId = row.id;
+  } finally {
+    db.close();
+  }
+  seed.seedTestEntries(feedId, count);
+});
+
+When("I open the read entries page", async ({ page, serverUrl }) => {
+  await page.goto(`${serverUrl}/entries/read`);
+});
+
+When("I open the starred entries page", async ({ page, serverUrl }) => {
+  await page.goto(`${serverUrl}/entries/starred`);
+});
+
+When("I open the summarized entries page", async ({ page, serverUrl }) => {
+  await page.goto(`${serverUrl}/entries/summarized`);
+});
+
+When("I open the entries page for feed {string}", async ({ page, seed, currentUser, serverUrl }, feedTitle) => {
+  const userId = seed.getUserId(currentUser.username);
+  const db = new Database(seed.dbPath);
+  let feedId;
+  try {
+    const row = db
+      .prepare(
+        `SELECT f.id FROM feed f JOIN category c ON f.category_id = c.id WHERE c.user_id = ? AND f.title = ?`
+      )
+      .get(userId, feedTitle);
+    if (!row) throw new Error(`Feed '${feedTitle}' not found`);
+    feedId = row.id;
+  } finally {
+    db.close();
+  }
+  await page.goto(`${serverUrl}/feeds/${feedId}/entries`);
+});
+
+When("I open the entries page for category {string}", async ({ page, seed, currentUser, serverUrl }, name) => {
+  const userId = seed.getUserId(currentUser.username);
+  const db = new Database(seed.dbPath);
+  let categoryId;
+  try {
+    const row = db
+      .prepare(`SELECT id FROM category WHERE user_id = ? AND name = ?`)
+      .get(userId, name);
+    if (!row) throw new Error(`Category '${name}' not found`);
+    categoryId = row.id;
+  } finally {
+    db.close();
+  }
+  await page.goto(`${serverUrl}/categories/${categoryId}/entries`);
+});
+
+When("I click the entry titled {string}", async ({ page }, title) => {
+  await page.getByTestId("entry-item").filter({ hasText: title }).first().click();
+});
+
+When("I click {string}", async ({ page }, label) => {
+  await page.getByRole("button", { name: label }).click();
+});
+
+When("I press the {string} key", async ({ page }, key) => {
+  await page.click("body");
+  await page.keyboard.press(key);
+});
+
+When("I click the {string} button", async ({ page }, label) => {
+  await page.getByRole("button", { name: label }).click();
+});
+
+Then("I see {int} entries in the entry list", async ({ page }, count) => {
+  await expect(page.getByTestId("entry-item")).toHaveCount(count);
+});
+
+Then("I see {int} entry in the entry list", async ({ page }, count) => {
+  await expect(page.getByTestId("entry-item")).toHaveCount(count);
+});
+
+Then("I see more than {int} entries in the entry list", async ({ page }, count) => {
+  const n = await page.getByTestId("entry-item").count();
+  expect(n).toBeGreaterThan(count);
+});
+
+Then("the first entry is titled {string}", async ({ page }, title) => {
+  await expect(page.getByTestId("entry-item").first()).toContainText(title);
+});
+
+Then("the reading pane shows the title {string}", async ({ page }, title) => {
+  await expect(page.getByTestId("reading-pane-title")).toContainText(title);
+});
+
+Then("the reading pane shows the content {string}", async ({ page }, content) => {
+  await expect(page.getByTestId("reading-pane-body")).toContainText(content);
+});
+
+Then("the reading pane shows the feed title {string}", async ({ page }, title) => {
+  await expect(page.getByTestId("reading-pane-feed-title")).toContainText(title);
+});
+
+Then("the reading pane shows a published time", async ({ page }) => {
+  await expect(page.getByTestId("reading-pane-published-at")).toBeVisible();
+});
+
+Then("the second entry is selected", async ({ page }) => {
+  await expect(page.getByTestId("entry-item").nth(1)).toHaveClass(/selected|active/);
+});
+
+Then("the first entry is selected", async ({ page }) => {
+  await expect(page.getByTestId("entry-item").first()).toHaveClass(/selected|active/);
+});
+
+Then("the keyboard shortcut help overlay is visible", async ({ page }) => {
+  await expect(page.getByTestId("kb-help")).toBeVisible();
+});
+
+Then("the reading pane shows the original feed body", async ({ page }) => {
+  await expect(page.getByTestId("reading-pane-body")).toHaveAttribute("data-mode", "original");
+});
+
+Then("the reading pane shows the original entry body", async ({ page }) => {
+  await expect(page.getByTestId("reading-pane-body")).toHaveAttribute("data-mode", "original");
+});
+
+Then("the entry row for {string} shows as read", async ({ page }, title) => {
+  const row = page.getByTestId("entry-item").filter({ hasText: title }).first();
+  await expect(row).toHaveAttribute("data-read", "true");
+});
