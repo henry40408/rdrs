@@ -155,8 +155,9 @@ Then("I see {int} entry in the entry list", async ({ page }, count) => {
 });
 
 Then("I see more than {int} entries in the entry list", async ({ page }, count) => {
-  const n = await page.getByTestId("entry-item").count();
-  expect(n).toBeGreaterThan(count);
+  // Use polling so async swaps (e.g. Load More fetch) have a chance to land
+  // before we assert. Plain `count()` snapshots the DOM at one instant.
+  await expect.poll(() => page.getByTestId("entry-item").count()).toBeGreaterThan(count);
 });
 
 Then("the first entry is titled {string}", async ({ page }, title) => {

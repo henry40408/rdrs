@@ -1,7 +1,25 @@
 import { createBdd } from "playwright-bdd";
 import { test, expect } from "../support/fixtures.js";
 
-const { When, Then } = createBdd(test);
+const { Given, When, Then } = createBdd(test);
+
+Given("the user has Kagi configured", async ({ seed, currentUser }) => {
+  // Seeds a fake Kagi session token so the reading-pane Summarize button
+  // is rendered. Actual Kagi requests will fail when fired, which is
+  // acceptable for tests that only assert the in-flight summary placeholder.
+  const userId = seed.getUserId(currentUser.username);
+  seed.configureKagi(userId);
+});
+
+When("I mark all entries as read", async ({ page }) => {
+  // app.js #mark-read-age <select> fires a window.confirm before calling
+  // /reader/api/0/mark-all-as-read. Pre-register the dialog handler so the
+  // prompt auto-accepts, then trigger the dropdown by selecting "all".
+  // On success app.js reloads the page; Playwright's auto-waiting picks up
+  // the post-reload DOM in the subsequent assertion.
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByTestId("mark-read-select").selectOption("all");
+});
 
 When("I star the entry titled {string}", async ({ page }, title) => {
   await page

@@ -117,6 +117,31 @@ export class SeedHelper {
     }
   }
 
+  configureKagi(userId, sessionToken = "e2e-test-token") {
+    // Seeds a fake Kagi config so the reading-pane Summarize button is rendered.
+    // The token is bogus — actual Kagi calls will fail at request time, which
+    // is fine for tests that only assert UI state up through the in-flight
+    // placeholder.
+    const db = new Database(this.dbPath);
+    try {
+      const payload = JSON.stringify({ kagi: { session_token: sessionToken } });
+      const existing = db
+        .prepare(`SELECT id FROM user_settings WHERE user_id = ?`)
+        .get(userId);
+      if (existing) {
+        db.prepare(
+          `UPDATE user_settings SET save_services = ? WHERE user_id = ?`
+        ).run(payload, userId);
+      } else {
+        db.prepare(
+          `INSERT INTO user_settings (user_id, save_services) VALUES (?, ?)`
+        ).run(userId, payload);
+      }
+    } finally {
+      db.close();
+    }
+  }
+
   seedTestEntries(feedId, count) {
     const entries = [];
     for (let i = 1; i <= count; i++) {
