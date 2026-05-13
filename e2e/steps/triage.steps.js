@@ -27,13 +27,6 @@ Then("the entry titled {string} is marked starred", async ({ page }, title) => {
   await expect(row.locator(".star-icon")).toBeVisible();
 });
 
-Then("the entry row for {string} shows as read", async ({ page }, title) => {
-  // _entry_row.html adds CSS class "entry-read" to the row when is_read is true.
-  // There is no data-read attribute — the read state is conveyed by CSS class only.
-  const row = page.getByTestId("entry-item").filter({ hasText: title }).first();
-  await expect(row).toHaveClass(/entry-read/);
-});
-
 Then("the sidebar starred count is at least {int}", async ({ page }, n) => {
   // The sidebar Starred link (<a href="/entries/starred">) has no numeric badge —
   // only the Unread link carries a count. This step can only assert the link is
