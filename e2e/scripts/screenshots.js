@@ -1,12 +1,16 @@
 // Screenshot generator for README
-// Run: cd e2e && npx playwright test screenshots.spec.ts
-import { test, expect } from "../fixtures/rdrs.js";
+// Run: cd e2e && node scripts/screenshots.js
+import { test, expect } from "../support/fixtures.js";
+import { fileURLToPath } from "url";
 import path from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const SCREENSHOT_DIR = path.resolve(__dirname, "..", "..", "screenshots");
 
 // Favicon URLs for each feed (domain → favicon path)
-const FAVICON_URLS: Record<string, string> = {
+const FAVICON_URLS = {
   "https://daringfireball.net/feeds/json": "https://daringfireball.net/graphics/favicon-64.png",
   "https://mjtsai.com/blog/feed/": "https://mjtsai.com/favicon.ico",
   "https://sixcolors.com/feed/": "https://sixcolors.com/favicon.ico",
@@ -17,7 +21,7 @@ const FAVICON_URLS: Record<string, string> = {
 };
 
 /** Fetch a favicon, returning { data, contentType } or null on failure. */
-async function fetchFavicon(url: string): Promise<{ data: Buffer; contentType: string } | null> {
+async function fetchFavicon(url) {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return null;
@@ -148,7 +152,7 @@ test.describe("Screenshots", () => {
     const faviconMap = new Map(
       faviconResults
         .filter((r) => r.result !== null)
-        .map((r) => [r.feedUrl, { ...r.result!, sourceUrl: r.iconUrl }])
+        .map((r) => [r.feedUrl, { ...r.result, sourceUrl: r.iconUrl }])
     );
 
     let hourOffset = 1;
@@ -186,12 +190,12 @@ test.describe("Screenshots", () => {
 
     // Wait for all feed icons to finish loading (loaded or errored)
     await page.waitForFunction(() => {
-      const icons = document.querySelectorAll<HTMLImageElement>(".feed-icon");
+      const icons = document.querySelectorAll(".feed-icon");
       return Array.from(icons).every((img) => img.complete);
     });
   });
 
-  for (const theme of ["light", "dark"] as const) {
+  for (const theme of ["light", "dark"]) {
     test.describe(theme, () => {
       test.use({ colorScheme: theme });
       const suffix = theme === "dark" ? "-dark" : "";

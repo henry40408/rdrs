@@ -1865,7 +1865,7 @@ async fn test_login_page_does_not_load_logged_in_chrome() {
     assert!(!body.contains("rdrs-kb-help.js"));
     assert!(!body.contains("rdrs-sidebar.js"));
     assert!(!body.contains("/static/js/app.js"));
-    assert!(!body.contains("<rdrs-kb-help>"));
+    assert!(!body.contains("<rdrs-kb-help"));
 
     // Flash machinery is still needed (login/register use flash.redirect).
     assert!(body.contains("rdrs-flash.js"));
@@ -1881,7 +1881,7 @@ async fn test_register_page_does_not_load_logged_in_chrome() {
     assert!(!body.contains("rdrs-kb-help.js"));
     assert!(!body.contains("rdrs-sidebar.js"));
     assert!(!body.contains("/static/js/app.js"));
-    assert!(!body.contains("<rdrs-kb-help>"));
+    assert!(!body.contains("<rdrs-kb-help"));
 
     assert!(body.contains("rdrs-flash.js"));
 }
@@ -1905,7 +1905,7 @@ async fn test_logged_in_page_loads_full_chrome() {
 
     // The keyboard-help overlay element must be mounted on every
     // logged-in page so the `?` shortcut can show it.
-    assert!(body.contains("<rdrs-kb-help>"));
+    assert!(body.contains("<rdrs-kb-help"));
     // The kb-pending dropdown indicator was a CSR-era artifact (chord
     // prefix toast). No `g`-prefix sequences survive in the SSR world,
     // so the element must NOT mount.

@@ -7,7 +7,7 @@
             <div class="page-content">
                 <rdrs-flash class="flash-container"></rdrs-flash>
                 <h1>Admin Panel</h1>
-                <table class="mobile-cards">
+                <table class="mobile-cards" data-testid="admin-users-table">
                     <thead>
                         <tr>
                             <th>ID</th><th>Username</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th>
@@ -15,12 +15,12 @@
                     </thead>
                     <tbody>
                         {% for u in users %}
-                        <tr>
+                        <tr data-testid="admin-user-row-{{ u.id }}">
                             <td data-label="ID">{{ u.id }}</td>
                             <td data-label="Username">{{ u.username }}</td>
                             <td data-label="Role">{{ u.role }}</td>
                             <td data-label="Status">
-                                {% if u.disabled %}<span class="error-text">disabled</span>
+                                {% if u.disabled %}<span class="error-text" data-testid="admin-user-disabled">disabled</span>
                                 {% else %}<span class="success-text">active</span>{% endif %}
                             </td>
                             <td data-label="Created">{{ u.created_at }}</td>
@@ -34,7 +34,7 @@
                                     </form>
                                     <form method="post" action="/admin/users/{{ u.id }}/status" style="display:inline">
                                         <input type="hidden" name="disabled" value="{% if u.disabled %}false{% else %}true{% endif %}">
-                                        <button type="submit" class="action-link">{% if u.disabled %}enable{% else %}disable{% endif %}</button>
+                                        <button type="submit" class="action-link" data-testid="admin-disable-btn">{% if u.disabled %}enable{% else %}disable{% endif %}</button>
                                     </form>
                                     <form method="post" action="/admin/users/{{ u.id }}/masquerade" style="display:inline">
                                         <button type="submit" class="action-link">view as</button>
