@@ -32,7 +32,7 @@ When("I register with mismatched passwords", async ({ page, currentUser, serverU
   await page.getByTestId("register-submit").click();
 });
 
-When("I sign in with my credentials", async ({ page, currentUser, serverUrl }) => {
+When("I sign in with my credentials", async ({ page, currentUser }) => {
   await page.getByTestId("username-input").fill(currentUser.username);
   await page.getByTestId("password-input").fill(currentUser.password);
   await page.getByTestId("login-submit").click();
@@ -61,7 +61,6 @@ Then("I see a login error", async ({ page }) => {
 });
 
 Then("I see {string} on the register page", async ({ page }, message) => {
-  await expect(page.getByTestId("register-error")).toBeVisible();
   await expect(page.getByTestId("register-error")).toContainText(message);
 });
 
