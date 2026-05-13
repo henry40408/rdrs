@@ -13,9 +13,9 @@ Given("I am on the feeds page", async ({ page, serverUrl }) => {
   await expect(page.getByTestId("feed-category-select")).not.toContainText("Loading");
 });
 
-When("I add a feed from the mock RSS server under {string}", async ({ page, feedServerUrl }, _category) => {
+When("I add a feed from the mock RSS server under {string}", async ({ page, feedServerUrl }, category) => {
   await page.getByTestId("feed-url-input").fill(`${feedServerUrl}/feed.xml`);
-  await page.getByTestId("feed-category-select").selectOption({ index: 0 });
+  await page.getByTestId("feed-category-select").selectOption({ label: category });
   await page.getByTestId("add-feed-btn").click();
 });
 

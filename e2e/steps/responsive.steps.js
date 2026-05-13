@@ -52,7 +52,7 @@ Then("the hamburger button is visible", async ({ page }) => {
 
 Then("the entry list pane is at least {int}px wide", async ({ page }, minWidth) => {
   const box = await page.locator(".list-pane").boundingBox();
-  expect(box.width).toBeGreaterThan(minWidth);
+  expect(box.width).toBeGreaterThanOrEqual(minWidth);
 });
 
 Then("the categories table is shown as cards", async ({ page }) => {
