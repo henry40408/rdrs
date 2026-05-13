@@ -13,9 +13,12 @@ export class SeedHelper {
         `INSERT OR IGNORE INTO entry (feed_id, guid, title, link, content, summary, published_at)
          VALUES (?, ?, ?, ?, ?, ?, datetime('now', ?))`
       );
+      const idLookup = db.prepare(
+        `SELECT id FROM entry WHERE feed_id = ? AND guid = ?`
+      );
       const insertAll = db.transaction(() => {
         for (const entry of entries) {
-          const result = stmt.run(
+          stmt.run(
             entry.feedId,
             entry.guid,
             entry.title,
@@ -24,7 +27,8 @@ export class SeedHelper {
             entry.summary ?? null,
             entry.publishedOffset ?? "0 seconds"
           );
-          ids.push(Number(result.lastInsertRowid));
+          const row = idLookup.get(entry.feedId, entry.guid);
+          ids.push(row.id);
         }
       });
       insertAll();

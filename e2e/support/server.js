@@ -35,13 +35,14 @@ export function findAvailablePort() {
 }
 
 async function waitForServer(baseUrl, timeoutMs = 30_000) {
+  const POLL_INTERVAL_MS = 200;
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
       const res = await fetch(`${baseUrl}/health`);
       if (res.ok) return;
     } catch {}
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
   throw new Error(`Server did not become ready within ${timeoutMs}ms`);
 }
@@ -73,19 +74,21 @@ export async function spawnRdrs() {
     if (process.env.DEBUG) process.stderr.write(`[rdrs:${port}] ${data}`);
   });
 
-  await waitForServer(baseUrl);
-  return {
-    url: baseUrl,
-    dbPath,
-    cleanup: async () => {
-      proc.kill("SIGTERM");
-      await new Promise((resolve) => {
-        proc.on("close", () => resolve());
-        setTimeout(resolve, 5_000);
-      });
-      rmSync(tempDir, { recursive: true, force: true });
-    },
+  const cleanup = async () => {
+    const closed = new Promise((resolve) => proc.once("close", resolve));
+    proc.kill("SIGTERM");
+    await Promise.race([closed, new Promise((r) => setTimeout(r, 5_000))]);
+    rmSync(tempDir, { recursive: true, force: true });
   };
+
+  try {
+    await waitForServer(baseUrl);
+  } catch (err) {
+    await cleanup();
+    throw err;
+  }
+
+  return { url: baseUrl, dbPath, cleanup };
 }
 
 export async function spawnMockFeedServer() {

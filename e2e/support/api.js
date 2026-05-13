@@ -13,7 +13,6 @@ export class ApiHelper {
       const body = await res.text();
       throw new Error(`Register failed (${res.status}): ${body}`);
     }
-    return { cookie: "" };
   }
 
   async login(username, password) {
@@ -21,7 +20,6 @@ export class ApiHelper {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
-      redirect: "manual",
     });
     if (!res.ok) {
       const body = await res.text();
