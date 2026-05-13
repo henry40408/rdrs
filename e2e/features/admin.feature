@@ -8,13 +8,6 @@ Feature: Admin and statistics
     When I open the admin page
     Then I see my username in the users table
 
-  # No admin "create user" form exists in the product — user creation is via /register only.
-  @skip
-  Scenario: Admin creates a new user account
-    When I open the admin page
-    And I create a user with a random username and password "password123"
-    Then the new user appears in the users table
-
   Scenario: Admin disables a user account
     Given there is another registered user
     When I open the admin page

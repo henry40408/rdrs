@@ -225,7 +225,7 @@ class RdrsSidebar extends HTMLElement {
         </div>
     </nav>
     <div class="sidebar-footer">
-        <span class="sidebar-user" data-testid="navbar-greeting">${escapeHtml(username)}</span>
+        <span class="sidebar-user">${escapeHtml(username)}</span>
         <a href="#" data-testid="logout-btn" data-rdrs-logout>Sign Out</a>
     </div>
 </aside>`;
