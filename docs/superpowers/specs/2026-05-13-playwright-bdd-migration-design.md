@@ -265,8 +265,8 @@ Source: `responsive.spec.ts` (6 scenarios), reorganized by viewport.
 - `@desktop` Sidebar is always visible
 - `@desktop` Reading pane sits beside the entry list
 
-**Totals.** 8 feature files, ~45 scenarios. ~12 are `@pending`
-(reading/triage scenarios blocked on SSR-first PR-10/11), ~33 run
+**Totals.** 8 feature files, 49 scenarios. 8 are `@pending`
+(reading/triage scenarios blocked on SSR-first PR-10/11), 41 run
 on CI today.
 
 ## Parallelism
@@ -298,9 +298,11 @@ warmups.
 
 ### File-internal parallelism
 Each `.feature` compiles to one `.spec.js`. Playwright defaults to
-serial execution within a file. We override with `describeMode:
-"parallel"` in `bddgen.config.js` so scenarios inside the same
-feature also distribute across workers.
+serial execution within a file. We enable scenario-level parallelism
+inside each feature by tagging features with `@parallel` (or by
+injecting `test.describe.configure({ mode: 'parallel' })` via the
+bddgen template hook — the exact knob is settled in PR-1 once the
+`playwright-bdd` v8 API surface is verified).
 
 ```javascript
 // bddgen.config.js
@@ -308,8 +310,14 @@ export default {
   features: "features/*.feature",
   steps: "steps/*.js support/fixtures.js",
   outputDir: ".features-gen",
-  describeMode: "parallel",
 };
+```
+
+```gherkin
+# features/authentication.feature (each feature opts in)
+@parallel
+Feature: Authentication
+  ...
 ```
 
 ### CI sharding
@@ -369,11 +377,11 @@ gates the same CI job once landed).
 | # | Scope | Risk |
 |---|---|---|
 | 1 | **Skeleton.** Add `playwright-bdd`, `nanoid`. Convert `e2e/package.json` to ESM. Port `helpers/api.ts`, `helpers/seed.ts`, `fixtures/rdrs.ts`, `global-setup.ts` to JS. Add `support/fixtures.js` with `currentUser`. New `playwright.config.js`, `bddgen.config.js`. Old `tests/*.spec.ts` still present and still run. | Low |
-| 2 | **First feature** (`authentication.feature`). Steps for register/login/redirect. Verify `bddgen` + `describeMode: parallel` works locally and on CI. | Low |
-| 3 | **Static-shape features** — `preferences`, `search`, `responsive`, `organizing`. Translate the 4 existing specs. Delete corresponding `*.spec.ts` files. | Medium |
-| 4 | **Admin + statistics** features. | Low |
+| 2 | **First feature** (`authentication.feature`). Steps for register/login/redirect. Verify `bddgen` + per-feature `@parallel` tag work locally and on CI. Delete `e2e/tests/auth.spec.ts`. | Low |
+| 3 | **Translate the 4 remaining existing specs** — `preferences`, `search`, `responsive`, `organizing`. Delete `feed-management.spec.ts`, `responsive.spec.ts`, `search.spec.ts`, `theme.spec.ts`. | Medium |
+| 4 | **Admin + statistics** features (new coverage, no spec to delete). | Low |
 | 5 | **Reading + triage** features with `@pending` tags on SSR-dependent scenarios. CI runs the non-`@pending` subset. | Medium |
-| 6 | **Cleanup.** Delete `e2e/tsconfig.json`. Update `.github/workflows/e2e.yml` to the 3-shard matrix. Update the e2e README (if any) and `CLAUDE.md` references. | Low |
+| 6 | **Cleanup.** Remove the now-empty `e2e/tests/` directory and `e2e/tsconfig.json`. Update `.github/workflows/e2e.yml` to the 3-shard matrix. | Low |
 
 When SSR-first PR-10 lands, a follow-up PR removes the `@pending`
 tags on the reading scenarios; PR-11 removes them on the triage
