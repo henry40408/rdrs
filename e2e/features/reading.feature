@@ -74,5 +74,5 @@ Feature: Reading entries
   Scenario: Reader can toggle between full content and original feed body
     When I open the inbox
     And I click the entry titled "Test Entry 1"
-    And I click the "Toggle original" button
+    And I click the "Fetch Full Content" button
     Then the reading pane shows the original feed body

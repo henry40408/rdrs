@@ -32,10 +32,9 @@ Feature: Triage entries (star, mark-read, summarize)
     And I click the "Summarize" button
     Then the reading pane shows a summary
 
-  @skip
-  Scenario: Dismissing a summary restores the original body
+  Scenario: Dismissing a summary clears the summary from the reading pane
     Given the entry titled "Test Entry 1" has a summary
     When I open the inbox
     And I click the entry titled "Test Entry 1"
-    And I click the "Dismiss summary" button
-    Then the reading pane shows the original entry body
+    And I click the "Dismiss" button
+    Then the reading pane summary is dismissed

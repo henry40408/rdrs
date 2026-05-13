@@ -118,7 +118,19 @@ When("I open the entries page for category {string}", async ({ page, seed, curre
 });
 
 When("I click the entry titled {string}", async ({ page }, title) => {
-  await page.getByTestId("entry-item").filter({ hasText: title }).first().click();
+  // Click the title link (data-testid="entry-title-link") to trigger the
+  // data-swap="#reading-pane" fetch. Clicking the entry-item container is
+  // unreliable because installRowClickToOpen bails on any <a> target; the
+  // title link is the canonical entry-open action.
+  await page
+    .getByTestId("entry-item")
+    .filter({ hasText: title })
+    .first()
+    .getByTestId("entry-title-link")
+    .click();
+  // Wait for the reading pane swap to complete — the empty placeholder loses
+  // its .reading-pane-empty class once the fragment replaces #reading-pane.
+  await page.locator("#reading-pane:not(.reading-pane-empty)").waitFor({ state: "attached" });
 });
 
 When("I click {string}", async ({ page }, label) => {
@@ -188,6 +200,8 @@ Then("the reading pane shows the original entry body", async ({ page }) => {
 });
 
 Then("the entry row for {string} shows as read", async ({ page }, title) => {
+  // _entry_row.html adds CSS class "entry-read" to the row when is_read is true.
+  // There is no data-read attribute — the read state is conveyed by CSS class only.
   const row = page.getByTestId("entry-item").filter({ hasText: title }).first();
-  await expect(row).toHaveAttribute("data-read", "true");
+  await expect(row).toHaveClass(/entry-read/);
 });
