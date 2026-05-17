@@ -86,7 +86,10 @@ pub async fn create_feed_form(
         .await;
 
     match result {
-        Ok(Ok(())) => FlashRedirect::success("/feeds", "Feed added.").into_response(),
+        Ok(Ok(())) => {
+            state.sidebar_cache.bust(user_id);
+            FlashRedirect::success("/feeds", "Feed added.").into_response()
+        }
         Ok(Err(AppError::FeedExists)) => {
             FlashRedirect::error("/feeds", "Feed already subscribed").into_response()
         }
@@ -206,6 +209,7 @@ pub async fn edit_feed_form(
 
     match result {
         Ok(Ok(())) => {
+            state.sidebar_cache.bust(user_id);
             FlashRedirect::success(format!("/feeds/{id}/edit"), "Feed updated.").into_response()
         }
         Ok(Err(AppError::Validation(msg))) => {
@@ -233,7 +237,10 @@ pub async fn delete_feed_form(
         })
         .await;
     match result {
-        Ok(Ok(())) => FlashRedirect::success("/feeds", "Feed deleted.").into_response(),
+        Ok(Ok(())) => {
+            state.sidebar_cache.bust(user_id);
+            FlashRedirect::success("/feeds", "Feed deleted.").into_response()
+        }
         Ok(Err(AppError::FeedNotFound)) => {
             FlashRedirect::error("/feeds", "Feed not found.").into_response()
         }
@@ -264,14 +271,19 @@ pub async fn refresh_feed_form(
         return FlashRedirect::error("/feeds", "Feed not found").into_response();
     }
     match feed_sync::refresh_feed(state.db.clone(), id, &state.config.user_agent).await {
-        Ok(r) => FlashRedirect::success(
-            "/feeds",
-            format!(
-                "Refreshed: {} new, {} updated.",
-                r.new_entries, r.updated_entries
-            ),
-        )
-        .into_response(),
+        Ok(r) => {
+            if r.new_entries > 0 || r.updated_entries > 0 {
+                state.sidebar_cache.bust(user_id);
+            }
+            FlashRedirect::success(
+                "/feeds",
+                format!(
+                    "Refreshed: {} new, {} updated.",
+                    r.new_entries, r.updated_entries
+                ),
+            )
+            .into_response()
+        }
         Err(e) => FlashRedirect::error("/feeds", format!("Refresh failed: {e}")).into_response(),
     }
 }
@@ -417,7 +429,10 @@ pub async fn import_opml_form(
         })
         .await;
     match result {
-        Ok(Ok(())) => FlashRedirect::success("/feeds", "OPML imported.").into_response(),
+        Ok(Ok(())) => {
+            state.sidebar_cache.bust(user_id);
+            FlashRedirect::success("/feeds", "OPML imported.").into_response()
+        }
         _ => FlashRedirect::error("/feeds/import", "Failed to import OPML").into_response(),
     }
 }

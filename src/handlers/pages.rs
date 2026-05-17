@@ -2019,18 +2019,37 @@ pub async fn build_app_layout(
     auth_user: &PageAuthUser,
     flash: &Flash,
 ) -> AppLayoutContext {
-    let user_id = auth_user.user.id;
-    let theme = state
-        .db
-        .read_user(move |c| user_settings::get_theme(c, user_id).unwrap_or(None))
-        .await
-        .unwrap_or(None);
+    let session = &auth_user.session;
+    let is_masquerading = session.is_masquerading();
+    let chrome = crate::handlers::user::read_chrome_data(
+        state,
+        auth_user.user.id,
+        if is_masquerading {
+            session.original_user_id
+        } else {
+            None
+        },
+    )
+    .await;
 
-    let sidebar_bootstrap_json = sidebar_bootstrap_json(state, auth_user).await;
+    let is_admin = if is_masquerading {
+        chrome.original_user_is_admin.unwrap_or(false)
+    } else {
+        auth_user.user.is_admin()
+    };
+
+    let sidebar = crate::handlers::user::SidebarResponse {
+        username: auth_user.user.username.clone(),
+        is_admin,
+        is_masquerading,
+        categories: chrome.categories,
+        total_unread: chrome.total_unread,
+    };
+    let sidebar_bootstrap_json = serialize_sidebar_for_script(&sidebar);
     let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
     AppLayoutContext {
-        theme,
+        theme: chrome.theme,
         git_version: crate::GIT_VERSION,
         sidebar_bootstrap_json,
         flash_bootstrap_json,
@@ -2511,17 +2530,10 @@ impl IntoResponse for SearchTemplate {
     }
 }
 
-/// Serialize the sidebar payload for inline embedding in the shell. Escapes
-/// `</` to prevent `</script>` breakout.
-async fn sidebar_bootstrap_json(state: &AppState, auth_user: &PageAuthUser) -> String {
-    let payload =
-        crate::handlers::user::build_sidebar_response(state, &auth_user.user, &auth_user.session)
-            .await
-            .ok();
-    let json = match &payload {
-        Some(p) => serde_json::to_string(p).unwrap_or_else(|_| "[]".to_string()),
-        None => "null".to_string(),
-    };
+/// Serialize an already-built sidebar payload for inline embedding in the
+/// shell. Escapes `</` to prevent `</script>` breakout.
+fn serialize_sidebar_for_script(payload: &crate::handlers::user::SidebarResponse) -> String {
+    let json = serde_json::to_string(payload).unwrap_or_else(|_| "null".to_string());
     escape_json_for_script(&json)
 }
 

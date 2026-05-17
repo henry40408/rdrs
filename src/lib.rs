@@ -27,7 +27,7 @@ pub use middleware::auth::SESSION_COOKIE_NAME;
 pub use models::{Role, User};
 pub use version::GIT_VERSION;
 
-use services::{SummaryCache, SummaryJob};
+use services::{SidebarCache, SummaryCache, SummaryJob};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -36,6 +36,7 @@ pub struct AppState {
     pub webauthn: Arc<Webauthn>,
     pub summary_cache: Arc<SummaryCache>,
     pub summary_tx: mpsc::Sender<SummaryJob>,
+    pub sidebar_cache: Arc<SidebarCache>,
 }
 
 pub fn create_router(state: AppState) -> Router {

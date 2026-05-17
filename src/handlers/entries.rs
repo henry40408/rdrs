@@ -96,12 +96,13 @@ pub async fn entry_fragment(
     // transaction. Marking-as-read on a `GET` is unusual REST-wise, but it
     // matches the feed-reader convention (Reeder / FreshRSS / etc. behave the
     // same way) and the operation is idempotent on the read row.
-    let (ewf, status) = state
+    let (ewf, status, marked_read) = state
         .db
         .user(move |conn| {
             let pre = entry::find_by_id_for_user(conn, user_id, entry_id)?
                 .ok_or(AppError::EntryNotFound)?;
-            if pre.entry.read_at.is_none() {
+            let marked_read = pre.entry.read_at.is_none();
+            if marked_read {
                 entry::mark_as_read(conn, entry_id)?;
             }
             let post = entry::find_by_id_for_user(conn, user_id, entry_id)?
@@ -109,9 +110,12 @@ pub async fn entry_fragment(
             let status = entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])?
                 .get(&entry_id)
                 .copied();
-            Ok::<_, AppError>((post, status))
+            Ok::<_, AppError>((post, status, marked_read))
         })
         .await??;
+    if marked_read {
+        state.sidebar_cache.bust(user_id);
+    }
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
     let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
@@ -416,6 +420,9 @@ async fn set_read_state(
         })
         .await??;
     let (ewf, changed) = result.ok_or(AppError::EntryNotFound)?;
+    if changed {
+        state.sidebar_cache.bust(user_id);
+    }
     let payload_json = build_sidebar_unread(&state, user_id).await?;
     let flash = if !desired_read && changed {
         Some(FlashPayload {

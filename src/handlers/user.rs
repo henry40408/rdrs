@@ -120,7 +120,7 @@ pub async fn get_user_settings(
     Ok(Json(response))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SidebarCategoryDto {
     pub id: i64,
     pub name: String,
@@ -136,6 +136,93 @@ pub struct SidebarResponse {
     pub total_unread: i64,
 }
 
+/// Raw chrome data needed for every authenticated page render: theme,
+/// sidebar categories with unread counts, and (when masquerading) the
+/// admin flag of the original session user. Bundled in one struct so all
+/// of it can be fetched in a single `read_user` closure (one channel
+/// round-trip, one actor turn) instead of 2-3 sequential awaits.
+#[derive(Default, Clone)]
+pub struct ChromeData {
+    pub theme: Option<String>,
+    pub categories: Vec<SidebarCategoryDto>,
+    pub total_unread: i64,
+    /// Only set when `original_user_id` is passed (i.e. session is
+    /// masquerading). `None` outside the masquerade path.
+    pub original_user_is_admin: Option<bool>,
+}
+
+/// Fetch all per-page chrome data for `user_id`. Backed by an in-memory
+/// per-user cache (`state.sidebar_cache`): cache hits return without a
+/// single DB call on the hot path. Cache misses fetch theme +
+/// categories + unread counts in one `read_user` closure, populate the
+/// cache, and return.
+///
+/// `original_user_id` (only `Some` when the session is masquerading) is
+/// never cached — it depends on the *session*, not on `user_id` — so a
+/// masquerading request adds one extra `read_user` lookup.
+pub async fn read_chrome_data(
+    state: &AppState,
+    user_id: i64,
+    original_user_id: Option<i64>,
+) -> ChromeData {
+    let original_user_is_admin = match original_user_id {
+        Some(id) => state
+            .db
+            .read_user(move |conn| {
+                user::find_by_id(conn, id)
+                    .ok()
+                    .flatten()
+                    .map(|u| u.is_admin())
+                    .unwrap_or(false)
+            })
+            .await
+            .ok(),
+        None => None,
+    };
+
+    if let Some(cached) = state.sidebar_cache.get(user_id) {
+        return ChromeData {
+            theme: cached.theme,
+            categories: cached.categories,
+            total_unread: cached.total_unread,
+            original_user_is_admin,
+        };
+    }
+
+    let fresh = state
+        .db
+        .read_user(move |conn| {
+            let theme = user_settings::get_theme(conn, user_id).unwrap_or(None);
+            let cats = category::list_by_user(conn, user_id).unwrap_or_default();
+            let unread_by_cat = entry::count_unread_by_category(conn, user_id).unwrap_or_default();
+            let total_unread = entry::count_unread_by_user(conn, user_id).unwrap_or(0);
+            let categories: Vec<SidebarCategoryDto> = cats
+                .into_iter()
+                .map(|c| SidebarCategoryDto {
+                    id: c.id,
+                    name: c.name,
+                    unread_count: *unread_by_cat.get(&c.id).unwrap_or(&0),
+                })
+                .collect();
+            crate::services::CachedChrome {
+                theme,
+                categories,
+                total_unread,
+            }
+        })
+        .await
+        .unwrap_or_default();
+
+    state.sidebar_cache.insert(user_id, fresh.clone());
+
+    ChromeData {
+        theme: fresh.theme,
+        categories: fresh.categories,
+        total_unread: fresh.total_unread,
+        original_user_is_admin,
+    }
+}
+
 /// Build the sidebar payload for the given authenticated session. Used by
 /// both the JSON API and the shell handler (which embeds it inline so the
 /// CSR sidebar paints without a network round trip).
@@ -145,47 +232,29 @@ pub async fn build_sidebar_response(
     session: &crate::models::session::Session,
 ) -> AppResult<SidebarResponse> {
     let is_masquerading = session.is_masquerading();
+    let chrome = read_chrome_data(
+        state,
+        user.id,
+        if is_masquerading {
+            session.original_user_id
+        } else {
+            None
+        },
+    )
+    .await;
+
     let is_admin = if is_masquerading {
-        match session.original_user_id {
-            Some(original_id) => state
-                .db
-                .read_user(move |conn| user::find_by_id(conn, original_id))
-                .await??
-                .map(|u| u.is_admin())
-                .unwrap_or(false),
-            None => false,
-        }
+        chrome.original_user_is_admin.unwrap_or(false)
     } else {
         user.is_admin()
     };
-
-    let user_id = user.id;
-    let (categories, total_unread) = state
-        .db
-        .read_user(move |conn| {
-            let cats = category::list_by_user(conn, user_id).unwrap_or_default();
-            let unread_by_cat = entry::count_unread_by_category(conn, user_id).unwrap_or_default();
-            let total_unread = entry::count_unread_by_user(conn, user_id).unwrap_or(0);
-
-            let dtos: Vec<SidebarCategoryDto> = cats
-                .into_iter()
-                .map(|c| SidebarCategoryDto {
-                    id: c.id,
-                    name: c.name,
-                    unread_count: *unread_by_cat.get(&c.id).unwrap_or(&0),
-                })
-                .collect();
-
-            Ok::<_, AppError>((dtos, total_unread))
-        })
-        .await??;
 
     Ok(SidebarResponse {
         username: user.username.clone(),
         is_admin,
         is_masquerading,
-        categories,
-        total_unread,
+        categories: chrome.categories,
+        total_unread: chrome.total_unread,
     })
 }
 
@@ -259,6 +328,7 @@ pub async fn update_theme(
         .user(move |conn| user_settings::update_theme(conn, user_id, req.theme))
         .await??;
 
+    state.sidebar_cache.bust(user_id);
     Ok(StatusCode::OK)
 }
 
@@ -354,7 +424,10 @@ pub async fn update_preferences_form(
         .await;
 
     match result {
-        Ok(Ok(())) => FlashRedirect::success("/user-settings", "Preferences updated."),
+        Ok(Ok(())) => {
+            state.sidebar_cache.bust(user_id);
+            FlashRedirect::success("/user-settings", "Preferences updated.")
+        }
         Ok(Err(AppError::Validation(msg))) => FlashRedirect::error("/user-settings", msg),
         _ => FlashRedirect::error("/user-settings", "Failed to update preferences."),
     }

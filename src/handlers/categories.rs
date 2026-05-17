@@ -33,7 +33,10 @@ pub async fn create_category_form(
         .user(move |conn| category::create_category(conn, user_id, &name))
         .await;
     match result {
-        Ok(Ok(_)) => FlashRedirect::success("/categories", "Category created."),
+        Ok(Ok(_)) => {
+            state.sidebar_cache.bust(user_id);
+            FlashRedirect::success("/categories", "Category created.")
+        }
         Ok(Err(AppError::CategoryExists)) => {
             FlashRedirect::error("/categories", "Category already exists.")
         }
@@ -61,7 +64,10 @@ pub async fn rename_category_form(
         .user(move |conn| category::update_name(conn, id, user_id, &name))
         .await;
     match result {
-        Ok(Ok(_)) => FlashRedirect::success("/categories", "Category renamed."),
+        Ok(Ok(_)) => {
+            state.sidebar_cache.bust(user_id);
+            FlashRedirect::success("/categories", "Category renamed.")
+        }
         Ok(Err(AppError::CategoryNotFound)) => {
             FlashRedirect::error("/categories", "Category not found.")
         }
@@ -84,7 +90,10 @@ pub async fn delete_category_form(
         .user(move |conn| category::delete_category(conn, id, user_id))
         .await;
     match result {
-        Ok(Ok(_)) => FlashRedirect::success("/categories", "Category deleted."),
+        Ok(Ok(_)) => {
+            state.sidebar_cache.bust(user_id);
+            FlashRedirect::success("/categories", "Category deleted.")
+        }
         Ok(Err(AppError::CategoryNotFound)) => {
             FlashRedirect::error("/categories", "Category not found.")
         }
