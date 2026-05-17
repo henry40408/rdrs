@@ -30,7 +30,9 @@
 
     /* Border radius */
     --radius-sm: 3px;
+    --radius-control: 4px;
     --radius-md: 6px;
+    --radius-card: 8px;
     --radius-lg: 10px;
 
     /* Shadows */
@@ -279,7 +281,6 @@ code {
     letter-spacing: 0.08em;
     color: var(--color-text-muted);
     padding: var(--space-2) var(--space-3);
-    margin-bottom: var(--space-1);
 }
 
 .sidebar-item {
@@ -341,12 +342,6 @@ code {
 
 .sidebar-badge:empty {
     display: none;
-}
-
-.sidebar-divider {
-    height: 1px;
-    background: var(--color-border-light);
-    margin: var(--space-2) var(--space-3);
 }
 
 .sidebar-footer {
@@ -1110,6 +1105,22 @@ dialog::backdrop {
     margin-bottom: var(--space-5);
 }
 
+/* Selects inside .filter-bar render at the same height as sibling
+   button-style chips (e.g. .feed-filter-link on /feeds) so the row
+   reads as one control strip rather than mismatched heights. */
+.filter-bar select {
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--font-sm);
+}
+
+/* Top-level forms inside .page-content (e.g. Add Feed on /feeds,
+   Add Category on /categories) need a bottom gap separating them
+   from the next block (filter-bar / table). .filter-bar is itself
+   a form and brings its own margin-bottom, so it's excluded. */
+.page-content > form:not(.filter-bar) {
+    margin-bottom: var(--space-6);
+}
+
 /* ===== Tab Bar ===== */
 .tab-bar {
     display: flex;
@@ -1447,7 +1458,7 @@ mark {
     gap: var(--space-3);
     flex-wrap: wrap;
     align-items: center;
-    margin-bottom: var(--space-4);
+    margin-bottom: var(--space-5);
 }
 
 .feed-edit-url-row {
@@ -1504,7 +1515,7 @@ summary {
     background: var(--color-accent-subtle);
     border: 1px solid var(--color-border-light);
     border-radius: var(--radius-md);
-    margin-bottom: var(--space-4);
+    margin-bottom: var(--space-5);
     font-size: var(--font-sm);
 }
 
@@ -1873,7 +1884,7 @@ summary {
 .stats-period-btn {
     padding: var(--space-1) var(--space-3);
     border: 1px solid var(--color-border);
-    border-radius: 4px;
+    border-radius: var(--radius-control);
     background: transparent;
     color: var(--color-text-secondary);
     text-decoration: none;
@@ -1892,7 +1903,7 @@ summary {
 .stats-date-input {
     padding: var(--space-1) var(--space-2);
     border: 1px solid var(--color-border);
-    border-radius: 4px;
+    border-radius: var(--radius-control);
     background: var(--color-bg);
     color: var(--color-text);
     font-family: var(--font-ui);
@@ -1907,7 +1918,7 @@ summary {
 }
 .stats-card {
     background: var(--color-bg-secondary);
-    border-radius: 8px;
+    border-radius: var(--radius-card);
     padding: var(--space-4);
     text-align: center;
 }
@@ -1957,7 +1968,7 @@ summary {
 .stats-bar {
     width: 100%;
     background: var(--color-accent);
-    border-radius: 3px 3px 0 0;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     min-height: 2px;
     transition: height 0.2s;
 }
@@ -1991,14 +2002,14 @@ summary {
 }
 .stats-progress {
     background: var(--color-bg);
-    border-radius: 4px;
+    border-radius: var(--radius-control);
     height: 8px;
     overflow: hidden;
 }
 .stats-progress-fill {
     background: var(--color-accent);
     height: 100%;
-    border-radius: 4px;
+    border-radius: var(--radius-control);
     min-width: 4px;
     transition: width 0.2s;
 }
@@ -2030,7 +2041,7 @@ summary {
 .feed-filter-link {
     padding: var(--space-1) var(--space-3);
     border: 1px solid var(--color-border);
-    border-radius: 4px;
+    border-radius: var(--radius-control);
     text-decoration: none;
     font-family: var(--font-ui);
     font-size: var(--font-sm);
@@ -2161,4 +2172,15 @@ summary {
 
 .entry-item-actions .entry-action-btn:hover {
     color: var(--color-accent);
+}
+
+/* Mobile: align load-more / mark-above wrappers with .entry-item, #entries-count
+   et al. (which drop from space-5 to space-4 horizontal padding at this width).
+   Placed here so it follows the base .load-more-form rule in source order. */
+@media (max-width: 1024px) {
+    .load-more-form,
+    .mark-above-form {
+        padding-left: var(--space-4);
+        padding-right: var(--space-4);
+    }
 }
