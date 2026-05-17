@@ -23,7 +23,7 @@
                                 {% if u.disabled %}<span class="error-text" data-testid="admin-user-disabled">disabled</span>
                                 {% else %}<span class="success-text">active</span>{% endif %}
                             </td>
-                            <td data-label="Created">{{ u.created_at }}</td>
+                            <td data-label="Created"><time datetime="{{ u.created_at_iso }}" data-local-text>{{ u.created_at }}</time></td>
                             <td class="actions">
                                 {% if u.is_self %}
                                     <span class="muted">(you)</span>

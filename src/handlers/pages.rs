@@ -608,6 +608,7 @@ pub async fn admin_page(
                 role: u.role.as_str().to_string(),
                 disabled,
                 created_at: u.created_at.format("%Y-%m-%d").to_string(),
+                created_at_iso: u.created_at.to_rfc3339(),
                 is_self: u.id == effective_admin_id || u.id == original_admin_id,
             }
         })
@@ -695,11 +696,13 @@ pub async fn user_settings_page(
         .created_at
         .format("%Y-%m-%d %H:%M:%S")
         .to_string();
+    let created_at_iso = auth_user.user.created_at.to_rfc3339();
     let session_created_at = auth_user
         .session
         .created_at
         .format("%Y-%m-%d %H:%M:%S")
         .to_string();
+    let session_created_at_iso = auth_user.session.created_at.to_rfc3339();
     let username = auth_user.user.username.clone();
 
     (
@@ -711,7 +714,9 @@ pub async fn user_settings_page(
             username,
             role,
             created_at,
+            created_at_iso,
             session_created_at,
+            session_created_at_iso,
             public_base_url,
             theme,
             entries_per_page,
@@ -1590,11 +1595,14 @@ pub async fn search_page(
                         if !visible_hit {
                             continue;
                         }
+                        let (published_relative, published_at_iso) =
+                            format_relative_time(e.entry.published_at);
                         visible.push(SearchResultView {
                             entry_id: e.entry.id,
                             title_html: highlight_html(&title, &q_for_filter),
                             feed_title: e.feed_title.clone().unwrap_or_else(|| e.feed_url.clone()),
-                            published_relative: format_relative_time(e.entry.published_at).0,
+                            published_relative,
+                            published_at_iso,
                             snippet_html: highlight_html(&snippet, &q_for_filter),
                         });
                         if visible.len() >= TARGET {
@@ -2098,7 +2106,9 @@ pub struct UserSettingsTemplate {
     pub username: String,
     pub role: String,
     pub created_at: String,
+    pub created_at_iso: String,
     pub session_created_at: String,
+    pub session_created_at_iso: String,
     pub public_base_url: String,
     pub theme: Option<String>,
     pub entries_per_page: i64,
@@ -2124,6 +2134,7 @@ pub struct AdminUserView {
     pub role: String,
     pub disabled: bool,
     pub created_at: String,
+    pub created_at_iso: String,
     pub is_self: bool,
 }
 
@@ -2507,6 +2518,10 @@ pub struct SearchResultView {
     pub title_html: String,
     pub feed_title: String,
     pub published_relative: String,
+    /// RFC 3339 UTC string when published_at is known, otherwise empty.
+    /// Emitted as the `datetime` attribute on the result row's `<time>`
+    /// element so the client-side tooltip can format to browser TZ.
+    pub published_at_iso: String,
     pub snippet_html: String,
 }
 
