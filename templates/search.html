@@ -42,7 +42,9 @@
                                 <div class="search-result-meta">
                                     <span class="muted">{{ r.feed_title }}</span>
                                     {% if !r.published_relative.is_empty() %}
-                                        <span class="muted">&middot; {{ r.published_relative }}</span>
+                                        <span class="muted">&middot;
+                                            {% if !r.published_at_iso.is_empty() %}<time datetime="{{ r.published_at_iso }}">{{ r.published_relative }}</time>{% else %}{{ r.published_relative }}{% endif %}
+                                        </span>
                                     {% endif %}
                                 </div>
                                 {% if !r.snippet_html.is_empty() %}

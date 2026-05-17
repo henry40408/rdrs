@@ -1590,11 +1590,14 @@ pub async fn search_page(
                         if !visible_hit {
                             continue;
                         }
+                        let (published_relative, published_at_iso) =
+                            format_relative_time(e.entry.published_at);
                         visible.push(SearchResultView {
                             entry_id: e.entry.id,
                             title_html: highlight_html(&title, &q_for_filter),
                             feed_title: e.feed_title.clone().unwrap_or_else(|| e.feed_url.clone()),
-                            published_relative: format_relative_time(e.entry.published_at).0,
+                            published_relative,
+                            published_at_iso,
                             snippet_html: highlight_html(&snippet, &q_for_filter),
                         });
                         if visible.len() >= TARGET {
@@ -2507,6 +2510,10 @@ pub struct SearchResultView {
     pub title_html: String,
     pub feed_title: String,
     pub published_relative: String,
+    /// RFC 3339 UTC string when published_at is known, otherwise empty.
+    /// Emitted as the `datetime` attribute on the result row's `<time>`
+    /// element so the client-side tooltip can format to browser TZ.
+    pub published_at_iso: String,
     pub snippet_html: String,
 }
 

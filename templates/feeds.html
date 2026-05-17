@@ -80,9 +80,9 @@
                                             <span title="{{ feed.url }}">{{ feed.title }}</span>
                                         </div>
                                         <div class="feed-health-info">
-                                            <span class="muted" title="{{ feed.fetched_at_datetime }}">Fetched: {{ feed.fetched_at_relative }}</span>
+                                            <span class="muted">Fetched: <time datetime="{{ feed.fetched_at_datetime }}">{{ feed.fetched_at_relative }}</time></span>
                                             &middot;
-                                            <span class="{{ feed.freshness_class }}" title="{{ feed.feed_updated_at_datetime }}">Updated: {{ feed.feed_updated_at_relative }}</span>
+                                            <span class="{{ feed.freshness_class }}">Updated: <time datetime="{{ feed.feed_updated_at_datetime }}">{{ feed.feed_updated_at_relative }}</time></span>
                                         </div>
                                     </div>
                                 </td>
