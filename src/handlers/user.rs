@@ -213,7 +213,16 @@ pub async fn read_chrome_data(
         .await
         .unwrap_or_default();
 
-    state.sidebar_cache.insert(user_id, fresh.clone());
+    // Skip caching the "completely empty" state (no categories, no unread).
+    // Real new accounts pay a trivial extra query per page load until they
+    // add their first feed; cache populates normally after that. The
+    // benefit: the empty state is the most likely-to-go-stale entry —
+    // anything added via a path that bypasses our handler bust hooks (e.g.
+    // E2E tests that seed straight into SQLite) would otherwise be hidden
+    // behind a stale empty cache for up to the 60 s TTL.
+    if !fresh.categories.is_empty() || fresh.total_unread > 0 {
+        state.sidebar_cache.insert(user_id, fresh.clone());
+    }
 
     ChromeData {
         theme: fresh.theme,
