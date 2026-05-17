@@ -239,6 +239,18 @@ function installSidebarPolling() {
 }
 installSidebarPolling();
 
+// After every successful partial swap (mark-read, mark-unread, mark-all,
+// batch read, OPML import surface, etc.), ask <rdrs-sidebar> to refetch.
+// `rdrs:swap-complete` fires from performSwap() on both single- and
+// multi-target swaps. Refreshing on every swap over-fetches slightly —
+// star/save/fetch-full-content don't change sidebar state — but the
+// server-side per-user sidebar cache means each /api/sidebar call costs
+// roughly nothing on a hit, so a single broad hook beats a fragile
+// per-action allowlist.
+document.addEventListener('rdrs:swap-complete', () => {
+    document.querySelector('rdrs-sidebar')?.refresh();
+});
+
 // Single source of truth for the in-app shortcut help. Pages don't
 // register additional entries — every shortcut the keyboard handler
 // recognizes is listed here, grouped by where it applies.
