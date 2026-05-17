@@ -91,7 +91,7 @@ class RdrsKbHelp extends HTMLElement {
                 }
                 .shortcut-key {
                     flex-shrink: 0;
-                    min-width: 5.5rem;
+                    min-width: 7rem;
                     text-align: right;
                 }
                 .shortcut-key kbd {
@@ -123,7 +123,7 @@ class RdrsKbHelp extends HTMLElement {
                         columns: 1;
                     }
                     .shortcut-key {
-                        min-width: 4.5rem;
+                        min-width: 7rem;
                     }
                 }
             </style>
