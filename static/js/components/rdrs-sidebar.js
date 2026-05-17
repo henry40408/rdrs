@@ -192,7 +192,6 @@ class RdrsSidebar extends HTMLElement {
             </a>
         </div>
         ${categoriesHtml}
-        <div class="sidebar-divider"></div>
         <div class="sidebar-section">
             <a href="/feeds" class="sidebar-item${isActive('feeds')}" data-testid="nav-feeds">
                 <span class="sidebar-item-icon">&#x1F4E1;&#xFE0F;</span>
@@ -203,7 +202,6 @@ class RdrsSidebar extends HTMLElement {
                 <span>Categories</span>
             </a>
         </div>
-        <div class="sidebar-divider"></div>
         <div class="sidebar-section">
             <a href="/search" class="sidebar-item${isActive('search')}" data-testid="nav-search">
                 <span class="sidebar-item-icon">&#x1F50D;&#xFE0F;</span>
