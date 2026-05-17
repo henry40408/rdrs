@@ -22,3 +22,9 @@ Feature: Keyboard shortcut overhaul (toggle read, mark all, rebinds)
     And I confirm the next dialog
     And I press the "K" key
     Then I see 0 entries in the entry list
+
+  Scenario: o marks every loaded entry above as read (on feed page)
+    When I open the entries page for feed "Shortcut Feed"
+    And I confirm the next dialog
+    And I press the "o" key
+    Then I see 0 entries in the entry list
