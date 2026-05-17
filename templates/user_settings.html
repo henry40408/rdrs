@@ -16,8 +16,8 @@
                 <table>
                     <tr><th class="settings-th">Username</th><td>{{ username }}</td></tr>
                     <tr><th class="settings-th">Role</th><td>{{ role }}</td></tr>
-                    <tr><th class="settings-th">Registered</th><td>{{ created_at }}</td></tr>
-                    <tr><th class="settings-th">Logged In</th><td>{{ session_created_at }}</td></tr>
+                    <tr><th class="settings-th">Registered</th><td><time datetime="{{ created_at_iso }}" data-local-text>{{ created_at }}</time></td></tr>
+                    <tr><th class="settings-th">Logged In</th><td><time datetime="{{ session_created_at_iso }}" data-local-text>{{ session_created_at }}</time></td></tr>
                 </table>
 
                 <h2>RSS Client (Google Reader API)</h2>

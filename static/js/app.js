@@ -256,6 +256,12 @@ document.addEventListener('rdrs:swap-complete', () => {
 // server emits UTC and only the client knows the user's TZ, so the
 // tooltip has to happen in JS. Runs on initial load and after every
 // swap so server-rendered fragments inserted later also pick it up.
+//
+// Elements that also carry `data-local-text` (currently the user-
+// settings + admin "registered / logged in / created" cells, which
+// display absolute times rather than a relative "3h ago") have their
+// textContent replaced with the same local format — the server-rendered
+// UTC string remains as a no-JS fallback.
 function applyTimeTooltips(root) {
     const scope = root || document;
     for (const el of scope.querySelectorAll('time[datetime]')) {
@@ -263,7 +269,11 @@ function applyTimeTooltips(root) {
         if (!iso) continue;
         const d = new Date(iso);
         if (isNaN(d.getTime())) continue;
-        el.title = d.toLocaleString();
+        const local = d.toLocaleString();
+        el.title = local;
+        if (el.hasAttribute('data-local-text')) {
+            el.textContent = local;
+        }
     }
 }
 applyTimeTooltips();

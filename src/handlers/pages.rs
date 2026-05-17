@@ -608,6 +608,7 @@ pub async fn admin_page(
                 role: u.role.as_str().to_string(),
                 disabled,
                 created_at: u.created_at.format("%Y-%m-%d").to_string(),
+                created_at_iso: u.created_at.to_rfc3339(),
                 is_self: u.id == effective_admin_id || u.id == original_admin_id,
             }
         })
@@ -695,11 +696,13 @@ pub async fn user_settings_page(
         .created_at
         .format("%Y-%m-%d %H:%M:%S")
         .to_string();
+    let created_at_iso = auth_user.user.created_at.to_rfc3339();
     let session_created_at = auth_user
         .session
         .created_at
         .format("%Y-%m-%d %H:%M:%S")
         .to_string();
+    let session_created_at_iso = auth_user.session.created_at.to_rfc3339();
     let username = auth_user.user.username.clone();
 
     (
@@ -711,7 +714,9 @@ pub async fn user_settings_page(
             username,
             role,
             created_at,
+            created_at_iso,
             session_created_at,
+            session_created_at_iso,
             public_base_url,
             theme,
             entries_per_page,
@@ -2101,7 +2106,9 @@ pub struct UserSettingsTemplate {
     pub username: String,
     pub role: String,
     pub created_at: String,
+    pub created_at_iso: String,
     pub session_created_at: String,
+    pub session_created_at_iso: String,
     pub public_base_url: String,
     pub theme: Option<String>,
     pub entries_per_page: i64,
@@ -2127,6 +2134,7 @@ pub struct AdminUserView {
     pub role: String,
     pub disabled: bool,
     pub created_at: String,
+    pub created_at_iso: String,
     pub is_self: bool,
 }
 
