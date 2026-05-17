@@ -83,6 +83,16 @@ impl DbPool {
             debug!("Read connection query_only mode enabled");
         }
 
+        // Tuning pragmas applied to both connections. synchronous=NORMAL is
+        // safe under WAL (durability bound to checkpoints instead of every
+        // commit) and skips a per-txn fsync; cache_size=-20000 reserves
+        // 20 MiB of page cache per connection; mmap_size=128 MiB lets reads
+        // bypass the syscall path for hot pages; temp_store=MEMORY keeps
+        // sorts/temp indexes in RAM; busy_timeout=5s prevents instant SQLITE_BUSY
+        // when the actor briefly contends with a checkpoint.
+        apply_tuning_pragmas(&write_conn, "write");
+        apply_tuning_pragmas(&read_conn, "read");
+
         // Write connection channels
         let (user_tx, user_rx) = mpsc::channel::<DbMessage>(256);
         let (bg_tx, bg_rx) = mpsc::channel::<DbMessage>(64);
@@ -284,6 +294,25 @@ fn process_message(conn: &Connection, msg: DbMessage) {
     let result = (msg.work)(conn);
     // If the receiver is dropped, we just discard the result
     let _ = msg.respond.send(result);
+}
+
+const TUNING_PRAGMAS: &str = "\
+    PRAGMA synchronous=NORMAL;\
+    PRAGMA cache_size=-20000;\
+    PRAGMA mmap_size=134217728;\
+    PRAGMA temp_store=MEMORY;\
+    PRAGMA busy_timeout=5000;\
+";
+
+fn apply_tuning_pragmas(conn: &Connection, label: &str) {
+    if let Err(e) = conn.execute_batch(TUNING_PRAGMAS) {
+        error!(
+            "Failed to apply tuning pragmas on {} connection: {}",
+            label, e
+        );
+    } else {
+        debug!("SQLite tuning pragmas applied on {} connection", label);
+    }
 }
 
 impl fmt::Debug for DbPool {
@@ -522,6 +551,56 @@ mod tests {
         // Actor should exit after shutdown
         let join_result = handle.await;
         assert!(join_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_tuning_pragmas_applied_to_both_connections() {
+        // Use file-backed connections so mmap_size is honored — memory dbs
+        // report 0 for mmap_size regardless of what's set.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        let write_conn = Connection::open(&path).unwrap();
+        let read_conn = Connection::open(&path).unwrap();
+
+        let (pool, _handle) = DbPool::new(write_conn, read_conn);
+
+        fn read_pragmas(conn: &Connection) -> (i64, i64, i64, i64, i64) {
+            let sync: i64 = conn
+                .pragma_query_value(None, "synchronous", |r| r.get(0))
+                .unwrap();
+            let cache: i64 = conn
+                .pragma_query_value(None, "cache_size", |r| r.get(0))
+                .unwrap();
+            let mmap: i64 = conn
+                .pragma_query_value(None, "mmap_size", |r| r.get(0))
+                .unwrap();
+            let temp: i64 = conn
+                .pragma_query_value(None, "temp_store", |r| r.get(0))
+                .unwrap();
+            let busy: i64 = conn
+                .pragma_query_value(None, "busy_timeout", |r| r.get(0))
+                .unwrap();
+            (sync, cache, mmap, temp, busy)
+        }
+
+        fn assert_tuned(label: &str, values: (i64, i64, i64, i64, i64)) {
+            let (sync, cache, mmap, temp, busy) = values;
+            assert_eq!(
+                sync, 1,
+                "synchronous should be NORMAL (1) on {} conn",
+                label
+            );
+            assert_eq!(cache, -20000, "cache_size on {} conn", label);
+            assert_eq!(mmap, 134217728, "mmap_size on {} conn", label);
+            assert_eq!(temp, 2, "temp_store should be MEMORY (2) on {} conn", label);
+            assert_eq!(busy, 5000, "busy_timeout on {} conn", label);
+        }
+
+        let write_values = pool.user(read_pragmas).await.unwrap();
+        assert_tuned("write", write_values);
+
+        let read_values = pool.read_user(read_pragmas).await.unwrap();
+        assert_tuned("read", read_values);
     }
 
     #[tokio::test]
