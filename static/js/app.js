@@ -245,24 +245,29 @@ installSidebarPolling();
 const KB_SHORTCUTS = [
     { group: 'Entry list', key: 'j', desc: 'Next entry' },
     { group: 'Entry list', key: 'k', desc: 'Previous entry' },
-    { group: 'Entry list', key: 'Enter / o', desc: 'Open selected entry' },
+    { group: 'Entry list', key: 'Enter', desc: 'Open selected entry' },
     { group: 'Entry list', key: 's', desc: 'Toggle star' },
-    { group: 'Entry list', key: 'Space', desc: 'Scroll reading pane (toggle read when closed)' },
-    { group: 'Entry list', key: 'Shift+Space', desc: 'Scroll reading pane up' },
-    { group: 'Entry actions', key: 'v', desc: 'View original (new tab)' },
-    { group: 'Entry actions', key: 'u', desc: 'Mark unread' },
+    { group: 'Entry list', key: 'u / r', desc: 'Toggle read / unread' },
+    { group: 'Entry list', key: 'Space', desc: 'Scroll reading pane (toggle read when pane is empty)' },
+    { group: 'Entry list', key: 'Shift+Space', desc: 'Scroll reading pane up (when pane is open)' },
+    { group: 'Entry actions', key: 'b', desc: 'Open original in new tab' },
+    { group: 'Entry actions', key: 'Shift+B', desc: 'Save (Linkding)' },
     { group: 'Entry actions', key: 'Shift+F', desc: 'Fetch full content (toggle with original)' },
-    { group: 'Entry actions', key: 'b', desc: 'Save (Linkding)' },
-    { group: 'Entry actions', key: 'm', desc: 'Summarize (Kagi)' },
+    { group: 'Entry actions', key: 'Shift+M', desc: 'Summarize (Kagi, when pane is open)' },
+    { group: 'Batch read', key: 'o', desc: 'Mark above as read' },
+    { group: 'Batch read', key: 'Shift+K', desc: 'Mark all as read (entire list)' },
     { group: 'List filters', key: '1', desc: 'All' },
     { group: 'List filters', key: '2', desc: 'Unread' },
     { group: 'List filters', key: '3', desc: 'Read' },
     { group: 'List filters', key: '4', desc: 'Starred' },
-    { group: 'List filters', key: 'A', desc: 'Mark above as read' },
     { group: 'Navigation', key: 'f', desc: 'Go to selected entry’s feed' },
     { group: 'Navigation', key: 'c', desc: 'Go to selected entry’s category (parent category as fallback)' },
     { group: 'Navigation', key: 'x', desc: 'Go to Unread (on category page)' },
-    { group: 'Help', key: 'Esc', desc: 'Close reading pane' },
+    { group: 'Navigation', key: '[', desc: 'Previous category (on category page)' },
+    { group: 'Navigation', key: ']', desc: 'Next category (on category page)' },
+    { group: 'Navigation', key: 'Shift+[', desc: 'Previous category with unread' },
+    { group: 'Navigation', key: 'Shift+]', desc: 'Next category with unread' },
+    { group: 'Help', key: 'Esc', desc: 'Close reading pane (when pane is open)' },
     { group: 'Help', key: '?', desc: 'Toggle this help' },
 ];
 
@@ -348,8 +353,7 @@ function installEntriesKeyboard() {
         switch (e.key) {
             case 'j': e.preventDefault(); move(1); break;
             case 'k': e.preventDefault(); move(-1); break;
-            case 'Enter':
-            case 'o': {
+            case 'Enter': {
                 const current = activeRow();
                 if (!current) return;
                 e.preventDefault();
@@ -384,7 +388,7 @@ function installEntriesKeyboard() {
                 window.location.href = options[idx].value;
                 break;
             }
-            case 'A': {
+            case 'o': {
                 // Mark Above as Read — only fires on pages that render
                 // the button (feed/category). Delegates to the button's
                 // click handler so the confirm + fetch flow lives in
@@ -393,6 +397,18 @@ function installEntriesKeyboard() {
                 if (!btn) return;
                 e.preventDefault();
                 btn.click();
+                break;
+            }
+            case 'K': {
+                // Mark All as Read — drives the list-pane "Mark as Read"
+                // dropdown's "All entries" option so the confirm + POST
+                // flow lives in one place. Only fires on pages that render
+                // the dropdown (feed / category / inbox).
+                const select = document.getElementById('mark-read-age');
+                if (!select) return;
+                e.preventDefault();
+                select.value = 'all';
+                select.dispatchEvent(new Event('change'));
                 break;
             }
             case 'c': {
@@ -425,25 +441,17 @@ function installEntriesKeyboard() {
                 window.location.href = link.getAttribute('href');
                 break;
             }
-            case 'v': {
-                // View Original — open the row's external link in a new
-                // tab. The row only renders the `<a target="_blank">`
-                // when `r.link` is Some, so absence = no-op.
+            case 'u':
+            case 'r': {
+                // Toggle read/unread on the active row. Mirrors the `s`
+                // (toggle star) and Space-when-pane-empty patterns —
+                // the row form's action is state-dependent (`/read` vs
+                // `/unread`), so matching either flips the entry in one
+                // binding regardless of current state.
                 const current = activeRow();
-                const link = current?.querySelector('a[target="_blank"]');
-                if (!link) return;
-                e.preventDefault();
-                link.click();
-                break;
-            }
-            case 'u': {
-                // Force Mark-Unread via the reading pane's dedicated form
-                // (fixed action — not state-dependent). Only fires when
-                // an entry is loaded in the pane.
-                const form = paneForm('/unread');
-                if (!form) return;
-                e.preventDefault();
-                form.requestSubmit();
+                if (!current) return;
+                const form = current.querySelector('form[action$="/read"], form[action$="/unread"]');
+                if (form) { e.preventDefault(); form.requestSubmit(); }
                 break;
             }
             case 'F': {
@@ -460,6 +468,17 @@ function installEntriesKeyboard() {
                 break;
             }
             case 'b': {
+                // Open Original — open the row's external link in a new
+                // tab. The row only renders the `<a target="_blank">`
+                // when `r.link` is Some, so absence = no-op.
+                const current = activeRow();
+                const link = current?.querySelector('a[target="_blank"]');
+                if (!link) return;
+                e.preventDefault();
+                link.click();
+                break;
+            }
+            case 'B': {
                 // Save (Linkding etc). Form is rendered only when the
                 // user has a save target configured — absent = no-op.
                 const form = paneForm('/save');
@@ -468,7 +487,7 @@ function installEntriesKeyboard() {
                 form.requestSubmit();
                 break;
             }
-            case 'm': {
+            case 'M': {
                 // Summarize via Kagi. Form is rendered only when Kagi is
                 // configured (or a summary is in-flight, in which case
                 // the button is disabled and paneForm() returns null).
@@ -483,6 +502,47 @@ function installEntriesKeyboard() {
                 if (!window.location.pathname.startsWith('/categories/')) return;
                 e.preventDefault();
                 window.location.href = '/';
+                break;
+            }
+            case '[':
+            case ']':
+            case '{':
+            case '}': {
+                // Prev/Next category nav — only on /categories/{id}/entries
+                // where "current category" is unambiguous. `[`/`]` walk the
+                // full sidebar list (with wrap); `Shift+[`/`Shift+]` (which
+                // come through as `{`/`}` on US layout) skip categories with
+                // zero unread. Decide shift-vs-not from the resulting
+                // character (`{`/`}`) rather than `e.shiftKey` so test
+                // harnesses that synthesize the character without the
+                // modifier still hit the unread-skipping branch.
+                const m = window.location.pathname.match(/^\/categories\/(\d+)\/entries/);
+                if (!m) return;
+                const sb = document.querySelector('rdrs-sidebar');
+                const cats = sb?._data?.categories || [];
+                if (cats.length === 0) return;
+                const currentId = parseInt(m[1], 10);
+                const idx = cats.findIndex(c => c.id === currentId);
+                if (idx === -1) return;
+                const len = cats.length;
+                const forward = e.key === ']' || e.key === '}';
+                const step = forward ? 1 : -1;
+                const unreadOnly = e.key === '{' || e.key === '}';
+                let target = null;
+                if (unreadOnly) {
+                    for (let i = 1; i <= len; i++) {
+                        const probe = cats[((idx + i * step) % len + len) % len];
+                        if (probe.unread_count > 0 && probe.id !== currentId) {
+                            target = probe;
+                            break;
+                        }
+                    }
+                } else if (len > 1) {
+                    target = cats[((idx + step) % len + len) % len];
+                }
+                if (!target) return;
+                e.preventDefault();
+                window.location.href = `/categories/${target.id}/entries`;
                 break;
             }
             case 'Escape': {

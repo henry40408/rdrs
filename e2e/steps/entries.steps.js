@@ -53,6 +53,23 @@ Given("the entry titled {string} has a summary", async ({ seed, currentUser }, t
   seed.insertSummary(id, userId);
 });
 
+Given("all entries in category {string} are marked read", async ({ seed, currentUser }, name) => {
+  const userId = seed.getUserId(currentUser.username);
+  const db = new Database(seed.dbPath);
+  try {
+    db.prepare(
+      `UPDATE entry SET read_at = datetime('now')
+       WHERE feed_id IN (
+         SELECT f.id FROM feed f
+         JOIN category c ON f.category_id = c.id
+         WHERE c.user_id = ? AND c.name = ?
+       )`
+    ).run(userId, name);
+  } finally {
+    db.close();
+  }
+});
+
 Given("the feed has {int} entries", async ({ seed, currentUser }, count) => {
   const userId = seed.getUserId(currentUser.username);
   const db = new Database(seed.dbPath);
@@ -142,6 +159,13 @@ When("I press the {string} key", async ({ page }, key) => {
   await page.keyboard.press(key);
 });
 
+When("I confirm the next dialog", async ({ page }) => {
+  // Pre-arms a one-shot dialog handler so the next window.confirm/alert
+  // auto-accepts. Used by shortcuts that go through a confirmation prompt
+  // (e.g. Shift+K → "Mark all as read?") — register BEFORE the keystroke.
+  page.once("dialog", (dialog) => dialog.accept());
+});
+
 When("I click the {string} button", async ({ page }, label) => {
   await page.getByRole("button", { name: label }).click();
 });
@@ -198,6 +222,32 @@ Then("the reading pane shows the original feed body", async ({ page }) => {
 
 Then("the reading pane shows the original entry body", async ({ page }) => {
   await expect(page.getByTestId("reading-pane-body")).toHaveAttribute("data-mode", "original");
+});
+
+When("the sidebar shows no unread for category {string}", async ({ page }, name) => {
+  // <rdrs-sidebar> hydrates from the SSR bootstrap on mount and then
+  // re-fetches /api/sidebar asynchronously to refresh badges. Tests that
+  // depend on the latest unread counts (e.g. Shift+] skip-empty nav) wait
+  // here until the visible badge for `name` is gone, which means both
+  // _data and the DOM reflect the freshest payload.
+  const link = page.locator(`rdrs-sidebar a[href^="/categories/"]`).filter({ hasText: name });
+  await expect(link.locator('.sidebar-badge')).toHaveCount(0);
+});
+
+Then("I am on the entries page for category {string}", async ({ page, seed, currentUser, serverUrl }, name) => {
+  const userId = seed.getUserId(currentUser.username);
+  const db = new Database(seed.dbPath);
+  let categoryId;
+  try {
+    const row = db
+      .prepare(`SELECT id FROM category WHERE user_id = ? AND name = ?`)
+      .get(userId, name);
+    if (!row) throw new Error(`Category '${name}' not found`);
+    categoryId = row.id;
+  } finally {
+    db.close();
+  }
+  await page.waitForURL(`${serverUrl}/categories/${categoryId}/entries`);
 });
 
 Then("the entry row for {string} shows as read", async ({ page }, title) => {
