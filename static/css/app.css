@@ -513,6 +513,14 @@ code {
     align-items: center;
 }
 
+/* Mid-dot separators only when the author span is present — the author is
+   the only non-first <span> child; the time element is a <time>. Without
+   an author, feed + time fall back to plain whitespace separation. */
+.reading-pane-meta:has(> span:not(:first-child)) > *:not(:first-child)::before {
+    content: "·";
+    margin-right: var(--space-2);
+}
+
 .reading-pane-actions {
     display: flex;
     flex-wrap: wrap;
