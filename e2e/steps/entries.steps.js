@@ -234,6 +234,59 @@ When("the sidebar shows no unread for category {string}", async ({ page }, name)
   await expect(link.locator('.sidebar-badge')).toHaveCount(0);
 });
 
+Then("the reading pane is empty", async ({ page }) => {
+  await expect(page.locator("#reading-pane.reading-pane-empty")).toBeAttached();
+});
+
+Then("I am on the unread inbox", async ({ page, serverUrl }) => {
+  await page.waitForURL(`${serverUrl}/`);
+});
+
+Then("I am on the entries page for feed {string}", async ({ page, seed, currentUser, serverUrl }, feedTitle) => {
+  const userId = seed.getUserId(currentUser.username);
+  const db = new Database(seed.dbPath);
+  let feedId;
+  try {
+    const row = db
+      .prepare(`SELECT f.id FROM feed f JOIN category c ON f.category_id = c.id WHERE c.user_id = ? AND f.title = ?`)
+      .get(userId, feedTitle);
+    if (!row) throw new Error(`Feed '${feedTitle}' not found`);
+    feedId = row.id;
+  } finally {
+    db.close();
+  }
+  await page.waitForURL(`${serverUrl}/feeds/${feedId}/entries`);
+});
+
+Then("I am on the Read filter for feed {string}", async ({ page, seed, currentUser, serverUrl }, feedTitle) => {
+  const userId = seed.getUserId(currentUser.username);
+  const db = new Database(seed.dbPath);
+  let feedId;
+  try {
+    const row = db
+      .prepare(`SELECT f.id FROM feed f JOIN category c ON f.category_id = c.id WHERE c.user_id = ? AND f.title = ?`)
+      .get(userId, feedTitle);
+    if (!row) throw new Error(`Feed '${feedTitle}' not found`);
+    feedId = row.id;
+  } finally {
+    db.close();
+  }
+  await page.waitForURL(`${serverUrl}/feeds/${feedId}/entries?status=read`);
+});
+
+Then("pressing the {string} key opens a new tab at {string}", async ({ page }, key, urlSubstring) => {
+  // Popup capture must be armed BEFORE the keystroke that triggers it —
+  // waitForEvent is a one-shot listener that misses already-fired events.
+  await page.click("body");
+  const popupPromise = page.context().waitForEvent("page", { timeout: 5000 });
+  await page.keyboard.press(key);
+  const popup = await popupPromise;
+  // popup.url() reflects the navigation target as soon as the popup event
+  // fires; no need to wait for the (external) URL to actually load.
+  expect(popup.url()).toContain(urlSubstring);
+  await popup.close().catch(() => {});
+});
+
 Then("I am on the entries page for category {string}", async ({ page, seed, currentUser, serverUrl }, name) => {
   const userId = seed.getUserId(currentUser.username);
   const db = new Database(seed.dbPath);
