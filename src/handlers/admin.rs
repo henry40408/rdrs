@@ -161,7 +161,10 @@ pub async fn delete_user_form(
         .await;
 
     match result {
-        Ok(Ok(())) => FlashRedirect::success("/admin", "User deleted."),
+        Ok(Ok(())) => {
+            state.sidebar_cache.bust(user_id);
+            FlashRedirect::success("/admin", "User deleted.")
+        }
         _ => FlashRedirect::error("/admin", "Failed to delete user."),
     }
 }

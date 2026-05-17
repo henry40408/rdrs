@@ -164,6 +164,7 @@ pub async fn edit_tag(
         })
         .await??;
 
+    state.sidebar_cache.bust(user_id);
     Ok("OK".to_string())
 }
 
@@ -230,6 +231,7 @@ pub async fn mark_all_as_read(
         })
         .await??;
 
+    state.sidebar_cache.bust(user_id);
     Ok("OK".to_string())
 }
 
@@ -274,6 +276,7 @@ pub async fn disable_tag(
         })
         .await??;
 
+    state.sidebar_cache.bust(user_id);
     Ok("OK".to_string())
 }
 
@@ -341,5 +344,6 @@ pub async fn rename_tag(
         })
         .await??;
 
+    state.sidebar_cache.bust(user_id);
     Ok("OK".to_string())
 }

@@ -53,6 +53,7 @@ fn create_test_app(config: Config) -> TestApp {
         webauthn: Arc::new(webauthn),
         summary_cache,
         summary_tx,
+        sidebar_cache: Arc::new(services::SidebarCache::default()),
     };
 
     let app = create_router(state);

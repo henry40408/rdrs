@@ -51,6 +51,7 @@ fn create_test_server(config: Config) -> TestServer {
         webauthn: Arc::new(webauthn),
         summary_cache,
         summary_tx,
+        sidebar_cache: Arc::new(services::SidebarCache::default()),
     };
 
     TestServer::builder().build(create_router(state))

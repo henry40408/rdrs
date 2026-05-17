@@ -66,6 +66,7 @@ async fn main() {
         webauthn: Arc::new(webauthn),
         summary_cache,
         summary_tx,
+        sidebar_cache: Arc::new(services::SidebarCache::default()),
     };
 
     // Start background sync task
