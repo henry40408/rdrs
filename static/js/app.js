@@ -120,10 +120,12 @@ async function performSwap(url, init, defaultTarget) {
     const text = await response.text();
     const parsed = new DOMParser().parseFromString(text, 'text/html');
 
+    let swappedReadingPane = false;
     const templates = parsed.querySelectorAll('template[data-swap-target]');
     if (templates.length > 0) {
         for (const tpl of templates) {
             const sel = tpl.getAttribute('data-swap-target');
+            if (sel === '#reading-pane') swappedReadingPane = true;
             const dst = document.querySelector(sel);
             if (!dst) continue;
             const parent = dst.parentNode;
@@ -139,6 +141,7 @@ async function performSwap(url, init, defaultTarget) {
             }
             parent.removeChild(dst);
         }
+        if (swappedReadingPane) syncEntryParamFromSwapUrl(url);
         applyFlashTemplates(parsed);
         document.dispatchEvent(new CustomEvent('rdrs:swap-complete'));
         return;
@@ -149,8 +152,27 @@ async function performSwap(url, init, defaultTarget) {
     const incoming = parsed.body.firstElementChild;
     if (!incoming) return;
     dst.outerHTML = incoming.outerHTML;
+    if (defaultTarget === '#reading-pane') syncEntryParamFromSwapUrl(url);
     applyFlashTemplates(parsed);
     document.dispatchEvent(new CustomEvent('rdrs:swap-complete'));
+}
+
+// Mirror the entry id from a `#reading-pane` swap URL into the address-bar
+// `?entry={id}` query so a refresh / share / browser-back reproduces the
+// current pane state (the SSR list handlers consume `?entry=` via
+// `maybe_build_reading_pane`). `replaceState` (not `pushState`) — every
+// pane swap rewrites the same entry, never accumulates history entries.
+function syncEntryParamFromSwapUrl(swapUrl) {
+    const m = (swapUrl || '').match(/\/entries\/(\d+)(?:\/|$|\?)/);
+    if (!m) return;
+    setEntryParam(m[1]);
+}
+
+function setEntryParam(entryId) {
+    const u = new URL(window.location.href);
+    if (entryId == null) u.searchParams.delete('entry');
+    else u.searchParams.set('entry', String(entryId));
+    window.history.replaceState({}, '', u);
 }
 
 // Process `<template data-flash data-level="success|error|info|warning">message</template>`
@@ -596,6 +618,7 @@ function installEntriesKeyboard() {
                 e.preventDefault();
                 pane.classList.add('reading-pane-empty');
                 pane.innerHTML = '<p>Select an entry to read.</p>';
+                setEntryParam(null);
                 break;
             }
             case ' ': {

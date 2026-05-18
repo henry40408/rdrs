@@ -225,6 +225,45 @@ pub struct EntriesQuery {
     /// path-based modes). Any other value (or absence) is treated as
     /// "no filter" (show all).
     pub status: Option<String>,
+    /// Deep-link target: when present, the list handler pre-populates the
+    /// reading pane with this entry. Honored by every list page (unread,
+    /// /entries, read/starred/summarized, /feeds/{id}/entries,
+    /// /categories/{id}/entries). Read-only: does not mark the entry read
+    /// (use POST /entries/{id}/read for that). Silently ignored when the
+    /// entry doesn't exist or belongs to another user.
+    pub entry: Option<i64>,
+}
+
+/// Best-effort builder for the `?entry={id}` deep-link reading pane.
+///
+/// Looks up the entry, verifies ownership (`find_by_id_for_user` enforces
+/// the join on `user_id`), reads the save / Kagi flags, and renders a
+/// `ReadingPaneView`. Any failure (entry missing, wrong owner, DB / sanitize
+/// hiccup) returns `None` so the list page still renders with an empty
+/// pane — mirroring the page's normal "no entry selected" state.
+///
+/// Read-only by design: deep links do NOT mark the entry as read. The
+/// canonical mark-as-read path remains the entry-row click, which fetches
+/// `GET /entries/{id}/fragment` and runs the write transaction inside
+/// `entry_fragment`.
+async fn maybe_build_reading_pane(
+    state: &AppState,
+    user_id: i64,
+    entry_id: Option<i64>,
+) -> Option<ReadingPaneView> {
+    let entry_id = entry_id?;
+    let ewf = state
+        .db
+        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
+        .await
+        .ok()?
+        .ok()??;
+    let (has_save, has_kagi) = crate::handlers::entries::load_pane_action_flags(state, user_id)
+        .await
+        .ok()?;
+    crate::handlers::entries::build_reading_pane_view(state, user_id, &ewf, has_save, has_kagi)
+        .await
+        .ok()
 }
 
 /// Fragment template for the Load-More response.
@@ -543,6 +582,7 @@ pub async fn unread_page(
         0,
     )
     .await;
+    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
     (
         flash,
@@ -551,7 +591,7 @@ pub async fn unread_page(
             git_version: crate::GIT_VERSION,
             layout,
             entries,
-            reading_pane: None,
+            reading_pane,
             next_cursor,
             entries_layout: EntriesLayoutContext {
                 active: "unread",
@@ -1040,6 +1080,7 @@ pub async fn entries_page(
         0,
     )
     .await;
+    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
     (
         flash,
@@ -1048,7 +1089,7 @@ pub async fn entries_page(
             git_version: crate::GIT_VERSION,
             layout,
             entries,
-            reading_pane: None,
+            reading_pane,
             next_cursor,
             entries_layout: EntriesLayoutContext {
                 active: "all",
@@ -1191,6 +1232,7 @@ pub async fn read_entries_page(
         0,
     )
     .await;
+    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
     (
         flash,
@@ -1199,7 +1241,7 @@ pub async fn read_entries_page(
             git_version: crate::GIT_VERSION,
             layout,
             entries,
-            reading_pane: None,
+            reading_pane,
             next_cursor,
             entries_layout: EntriesLayoutContext {
                 active: "read",
@@ -1271,6 +1313,7 @@ pub async fn starred_entries_page(
         0,
     )
     .await;
+    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
     (
         flash,
@@ -1279,7 +1322,7 @@ pub async fn starred_entries_page(
             git_version: crate::GIT_VERSION,
             layout,
             entries,
-            reading_pane: None,
+            reading_pane,
             next_cursor,
             entries_layout: EntriesLayoutContext {
                 active: "starred",
@@ -1351,6 +1394,7 @@ pub async fn summarized_entries_page(
         0,
     )
     .await;
+    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
     (
         flash,
@@ -1359,7 +1403,7 @@ pub async fn summarized_entries_page(
             git_version: crate::GIT_VERSION,
             layout,
             entries,
-            reading_pane: None,
+            reading_pane,
             next_cursor,
             entries_layout: EntriesLayoutContext {
                 active: "summarized",
@@ -1491,12 +1535,14 @@ pub async fn category_entries_page(
         },
     ];
 
+    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
+
     let template = CategoryEntriesTemplate {
         title: category_name,
         git_version: crate::GIT_VERSION,
         layout,
         entries,
-        reading_pane: None,
+        reading_pane,
         next_cursor,
         entries_layout: EntriesLayoutContext {
             active: "",
@@ -1942,12 +1988,14 @@ pub async fn feed_entries_page(
         },
     ];
 
+    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
+
     let template = FeedEntriesTemplate {
         title: feed_title,
         git_version: crate::GIT_VERSION,
         layout,
         entries,
-        reading_pane: None,
+        reading_pane,
         next_cursor,
         entries_layout: EntriesLayoutContext {
             active: "",

@@ -171,6 +171,155 @@ async fn test_unread_page_while_masquerading() {
     assert_ne!(admin_id, user_id);
 }
 
+/// Seed a single category + feed + entry owned by `username`. Returns the
+/// entry id. Uses a unique category/feed name per call so tests that share
+/// the in-memory DB don't trip on each other.
+async fn seed_one_entry(db: &DbPool, username: &str, slug: &str) -> i64 {
+    let username = username.to_string();
+    let slug = slug.to_string();
+    db.user(move |conn| {
+        let user_id: i64 = conn
+            .query_row(
+                "SELECT id FROM user WHERE username = ?1",
+                rusqlite::params![username],
+                |row| row.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
+            rusqlite::params![user_id, format!("cat-{}", slug)],
+        )
+        .unwrap();
+        let cat_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                cat_id,
+                format!("https://example.com/{}.xml", slug),
+                format!("Feed {}", slug)
+            ],
+        )
+        .unwrap();
+        let feed_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO entry (feed_id, guid, title, link, content) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                feed_id,
+                format!("guid-{}", slug),
+                format!("Title for {}", slug),
+                format!("https://example.com/{}", slug),
+                format!("<p>Body for {}.</p>", slug)
+            ],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_unread_page_entry_query_populates_reading_pane() {
+    let app = create_test_app_named(default_test_config(), "test_unread_entry_query_ok");
+    setup_users(&app.db).await;
+    let entry_id = seed_one_entry(&app.db, "admin", "deep-link-ok").await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get(&format!("/?entry={}", entry_id)).await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    // Reading pane is rendered with the deep-linked entry, not the empty state.
+    assert!(
+        !body.contains("reading-pane-empty"),
+        "deep link must NOT render the empty reading pane"
+    );
+    assert!(
+        body.contains(r#"data-testid="reading-pane-title""#),
+        "deep link must render the populated reading pane"
+    );
+    assert!(
+        body.contains("Title for deep-link-ok"),
+        "reading pane must contain the seeded entry title; body was: {body}"
+    );
+    assert!(
+        body.contains("Body for deep-link-ok"),
+        "reading pane must contain the seeded entry body; body was: {body}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_unread_page_entry_query_invalid_id_falls_back_to_empty_pane() {
+    let app = create_test_app_named(default_test_config(), "test_unread_entry_query_invalid");
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    // No entries seeded, so id 99999 cannot resolve.
+    let response = app.server.get("/?entry=99999").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    // Invalid deep-link id must silently fall back to the empty pane —
+    // the list page itself must still render.
+    assert!(
+        body.contains("reading-pane-empty"),
+        "invalid entry id must fall back to the empty reading pane"
+    );
+    assert!(
+        !body.contains(r#"data-testid="reading-pane-title""#),
+        "invalid entry id must NOT render a populated pane"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_unread_page_entry_query_other_user_falls_back_to_empty_pane() {
+    let app = create_test_app_named(default_test_config(), "test_unread_entry_query_other_user");
+    setup_users(&app.db).await; // creates `admin` and `user`
+                                // Entry belongs to `user`; we log in as `admin`.
+    let entry_id = seed_one_entry(&app.db, "user", "cross-user").await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get(&format!("/?entry={}", entry_id)).await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    // Cross-tenant deep link must NOT leak the foreign entry into the pane.
+    assert!(
+        body.contains("reading-pane-empty"),
+        "cross-user entry id must fall back to the empty reading pane (no info disclosure)"
+    );
+    assert!(
+        !body.contains("Title for cross-user"),
+        "cross-user entry title must NOT appear in the response body"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_starred_entries_page_entry_query_populates_reading_pane() {
+    // The helper is shared, but exercise one of the non-unread routes too
+    // so the wiring on a second handler is covered.
+    let app = create_test_app_named(default_test_config(), "test_starred_entry_query_ok");
+    setup_users(&app.db).await;
+    let entry_id = seed_one_entry(&app.db, "admin", "starred-deep-link").await;
+    login(&app.server, "admin").await;
+
+    let response = app
+        .server
+        .get(&format!("/entries/starred?entry={}", entry_id))
+        .await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(
+        !body.contains("reading-pane-empty"),
+        "deep link on /entries/starred must NOT render the empty reading pane"
+    );
+    assert!(
+        body.contains("Title for starred-deep-link"),
+        "/entries/starred deep link must populate the reading pane; body was: {body}"
+    );
+}
+
 #[tokio::test]
 async fn test_admin_page_while_masquerading() {
     let app = create_test_app(default_test_config());
