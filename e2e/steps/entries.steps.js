@@ -238,6 +238,36 @@ Then("the reading pane is empty", async ({ page }) => {
   await expect(page.locator("#reading-pane.reading-pane-empty")).toBeAttached();
 });
 
+When("I reload the page", async ({ page }) => {
+  await page.reload();
+});
+
+When(
+  "I open the inbox deep-linked to entry titled {string}",
+  async ({ page, serverUrl, seed, currentUser }, title) => {
+    const id = entryIdByTitle(seed, currentUser, title);
+    await page.goto(`${serverUrl}/?entry=${id}`);
+  }
+);
+
+Then(
+  "the URL has the ?entry= parameter for {string}",
+  async ({ page, seed, currentUser }, title) => {
+    const id = entryIdByTitle(seed, currentUser, title);
+    // performSwap rewrites the URL via replaceState after a #reading-pane swap;
+    // wait until the address-bar `entry` query matches the clicked entry's id.
+    await expect
+      .poll(() => new URL(page.url()).searchParams.get("entry"))
+      .toBe(String(id));
+  }
+);
+
+Then("the URL has no ?entry= parameter", async ({ page }) => {
+  await expect
+    .poll(() => new URL(page.url()).searchParams.has("entry"))
+    .toBe(false);
+});
+
 Then("I am on the unread inbox", async ({ page, serverUrl }) => {
   await page.waitForURL(`${serverUrl}/`);
 });

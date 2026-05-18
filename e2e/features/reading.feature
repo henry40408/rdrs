@@ -72,3 +72,22 @@ Feature: Reading entries
     And I click the entry titled "Test Entry 1"
     And I click the "Fetch Full Content" button
     Then the reading pane shows the original feed body
+
+  Scenario: Clicking an entry syncs ?entry= into the URL and survives a reload
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    Then the URL has the ?entry= parameter for "Test Entry 1"
+    When I reload the page
+    Then the reading pane shows the title "Test Entry 1"
+
+  Scenario: Visiting /?entry={id} directly opens that entry's reading pane
+    When I open the inbox deep-linked to entry titled "Test Entry 2"
+    Then the reading pane shows the title "Test Entry 2"
+    And the reading pane shows the content "Content for test entry 2"
+
+  Scenario: Pressing Esc clears the reading pane and drops ?entry= from the URL
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    And I press the "Escape" key
+    Then the reading pane is empty
+    And the URL has no ?entry= parameter
