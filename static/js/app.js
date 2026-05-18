@@ -652,17 +652,20 @@ function installSummaryActions() {
     document.addEventListener('click', async (e) => {
         const copyBtn = e.target.closest('[data-summary-copy]');
         if (copyBtn) {
-            const pane = document.getElementById('reading-pane');
-            if (!pane) return;
-            const titleEl = pane.querySelector('.reading-pane-title');
-            const summaryEl = pane.querySelector('.rp-summary-content');
+            // Read from inside the summary box only, so what the user copies
+            // matches the visible content of the box (title + link + summary).
+            const box = copyBtn.closest('.summary-box');
+            if (!box) return;
+            const summaryEl = box.querySelector('.rp-summary-content');
             if (!summaryEl) return;
-            const title = (titleEl?.textContent || '').trim();
-            const link = titleEl?.querySelector('a')?.getAttribute('href') || '';
+            const title = (box.querySelector('[data-summary-title]')?.textContent || '').trim();
+            const link = (box.querySelector('[data-summary-link]')?.getAttribute('href') || '').trim();
             const summary = summaryEl.textContent.trim();
-            const text = link
-                ? `${title}\n\n${link}\n\n${summary}`
-                : `${title}\n\n${summary}`;
+            const parts = [];
+            if (title) parts.push(title);
+            if (link) parts.push(link);
+            parts.push(summary);
+            const text = parts.join('\n\n');
             try {
                 await navigator.clipboard.writeText(text);
                 const original = copyBtn.textContent;
