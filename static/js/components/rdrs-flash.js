@@ -1,17 +1,27 @@
-// <rdrs-flash> — Client-side flash/toast message system (Light DOM)
+// <rdrs-flash> — accessible banner-stack for flash messages (Light DOM).
+//
+// Per-message ARIA role: role="status" (polite) for success/info,
+// role="alert" (assertive) for warning/error. Dismiss is a real <button>;
+// closing it returns focus to the element that triggered the message,
+// or to the stack region as a fallback.
+
+const MAX_MESSAGES = 3;
+
+const LEVEL_META = {
+    success: { role: 'status', label: 'Success' },
+    info:    { role: 'status', label: 'Info' },
+    warning: { role: 'alert',  label: 'Warning' },
+    error:   { role: 'alert',  label: 'Error' },
+};
 
 class RdrsFlash extends HTMLElement {
-    constructor() {
-        super();
-        this._maxMessages = 3;
-    }
-
     connectedCallback() {
-        if (!this.classList.contains('flash-container')) {
-            this.classList.add('flash-container');
-        }
-        // CSR shell pages embed pending flash messages as inline JSON.
-        // Show them on first paint so the flow matches the old SSR macro.
+        this.classList.add('banner-stack');
+        if (!this.hasAttribute('role')) this.setAttribute('role', 'region');
+        if (!this.hasAttribute('aria-label')) this.setAttribute('aria-label', 'Notifications');
+        // Focusable as a fallback target when the trigger element is gone.
+        if (!this.hasAttribute('tabindex')) this.tabIndex = -1;
+
         const node = document.getElementById('rdrs-flash-bootstrap');
         if (node && node.textContent && !this._bootstrapApplied) {
             this._bootstrapApplied = true;
@@ -26,18 +36,6 @@ class RdrsFlash extends HTMLElement {
         }
     }
 
-    _formatTime(date) {
-        return date.toLocaleTimeString('en-US', {
-            hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
-        });
-    }
-
-    _escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
     /** Set a flash message cookie for next page load. */
     set(level, message) {
         const messages = [{ level, message }];
@@ -46,25 +44,58 @@ class RdrsFlash extends HTMLElement {
 
     /** Show a flash message immediately on the page. */
     show(level, message) {
-        // Ensure we're in the DOM
         if (!this.parentNode) {
             document.body.insertBefore(this, document.body.firstChild);
         }
 
-        // Remove oldest messages if we have too many
-        const existing = this.querySelectorAll('.flash');
-        if (existing.length >= this._maxMessages) {
-            for (let i = 0; i <= existing.length - this._maxMessages; i++) {
+        const existing = this.querySelectorAll('.banner');
+        if (existing.length >= MAX_MESSAGES) {
+            for (let i = 0; i <= existing.length - MAX_MESSAGES; i++) {
                 existing[i].remove();
             }
         }
 
-        const div = document.createElement('div');
-        div.className = `flash flash-${level}`;
-        div.setAttribute('data-testid', 'flash-message');
-        const timestamp = this._formatTime(new Date());
-        div.innerHTML = `<span>${this._escapeHtml(message)}</span><span class="flash-right"><span class="flash-time">${timestamp}</span> <a href="#" class="flash-close" data-testid="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">\u00d7</a></span>`;
-        this.appendChild(div);
+        const meta = LEVEL_META[level] || LEVEL_META.info;
+        const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+        const banner = document.createElement('div');
+        banner.className = `banner banner--${level}`;
+        banner.setAttribute('role', meta.role);
+        banner.setAttribute('data-testid', 'flash-message');
+
+        const icon = document.createElement('span');
+        icon.className = 'banner-icon';
+        icon.setAttribute('aria-hidden', 'true');
+
+        const body = document.createElement('div');
+        body.className = 'banner-body';
+        const srLevel = document.createElement('span');
+        srLevel.className = 'sr-only';
+        srLevel.textContent = `${meta.label}: `;
+        const msg = document.createElement('span');
+        msg.className = 'banner-message';
+        msg.textContent = message;
+        body.append(srLevel, msg);
+
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.className = 'banner-dismiss';
+        dismiss.setAttribute('aria-label', 'Dismiss notification');
+        dismiss.setAttribute('data-testid', 'flash-close');
+        dismiss.textContent = '×';
+        dismiss.addEventListener('click', () => {
+            banner.remove();
+            // Return focus to the original trigger if still in the DOM and visible,
+            // otherwise to the stack region (which is tabindex=-1).
+            if (trigger && document.contains(trigger) && typeof trigger.focus === 'function') {
+                trigger.focus();
+            } else {
+                this.focus();
+            }
+        });
+
+        banner.append(icon, body, dismiss);
+        this.appendChild(banner);
     }
 
     success(message) { this.show('success', message); }
@@ -80,7 +111,6 @@ class RdrsFlash extends HTMLElement {
 
 customElements.define('rdrs-flash', RdrsFlash);
 
-// Global proxy for backwards compatibility
 window.flash = {
     get _el() {
         let el = document.querySelector('rdrs-flash');
@@ -97,9 +127,4 @@ window.flash = {
     info(message) { this._el.info(message); },
     warning(message) { this._el.warning(message); },
     redirect(url, level, message) { this._el.redirect(url, level, message); },
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
 };
