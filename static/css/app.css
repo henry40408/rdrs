@@ -1576,6 +1576,15 @@ summary {
     border: 1px solid var(--color-border-light);
     border-radius: var(--radius-md);
     padding: var(--space-5);
+    margin-bottom: var(--space-5);
+}
+
+/* In-flight status line ("Summarizing… (refresh to see the result)") —
+   only direct <p> child of the box, smaller than the eventual summary
+   body so the transient state doesn't dominate the pane. */
+.summary-box > p {
+    margin: 0;
+    font-size: var(--font-sm);
 }
 
 .summary-actions {
@@ -1583,6 +1592,29 @@ summary {
     gap: var(--space-2);
     margin-bottom: var(--space-3);
 }
+
+/* Caption-style title + link, mirrors what the Copy button writes. */
+.summary-header {
+    margin-bottom: var(--space-3);
+    padding-bottom: var(--space-3);
+    border-bottom: 1px dashed var(--color-border-light);
+}
+.summary-title {
+    font-weight: 600;
+    color: var(--color-text);
+    font-size: var(--font-base);
+    line-height: 1.4;
+    margin-bottom: var(--space-1);
+}
+.summary-link {
+    display: inline-block;
+    color: var(--color-accent);
+    font-size: var(--font-sm);
+    font-family: var(--font-mono);
+    word-break: break-all;
+    text-decoration: none;
+}
+.summary-link:hover { text-decoration: underline; }
 
 .summary-box blockquote {
     border-left: var(--border-accent-width) solid var(--color-accent);

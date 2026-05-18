@@ -61,6 +61,14 @@
                     <button type="button" class="btn-secondary btn-sm" data-summary-copy>Copy</button>
                     <button type="button" class="btn-secondary btn-sm" data-summary-dismiss data-entry-id="{{ pane.id }}">Dismiss</button>
                 </div>
+                {# Title + link rendered inside the box so what users see
+                   matches what the Copy button writes to the clipboard. #}
+                <div class="summary-header">
+                    <div class="summary-title" data-summary-title>{{ pane.title }}</div>
+                    {% if let Some(link) = pane.link.as_ref() %}
+                    <a class="summary-link" href="{{ link }}" target="_blank" rel="noopener noreferrer" data-summary-link>{{ link }}</a>
+                    {% endif %}
+                </div>
                 <blockquote class="rp-summary-content">{{ summary|safe }}</blockquote>
             </div>
             {% endif %}
