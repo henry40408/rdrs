@@ -1,10 +1,11 @@
 {% macro flash(messages) %}
 {% if !messages.is_empty() %}
-<div class="flash-container">
+<div class="banner-stack" role="region" aria-label="Notifications" tabindex="-1">
     {% for msg in messages %}
-    <div class="flash {{ msg.level_class() }}" data-testid="flash-message">
-        <span>{{ msg.message }}</span>
-        <span class="flash-right"><span class="flash-time">{{ msg.formatted_time() }}</span> <a href="#" class="flash-close" data-testid="flash-close" onclick="this.parentElement.parentElement.remove(); return false;">&times;</a></span>
+    <div class="banner {{ msg.level_class() }}" role="{{ msg.aria_role() }}" data-testid="flash-message">
+        <span class="banner-icon" aria-hidden="true"></span>
+        <div class="banner-body"><span class="sr-only">{{ msg.level_name() }}: </span><span class="banner-message">{{ msg.message }}</span></div>
+        <button type="button" class="banner-dismiss" aria-label="Dismiss notification" data-testid="flash-close" onclick="this.closest('.banner').remove();">&times;</button>
     </div>
     {% endfor %}
 </div>

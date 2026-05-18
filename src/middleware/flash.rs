@@ -61,10 +61,29 @@ impl FlashMessage {
 
     pub fn level_class(&self) -> &'static str {
         match self.level {
-            FlashLevel::Success => "flash-success",
-            FlashLevel::Error => "flash-error",
-            FlashLevel::Info => "flash-info",
-            FlashLevel::Warning => "flash-warning",
+            FlashLevel::Success => "banner--success",
+            FlashLevel::Error => "banner--error",
+            FlashLevel::Info => "banner--info",
+            FlashLevel::Warning => "banner--warning",
+        }
+    }
+
+    /// ARIA role for live-region announcement.
+    /// `status` (polite) for non-blocking info; `alert` (assertive) for problems.
+    pub fn aria_role(&self) -> &'static str {
+        match self.level {
+            FlashLevel::Success | FlashLevel::Info => "status",
+            FlashLevel::Warning | FlashLevel::Error => "alert",
+        }
+    }
+
+    /// Human-readable level name announced by screen readers (visually hidden).
+    pub fn level_name(&self) -> &'static str {
+        match self.level {
+            FlashLevel::Success => "Success",
+            FlashLevel::Error => "Error",
+            FlashLevel::Info => "Info",
+            FlashLevel::Warning => "Warning",
         }
     }
 
@@ -238,10 +257,26 @@ mod tests {
 
     #[test]
     fn test_flash_level_class() {
-        assert_eq!(FlashMessage::success("").level_class(), "flash-success");
-        assert_eq!(FlashMessage::error("").level_class(), "flash-error");
-        assert_eq!(FlashMessage::info("").level_class(), "flash-info");
-        assert_eq!(FlashMessage::warning("").level_class(), "flash-warning");
+        assert_eq!(FlashMessage::success("").level_class(), "banner--success");
+        assert_eq!(FlashMessage::error("").level_class(), "banner--error");
+        assert_eq!(FlashMessage::info("").level_class(), "banner--info");
+        assert_eq!(FlashMessage::warning("").level_class(), "banner--warning");
+    }
+
+    #[test]
+    fn test_flash_aria_role() {
+        assert_eq!(FlashMessage::success("").aria_role(), "status");
+        assert_eq!(FlashMessage::info("").aria_role(), "status");
+        assert_eq!(FlashMessage::warning("").aria_role(), "alert");
+        assert_eq!(FlashMessage::error("").aria_role(), "alert");
+    }
+
+    #[test]
+    fn test_flash_level_name() {
+        assert_eq!(FlashMessage::success("").level_name(), "Success");
+        assert_eq!(FlashMessage::error("").level_name(), "Error");
+        assert_eq!(FlashMessage::info("").level_name(), "Info");
+        assert_eq!(FlashMessage::warning("").level_name(), "Warning");
     }
 
     #[test]

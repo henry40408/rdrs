@@ -859,104 +859,112 @@ td input[type="text"] {
     font-size: var(--font-sm);
 }
 
-/* ===== Flash Messages ===== */
-.flash-container {
-    position: fixed;
-    top: var(--space-3);
-    right: var(--space-3);
-    z-index: 200;
-    max-width: 480px;
+/* ===== Banner Stack (accessible flash messages) =====
+   Inline, persistent notifications anchored to the top of `<main>`.
+   Replaces the prior floating-toast pattern to satisfy Primer / WCAG
+   1.3.2 (sequence), 2.1.1 (keyboard), 2.2.1 (timing), 4.1.3 (status).
+   Compact style: faint tinted bg, 8px coloured dot, no visible timestamp.
+   Per-message role=status (success/info) or role=alert (warning/error)
+   is set in JS; the dismiss control is a real <button>. */
+.banner-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
     width: 100%;
 }
+.banner-stack:empty {
+    display: none;
+}
+.banner-stack:focus { outline: none; }
 
-.flash {
-    margin-bottom: var(--space-2);
-    padding: var(--space-3) var(--space-4);
-    border-radius: var(--radius-md);
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    font-size: var(--font-sm);
-    background: var(--color-bg-secondary);
+.banner {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: start;
+    column-gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: transparent;
     border: 1px solid var(--color-border-light);
+    border-left-width: 3px;
+    font-size: var(--font-sm);
+    line-height: 1.45;
 }
 
-.flash-success {
-    background: #e8f5e9;
-    border-color: #2d7a3a;
+/* 8px coloured dot, vertically aligned with the first line of text. */
+.banner-icon {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 0.45em;
+    flex: none;
+    background: var(--color-text-muted);
 }
 
-.flash-error {
-    background: #fde8e8;
-    border-color: #b91c1c;
+.banner-body {
+    min-width: 0;
+    color: var(--color-text);
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+}
+.banner-message { color: var(--color-text); }
+
+.banner-dismiss {
+    background: none;
+    border: 1px solid transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    width: 22px;
+    height: 22px;
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--font-base);
+    line-height: 1;
+    padding: 0;
+    margin-top: 1px;
+}
+.banner-dismiss:hover {
+    background: var(--color-bg-tertiary);
+    color: var(--color-text);
+}
+.banner-dismiss:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
 }
 
-.flash-warning {
-    background: #fef3e2;
-    border-color: #92610e;
-}
+.banner--success { background: rgba(45, 122, 58, 0.06); border-color: rgba(45, 122, 58, 0.20); border-left-color: var(--color-success); }
+.banner--success .banner-icon { background: var(--color-success); }
+.banner--error   { background: rgba(185, 28, 28, 0.06); border-color: rgba(185, 28, 28, 0.20); border-left-color: var(--color-error); }
+.banner--error   .banner-icon { background: var(--color-error); }
+.banner--warning { background: rgba(146, 97, 14, 0.06); border-color: rgba(146, 97, 14, 0.20); border-left-color: var(--color-warning); }
+.banner--warning .banner-icon { background: var(--color-warning); }
+.banner--info    { background: rgba(184, 134, 11, 0.05); border-color: rgba(184, 134, 11, 0.20); border-left-color: var(--color-accent); }
+.banner--info    .banner-icon { background: var(--color-accent); }
 
-[data-theme="dark"] .flash-success {
-    background: #1a2b1a;
-    border-color: #4ADE80;
-}
-[data-theme="dark"] .flash-error {
-    background: #2b1a1a;
-    border-color: #F87171;
-}
-[data-theme="dark"] .flash-warning {
-    background: #2b2516;
-    border-color: #FBBF24;
-}
+[data-theme="dark"] .banner--success { background: rgba(74, 222, 128, 0.08); border-color: rgba(74, 222, 128, 0.25); border-left-color: #4ADE80; }
+[data-theme="dark"] .banner--error   { background: rgba(248, 113, 113, 0.08); border-color: rgba(248, 113, 113, 0.25); border-left-color: #F87171; }
+[data-theme="dark"] .banner--warning { background: rgba(251, 191, 36, 0.08); border-color: rgba(251, 191, 36, 0.25); border-left-color: #FBBF24; }
+[data-theme="dark"] .banner--info    { background: rgba(184, 134, 11, 0.10); border-color: rgba(184, 134, 11, 0.30); }
 
 @media (prefers-color-scheme: dark) {
-    :root:not([data-theme]) .flash-success {
-        background: #1a2b1a;
-        border-color: #4ADE80;
-    }
-    :root:not([data-theme]) .flash-error {
-        background: #2b1a1a;
-        border-color: #F87171;
-    }
-    :root:not([data-theme]) .flash-warning {
-        background: #2b2516;
-        border-color: #FBBF24;
-    }
+    :root:not([data-theme]) .banner--success { background: rgba(74, 222, 128, 0.08); border-color: rgba(74, 222, 128, 0.25); border-left-color: #4ADE80; }
+    :root:not([data-theme]) .banner--error   { background: rgba(248, 113, 113, 0.08); border-color: rgba(248, 113, 113, 0.25); border-left-color: #F87171; }
+    :root:not([data-theme]) .banner--warning { background: rgba(251, 191, 36, 0.08); border-color: rgba(251, 191, 36, 0.25); border-left-color: #FBBF24; }
+    :root:not([data-theme]) .banner--info    { background: rgba(184, 134, 11, 0.10); border-color: rgba(184, 134, 11, 0.30); }
 }
 
-.flash-success::before { content: "OK "; font-weight: 600; color: var(--color-success); }
-.flash-error::before { content: "ERROR "; font-weight: 600; color: var(--color-error); }
-.flash-info::before { content: "INFO "; font-weight: 600; color: var(--color-accent); }
-.flash-warning::before { content: "WARN "; font-weight: 600; color: var(--color-warning); }
-
-.flash-close {
-    background: none;
-    border: none;
-    cursor: pointer;
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
     padding: 0;
-    margin: 0;
-    font-size: var(--font-lg);
-    color: var(--color-text-muted);
-    line-height: 1;
-    opacity: 0.6;
-}
-
-.flash-close:hover {
-    background: none;
-    opacity: 1;
-}
-
-.flash-right {
-    margin-left: auto;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
     white-space: nowrap;
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-}
-
-.flash-time {
-    color: var(--color-text-muted);
-    font-size: var(--font-xs);
+    border: 0;
 }
 
 /* ===== Entry Items (List) ===== */
@@ -965,7 +973,6 @@ td input[type="text"] {
     border-bottom: 1px solid var(--color-border-light);
     cursor: pointer;
     transition: background 0.1s;
-    border-left: var(--border-accent-width) solid transparent;
 }
 
 .entry-item:hover {
@@ -974,7 +981,7 @@ td input[type="text"] {
 
 .entry-item.selected {
     background: var(--color-accent-subtle);
-    border-left-color: var(--color-accent);
+    box-shadow: inset var(--border-accent-width) 0 0 var(--color-accent);
 }
 
 .entry-item.entry-read {
@@ -1742,9 +1749,10 @@ summary {
         padding: 0 var(--space-4);
     }
 
-    /* Flash container: don't exceed viewport */
-    .flash-container {
-        max-width: calc(100% - var(--space-6));
+    /* Banner stack: tighter padding on narrow viewports. */
+    .banner {
+        padding: var(--space-2);
+        column-gap: var(--space-2);
     }
 
     /* Dialog: reduce padding on tablet */

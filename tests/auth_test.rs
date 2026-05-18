@@ -684,7 +684,8 @@ async fn test_flash_message_displayed_on_login_page() {
     response.assert_status_ok();
     let body = response.text();
     assert!(body.contains("Test flash message"));
-    assert!(body.contains("flash-success"));
+    assert!(body.contains("banner--success"));
+    assert!(body.contains(r#"role="status""#));
 }
 
 #[tokio::test]
