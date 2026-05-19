@@ -112,52 +112,9 @@ impl SummaryCache {
         self.cache.invalidate(&(user_id, entry_id));
     }
 
-    /// Check if an entry has a summary (completed or in progress)
-    pub fn has_summary(&self, user_id: i64, entry_id: i64) -> bool {
-        self.cache.get(&(user_id, entry_id)).is_some()
-    }
-
-    /// Check if an entry has a completed summary
-    pub fn has_completed_summary(&self, user_id: i64, entry_id: i64) -> bool {
-        self.cache
-            .get(&(user_id, entry_id))
-            .map(|e| e.status == SummaryStatus::Completed)
-            .unwrap_or(false)
-    }
-
-    /// Check if a job is in-flight (pending or processing)
-    /// Used to prevent duplicate submissions
-    pub fn is_in_flight(&self, user_id: i64, entry_id: i64) -> bool {
-        self.cache
-            .get(&(user_id, entry_id))
-            .map(|e| e.status == SummaryStatus::Pending || e.status == SummaryStatus::Processing)
-            .unwrap_or(false)
-    }
-
     /// Get the status of a summary if it exists in cache
     pub fn get_status(&self, user_id: i64, entry_id: i64) -> Option<SummaryStatus> {
         self.cache.get(&(user_id, entry_id)).map(|e| e.status)
-    }
-
-    /// List all entry IDs with summaries for a user
-    pub fn list_by_user(&self, user_id: i64) -> Vec<i64> {
-        self.cache
-            .iter()
-            .filter_map(|(key, _)| if key.0 == user_id { Some(key.1) } else { None })
-            .collect()
-    }
-
-    /// Count entries by status for a user
-    pub fn count_by_status(&self, user_id: i64, status: SummaryStatus) -> usize {
-        self.cache
-            .iter()
-            .filter(|(key, entry)| key.0 == user_id && entry.status == status)
-            .count()
-    }
-
-    /// Get cache statistics
-    pub fn entry_count(&self) -> u64 {
-        self.cache.entry_count()
     }
 }
 
@@ -206,55 +163,5 @@ mod tests {
         let entry = cache.get(1, 100).unwrap();
         assert_eq!(entry.status, SummaryStatus::Failed);
         assert_eq!(entry.error_message.as_deref(), Some("Error occurred"));
-    }
-
-    #[test]
-    fn test_has_summary_methods() {
-        let cache = SummaryCache::new(100, 24);
-
-        assert!(!cache.has_summary(1, 100));
-        assert!(!cache.has_completed_summary(1, 100));
-
-        cache.set_pending(1, 100);
-        assert!(cache.has_summary(1, 100));
-        assert!(!cache.has_completed_summary(1, 100));
-
-        cache.set_completed(1, 100, "Summary".to_string());
-        assert!(cache.has_summary(1, 100));
-        assert!(cache.has_completed_summary(1, 100));
-    }
-
-    #[test]
-    fn test_list_by_user() {
-        let cache = SummaryCache::new(100, 24);
-
-        cache.set_completed(1, 100, "a".to_string());
-        cache.set_completed(1, 101, "b".to_string());
-        cache.set_completed(2, 200, "c".to_string());
-
-        let user1_entries = cache.list_by_user(1);
-        assert_eq!(user1_entries.len(), 2);
-        assert!(user1_entries.contains(&100));
-        assert!(user1_entries.contains(&101));
-
-        let user2_entries = cache.list_by_user(2);
-        assert_eq!(user2_entries.len(), 1);
-        assert!(user2_entries.contains(&200));
-    }
-
-    #[test]
-    fn test_count_by_status() {
-        let cache = SummaryCache::new(100, 24);
-
-        cache.set_pending(1, 100);
-        cache.set_processing(1, 101);
-        cache.set_completed(1, 102, "a".to_string());
-        cache.set_completed(1, 103, "b".to_string());
-        cache.set_failed(1, 104, "err".to_string());
-
-        assert_eq!(cache.count_by_status(1, SummaryStatus::Pending), 1);
-        assert_eq!(cache.count_by_status(1, SummaryStatus::Processing), 1);
-        assert_eq!(cache.count_by_status(1, SummaryStatus::Completed), 2);
-        assert_eq!(cache.count_by_status(1, SummaryStatus::Failed), 1);
     }
 }

@@ -35,10 +35,6 @@ struct LinkdingBookmarkRequest {
 #[derive(Debug, Deserialize)]
 struct LinkdingBookmarkResponse {
     id: i64,
-    #[allow(dead_code)]
-    url: String,
-    #[allow(dead_code)]
-    title: Option<String>,
 }
 
 /// Save a bookmark to Linkding

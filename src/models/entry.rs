@@ -438,16 +438,6 @@ pub fn count_unread_by_category(
     Ok(map)
 }
 
-pub fn count_by_feed(conn: &Connection, feed_id: i64) -> AppResult<i64> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM entry WHERE feed_id = ?1",
-        params![feed_id],
-        |row| row.get(0),
-    )?;
-
-    Ok(count)
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn upsert_entry(
     conn: &Connection,
