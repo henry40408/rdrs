@@ -28,11 +28,6 @@ impl UserSettings {
             .and_then(|json| SaveServicesConfig::from_json(json).ok())
             .unwrap_or_default()
     }
-
-    /// Check if any save service is configured
-    pub fn has_save_services(&self) -> bool {
-        self.get_save_services_config().has_any_service()
-    }
 }
 
 fn parse_datetime(s: &str) -> DateTime<Utc> {
@@ -103,12 +98,6 @@ pub fn get_save_services_config(conn: &Connection, user_id: i64) -> AppResult<Sa
         Some(settings) => Ok(settings.get_save_services_config()),
         None => Ok(SaveServicesConfig::default()),
     }
-}
-
-/// Check if user has any save services configured
-pub fn has_save_services(conn: &Connection, user_id: i64) -> AppResult<bool> {
-    let config = get_save_services_config(conn, user_id)?;
-    Ok(config.has_any_service())
 }
 
 /// Update save_services configuration for a user

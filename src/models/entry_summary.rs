@@ -191,17 +191,6 @@ pub fn delete(conn: &Connection, user_id: i64, entry_id: i64) -> AppResult<bool>
     Ok(rows > 0)
 }
 
-/// Check if an entry has a completed summary
-pub fn has_completed_summary(conn: &Connection, user_id: i64, entry_id: i64) -> AppResult<bool> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM entry_summary WHERE user_id = ?1 AND entry_id = ?2 AND status = 'completed'",
-        params![user_id, entry_id],
-        |row| row.get(0),
-    )?;
-
-    Ok(count > 0)
-}
-
 /// Get summary statuses for multiple entries (batch query for list display)
 pub fn get_statuses_for_entries(
     conn: &Connection,
@@ -248,19 +237,6 @@ pub fn get_statuses_for_entries(
     }
 
     Ok(map)
-}
-
-/// Get entry IDs that have completed summaries
-pub fn get_completed_entry_ids(conn: &Connection, user_id: i64) -> AppResult<Vec<i64>> {
-    let mut stmt = conn.prepare(
-        "SELECT entry_id FROM entry_summary WHERE user_id = ?1 AND status = 'completed'",
-    )?;
-
-    let ids = stmt
-        .query_map(params![user_id], |row| row.get(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(ids)
 }
 
 /// Find incomplete summaries (pending or processing) for recovery on startup
@@ -430,21 +406,6 @@ mod tests {
         let deleted = delete(&conn, user_id, entry_id).unwrap();
         assert!(deleted);
         assert!(!exists(&conn, user_id, entry_id).unwrap());
-    }
-
-    #[test]
-    fn test_has_completed_summary() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let entry_id = create_test_entry(&conn, user_id);
-
-        assert!(!has_completed_summary(&conn, user_id, entry_id).unwrap());
-
-        upsert_pending(&conn, user_id, entry_id).unwrap();
-        assert!(!has_completed_summary(&conn, user_id, entry_id).unwrap());
-
-        set_completed(&conn, user_id, entry_id, "Summary text").unwrap();
-        assert!(has_completed_summary(&conn, user_id, entry_id).unwrap());
     }
 
     #[test]

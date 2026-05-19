@@ -9,7 +9,6 @@ pub const SESSION_ABSOLUTE_MAX_DAYS: i64 = 90;
 const TOKEN_LENGTH: usize = 32;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Session {
     pub id: i64,
     pub user_id: i64,
@@ -164,12 +163,6 @@ pub fn delete_session(conn: &Connection, token: &str) -> AppResult<()> {
 pub fn delete_user_sessions(conn: &Connection, user_id: i64) -> AppResult<()> {
     conn.execute("DELETE FROM session WHERE user_id = ?1", params![user_id])?;
     Ok(())
-}
-
-#[allow(dead_code)]
-pub fn cleanup_expired(conn: &Connection) -> AppResult<usize> {
-    let deleted = conn.execute("DELETE FROM session WHERE expires_at < datetime('now')", [])?;
-    Ok(deleted)
 }
 
 pub fn start_masquerade(conn: &Connection, token: &str, target_user_id: i64) -> AppResult<()> {
