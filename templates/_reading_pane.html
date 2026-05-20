@@ -1,7 +1,16 @@
 {# Reading pane content. Matches the pre-SSR `.reading-pane-content` +
    `.reading-pane-article` + `.reading-pane-actions` DOM the existing
-   CSS rules target. `id="reading-pane"` is the swap target. #}
-<div id="reading-pane" class="reading-pane">
+   CSS rules target. `id="reading-pane"` is the swap target.
+
+   `reading-pane-active` is load-bearing on mobile (≤1024px): the
+   media query hides the bare `.reading-pane` and only reveals
+   `.reading-pane.reading-pane-active` as a full-screen overlay.
+   Empty-state placeholders MUST NOT carry the class, or mobile will
+   trap users behind a blank pane. #}
+<div id="reading-pane" class="reading-pane reading-pane-active">
+    <div class="reading-pane-back">
+        <button type="button" class="reading-pane-back-link" data-pane-back data-testid="reading-pane-back">← Back to list</button>
+    </div>
     <div class="reading-pane-content">
         <h1 class="reading-pane-title" data-testid="reading-pane-title">
             {% if let Some(link) = pane.link.as_ref() %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer">{{ pane.title }}</a>{% else %}{{ pane.title }}{% endif %}

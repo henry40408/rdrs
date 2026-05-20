@@ -22,6 +22,31 @@ Feature: Responsive layout
     Then the entry list pane is at least 370px wide
 
   @mobile
+  Scenario: Opening an entry on mobile reveals the reading pane as a full-screen overlay
+    Given I am viewing on a mobile screen
+    And I have a feed with 5 test entries
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    Then the reading pane is visible on mobile
+
+  @mobile
+  Scenario: Tapping back on the reading pane on mobile returns to the entry list
+    Given I am viewing on a mobile screen
+    And I have a feed with 5 test entries
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    And I tap the reading-pane back button
+    Then the reading pane is empty
+    And the URL has no ?entry= parameter
+
+  @mobile
+  Scenario: Deep-linking with ?entry= on mobile shows the reading pane
+    Given I am viewing on a mobile screen
+    And I have a feed "Reading Feed" with 5 test entries in category "Reading Category"
+    When I open the inbox deep-linked to entry titled "Test Entry 2"
+    Then the reading pane is visible on mobile
+
+  @mobile
   Scenario: Categories table renders as cards on mobile
     Given I am viewing on a mobile screen
     And I have a category named "Test Category"
