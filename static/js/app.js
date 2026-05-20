@@ -175,6 +175,31 @@ function setEntryParam(entryId) {
     window.history.replaceState({}, '', u);
 }
 
+// Reset `#reading-pane` to its empty placeholder. Mirrors the SSR-rendered
+// empty state in `_entries_layout.html` so the @media-driven mobile overlay
+// dismisses (the `.reading-pane-active` class is what reveals the pane at
+// ≤1024px — leaving it on top of empty content traps users on a blank
+// screen). Returns false if the pane was already empty.
+function closeReadingPane() {
+    const pane = document.getElementById('reading-pane');
+    if (!pane || pane.classList.contains('reading-pane-empty')) return false;
+    pane.classList.remove('reading-pane-active');
+    pane.classList.add('reading-pane-empty');
+    pane.innerHTML = '<p>Select an entry to read.</p>';
+    setEntryParam(null);
+    return true;
+}
+
+// Mobile back button inside the reading pane. The button is rendered in
+// `_reading_pane.html` but hidden on desktop via `.reading-pane-back`'s
+// default `display: none` — the @media (≤1024px) block flips it to flex.
+document.addEventListener('click', (event) => {
+    if (event.button !== 0) return;
+    if (!event.target.closest('[data-pane-back]')) return;
+    event.preventDefault();
+    closeReadingPane();
+});
+
 // Process `<template data-flash data-level="success|error|info|warning">message</template>`
 // blocks in a swap response. Each one becomes a toast on the page-level
 // `<rdrs-flash>` element (mounted by _entries_layout.html). Used for
@@ -613,12 +638,7 @@ function installEntriesKeyboard() {
                 // (in its own shadow root), so we yield to it.
                 const help = document.querySelector('rdrs-kb-help');
                 if (help && help.isVisible) return;
-                const pane = document.getElementById('reading-pane');
-                if (!pane || pane.classList.contains('reading-pane-empty')) return;
-                e.preventDefault();
-                pane.classList.add('reading-pane-empty');
-                pane.innerHTML = '<p>Select an entry to read.</p>';
-                setEntryParam(null);
+                if (closeReadingPane()) e.preventDefault();
                 break;
             }
             case ' ': {

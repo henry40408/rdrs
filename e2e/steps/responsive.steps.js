@@ -74,3 +74,17 @@ Then("the entry list pane is narrower than the viewport", async ({ page }) => {
   const box = await page.locator(".list-pane").boundingBox();
   expect(box.width).toBeLessThan(viewport.width * 0.9);
 });
+
+Then("the reading pane is visible on mobile", async ({ page }) => {
+  // At ≤1024px width the reading pane is `display: none` by default and only
+  // surfaces when the `.reading-pane-active` overlay class is present. Assert
+  // both the class is applied AND the element is actually visible — class
+  // alone would pass even if a future CSS regression unset `display: block`.
+  const pane = page.locator("#reading-pane");
+  await expect(pane).toHaveClass(/reading-pane-active/);
+  await expect(pane).toBeVisible();
+});
+
+When("I tap the reading-pane back button", async ({ page }) => {
+  await page.getByTestId("reading-pane-back").click();
+});
