@@ -1,6 +1,7 @@
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::reader::Reader;
 use quick_xml::writer::Writer;
+use quick_xml::XmlVersion;
 use std::io::Cursor;
 
 use crate::error::{AppError, AppResult};
@@ -180,7 +181,7 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                 for attr in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_lowercase();
                     let value = attr
-                        .decode_and_unescape_value(reader.decoder())
+                        .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
                         .map(|v| v.to_string())
                         .unwrap_or_else(|_| String::from_utf8_lossy(&attr.value).to_string());
 
@@ -242,7 +243,7 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                 for attr in e.attributes().flatten() {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_lowercase();
                     let value = attr
-                        .decode_and_unescape_value(reader.decoder())
+                        .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
                         .map(|v| v.to_string())
                         .unwrap_or_else(|_| String::from_utf8_lossy(&attr.value).to_string());
 
