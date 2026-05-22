@@ -81,6 +81,16 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_entry_read_at ON entry(read_at);
         CREATE INDEX IF NOT EXISTS idx_entry_starred_at ON entry(starred_at);
         CREATE INDEX IF NOT EXISTS idx_entry_sort_ts ON entry(COALESCE(published_at, created_at));
+        -- Partial indexes for the Starred / Read list pages. The list-by-user
+        -- query orders by COALESCE(published_at, created_at) DESC with the
+        -- selectivity predicate baked in; without these the planner falls back
+        -- to a category->feed->entry walk over every row. See migration v5.
+        CREATE INDEX IF NOT EXISTS idx_entry_starred_sort
+            ON entry(COALESCE(published_at, created_at))
+            WHERE starred_at IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_entry_read_sort
+            ON entry(COALESCE(published_at, created_at))
+            WHERE read_at IS NOT NULL;
 
         CREATE TABLE IF NOT EXISTS entry_summary (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -191,7 +201,15 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         )?;
     }
 
-    const LATEST_VERSION: i64 = 4;
+    if version < 5 {
+        // Partial indexes for the Starred / Read list pages. Defined alongside
+        // the other entry indexes in the main `execute_batch` block above using
+        // `CREATE INDEX IF NOT EXISTS`, so existing databases pick them up on
+        // restart without a dedicated migration step. The version bump exists
+        // so future migrations can rely on these indexes being present.
+    }
+
+    const LATEST_VERSION: i64 = 5;
     if version < LATEST_VERSION {
         conn.pragma_update(None, "user_version", LATEST_VERSION)?;
     }
@@ -233,7 +251,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
     }
 
     #[test]
@@ -244,7 +262,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
     }
 
     #[test]
@@ -317,5 +335,31 @@ mod tests {
             .filter_map(Result::ok)
             .collect();
         assert_eq!(indexes.len(), 1);
+    }
+
+    #[test]
+    fn test_init_db_entry_partial_indexes_exist() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let indexes: Vec<String> = conn
+            .prepare(
+                "SELECT name FROM sqlite_master \
+                 WHERE type='index' \
+                 AND name IN ('idx_entry_starred_sort', 'idx_entry_read_sort') \
+                 ORDER BY name",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(
+            indexes,
+            vec![
+                "idx_entry_read_sort".to_string(),
+                "idx_entry_starred_sort".to_string(),
+            ]
+        );
     }
 }
