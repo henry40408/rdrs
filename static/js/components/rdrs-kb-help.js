@@ -45,7 +45,7 @@ class RdrsKbHelp extends HTMLElement {
                     border-bottom: 1px solid var(--color-border-light, #E5E1DB);
                 }
                 h2 {
-                    font-family: var(--font-display, 'Playfair Display', serif);
+                    font-family: var(--font-display, 'Source Serif 4', serif);
                     font-size: 1.25rem;
                     font-weight: 600;
                     margin: 0;
