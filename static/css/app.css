@@ -1806,9 +1806,11 @@ summary {
 
     /* On narrow viewports the fixed hamburger overlays the top-left of
        <main>. Keep the banner background edge-to-edge but push its
-       content right so the icon + message clear the button. */
+       content right so the icon + message clear the button. (4rem
+       comfortably clears `.sidebar-toggle` at `left: space-4` plus its
+       width.) */
     .main-content > .banner-stack .banner {
-        padding-inline-start: var(--space-14);
+        padding-inline-start: var(--space-16);
     }
 
     /* When the flash is visible, the 64px top padding that normally
