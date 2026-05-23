@@ -15,6 +15,7 @@ Feature: Organizing feeds and categories
     Given I am on the categories page
     When I create a category named "Tech News"
     Then I see a success flash "Category created."
+    And the flash banner shows a timestamp
     And the categories table contains "Tech News"
 
   Scenario: Renaming a category inline persists the new name

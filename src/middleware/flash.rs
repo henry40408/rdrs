@@ -90,6 +90,13 @@ impl FlashMessage {
     pub fn formatted_time(&self) -> String {
         self.timestamp.format("%H:%M:%S").to_string()
     }
+
+    /// ISO-8601 form used for the `<time datetime="…">` attribute so
+    /// assistive tech and `Date.parse()` consumers get an unambiguous
+    /// instant; the visible text stays HH:MM:SS via `formatted_time()`.
+    pub fn timestamp_iso(&self) -> String {
+        self.timestamp.to_rfc3339()
+    }
 }
 
 const MAX_FLASH_MESSAGES: usize = 3;
@@ -305,6 +312,17 @@ mod tests {
         // Format should be HH:MM:SS
         assert_eq!(time.len(), 8);
         assert!(time.contains(':'));
+    }
+
+    #[test]
+    fn test_flash_message_timestamp_iso() {
+        let msg = FlashMessage::success("Test");
+        let iso = msg.timestamp_iso();
+        // RFC 3339 form: "YYYY-MM-DDTHH:MM:SS(.fff)+ZZ:ZZ" — at minimum
+        // contains a date marker and a timezone offset.
+        assert!(iso.starts_with(&msg.timestamp.format("%Y-%m-%d").to_string()));
+        assert!(iso.contains('T'));
+        assert!(iso.contains('+') || iso.contains('Z') || iso.contains('-'));
     }
 
     #[test]

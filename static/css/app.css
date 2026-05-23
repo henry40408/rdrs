@@ -869,7 +869,6 @@ td input[type="text"] {
    Inline, persistent notifications anchored to the top of `<main>`.
    Replaces the prior floating-toast pattern to satisfy Primer / WCAG
    1.3.2 (sequence), 2.1.1 (keyboard), 2.2.1 (timing), 4.1.3 (status).
-   Compact style: faint tinted bg, 8px coloured dot, no visible timestamp.
    Per-message role=status (success/info) or role=alert (warning/error)
    is set in JS; the dismiss control is a real <button>. */
 .banner-stack {
@@ -885,7 +884,7 @@ td input[type="text"] {
 
 .banner {
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto 1fr auto auto;
     align-items: start;
     column-gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
@@ -914,6 +913,14 @@ td input[type="text"] {
     overflow-wrap: anywhere;
 }
 .banner-message { color: var(--color-text); }
+
+.banner-time {
+    color: var(--color-text-muted);
+    font-size: var(--font-xs);
+    font-variant-numeric: tabular-nums;
+    align-self: center;
+    white-space: nowrap;
+}
 
 .banner-dismiss {
     background: none;
@@ -1795,6 +1802,27 @@ summary {
     .banner {
         padding: var(--space-2);
         column-gap: var(--space-2);
+    }
+
+    /* On narrow viewports the fixed hamburger overlays the top-left of
+       <main>. Keep the banner background edge-to-edge but push its
+       content right so the icon + message clear the button. (4rem
+       comfortably clears `.sidebar-toggle` at `left: space-4` plus its
+       width.) */
+    .main-content > .banner-stack .banner {
+        padding-inline-start: var(--space-16);
+    }
+
+    /* When the flash is visible, trim the top padding that normally
+       reserves space for the floating hamburger by roughly the
+       single-banner height (≈ 1 line of `--font-sm` + 16px padding ≈
+       36px). The remainder still clears the hamburger when it sticks
+       out below a short banner stack, and — most importantly — keeps
+       the heading at roughly the same Y position whether the banner
+       is shown or dismissed (no visible jump on dismiss). */
+    body:has(.main-content > .banner-stack:not(:empty)) .list-pane-header,
+    body:has(.main-content > .banner-stack:not(:empty)) .page-content {
+        padding-top: var(--space-6);
     }
 
     /* Dialog: reduce padding on tablet */

@@ -95,6 +95,16 @@ Then("I see a success flash {string}", async ({ page }, message) => {
   await expect(page.getByTestId("flash-message")).toContainText(message);
 });
 
+Then("the flash banner shows a timestamp", async ({ page }) => {
+  // HH:MM:SS — server-rendered for SSR cookie/inline-template paths,
+  // client-rendered for window.flash.show() emits. Both paths must
+  // produce a same-shape `<time>` element so the visual is consistent.
+  await expect(page.getByTestId("flash-time").first()).toHaveText(
+    /^\d{2}:\d{2}:\d{2}$/
+  );
+  await expect(page.getByTestId("flash-time").first()).toHaveAttribute("datetime", /.+/);
+});
+
 Then("the feeds table contains {string}", async ({ page }, text) => {
   await expect(page.getByTestId("feeds-table")).toContainText(text);
 });

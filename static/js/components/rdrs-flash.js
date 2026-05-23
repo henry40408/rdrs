@@ -77,6 +77,19 @@ class RdrsFlash extends HTMLElement {
         msg.textContent = message;
         body.append(srLevel, msg);
 
+        // Render the moment the toast first appears. Server-set cookie
+        // and inline-template flashes don't carry a timestamp through to
+        // the JS layer, so client-time is the most consistent signal —
+        // and it's accurate to sub-second for every emit path.
+        const now = new Date();
+        const time = document.createElement('time');
+        time.className = 'banner-time';
+        time.dateTime = now.toISOString();
+        time.textContent = now.toLocaleTimeString(undefined, {
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+        });
+        time.setAttribute('data-testid', 'flash-time');
+
         const dismiss = document.createElement('button');
         dismiss.type = 'button';
         dismiss.className = 'banner-dismiss';
@@ -94,7 +107,7 @@ class RdrsFlash extends HTMLElement {
             }
         });
 
-        banner.append(icon, body, dismiss);
+        banner.append(icon, body, time, dismiss);
         this.appendChild(banner);
     }
 
