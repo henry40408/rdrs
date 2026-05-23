@@ -96,8 +96,12 @@ function clearFormBusy(form) {
     }
 }
 
-async function performSwap(url, init, defaultTarget) {
+async function performSwap(url, init, defaultTarget, options) {
     const method = (init.method || 'GET').toUpperCase();
+    // popstate-driven restores pass `skipHistory: true` because the browser
+    // has already moved the address bar via back/forward — we must not push
+    // or replace on top of the slot the user just navigated into.
+    const skipHistory = options?.skipHistory === true;
     let response;
     try {
         response = await fetch(url, init);
@@ -120,6 +124,14 @@ async function performSwap(url, init, defaultTarget) {
     const text = await response.text();
     const parsed = new DOMParser().parseFromString(text, 'text/html');
 
+    // Decide pushState vs replaceState BEFORE the DOM mutates: opening an
+    // entry from the empty placeholder pushes a history entry (so a back /
+    // mobile edge-swipe closes the pane back to the list); switching to a
+    // different entry while the pane is already open replaces in place so
+    // history doesn't accumulate per click.
+    const paneBefore = document.getElementById('reading-pane');
+    const paneWasEmpty = !!paneBefore?.classList.contains('reading-pane-empty');
+
     let swappedReadingPane = false;
     const templates = parsed.querySelectorAll('template[data-swap-target]');
     if (templates.length > 0) {
@@ -141,7 +153,7 @@ async function performSwap(url, init, defaultTarget) {
             }
             parent.removeChild(dst);
         }
-        if (swappedReadingPane) syncEntryParamFromSwapUrl(url);
+        if (swappedReadingPane && !skipHistory) syncEntryParamFromSwapUrl(url, { push: paneWasEmpty });
         applyFlashTemplates(parsed);
         document.dispatchEvent(new CustomEvent('rdrs:swap-complete'));
         return;
@@ -152,7 +164,7 @@ async function performSwap(url, init, defaultTarget) {
     const incoming = parsed.body.firstElementChild;
     if (!incoming) return;
     dst.outerHTML = incoming.outerHTML;
-    if (defaultTarget === '#reading-pane') syncEntryParamFromSwapUrl(url);
+    if (defaultTarget === '#reading-pane' && !skipHistory) syncEntryParamFromSwapUrl(url, { push: paneWasEmpty });
     applyFlashTemplates(parsed);
     document.dispatchEvent(new CustomEvent('rdrs:swap-complete'));
 }
@@ -160,20 +172,58 @@ async function performSwap(url, init, defaultTarget) {
 // Mirror the entry id from a `#reading-pane` swap URL into the address-bar
 // `?entry={id}` query so a refresh / share / browser-back reproduces the
 // current pane state (the SSR list handlers consume `?entry=` via
-// `maybe_build_reading_pane`). `replaceState` (not `pushState`) — every
-// pane swap rewrites the same entry, never accumulates history entries.
-function syncEntryParamFromSwapUrl(swapUrl) {
+// `maybe_build_reading_pane`). The caller passes `push: true` exactly
+// when the pane was empty before the swap — that single push is what
+// makes browser back / mobile edge-swipe-back close the pane instead of
+// leaving the list entirely. Subsequent entry switches replace in place
+// so history doesn't accumulate one slot per click.
+function syncEntryParamFromSwapUrl(swapUrl, options) {
     const m = (swapUrl || '').match(/\/entries\/(\d+)(?:\/|$|\?)/);
     if (!m) return;
-    setEntryParam(m[1]);
+    setEntryParam(m[1], options);
 }
 
-function setEntryParam(entryId) {
+function setEntryParam(entryId, options) {
     const u = new URL(window.location.href);
     if (entryId == null) u.searchParams.delete('entry');
     else u.searchParams.set('entry', String(entryId));
-    window.history.replaceState({}, '', u);
+    if (options?.push) window.history.pushState({}, '', u);
+    else window.history.replaceState({}, '', u);
 }
+
+// Resolve the entry id currently mounted in the reading pane. The pane's
+// outer element has no entry id of its own, but every inner action form
+// targets `/entries/{id}/...`, so reading the first form's action is the
+// reliable way to identify the loaded entry. Returns null when the pane
+// is empty or has no form (e.g. an error-state render).
+function currentPaneEntryId() {
+    const pane = document.getElementById('reading-pane');
+    if (!pane || pane.classList.contains('reading-pane-empty')) return null;
+    const form = pane.querySelector('form[action*="/entries/"]');
+    const m = form?.action.match(/\/entries\/(\d+)\//);
+    return m ? m[1] : null;
+}
+
+// Back/forward navigation within the same document needs to sync the
+// reading-pane to match the URL. We push exactly one history slot per
+// list visit (the "first-open from empty pane" transition); back from
+// that slot lands on a URL without `?entry=` and we close the pane,
+// while forward back to that slot needs the pane re-mounted. Both ends
+// of the toggle are handled here. Cross-document navigation (sidebar
+// links, status-filter, 1-4 keys) reloads the page and SSR consumes
+// `?entry=` server-side, so popstate doesn't fire for those.
+window.addEventListener('popstate', () => {
+    const u = new URL(window.location.href);
+    const entryId = u.searchParams.get('entry');
+    if (!entryId) {
+        closeReadingPane();
+        return;
+    }
+    if (currentPaneEntryId() === entryId) return;
+    // `skipHistory` keeps performSwap from pushing/replacing on top of the
+    // slot the browser just moved into.
+    performSwap(`/entries/${entryId}/fragment`, { method: 'GET' }, '#reading-pane', { skipHistory: true });
+});
 
 // Reset `#reading-pane` to its empty placeholder. Mirrors the SSR-rendered
 // empty state in `_entries_layout.html` so the @media-driven mobile overlay
