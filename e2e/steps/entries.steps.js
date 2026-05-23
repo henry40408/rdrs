@@ -254,7 +254,8 @@ Then(
   "the URL has the ?entry= parameter for {string}",
   async ({ page, seed, currentUser }, title) => {
     const id = entryIdByTitle(seed, currentUser, title);
-    // performSwap rewrites the URL via replaceState after a #reading-pane swap;
+    // performSwap rewrites the URL after a #reading-pane swap (pushState on
+    // first-open from an empty pane, replaceState on subsequent switches);
     // wait until the address-bar `entry` query matches the clicked entry's id.
     await expect
       .poll(() => new URL(page.url()).searchParams.get("entry"))
