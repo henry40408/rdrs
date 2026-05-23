@@ -882,14 +882,6 @@ td input[type="text"] {
 }
 .banner-stack:focus { outline: none; }
 
-/* Entries layout puts <rdrs-flash> directly inside <main>; .page-content
-   pages already give the flash horizontal inset via the wrapper. Mirror
-   that inset here so the banner aligns the same way on every page. */
-.main-content > .banner-stack {
-    padding-block: var(--space-3);
-    padding-inline: var(--space-10);
-}
-
 .banner {
     display: grid;
     grid-template-columns: auto 1fr auto auto;
@@ -1812,10 +1804,20 @@ summary {
         column-gap: var(--space-2);
     }
 
-    /* Match the entries-layout flash inset to the narrow-viewport
-       `.page-content` horizontal padding. */
-    .main-content > .banner-stack {
-        padding-inline: var(--space-4);
+    /* On narrow viewports the fixed hamburger overlays the top-left of
+       <main>. Keep the banner background edge-to-edge but push its
+       content right so the icon + message clear the button. */
+    .main-content > .banner-stack .banner {
+        padding-inline-start: var(--space-14);
+    }
+
+    /* When the flash is visible, the 64px top padding that normally
+       reserves space for the floating hamburger is redundant — the
+       banner itself gives the visual buffer above the first row of
+       content. Collapse it to a small gap instead. */
+    body:has(.main-content > .banner-stack:not(:empty)) .list-pane-header,
+    body:has(.main-content > .banner-stack:not(:empty)) .page-content {
+        padding-top: var(--space-3);
     }
 
     /* Dialog: reduce padding on tablet */
