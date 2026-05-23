@@ -131,6 +131,14 @@ async function performSwap(url, init, defaultTarget, options) {
     // history doesn't accumulate per click.
     const paneBefore = document.getElementById('reading-pane');
     const paneWasEmpty = !!paneBefore?.classList.contains('reading-pane-empty');
+    // Captured pre-mutation so the navigation-vs-action detection below
+    // can compare against what was in the pane, not what we just swapped
+    // in. A swap that lands a different entry id is treated as navigation
+    // and clears any pre-existing flash banners; action-result swaps
+    // (Save / Fetch-Full-Content) re-target the same entry and keep their
+    // own `<template data-flash>` toast.
+    const paneEntryIdBefore = currentPaneEntryId();
+    const incomingEntryId = entryIdFromSwapUrl(url);
 
     let swappedReadingPane = false;
     const templates = parsed.querySelectorAll('template[data-swap-target]');
@@ -153,6 +161,9 @@ async function performSwap(url, init, defaultTarget, options) {
             }
             parent.removeChild(dst);
         }
+        if (swappedReadingPane && incomingEntryId && incomingEntryId !== paneEntryIdBefore) {
+            window.flash?.clear?.();
+        }
         if (swappedReadingPane && !skipHistory) syncEntryParamFromSwapUrl(url, { push: paneWasEmpty });
         applyFlashTemplates(parsed);
         document.dispatchEvent(new CustomEvent('rdrs:swap-complete'));
@@ -164,9 +175,20 @@ async function performSwap(url, init, defaultTarget, options) {
     const incoming = parsed.body.firstElementChild;
     if (!incoming) return;
     dst.outerHTML = incoming.outerHTML;
+    if (defaultTarget === '#reading-pane' && incomingEntryId && incomingEntryId !== paneEntryIdBefore) {
+        window.flash?.clear?.();
+    }
     if (defaultTarget === '#reading-pane' && !skipHistory) syncEntryParamFromSwapUrl(url, { push: paneWasEmpty });
     applyFlashTemplates(parsed);
     document.dispatchEvent(new CustomEvent('rdrs:swap-complete'));
+}
+
+// Extract the entry id embedded in a swap URL like `/entries/123/fragment`
+// or `/entries/123/save`. Returns null when the URL doesn't address an
+// entry (e.g. `/sidebar/unread`, `/entries?after=…`).
+function entryIdFromSwapUrl(url) {
+    const m = (url || '').match(/\/entries\/(\d+)(?:\/|$|\?)/);
+    return m ? m[1] : null;
 }
 
 // Mirror the entry id from a `#reading-pane` swap URL into the address-bar
@@ -178,9 +200,9 @@ async function performSwap(url, init, defaultTarget, options) {
 // leaving the list entirely. Subsequent entry switches replace in place
 // so history doesn't accumulate one slot per click.
 function syncEntryParamFromSwapUrl(swapUrl, options) {
-    const m = (swapUrl || '').match(/\/entries\/(\d+)(?:\/|$|\?)/);
-    if (!m) return;
-    setEntryParam(m[1], options);
+    const id = entryIdFromSwapUrl(swapUrl);
+    if (!id) return;
+    setEntryParam(id, options);
 }
 
 function setEntryParam(entryId, options) {
@@ -213,6 +235,11 @@ function currentPaneEntryId() {
 // links, status-filter, 1-4 keys) reloads the page and SSR consumes
 // `?entry=` server-side, so popstate doesn't fire for those.
 window.addEventListener('popstate', () => {
+    // Back/forward is a navigation in user terms — clear any toasts left
+    // over from the previous view so they don't follow the user across
+    // history slots. performSwap below would clear too on entry mismatch,
+    // but doing it upfront also covers the close-pane branch.
+    window.flash?.clear?.();
     const u = new URL(window.location.href);
     const entryId = u.searchParams.get('entry');
     if (!entryId) {
