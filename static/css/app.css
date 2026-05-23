@@ -869,7 +869,6 @@ td input[type="text"] {
    Inline, persistent notifications anchored to the top of `<main>`.
    Replaces the prior floating-toast pattern to satisfy Primer / WCAG
    1.3.2 (sequence), 2.1.1 (keyboard), 2.2.1 (timing), 4.1.3 (status).
-   Compact style: faint tinted bg, 8px coloured dot, no visible timestamp.
    Per-message role=status (success/info) or role=alert (warning/error)
    is set in JS; the dismiss control is a real <button>. */
 .banner-stack {
@@ -883,9 +882,17 @@ td input[type="text"] {
 }
 .banner-stack:focus { outline: none; }
 
+/* Entries layout puts <rdrs-flash> directly inside <main>; .page-content
+   pages already give the flash horizontal inset via the wrapper. Mirror
+   that inset here so the banner aligns the same way on every page. */
+.main-content > .banner-stack {
+    padding-block: var(--space-3);
+    padding-inline: var(--space-10);
+}
+
 .banner {
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto 1fr auto auto;
     align-items: start;
     column-gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
@@ -914,6 +921,14 @@ td input[type="text"] {
     overflow-wrap: anywhere;
 }
 .banner-message { color: var(--color-text); }
+
+.banner-time {
+    color: var(--color-text-muted);
+    font-size: var(--font-xs);
+    font-variant-numeric: tabular-nums;
+    align-self: center;
+    white-space: nowrap;
+}
 
 .banner-dismiss {
     background: none;
@@ -1795,6 +1810,12 @@ summary {
     .banner {
         padding: var(--space-2);
         column-gap: var(--space-2);
+    }
+
+    /* Match the entries-layout flash inset to the narrow-viewport
+       `.page-content` horizontal padding. */
+    .main-content > .banner-stack {
+        padding-inline: var(--space-4);
     }
 
     /* Dialog: reduce padding on tablet */

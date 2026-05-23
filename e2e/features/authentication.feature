@@ -4,6 +4,7 @@ Feature: Authentication
   Scenario: New user can register, sign in, and reach the unread inbox
     When I register with matching passwords
     Then I am redirected to the login page with a success message
+    And the flash banner shows a timestamp
     When I sign in with my credentials
     Then I land on the unread inbox
 
