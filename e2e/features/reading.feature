@@ -91,3 +91,20 @@ Feature: Reading entries
     And I press the "Escape" key
     Then the reading pane is empty
     And the URL has no ?entry= parameter
+
+  Scenario: Opening a different entry clears flash banners from prior actions
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    And I press the "u" key
+    Then I see a success flash "Marked as unread"
+    When I click the entry titled "Test Entry 2"
+    Then the reading pane shows the title "Test Entry 2"
+    And I see no flash message
+
+  Scenario: Acting on the same entry preserves an earlier flash banner
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    And I press the "u" key
+    Then I see a success flash "Marked as unread"
+    When I press the "s" key
+    Then I see a success flash "Marked as unread"

@@ -103,6 +103,15 @@ class RdrsFlash extends HTMLElement {
     info(message) { this.show('info', message); }
     warning(message) { this.show('warning', message); }
 
+    /** Remove every currently-displayed banner from the stack. Used by
+     *  navigation-like partial swaps (opening a different entry,
+     *  back/forward) so stale toasts don't follow the user across views. */
+    clear() {
+        for (const banner of Array.from(this.querySelectorAll('.banner'))) {
+            banner.remove();
+        }
+    }
+
     redirect(url, level, message) {
         this.set(level, message);
         window.location.href = url;
@@ -126,5 +135,6 @@ window.flash = {
     error(message) { this._el.error(message); },
     info(message) { this._el.info(message); },
     warning(message) { this._el.warning(message); },
+    clear() { this._el.clear(); },
     redirect(url, level, message) { this._el.redirect(url, level, message); },
 };

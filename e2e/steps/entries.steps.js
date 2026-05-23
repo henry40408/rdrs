@@ -340,3 +340,7 @@ Then("the entry row for {string} shows as read", async ({ page }, title) => {
   const row = page.getByTestId("entry-item").filter({ hasText: title }).first();
   await expect(row).toHaveClass(/entry-read/);
 });
+
+Then("I see no flash message", async ({ page }) => {
+  await expect(page.getByTestId("flash-message")).toHaveCount(0);
+});
