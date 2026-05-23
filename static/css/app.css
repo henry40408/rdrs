@@ -1813,13 +1813,16 @@ summary {
         padding-inline-start: var(--space-16);
     }
 
-    /* When the flash is visible, the 64px top padding that normally
-       reserves space for the floating hamburger is redundant — the
-       banner itself gives the visual buffer above the first row of
-       content. Collapse it to a small gap instead. */
+    /* When the flash is visible, trim the top padding that normally
+       reserves space for the floating hamburger by roughly the
+       single-banner height (≈ 1 line of `--font-sm` + 16px padding ≈
+       36px). The remainder still clears the hamburger when it sticks
+       out below a short banner stack, and — most importantly — keeps
+       the heading at roughly the same Y position whether the banner
+       is shown or dismissed (no visible jump on dismiss). */
     body:has(.main-content > .banner-stack:not(:empty)) .list-pane-header,
     body:has(.main-content > .banner-stack:not(:empty)) .page-content {
-        padding-top: var(--space-3);
+        padding-top: var(--space-6);
     }
 
     /* Dialog: reduce padding on tablet */
