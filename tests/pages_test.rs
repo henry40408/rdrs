@@ -390,9 +390,12 @@ async fn test_settings_page_renders_ssr_content() {
 #[tokio::test]
 async fn test_settings_page_reflects_custom_config() {
     let config = Config {
+        database_url: "/data/custom.sqlite3".to_string(),
+        server_port: 8080,
         user_agent: "Custom-Agent/2.0".to_string(),
         signup_enabled: true,
         multi_user_enabled: true,
+        image_proxy_secret_generated: false,
         ..default_test_config()
     };
     let app = create_test_app(config);
@@ -405,11 +408,36 @@ async fn test_settings_page_reflects_custom_config() {
 
     assert!(body.contains("Custom-Agent/2.0"));
     assert!(body.contains("(custom)"));
+    // Server section reflects the actual runtime database path and port.
+    assert!(body.contains("/data/custom.sqlite3"));
+    assert!(body.contains("8080"));
+    // Image proxy secret is configured (not auto-generated).
+    assert!(body.contains("Configured"));
+    assert!(!body.contains(">Auto-generated<"));
     // Both Yes flags rendered for signup + multi-user.
     let yes_count = body
         .matches("<span class=\"success-text\">Yes</span>")
         .count();
     assert!(yes_count >= 2, "expected >=2 Yes badges, got {yes_count}");
+}
+
+#[tokio::test]
+async fn test_settings_page_reflects_auto_generated_image_proxy_secret() {
+    let config = Config {
+        image_proxy_secret_generated: true,
+        ..default_test_config()
+    };
+    let app = create_test_app(config);
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/settings").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    // Image proxy secret status reflects the auto-generated runtime state.
+    assert!(body.contains("Auto-generated"));
+    assert!(!body.contains(">Configured<"));
 }
 
 #[tokio::test]

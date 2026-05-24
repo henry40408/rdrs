@@ -1173,10 +1173,13 @@ pub async fn settings_page(
             title: "Settings",
             git_version: crate::GIT_VERSION,
             layout,
+            database_url: state.config.database_url.clone(),
+            server_port: state.config.server_port,
             user_agent: state.config.user_agent.clone(),
             user_agent_is_default,
             signup_enabled: state.config.signup_enabled,
             multi_user_enabled: state.config.multi_user_enabled,
+            image_proxy_secret_generated: state.config.image_proxy_secret_generated,
         },
     )
 }
@@ -2126,10 +2129,13 @@ pub struct SettingsTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    pub database_url: String,
+    pub server_port: u16,
     pub user_agent: String,
     pub user_agent_is_default: bool,
     pub signup_enabled: bool,
     pub multi_user_enabled: bool,
+    pub image_proxy_secret_generated: bool,
 }
 
 impl IntoResponse for SettingsTemplate {
