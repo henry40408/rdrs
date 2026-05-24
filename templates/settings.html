@@ -11,67 +11,14 @@
                     <p class="muted">Version: <code>{{ git_version }}</code></p>
 
                     <h2>Configuration</h2>
-                    <p class="muted">These settings are configured via environment variables and cannot be changed at runtime.</p>
-
-                    <h3>Server</h3>
-                    <table>
-                        <tbody>
-                            <tr>
-                                <th class="settings-th">Database</th>
-                                <td><code>{{ database_url }}</code></td>
-                            </tr>
-                            <tr>
-                                <th class="settings-th">Port</th>
-                                <td><code>{{ server_port }}</code></td>
-                            </tr>
-                        </tbody>
-                    </table>
-
-                    <h3>HTTP Client</h3>
-                    <table>
-                        <tbody>
-                            <tr>
-                                <th class="settings-th">User Agent</th>
-                                <td>
-                                    <code>{{ user_agent }}</code>
-                                    <span class="muted">({% if user_agent_is_default %}default{% else %}custom{% endif %})</span>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-
-                    <h3>User Registration</h3>
-                    <table>
-                        <tbody>
-                            <tr>
-                                <th class="settings-th">Signup Enabled</th>
-                                <td>{% if signup_enabled %}<span class="success-text">Yes</span>{% else %}<span class="muted">No</span>{% endif %}</td>
-                            </tr>
-                            <tr>
-                                <th class="settings-th">Multi-User Mode</th>
-                                <td>{% if multi_user_enabled %}<span class="success-text">Yes</span>{% else %}<span class="muted">No</span>{% endif %}</td>
-                            </tr>
-                        </tbody>
-                    </table>
-
-                    <h3>Image Proxy</h3>
-                    <table>
-                        <tbody>
-                            <tr>
-                                <th class="settings-th">Secret</th>
-                                <td>{% if image_proxy_secret_generated %}<span class="muted">Auto-generated</span>{% else %}<span class="success-text">Configured</span>{% endif %}</td>
-                            </tr>
-                        </tbody>
-                    </table>
-
-                    <h3>Environment Variables</h3>
-                    <p class="muted">Configure these environment variables to customize RDRS:</p>
+                    <p class="muted">These settings are configured via environment variables and cannot be changed at runtime. The current column reflects the running instance.</p>
                     <table class="mobile-cards-settings">
                         <thead>
                             <tr>
                                 <th class="settings-th">Variable</th>
                                 <th class="settings-th">Description</th>
                                 <th class="settings-th">Default</th>
+                                <th class="settings-th">Current</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -79,31 +26,40 @@
                                 <td><code>DATABASE_URL</code></td>
                                 <td data-label="Description">SQLite database file path</td>
                                 <td data-label="Default"><code>rdrs.sqlite3</code></td>
+                                <td data-label="Current"><code>{{ database_url }}</code></td>
                             </tr>
                             <tr>
                                 <td><code>SERVER_PORT</code></td>
                                 <td data-label="Description">HTTP server port</td>
                                 <td data-label="Default"><code>3000</code></td>
+                                <td data-label="Current"><code>{{ server_port }}</code></td>
                             </tr>
                             <tr>
                                 <td><code>USER_AGENT</code></td>
                                 <td data-label="Description">User agent for HTTP requests</td>
                                 <td data-label="Default"><code>RDRS/{version} (...)</code></td>
+                                <td data-label="Current">
+                                    <code>{{ user_agent }}</code>
+                                    <span class="muted">({% if user_agent_is_default %}default{% else %}custom{% endif %})</span>
+                                </td>
                             </tr>
                             <tr>
                                 <td><code>SIGNUP_ENABLED</code></td>
                                 <td data-label="Description">Allow new user registration</td>
                                 <td data-label="Default"><code>false</code></td>
+                                <td data-label="Current">{% if signup_enabled %}<span class="success-text">Yes</span>{% else %}<span class="muted">No</span>{% endif %}</td>
                             </tr>
                             <tr>
                                 <td><code>MULTI_USER_ENABLED</code></td>
                                 <td data-label="Description">Allow multiple users</td>
                                 <td data-label="Default"><code>false</code></td>
+                                <td data-label="Current">{% if multi_user_enabled %}<span class="success-text">Yes</span>{% else %}<span class="muted">No</span>{% endif %}</td>
                             </tr>
                             <tr>
                                 <td><code>IMAGE_PROXY_SECRET</code></td>
                                 <td data-label="Description">Secret key for image proxy URLs</td>
                                 <td data-label="Default"><em>(auto-generated)</em></td>
+                                <td data-label="Current">{% if image_proxy_secret_generated %}<span class="muted">Auto-generated</span>{% else %}<span class="success-text">Configured</span>{% endif %}</td>
                             </tr>
                         </tbody>
                     </table>

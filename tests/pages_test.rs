@@ -379,12 +379,19 @@ async fn test_settings_page_renders_ssr_content() {
     assert!(!body.contains("<rdrs-settings-page>"));
     assert!(!body.contains("/static/js/pages/settings.js"));
 
-    // Server-rendered content from default config.
+    // Server-rendered content from default config: a single Configuration
+    // table listing each env var with its description, default, and current
+    // value (Configuration + Environment Variables sections are merged).
     assert!(body.contains("<h1>Settings</h1>"));
     assert!(body.contains("Configuration"));
-    assert!(body.contains("User Agent"));
-    assert!(body.contains("Signup Enabled"));
-    assert!(body.contains("Environment Variables"));
+    assert!(body.contains("DATABASE_URL"));
+    assert!(body.contains("USER_AGENT"));
+    assert!(body.contains("SIGNUP_ENABLED"));
+    assert!(body.contains("IMAGE_PROXY_SECRET"));
+    // The "Current" column header surfaces the running instance's values.
+    assert!(body.contains("Current"));
+    // The old standalone "Environment Variables" sub-heading is gone.
+    assert!(!body.contains("Environment Variables"));
 }
 
 #[tokio::test]
