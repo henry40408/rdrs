@@ -26,9 +26,10 @@ simple elements only. The ornate `⁂` asterism is dropped in favor of a clean
 
 Two tiers of the same family, so the system reads as one voice across scales:
 
-### Tier 1 — `.empty-state` (full-surface)
+### Tier 1 — `.empty-state` (full-surface, editorial)
 
-Used on the entries-family list pages and `/search`. Structure:
+Used on **`/search` only** — a dedicated destination page where the editorial
+treatment reads as intentional, not as an in-context surprise. Structure:
 
 ```
         ▬               accent rule  (40×3px, --color-accent, opacity .8)
@@ -39,6 +40,22 @@ Used on the entries-family list pages and `/search`. Structure:
 Centered, `max-width: 30rem`, top whitespace via `margin`/`padding-top`.
 Carries an `.empty-state-kbd` inline element (migrated from `.search-status-kbd`)
 for keyboard hints.
+
+### Tier 1-quiet — `.empty-state-quiet` (entries-family list views)
+
+Used by the entries-family list pages (unread / all / read / starred /
+summarized / category / feed). An empty list is an *in-context* condition — you
+navigated into a view that happens to have no items — not an announcement, so
+the loud accent rule + large heading of Tier 1 is wrong here. Quieter structure,
+**no accent rule**:
+
+```
+   <heading>            serif, --font-lg, weight 500, --color-text-secondary
+   <subtext>            italic, muted, --font-sm, line-height 1.6
+```
+
+Centered, `max-width: 30rem`. Keeps the same heading + detail copy as the plan
+below, just rendered restrained.
 
 ### Tier 2 — `.empty-state-compact` (narrow surfaces)
 
@@ -77,13 +94,14 @@ This is the natural collapse of Tier 1 into tight space.
 
 - **`static/css/app.css`** — replace `.search-status` / `.search-status::before`
   / `.search-status-kbd` with the generic `.empty-state` / `.empty-state::before`
-  / `.empty-state-kbd`; add `.empty-state-compact`. Fold `.reading-pane-empty`'s
-  text styling onto the compact class (keep its flex vertical-centering wrapper).
+  / `.empty-state-kbd`; add `.empty-state-compact` and `.empty-state-quiet*`. Fold
+  `.reading-pane-empty`'s text styling onto the compact class (keep its flex
+  vertical-centering wrapper).
 - **`src/handlers/pages.rs`** — split `EntriesLayoutContext.empty_message:
   &'static str` into `empty_title: &'static str` + `empty_detail: &'static str`.
   Update all 8 construction sites with the copy above.
 - **Templates**
-  - `_entries_layout.html` — list empty state renders Tier 1
+  - `_entries_layout.html` — list empty state renders Tier 1-quiet
     (`empty_title` + `empty_detail`); the reading-pane placeholder renders Tier 2.
   - `search.html` — both states render Tier 1; `.search-status*` → `.empty-state*`.
   - `feeds.html`, `categories.html`, `admin.html` — `<td colspan>` empty rows

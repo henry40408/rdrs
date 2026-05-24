@@ -48,9 +48,9 @@
                     </div>
                     <div class="list-pane-body" data-entries-list>
                         {% if entries.is_empty() %}
-                            <div class="empty-state">
-                                <h2 class="empty-state-title">{{ entries_layout.empty_title }}</h2>
-                                <p class="empty-state-text">{{ entries_layout.empty_detail }}</p>
+                            <div class="empty-state-quiet">
+                                <p class="empty-state-quiet-title">{{ entries_layout.empty_title }}</p>
+                                <p class="empty-state-quiet-text">{{ entries_layout.empty_detail }}</p>
                             </div>
                         {% else %}
                             {% for r in entries %}{% include "_entry_row.html" %}{% endfor %}

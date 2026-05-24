@@ -134,10 +134,10 @@ async fn test_unread_page_renders_ssr_layout() {
     assert!(body.contains("data-entries-list"));
     assert!(body.contains(r#"id="reading-pane""#));
     assert!(body.contains("Select an entry"));
-    // Empty unread list renders the Tier-1 editorial empty-state (heading +
-    // detail), not the old plain muted line.
-    assert!(body.contains("class=\"empty-state\""));
-    assert!(body.contains("class=\"empty-state-title\""));
+    // Empty list views render the quiet in-context empty-state (heading +
+    // detail), not the old plain muted line nor the loud Tier-1 banner.
+    assert!(body.contains("class=\"empty-state-quiet\""));
+    assert!(body.contains("class=\"empty-state-quiet-title\""));
     assert!(body.contains("All caught up"));
 }
 
