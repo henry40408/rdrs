@@ -108,3 +108,49 @@ Feature: Reading entries
     Then I see a success flash "Marked as unread"
     When I press the "s" key
     Then I see a success flash "Marked as unread"
+
+  # Uses the All view so reading an entry doesn't drop it from the list —
+  # neighbour membership stays stable while we step through it.
+  Scenario: Reading pane Next and Previous open adjacent entries
+    When I open the all entries page
+    And I click the entry titled "Test Entry 3"
+    And I navigate to the "Next" entry in the reading pane
+    Then the reading pane shows the title "Test Entry 4"
+    When I navigate to the "Previous" entry in the reading pane
+    Then the reading pane shows the title "Test Entry 3"
+    When I navigate to the "Previous" entry in the reading pane
+    Then the reading pane shows the title "Test Entry 2"
+
+  Scenario: With the reading pane open, j and k open adjacent entries
+    When I open the all entries page
+    And I click the entry titled "Test Entry 3"
+    And I press the "j" key
+    Then the reading pane shows the title "Test Entry 4"
+    When I press the "k" key
+    Then the reading pane shows the title "Test Entry 3"
+    When I press the "k" key
+    Then the reading pane shows the title "Test Entry 2"
+
+  # Neighbours honour the active filter: in the Unread inbox, opening an
+  # entry marks it read and so drops it from the unread set. "Previous"
+  # therefore skips the entry just read and lands on the next still-unread
+  # one — the same set the list filters to.
+  Scenario: Reading-pane navigation honours the unread filter
+    When I open the inbox
+    And I click the entry titled "Test Entry 3"
+    And I navigate to the "Next" entry in the reading pane
+    Then the reading pane shows the title "Test Entry 4"
+    When I navigate to the "Previous" entry in the reading pane
+    Then the reading pane shows the title "Test Entry 2"
+
+  Scenario: Previous is disabled on the newest entry
+    When I open the all entries page
+    And I click the entry titled "Test Entry 1"
+    Then the reading-pane "Next" button is enabled
+    And the reading-pane "Previous" button is disabled
+
+  Scenario: Next is disabled on the oldest entry
+    When I open the all entries page
+    And I click the entry titled "Test Entry 5"
+    Then the reading-pane "Previous" button is enabled
+    And the reading-pane "Next" button is disabled

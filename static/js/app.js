@@ -277,6 +277,131 @@ document.addEventListener('click', (event) => {
     closeReadingPane();
 });
 
+// ── Reading-pane prev/next ("neighbors") navigation ──────────────────
+//
+// The reading pane renders disabled `[data-pane-prev]` / `[data-pane-next]`
+// buttons. After the pane opens we resolve the adjacent entry ids from
+// `GET /api/entries/{id}/neighbors`, scoped to the *current list filter*
+// (so "Next" inside the Unread inbox only walks unread entries, etc.),
+// enable whichever direction has a neighbor, and remember the ids so a
+// click / keypress is an instant swap with no extra round-trip. The
+// endpoint resolves order from the DB, so prev/next also crosses
+// pagination boundaries the in-memory list hasn't loaded yet.
+//
+// "Previous" = newer entry (up the published-desc list); "Next" = older
+// (down) — the same axis as the list's `k`/`j`.
+let neighborState = { entryId: null, prevId: null, nextId: null };
+
+// Translate the current page's list filter into the query params
+// `NeighborsQuery` accepts, mirroring the server-side filter each route
+// builds (see handlers/pages.rs). Returns a query string without the
+// leading `?` (empty for the unfiltered `/entries` "All" view).
+function currentEntryFilterParams() {
+    const { pathname, search } = window.location;
+    const out = new URLSearchParams();
+    const status = new URLSearchParams(search).get('status');
+    const applyStatus = (s) => {
+        // Feed/category default view is Unread when no status is present.
+        if (s === 'read') out.set('read_only', 'true');
+        else if (s === 'starred') out.set('starred_only', 'true');
+        else if (s === 'all') { /* no flag */ }
+        else out.set('unread_only', 'true');
+    };
+    const feed = pathname.match(/^\/feeds\/(\d+)\/entries/);
+    const cat = pathname.match(/^\/categories\/(\d+)\/entries/);
+    if (pathname === '/') out.set('unread_only', 'true');
+    else if (pathname === '/entries') { /* All — no flag */ }
+    else if (pathname === '/entries/read') out.set('read_only', 'true');
+    else if (pathname === '/entries/starred') out.set('starred_only', 'true');
+    else if (pathname === '/entries/summarized') out.set('has_summary', 'true');
+    else if (feed) { out.set('feed_id', feed[1]); applyStatus(status); }
+    else if (cat) { out.set('category_id', cat[1]); applyStatus(status); }
+    return out.toString();
+}
+
+// Reflect the resolved neighbor ids onto the buttons, but only while they
+// still describe the entry currently in the pane (guards against a stale
+// fetch landing after the user moved on). Anything else leaves both
+// buttons disabled.
+function applyNeighborButtons() {
+    const prevBtn = document.querySelector('[data-pane-prev]');
+    const nextBtn = document.querySelector('[data-pane-next]');
+    const open = currentPaneEntryId();
+    const valid = open != null && neighborState.entryId === open;
+    if (prevBtn) prevBtn.disabled = !(valid && neighborState.prevId != null);
+    if (nextBtn) nextBtn.disabled = !(valid && neighborState.nextId != null);
+}
+
+async function resolveNeighbors(entryId) {
+    const params = currentEntryFilterParams();
+    const url = `/api/entries/${entryId}/neighbors${params ? `?${params}` : ''}`;
+    try {
+        const resp = await fetch(url, { credentials: 'same-origin' });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        neighborState = { entryId, prevId: data.prev_id, nextId: data.next_id };
+        applyNeighborButtons();
+    } catch {}
+}
+
+// Re-resolve whenever the pane settles on a different entry. Disable the
+// buttons up-front so a slow fetch never leaves a stale direction live.
+let lastResolvedPaneId = null;
+function maybeResolveNeighbors() {
+    const id = currentPaneEntryId();
+    if (id === lastResolvedPaneId) return;
+    lastResolvedPaneId = id;
+    if (id == null) {
+        neighborState = { entryId: null, prevId: null, nextId: null };
+        applyNeighborButtons();
+        return;
+    }
+    applyNeighborButtons();
+    resolveNeighbors(id);
+}
+
+// Open the neighbor in `direction` ('prev' | 'next'). Prefers clicking the
+// matching list row's link when that entry is already loaded — that path
+// also keeps the keyboard list selection in sync — and falls back to a
+// direct fragment swap for neighbors beyond the loaded page. If the
+// pane's neighbors haven't resolved yet, resolve then navigate.
+function navigateNeighbor(direction) {
+    const open = currentPaneEntryId();
+    if (open == null) return;
+    if (neighborState.entryId !== open) {
+        resolveNeighbors(open).then(() => doNavigateNeighbor(direction));
+        return;
+    }
+    doNavigateNeighbor(direction);
+}
+
+function doNavigateNeighbor(direction) {
+    const id = direction === 'next' ? neighborState.nextId : neighborState.prevId;
+    if (id == null) return;
+    const link = document.querySelector(
+        `[data-entry-row][data-entry-id="${id}"] a[data-swap="#reading-pane"]`
+    );
+    if (link) { link.click(); return; }
+    performSwap(`/entries/${id}/fragment`, { method: 'GET' }, '#reading-pane');
+}
+
+function installNeighborNav() {
+    document.addEventListener('click', (event) => {
+        if (event.button !== 0) return;
+        if (event.target.closest('[data-pane-prev]')) {
+            event.preventDefault();
+            navigateNeighbor('prev');
+        } else if (event.target.closest('[data-pane-next]')) {
+            event.preventDefault();
+            navigateNeighbor('next');
+        }
+    });
+    document.addEventListener('rdrs:swap-complete', maybeResolveNeighbors);
+    // Resolve once on load so a `?entry=` deep-link gets live buttons too.
+    maybeResolveNeighbors();
+}
+installNeighborNav();
+
 // Process `<template data-flash data-level="success|error|info|warning">message</template>`
 // blocks in a swap response. Each one becomes a toast on the page-level
 // `<rdrs-flash>` element (mounted by _entries_layout.html). Used for
@@ -407,8 +532,8 @@ document.addEventListener('rdrs:swap-complete', () => applyTimeTooltips());
 // register additional entries — every shortcut the keyboard handler
 // recognizes is listed here, grouped by where it applies.
 const KB_SHORTCUTS = [
-    { group: 'Entry list', key: 'j', desc: 'Next entry' },
-    { group: 'Entry list', key: 'k', desc: 'Previous entry' },
+    { group: 'Entry list', key: 'j', desc: 'Next entry (opens it when the reading pane is open)' },
+    { group: 'Entry list', key: 'k', desc: 'Previous entry (opens it when the reading pane is open)' },
     { group: 'Entry list', key: 'Enter', desc: 'Open selected entry' },
     { group: 'Entry list', key: 's', desc: 'Toggle star' },
     { group: 'Entry list', key: 'u / r', desc: 'Toggle read / unread' },
@@ -515,8 +640,20 @@ function installEntriesKeyboard() {
         if (e.target.matches('input, textarea, select')) return;
         if (e.metaKey || e.ctrlKey || e.altKey) return;
         switch (e.key) {
-            case 'j': e.preventDefault(); move(1); break;
-            case 'k': e.preventDefault(); move(-1); break;
+            case 'j':
+                e.preventDefault();
+                // With the reading pane open, j/k navigate it (open the
+                // next/previous entry across the current filter, even past
+                // the loaded page) instead of only moving the list cursor;
+                // the list selection follows when the neighbor is loaded.
+                if (currentPaneEntryId() != null) navigateNeighbor('next');
+                else move(1);
+                break;
+            case 'k':
+                e.preventDefault();
+                if (currentPaneEntryId() != null) navigateNeighbor('prev');
+                else move(-1);
+                break;
             case 'Enter': {
                 const current = activeRow();
                 if (!current) return;

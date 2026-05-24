@@ -492,6 +492,40 @@ code {
     display: none;
 }
 
+/* Prev/Next navigation bar at the top of the reading pane, visible on all
+   viewports. Readers navigate with these buttons or the j/k keys while the
+   pane is open; mobile readers get them above the article alongside the
+   Back bar. The
+   buttons render disabled and app.js enables whichever direction has an
+   adjacent entry once `/api/entries/{id}/neighbors` resolves. */
+.reading-pane-nav {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-bottom: var(--space-5);
+}
+
+.reading-pane-nav-btn {
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-link);
+    cursor: pointer;
+    font-size: var(--font-sm);
+    line-height: 1;
+    padding: var(--space-2) var(--space-4);
+}
+
+.reading-pane-nav-btn:hover:not(:disabled) {
+    background: var(--color-bg-secondary);
+    color: var(--color-link-hover);
+}
+
+.reading-pane-nav-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
 .reading-pane-content {
     padding: var(--space-8) var(--space-10);
     max-width: var(--content-max-width);
@@ -1758,32 +1792,6 @@ summary {
 
     .reading-pane-back-link:hover {
         color: var(--color-link-hover);
-    }
-
-    .reading-pane-nav {
-        display: flex;
-        gap: var(--space-2);
-    }
-
-    .reading-pane-nav-btn {
-        background: none;
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-md);
-        color: var(--color-link);
-        cursor: pointer;
-        font-size: var(--font-lg);
-        line-height: 1;
-        padding: var(--space-1) var(--space-3);
-    }
-
-    .reading-pane-nav-btn:hover:not(:disabled) {
-        background: var(--color-bg-secondary);
-        color: var(--color-link-hover);
-    }
-
-    .reading-pane-nav-btn:disabled {
-        opacity: 0.3;
-        cursor: default;
     }
 
     .entry-item {
