@@ -91,6 +91,16 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_entry_read_sort
             ON entry(COALESCE(published_at, created_at))
             WHERE read_at IS NOT NULL;
+        -- Partial index over only the unread rows, keyed by feed_id. The
+        -- sidebar (per-category unread) and the feeds page (per-feed unread)
+        -- otherwise walk `idx_entry_feed_id` over every entry and filter
+        -- read_at after the fact; this index touches only the unread subset.
+        -- The count queries pin it with `INDEXED BY` because, post-ANALYZE,
+        -- the planner can otherwise flip to a far worse `idx_entry_read_at`
+        -- plan. See migration v6.
+        CREATE INDEX IF NOT EXISTS idx_entry_unread_feed
+            ON entry(feed_id)
+            WHERE read_at IS NULL;
 
         CREATE TABLE IF NOT EXISTS entry_summary (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -209,7 +219,14 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         // so future migrations can rely on these indexes being present.
     }
 
-    const LATEST_VERSION: i64 = 5;
+    if version < 6 {
+        // Partial index over unread entries (`idx_entry_unread_feed`). Like the
+        // v5 indexes it is created via `CREATE INDEX IF NOT EXISTS` in the main
+        // batch above, so existing databases pick it up on restart. The version
+        // bump records that the unread-count queries can rely on it.
+    }
+
+    const LATEST_VERSION: i64 = 6;
     if version < LATEST_VERSION {
         conn.pragma_update(None, "user_version", LATEST_VERSION)?;
     }
@@ -251,7 +268,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
     }
 
     #[test]
@@ -262,7 +279,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
     }
 
     #[test]
@@ -361,5 +378,23 @@ mod tests {
                 "idx_entry_starred_sort".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_init_db_unread_feed_index_exists() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let indexes: Vec<String> = conn
+            .prepare(
+                "SELECT name FROM sqlite_master \
+                 WHERE type='index' AND name='idx_entry_unread_feed'",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(indexes, vec!["idx_entry_unread_feed".to_string()]);
     }
 }

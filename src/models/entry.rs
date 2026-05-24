@@ -306,16 +306,12 @@ pub fn list_by_user(
     // Force the right entry index for the high-traffic list pages. The
     // SQLite planner otherwise picks `category -> feed -> entry` and walks
     // every row before sorting (worst case for a single-user instance that
-    // owns 100% of entries). Each branch matches one list page; the partial
-    // indexes (`idx_entry_starred_sort`, `idx_entry_read_sort`) were added
-    // in schema migration v5 specifically to serve these queries.
-    let entry_hint = match (sort_order, filter) {
-        (EntrySortOrder::PublishedAt, f) if f.starred_only => " INDEXED BY idx_entry_starred_sort",
-        (EntrySortOrder::PublishedAt, f) if f.read_only => " INDEXED BY idx_entry_read_sort",
-        (EntrySortOrder::PublishedAt, f) if is_no_entry_side_predicate(f) => {
-            " INDEXED BY idx_entry_sort_ts"
-        }
-        _ => "",
+    // owns 100% of entries). The hint only applies to the published-order
+    // sort; the read_at / starred_at sorts have their own dedicated indexes.
+    let entry_hint = if sort_order == EntrySortOrder::PublishedAt {
+        published_sort_entry_hint(filter)
+    } else {
+        ""
     };
 
     let sql = format!(
@@ -406,7 +402,8 @@ pub fn count_unread_by_feed(
         SELECT f.id, COUNT(e.id)
         FROM feed f
         INNER JOIN category c ON f.category_id = c.id
-        LEFT JOIN entry e ON e.feed_id = f.id AND e.read_at IS NULL
+        LEFT JOIN entry e INDEXED BY idx_entry_unread_feed
+            ON e.feed_id = f.id AND e.read_at IS NULL
         WHERE c.user_id = ?1
         GROUP BY f.id
         "#,
@@ -435,7 +432,8 @@ pub fn count_unread_by_category(
         SELECT c.id, COUNT(e.id)
         FROM category c
         LEFT JOIN feed f ON f.category_id = c.id
-        LEFT JOIN entry e ON e.feed_id = f.id AND e.read_at IS NULL
+        LEFT JOIN entry e INDEXED BY idx_entry_unread_feed
+            ON e.feed_id = f.id AND e.read_at IS NULL
         WHERE c.user_id = ?1
         GROUP BY c.id
         "#,
@@ -655,7 +653,7 @@ pub struct UnreadCount {
 pub fn unread_counts_per_feed(conn: &Connection, user_id: i64) -> AppResult<Vec<UnreadCount>> {
     let mut stmt = conn.prepare(
         "SELECT e.feed_id, COUNT(*) AS unread \
-         FROM entry e \
+         FROM entry e INDEXED BY idx_entry_unread_feed \
          INNER JOIN feed f ON f.id = e.feed_id \
          INNER JOIN category c ON c.id = f.category_id \
          WHERE c.user_id = ?1 AND e.read_at IS NULL \
@@ -862,6 +860,26 @@ fn is_no_entry_side_predicate(filter: &EntryFilter) -> bool {
         && !filter.read_only
         && filter.search.is_none()
         && filter.has_summary.is_none()
+}
+
+/// Index hint (a leading `" INDEXED BY ..."` fragment, or `""`) for queries
+/// that `ORDER BY COALESCE(published_at, created_at)`. Shared by `list_by_user`
+/// and `find_neighbors` so both pin the same index for the published-order
+/// pages. Without it the planner walks `category -> feed -> entry` over every
+/// row on a single-user instance that owns ~100% of entries. Each branch maps
+/// to a partial/sort index added in schema migrations v4/v5:
+/// `idx_entry_starred_sort` / `idx_entry_read_sort` for the filtered list
+/// pages, `idx_entry_sort_ts` for the unfiltered case.
+fn published_sort_entry_hint(filter: &EntryFilter) -> &'static str {
+    if filter.starred_only {
+        " INDEXED BY idx_entry_starred_sort"
+    } else if filter.read_only {
+        " INDEXED BY idx_entry_read_sort"
+    } else if is_no_entry_side_predicate(filter) {
+        " INDEXED BY idx_entry_sort_ts"
+    } else {
+        ""
+    }
 }
 
 fn apply_filter_conditions(
@@ -1115,11 +1133,17 @@ pub fn find_neighbors(
         format!(" AND {}", next_conditions.join(" AND "))
     };
 
+    // Pin the same published-order index that `list_by_user` uses. Both
+    // prev/next sort by COALESCE(published_at, created_at), so the hint turns
+    // the planner's full `category -> feed -> entry` walk into an indexed
+    // range scan + LIMIT 1.
+    let entry_hint = published_sort_entry_hint(filter);
+
     // Find previous entry (newer, comes before in DESC order)
     let prev_sql = format!(
         r#"
         SELECT e.id
-        FROM entry e
+        FROM entry e{}
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
         WHERE c.user_id = ?1
@@ -1128,7 +1152,7 @@ pub fn find_neighbors(
         ORDER BY COALESCE(e.published_at, e.created_at) ASC
         LIMIT 1
         "#,
-        prev_extra
+        entry_hint, prev_extra
     );
     let prev_refs: Vec<&dyn rusqlite::ToSql> = prev_params.iter().map(|p| p.as_ref()).collect();
     let prev_id: Option<i64> = conn
@@ -1139,7 +1163,7 @@ pub fn find_neighbors(
     let next_sql = format!(
         r#"
         SELECT e.id
-        FROM entry e
+        FROM entry e{}
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
         WHERE c.user_id = ?1
@@ -1149,7 +1173,7 @@ pub fn find_neighbors(
         ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
         LIMIT 1
         "#,
-        next_extra
+        entry_hint, next_extra
     );
     let next_refs: Vec<&dyn rusqlite::ToSql> = next_params.iter().map(|p| p.as_ref()).collect();
     let next_id: Option<i64> = conn
