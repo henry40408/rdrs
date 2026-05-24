@@ -48,7 +48,10 @@
                     </div>
                     <div class="list-pane-body" data-entries-list>
                         {% if entries.is_empty() %}
-                            <p class="muted" style="padding: var(--space-4);">{{ entries_layout.empty_message }}</p>
+                            <div class="empty-state">
+                                <h2 class="empty-state-title">{{ entries_layout.empty_title }}</h2>
+                                <p class="empty-state-text">{{ entries_layout.empty_detail }}</p>
+                            </div>
                         {% else %}
                             {% for r in entries %}{% include "_entry_row.html" %}{% endfor %}
                             {% if let Some(after) = next_cursor %}
@@ -77,7 +80,7 @@
                 {% if let Some(pane) = reading_pane.as_ref() %}
                     {% include "_reading_pane.html" %}
                 {% else %}
-                    <div id="reading-pane" class="reading-pane reading-pane-empty"><p>Select an entry to read.</p></div>
+                    <div id="reading-pane" class="reading-pane reading-pane-empty"><p class="empty-state-compact">Select an entry from the list to start reading.</p></div>
                 {% endif %}
             </div>
         </main>

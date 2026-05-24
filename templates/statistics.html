@@ -69,7 +69,7 @@
                     <div class="stats-section">
                         <h2>Entries by Category</h2>
                         {% if categories.is_empty() %}
-                            <p class="muted">No entries in this period</p>
+                            <p class="empty-state-compact">No entries in this period.</p>
                         {% else %}
                             {% for c in categories %}
                                 <div class="stats-bar-row">
@@ -87,7 +87,7 @@
                     <div class="stats-section">
                         <h2>Top Feeds</h2>
                         {% if top_feeds.is_empty() %}
-                            <p class="muted">No entries in this period</p>
+                            <p class="empty-state-compact">No entries in this period.</p>
                         {% else %}
                             {% for f in top_feeds %}
                                 <div class="stats-bar-row">

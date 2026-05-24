@@ -31,9 +31,15 @@
                 </script>
 
                 {% if q.is_empty() %}
-                    <p class="search-status">Enter a search term and press <kbd class="search-status-kbd">Enter</kbd> to search.</p>
+                    <div class="empty-state">
+                        <h2 class="empty-state-title">Search your library</h2>
+                        <p class="empty-state-text">Type a keyword and press <kbd class="empty-state-kbd">Enter</kbd> to find entries by title or content.</p>
+                    </div>
                 {% else if results.is_empty() %}
-                    <p class="search-status" data-testid="search-empty">Nothing matched &ldquo;{{ q }}&rdquo;.</p>
+                    <div class="empty-state" data-testid="search-empty">
+                        <h2 class="empty-state-title">No matches</h2>
+                        <p class="empty-state-text">Nothing matched &ldquo;{{ q }}&rdquo;. Try another keyword or check the spelling.</p>
+                    </div>
                 {% else %}
                     <ul class="search-results" data-testid="search-results">
                         {% for r in results %}

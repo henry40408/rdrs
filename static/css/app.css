@@ -480,10 +480,6 @@ code {
     align-items: center;
     justify-content: center;
     height: 100%;
-    color: var(--color-text-muted);
-    font-family: var(--font-body);
-    font-size: var(--font-lg);
-    font-style: italic;
 }
 
 /* Reading-pane toolbar. Holds the prev/next nav on every viewport
@@ -1286,34 +1282,46 @@ dialog::backdrop {
     color: var(--color-text-muted);
 }
 
-/* Editorial empty-state used by /search (and any future SSR list page that
-   wants the same manuscript-aside tone). Italic Source Serif, generous
-   leading whitespace, soft drop-shadowed asterism mark above. */
-.search-status {
-    font-family: var(--font-body);
-    font-style: italic;
-    font-size: var(--font-lg);
-    color: var(--color-text-muted);
+/* Unified empty-state, editorial-modern ("D"). A thin gold accent rule above a
+   serif heading with an italic muted subtext — no icon, no card, no button.
+   Tier 1 (`.empty-state`) is the full-surface form used by the entries-family
+   list pages and /search. */
+.empty-state {
     text-align: center;
+    max-width: 30rem;
     margin: var(--space-12) auto var(--space-8);
-    max-width: 28rem;
-    line-height: 1.6;
     position: relative;
     padding-top: var(--space-8);
 }
-.search-status::before {
-    content: "⁂";
+.empty-state::before {
+    content: "";
     position: absolute;
     top: 0;
     left: 50%;
     transform: translateX(-50%);
-    font-style: normal;
-    font-size: var(--font-xl);
-    color: var(--color-accent);
-    letter-spacing: 0.2em;
-    opacity: 0.6;
+    width: 40px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--color-accent);
+    opacity: 0.8;
 }
-.search-status-kbd {
+.empty-state-title {
+    font-family: var(--font-display);
+    font-size: var(--font-2xl);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--color-text);
+    margin: 0 0 var(--space-3);
+}
+.empty-state-text {
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--font-lg);
+    color: var(--color-text-muted);
+    line-height: 1.6;
+    margin: 0;
+}
+.empty-state-kbd {
     display: inline-block;
     font-family: var(--font-mono);
     font-style: normal;
@@ -1325,6 +1333,20 @@ dialog::backdrop {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     box-shadow: 0 1px 0 var(--color-border);
+}
+
+/* Tier 2 — compact single-line form for narrow surfaces (reading pane, table
+   cells, stats sub-sections) where a full editorial block would break the
+   layout. The natural collapse of Tier 1 into tight space. */
+.empty-state-compact {
+    text-align: center;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: var(--font-base);
+    color: var(--color-text-muted);
+    line-height: 1.6;
+    margin: 0;
+    padding: var(--space-8) var(--space-4);
 }
 
 /* ===== /search page ===== */

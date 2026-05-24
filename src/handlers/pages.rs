@@ -104,7 +104,10 @@ pub struct FilterTab {
 pub struct EntriesLayoutContext {
     pub active: &'static str,
     pub description: Option<String>,
-    pub empty_message: &'static str,
+    /// Empty-state heading (Tier-1 `.empty-state-title`).
+    pub empty_title: &'static str,
+    /// Empty-state subtext (Tier-1 `.empty-state-text`).
+    pub empty_detail: &'static str,
     pub path: String,
     /// Render the All/Read/Starred/Summarized tab bar above the list. True
     /// for the 4 entries-tabs (`active = "all" | "read" | "starred" |
@@ -596,7 +599,9 @@ pub async fn unread_page(
             entries_layout: EntriesLayoutContext {
                 active: "unread",
                 description: None,
-                empty_message: "No unread entries — nice work.",
+                empty_title: "All caught up",
+                empty_detail:
+                    "You've read every unread entry — new items land here as your feeds refresh.",
                 path: "/".to_string(),
                 show_tab_bar: false,
                 mark_as_read_scope: Some("user/-/state/com.google/reading-list".to_string()),
@@ -1094,7 +1099,8 @@ pub async fn entries_page(
             entries_layout: EntriesLayoutContext {
                 active: "all",
                 description: None,
-                empty_message: "No entries.",
+                empty_title: "Nothing to read yet",
+                empty_detail: "Subscribe to a few feeds and their entries will gather here.",
                 path: "/entries".to_string(),
                 show_tab_bar: true,
                 mark_as_read_scope: Some("user/-/state/com.google/reading-list".to_string()),
@@ -1249,7 +1255,8 @@ pub async fn read_entries_page(
             entries_layout: EntriesLayoutContext {
                 active: "read",
                 description: None,
-                empty_message: "No read entries.",
+                empty_title: "No read entries yet",
+                empty_detail: "Entries stay here once you've opened and read them.",
                 path: "/entries/read".to_string(),
                 show_tab_bar: true,
                 mark_as_read_scope: None,
@@ -1330,7 +1337,8 @@ pub async fn starred_entries_page(
             entries_layout: EntriesLayoutContext {
                 active: "starred",
                 description: None,
-                empty_message: "No starred entries.",
+                empty_title: "No starred entries",
+                empty_detail: "Star an entry and it'll wait for you here.",
                 path: "/entries/starred".to_string(),
                 show_tab_bar: true,
                 mark_as_read_scope: None,
@@ -1411,7 +1419,8 @@ pub async fn summarized_entries_page(
             entries_layout: EntriesLayoutContext {
                 active: "summarized",
                 description: None,
-                empty_message: "No summarized entries.",
+                empty_title: "No summaries yet",
+                empty_detail: "Entries you summarize are collected on this page.",
                 path: "/entries/summarized".to_string(),
                 show_tab_bar: true,
                 mark_as_read_scope: None,
@@ -1550,7 +1559,8 @@ pub async fn category_entries_page(
         entries_layout: EntriesLayoutContext {
             active: "",
             description: None,
-            empty_message: "No entries in this category.",
+            empty_title: "Nothing in this category",
+            empty_detail: "The feeds in this category haven't brought in any entries yet.",
             path,
             show_tab_bar: false,
             mark_as_read_scope,
@@ -2003,7 +2013,8 @@ pub async fn feed_entries_page(
         entries_layout: EntriesLayoutContext {
             active: "",
             description: None,
-            empty_message: "No entries in this feed.",
+            empty_title: "Nothing in this feed",
+            empty_detail: "This feed hasn't published anything yet, or it's still syncing.",
             path,
             show_tab_bar: false,
             mark_as_read_scope,

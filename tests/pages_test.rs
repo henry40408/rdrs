@@ -134,6 +134,11 @@ async fn test_unread_page_renders_ssr_layout() {
     assert!(body.contains("data-entries-list"));
     assert!(body.contains(r#"id="reading-pane""#));
     assert!(body.contains("Select an entry"));
+    // Empty unread list renders the Tier-1 editorial empty-state (heading +
+    // detail), not the old plain muted line.
+    assert!(body.contains("class=\"empty-state\""));
+    assert!(body.contains("class=\"empty-state-title\""));
+    assert!(body.contains("All caught up"));
 }
 
 #[tokio::test]
@@ -797,8 +802,10 @@ async fn test_search_page() {
     assert!(body.contains("<h1>Search</h1>"));
     assert!(body.contains("<form method=\"get\" action=\"/search\""));
     assert!(body.contains("data-testid=\"search-input\""));
-    assert!(body.contains("Enter a search term"));
-    assert!(body.contains("class=\"search-status\""));
+    assert!(body.contains("Search your library"));
+    assert!(body.contains("class=\"empty-state\""));
+    // Old editorial empty-state class fully retired in favor of `.empty-state`.
+    assert!(!body.contains("search-status"));
     assert!(!body.contains("<rdrs-entries-page>"));
     assert!(!body.contains("/static/js/pages/entries.js"));
 }
@@ -879,6 +886,9 @@ async fn test_search_page_no_results() {
     let body = response.text();
     assert!(body.contains("Nothing matched"));
     assert!(body.contains("zzznotfoundzzz"));
+    // Tier-1 empty-state with the no-results heading, behind the stable testid.
+    assert!(body.contains("No matches"));
+    assert!(body.contains("data-testid=\"search-empty\""));
 }
 
 // ============================================================================
@@ -993,7 +1003,7 @@ async fn test_category_entries_page() {
         "SSR page must not load the legacy entries.js bundle"
     );
     assert!(
-        html.contains("Select an entry to read."),
+        html.contains("Select an entry from the list to start reading."),
         "reading-pane placeholder must render"
     );
     if html.contains("id=\"load-more\"") {
@@ -1298,7 +1308,7 @@ async fn test_feed_entries_page() {
         "SSR page must not load the legacy entries.js bundle"
     );
     assert!(
-        html.contains("Select an entry to read."),
+        html.contains("Select an entry from the list to start reading."),
         "reading-pane placeholder must render when no entry is selected"
     );
     if html.contains("id=\"load-more\"") {
@@ -1894,8 +1904,9 @@ async fn test_categories_page_renders_empty_state() {
 
     // No CSR shell on the SSR page.
     assert!(!body.contains("<rdrs-categories-page>"));
-    // Empty state renders directly from the template.
-    assert!(body.contains("No categories yet."));
+    // Empty state renders directly from the template (Tier-2 compact).
+    assert!(body.contains("No categories yet"));
+    assert!(body.contains("class=\"empty-state-compact\""));
 }
 
 #[tokio::test]
