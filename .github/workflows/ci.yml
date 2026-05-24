@@ -85,14 +85,36 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
 
       - name: Install E2E dependencies
         working-directory: e2e
         run: npm ci
 
+      - name: Resolve Playwright version
+        id: playwright-version
+        working-directory: e2e
+        run: echo "version=$(node -e 'console.log(require("@playwright/test/package.json").version)')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
+
+      # On a cache hit the browser binaries are restored; only the apt-level
+      # system libraries still need installing. On a miss, download both.
       - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: e2e
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: e2e
+        run: npx playwright install-deps chromium
 
       - name: Run E2E tests (shard ${{ matrix.shard }})
         working-directory: e2e
