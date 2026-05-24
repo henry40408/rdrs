@@ -88,6 +88,10 @@ Given("the feed has {int} entries", async ({ seed, currentUser }, count) => {
   seed.seedTestEntries(feedId, count);
 });
 
+When("I open the all entries page", async ({ page, serverUrl }) => {
+  await page.goto(`${serverUrl}/entries`);
+});
+
 When("I open the read entries page", async ({ page, serverUrl }) => {
   await page.goto(`${serverUrl}/entries/read`);
 });
@@ -153,6 +157,54 @@ When("I click the entry titled {string}", async ({ page }, title) => {
 When("I click {string}", async ({ page }, label) => {
   await page.getByRole("button", { name: label }).click();
 });
+
+// Reading-pane prev/next. The button starts disabled and app.js enables it
+// once `/api/entries/{id}/neighbors` resolves; Playwright's click waits for
+// the actionable (enabled) state, so no explicit wait is needed there.
+function paneNavTestId(direction) {
+  return direction.toLowerCase() === "next"
+    ? "reading-pane-next"
+    : "reading-pane-prev";
+}
+
+// The pane carries no entry id of its own, but every action form targets
+// `/entries/{id}/...` — mirror app.js's currentPaneEntryId() to read it.
+async function paneEntryId(page) {
+  const action = await page
+    .locator('#reading-pane form[action*="/entries/"]')
+    .first()
+    .getAttribute("action")
+    .catch(() => null);
+  const m = action?.match(/\/entries\/(\d+)\//);
+  return m ? m[1] : null;
+}
+
+When(
+  "I navigate to the {string} entry in the reading pane",
+  async ({ page }, direction) => {
+    // Capture the current entry before the click so we can wait until the
+    // pane actually swaps to a different one — guards against a follow-up
+    // navigation firing before this swap (and its neighbour re-resolve)
+    // lands.
+    const before = await paneEntryId(page);
+    await page.getByTestId(paneNavTestId(direction)).click();
+    await expect.poll(() => paneEntryId(page)).not.toBe(before);
+  }
+);
+
+Then(
+  "the reading-pane {string} button is disabled",
+  async ({ page }, direction) => {
+    await expect(page.getByTestId(paneNavTestId(direction))).toBeDisabled();
+  }
+);
+
+Then(
+  "the reading-pane {string} button is enabled",
+  async ({ page }, direction) => {
+    await expect(page.getByTestId(paneNavTestId(direction))).toBeEnabled();
+  }
+);
 
 When("I press the {string} key", async ({ page }, key) => {
   await page.click("body");

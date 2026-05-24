@@ -486,10 +486,64 @@ code {
     font-style: italic;
 }
 
-/* Mobile-only back affordance — hidden on desktop, revealed inside the
-   ≤1024px media query along with the fixed-position pane overlay. */
+/* Reading-pane toolbar. Holds the prev/next nav on every viewport
+   (right-aligned) and, on mobile only, the Back-to-list affordance on the
+   left. Visible on desktop too so the single nav element doesn't have to be
+   duplicated across breakpoints. */
 .reading-pane-back {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-6);
+    border-bottom: 1px solid var(--color-border-light);
+}
+
+/* Back-to-list button — mobile-only (the desktop split view never leaves
+   the list). `margin-right: auto` pins it far left so the nav stays right.
+   Revealed in the ≤1024px block. */
+.reading-pane-back-link {
     display: none;
+    margin-right: auto;
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: var(--color-link);
+    cursor: pointer;
+}
+
+.reading-pane-back-link:hover {
+    color: var(--color-link-hover);
+}
+
+/* Prev/Next navigation. Buttons render disabled and app.js enables whichever
+   direction has an adjacent entry once `/api/entries/{id}/neighbors`
+   resolves; readers also navigate with the j/k keys while the pane is open. */
+.reading-pane-nav {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.reading-pane-nav-btn {
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-link);
+    cursor: pointer;
+    font-size: var(--font-sm);
+    line-height: 1;
+    padding: var(--space-2) var(--space-4);
+}
+
+.reading-pane-nav-btn:hover:not(:disabled) {
+    background: var(--color-bg-secondary);
+    color: var(--color-link-hover);
+}
+
+.reading-pane-nav-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
 }
 
 .reading-pane-content {
@@ -1734,12 +1788,10 @@ summary {
         padding-right: var(--space-4);
     }
 
+    /* Mobile keeps the toolbar (base styles) but makes it a sticky bar over
+       the full-screen pane overlay and reveals the Back button. */
     .reading-pane-back {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
         padding: var(--space-3) var(--space-4);
-        border-bottom: 1px solid var(--color-border-light);
         font-size: var(--font-sm);
         background: var(--color-bg);
         position: sticky;
@@ -1748,42 +1800,8 @@ summary {
     }
 
     .reading-pane-back-link {
-        background: none;
-        border: 0;
-        padding: 0;
-        font: inherit;
-        color: var(--color-link);
-        cursor: pointer;
-    }
-
-    .reading-pane-back-link:hover {
-        color: var(--color-link-hover);
-    }
-
-    .reading-pane-nav {
-        display: flex;
-        gap: var(--space-2);
-    }
-
-    .reading-pane-nav-btn {
-        background: none;
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-md);
-        color: var(--color-link);
-        cursor: pointer;
-        font-size: var(--font-lg);
-        line-height: 1;
-        padding: var(--space-1) var(--space-3);
-    }
-
-    .reading-pane-nav-btn:hover:not(:disabled) {
-        background: var(--color-bg-secondary);
-        color: var(--color-link-hover);
-    }
-
-    .reading-pane-nav-btn:disabled {
-        opacity: 0.3;
-        cursor: default;
+        display: inline-flex;
+        align-items: center;
     }
 
     .entry-item {

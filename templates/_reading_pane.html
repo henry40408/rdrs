@@ -8,8 +8,20 @@
    Empty-state placeholders MUST NOT carry the class, or mobile will
    trap users behind a blank pane. #}
 <div id="reading-pane" class="reading-pane reading-pane-active">
+    {# Pane toolbar. On mobile it also holds the Back affordance (left); the
+       prev/next nav sits at the right on every viewport. #}
     <div class="reading-pane-back">
         <button type="button" class="reading-pane-back-link" data-pane-back data-testid="reading-pane-back">← Back to list</button>
+        {# Prev/Next navigation across the current filtered list. Rendered
+           disabled; app.js resolves neighbours via
+           `GET /api/entries/{id}/neighbors` after the pane opens and enables
+           whichever direction has an adjacent entry. "Previous" = newer
+           (up the list), "Next" = older (down the list), matching the
+           list's published-desc order. #}
+        <nav class="reading-pane-nav" aria-label="Entry navigation">
+            <button type="button" class="reading-pane-nav-btn" data-pane-prev data-testid="reading-pane-prev" disabled>‹ Previous</button>
+            <button type="button" class="reading-pane-nav-btn" data-pane-next data-testid="reading-pane-next" disabled>Next ›</button>
+        </nav>
     </div>
     <div class="reading-pane-content">
         <h1 class="reading-pane-title" data-testid="reading-pane-title">
