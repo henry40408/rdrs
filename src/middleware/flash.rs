@@ -147,8 +147,12 @@ impl IntoResponseParts for Flash {
 
     fn into_response_parts(self, res: ResponseParts) -> Result<ResponseParts, Self::Error> {
         if let Some(jar) = self.jar {
-            // Clear the flash cookie after reading
-            let jar = jar.remove(FLASH_COOKIE_NAME);
+            // Clear the flash cookie after reading. The removal cookie must carry
+            // the same `Path=/` the cookie was stored with, otherwise (per RFC 6265)
+            // the browser computes a default-path from the request URI and the
+            // deletion fails to match on multi-segment routes (see #247).
+            let removal = Cookie::build((FLASH_COOKIE_NAME, "")).path("/").build();
+            let jar = jar.remove(removal);
             jar.into_response_parts(res)
         } else {
             Ok(res)
@@ -507,5 +511,44 @@ mod tests {
         let location = String::from("/dynamic/path");
         let redirect = FlashRedirect::success(location, "Message");
         assert_eq!(redirect.location, "/dynamic/path");
+    }
+
+    /// Regression for #247: the flash-cookie removal must carry `Path=/` so it
+    /// matches the stored cookie (always written with `Path=/`). Without it the
+    /// browser derives a default-path from the request URI, and on multi-segment
+    /// routes (e.g. `/feeds/{id}/entries`) the deletion never matches — leaving
+    /// the flash to re-render on every subsequent page load.
+    #[tokio::test]
+    async fn test_flash_removal_cookie_has_root_path() {
+        use axum::http::Request;
+        use axum::response::IntoResponse;
+
+        let messages = vec![FlashMessage::success("Marked 5 loaded entries as read.")];
+        let cookie_value = serde_json::to_string(&messages).unwrap();
+
+        // Reproduce the original report: consume the flash on a multi-segment route.
+        let request = Request::builder()
+            .uri("/feeds/5/entries")
+            .header("Cookie", format!("{FLASH_COOKIE_NAME}={cookie_value}"))
+            .body(())
+            .unwrap();
+        let (mut parts, _) = request.into_parts();
+
+        let flash = Flash::from_request_parts(&mut parts, &()).await.unwrap();
+        assert_eq!(flash.messages.len(), 1, "flash cookie should be read");
+
+        let response = (flash, ()).into_response();
+        let removal = response
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .map(|value| value.to_str().unwrap().to_string())
+            .find(|value| value.starts_with(&format!("{FLASH_COOKIE_NAME}=")))
+            .expect("removal Set-Cookie header for flash should be present");
+
+        assert!(
+            removal.contains("Path=/"),
+            "removal cookie must carry Path=/ to match the stored cookie, got: {removal}"
+        );
     }
 }
