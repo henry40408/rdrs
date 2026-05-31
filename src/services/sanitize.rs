@@ -235,6 +235,71 @@ fn strip_tracking_params(html: &str) -> String {
     result
 }
 
+/// Attributes that carry the real image URL for lazy-loaded images, in priority order.
+const LAZY_SRC_ATTRS: &[&str] = &["data-src", "data-lazy-src", "data-original"];
+
+/// Promote lazy-loaded image URLs into `src` before sanitization.
+///
+/// Many sites (e.g. WordPress with lazy-load plugins) ship a `data:` SVG
+/// placeholder in `src` and keep the real URL in a `data-*` attribute. Ammonia
+/// later drops both the `data:` src (disallowed scheme) and the unknown `data-*`
+/// attribute, leaving an empty `<img>` and making images disappear. Running this
+/// first moves the real URL into `src` so the rest of the pipeline can proxy it.
+fn promote_lazy_images(html: &str) -> String {
+    let document = Html::parse_fragment(html);
+    let img_selector = Selector::parse("img").expect("static CSS selector");
+
+    let mut result = html.to_string();
+
+    for element in document.select(&img_selector) {
+        let el = element.value();
+
+        // Keep a real (non-placeholder) src as-is.
+        let current_src = el.attr("src");
+        if let Some(src) = current_src {
+            if !src.starts_with("data:") {
+                continue;
+            }
+        }
+
+        // Find the first usable lazy URL (non-empty, not another placeholder).
+        let lazy = LAZY_SRC_ATTRS.iter().find_map(|attr| {
+            el.attr(attr)
+                .filter(|u| !u.is_empty() && !u.starts_with("data:"))
+                .map(|u| (*attr, u))
+        });
+        let Some((attr_name, real)) = lazy else {
+            continue;
+        };
+
+        let new_src = format!("src=\"{}\"", real);
+        match current_src {
+            // Replace the `data:` placeholder src with the real URL.
+            Some(placeholder) => {
+                let old_amp = format!("src=\"{}\"", placeholder.replace('&', "&amp;"));
+                let old_raw = format!("src=\"{}\"", placeholder);
+                if result.contains(&old_amp) {
+                    result = result.replacen(&old_amp, &new_src, 1);
+                } else {
+                    result = result.replacen(&old_raw, &new_src, 1);
+                }
+            }
+            // No src at all: convert the lazy attribute into `src`.
+            None => {
+                let old_amp = format!("{}=\"{}\"", attr_name, real.replace('&', "&amp;"));
+                let old_raw = format!("{}=\"{}\"", attr_name, real);
+                if result.contains(&old_amp) {
+                    result = result.replacen(&old_amp, &new_src, 1);
+                } else {
+                    result = result.replacen(&old_raw, &new_src, 1);
+                }
+            }
+        }
+    }
+
+    result
+}
+
 pub fn sanitize_html(
     content: &str,
     secret: &[u8],
@@ -280,12 +345,16 @@ pub fn sanitize_html(
 
     let url_schemes: HashSet<&str> = ["http", "https"].iter().copied().collect();
 
+    // Step 0: Promote lazy-loaded image URLs into src before ammonia drops the
+    // data: placeholder and the unknown data-* attributes.
+    let unlazied = promote_lazy_images(content);
+
     // Step 1: Ammonia sanitization (already adds rel="noopener noreferrer")
     let sanitized = Builder::default()
         .tags(allowed_tags)
         .link_rel(Some("noopener noreferrer"))
         .url_schemes(url_schemes)
-        .clean(content)
+        .clean(&unlazied)
         .to_string();
 
     // Step 2: Remove tracking pixels
@@ -461,6 +530,85 @@ mod tests {
         assert_eq!(proxy_count, 2);
         let sig_count = output.matches("&s=").count();
         assert_eq!(sig_count, 2);
+    }
+
+    #[test]
+    fn test_promote_lazy_image_data_lazy_src() {
+        // Lazy-loaded images (e.g. WordPress + lazy-load plugins) carry a data: SVG
+        // placeholder in src and the real URL in data-lazy-src. The real image must
+        // be promoted and proxied, not dropped.
+        let input = r#"<img src="data:image/svg+xml,%3Csvg%3E%3C/svg%3E" data-lazy-src="https://example.com/real.jpg" alt="Photo">"#;
+        let output = sanitize_html(
+            input,
+            TEST_SECRET,
+            Some("https://example.com/post"),
+            None,
+            None,
+        );
+        assert!(
+            output.contains("/api/proxy/image?url="),
+            "expected lazy image to be proxied, got: {output}"
+        );
+        assert!(output.contains("&s="));
+        assert!(
+            !output.contains("data:image/svg"),
+            "placeholder should be replaced, got: {output}"
+        );
+    }
+
+    #[test]
+    fn test_promote_lazy_image_data_src() {
+        let input =
+            r#"<img src="data:image/gif;base64,R0lGOD" data-src="https://example.com/photo.png">"#;
+        let output = sanitize_html(
+            input,
+            TEST_SECRET,
+            Some("https://example.com/post"),
+            None,
+            None,
+        );
+        assert!(
+            output.contains("/api/proxy/image?url="),
+            "expected lazy image to be proxied, got: {output}"
+        );
+        assert!(!output.contains("data:image/gif"));
+    }
+
+    #[test]
+    fn test_promote_lazy_image_relative_data_src() {
+        // Relative lazy URLs must be resolved against base_url before proxying.
+        let input = r#"<img src="data:image/svg+xml,%3Csvg%3E%3C/svg%3E" data-src="/img/pic.jpg">"#;
+        let output = sanitize_html(
+            input,
+            TEST_SECRET,
+            Some("https://example.com/post"),
+            None,
+            None,
+        );
+        assert!(
+            output.contains("/api/proxy/image?url="),
+            "expected relative lazy image to be proxied, got: {output}"
+        );
+    }
+
+    #[test]
+    fn test_real_src_not_overridden_by_lazy_attr() {
+        // When src is already a real URL, it must win even if a lazy attr exists.
+        let input =
+            r#"<img src="https://example.com/real.jpg" data-src="https://example.com/other.jpg">"#;
+        let output = sanitize_html(
+            input,
+            TEST_SECRET,
+            Some("https://example.com/post"),
+            None,
+            None,
+        );
+        // real.jpg must be the one proxied; other.jpg must not appear.
+        assert!(output.contains("/api/proxy/image?url="));
+        assert!(
+            !output.contains("other.jpg"),
+            "lazy attr must not override a real src, got: {output}"
+        );
     }
 
     #[test]
