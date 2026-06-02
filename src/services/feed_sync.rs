@@ -18,6 +18,23 @@ pub struct SyncResult {
     pub updated_entries: i64,
 }
 
+/// Pick the freshest available "last updated" signal for a feed.
+///
+/// Combines the feed-level timestamp (RSS `<lastBuildDate>` / Atom `<updated>`),
+/// the newest entry date, and the HTTP `Last-Modified` header, returning the most
+/// recent one. The HTTP header guards against feeds whose in-feed dates are stale
+/// or bogus (e.g. a frozen `<lastBuildDate>` on a feed with no entries).
+fn effective_feed_updated_at(
+    feed_timestamp: Option<chrono::DateTime<Utc>>,
+    latest_entry_date: Option<chrono::DateTime<Utc>>,
+    http_last_modified: Option<chrono::DateTime<Utc>>,
+) -> Option<chrono::DateTime<Utc>> {
+    [feed_timestamp, latest_entry_date, http_last_modified]
+        .into_iter()
+        .flatten()
+        .max()
+}
+
 pub async fn refresh_feed(
     db: DbPool,
     feed_id: i64,
@@ -258,6 +275,12 @@ pub async fn refresh_feed(
         .or(parsed_feed.published)
         .map(|dt| dt.with_timezone(&Utc));
 
+    // Parse the HTTP Last-Modified header as an additional freshness signal.
+    // Some feeds report a stale/bogus in-feed date (e.g. a frozen <lastBuildDate>
+    // on a feed with no entries) while the server still serves a recent
+    // Last-Modified; without this the feed's "last updated" would be misjudged.
+    let http_last_modified = new_last_modified.as_deref().and_then(parse_timestamp);
+
     let (new_entries, updated_entries) = db
         .background(move |conn| {
             let mut new_entries = 0i64;
@@ -315,11 +338,10 @@ pub async fn refresh_feed(
                 }
             }
 
-            // Use the most recent of feed-level timestamp and latest entry date
-            let effective_updated_at = match (feed_timestamp, latest_entry_date) {
-                (Some(a), Some(b)) => Some(a.max(b)),
-                (a, b) => a.or(b),
-            };
+            // Use the most recent of feed-level timestamp, latest entry date, and
+            // the HTTP Last-Modified header.
+            let effective_updated_at =
+                effective_feed_updated_at(feed_timestamp, latest_entry_date, http_last_modified);
 
             feed::update_fetch_result(
                 conn,
@@ -490,5 +512,64 @@ mod tests {
 
         // Chinese format
         assert!(parse_timestamp("週四, 22 一月 2026 15:09:47 +0800").is_some());
+    }
+
+    #[test]
+    fn test_parse_timestamp_http_last_modified() {
+        // HTTP-date (RFC 7231 IMF-fixdate) uses the "GMT" zone name
+        let result = parse_timestamp("Mon, 01 Jun 2026 17:46:41 GMT");
+        assert!(
+            result.is_some(),
+            "Should parse HTTP-date Last-Modified format"
+        );
+        let dt = result.unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 6);
+        assert_eq!(dt.day(), 1);
+        assert_eq!(dt.hour(), 17);
+    }
+
+    fn dt(y: i32, mo: u32, d: u32) -> chrono::DateTime<Utc> {
+        use chrono::TimeZone;
+        Utc.with_ymd_and_hms(y, mo, d, 0, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn test_effective_feed_updated_at_uses_http_last_modified_when_feed_date_is_stale() {
+        // Regression: blocktempo serves lastBuildDate=2019 with no entries, but the
+        // HTTP Last-Modified header is recent. The freshest signal must win.
+        let feed_ts = Some(dt(2019, 1, 22));
+        let latest_entry = None;
+        let http_lm = Some(dt(2026, 6, 1));
+        assert_eq!(
+            effective_feed_updated_at(feed_ts, latest_entry, http_lm),
+            Some(dt(2026, 6, 1))
+        );
+    }
+
+    #[test]
+    fn test_effective_feed_updated_at_picks_maximum() {
+        assert_eq!(
+            effective_feed_updated_at(
+                Some(dt(2026, 3, 1)),
+                Some(dt(2026, 5, 1)),
+                Some(dt(2026, 4, 1))
+            ),
+            Some(dt(2026, 5, 1))
+        );
+    }
+
+    #[test]
+    fn test_effective_feed_updated_at_all_none() {
+        assert_eq!(effective_feed_updated_at(None, None, None), None);
+    }
+
+    #[test]
+    fn test_effective_feed_updated_at_ignores_missing_signals() {
+        // Only entry dates present -> use them; no HTTP/feed-level date available.
+        assert_eq!(
+            effective_feed_updated_at(None, Some(dt(2026, 2, 2)), None),
+            Some(dt(2026, 2, 2))
+        );
     }
 }
