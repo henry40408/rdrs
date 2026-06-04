@@ -16,7 +16,7 @@ path = "src/main.rs"
 axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 askama = "0.16"
 argon2 = "0.5"
 password-hash = { version = "0.6", features = ["getrandom"] }
