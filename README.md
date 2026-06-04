@@ -132,7 +132,7 @@ The Dockerfile uses multi-stage builds with a distroless base image for minimal 
 
 ### Prerequisites
 
-- Rust 1.92+
+- Rust 1.95+
 - SQLite (bundled via rusqlite)
 
 ### Running Tests

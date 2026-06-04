@@ -899,9 +899,9 @@ pub async fn feeds_page(
         _ => {}
     }
     match active_sort.as_str() {
-        "unread" => rows.sort_by(|a, b| b.unread_count.cmp(&a.unread_count)),
+        "unread" => rows.sort_by_key(|b| std::cmp::Reverse(b.unread_count)),
         "category" => rows.sort_by(|a, b| a.category_name.cmp(&b.category_name)),
-        _ => rows.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
+        _ => rows.sort_by_key(|a| a.title.to_lowercase()),
     }
     let active_filter = match active_filter_raw.as_str() {
         "errors" | "stale" | "all" => active_filter_raw,
