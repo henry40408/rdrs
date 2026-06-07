@@ -27,11 +27,6 @@ When("I search for {string}", async ({ page }, term) => {
   await page.keyboard.press("Enter");
 });
 
-When("I press {string}", async ({ page }, key) => {
-  await page.click("body");
-  await page.keyboard.press(key);
-});
-
 Then("I see search results:", async ({ page }, table) => {
   await expect(page.getByTestId("search-results")).toBeVisible();
   for (const [title] of table.raw()) {
