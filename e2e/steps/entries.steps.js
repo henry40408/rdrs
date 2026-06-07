@@ -1,27 +1,7 @@
 import { createBdd } from "playwright-bdd";
-import Database from "better-sqlite3";
 import { test, expect } from "../support/fixtures.js";
 
 const { Given, When, Then } = createBdd(test);
-
-function entryIdByTitle(seed, currentUser, title) {
-  const db = new Database(seed.dbPath);
-  try {
-    const userId = seed.getUserId(currentUser.username);
-    const row = db
-      .prepare(
-        `SELECT e.id FROM entry e
-         JOIN feed f ON e.feed_id = f.id
-         JOIN category c ON f.category_id = c.id
-         WHERE c.user_id = ? AND e.title = ?`
-      )
-      .get(userId, title);
-    if (!row) throw new Error(`Entry '${title}' not found`);
-    return row.id;
-  } finally {
-    db.close();
-  }
-}
 
 Given(
   "I have a feed {string} with {int} test entries in category {string}",
@@ -38,54 +18,28 @@ Given(
 );
 
 Given("the entry titled {string} is marked read", async ({ seed, currentUser }, title) => {
-  const id = entryIdByTitle(seed, currentUser, title);
-  seed.markRead(id);
+  const userId = seed.getUserId(currentUser.username);
+  seed.markRead(seed.findEntryIdByTitle(userId, title));
 });
 
 Given("the entry titled {string} is starred", async ({ seed, currentUser }, title) => {
-  const id = entryIdByTitle(seed, currentUser, title);
-  seed.markStarred(id);
+  const userId = seed.getUserId(currentUser.username);
+  seed.markStarred(seed.findEntryIdByTitle(userId, title));
 });
 
 Given("the entry titled {string} has a summary", async ({ seed, currentUser }, title) => {
-  const id = entryIdByTitle(seed, currentUser, title);
   const userId = seed.getUserId(currentUser.username);
-  seed.insertSummary(id, userId);
+  seed.insertSummary(seed.findEntryIdByTitle(userId, title), userId);
 });
 
 Given("all entries in category {string} are marked read", async ({ seed, currentUser }, name) => {
   const userId = seed.getUserId(currentUser.username);
-  const db = new Database(seed.dbPath);
-  try {
-    db.prepare(
-      `UPDATE entry SET read_at = datetime('now')
-       WHERE feed_id IN (
-         SELECT f.id FROM feed f
-         JOIN category c ON f.category_id = c.id
-         WHERE c.user_id = ? AND c.name = ?
-       )`
-    ).run(userId, name);
-  } finally {
-    db.close();
-  }
+  seed.markCategoryRead(userId, name);
 });
 
 Given("the feed has {int} entries", async ({ seed, currentUser }, count) => {
   const userId = seed.getUserId(currentUser.username);
-  const db = new Database(seed.dbPath);
-  let feedId;
-  try {
-    const row = db
-      .prepare(
-        `SELECT f.id FROM feed f JOIN category c ON f.category_id = c.id WHERE c.user_id = ? LIMIT 1`
-      )
-      .get(userId);
-    if (!row) throw new Error("No feed found for user");
-    feedId = row.id;
-  } finally {
-    db.close();
-  }
-  seed.seedTestEntries(feedId, count);
+  seed.seedTestEntries(seed.firstFeedId(userId), count);
 });
 
 When("I open the all entries page", async ({ page, serverUrl }) => {
@@ -106,35 +60,13 @@ When("I open the summarized entries page", async ({ page, serverUrl }) => {
 
 When("I open the entries page for feed {string}", async ({ page, seed, currentUser, serverUrl }, feedTitle) => {
   const userId = seed.getUserId(currentUser.username);
-  const db = new Database(seed.dbPath);
-  let feedId;
-  try {
-    const row = db
-      .prepare(
-        `SELECT f.id FROM feed f JOIN category c ON f.category_id = c.id WHERE c.user_id = ? AND f.title = ?`
-      )
-      .get(userId, feedTitle);
-    if (!row) throw new Error(`Feed '${feedTitle}' not found`);
-    feedId = row.id;
-  } finally {
-    db.close();
-  }
+  const feedId = seed.findFeedIdByTitle(userId, feedTitle);
   await page.goto(`${serverUrl}/feeds/${feedId}/entries`);
 });
 
 When("I open the entries page for category {string}", async ({ page, seed, currentUser, serverUrl }, name) => {
   const userId = seed.getUserId(currentUser.username);
-  const db = new Database(seed.dbPath);
-  let categoryId;
-  try {
-    const row = db
-      .prepare(`SELECT id FROM category WHERE user_id = ? AND name = ?`)
-      .get(userId, name);
-    if (!row) throw new Error(`Category '${name}' not found`);
-    categoryId = row.id;
-  } finally {
-    db.close();
-  }
+  const categoryId = seed.findCategoryIdByName(userId, name);
   await page.goto(`${serverUrl}/categories/${categoryId}/entries`);
 });
 
@@ -297,7 +229,8 @@ When("I reload the page", async ({ page }) => {
 When(
   "I open the inbox deep-linked to entry titled {string}",
   async ({ page, serverUrl, seed, currentUser }, title) => {
-    const id = entryIdByTitle(seed, currentUser, title);
+    const userId = seed.getUserId(currentUser.username);
+    const id = seed.findEntryIdByTitle(userId, title);
     await page.goto(`${serverUrl}/?entry=${id}`);
   }
 );
@@ -305,7 +238,8 @@ When(
 Then(
   "the URL has the ?entry= parameter for {string}",
   async ({ page, seed, currentUser }, title) => {
-    const id = entryIdByTitle(seed, currentUser, title);
+    const userId = seed.getUserId(currentUser.username);
+    const id = seed.findEntryIdByTitle(userId, title);
     // performSwap rewrites the URL after a #reading-pane swap (pushState on
     // first-open from an empty pane, replaceState on subsequent switches);
     // wait until the address-bar `entry` query matches the clicked entry's id.
@@ -327,33 +261,13 @@ Then("I am on the unread inbox", async ({ page, serverUrl }) => {
 
 Then("I am on the entries page for feed {string}", async ({ page, seed, currentUser, serverUrl }, feedTitle) => {
   const userId = seed.getUserId(currentUser.username);
-  const db = new Database(seed.dbPath);
-  let feedId;
-  try {
-    const row = db
-      .prepare(`SELECT f.id FROM feed f JOIN category c ON f.category_id = c.id WHERE c.user_id = ? AND f.title = ?`)
-      .get(userId, feedTitle);
-    if (!row) throw new Error(`Feed '${feedTitle}' not found`);
-    feedId = row.id;
-  } finally {
-    db.close();
-  }
+  const feedId = seed.findFeedIdByTitle(userId, feedTitle);
   await page.waitForURL(`${serverUrl}/feeds/${feedId}/entries`);
 });
 
 Then("I am on the Read filter for feed {string}", async ({ page, seed, currentUser, serverUrl }, feedTitle) => {
   const userId = seed.getUserId(currentUser.username);
-  const db = new Database(seed.dbPath);
-  let feedId;
-  try {
-    const row = db
-      .prepare(`SELECT f.id FROM feed f JOIN category c ON f.category_id = c.id WHERE c.user_id = ? AND f.title = ?`)
-      .get(userId, feedTitle);
-    if (!row) throw new Error(`Feed '${feedTitle}' not found`);
-    feedId = row.id;
-  } finally {
-    db.close();
-  }
+  const feedId = seed.findFeedIdByTitle(userId, feedTitle);
   await page.waitForURL(`${serverUrl}/feeds/${feedId}/entries?status=read`);
 });
 
@@ -372,17 +286,7 @@ Then("pressing the {string} key opens a new tab at {string}", async ({ page }, k
 
 Then("I am on the entries page for category {string}", async ({ page, seed, currentUser, serverUrl }, name) => {
   const userId = seed.getUserId(currentUser.username);
-  const db = new Database(seed.dbPath);
-  let categoryId;
-  try {
-    const row = db
-      .prepare(`SELECT id FROM category WHERE user_id = ? AND name = ?`)
-      .get(userId, name);
-    if (!row) throw new Error(`Category '${name}' not found`);
-    categoryId = row.id;
-  } finally {
-    db.close();
-  }
+  const categoryId = seed.findCategoryIdByName(userId, name);
   await page.waitForURL(`${serverUrl}/categories/${categoryId}/entries`);
 });
 
