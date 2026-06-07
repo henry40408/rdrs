@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>rdrs subscriptions</title>
+  </head>
+  <body>
+    <outline text="Imported Category" title="Imported Category">
+      <outline type="rss" text="Imported Feed" title="Imported Feed" xmlUrl="https://example.com/imported-feed.xml" htmlUrl="https://example.com/"/>
+    </outline>
+  </body>
+</opml>

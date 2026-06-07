@@ -11,14 +11,14 @@
                 <form method="post" action="/feeds/import" enctype="multipart/form-data">
                     <div class="form-group">
                         <label for="file">Upload .opml file</label>
-                        <input type="file" id="file" name="file" accept=".opml,.xml">
+                        <input type="file" id="file" name="file" accept=".opml,.xml" data-testid="opml-file-input">
                     </div>
                     <div class="form-group">
                         <label for="content">Or paste OPML content</label>
                         <textarea id="content" name="content" rows="10" class="textarea-full"></textarea>
                     </div>
                     <div class="modal-actions">
-                        <button type="submit">Import</button>
+                        <button type="submit" data-testid="opml-import-btn">Import</button>
                         <a href="/feeds" class="btn btn-secondary">Cancel</a>
                     </div>
                 </form>
