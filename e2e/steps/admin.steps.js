@@ -1,19 +1,13 @@
 import { createBdd } from "playwright-bdd";
 import { test, expect } from "../support/fixtures.js";
-import Database from "better-sqlite3";
 
 const { Given, When, Then } = createBdd(test);
 
-// Promote the currentUser to admin via direct SQL, then sign in.
+// Promote the currentUser to admin via the seed helper, then sign in.
 Given("I am signed in as an admin", async ({ page, api, currentUser, seed, serverUrl }) => {
   await api.register(currentUser.username, currentUser.password);
   const userId = seed.getUserId(currentUser.username);
-  const db = new Database(seed.dbPath);
-  try {
-    db.prepare(`UPDATE user SET role = 'admin' WHERE id = ?`).run(userId);
-  } finally {
-    db.close();
-  }
+  seed.makeAdmin(userId);
   await page.goto(`${serverUrl}/login`);
   await page.getByTestId("username-input").fill(currentUser.username);
   await page.getByTestId("password-input").fill(currentUser.password);

@@ -142,6 +142,96 @@ export class SeedHelper {
     }
   }
 
+  makeAdmin(userId) {
+    const db = new Database(this.dbPath);
+    try {
+      db.prepare(`UPDATE user SET role = 'admin' WHERE id = ?`).run(userId);
+    } finally {
+      db.close();
+    }
+  }
+
+  findEntryIdByTitle(userId, title) {
+    const db = new Database(this.dbPath);
+    try {
+      const row = db
+        .prepare(
+          `SELECT e.id FROM entry e
+           JOIN feed f ON e.feed_id = f.id
+           JOIN category c ON f.category_id = c.id
+           WHERE c.user_id = ? AND e.title = ?`
+        )
+        .get(userId, title);
+      if (!row) throw new Error(`Entry '${title}' not found`);
+      return row.id;
+    } finally {
+      db.close();
+    }
+  }
+
+  findFeedIdByTitle(userId, feedTitle) {
+    const db = new Database(this.dbPath);
+    try {
+      const row = db
+        .prepare(
+          `SELECT f.id FROM feed f
+           JOIN category c ON f.category_id = c.id
+           WHERE c.user_id = ? AND f.title = ?`
+        )
+        .get(userId, feedTitle);
+      if (!row) throw new Error(`Feed '${feedTitle}' not found`);
+      return row.id;
+    } finally {
+      db.close();
+    }
+  }
+
+  firstFeedId(userId) {
+    const db = new Database(this.dbPath);
+    try {
+      const row = db
+        .prepare(
+          `SELECT f.id FROM feed f
+           JOIN category c ON f.category_id = c.id
+           WHERE c.user_id = ? LIMIT 1`
+        )
+        .get(userId);
+      if (!row) throw new Error("No feed found for user");
+      return row.id;
+    } finally {
+      db.close();
+    }
+  }
+
+  findCategoryIdByName(userId, name) {
+    const db = new Database(this.dbPath);
+    try {
+      const row = db
+        .prepare(`SELECT id FROM category WHERE user_id = ? AND name = ?`)
+        .get(userId, name);
+      if (!row) throw new Error(`Category '${name}' not found`);
+      return row.id;
+    } finally {
+      db.close();
+    }
+  }
+
+  markCategoryRead(userId, categoryName) {
+    const db = new Database(this.dbPath);
+    try {
+      db.prepare(
+        `UPDATE entry SET read_at = datetime('now')
+         WHERE feed_id IN (
+           SELECT f.id FROM feed f
+           JOIN category c ON f.category_id = c.id
+           WHERE c.user_id = ? AND c.name = ?
+         )`
+      ).run(userId, categoryName);
+    } finally {
+      db.close();
+    }
+  }
+
   seedTestEntries(feedId, count) {
     const entries = [];
     for (let i = 1; i <= count; i++) {
