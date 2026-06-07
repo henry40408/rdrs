@@ -45,3 +45,29 @@ Feature: Organizing feeds and categories
     And I am on the feeds page
     When I refresh the feed "Test Feed"
     Then I see a success flash "Refreshed:"
+
+  Scenario: Editing a feed updates its title in the feeds table
+    Given I have a feed "Old Feed" in category "My Category"
+    And I am on the feeds page
+    When I edit the feed "Old Feed" and set its title to "New Feed Name"
+    Then I see a success flash "Feed updated."
+    When I am on the feeds page
+    Then the feeds table contains "New Feed Name"
+
+  Scenario: Deleting a feed removes it from the feeds table
+    Given I have a feed "Doomed Feed" in category "My Category"
+    And I am on the feeds page
+    When I confirm the next dialog
+    And I delete the feed "Doomed Feed"
+    Then I see a success flash "Feed deleted."
+    And the feeds table does not contain "Doomed Feed"
+
+  Scenario: Importing an OPML file adds its feeds to the feeds table
+    Given I am on the import OPML page
+    When I import the OPML fixture "sample.opml"
+    Then I see a success flash "OPML imported."
+    And the feeds table contains "Imported Feed"
+
+  Scenario: Exporting OPML includes my subscribed feeds
+    Given I have a feed "Exported Feed" in category "My Category"
+    Then the exported OPML contains "Exported Feed"
