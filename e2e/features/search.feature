@@ -17,7 +17,7 @@ Feature: Search
     And the result count is 2
 
   Scenario: Pressing the slash key focuses the search input
-    When I press "/"
+    When I press the "/" key
     Then the search input is focused
 
   Scenario: Searching for a term with no matches shows an empty state

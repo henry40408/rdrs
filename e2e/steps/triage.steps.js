@@ -49,7 +49,7 @@ Then("the sidebar starred count is at least {int}", async ({ page }, n) => {
   // The sidebar Starred link (<a href="/entries/starred">) has no numeric badge —
   // only the Unread link carries a count. This step can only assert the link is
   // visible; a count assertion requires a future UI addition.
-  // @skip kept on the owning scenario until a badge is added.
+  // Strengthen to a numeric assertion once the Starred link gains a badge.
   const locator = page.locator('a[href="/entries/starred"]').first();
   await expect(locator).toBeVisible();
   void n; // numeric check deferred until sidebar starred-count badge is added
@@ -59,7 +59,7 @@ Then("the sidebar unread count decreases by {int}", async ({ page }, _delta) => 
   // The total-unread badge has id="unread-count" (rendered by rdrs-sidebar.js).
   // Delta comparison requires capturing the before-count, which needs a fixture
   // hook. For now assert the element is present and shows a non-negative number.
-  // @skip kept on the owning scenario until before/after capture is wired.
+  // Strengthen to a delta assertion once before/after capture is wired.
   const locator = page.locator("#unread-count").first();
   const text = await locator.innerText();
   const count = parseInt(text, 10);
