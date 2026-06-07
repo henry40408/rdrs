@@ -428,6 +428,10 @@ pub async fn import_opml_form(
             Ok::<_, AppError>(())
         })
         .await;
+    // The import dropped its transient OPML parse tree and per-feed buffers;
+    // return those freed pages to the OS now instead of waiting for the
+    // allocator's lazy purge.
+    crate::reclaim_memory();
     match result {
         Ok(Ok(())) => {
             state.sidebar_cache.bust(user_id);
