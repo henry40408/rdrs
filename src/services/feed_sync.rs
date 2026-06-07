@@ -448,6 +448,11 @@ pub async fn refresh_bucket(
         }
     }
 
+    // A full bucket sync fetches and parses many feeds concurrently, leaving
+    // transient per-feed buffers behind. Reclaim them now so steady-state RSS
+    // does not creep up over long uptime.
+    crate::reclaim_memory();
+
     results
 }
 

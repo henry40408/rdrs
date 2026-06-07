@@ -29,6 +29,20 @@ pub use version::GIT_VERSION;
 
 use services::{SidebarCache, SummaryCache, SummaryJob};
 
+/// Force the allocator to return freed pages to the OS.
+///
+/// Bulk operations (OPML import, a full background sync cycle) allocate large
+/// transient buffers that mimalloc would otherwise hold for up to its purge
+/// delay. Calling this right after the bulk work collapses the resident spike
+/// to the steady-state footprint immediately, which matters on
+/// memory-constrained hosts.
+pub fn reclaim_memory() {
+    // SAFETY: `mi_collect` is a thread-safe collection call with no
+    // side-effects beyond reclaiming memory; `true` forces it to also return
+    // memory to the OS.
+    unsafe { libmimalloc_sys::mi_collect(true) }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: DbPool,

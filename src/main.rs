@@ -1,6 +1,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+// Use mimalloc to keep resident memory low: long-running multi-threaded sync
+// accumulates allocator fragmentation that the system glibc allocator tends to
+// retain as RSS. mimalloc returns freed pages to the OS far more aggressively.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use rdrs::{auth, create_router, db, services, AppState, Config, DbPool};
 use rusqlite::Connection;
 use tokio_util::sync::CancellationToken;
