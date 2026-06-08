@@ -61,6 +61,24 @@
                                 <td data-label="Default"><em>(auto-generated)</em></td>
                                 <td data-label="Current">{% if image_proxy_secret_generated %}<span class="muted">Auto-generated</span>{% else %}<span class="success-text">Configured</span>{% endif %}</td>
                             </tr>
+                            <tr>
+                                <td><code>WEBAUTHN_RP_ID</code></td>
+                                <td data-label="Description">WebAuthn Relying Party ID for passkeys</td>
+                                <td data-label="Default"><code>localhost</code></td>
+                                <td data-label="Current"><code data-testid="webauthn-rp-id">{{ webauthn_rp_id }}</code></td>
+                            </tr>
+                            <tr>
+                                <td><code>WEBAUTHN_RP_ORIGIN</code></td>
+                                <td data-label="Description">WebAuthn Relying Party origin URL (must match the URL you deploy at)</td>
+                                <td data-label="Default"><code>http://localhost:{port}</code></td>
+                                <td data-label="Current"><code data-testid="webauthn-rp-origin">{{ webauthn_rp_origin }}</code></td>
+                            </tr>
+                            <tr>
+                                <td><code>WEBAUTHN_RP_NAME</code></td>
+                                <td data-label="Description">WebAuthn Relying Party display name</td>
+                                <td data-label="Default"><code>rdrs</code></td>
+                                <td data-label="Current"><code data-testid="webauthn-rp-name">{{ webauthn_rp_name }}</code></td>
+                            </tr>
                         </tbody>
                     </table>
                 </div>

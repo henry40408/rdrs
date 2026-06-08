@@ -119,7 +119,30 @@ async fn login(server: &TestServer, username: &str) {
 #[tokio::test]
 async fn test_unread_page_renders_ssr_layout() {
     let app = create_test_app(default_test_config());
-    setup_users(&app.db).await;
+    let (admin_id, _) = setup_users(&app.db).await;
+
+    // Give admin a feed (no entries) so the empty unread list is the genuine
+    // "all caught up" case rather than the no-feeds onboarding case.
+    app.db
+        .user(move |conn| {
+            let cat = rdrs::models::category::create_category(conn, admin_id, "Tech").unwrap();
+            rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://example.com/feed.xml",
+                    title: Some("Test Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
 
     login(&app.server, "admin").await;
 
@@ -139,6 +162,25 @@ async fn test_unread_page_renders_ssr_layout() {
     assert!(body.contains("class=\"empty-state-quiet\""));
     assert!(body.contains("class=\"empty-state-quiet-title\""));
     assert!(body.contains("All caught up"));
+}
+
+#[tokio::test]
+async fn test_unread_page_shows_onboarding_when_no_feeds() {
+    // A brand-new account with no feeds gets the getting-started guide, not the
+    // misleading "All caught up" empty state.
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(body.contains("data-testid=\"onboarding-guide\""));
+    assert!(body.contains("Add your first feed"));
+    assert!(body.contains("Import OPML"));
+    assert!(!body.contains("All caught up"));
 }
 
 #[tokio::test]

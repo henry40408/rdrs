@@ -72,8 +72,38 @@ impl Config {
         (secret, true)
     }
 
+    /// Whether a new account may be registered given the current user count.
+    ///
+    /// The very first account is always allowed so a fresh install (including a
+    /// source build that never set `SIGNUP_ENABLED`) can always create its
+    /// initial admin. Every subsequent account requires both `SIGNUP_ENABLED`
+    /// and `MULTI_USER_ENABLED`.
     pub fn can_register(&self, user_count: i64) -> bool {
-        self.signup_enabled && (self.multi_user_enabled || user_count == 0)
+        user_count == 0 || (self.signup_enabled && self.multi_user_enabled)
+    }
+
+    /// A startup warning about WebAuthn relying-party config that would silently
+    /// break passkeys in a real deployment, or `None` when the config looks
+    /// deployable. Returns a message when the RP origin still points at
+    /// `localhost` (the default), or when it disagrees with `PUBLIC_BASE_URL`.
+    pub fn webauthn_rp_warning(&self) -> Option<String> {
+        if self.webauthn_rp_origin.contains("localhost") {
+            return Some(format!(
+                "WEBAUTHN_RP_ORIGIN is still '{}'. Passkeys will be rejected from any other \
+                 origin — set WEBAUTHN_RP_ID and WEBAUTHN_RP_ORIGIN to your deployment domain.",
+                self.webauthn_rp_origin
+            ));
+        }
+        if let Some(base) = &self.public_base_url {
+            if base.trim_end_matches('/') != self.webauthn_rp_origin.trim_end_matches('/') {
+                return Some(format!(
+                    "WEBAUTHN_RP_ORIGIN ('{}') does not match PUBLIC_BASE_URL ('{}'). Passkeys \
+                     may be rejected — align WEBAUTHN_RP_ORIGIN with the URL users access.",
+                    self.webauthn_rp_origin, base
+                ));
+            }
+        }
+        None
     }
 }
 
@@ -99,11 +129,12 @@ mod tests {
 
     #[test]
     fn test_can_register() {
+        // Single-user (signup on, multi-user off): only the first account.
         let config = test_config();
-
         assert!(config.can_register(0));
         assert!(!config.can_register(1));
 
+        // Multi-user: every account is allowed.
         let config_multi = Config {
             multi_user_enabled: true,
             ..config.clone()
@@ -111,10 +142,42 @@ mod tests {
         assert!(config_multi.can_register(0));
         assert!(config_multi.can_register(5));
 
+        // Signup disabled: the first account still works (fresh-install bootstrap),
+        // but no further accounts may register.
         let config_disabled = Config {
             signup_enabled: false,
             ..config
         };
-        assert!(!config_disabled.can_register(0));
+        assert!(config_disabled.can_register(0));
+        assert!(!config_disabled.can_register(1));
+    }
+
+    #[test]
+    fn test_webauthn_rp_warning() {
+        // Default localhost origin → warn.
+        let config = test_config();
+        assert!(config.webauthn_rp_warning().is_some());
+
+        // Real domain, no PUBLIC_BASE_URL → fine.
+        let deployed = Config {
+            webauthn_rp_id: "rdrs.example.com".to_string(),
+            webauthn_rp_origin: "https://rdrs.example.com".to_string(),
+            ..test_config()
+        };
+        assert!(deployed.webauthn_rp_warning().is_none());
+
+        // Real domain matching PUBLIC_BASE_URL (trailing slash ignored) → fine.
+        let matched = Config {
+            public_base_url: Some("https://rdrs.example.com/".to_string()),
+            ..deployed.clone()
+        };
+        assert!(matched.webauthn_rp_warning().is_none());
+
+        // Real domain disagreeing with PUBLIC_BASE_URL → warn.
+        let mismatched = Config {
+            public_base_url: Some("https://reader.example.com".to_string()),
+            ..deployed
+        };
+        assert!(mismatched.webauthn_rp_warning().is_some());
     }
 }

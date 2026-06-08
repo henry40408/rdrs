@@ -237,8 +237,9 @@ async fn test_list_categories() {
     create_category(&server, "News").await;
     create_category(&server, "Sports").await;
 
+    // 3 created + the "Uncategorized" category seeded at registration.
     let count = count_folder_tags(&server).await;
-    assert_eq!(count, 3);
+    assert_eq!(count, 4);
 }
 
 #[tokio::test]
@@ -809,9 +810,9 @@ async fn test_import_opml_multiple_categories() {
     let body: serde_json::Value = response.json();
     assert_eq!(body["subscriptions"].as_array().unwrap().len(), 3);
 
-    // Verify 2 folder-type tags
+    // Verify 2 imported folder-type tags + the seeded "Uncategorized".
     let count = count_folder_tags(&server).await;
-    assert_eq!(count, 2);
+    assert_eq!(count, 3);
 }
 
 // ============================================================================
@@ -1385,9 +1386,10 @@ async fn test_category_isolation_between_users() {
         .await
         .assert_status_ok();
 
-    // User2's tag/list should have no folder tags (only 4 built-in state tags)
-    let count = count_folder_tags(&server).await;
-    assert_eq!(count, 0);
+    // User2 sees only its own seeded "Uncategorized", never User1's category.
+    let names = get_folder_tag_names(&server).await;
+    assert!(!names.contains(&"User1 Category".to_string()));
+    assert_eq!(names, vec!["Uncategorized".to_string()]);
 }
 
 // ============================================================================
@@ -3015,7 +3017,11 @@ async fn test_create_category_form_empty_name() {
         })
         .await
         .unwrap();
-    assert_eq!(count, 0, "no category should be created for an empty name");
+    // Only the seeded "Uncategorized" remains; the empty name created nothing.
+    assert_eq!(
+        count, 1,
+        "no category should be created for an empty name (only the seeded default)"
+    );
 }
 
 #[tokio::test]

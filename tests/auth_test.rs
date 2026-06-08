@@ -127,12 +127,24 @@ async fn test_register_duplicate_username() {
 }
 
 #[tokio::test]
-async fn test_register_disabled() {
+async fn test_register_disabled_still_allows_first_account() {
+    // With signup disabled, a fresh install must still be able to create its
+    // first (admin) account — otherwise a source build is unusable. Subsequent
+    // registrations stay blocked.
     let config = Config {
         signup_enabled: false,
         ..default_test_config()
     };
     let server = create_test_server(config);
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
 
     let response = server
         .post("/api/register")

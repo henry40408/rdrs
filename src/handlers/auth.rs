@@ -6,6 +6,7 @@ use time::Duration;
 use crate::auth::{hash_password, verify_password};
 use crate::error::{AppError, AppResult};
 use crate::middleware::{AuthUser, SESSION_COOKIE_NAME};
+use crate::models::category;
 use crate::models::session;
 use crate::models::user::{self, Role};
 use crate::AppState;
@@ -56,6 +57,12 @@ pub async fn register(
             };
 
             let user = user::create_user(conn, &req.username, &password_hash, role)?;
+
+            // Seed a default category so the account can add its first feed
+            // without first creating a category. Matches the "Uncategorized"
+            // convention used by OPML import and the GReader subscription API.
+            category::create_category(conn, user.id, "Uncategorized")?;
+
             Ok::<_, AppError>(user)
         })
         .await??;

@@ -1376,6 +1376,27 @@ dialog::backdrop {
     margin: 0;
 }
 
+/* Onboarding empty state on the landing page (no feeds yet). */
+.onboarding-guide .empty-state-quiet-text {
+    font-style: normal;
+}
+.onboarding-steps {
+    display: inline-block;
+    text-align: left;
+    margin: var(--space-4) 0;
+    padding-left: var(--space-6);
+    color: var(--color-text-secondary);
+    font-size: var(--font-sm);
+    line-height: 1.8;
+}
+.onboarding-cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    justify-content: center;
+    margin-top: var(--space-4);
+}
+
 /* ===== /search page ===== */
 /* Search form follows the standard form-group / button conventions used on
    /categories, /feeds, /user-settings. No custom borderless input; no custom

@@ -37,10 +37,16 @@ docker run -d \
   -p 3000:3000 \
   -v rdrs_data:/data \
   -e SIGNUP_ENABLED=true \
+  -e IMAGE_PROXY_SECRET="$(openssl rand -base64 32)" \
   ghcr.io/henry40408/rdrs:latest
 ```
 
 Visit `http://localhost:3000` and create your account.
+
+> **`IMAGE_PROXY_SECRET`** — if left unset, a random secret is generated on
+> each startup, which invalidates every previously-proxied image URL whenever
+> the container restarts. Set it to a persistent value (e.g.
+> `openssl rand -base64 32`) so proxied images survive restarts.
 
 ### Building from Source
 
@@ -55,6 +61,12 @@ cargo build --release
 # Run server
 ./target/release/rdrs
 ```
+
+Visit `http://localhost:3000` and create your account. The **first account is
+always allowed** even when `SIGNUP_ENABLED=false` (the default), so a source
+build works out of the box. `SIGNUP_ENABLED` (together with
+`MULTI_USER_ENABLED`) only governs *additional* registrations after the first
+account exists.
 
 ## Configuration
 
@@ -73,6 +85,13 @@ All configuration is done via environment variables:
 | `WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin URL |
 | `WEBAUTHN_RP_NAME` | `rdrs` | WebAuthn Relying Party display name |
 | `RUST_LOG` | - | Log level filter (e.g., `info`, `debug`, `rdrs=debug`) |
+
+> **Deploying behind a domain?** `WEBAUTHN_RP_ID` and `WEBAUTHN_RP_ORIGIN`
+> default to `localhost` and **must** be overridden to your public host (e.g.
+> `WEBAUTHN_RP_ID=rdrs.example.com`,
+> `WEBAUTHN_RP_ORIGIN=https://rdrs.example.com`), otherwise the browser rejects
+> passkeys. rdrs logs a startup warning while the RP origin still points at
+> `localhost`, and the active values are shown on the Settings page.
 
 ## Usage
 

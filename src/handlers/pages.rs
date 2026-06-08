@@ -145,6 +145,12 @@ pub struct EntriesLayoutContext {
     /// read (loaded + Load-More-appended rows; unloaded entries are
     /// untouched). Only the feed + category entries pages set this true.
     pub show_mark_above: bool,
+    /// When `true` and the list is empty, the shared layout renders the
+    /// getting-started onboarding block (welcome + 3 steps + "Add your first
+    /// feed" / "Import OPML" CTAs) instead of the plain empty-state text. Set
+    /// only by the landing page (`/`) when the account has no feeds; every
+    /// other route leaves it `false`.
+    pub onboarding: bool,
 }
 
 /// Map an `EntryWithFeed` (+ optional summary status) to an `EntryRowView`.
@@ -587,6 +593,17 @@ pub async fn unread_page(
     .await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
+    // When the unread list is empty, distinguish a brand-new account with no
+    // feeds yet (→ getting-started onboarding) from an inbox where everything
+    // has been read (→ "All caught up"). Only query when the list is empty.
+    let no_feeds = entries.is_empty()
+        && state
+            .db
+            .read_user(move |conn| feed::count_by_user(conn, user_id).unwrap_or(0))
+            .await
+            .map(|count| count == 0)
+            .unwrap_or(false);
+
     (
         flash,
         UnreadTemplate {
@@ -611,6 +628,7 @@ pub async fn unread_page(
                 filter_tabs: None,
                 status_filter: None,
                 show_mark_above: false,
+                onboarding: no_feeds,
             },
         },
     )
@@ -1110,6 +1128,7 @@ pub async fn entries_page(
                 filter_tabs: None,
                 status_filter: None,
                 show_mark_above: false,
+                onboarding: false,
             },
         },
     )
@@ -1186,6 +1205,9 @@ pub async fn settings_page(
             signup_enabled: state.config.signup_enabled,
             multi_user_enabled: state.config.multi_user_enabled,
             image_proxy_secret_generated: state.config.image_proxy_secret_generated,
+            webauthn_rp_id: state.config.webauthn_rp_id.clone(),
+            webauthn_rp_origin: state.config.webauthn_rp_origin.clone(),
+            webauthn_rp_name: state.config.webauthn_rp_name.clone(),
         },
     )
 }
@@ -1266,6 +1288,7 @@ pub async fn read_entries_page(
                 filter_tabs: None,
                 status_filter: None,
                 show_mark_above: false,
+                onboarding: false,
             },
         },
     )
@@ -1348,6 +1371,7 @@ pub async fn starred_entries_page(
                 filter_tabs: None,
                 status_filter: None,
                 show_mark_above: false,
+                onboarding: false,
             },
         },
     )
@@ -1430,6 +1454,7 @@ pub async fn summarized_entries_page(
                 filter_tabs: None,
                 status_filter: None,
                 show_mark_above: false,
+                onboarding: false,
             },
         },
     )
@@ -1570,6 +1595,7 @@ pub async fn category_entries_page(
             filter_tabs,
             status_filter,
             show_mark_above: true,
+            onboarding: false,
         },
     };
 
@@ -2024,6 +2050,7 @@ pub async fn feed_entries_page(
             filter_tabs,
             status_filter,
             show_mark_above: true,
+            onboarding: false,
         },
     };
 
@@ -2147,6 +2174,9 @@ pub struct SettingsTemplate {
     pub signup_enabled: bool,
     pub multi_user_enabled: bool,
     pub image_proxy_secret_generated: bool,
+    pub webauthn_rp_id: String,
+    pub webauthn_rp_origin: String,
+    pub webauthn_rp_name: String,
 }
 
 impl IntoResponse for SettingsTemplate {

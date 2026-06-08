@@ -178,6 +178,21 @@ pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Feed>> {
     Ok(feeds)
 }
 
+/// Count how many feeds a user has subscribed to (across all categories).
+pub fn count_by_user(conn: &Connection, user_id: i64) -> AppResult<i64> {
+    conn.query_row(
+        r#"
+        SELECT COUNT(*)
+        FROM feed f
+        INNER JOIN category c ON f.category_id = c.id
+        WHERE c.user_id = ?1
+        "#,
+        params![user_id],
+        |row| row.get(0),
+    )
+    .map_err(AppError::Database)
+}
+
 /// Find a feed by URL across all categories for a given user.
 pub fn find_by_url_for_user(conn: &Connection, url: &str, user_id: i64) -> AppResult<Option<Feed>> {
     conn.query_row(
@@ -629,5 +644,40 @@ mod tests {
 
         // Feed should be deleted too
         assert!(find_by_id(&conn, feed.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_count_by_user() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let other_id = create_test_user(&conn, "other");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+
+        // No feeds yet.
+        assert_eq!(count_by_user(&conn, user_id).unwrap(), 0);
+
+        for url in [
+            "https://a.example.com/feed.xml",
+            "https://b.example.com/feed.xml",
+        ] {
+            create_feed(
+                &conn,
+                &CreateFeedParams {
+                    category_id,
+                    url,
+                    title: None,
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+        }
+
+        assert_eq!(count_by_user(&conn, user_id).unwrap(), 2);
+        // Another user's count is isolated.
+        assert_eq!(count_by_user(&conn, other_id).unwrap(), 0);
     }
 }
