@@ -131,20 +131,25 @@ only; other empty states keep their current title/detail.
 
 **BDD (`e2e/features/onboarding.feature`):**
 
-- A brand-new user (zero users) can register even with signup disabled, then sign in and
-  land on the unread inbox. *(#1)*
-- A freshly-registered user's Add Feed form shows an `Uncategorized` category and a feed can
-  be added immediately without first creating a category. *(#2)*
-- A signed-in user with no feeds sees the onboarding welcome (3 steps + "Add your first
-  feed" / "Import OPML" CTAs) instead of "All caught up". *(#5/#6)*
-- After adding a feed, the landing page no longer shows the onboarding block. *(#5/#6)*
-- The Settings page shows the active WebAuthn RP id / origin. *(#3, UI portion)*
+- A freshly-registered user's Add Feed form offers an `Uncategorized` category and a feed
+  can be added immediately without first creating a category. *(#2)*
+- A signed-in user with no feeds sees the getting-started guide ("Add your first feed" /
+  "Import OPML" CTAs) on the landing page. *(#5/#6)*
+- An account that has a feed shows "All caught up" and not the getting-started guide. *(#5)*
+- The Settings page shows the active WebAuthn RP origin. *(#3, UI portion)*
 
 **Unit / Rust tests:**
 
 - `config::can_register` truth table including the new first-account-always row. *(#1)*
 - `create_user` seeds exactly one `Uncategorized` category for the new user. *(#2)*
 - `feed::count_by_user` (if added). *(#5)*
+
+**Why #1 is not BDD-covered:** the shared, worker-scoped e2e server fixture is hard-wired to
+`SIGNUP_ENABLED=true` / `MULTI_USER_ENABLED=true` and is reused across parallel scenarios, so
+"signup disabled, zero users, first account still registers" cannot be expressed without a
+dedicated isolated server. The behaviour is config logic, so it is verified by the
+`config::can_register` unit test instead. (An isolated-server BDD scenario could be added later
+if desired.)
 
 **Not BDD-covered:** the startup RP-origin warning (#3 log) and the README/docker doc
 changes (#4) — covered by code review and (for the warning) a focused unit test on the
