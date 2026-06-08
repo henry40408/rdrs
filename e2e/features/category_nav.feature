@@ -3,6 +3,7 @@ Feature: Category navigation shortcuts
 
   Background:
     Given I am signed in
+    And the default "Uncategorized" category is removed
     And I have a feed "Alpha Feed" with 2 test entries in category "Cat A"
     And I have a feed "Bravo Feed" with 2 test entries in category "Cat B"
     And I have a feed "Charlie Feed" with 2 test entries in category "Cat C"

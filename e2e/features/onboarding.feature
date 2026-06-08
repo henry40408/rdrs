@@ -23,7 +23,7 @@ Feature: Onboarding from a fresh account to the first read
   Scenario: The landing page reserves "All caught up" for an account that has feeds
     Given I am signed in
     And I have a feed "My First Feed" in category "Uncategorized"
-    When I am on the unread inbox
+    When I open the landing page
     Then the landing page does not show the getting-started guide
     And I see "All caught up" on the landing page
 

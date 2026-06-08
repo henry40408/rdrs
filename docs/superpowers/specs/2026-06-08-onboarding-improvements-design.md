@@ -67,15 +67,31 @@ unchanged.
 **README:** the *Building from Source* section gains a note that the first account always
 works and `SIGNUP_ENABLED` only controls additional registrations.
 
-### #2 — Seed "Uncategorized" on user creation
+### #2 — Seed "Uncategorized" at registration
 
-`models::user::create_user` seeds a default category named `Uncategorized` for the new user
-in the same transaction-scoped path, so every new account (password or passkey) has a usable
-category and the Add Feed form's `<select>` is never empty. This matches the existing
-`Uncategorized` convention used by OPML import and the GReader subscription API.
+The **registration handler** (`handlers::auth::register`) seeds a default category named
+`Uncategorized` for the new user, in the same `db.user(...)` closure right after
+`create_user`, so a fresh account has a usable category and the Add Feed form's `<select>`
+is never empty. This matches the existing `Uncategorized` convention used by OPML import and
+the GReader subscription API.
+
+Seeding lives in the handler rather than `models::user::create_user` because `create_user`
+is a low-level building block reused by dozens of model/integration test fixtures (and by
+nothing else that creates real accounts). Passkeys are added to *already-authenticated*
+users via `passkey::finish_registration`, so the password `register` handler is the only
+genuine account-creation entry point. Keeping `create_user` pure avoids broad test churn.
 
 The `feeds.html` empty-`<option>` branch becomes unreachable for real users but is left in
 place as a defensive fallback.
+
+**Sidebar-cache interaction.** `read_chrome_data` previously skipped caching the sidebar
+only when an account had *no categories*. Seeding `Uncategorized` makes that always false,
+so a brand-new account would cache a `[Uncategorized]`-only sidebar and mask
+direct-DB-seeded feeds (which E2E relies on) behind the 60 s TTL. The cache gate is changed
+to skip when the account has *no feeds and no unread* (`has_feeds || total_unread > 0`),
+restoring the "don't cache an empty account" invariant. The `category_nav` E2E background
+removes the seeded `Uncategorized` so its wrap-around scenarios still exercise a clean
+three-category set.
 
 ### #3 — Surface and warn about WebAuthn RP config
 
@@ -121,7 +137,8 @@ only; other empty states keep their current title/detail.
 | User creation | `src/models/user.rs` | seed `Uncategorized`; tests |
 | Register handler | `src/handlers/auth.rs` | unchanged logic, benefits from #1 |
 | Landing page | `src/handlers/pages.rs` | feed-count → onboarding vs all-caught-up |
-| Feed model | `src/models/feed.rs` | `count_by_user` (if added) |
+| Feed model | `src/models/feed.rs` | `count_by_user` |
+| Sidebar cache | `src/handlers/user.rs` | gate caching on feeds/unread, not on having any category (see note) |
 | Settings page | `src/handlers/pages.rs`, `templates/settings.html` | RP id/origin/name rows |
 | Startup | `src/main.rs` | RP-origin warning |
 | Templates | `templates/_entries_layout.html` | onboarding empty-state block |

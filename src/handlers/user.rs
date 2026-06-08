@@ -189,13 +189,14 @@ pub async fn read_chrome_data(
         };
     }
 
-    let fresh = state
+    let (fresh, has_feeds) = state
         .db
         .read_user(move |conn| {
             let theme = user_settings::get_theme(conn, user_id).unwrap_or(None);
             let cats = category::list_by_user(conn, user_id).unwrap_or_default();
             let unread_by_cat = entry::count_unread_by_category(conn, user_id).unwrap_or_default();
             let total_unread = entry::count_unread_by_user(conn, user_id).unwrap_or(0);
+            let has_feeds = crate::models::feed::count_by_user(conn, user_id).unwrap_or(0) > 0;
             let categories: Vec<SidebarCategoryDto> = cats
                 .into_iter()
                 .map(|c| SidebarCategoryDto {
@@ -204,23 +205,27 @@ pub async fn read_chrome_data(
                     unread_count: *unread_by_cat.get(&c.id).unwrap_or(&0),
                 })
                 .collect();
-            crate::services::CachedChrome {
-                theme,
-                categories,
-                total_unread,
-            }
+            (
+                crate::services::CachedChrome {
+                    theme,
+                    categories,
+                    total_unread,
+                },
+                has_feeds,
+            )
         })
         .await
         .unwrap_or_default();
 
-    // Skip caching the "completely empty" state (no categories, no unread).
-    // Real new accounts pay a trivial extra query per page load until they
-    // add their first feed; cache populates normally after that. The
-    // benefit: the empty state is the most likely-to-go-stale entry —
-    // anything added via a path that bypasses our handler bust hooks (e.g.
-    // E2E tests that seed straight into SQLite) would otherwise be hidden
-    // behind a stale empty cache for up to the 60 s TTL.
-    if !fresh.categories.is_empty() || fresh.total_unread > 0 {
+    // Skip caching the "no content yet" state — an account with no feeds and no
+    // unread (e.g. a brand-new account whose only category is the auto-seeded
+    // empty "Uncategorized"). Such accounts pay a trivial extra query per page
+    // load until they add their first feed; the cache populates normally after
+    // that. The benefit: the empty state is the most likely-to-go-stale entry —
+    // anything added via a path that bypasses our handler bust hooks (e.g. E2E
+    // tests that seed straight into SQLite) would otherwise be hidden behind a
+    // stale cache for up to the 60 s TTL.
+    if has_feeds || fresh.total_unread > 0 {
         state.sidebar_cache.insert(user_id, fresh.clone());
     }
 

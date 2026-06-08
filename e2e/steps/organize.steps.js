@@ -15,6 +15,11 @@ Given("I have a category named {string}", async ({ seed, currentUser }, name) =>
   seed.createCategory(userId, name);
 });
 
+Given("the default {string} category is removed", async ({ seed, currentUser }, name) => {
+  const userId = seed.getUserId(currentUser.username);
+  seed.deleteCategory(userId, name);
+});
+
 Given(
   "I have a feed {string} in category {string}",
   async ({ seed, currentUser }, feedTitle, categoryName) => {

@@ -60,6 +60,15 @@ export class SeedHelper {
     }
   }
 
+  deleteCategory(userId, name) {
+    const db = new Database(this.dbPath);
+    try {
+      db.prepare(`DELETE FROM category WHERE user_id = ? AND name = ?`).run(userId, name);
+    } finally {
+      db.close();
+    }
+  }
+
   createFeed(categoryId, url, title) {
     const db = new Database(this.dbPath);
     try {

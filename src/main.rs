@@ -27,6 +27,10 @@ async fn main() {
         );
     }
 
+    if let Some(warning) = config.webauthn_rp_warning() {
+        tracing::warn!("{warning}");
+    }
+
     let write_conn = Connection::open(&config.database_url).expect("Failed to open database");
     db::init_db(&write_conn).expect("Failed to initialize database");
 
