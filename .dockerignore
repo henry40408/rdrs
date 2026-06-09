@@ -1,6 +1,10 @@
 # Build artifacts
 target/
 
+# E2E suite (Playwright node_modules ~65MB) and visual assets — not part of the build
+e2e/
+screenshots/
+
 # Git
 .git/
 .gitignore
