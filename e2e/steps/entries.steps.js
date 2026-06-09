@@ -300,3 +300,11 @@ Then("the entry row for {string} shows as read", async ({ page }, title) => {
 Then("I see no flash message", async ({ page }) => {
   await expect(page.getByTestId("flash-message")).toHaveCount(0);
 });
+
+// Barrier for form-action swaps whose only visible signal is a toast (Save /
+// Fetch Full Content). The flash is shown right after the reading-pane swap
+// lands and the neighbour re-resolve fires, so waiting on it sequences any
+// follow-up navigation after the pane has fully settled.
+Then("I see a flash message", async ({ page }) => {
+  await expect(page.getByTestId("flash-message").first()).toBeVisible();
+});

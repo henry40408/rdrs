@@ -349,7 +349,17 @@ async function resolveNeighbors(entryId) {
 let lastResolvedPaneId = null;
 function maybeResolveNeighbors() {
     const id = currentPaneEntryId();
-    if (id === lastResolvedPaneId) return;
+    if (id === lastResolvedPaneId) {
+        // Same entry, but the pane DOM may have just been re-rendered by an
+        // action swap that re-targets the same entry (Fetch Full Content /
+        // Save) — which resets prev/next to their default `disabled` state.
+        // neighborState is still valid here, so re-apply it; otherwise the
+        // freshly-rendered buttons stay permanently disabled and, because a
+        // disabled button swallows taps, mobile prev/next navigation dies for
+        // good (desktop j/k bypasses the buttons via navigateNeighbor()).
+        applyNeighborButtons();
+        return;
+    }
     lastResolvedPaneId = id;
     if (id == null) {
         neighborState = { entryId: null, prevId: null, nextId: null };

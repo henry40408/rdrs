@@ -154,3 +154,21 @@ Feature: Reading entries
     And I click the entry titled "Test Entry 5"
     Then the reading-pane "Previous" button is enabled
     And the reading-pane "Next" button is disabled
+
+  # Regression: Fetch Full Content re-renders the pane for the *same* entry,
+  # resetting prev/next to their default disabled state. The neighbour
+  # re-resolve skipped re-enabling them because the entry id was unchanged,
+  # so the freshly-rendered buttons stayed disabled forever. Disabled buttons
+  # swallow taps, killing mobile navigation permanently (desktop j/k bypasses
+  # the buttons, which is why the breakage was mobile-only).
+  @mobile
+  Scenario: Reading-pane navigation survives Fetch Full Content on mobile
+    Given I am viewing on a mobile screen
+    When I open the all entries page
+    And I click the entry titled "Test Entry 3"
+    And I click the "Fetch Full Content" button
+    And I see a flash message
+    Then the reading-pane "Next" button is enabled
+    And the reading-pane "Previous" button is enabled
+    When I navigate to the "Next" entry in the reading pane
+    Then the reading pane shows the title "Test Entry 4"
