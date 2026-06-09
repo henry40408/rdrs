@@ -10,6 +10,9 @@
 //! - POST /reader/api/0/mark-all-as-read (mark all read)
 //! - GET /reader/api/0/unread-count (unread counts)
 
+mod common;
+use common::default_test_config;
+
 use std::sync::Arc;
 
 use axum::http::{header, HeaderValue, StatusCode};
@@ -18,22 +21,6 @@ use rdrs::models::{category, entry, feed};
 use rdrs::{auth, create_router, db, services, AppState, Config, DbPool};
 use rusqlite::Connection;
 use serde_json::json;
-
-fn default_test_config() -> Config {
-    Config {
-        database_url: ":memory:".to_string(),
-        server_port: 3000,
-        signup_enabled: true,
-        multi_user_enabled: true,
-        image_proxy_secret: vec![0u8; 32],
-        image_proxy_secret_generated: false,
-        user_agent: "RDRS-Test/1.0".to_string(),
-        webauthn_rp_id: "localhost".to_string(),
-        webauthn_rp_origin: "http://localhost:3000".to_string(),
-        webauthn_rp_name: "rdrs-test".to_string(),
-        public_base_url: None,
-    }
-}
 
 struct TestApp {
     server: TestServer,

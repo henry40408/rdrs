@@ -15,11 +15,13 @@ use crate::models::SummaryStatus;
 use crate::models::{category, entry, entry_summary, feed};
 use crate::AppState;
 
-/// Escape a JSON string for safe embedding inside HTML `<script>` tags.
-/// Replaces `</` with `<\/` to prevent `</script>` breakout attacks.
-fn escape_json_for_script(json: &str) -> String {
-    json.replace("</", "<\\/")
-}
+mod script_json;
+mod search_text;
+mod time_format;
+
+use script_json::{flash_bootstrap_json, serialize_sidebar_for_script};
+use search_text::{build_snippet, highlight_html};
+pub use time_format::{compute_freshness, format_relative_time, format_relative_time_compact};
 
 // ============================================================================
 // Entries-family shared view structs (PR-10)
@@ -303,88 +305,6 @@ impl IntoResponse for EntriesFragmentTemplate {
 /// forms like `now` / `46m` / `3h` / `2d` / `5mo` / `1y`. Long form
 /// (`format_relative_time`) is kept for places with more breathing
 /// room (reading pane, feeds page, admin tables).
-pub fn format_relative_time_compact(dt: Option<chrono::DateTime<chrono::Utc>>) -> String {
-    let Some(dt) = dt else {
-        return "—".to_string();
-    };
-    let duration = chrono::Utc::now().signed_duration_since(dt);
-    let seconds = duration.num_seconds();
-    if seconds < 60 {
-        "now".to_string()
-    } else if seconds < 3600 {
-        format!("{}m", duration.num_minutes())
-    } else if seconds < 86400 {
-        format!("{}h", duration.num_hours())
-    } else if seconds < 2_592_000 {
-        format!("{}d", duration.num_days())
-    } else if seconds < 31_536_000 {
-        format!("{}mo", duration.num_days() / 30)
-    } else {
-        format!("{}y", duration.num_days() / 365)
-    }
-}
-
-/// Format a datetime as a human-readable relative time string.
-/// Returns (relative_text, iso_datetime_for_tooltip).
-pub fn format_relative_time(dt: Option<chrono::DateTime<chrono::Utc>>) -> (String, String) {
-    match dt {
-        None => ("Never".to_string(), String::new()),
-        Some(dt) => {
-            let now = chrono::Utc::now();
-            let duration = now.signed_duration_since(dt);
-            let seconds = duration.num_seconds();
-            let relative = if seconds < 60 {
-                "Just now".to_string()
-            } else if seconds < 3600 {
-                let mins = duration.num_minutes();
-                format!("{} minute{} ago", mins, if mins == 1 { "" } else { "s" })
-            } else if seconds < 86400 {
-                let hours = duration.num_hours();
-                format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
-            } else if seconds < 2_592_000 {
-                let days = duration.num_days();
-                format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
-            } else if seconds < 31_536_000 {
-                let months = duration.num_days() / 30;
-                format!("{} month{} ago", months, if months == 1 { "" } else { "s" })
-            } else {
-                let years = duration.num_days() / 365;
-                format!("{} year{} ago", years, if years == 1 { "" } else { "s" })
-            };
-            (relative, dt.to_rfc3339())
-        }
-    }
-}
-
-/// Compute freshness CSS class and key from feed_updated_at and fetched_at.
-pub fn compute_freshness(
-    feed_updated_at: Option<chrono::DateTime<chrono::Utc>>,
-    fetched_at: Option<chrono::DateTime<chrono::Utc>>,
-) -> (String, String) {
-    let now = chrono::Utc::now();
-    match feed_updated_at {
-        Some(updated) => {
-            let days = (now - updated).num_days();
-            if days <= 30 {
-                (String::new(), "fresh".to_string())
-            } else if days <= 90 {
-                ("feed-freshness-warning".to_string(), "warning".to_string())
-            } else {
-                ("feed-freshness-stale".to_string(), "stale".to_string())
-            }
-        }
-        None => match fetched_at {
-            Some(fetched) if (now - fetched).num_days() <= 30 => {
-                ("muted".to_string(), "fresh".to_string())
-            }
-            Some(fetched) if (now - fetched).num_days() <= 90 => {
-                ("feed-freshness-warning".to_string(), "warning".to_string())
-            }
-            _ => ("feed-freshness-stale".to_string(), "stale".to_string()),
-        },
-    }
-}
-
 #[derive(serde::Deserialize)]
 pub struct StatisticsQuery {
     pub period: Option<String>,
@@ -1722,182 +1642,6 @@ pub async fn search_page(
 
 /// Strip HTML tags (including `<script>` / `<style>` bodies) and collapse
 /// whitespace into a single line of plain text.
-fn strip_to_plain_text(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    let mut in_tag = false;
-    let mut skip_until: Option<&'static str> = None;
-    let mut last_space = true;
-    let bytes = raw.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if let Some(end_tag) = skip_until {
-            if let Some(pos) = raw[i..].to_ascii_lowercase().find(end_tag) {
-                i += pos + end_tag.len();
-                skip_until = None;
-                in_tag = false;
-                if !last_space {
-                    out.push(' ');
-                    last_space = true;
-                }
-                continue;
-            } else {
-                break;
-            }
-        }
-        let ch = bytes[i] as char;
-        match ch {
-            '<' => {
-                let lower = raw[i..].to_ascii_lowercase();
-                if lower.starts_with("<script") {
-                    skip_until = Some("</script>");
-                    i += 1;
-                    continue;
-                }
-                if lower.starts_with("<style") {
-                    skip_until = Some("</style>");
-                    i += 1;
-                    continue;
-                }
-                if lower.starts_with("<!--") {
-                    if let Some(pos) = raw[i + 4..].find("-->") {
-                        i += 4 + pos + 3;
-                        if !last_space {
-                            out.push(' ');
-                            last_space = true;
-                        }
-                        continue;
-                    } else {
-                        break;
-                    }
-                }
-                in_tag = true;
-                i += 1;
-            }
-            '>' if in_tag => {
-                in_tag = false;
-                if !last_space {
-                    out.push(' ');
-                    last_space = true;
-                }
-                i += 1;
-            }
-            _ if in_tag => {
-                i += 1;
-            }
-            c if c.is_whitespace() => {
-                if !last_space {
-                    out.push(' ');
-                    last_space = true;
-                }
-                i += 1;
-            }
-            _ => {
-                let ch_len = raw[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-                out.push_str(&raw[i..i + ch_len]);
-                last_space = false;
-                i += ch_len;
-            }
-        }
-    }
-    out.trim().to_string()
-}
-
-/// Build a query-aware snippet: returns a `max_chars`-wide window centered on
-/// the first case-insensitive match of `query` in the plain-text content, with
-/// `…` prefix/suffix where the window doesn't reach the original boundaries.
-/// Falls back to the leading `max_chars` characters if no match is found
-/// (or if `query` is empty).
-fn build_snippet(html: Option<&str>, query: &str, max_chars: usize) -> String {
-    let raw = match html {
-        Some(s) if !s.is_empty() => s,
-        _ => return String::new(),
-    };
-    let plain = strip_to_plain_text(raw);
-    let total_chars = plain.chars().count();
-    if total_chars <= max_chars {
-        return plain;
-    }
-
-    // Try to center on the first match (ASCII-case-insensitive).
-    let q = query.trim();
-    if !q.is_empty() {
-        let plain_lower = plain.to_ascii_lowercase();
-        let q_lower = q.to_ascii_lowercase();
-        if let Some(byte_pos) = plain_lower.find(&q_lower) {
-            // Convert byte position → char index.
-            let match_char_idx = plain[..byte_pos].chars().count();
-            let context_before = max_chars / 3;
-            let start_char = match_char_idx.saturating_sub(context_before);
-            let end_char = (start_char + max_chars).min(total_chars);
-            // Recompute start to fill the window if we hit the tail.
-            let start_char = end_char.saturating_sub(max_chars);
-
-            let window: String = plain
-                .chars()
-                .skip(start_char)
-                .take(end_char - start_char)
-                .collect();
-            let prefix = if start_char > 0 { "…" } else { "" };
-            let suffix = if end_char < total_chars { "…" } else { "" };
-            return format!("{}{}{}", prefix, window.trim(), suffix);
-        }
-    }
-
-    // Fallback: leading window.
-    let truncated: String = plain.chars().take(max_chars).collect();
-    format!("{}…", truncated.trim_end())
-}
-
-/// Wrap case-insensitive (ASCII-only — matches the SQLite LIKE COLLATE NOCASE
-/// behavior of the search query) matches of `query` in `<mark>` tags. Returns
-/// HTML with the non-match parts and the matched text both escaped, plus the
-/// `<mark>...</mark>` wrappers around hits. Use with `|safe` in templates.
-fn highlight_html(text: &str, query: &str) -> String {
-    if query.is_empty() {
-        return html_escape_minimal(text);
-    }
-    let q_lower = query.to_ascii_lowercase();
-    let q_bytes = q_lower.len();
-    if q_bytes == 0 {
-        return html_escape_minimal(text);
-    }
-    let t_lower = text.to_ascii_lowercase();
-    let mut out = String::with_capacity(text.len() + 16);
-    let mut last = 0;
-    let mut start = 0;
-    while start <= t_lower.len() {
-        match t_lower[start..].find(&q_lower) {
-            Some(rel) => {
-                let abs = start + rel;
-                out.push_str(&html_escape_minimal(&text[last..abs]));
-                out.push_str("<mark>");
-                out.push_str(&html_escape_minimal(&text[abs..abs + q_bytes]));
-                out.push_str("</mark>");
-                last = abs + q_bytes;
-                start = last;
-            }
-            None => break,
-        }
-    }
-    out.push_str(&html_escape_minimal(&text[last..]));
-    out
-}
-
-fn html_escape_minimal(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '&' => out.push_str("&amp;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
 /// `GET /feeds/{id}/entries` — SSR list of entries from a single feed.
 /// Supports the `?fragment=1&after=N` Load-More overload like the other
 /// entries-family pages.
@@ -2638,19 +2382,6 @@ impl IntoResponse for SearchTemplate {
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         }
     }
-}
-
-/// Serialize an already-built sidebar payload for inline embedding in the
-/// shell. Escapes `</` to prevent `</script>` breakout.
-fn serialize_sidebar_for_script(payload: &crate::handlers::user::SidebarResponse) -> String {
-    let json = serde_json::to_string(payload).unwrap_or_else(|_| "null".to_string());
-    escape_json_for_script(&json)
-}
-
-/// Serialize the pending flash messages for inline embedding in the shell.
-fn flash_bootstrap_json(messages: &[FlashMessage]) -> String {
-    let json = serde_json::to_string(messages).unwrap_or_else(|_| "[]".to_string());
-    escape_json_for_script(&json)
 }
 
 /// Serves `/statistics` rendered fully server-side. Period buttons are

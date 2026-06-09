@@ -5,6 +5,16 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, AppResult};
 use crate::utils::datetime::parse_datetime;
 
+mod filters;
+use filters::{
+    apply_continuation_condition, apply_filter_conditions, apply_time_conditions,
+    published_sort_entry_hint,
+};
+// Only the unit tests exercise this predicate directly; production code reaches
+// it through `published_sort_entry_hint`.
+#[cfg(test)]
+use filters::is_no_entry_side_predicate;
+
 /// Sort order for entries
 #[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -168,6 +178,17 @@ fn row_to_entry_with_feed(row: &rusqlite::Row) -> rusqlite::Result<EntryWithFeed
 
 const SELECT_COLUMNS: &str = "id, feed_id, guid, title, link, content, summary, author, published_at, read_at, starred_at, created_at, updated_at";
 
+/// Full SELECT column list for `EntryWithFeed` rows, in the exact order
+/// `row_to_entry_with_feed` reads (columns 0–19). The `has_icon` column (18) is
+/// computed two ways depending on the query shape; this variant uses a
+/// correlated COUNT subquery, for queries that do NOT `LEFT JOIN image`. Keep
+/// both variants and the mapper in sync.
+const ENTRY_WITH_FEED_COLUMNS_COUNT: &str = "e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author, e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at, f.title, f.url, f.site_url, c.id, c.name, (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon, f.custom_referrer";
+
+/// Same columns as [`ENTRY_WITH_FEED_COLUMNS_COUNT`] but computes `has_icon`
+/// from a `LEFT JOIN image i` already present in the query.
+const ENTRY_WITH_FEED_COLUMNS_JOIN: &str = "e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author, e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at, f.title, f.url, f.site_url, c.id, c.name, CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon, f.custom_referrer";
+
 pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Entry>> {
     conn.query_row(
         &format!("SELECT {} FROM entry WHERE id = ?1", SELECT_COLUMNS),
@@ -180,17 +201,15 @@ pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Entry>> {
 
 pub fn find_by_id_with_feed(conn: &Connection, id: i64) -> AppResult<Option<EntryWithFeed>> {
     conn.query_row(
-        r#"
-        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
-               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, f.site_url, c.id, c.name,
-               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon,
-               f.custom_referrer
+        &format!(
+            r#"
+        SELECT {ENTRY_WITH_FEED_COLUMNS_COUNT}
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
         WHERE e.id = ?1
-        "#,
+        "#
+        ),
         params![id],
         row_to_entry_with_feed,
     )
@@ -207,18 +226,16 @@ pub fn find_by_id_for_user(
     entry_id: i64,
 ) -> AppResult<Option<EntryWithFeed>> {
     conn.query_row(
-        r#"
-        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
-               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, f.site_url, c.id, c.name,
-               CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon,
-               f.custom_referrer
+        &format!(
+            r#"
+        SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
         LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
         WHERE e.id = ?1 AND c.user_id = ?2
-        "#,
+        "#
+        ),
         params![entry_id, user_id],
         row_to_entry_with_feed,
     )
@@ -316,11 +333,7 @@ pub fn list_by_user(
 
     let sql = format!(
         r#"
-        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
-               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, f.site_url, c.id, c.name,
-               CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon,
-               f.custom_referrer
+        SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}
         FROM entry e{}
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
@@ -689,11 +702,7 @@ pub fn find_by_ids_with_feed(
 
     let sql = format!(
         r#"
-        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
-               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, f.site_url, c.id, c.name,
-               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon,
-               f.custom_referrer
+        SELECT {ENTRY_WITH_FEED_COLUMNS_COUNT}
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
@@ -818,11 +827,7 @@ pub fn list_by_user_with_continuation(
 
     let sql = format!(
         r#"
-        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
-               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, f.site_url, c.id, c.name,
-               CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon,
-               f.custom_referrer
+        SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
@@ -852,165 +857,6 @@ pub fn list_by_user_with_continuation(
 /// table itself. Used to gate the `INDEXED BY idx_entry_sort_ts` hint: without
 /// any entry-side filter, scanning the sort index DESC with LIMIT is far
 /// cheaper than the planner's default `category -> feed -> entry` walk.
-fn is_no_entry_side_predicate(filter: &EntryFilter) -> bool {
-    filter.feed_id.is_none()
-        && filter.category_id.is_none()
-        && !filter.unread_only
-        && !filter.starred_only
-        && !filter.read_only
-        && filter.search.is_none()
-        && filter.has_summary.is_none()
-}
-
-/// Index hint (a leading `" INDEXED BY ..."` fragment, or `""`) for queries
-/// that `ORDER BY COALESCE(published_at, created_at)`. Shared by `list_by_user`
-/// and `find_neighbors` so both pin the same index for the published-order
-/// pages. Without it the planner walks `category -> feed -> entry` over every
-/// row on a single-user instance that owns ~100% of entries. Each branch maps
-/// to a partial/sort index added in schema migrations v4/v5:
-/// `idx_entry_starred_sort` / `idx_entry_read_sort` for the filtered list
-/// pages, `idx_entry_sort_ts` for the unfiltered case.
-fn published_sort_entry_hint(filter: &EntryFilter) -> &'static str {
-    if filter.starred_only {
-        " INDEXED BY idx_entry_starred_sort"
-    } else if filter.read_only {
-        " INDEXED BY idx_entry_read_sort"
-    } else if is_no_entry_side_predicate(filter) {
-        " INDEXED BY idx_entry_sort_ts"
-    } else {
-        ""
-    }
-}
-
-fn apply_filter_conditions(
-    conditions: &mut Vec<String>,
-    params_vec: &mut Vec<Box<dyn rusqlite::ToSql>>,
-    filter: &EntryFilter,
-) {
-    if let Some(feed_id) = filter.feed_id {
-        conditions.push(format!("e.feed_id = ?{}", params_vec.len() + 1));
-        params_vec.push(Box::new(feed_id));
-    }
-
-    if let Some(category_id) = filter.category_id {
-        conditions.push(format!("c.id = ?{}", params_vec.len() + 1));
-        params_vec.push(Box::new(category_id));
-    }
-
-    if filter.unread_only {
-        conditions.push("e.read_at IS NULL".to_string());
-    }
-
-    if filter.starred_only {
-        conditions.push("e.starred_at IS NOT NULL".to_string());
-    }
-
-    if filter.read_only {
-        conditions.push("e.read_at IS NOT NULL".to_string());
-    }
-
-    if let Some(ref search) = filter.search {
-        let search_pattern = format!("%{}%", search);
-        let param_idx = params_vec.len() + 1;
-        conditions.push(format!(
-            "(e.title LIKE ?{} COLLATE NOCASE OR e.content LIKE ?{} COLLATE NOCASE)",
-            param_idx, param_idx
-        ));
-        params_vec.push(Box::new(search_pattern));
-    }
-
-    if let Some(has_summary) = filter.has_summary {
-        if has_summary {
-            conditions.push(
-                "EXISTS (SELECT 1 FROM entry_summary es WHERE es.user_id = ?1 AND es.entry_id = e.id)".to_string()
-            );
-        } else {
-            conditions.push(
-                "NOT EXISTS (SELECT 1 FROM entry_summary es WHERE es.user_id = ?1 AND es.entry_id = e.id)".to_string()
-            );
-        }
-    }
-}
-
-/// Apply time range conditions (ot = oldest timestamp, nt = newest timestamp, in seconds).
-fn apply_time_conditions(
-    conditions: &mut Vec<String>,
-    params_vec: &mut Vec<Box<dyn rusqlite::ToSql>>,
-    ot: Option<i64>,
-    nt: Option<i64>,
-) {
-    if let Some(oldest_ts) = ot {
-        let param_idx = params_vec.len() + 1;
-        conditions.push(format!(
-            "CAST(strftime('%s', COALESCE(e.published_at, e.created_at)) AS INTEGER) >= ?{}",
-            param_idx
-        ));
-        params_vec.push(Box::new(oldest_ts));
-    }
-
-    if let Some(newest_ts) = nt {
-        let param_idx = params_vec.len() + 1;
-        conditions.push(format!(
-            "CAST(strftime('%s', COALESCE(e.published_at, e.created_at)) AS INTEGER) <= ?{}",
-            param_idx
-        ));
-        params_vec.push(Box::new(newest_ts));
-    }
-}
-
-/// Apply continuation-based pagination condition.
-///
-/// Composite cursor uses the V2 bounded-OR form, which the SQLite planner
-/// can convert to an indexed range scan even when sort_ts is an expression
-/// (`COALESCE(...)`). See PoC at `docs/superpowers/specs/2026-04-26-composite-cursor-pagination-design.md`.
-fn apply_continuation_condition(
-    conditions: &mut Vec<String>,
-    params_vec: &mut Vec<Box<dyn rusqlite::ToSql>>,
-    continuation: Option<&ContinuationCursor>,
-    sort_order: EntrySortOrder,
-    oldest_first: bool,
-) {
-    let Some(cursor) = continuation else {
-        return;
-    };
-
-    match cursor {
-        ContinuationCursor::Composite { sort_ts, id } => {
-            let sort_ts_expr = match sort_order {
-                EntrySortOrder::ReadAt => "e.read_at",
-                EntrySortOrder::StarredAt => "e.starred_at",
-                EntrySortOrder::PublishedAt => "COALESCE(e.published_at, e.created_at)",
-            };
-            let (cmp_outer, cmp_inner) = if oldest_first {
-                (">=", ">")
-            } else {
-                ("<=", "<")
-            };
-            let ts1 = params_vec.len() + 1;
-            let ts2 = params_vec.len() + 2;
-            let id_idx = params_vec.len() + 3;
-            conditions.push(format!(
-                "{expr} {cmp_outer} ?{ts1} AND ({expr} {cmp_inner} ?{ts2} OR e.id {cmp_inner} ?{id_idx})",
-                expr = sort_ts_expr,
-                cmp_outer = cmp_outer,
-                cmp_inner = cmp_inner,
-                ts1 = ts1,
-                ts2 = ts2,
-                id_idx = id_idx,
-            ));
-            params_vec.push(Box::new(sort_ts.clone()));
-            params_vec.push(Box::new(sort_ts.clone()));
-            params_vec.push(Box::new(*id));
-        }
-        ContinuationCursor::LegacyId(id) => {
-            let cmp = if oldest_first { ">" } else { "<" };
-            let id_idx = params_vec.len() + 1;
-            conditions.push(format!("e.id {} ?{}", cmp, id_idx));
-            params_vec.push(Box::new(*id));
-        }
-    }
-}
-
 pub fn mark_all_read_by_feed(
     conn: &Connection,
     feed_id: i64,
