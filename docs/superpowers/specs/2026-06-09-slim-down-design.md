@@ -26,24 +26,31 @@ port (high effort, real porting risk with ring/openssl-vendored).
 
 ### A. Dependencies (`Cargo.toml`)
 
-1. **Remove `openssl` direct dep.** `webauthn-rs-core` already pulls openssl
-   with the `vendored` feature; the crate is referenced 0× in `src/`, `build.rs`,
-   `tests/`. Build output must be unchanged.
+1. **KEEP `openssl = { vendored }` — do NOT remove.** Verification (`cargo tree
+   -e features -i openssl`) shows the `vendored` feature is enabled **only** by
+   this direct dep; `webauthn-rs-core` pulls openssl with *default* features
+   (system openssl). Dropping the direct dep would switch the build from a
+   self-contained vendored build to requiring system `libssl-dev`/`pkg-config` —
+   breaking both this NixOS box and the Dockerfile. The dep exists precisely to
+   force the vendored build. (Original analysis was wrong; corrected at review.)
 2. **Remove `rand_core` direct dep.** Only used via `password_hash::rand_core::OsRng`
-   (`src/auth/password.rs`); the direct crate is referenced 0×.
+   (`src/auth/password.rs:2`); the direct crate is referenced 0×.
 3. **Drop `tower-http` `trace` feature.** No `TraceLayer` anywhere; only
    `CompressionLayer` + `TimeoutLayer` are used.
 4. **Trim `tokio` `features=["full"]`** to
-   `["macros","rt-multi-thread","time","net","signal","sync"]`. No `fs`/`process`/
-   `io-util`/`io-std` usage found; `#[tokio::test]` is covered by `macros`+`rt`.
+   `["macros","rt-multi-thread","time","net","signal","sync"]`. Verified usage:
+   `time`, `spawn`/`task`/`select` (rt+macros), `sync::mpsc`, `signal::unix`,
+   `net::TcpListener`; no `fs`/`process`/`io-util`/`io-std`. `#[tokio::test]` is
+   covered by `macros`+`rt`.
 
 Verification: `cargo build` + `cargo nextest run` both green; `cargo fmt`.
 
 ### B. Docker / build context
 
-5. **`.dockerignore`:** add `e2e/`, `screenshots/`, `coverage/` so `COPY . .` in
-   the builder stage stops pulling Playwright `node_modules` and image assets
-   into the build context.
+5. **`.dockerignore`:** add `e2e/` and `screenshots/` so `COPY . .` in the
+   builder stage stops pulling **`e2e/node_modules` (65 MB)** and image assets
+   into the build context. (`docs/` is already largely covered by `*.md`;
+   `coverage/` does not exist — skip both.)
 
 (Toolchain 1.95 vs Dockerfile base 1.96 is a build-speed nit, not size — note
 only, no change unless asked.)
