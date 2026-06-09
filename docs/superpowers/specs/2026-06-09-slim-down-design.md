@@ -33,8 +33,13 @@ port (high effort, real porting risk with ring/openssl-vendored).
    self-contained vendored build to requiring system `libssl-dev`/`pkg-config` —
    breaking both this NixOS box and the Dockerfile. The dep exists precisely to
    force the vendored build. (Original analysis was wrong; corrected at review.)
-2. **Remove `rand_core` direct dep.** Only used via `password_hash::rand_core::OsRng`
-   (`src/auth/password.rs:2`); the direct crate is referenced 0×.
+2. **KEEP `rand_core` direct dep — do NOT remove.** Although referenced 0× in
+   code, removing it breaks the build: it enables the `getrandom` feature on
+   rand_core 0.6 (password-hash's major), which is what provides `OsRng` used at
+   `src/auth/password.rs:2` via `password_hash::rand_core::OsRng`. `rand` pulls a
+   different rand_core major (0.9), so it can't satisfy this. Another
+   feature-unification dep with no direct references by design. (Corrected at
+   implementation — build failed `E0432: no OsRng` without it.)
 3. **Drop `tower-http` `trace` feature.** No `TraceLayer` anywhere; only
    `CompressionLayer` + `TimeoutLayer` are used.
 4. **Trim `tokio` `features=["full"]`** to
