@@ -1,6 +1,9 @@
 //! Verifies that responses are brotli-compressed when the client advertises
 //! `Accept-Encoding: br`, and left untouched otherwise.
 
+mod common;
+use common::default_test_config;
+
 use std::sync::Arc;
 
 use axum::http::{header, HeaderValue};
@@ -17,22 +20,6 @@ fn open_shared_memory(name: &str) -> Connection {
             | rusqlite::OpenFlags::SQLITE_OPEN_URI,
     )
     .unwrap()
-}
-
-fn default_test_config() -> Config {
-    Config {
-        database_url: ":memory:".to_string(),
-        server_port: 3000,
-        signup_enabled: true,
-        multi_user_enabled: true,
-        image_proxy_secret: vec![0u8; 32],
-        image_proxy_secret_generated: false,
-        user_agent: "RDRS-Test/1.0".to_string(),
-        webauthn_rp_id: "localhost".to_string(),
-        webauthn_rp_origin: "http://localhost:3000".to_string(),
-        webauthn_rp_name: "rdrs-test".to_string(),
-        public_base_url: None,
-    }
 }
 
 fn create_test_server(config: Config) -> TestServer {
