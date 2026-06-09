@@ -168,6 +168,17 @@ fn row_to_entry_with_feed(row: &rusqlite::Row) -> rusqlite::Result<EntryWithFeed
 
 const SELECT_COLUMNS: &str = "id, feed_id, guid, title, link, content, summary, author, published_at, read_at, starred_at, created_at, updated_at";
 
+/// Full SELECT column list for `EntryWithFeed` rows, in the exact order
+/// `row_to_entry_with_feed` reads (columns 0–19). The `has_icon` column (18) is
+/// computed two ways depending on the query shape; this variant uses a
+/// correlated COUNT subquery, for queries that do NOT `LEFT JOIN image`. Keep
+/// both variants and the mapper in sync.
+const ENTRY_WITH_FEED_COLUMNS_COUNT: &str = "e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author, e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at, f.title, f.url, f.site_url, c.id, c.name, (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon, f.custom_referrer";
+
+/// Same columns as [`ENTRY_WITH_FEED_COLUMNS_COUNT`] but computes `has_icon`
+/// from a `LEFT JOIN image i` already present in the query.
+const ENTRY_WITH_FEED_COLUMNS_JOIN: &str = "e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author, e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at, f.title, f.url, f.site_url, c.id, c.name, CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon, f.custom_referrer";
+
 pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Entry>> {
     conn.query_row(
         &format!("SELECT {} FROM entry WHERE id = ?1", SELECT_COLUMNS),
@@ -180,17 +191,15 @@ pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Entry>> {
 
 pub fn find_by_id_with_feed(conn: &Connection, id: i64) -> AppResult<Option<EntryWithFeed>> {
     conn.query_row(
-        r#"
-        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
-               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, f.site_url, c.id, c.name,
-               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon,
-               f.custom_referrer
+        &format!(
+            r#"
+        SELECT {ENTRY_WITH_FEED_COLUMNS_COUNT}
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
         WHERE e.id = ?1
-        "#,
+        "#
+        ),
         params![id],
         row_to_entry_with_feed,
     )
@@ -207,18 +216,16 @@ pub fn find_by_id_for_user(
     entry_id: i64,
 ) -> AppResult<Option<EntryWithFeed>> {
     conn.query_row(
-        r#"
-        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
-               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, f.site_url, c.id, c.name,
-               CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon,
-               f.custom_referrer
+        &format!(
+            r#"
+        SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
         LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
         WHERE e.id = ?1 AND c.user_id = ?2
-        "#,
+        "#
+        ),
         params![entry_id, user_id],
         row_to_entry_with_feed,
     )
@@ -316,11 +323,7 @@ pub fn list_by_user(
 
     let sql = format!(
         r#"
-        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
-               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, f.site_url, c.id, c.name,
-               CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon,
-               f.custom_referrer
+        SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}
         FROM entry e{}
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
@@ -689,11 +692,7 @@ pub fn find_by_ids_with_feed(
 
     let sql = format!(
         r#"
-        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
-               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, f.site_url, c.id, c.name,
-               (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon,
-               f.custom_referrer
+        SELECT {ENTRY_WITH_FEED_COLUMNS_COUNT}
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
@@ -818,11 +817,7 @@ pub fn list_by_user_with_continuation(
 
     let sql = format!(
         r#"
-        SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
-               e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
-               f.title, f.url, f.site_url, c.id, c.name,
-               CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon,
-               f.custom_referrer
+        SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
