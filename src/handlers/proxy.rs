@@ -17,6 +17,20 @@ use crate::{
 
 const MAX_IMAGE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
+/// Fallback caching directive used only when the origin image specifies none.
+const DEFAULT_CACHE_CONTROL: &str = "public, max-age=86400";
+
+/// Pick the `Cache-Control` to send for a proxied image: mirror the origin's
+/// directive when it sends a non-empty one (so an upstream `no-store`,
+/// `private`, or shorter `max-age` wins), otherwise fall back to a 1-day
+/// public TTL.
+fn choose_cache_control(origin: Option<&str>) -> &str {
+    origin
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(DEFAULT_CACHE_CONTROL)
+}
+
 #[derive(Deserialize)]
 pub struct ProxyQuery {
     url: String,
@@ -68,7 +82,7 @@ pub async fn proxy_image(
             StatusCode::NOT_MODIFIED,
             [
                 (header::ETAG, etag),
-                (header::CACHE_CONTROL, "public, max-age=86400".to_string()),
+                (header::CACHE_CONTROL, DEFAULT_CACHE_CONTROL.to_string()),
             ],
         )
             .into_response());
@@ -134,6 +148,16 @@ pub async fn proxy_image(
         return Err(AppError::UnsupportedImageType);
     }
 
+    // Mirror the origin's caching directive when it sends one (see
+    // `choose_cache_control`), else apply our default TTL.
+    let cache_control = choose_cache_control(
+        response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+    )
+    .to_string();
+
     // Check Content-Length if available
     if let Some(content_length) = response.content_length() {
         if content_length > MAX_IMAGE_SIZE {
@@ -158,7 +182,7 @@ pub async fn proxy_image(
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "public, max-age=86400".to_string()),
+            (header::CACHE_CONTROL, cache_control),
             (header::ETAG, etag),
         ],
         bytes,
@@ -242,6 +266,26 @@ mod tests {
             Some(referrer),
             secret
         ));
+    }
+
+    #[test]
+    fn test_choose_cache_control_mirrors_origin() {
+        // Origin directive wins verbatim.
+        assert_eq!(choose_cache_control(Some("max-age=3600")), "max-age=3600");
+        assert_eq!(choose_cache_control(Some("no-store")), "no-store");
+        assert_eq!(
+            choose_cache_control(Some("private, max-age=0")),
+            "private, max-age=0"
+        );
+        // Surrounding whitespace is trimmed.
+        assert_eq!(choose_cache_control(Some("  no-cache  ")), "no-cache");
+    }
+
+    #[test]
+    fn test_choose_cache_control_falls_back_when_absent() {
+        assert_eq!(choose_cache_control(None), DEFAULT_CACHE_CONTROL);
+        assert_eq!(choose_cache_control(Some("")), DEFAULT_CACHE_CONTROL);
+        assert_eq!(choose_cache_control(Some("   ")), DEFAULT_CACHE_CONTROL);
     }
 
     #[test]
