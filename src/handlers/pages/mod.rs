@@ -163,7 +163,8 @@ pub(crate) fn row_view_from(
     let title = e
         .entry
         .title
-        .clone()
+        .as_deref()
+        .map(crate::services::decode_html_entities)
         .unwrap_or_else(|| "(no title)".to_string());
     let published_at = e.entry.published_at.unwrap_or(e.entry.created_at);
     EntryRowView {
@@ -2602,7 +2603,51 @@ pub async fn categories_page(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_snippet, highlight_html};
+    use super::{build_snippet, highlight_html, row_view_from};
+    use crate::models::entry::{Entry, EntryWithFeed};
+    use chrono::Utc;
+
+    fn ewf_with_title(title: &str) -> EntryWithFeed {
+        let now = Utc::now();
+        EntryWithFeed {
+            entry: Entry {
+                id: 1,
+                feed_id: 1,
+                guid: "g".to_string(),
+                title: Some(title.to_string()),
+                link: None,
+                content: None,
+                summary: None,
+                author: None,
+                published_at: Some(now),
+                read_at: None,
+                starred_at: None,
+                created_at: now,
+                updated_at: now,
+            },
+            feed_title: Some("Feed".to_string()),
+            feed_url: "https://example.com/feed".to_string(),
+            site_url: None,
+            category_id: 1,
+            category_name: "Cat".to_string(),
+            feed_has_icon: false,
+            custom_referrer: None,
+        }
+    }
+
+    #[test]
+    fn row_view_decodes_hex_entity_in_title() {
+        let ewf = ewf_with_title("Collabora&#x27;s CODE 26.04 Release");
+        let row = row_view_from(&ewf, None);
+        assert_eq!(row.title, "Collabora's CODE 26.04 Release");
+    }
+
+    #[test]
+    fn row_view_decodes_decimal_and_named_entities() {
+        let ewf = ewf_with_title("Tom &amp; Jerry&#39;s &quot;day&quot;");
+        let row = row_view_from(&ewf, None);
+        assert_eq!(row.title, "Tom & Jerry's \"day\"");
+    }
 
     #[test]
     fn highlight_wraps_simple_match() {

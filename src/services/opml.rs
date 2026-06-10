@@ -6,16 +6,7 @@ use std::io::Cursor;
 
 use crate::error::{AppError, AppResult};
 use crate::models::{category::Category, feed::Feed};
-
-/// Decode HTML entities in a string (e.g., &amp; -> &)
-fn decode_html_entities(s: &str) -> String {
-    s.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&apos;", "'")
-}
+use crate::services::html_entities::decode_html_entities;
 
 #[derive(Debug, Clone)]
 pub struct OpmlFeed {

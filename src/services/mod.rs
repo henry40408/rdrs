@@ -1,6 +1,7 @@
 pub mod background;
 pub mod feed_discovery;
 pub mod feed_sync;
+pub mod html_entities;
 pub mod http;
 pub mod icon_fetcher;
 pub mod image_proxy;
@@ -18,6 +19,7 @@ pub mod summary_worker;
 pub use background::start_background_sync;
 pub use feed_discovery::{discover_feed, DiscoveredFeed};
 pub use feed_sync::{refresh_feed, SyncResult};
+pub use html_entities::decode_html_entities;
 pub use image_proxy::{
     create_proxy_url, create_proxy_url_with_referrer, sign_url, sign_url_with_referrer,
     verify_signature, verify_signature_with_referrer,
