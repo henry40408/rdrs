@@ -532,6 +532,86 @@ async fn test_edit_tag_mark_read() {
 }
 
 #[tokio::test]
+async fn test_edit_tag_mark_read_multiple() {
+    let app = create_test_app(default_test_config());
+    let user_id = setup_authenticated_user(&app).await;
+
+    let (_cat_id, feed_id) =
+        create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
+    let entry_ids = create_test_entries(&app.db, feed_id, 3).await;
+
+    // Mark every loaded entry as read in a single batch request — the server
+    // path behind the "o" / Mark-loaded-as-read shortcut.
+    let mut form: Vec<(String, String)> = entry_ids
+        .iter()
+        .map(|id| {
+            (
+                "i".to_string(),
+                format!("tag:google.com,2005:reader/item/{:016x}", *id),
+            )
+        })
+        .collect();
+    form.push(("a".to_string(), "user/-/state/com.google/read".to_string()));
+
+    let response = app.server.post("/reader/api/0/edit-tag").form(&form).await;
+    response.assert_status_ok();
+    assert_eq!(response.text(), "OK");
+
+    // All three are now read -> reading-list unread count is 0.
+    let response = app.server.get("/reader/api/0/unread-count").await;
+    let body: serde_json::Value = response.json();
+    let counts = body["unreadcounts"].as_array().unwrap();
+    let reading_list_count = counts
+        .iter()
+        .find(|c| c["id"].as_str().unwrap().contains("reading-list"))
+        .map(|c| c["count"].as_i64().unwrap())
+        .unwrap_or(0);
+    assert_eq!(reading_list_count, 0);
+}
+
+#[tokio::test]
+async fn test_edit_tag_mark_read_rejects_unknown_entry() {
+    let app = create_test_app(default_test_config());
+    let user_id = setup_authenticated_user(&app).await;
+
+    let (_cat_id, feed_id) =
+        create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
+    let entry_ids = create_test_entries(&app.db, feed_id, 2).await;
+
+    // A batch that mixes two owned entries with one id that does not exist.
+    // The handler verifies every id up front and rejects the whole batch, so
+    // no entry is marked read.
+    let mut form: Vec<(String, String)> = entry_ids
+        .iter()
+        .map(|id| {
+            (
+                "i".to_string(),
+                format!("tag:google.com,2005:reader/item/{:016x}", *id),
+            )
+        })
+        .collect();
+    form.push((
+        "i".to_string(),
+        format!("tag:google.com,2005:reader/item/{:016x}", 999_999_i64),
+    ));
+    form.push(("a".to_string(), "user/-/state/com.google/read".to_string()));
+
+    let response = app.server.post("/reader/api/0/edit-tag").form(&form).await;
+    response.assert_status(StatusCode::NOT_FOUND);
+
+    // The two owned entries must remain unread (batch rolled back).
+    let response = app.server.get("/reader/api/0/unread-count").await;
+    let body: serde_json::Value = response.json();
+    let counts = body["unreadcounts"].as_array().unwrap();
+    let reading_list_count = counts
+        .iter()
+        .find(|c| c["id"].as_str().unwrap().contains("reading-list"))
+        .map(|c| c["count"].as_i64().unwrap())
+        .unwrap_or(0);
+    assert_eq!(reading_list_count, 2);
+}
+
+#[tokio::test]
 async fn test_edit_tag_star_and_unstar() {
     let app = create_test_app(default_test_config());
     let user_id = setup_authenticated_user(&app).await;

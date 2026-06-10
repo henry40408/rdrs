@@ -2260,6 +2260,13 @@ async fn test_unread_page_renders_entry_rows() {
     // Reading pane placeholder + swap target
     assert!(html.contains(r#"id="reading-pane""#));
     assert!(html.contains("Select an entry"));
+
+    // Mark Above as Read button must render so the "o" shortcut can mark
+    // the currently-loaded unread rows as read.
+    assert!(
+        html.contains(r#"id="mark-above-read""#),
+        "unread page must render the Mark Above as Read button"
+    );
 }
 
 // ============================================================================
