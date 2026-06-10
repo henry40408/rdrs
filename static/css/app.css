@@ -20,7 +20,6 @@
     --font-xl: 1.25rem;
     --font-2xl: 1.5rem;
     --font-3xl: 2rem;
-    --font-4xl: 2.25rem;
 
     /* Font families */
     --font-display: 'Source Serif 4', Georgia, serif;
@@ -37,7 +36,6 @@
 
     /* Shadows */
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-    --shadow-md: 0 2px 8px rgba(0,0,0,0.08);
     --shadow-lg: 0 4px 16px rgba(0,0,0,0.12);
 
     /* Layout */
@@ -45,7 +43,6 @@
     --list-pane-width: 340px;
     --content-max-width: 820px;
     --page-max-width: 1200px;
-    --dialog-max-width: 600px;
     --auth-max-width: 380px;
 
     /* Borders */
@@ -55,75 +52,38 @@
     --icon-sm: 14px;
     --icon-md: 18px;
 
-    /* Colors - Light theme (Ink & Paper) */
-    --color-bg: #FAF8F5;
-    --color-bg-secondary: #F3F0EC;
-    --color-bg-tertiary: #EBE7E2;
-    --color-bg-sidebar: #F5F2EE;
-    --color-text: #1A1715;
-    --color-text-secondary: #4A4540;
+    /* Colors (Ink & Paper) — light-dark(light, dark) resolves against
+       color-scheme: the default `light dark` follows the OS preference;
+       the [data-theme] rules below pin it when the user picks a theme
+       explicitly. One token list instead of three duplicated blocks. */
+    color-scheme: light dark;
+    --color-bg: light-dark(#FAF8F5, #1C1917);
+    --color-bg-secondary: light-dark(#F3F0EC, #231F1C);
+    --color-bg-tertiary: light-dark(#EBE7E2, #2C2724);
+    --color-bg-sidebar: light-dark(#F5F2EE, #211E1B);
+    --color-text: light-dark(#1A1715, #F5F0EB);
+    --color-text-secondary: light-dark(#4A4540, #C8C0B8);
     --color-text-muted: #8A847D;
-    --color-border: #D4CFC8;
-    --color-border-light: #E5E1DB;
-    --color-accent: #B8860B;
-    --color-accent-hover: #9A7209;
-    --color-accent-subtle: rgba(184, 134, 11, 0.1);
-    --color-success: #2D7A3A;
-    --color-error: #B91C1C;
-    --color-warning: #92610E;
-    --color-button-bg: #1A1715;
-    --color-button-text: #FAF8F5;
-    --color-overlay: rgba(26, 23, 21, 0.4);
-    --color-highlight: #FEF3C7;
-    --color-sidebar-active: rgba(184, 134, 11, 0.08);
+    --color-border: light-dark(#D4CFC8, #3D3731);
+    --color-border-light: light-dark(#E5E1DB, #332E29);
+    --color-accent: light-dark(#B8860B, #D4A853);
+    --color-accent-hover: light-dark(#9A7209, #E0BA6A);
+    --color-accent-subtle: light-dark(rgba(184, 134, 11, 0.1), rgba(212, 168, 83, 0.12));
+    --color-success: light-dark(#2D7A3A, #4ADE80);
+    --color-error: light-dark(#B91C1C, #F87171);
+    --color-warning: light-dark(#92610E, #FBBF24);
+    --color-button-bg: light-dark(#1A1715, #F5F0EB);
+    --color-button-text: light-dark(#FAF8F5, #1C1917);
+    --color-overlay: light-dark(rgba(26, 23, 21, 0.4), rgba(0, 0, 0, 0.6));
+    --color-sidebar-active: light-dark(rgba(184, 134, 11, 0.08), rgba(212, 168, 83, 0.1));
+}
+
+[data-theme="light"] {
+    color-scheme: light;
 }
 
 [data-theme="dark"] {
-    --color-bg: #1C1917;
-    --color-bg-secondary: #231F1C;
-    --color-bg-tertiary: #2C2724;
-    --color-bg-sidebar: #211E1B;
-    --color-text: #F5F0EB;
-    --color-text-secondary: #C8C0B8;
-    --color-text-muted: #8A847D;
-    --color-border: #3D3731;
-    --color-border-light: #332E29;
-    --color-accent: #D4A853;
-    --color-accent-hover: #E0BA6A;
-    --color-accent-subtle: rgba(212, 168, 83, 0.12);
-    --color-success: #4ADE80;
-    --color-error: #F87171;
-    --color-warning: #FBBF24;
-    --color-button-bg: #F5F0EB;
-    --color-button-text: #1C1917;
-    --color-overlay: rgba(0, 0, 0, 0.6);
-    --color-highlight: #4A3B10;
-    --color-sidebar-active: rgba(212, 168, 83, 0.1);
-}
-
-@media (prefers-color-scheme: dark) {
-    :root:not([data-theme]) {
-        --color-bg: #1C1917;
-        --color-bg-secondary: #231F1C;
-        --color-bg-tertiary: #2C2724;
-        --color-bg-sidebar: #211E1B;
-        --color-text: #F5F0EB;
-        --color-text-secondary: #C8C0B8;
-        --color-text-muted: #8A847D;
-        --color-border: #3D3731;
-        --color-border-light: #332E29;
-        --color-accent: #D4A853;
-        --color-accent-hover: #E0BA6A;
-        --color-accent-subtle: rgba(212, 168, 83, 0.12);
-        --color-success: #4ADE80;
-        --color-error: #F87171;
-        --color-warning: #FBBF24;
-        --color-button-bg: #F5F0EB;
-        --color-button-text: #1C1917;
-        --color-overlay: rgba(0, 0, 0, 0.6);
-        --color-highlight: #4A3B10;
-        --color-sidebar-active: rgba(212, 168, 83, 0.1);
-    }
+    color-scheme: dark;
 }
 
 /* ===== Reset ===== */
@@ -505,12 +465,12 @@ code {
     border: 0;
     padding: 0;
     font: inherit;
-    color: var(--color-link);
+    color: var(--color-accent);
     cursor: pointer;
 }
 
 .reading-pane-back-link:hover {
-    color: var(--color-link-hover);
+    color: var(--color-accent-hover);
 }
 
 /* Prev/Next navigation. Buttons render disabled and app.js enables whichever
@@ -525,7 +485,7 @@ code {
     background: none;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    color: var(--color-link);
+    color: var(--color-accent);
     cursor: pointer;
     font-size: var(--font-sm);
     line-height: 1;
@@ -534,7 +494,7 @@ code {
 
 .reading-pane-nav-btn:hover:not(:disabled) {
     background: var(--color-bg-secondary);
-    color: var(--color-link-hover);
+    color: var(--color-accent-hover);
 }
 
 .reading-pane-nav-btn:disabled {
@@ -760,7 +720,8 @@ label {
 input[type="text"],
 input[type="password"],
 input[type="url"],
-input[type="number"] {
+input[type="number"],
+select {
     width: 100%;
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--color-border);
@@ -772,28 +733,8 @@ input[type="number"] {
     transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-input:focus {
-    outline: none;
-    border-color: var(--color-accent);
-    box-shadow: 0 0 0 3px var(--color-accent-subtle);
-}
-
 select {
-    width: 100%;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    font-family: var(--font-ui);
-    font-size: var(--font-base);
-    background: var(--color-bg);
-    color: var(--color-text);
     cursor: pointer;
-}
-
-select:focus {
-    outline: none;
-    border-color: var(--color-accent);
-    box-shadow: 0 0 0 3px var(--color-accent-subtle);
 }
 
 textarea {
@@ -806,6 +747,8 @@ textarea {
     padding: var(--space-3);
 }
 
+input:focus,
+select:focus,
 textarea:focus {
     outline: none;
     border-color: var(--color-accent);
@@ -863,7 +806,11 @@ button:disabled {
     opacity: 1;
 }
 
-.btn-sm {
+/* Compact size — shared by .btn-sm and any button/.btn inside an
+   .actions row. */
+.btn-sm,
+.actions button,
+.actions .btn {
     padding: var(--space-1) var(--space-2);
     font-size: var(--font-xs);
 }
@@ -997,26 +944,17 @@ td input[type="text"] {
     outline-offset: 2px;
 }
 
-.banner--success { background: rgba(45, 122, 58, 0.06); border-color: rgba(45, 122, 58, 0.20); border-left-color: var(--color-success); }
+/* Tinted wash + border per level; border-left picks up the level colour
+   via the theme-aware tokens. (Dark border-left values matched the dark
+   token values exactly, so var() covers both schemes.) */
+.banner--success { background: light-dark(rgba(45, 122, 58, 0.06), rgba(74, 222, 128, 0.08)); border-color: light-dark(rgba(45, 122, 58, 0.20), rgba(74, 222, 128, 0.25)); border-left-color: var(--color-success); }
 .banner--success .banner-icon { background: var(--color-success); }
-.banner--error   { background: rgba(185, 28, 28, 0.06); border-color: rgba(185, 28, 28, 0.20); border-left-color: var(--color-error); }
+.banner--error   { background: light-dark(rgba(185, 28, 28, 0.06), rgba(248, 113, 113, 0.08)); border-color: light-dark(rgba(185, 28, 28, 0.20), rgba(248, 113, 113, 0.25)); border-left-color: var(--color-error); }
 .banner--error   .banner-icon { background: var(--color-error); }
-.banner--warning { background: rgba(146, 97, 14, 0.06); border-color: rgba(146, 97, 14, 0.20); border-left-color: var(--color-warning); }
+.banner--warning { background: light-dark(rgba(146, 97, 14, 0.06), rgba(251, 191, 36, 0.08)); border-color: light-dark(rgba(146, 97, 14, 0.20), rgba(251, 191, 36, 0.25)); border-left-color: var(--color-warning); }
 .banner--warning .banner-icon { background: var(--color-warning); }
-.banner--info    { background: rgba(184, 134, 11, 0.05); border-color: rgba(184, 134, 11, 0.20); border-left-color: var(--color-accent); }
+.banner--info    { background: light-dark(rgba(184, 134, 11, 0.05), rgba(184, 134, 11, 0.10)); border-color: light-dark(rgba(184, 134, 11, 0.20), rgba(184, 134, 11, 0.30)); border-left-color: var(--color-accent); }
 .banner--info    .banner-icon { background: var(--color-accent); }
-
-[data-theme="dark"] .banner--success { background: rgba(74, 222, 128, 0.08); border-color: rgba(74, 222, 128, 0.25); border-left-color: #4ADE80; }
-[data-theme="dark"] .banner--error   { background: rgba(248, 113, 113, 0.08); border-color: rgba(248, 113, 113, 0.25); border-left-color: #F87171; }
-[data-theme="dark"] .banner--warning { background: rgba(251, 191, 36, 0.08); border-color: rgba(251, 191, 36, 0.25); border-left-color: #FBBF24; }
-[data-theme="dark"] .banner--info    { background: rgba(184, 134, 11, 0.10); border-color: rgba(184, 134, 11, 0.30); }
-
-@media (prefers-color-scheme: dark) {
-    :root:not([data-theme]) .banner--success { background: rgba(74, 222, 128, 0.08); border-color: rgba(74, 222, 128, 0.25); border-left-color: #4ADE80; }
-    :root:not([data-theme]) .banner--error   { background: rgba(248, 113, 113, 0.08); border-color: rgba(248, 113, 113, 0.25); border-left-color: #F87171; }
-    :root:not([data-theme]) .banner--warning { background: rgba(251, 191, 36, 0.08); border-color: rgba(251, 191, 36, 0.25); border-left-color: #FBBF24; }
-    :root:not([data-theme]) .banner--info    { background: rgba(184, 134, 11, 0.10); border-color: rgba(184, 134, 11, 0.30); }
-}
 
 .sr-only {
     position: absolute;
@@ -1083,14 +1021,6 @@ td input[type="text"] {
     color: var(--color-text-muted);
 }
 
-.entry-item-meta a {
-    color: var(--color-text-muted);
-}
-
-.entry-item-meta a:hover {
-    color: var(--color-accent);
-}
-
 .entry-item-actions {
     margin-top: var(--space-2);
     font-size: var(--font-xs);
@@ -1098,12 +1028,17 @@ td input[type="text"] {
     gap: var(--space-3);
 }
 
-.entry-item-actions a {
+/* Quiet secondary links (entry meta/actions, breadcrumb): muted until
+   hovered, then accent. */
+.entry-item-meta a,
+.entry-item-actions a,
+.breadcrumb a {
     color: var(--color-text-muted);
-    text-decoration: none;
 }
 
-.entry-item-actions a:hover {
+.entry-item-meta a:hover,
+.entry-item-actions a:hover,
+.breadcrumb a:hover {
     color: var(--color-accent);
 }
 
@@ -1114,12 +1049,11 @@ td input[type="text"] {
     flex-wrap: wrap;
 }
 
-.actions button, .actions .btn {
-    padding: var(--space-1) var(--space-2);
-    font-size: var(--font-xs);
-}
-
-.actions a {
+/* Plain <a> actions and .action-link form-submit buttons share the same
+   compact accent-text styling so a <form><button> next to <a>'s reads as
+   part of the same row of actions. */
+.actions a,
+.action-link {
     color: var(--color-accent);
     text-decoration: none;
     padding: var(--space-1) var(--space-2);
@@ -1128,46 +1062,30 @@ td input[type="text"] {
     transition: background 0.15s, color 0.15s;
 }
 
-.actions a:hover {
-    background: var(--color-accent-subtle);
+/* Button reset on top of the shared link styling (opacity: 1 cancels the
+   global button:hover dim). */
+.action-link {
+    background: transparent;
+    border: none;
+    font-family: var(--font-ui);
+    cursor: pointer;
 }
 
-.actions a[onclick*="delete"] {
+.actions a:hover,
+.action-link:hover {
+    background: var(--color-accent-subtle);
+    opacity: 1;
+}
+
+.action-link-danger {
     color: var(--color-error);
 }
 
-.actions a[onclick*="delete"]:hover {
+.action-link-danger:hover {
     background: rgba(185, 28, 28, 0.08);
 }
 
-/* ===== Dialog (Modal) ===== */
-dialog {
-    margin: auto;
-    background: var(--color-bg);
-    color: var(--color-text);
-    max-width: var(--dialog-max-width);
-    width: calc(100% - var(--space-8));
-    padding: var(--space-8);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
-    font-family: var(--font-ui);
-    font-size: var(--font-base);
-    box-shadow: var(--shadow-lg);
-}
-
-dialog::backdrop {
-    background: var(--color-overlay);
-}
-
-.modal-title {
-    font-family: var(--font-display);
-    font-size: var(--font-xl);
-    font-weight: 600;
-    margin-bottom: var(--space-5);
-    padding-bottom: var(--space-3);
-    border-bottom: 1px solid var(--color-border-light);
-}
-
+/* ===== Modal-style action rows ===== */
 .modal-actions {
     display: flex;
     gap: var(--space-3);
@@ -1253,14 +1171,6 @@ dialog::backdrop {
     margin-bottom: var(--space-3);
 }
 
-.breadcrumb a {
-    color: var(--color-text-muted);
-}
-
-.breadcrumb a:hover {
-    color: var(--color-accent);
-}
-
 /* ===== Error ===== */
 .error {
     margin-bottom: var(--space-4);
@@ -1313,13 +1223,20 @@ dialog::backdrop {
     color: var(--color-text);
     margin: 0 0 var(--space-3);
 }
-.empty-state-text {
+/* Shared italic subtext across all empty-state tiers; each tier only
+   sets its own font-size (and, for compact, its box). */
+.empty-state-text,
+.empty-state-compact,
+.empty-state-quiet-text {
     font-family: var(--font-body);
     font-style: italic;
-    font-size: var(--font-lg);
     color: var(--color-text-muted);
     line-height: 1.6;
     margin: 0;
+}
+
+.empty-state-text {
+    font-size: var(--font-lg);
 }
 .empty-state-kbd {
     display: inline-block;
@@ -1340,12 +1257,7 @@ dialog::backdrop {
    layout. The natural collapse of Tier 1 into tight space. */
 .empty-state-compact {
     text-align: center;
-    font-family: var(--font-body);
-    font-style: italic;
     font-size: var(--font-base);
-    color: var(--color-text-muted);
-    line-height: 1.6;
-    margin: 0;
     padding: var(--space-8) var(--space-4);
 }
 
@@ -1368,12 +1280,7 @@ dialog::backdrop {
     margin: 0 0 var(--space-2);
 }
 .empty-state-quiet-text {
-    font-family: var(--font-body);
-    font-style: italic;
     font-size: var(--font-sm);
-    color: var(--color-text-muted);
-    line-height: 1.6;
-    margin: 0;
 }
 
 /* Onboarding empty state on the landing page (no feeds yet). */
@@ -1491,10 +1398,6 @@ mark {
     color: var(--color-error);
 }
 
-.d-none {
-    display: none;
-}
-
 .btn-block {
     width: 100%;
 }
@@ -1505,14 +1408,6 @@ mark {
 
 .textarea-full {
     width: 100%;
-}
-
-.flex-1 {
-    flex: 1;
-}
-
-.entries-status-msg {
-    padding: var(--space-4) var(--space-5);
 }
 
 .star-icon {
@@ -1531,21 +1426,6 @@ mark {
     margin-bottom: var(--space-4);
 }
 
-.hidden-mt4 {
-    display: none;
-    margin-top: var(--space-4);
-    padding: 0 var(--space-5);
-}
-
-.content-snippet {
-    font-size: var(--font-xs);
-    margin-top: var(--space-2);
-    font-style: italic;
-    font-family: var(--font-body);
-    overflow-wrap: break-word;
-    word-break: break-word;
-}
-
 /* Feed icon */
 .feed-icon {
     width: var(--icon-sm);
@@ -1556,52 +1436,36 @@ mark {
     background: #ffffff;
 }
 
-/* Search highlight */
-.search-highlight {
-    background-color: var(--color-highlight);
-    color: var(--color-text);
-    padding: 0 var(--space-1);
-    border-radius: var(--radius-sm);
+/* Summary badges — shared geometry, per-state colour. */
+.summary-badge,
+.summary-badge-pending,
+.summary-badge-processing,
+.summary-badge-failed {
+    margin-left: var(--space-1);
+    font-size: var(--font-xs);
 }
 
-/* Summary badges */
 .summary-badge {
     color: var(--color-accent);
     font-weight: normal;
-    margin-left: var(--space-1);
-    font-size: var(--font-xs);
 }
 
 .summary-badge-pending {
     color: var(--color-text-muted);
-    margin-left: var(--space-1);
-    font-size: var(--font-xs);
 }
 
 .summary-badge-processing {
     color: var(--color-accent);
-    margin-left: var(--space-1);
-    font-size: var(--font-xs);
     animation: blink 1s infinite;
 }
 
 .summary-badge-failed {
     color: var(--color-error);
-    margin-left: var(--space-1);
-    font-size: var(--font-xs);
 }
 
 @keyframes blink {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
-}
-
-/* Entries count */
-#entries-count {
-    margin-top: var(--space-4);
-    margin-bottom: var(--space-6);
-    padding: 0 var(--space-5);
-    font-size: var(--font-xs);
 }
 
 /* Feed page specific */
@@ -1611,19 +1475,6 @@ mark {
     flex-wrap: wrap;
     align-items: center;
     margin-bottom: var(--space-5);
-}
-
-.feed-edit-url-row {
-    display: flex;
-    gap: var(--space-2);
-}
-
-.feed-edit-url-row input {
-    flex: 1;
-}
-
-.feed-edit-url-row button {
-    white-space: nowrap;
 }
 
 summary {
@@ -1655,27 +1506,6 @@ summary {
 .feed-error-cell {
     font-size: var(--font-sm);
     padding-top: 0;
-}
-
-.feed-row-syncing {
-    background: var(--color-bg-secondary);
-}
-
-#sync-status-bar {
-    display: none;
-    padding: var(--space-2) var(--space-4);
-    background: var(--color-accent-subtle);
-    border: 1px solid var(--color-border-light);
-    border-radius: var(--radius-md);
-    margin-bottom: var(--space-5);
-    font-size: var(--font-sm);
-}
-
-#sync-status-bar.active { display: block; }
-
-#sync-status-text {
-    color: var(--color-accent);
-    animation: blink 1s infinite;
 }
 
 /* ===== Auth Layout (Login / Register) ===== */
@@ -1764,13 +1594,6 @@ summary {
     font-size: var(--font-base);
     line-height: 1.6;
     white-space: pre-wrap;
-}
-
-/* ===== Refreshing state ===== */
-.entries-list-refreshing {
-    position: relative;
-    opacity: 0.5;
-    pointer-events: none;
 }
 
 /* ===== Responsive: Wide screens ===== */
@@ -1878,14 +1701,6 @@ summary {
         padding: var(--space-3) var(--space-4);
     }
 
-    #entries-count {
-        padding: 0 var(--space-4);
-    }
-
-    .hidden-mt4 {
-        padding: 0 var(--space-4);
-    }
-
     /* Banner stack: tighter padding on narrow viewports. */
     .banner {
         padding: var(--space-2);
@@ -1912,31 +1727,31 @@ summary {
     body:has(.main-content > .banner-stack:not(:empty)) .page-content {
         padding-top: var(--space-6);
     }
-
-    /* Dialog: reduce padding on tablet */
-    dialog {
-        padding: var(--space-4);
-        width: calc(100% - var(--space-4));
-    }
 }
 
 /* ===== Responsive: Phone (card tables, compact spacing) ===== */
 @media (max-width: 600px) {
-    /* Responsive tables: card layout */
-    .page-content table.mobile-cards {
+    /* Responsive tables: card layout. Skeleton shared by the generic
+       .mobile-cards and the settings variant; the td treatment differs
+       below (flex label/value rows vs stacked blocks). */
+    .page-content table.mobile-cards,
+    .page-content table.mobile-cards-settings {
         display: block;
         border: none;
     }
 
-    .page-content table.mobile-cards thead {
+    .page-content table.mobile-cards thead,
+    .page-content table.mobile-cards-settings thead {
         display: none;
     }
 
-    .page-content table.mobile-cards tbody {
+    .page-content table.mobile-cards tbody,
+    .page-content table.mobile-cards-settings tbody {
         display: block;
     }
 
-    .page-content table.mobile-cards tbody tr {
+    .page-content table.mobile-cards tbody tr,
+    .page-content table.mobile-cards-settings tbody tr {
         display: block;
         padding: var(--space-3) 0;
         border-bottom: 1px solid var(--color-border-light);
@@ -1984,26 +1799,7 @@ summary {
         display: block;
     }
 
-    /* Settings env-vars table card layout */
-    .page-content table.mobile-cards-settings thead {
-        display: none;
-    }
-
-    .page-content table.mobile-cards-settings {
-        display: block;
-        border: none;
-    }
-
-    .page-content table.mobile-cards-settings tbody {
-        display: block;
-    }
-
-    .page-content table.mobile-cards-settings tbody tr {
-        display: block;
-        padding: var(--space-3) 0;
-        border-bottom: 1px solid var(--color-border-light);
-    }
-
+    /* Settings env-vars variant: stacked label-over-value blocks. */
     .page-content table.mobile-cards-settings tbody td {
         display: block;
         padding: var(--space-1) 0;
@@ -2055,7 +1851,9 @@ summary {
     gap: var(--space-2);
     flex-wrap: wrap;
 }
-.stats-period-btn {
+/* Chip-style toggle shared with the /feeds filter links. */
+.stats-period-btn,
+.feed-filter-link {
     padding: var(--space-1) var(--space-3);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-control);
@@ -2066,8 +1864,10 @@ summary {
     font-size: var(--font-sm);
     cursor: pointer;
 }
-.stats-period-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
-.stats-period-btn.active {
+.stats-period-btn:hover,
+.feed-filter-link:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.stats-period-btn.active,
+.feed-filter-link.active {
     background: var(--color-accent);
     color: var(--color-bg);
     border-color: var(--color-accent);
@@ -2207,55 +2007,11 @@ summary {
 .feed-freshness-warning { color: var(--color-warning); }
 .feed-freshness-stale { color: var(--color-error); }
 
+/* .feed-filter-link styling lives with .stats-period-btn (chip toggle). */
 .feed-filter-links {
     display: flex;
     gap: var(--space-2);
     align-items: center;
-}
-.feed-filter-link {
-    padding: var(--space-1) var(--space-3);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-control);
-    text-decoration: none;
-    font-family: var(--font-ui);
-    font-size: var(--font-sm);
-    color: var(--color-text-secondary);
-}
-.feed-filter-link:hover { border-color: var(--color-accent); color: var(--color-accent); }
-.feed-filter-link.active {
-    background: var(--color-accent);
-    color: var(--color-bg);
-    border-color: var(--color-accent);
-}
-
-/* ===== Action links — buttons that read as links in a row ===== */
-/* For form-submit buttons inline with .actions <a>'s. Matches the
-   compact accent-text style of .actions a so a <form><button> next
-   to <a>'s reads as part of the same row of actions. */
-.action-link {
-    background: transparent;
-    border: none;
-    padding: var(--space-1) var(--space-2);
-    color: var(--color-accent);
-    font-family: var(--font-ui);
-    font-size: var(--font-xs);
-    text-decoration: none;
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-    transition: background 0.15s, color 0.15s;
-}
-
-.action-link:hover {
-    background: var(--color-accent-subtle);
-    opacity: 1;
-}
-
-.action-link-danger {
-    color: var(--color-error);
-}
-
-.action-link-danger:hover {
-    background: rgba(185, 28, 28, 0.08);
 }
 
 /* ===== Categories: inline rename form ===== */
@@ -2306,20 +2062,11 @@ summary {
 }
 
 /* ── Entries keyboard focus ───────────────────────────────────────────── */
-/* SSR Load-More form wrapper. Same shape as the legacy `.hidden-mt4`
-   wrapper around the load-more button — top margin separating it
-   from the last row, side padding aligning with the rest of the list,
-   and matching bottom margin so the button doesn't sit flush with
-   the .list-pane edge. */
-.load-more-form {
-    margin-top: var(--space-4);
-    margin-bottom: var(--space-4);
-    padding: 0 var(--space-5);
-}
-
-/* Mark Above as Read wrapper — sits at the bottom of the list-pane
-   below the Load-More form on feed/category pages. Same spacing as
-   `.load-more-form` so the two buttons align. */
+/* Bottom-of-list-pane form wrappers (Load More, Mark Above as Read) —
+   top margin separating them from the last row, side padding aligning
+   with the rest of the list, and matching bottom margin so the buttons
+   don't sit flush with the .list-pane edge. */
+.load-more-form,
 .mark-above-form {
     margin-top: var(--space-4);
     margin-bottom: var(--space-4);
@@ -2348,9 +2095,9 @@ summary {
     color: var(--color-accent);
 }
 
-/* Mobile: align load-more / mark-above wrappers with .entry-item, #entries-count
-   et al. (which drop from space-5 to space-4 horizontal padding at this width).
-   Placed here so it follows the base .load-more-form rule in source order. */
+/* Mobile: align load-more / mark-above wrappers with .entry-item (which drops
+   from space-5 to space-4 horizontal padding at this width). Placed here so it
+   follows the base .load-more-form rule in source order. */
 @media (max-width: 1024px) {
     .load-more-form,
     .mark-above-form {

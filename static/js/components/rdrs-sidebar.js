@@ -17,13 +17,9 @@
 // `document.querySelector('rdrs-sidebar')?.refresh()` so the bootstrap, the
 // sessionStorage mirror, and the visible badges all advance together.
 
-const SIDEBAR_CACHE_KEY = 'rdrs.sidebar.v1';
+import { escapeHtml } from '/static/js/utils.js';
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text == null ? '' : String(text);
-    return div.innerHTML;
-}
+const SIDEBAR_CACHE_KEY = 'rdrs.sidebar.v1';
 
 function readBootstrap() {
     const node = document.getElementById('rdrs-sidebar-bootstrap');
