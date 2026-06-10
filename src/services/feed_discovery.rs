@@ -1,8 +1,9 @@
+use reqwest::header::USER_AGENT;
 use scraper::{Html, Selector};
 use url::Url;
 
 use crate::error::{AppError, AppResult};
-use crate::services::http::{send_with_retry_on_error, RetryConfig, DEFAULT_TIMEOUT};
+use crate::services::http::{send_with_retry_on_error, RetryConfig, SHARED_CLIENT};
 
 #[derive(Debug, Clone)]
 pub struct DiscoveredFeed {
@@ -20,19 +21,15 @@ pub async fn discover_feed(url: &str, user_agent: &str) -> AppResult<DiscoveredF
         return Err(AppError::InvalidUrl);
     }
 
-    // Fetch the URL
-    let client = reqwest::Client::builder()
-        .timeout(DEFAULT_TIMEOUT)
-        .user_agent(user_agent)
-        .build()
-        .map_err(|e| AppError::FetchError(e.to_string()))?;
-
+    // Fetch the URL via the shared, connection-pooled client (UA per request).
     let retry_config = RetryConfig::default();
     let url_owned = url.to_string();
 
-    let response = send_with_retry_on_error(&retry_config, || client.get(&url_owned))
-        .await
-        .map_err(|e| AppError::FetchError(e.to_string()))?;
+    let response = send_with_retry_on_error(&retry_config, || {
+        SHARED_CLIENT.get(&url_owned).header(USER_AGENT, user_agent)
+    })
+    .await
+    .map_err(|e| AppError::FetchError(e.to_string()))?;
 
     if !response.status().is_success() {
         return Err(AppError::FetchError(format!("HTTP {}", response.status())));
@@ -59,9 +56,11 @@ pub async fn discover_feed(url: &str, user_agent: &str) -> AppResult<DiscoveredF
     let feed_url = find_feed_link_in_html(&body, &parsed_url)?;
 
     // Fetch and parse the discovered feed
-    let feed_response = send_with_retry_on_error(&retry_config, || client.get(&feed_url))
-        .await
-        .map_err(|e| AppError::FetchError(e.to_string()))?;
+    let feed_response = send_with_retry_on_error(&retry_config, || {
+        SHARED_CLIENT.get(&feed_url).header(USER_AGENT, user_agent)
+    })
+    .await
+    .map_err(|e| AppError::FetchError(e.to_string()))?;
 
     if !feed_response.status().is_success() {
         return Err(AppError::FetchError(format!(

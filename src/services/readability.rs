@@ -1,8 +1,9 @@
 use readability::extractor;
+use reqwest::header::USER_AGENT;
 use url::Url;
 
 use crate::error::{AppError, AppResult};
-use crate::services::http::{send_with_retry_on_error, RetryConfig, DEFAULT_TIMEOUT};
+use crate::services::http::{send_with_retry_on_error, RetryConfig, SHARED_CLIENT};
 use crate::utils::url_validation;
 
 pub struct ExtractedContent {
@@ -16,17 +17,13 @@ pub async fn fetch_and_extract(url: &str, user_agent: &str) -> AppResult<Extract
     let parsed_url = Url::parse(url).map_err(|_| AppError::InvalidUrl)?;
     url_validation::validate_url(&parsed_url).map_err(|_| AppError::InvalidUrl)?;
 
-    // Fetch HTML using existing reqwest (rustls-tls)
-    let client = reqwest::Client::builder()
-        .timeout(DEFAULT_TIMEOUT)
-        .user_agent(user_agent)
-        .build()
-        .map_err(|e| AppError::FetchError(e.to_string()))?;
-
+    // Fetch HTML via the shared, connection-pooled client (User-Agent per request).
     let url_owned = url.to_string();
-    let response = send_with_retry_on_error(&RetryConfig::default(), || client.get(&url_owned))
-        .await
-        .map_err(|e| AppError::FetchError(e.to_string()))?;
+    let response = send_with_retry_on_error(&RetryConfig::default(), || {
+        SHARED_CLIENT.get(&url_owned).header(USER_AGENT, user_agent)
+    })
+    .await
+    .map_err(|e| AppError::FetchError(e.to_string()))?;
 
     if !response.status().is_success() {
         return Err(AppError::FetchError(format!("HTTP {}", response.status())));
