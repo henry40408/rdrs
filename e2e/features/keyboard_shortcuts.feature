@@ -29,6 +29,12 @@ Feature: Keyboard shortcut overhaul (toggle read, mark all, rebinds)
     And I press the "o" key
     Then I see 0 entries in the entry list
 
+  Scenario: o marks every loaded entry above as read (on unread page)
+    When I open the inbox
+    And I confirm the next dialog
+    And I press the "o" key
+    Then I see 0 entries in the entry list
+
   Scenario: Enter opens the selected entry into the reading pane
     When I open the inbox
     And I press the "j" key

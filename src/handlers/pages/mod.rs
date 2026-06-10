@@ -547,7 +547,7 @@ pub async fn unread_page(
                 active_category_id: None,
                 filter_tabs: None,
                 status_filter: None,
-                show_mark_above: false,
+                show_mark_above: true,
                 onboarding: no_feeds,
             },
         },
