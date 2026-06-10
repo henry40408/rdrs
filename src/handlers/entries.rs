@@ -200,11 +200,16 @@ pub(crate) async fn build_reading_pane_view(
         title: ewf
             .entry
             .title
-            .clone()
+            .as_deref()
+            .map(crate::services::decode_html_entities)
             .unwrap_or_else(|| "(no title)".to_string()),
         link: ewf.entry.link.clone(),
         feed_title: ewf.feed_title.clone().unwrap_or_default(),
-        author: ewf.entry.author.clone(),
+        author: ewf
+            .entry
+            .author
+            .as_deref()
+            .map(crate::services::decode_html_entities),
         published_at_iso: published_at.map(|t| t.to_rfc3339()),
         published_relative: format_relative_time(published_at).0,
         content_html,
