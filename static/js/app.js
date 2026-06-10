@@ -96,12 +96,36 @@ function clearFormBusy(form) {
     }
 }
 
+// Abort in-flight image downloads in the outgoing reading pane. The swap
+// removes the old pane from the DOM, but browsers do NOT reliably cancel an
+// `<img>`'s in-flight request when the element is detached — and image-proxy
+// requests are slow (each re-fetches from origin). On HTTP/1.1 those stale
+// downloads keep occupying the ~6 per-origin connection slots, so the next
+// entry's fragment `fetch` stalls behind them (measured: hundreds of ms to
+// >1s of pure connection-queue wait). Dropping `src` cancels them up front.
+function cancelPaneImages(pane) {
+    if (!pane) return;
+    for (const img of pane.querySelectorAll('img[src]')) {
+        img.removeAttribute('src');
+    }
+}
+
 async function performSwap(url, init, defaultTarget, options) {
     const method = (init.method || 'GET').toUpperCase();
     // popstate-driven restores pass `skipHistory: true` because the browser
     // has already moved the address bar via back/forward — we must not push
     // or replace on top of the slot the user just navigated into.
     const skipHistory = options?.skipHistory === true;
+    // Before fetching the next entry, cancel the current pane's image loads so
+    // they stop starving the connection pool — but only when navigating to a
+    // *different* entry (action swaps like Save / Fetch-Full-Content re-target
+    // the same entry and would just reload the same images).
+    if (defaultTarget === '#reading-pane') {
+        const incoming = entryIdFromSwapUrl(url);
+        if (incoming && incoming !== currentPaneEntryId()) {
+            cancelPaneImages(document.getElementById('reading-pane'));
+        }
+    }
     let response;
     try {
         response = await fetch(url, init);

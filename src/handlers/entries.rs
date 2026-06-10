@@ -1,8 +1,8 @@
 use askama::Template;
 use axum::{
     extract::{Path as AxumPath, State},
-    http::StatusCode,
-    response::{Html, IntoResponse, Response},
+    http::{HeaderMap, StatusCode},
+    response::{Html, IntoResponse, Redirect, Response},
 };
 
 use crate::{
@@ -87,9 +87,23 @@ impl IntoResponse for SummarizePending {
 pub async fn entry_fragment(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<OpenEntryMulti> {
+) -> AppResult<Response> {
     let user_id = auth_user.user.id;
+
+    // `/entries/{id}/fragment` is a partial-only route: it renders just the
+    // `<template data-swap-target>` blocks the swap helper consumes, which
+    // display as a blank page when loaded as a top-level document. A real
+    // browser navigation here (the swap helper's error fallback, a click that
+    // lands before `app.js` wires up the interceptor, open-in-new-tab, or a
+    // refresh of the URL) must NOT show that blank page. Browsers tag
+    // top-level navigations with `Sec-Fetch-Dest: document` (a `fetch()` sends
+    // `empty`), so redirect those to the full entries page with the pane
+    // pre-opened via `?entry=`.
+    if headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) == Some("document") {
+        return Ok(Redirect::to(&format!("/entries?entry={entry_id}")).into_response());
+    }
 
     // Verify ownership, mark unread→read, re-fetch the entry to reflect the
     // new state, and pick up the summary status — all in a single write
@@ -125,7 +139,8 @@ pub async fn entry_fragment(
         pane,
         r: row,
         sidebar_unread_payload_json,
-    })
+    }
+    .into_response())
 }
 
 /// Read the user's save-services config + Kagi config to drive the

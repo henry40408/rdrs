@@ -13,7 +13,7 @@ use common::default_test_config;
 
 use std::sync::Arc;
 
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{header, HeaderName, HeaderValue, StatusCode};
 use axum_test::multipart::{MultipartForm, Part};
 use axum_test::TestServer;
 use rdrs::{auth, create_router, db, services, AppState, Config, DbPool, Role};
@@ -3636,6 +3636,126 @@ async fn test_entry_fragment_renders_reading_pane() {
         read_at.is_some(),
         "opening fragment must auto-mark the entry as read"
     );
+}
+
+/// A real top-level browser navigation to the partial-only `/fragment` route
+/// (carrying `Sec-Fetch-Dest: document`) must redirect to the full entries
+/// page rather than serving the bare `<template>` blocks — which render as a
+/// blank page. The redirect path is read-only and must not mark the entry read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_entry_fragment_redirects_on_top_level_navigation() {
+    let app = create_test_app_named(default_test_config(), "test_entry_fragment_doc_nav");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "doc_nav", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "doc_nav", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let entry_id: i64 = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/feed",
+                    title: Some("Test Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (entry, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-doc-nav",
+                Some("Hello World"),
+                Some("https://x/post"),
+                Some("<p>Body text here</p>"),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            entry.id
+        })
+        .await
+        .unwrap();
+
+    let response = app
+        .server
+        .get(&format!("/entries/{}/fragment", entry_id))
+        .add_header(
+            HeaderName::from_static("sec-fetch-dest"),
+            HeaderValue::from_static("document"),
+        )
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(location, format!("/entries?entry={entry_id}"));
+
+    // The redirect short-circuits before the write transaction, so the entry
+    // stays unread (the user will mark it read by opening it normally).
+    let read_at: Option<String> = app
+        .db
+        .read_user(move |conn| {
+            conn.query_row(
+                "SELECT read_at FROM entry WHERE id = ?1",
+                [entry_id],
+                |row| row.get(0),
+            )
+            .map_err(rdrs::error::AppError::from)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        read_at.is_none(),
+        "the top-level-navigation redirect must not mark the entry read"
+    );
+}
+
+/// The media proxy serves a stable ETag (the per-URL request signature). A
+/// conditional request that already holds it gets a 304 with no origin fetch,
+/// mirroring miniflux's media proxy.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_proxy_image_304_on_if_none_match() {
+    let app = create_test_app_named(default_test_config(), "test_proxy_image_inm");
+
+    let response = app
+        .server
+        .get("/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=sometoken")
+        .add_header(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_static("\"sometoken\""),
+        )
+        .await;
+
+    response.assert_status(StatusCode::NOT_MODIFIED);
+    let etag = response
+        .headers()
+        .get(header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(etag, "\"sometoken\"");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

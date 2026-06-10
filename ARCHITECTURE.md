@@ -255,6 +255,12 @@ Uses HMAC-SHA256 signatures to prevent abuse:
 2. Proxy handler verifies signature before fetching the image
 3. Signature is truncated to 8 bytes for URL brevity
 
+**Caching:** responses carry `Cache-Control: public, max-age=86400` and an
+`ETag` equal to the per-URL signature. A conditional request with a matching
+`If-None-Match` is answered `304 Not Modified` without re-fetching the origin
+(the image is immutable per URL), keeping refreshes / post-TTL revisits cheap
+instead of re-downloading every image.
+
 **URL Format:**
 - **Relative paths** (default): `/api/proxy/image?url=...&s=...`
   - Used by Web UI (browsers automatically resolve relative paths)
