@@ -1,9 +1,9 @@
-use reqwest::header::CONTENT_TYPE;
+use reqwest::header::{CONTENT_TYPE, USER_AGENT};
 use tracing::debug;
 use url::Url;
 
-use crate::error::{AppError, AppResult};
-use crate::services::http::{send_with_retry_on_error, RetryConfig, ICON_TIMEOUT};
+use crate::error::AppResult;
+use crate::services::http::{send_with_retry_on_error, RetryConfig, ICON_TIMEOUT, SHARED_CLIENT};
 
 const MAX_ICON_SIZE: usize = 256 * 1024; // 256KB
 
@@ -46,16 +46,17 @@ pub async fn fetch_feed_icon(
 }
 
 async fn fetch_image(url: &str, user_agent: &str) -> AppResult<Option<FetchedImage>> {
-    let client = reqwest::Client::builder()
-        .timeout(ICON_TIMEOUT)
-        .user_agent(user_agent)
-        .build()
-        .map_err(|e| AppError::FetchError(e.to_string()))?;
-
     let retry_config = RetryConfig::icon();
     let url_owned = url.to_string();
 
-    let response = match send_with_retry_on_error(&retry_config, || client.get(&url_owned)).await {
+    let response = match send_with_retry_on_error(&retry_config, || {
+        SHARED_CLIENT
+            .get(&url_owned)
+            .timeout(ICON_TIMEOUT)
+            .header(USER_AGENT, user_agent)
+    })
+    .await
+    {
         Ok(r) => r,
         Err(e) => {
             debug!("Failed to fetch image from {}: {}", url, e);
@@ -124,16 +125,17 @@ async fn fetch_favicon(site_url: &str, user_agent: &str) -> AppResult<Option<Fet
     }
 
     // Try parsing HTML for link rel="icon"
-    let client = reqwest::Client::builder()
-        .timeout(ICON_TIMEOUT)
-        .user_agent(user_agent)
-        .build()
-        .map_err(|e| AppError::FetchError(e.to_string()))?;
-
     let retry_config = RetryConfig::icon();
     let site_url_owned = site_url.to_string();
 
-    let html = match send_with_retry_on_error(&retry_config, || client.get(&site_url_owned)).await {
+    let html = match send_with_retry_on_error(&retry_config, || {
+        SHARED_CLIENT
+            .get(&site_url_owned)
+            .timeout(ICON_TIMEOUT)
+            .header(USER_AGENT, user_agent)
+    })
+    .await
+    {
         Ok(r) if r.status().is_success() => match r.text().await {
             Ok(t) => t,
             Err(_) => return Ok(None),

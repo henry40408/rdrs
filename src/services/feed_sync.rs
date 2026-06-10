@@ -1,5 +1,5 @@
 use chrono::Utc;
-use reqwest::header::{HeaderMap, HeaderValue, IF_MODIFIED_SINCE, IF_NONE_MATCH};
+use reqwest::header::{HeaderMap, HeaderValue, IF_MODIFIED_SINCE, IF_NONE_MATCH, USER_AGENT};
 use serde::Serialize;
 use tracing::{debug, error, info, warn};
 
@@ -7,7 +7,7 @@ use crate::db::DbPool;
 use crate::error::{AppError, AppResult};
 use crate::models::{entry, feed, image};
 use crate::services::http::{
-    send_with_retry_on_error, RetryConfig, DEFAULT_TIMEOUT, FEED_SYNC_TIMEOUT,
+    send_with_retry_on_error, RetryConfig, FEED_SYNC_TIMEOUT, SHARED_CLIENT, SHARED_CLIENT_H1,
 };
 use crate::services::icon_fetcher;
 use crate::utils::datetime::parse_timestamp;
@@ -51,21 +51,23 @@ pub async fn refresh_feed(
         .as_deref()
         .unwrap_or(default_user_agent);
 
-    // Build HTTP client with per-feed settings
-    let mut client_builder = reqwest::Client::builder()
-        .timeout(DEFAULT_TIMEOUT)
-        .user_agent(effective_user_agent);
-
-    // Disable HTTP/2 if configured for this feed
-    if feed_data.http2_disabled {
-        client_builder = client_builder.http1_only();
-    }
-
-    let client = client_builder
-        .build()
-        .map_err(|e| AppError::FetchError(e.to_string()))?;
+    // Per-feed opt-out of HTTP/2 needs the HTTP/1.1-only pooled client; all
+    // other feeds share the default pooled client. `http1_only()` is a
+    // client-level setting and cannot be applied per request, which is why this
+    // one knob still selects between two shared clients.
+    let client = if feed_data.http2_disabled {
+        &*SHARED_CLIENT_H1
+    } else {
+        &*SHARED_CLIENT
+    };
 
     let mut headers = HeaderMap::new();
+
+    // User-Agent (possibly a per-feed override) is sent per request now that the
+    // client is shared rather than rebuilt with `.user_agent(...)` each call.
+    if let Ok(value) = HeaderValue::from_str(effective_user_agent) {
+        headers.insert(USER_AGENT, value);
+    }
 
     if let Some(ref etag) = feed_data.etag {
         if let Ok(value) = HeaderValue::from_str(etag) {
