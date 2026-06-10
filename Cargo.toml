@@ -67,6 +67,7 @@ time = "0.3"
 hex = "0.4.3"
 mimalloc = "0.1"
 libmimalloc-sys = { version = "0.1", features = ["extended"] }
+lol_html = "3.0.0"
 
 [build-dependencies]
 resvg = "0.47"
