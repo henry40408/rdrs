@@ -1,6 +1,6 @@
 use axum::{
     extract::{Query, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -48,8 +48,32 @@ fn verify_proxy_signature(
 
 pub async fn proxy_image(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<ProxyQuery>,
 ) -> AppResult<Response> {
+    // A proxied image is immutable for a given URL, and the request signature
+    // `s` is a stable per-URL token — so it doubles as the ETag. When the
+    // browser revalidates a cached image it sends `If-None-Match`; answer 304
+    // immediately and skip the origin round-trip entirely. This mirrors
+    // miniflux's media proxy and is what makes a refresh / post-TTL revisit
+    // cheap instead of re-downloading every image from origin.
+    let etag = format!("\"{}\"", query.s);
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v == etag || v == "*")
+        .unwrap_or(false)
+    {
+        return Ok((
+            StatusCode::NOT_MODIFIED,
+            [
+                (header::ETAG, etag),
+                (header::CACHE_CONTROL, "public, max-age=86400".to_string()),
+            ],
+        )
+            .into_response());
+    }
+
     // Decode the base64 URL
     let url_bytes = URL_SAFE_NO_PAD
         .decode(&query.url)
@@ -127,12 +151,15 @@ pub async fn proxy_image(
         return Err(AppError::ImageTooLarge);
     }
 
-    // Return the image with appropriate headers
+    // Return the image with appropriate headers. The ETag lets the browser
+    // revalidate cheaply on its next visit (see the `If-None-Match` 304
+    // short-circuit at the top of this handler).
     Ok((
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, content_type),
             (header::CACHE_CONTROL, "public, max-age=86400".to_string()),
+            (header::ETAG, etag),
         ],
         bytes,
     )
