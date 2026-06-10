@@ -86,6 +86,20 @@ When("I click the entry titled {string}", async ({ page }, title) => {
   await page.locator("#reading-pane:not(.reading-pane-empty)").waitFor({ state: "attached" });
 });
 
+When("I mark the entry row for {string} with an identity probe", async ({ page }, title) => {
+  // Stamp a JS property (not an attribute — the in-place morph syncs
+  // attributes, so a data-* probe would be stripped) on the row's DOM node.
+  // The property only survives the open swap if the node's identity is
+  // preserved (morph), not when the node is replaced.
+  await page
+    .getByTestId("entry-item")
+    .filter({ hasText: title })
+    .first()
+    .evaluate((el) => {
+      el.__identityProbe = "kept";
+    });
+});
+
 When("I click {string}", async ({ page }, label) => {
   await page.getByRole("button", { name: label }).click();
 });
@@ -288,6 +302,11 @@ Then("I am on the entries page for category {string}", async ({ page, seed, curr
   const userId = seed.getUserId(currentUser.username);
   const categoryId = seed.findCategoryIdByName(userId, name);
   await page.waitForURL(`${serverUrl}/categories/${categoryId}/entries`);
+});
+
+Then("the entry row for {string} kept its identity probe", async ({ page }, title) => {
+  const row = page.getByTestId("entry-item").filter({ hasText: title }).first();
+  await expect.poll(() => row.evaluate((el) => el.__identityProbe ?? null)).toBe("kept");
 });
 
 Then("the entry row for {string} shows as read", async ({ page }, title) => {

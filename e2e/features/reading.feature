@@ -16,6 +16,21 @@ Feature: Reading entries
     Then the reading pane shows the title "Test Entry 1"
     And the reading pane shows the content "Content for test entry 1"
 
+  # Regression: opening an entry used to REPLACE the row's DOM node
+  # (insertBefore the new node, removeChild the old). If that replacement
+  # landed between a user's mousedown and mouseup on the same row — a slow
+  # fragment fetch resolving mid-click — the browser fired no `click` and the
+  # open was silently dropped ("click does nothing; hover shows; click again
+  # works"). The swap now morphs single-element targets in place, preserving
+  # the row's node identity. A JS property set on the node survives the open
+  # only when that identity is kept.
+  Scenario: Opening an entry preserves the row's DOM node (no dropped clicks)
+    When I open the inbox
+    And I mark the entry row for "Test Entry 1" with an identity probe
+    And I click the entry titled "Test Entry 1"
+    Then the reading pane shows the title "Test Entry 1"
+    And the entry row for "Test Entry 1" kept its identity probe
+
   Scenario: Reading pane shows feed title and published time
     When I open the inbox
     And I click the entry titled "Test Entry 1"

@@ -110,6 +110,45 @@ function cancelPaneImages(pane) {
     }
 }
 
+// Replace a swap target while PRESERVING its DOM node identity when the
+// payload is a single element of the same tag. The fallback path detaches the
+// target (`insertBefore` the replacement, then `removeChild` the original) —
+// but if that detachment lands between a user's `mousedown` and `mouseup` on
+// the same node (a slow fragment fetch resolving mid-click), the browser fires
+// NO `click` and the interaction is silently dropped: the entry row is the
+// click-to-open target, so the row just "doesn't open" (hover still shows,
+// because the replacement node is under the cursor) until a second click on
+// the now-stable node. Morphing in place keeps the node alive so the click
+// survives. Multi-node payloads (Load More appends N rows + a form) can't
+// collapse onto one node, so the caller keeps detach/insert for those.
+//
+// Returns true when it morphed in place, false when the caller should fall
+// back to detach/insert.
+function swapInPlace(dst, nodes) {
+    const elements = nodes.filter((n) => n.nodeType === Node.ELEMENT_NODE);
+    const onlyWhitespaceAround = nodes.every(
+        (n) =>
+            n.nodeType === Node.ELEMENT_NODE ||
+            (n.nodeType === Node.TEXT_NODE && !n.textContent.trim()),
+    );
+    if (elements.length !== 1 || !onlyWhitespaceAround) return false;
+    const incoming = elements[0];
+    if (incoming.tagName !== dst.tagName) return false;
+    // Sync attributes to mirror "replace with incoming": drop attributes the
+    // incoming node lacks, then set/overwrite the rest (e.g. the row's
+    // `entry-read` class flips here).
+    for (const attr of Array.from(dst.attributes)) {
+        if (!incoming.hasAttribute(attr.name)) dst.removeAttribute(attr.name);
+    }
+    for (const attr of Array.from(incoming.attributes)) {
+        if (dst.getAttribute(attr.name) !== attr.value) {
+            dst.setAttribute(attr.name, attr.value);
+        }
+    }
+    dst.replaceChildren(...incoming.childNodes);
+    return true;
+}
+
 async function performSwap(url, init, defaultTarget, options) {
     const method = (init.method || 'GET').toUpperCase();
     // popstate-driven restores pass `skipHistory: true` because the browser
@@ -172,18 +211,19 @@ async function performSwap(url, init, defaultTarget, options) {
             if (sel === '#reading-pane') swappedReadingPane = true;
             const dst = document.querySelector(sel);
             if (!dst) continue;
-            const parent = dst.parentNode;
-            // Insert every child of the template content (including
-            // multi-element payloads — e.g. Load-More returns N rows + a
-            // new load-more form) before the swap target, then remove
-            // the target. Single-element templates collapse to the same
-            // outcome as the previous outerHTML-replace behaviour, so
-            // existing call sites stay correct.
+            // Single-element payloads (reading pane, entry row, sidebar
+            // count) morph in place to keep the node's identity — see
+            // swapInPlace. Multi-element payloads (Load-More returns N rows +
+            // a new load-more form) insert every child of the template
+            // content before the swap target, then remove the target.
             const nodes = Array.from(tpl.content.childNodes);
-            for (const node of nodes) {
-                parent.insertBefore(node, dst);
+            if (!swapInPlace(dst, nodes)) {
+                const parent = dst.parentNode;
+                for (const node of nodes) {
+                    parent.insertBefore(node, dst);
+                }
+                parent.removeChild(dst);
             }
-            parent.removeChild(dst);
         }
         if (swappedReadingPane && incomingEntryId && incomingEntryId !== paneEntryIdBefore) {
             window.flash?.clear?.();
@@ -198,7 +238,11 @@ async function performSwap(url, init, defaultTarget, options) {
     if (!dst) return;
     const incoming = parsed.body.firstElementChild;
     if (!incoming) return;
-    dst.outerHTML = incoming.outerHTML;
+    // Morph in place when possible (preserves node identity → no dropped
+    // clicks on rapid re-clicks), else fall back to a full node replace.
+    if (!swapInPlace(dst, [incoming])) {
+        dst.outerHTML = incoming.outerHTML;
+    }
     if (defaultTarget === '#reading-pane' && incomingEntryId && incomingEntryId !== paneEntryIdBefore) {
         window.flash?.clear?.();
     }
