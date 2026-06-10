@@ -5,6 +5,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::Deserialize;
+use std::sync::LazyLock;
 use url::Url;
 
 use crate::{
@@ -16,6 +17,24 @@ use crate::{
 };
 
 const MAX_IMAGE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+
+/// Process-wide HTTP client for image proxying, built once and reused.
+///
+/// `reqwest::Client` owns a connection pool; cloning/reusing it lets upstream
+/// origin connections be kept alive and reused across proxied images. The
+/// previous code built a fresh client *per request*, which discarded the pool
+/// every time and forced a new TCP+TLS handshake to the origin for every image.
+/// That is masked under HTTP/1.1 — the browser caps at ~6 concurrent requests to
+/// us — but under HTTP/2 the browser dispatches every image of an entry at once,
+/// so we receive N concurrent proxy requests, each building a client and opening
+/// a brand-new origin connection. Sharing one client removes that per-request
+/// build + handshake overhead.
+static IMAGE_PROXY_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(DEFAULT_TIMEOUT)
+        .build()
+        .expect("failed to build image proxy HTTP client")
+});
 
 /// Fallback caching directive used only when the origin image specifies none.
 const DEFAULT_CACHE_CONTROL: &str = "public, max-age=86400";
@@ -111,16 +130,13 @@ pub async fn proxy_image(
     let url = Url::parse(&url_str).map_err(|_| AppError::InvalidImageUrl)?;
     url_validation::validate_url(&url).map_err(|_| AppError::InvalidImageUrl)?;
 
-    // Fetch the image
-    let client = reqwest::Client::builder()
-        .timeout(DEFAULT_TIMEOUT)
-        .build()
-        .map_err(|e| AppError::ImageFetchError(e.to_string()))?;
-
+    // Fetch the image through the shared, connection-pooled client.
     let url_str = url.to_string();
     let user_agent = state.config.user_agent.clone();
     let response = send_with_retry_on_error(&RetryConfig::default(), || {
-        let mut req = client.get(&url_str).header("User-Agent", &user_agent);
+        let mut req = IMAGE_PROXY_CLIENT
+            .get(&url_str)
+            .header("User-Agent", &user_agent);
         if let Some(ref referrer) = referrer {
             req = req.header("Referer", referrer.as_str());
         }
