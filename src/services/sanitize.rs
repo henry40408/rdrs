@@ -1,4 +1,5 @@
 use ammonia::Builder;
+use lol_html::{element, rewrite_str, RewriteStrSettings};
 use scraper::{Html, Selector};
 use std::collections::HashSet;
 use url::Url;
@@ -70,92 +71,6 @@ const TRACKING_PARAMS: &[&str] = &[
 /// Tracking query parameter prefixes
 const TRACKING_PARAM_PREFIXES: &[&str] = &["utm_", "mtm_"];
 
-/// Remove tracking pixels (1x1 images, zero-dimension images, and images from tracking domains)
-fn remove_tracking_pixels(html: &str) -> String {
-    // Build a list of src URLs to remove based on tracking criteria
-    let document = Html::parse_fragment(html);
-    let img_selector = Selector::parse("img").expect("static CSS selector");
-
-    let mut urls_to_remove: Vec<String> = Vec::new();
-
-    for element in document.select(&img_selector) {
-        let attrs = element.value();
-
-        // Check for 1x1 pixel or zero dimensions
-        let width = attrs.attr("width");
-        let height = attrs.attr("height");
-
-        let is_tracking_size = match (width, height) {
-            (Some(w), Some(h)) => w == "1" && h == "1",
-            (Some(w), None) => w == "0",
-            (None, Some(h)) => h == "0",
-            _ => false,
-        };
-
-        // Check for tracking domain or path in src
-        let is_tracking_url = if let Some(src) = attrs.attr("src") {
-            let src_lower = src.to_lowercase();
-            TRACKING_DOMAINS.iter().any(|d| src_lower.contains(d))
-                || TRACKING_PATHS.iter().any(|p| src_lower.contains(p))
-        } else {
-            false
-        };
-
-        if is_tracking_size || is_tracking_url {
-            if let Some(src) = attrs.attr("src") {
-                urls_to_remove.push(src.to_string());
-            }
-        }
-    }
-
-    // Remove img tags with matching src URLs
-    let mut result = html.to_string();
-    for url in &urls_to_remove {
-        // Find img tags containing this URL and remove them
-        result = remove_img_tag_with_src(&result, url);
-    }
-
-    result
-}
-
-/// Remove an img tag that contains the specified src URL
-fn remove_img_tag_with_src(html: &str, src_url: &str) -> String {
-    let mut result = String::new();
-    let mut i = 0;
-
-    while i < html.len() {
-        // Check if we're at the start of an img tag
-        if html[i..].starts_with("<img") {
-            // Find the end of this tag
-            if let Some(end_pos) = html[i..].find('>') {
-                let tag_end = i + end_pos + 1;
-                let tag = &html[i..tag_end];
-
-                // Check if this img tag contains our target src URL
-                let src_patterns = [format!("src=\"{}\"", src_url), format!("src='{}'", src_url)];
-
-                let should_remove = src_patterns.iter().any(|p| tag.contains(p));
-
-                if should_remove {
-                    // Skip this tag entirely
-                    i = tag_end;
-                    continue;
-                }
-            }
-        }
-
-        // Add current character to result
-        if let Some(c) = html[i..].chars().next() {
-            result.push(c);
-            i += c.len_utf8();
-        } else {
-            break;
-        }
-    }
-
-    result
-}
-
 /// Check if a parameter name is a tracking parameter
 fn is_tracking_param(name: &str) -> bool {
     let name_lower = name.to_lowercase();
@@ -163,76 +78,6 @@ fn is_tracking_param(name: &str) -> bool {
         || TRACKING_PARAM_PREFIXES
             .iter()
             .any(|p| name_lower.starts_with(p))
-}
-
-/// Strip tracking parameters from all URLs in anchor tags
-fn strip_tracking_params(html: &str) -> String {
-    let document = Html::parse_fragment(html);
-    let a_selector = Selector::parse("a[href]").expect("static CSS selector");
-
-    let mut result = html.to_string();
-
-    for element in document.select(&a_selector) {
-        if let Some(href) = element.value().attr("href") {
-            // Only process http/https URLs
-            if !href.starts_with("http://") && !href.starts_with("https://") {
-                continue;
-            }
-
-            if let Ok(mut url) = Url::parse(href) {
-                let original_query: Vec<(String, String)> = url
-                    .query_pairs()
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
-                    .collect();
-
-                // Filter out tracking parameters
-                let filtered_query: Vec<(String, String)> = original_query
-                    .iter()
-                    .filter(|(k, _)| !is_tracking_param(k))
-                    .cloned()
-                    .collect();
-
-                // Only modify if we actually removed something
-                if filtered_query.len() < original_query.len() {
-                    // Clear and rebuild query string
-                    url.set_query(None);
-                    if !filtered_query.is_empty() {
-                        let query_string: String = filtered_query
-                            .iter()
-                            .map(|(k, v)| {
-                                format!(
-                                    "{}={}",
-                                    url::form_urlencoded::byte_serialize(k.as_bytes())
-                                        .collect::<String>(),
-                                    url::form_urlencoded::byte_serialize(v.as_bytes())
-                                        .collect::<String>()
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join("&");
-                        url.set_query(Some(&query_string));
-                    }
-
-                    // Build new URL with &amp; for HTML context
-                    let new_url = url.as_str().replace('&', "&amp;");
-
-                    // Try both & and &amp; versions for matching (ammonia encodes & to &amp;)
-                    let old_attr_amp = format!("href=\"{}\"", href.replace('&', "&amp;"));
-                    let old_attr_raw = format!("href=\"{}\"", href);
-                    let new_attr = format!("href=\"{}\"", new_url);
-
-                    // Try the &amp; version first (more common after ammonia)
-                    if result.contains(&old_attr_amp) {
-                        result = result.replacen(&old_attr_amp, &new_attr, 1);
-                    } else {
-                        result = result.replacen(&old_attr_raw, &new_attr, 1);
-                    }
-                }
-            }
-        }
-    }
-
-    result
 }
 
 /// Attributes that carry the real image URL for lazy-loaded images, in priority order.
@@ -300,6 +145,145 @@ fn promote_lazy_images(html: &str) -> String {
     result
 }
 
+/// Decide whether an `<img>` is a tracking pixel, given its attributes.
+fn is_tracking_pixel(width: Option<&str>, height: Option<&str>, src: Option<&str>) -> bool {
+    let is_tracking_size = match (width, height) {
+        (Some(w), Some(h)) => w == "1" && h == "1",
+        (Some(w), None) => w == "0",
+        (None, Some(h)) => h == "0",
+        _ => false,
+    };
+
+    let is_tracking_url = if let Some(src) = src {
+        let src_lower = src.to_lowercase();
+        TRACKING_DOMAINS.iter().any(|d| src_lower.contains(d))
+            || TRACKING_PATHS.iter().any(|p| src_lower.contains(p))
+    } else {
+        false
+    };
+
+    is_tracking_size || is_tracking_url
+}
+
+/// Strip tracking query parameters from an http(s) URL, returning the rewritten
+/// URL only if something was removed. Non-http(s) inputs return `None`.
+fn strip_tracking_params_from_url(href: &str) -> Option<String> {
+    if !href.starts_with("http://") && !href.starts_with("https://") {
+        return None;
+    }
+    let mut url = Url::parse(href).ok()?;
+    let original_query: Vec<(String, String)> = url
+        .query_pairs()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let filtered_query: Vec<(String, String)> = original_query
+        .iter()
+        .filter(|(k, _)| !is_tracking_param(k))
+        .cloned()
+        .collect();
+    if filtered_query.len() == original_query.len() {
+        return None;
+    }
+    url.set_query(None);
+    if !filtered_query.is_empty() {
+        let query_string: String = filtered_query
+            .iter()
+            .map(|(k, v)| {
+                format!(
+                    "{}={}",
+                    url::form_urlencoded::byte_serialize(k.as_bytes()).collect::<String>(),
+                    url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        url.set_query(Some(&query_string));
+    }
+    Some(url.to_string())
+}
+
+/// Consolidated post-ammonia rewrite: a single streaming `lol_html` pass that
+/// folds the former four `parse_fragment`-based passes (remove tracking pixels,
+/// strip tracking params, rewrite image URLs to the signed proxy, add link
+/// privacy attributes) into one parse of the (already-sanitized) HTML.
+///
+/// `lol_html` exposes attribute values verbatim (it neither decodes `&amp;` on
+/// read nor re-encodes `&` on write), so we normalize `&amp;` to `&` before
+/// parsing a URL — ammonia emits `&amp;` for query separators, and `Url::parse`
+/// needs the raw `&` to split query pairs correctly.
+fn rewrite_post_ammonia(
+    html: &str,
+    secret: &[u8],
+    base_url: Option<&str>,
+    referrer: Option<&str>,
+    proxy_base_url: Option<&str>,
+) -> String {
+    let parsed_base = base_url.and_then(|u| Url::parse(u).ok());
+
+    let img_handler = element!("img", |el| {
+        let width = el.get_attribute("width");
+        let height = el.get_attribute("height");
+        // Normalize ammonia's `&amp;` back to `&` so URL parsing and proxy
+        // signing operate on the real URL.
+        let src = el.get_attribute("src").map(|s| s.replace("&amp;", "&"));
+
+        // Remove tracking pixels outright.
+        if is_tracking_pixel(width.as_deref(), height.as_deref(), src.as_deref()) {
+            el.remove();
+            return Ok(());
+        }
+
+        // Rewrite the image src to the signed proxy URL (skip data: URLs).
+        if let Some(src) = src {
+            if src.starts_with("data:") {
+                return Ok(());
+            }
+            let absolute_url = if src.starts_with("http://") || src.starts_with("https://") {
+                Some(src.clone())
+            } else if let Some(ref base) = parsed_base {
+                base.join(&src).ok().map(|u| u.to_string())
+            } else {
+                None
+            };
+            if let Some(url) = absolute_url {
+                let proxy_url = if let Some(ref_val) = referrer {
+                    create_proxy_url_with_referrer(&url, ref_val, secret, proxy_base_url)
+                } else {
+                    create_proxy_url(&url, secret, proxy_base_url)
+                };
+                el.set_attribute("src", &proxy_url)?;
+                el.set_attribute("loading", "lazy")?;
+                el.set_attribute("decoding", "async")?;
+            }
+        }
+        Ok(())
+    });
+
+    let a_handler = element!("a[href]", |el| {
+        let Some(href) = el.get_attribute("href") else {
+            return Ok(());
+        };
+        // Normalize ammonia's `&amp;` back to `&` so query pairs split correctly.
+        let href = href.replace("&amp;", "&");
+        if !href.starts_with("http://") && !href.starts_with("https://") {
+            return Ok(());
+        }
+        // Strip tracking params first, then apply privacy attributes.
+        if let Some(stripped) = strip_tracking_params_from_url(&href) {
+            el.set_attribute("href", &stripped)?;
+        }
+        el.set_attribute("target", "_blank")?;
+        el.set_attribute("referrerpolicy", "no-referrer")?;
+        Ok(())
+    });
+
+    let settings = RewriteStrSettings::new()
+        .append_element_content_handler(img_handler)
+        .append_element_content_handler(a_handler);
+    let rewritten = rewrite_str(html, settings);
+    rewritten.unwrap_or_else(|_| html.to_string())
+}
+
 pub fn sanitize_html(
     content: &str,
     secret: &[u8],
@@ -357,103 +341,10 @@ pub fn sanitize_html(
         .clean(&unlazied)
         .to_string();
 
-    // Step 2: Remove tracking pixels
-    let without_pixels = remove_tracking_pixels(&sanitized);
-
-    // Step 3: Strip tracking parameters from URLs
-    let without_tracking = strip_tracking_params(&without_pixels);
-
-    // Step 4: Rewrite image URLs to proxy (resolve relative URLs using base_url)
-    let with_images = rewrite_image_urls(
-        &without_tracking,
-        secret,
-        base_url,
-        referrer,
-        proxy_base_url,
-    );
-
-    // Step 5: Add privacy attributes to links
-    add_privacy_attrs_to_links(&with_images)
-}
-
-pub fn rewrite_image_urls(
-    html: &str,
-    secret: &[u8],
-    base_url: Option<&str>,
-    referrer: Option<&str>,
-    proxy_base_url: Option<&str>,
-) -> String {
-    let document = Html::parse_fragment(html);
-    let img_selector = Selector::parse("img[src]").expect("static CSS selector");
-
-    // Parse base URL if provided
-    let parsed_base = base_url.and_then(|u| Url::parse(u).ok());
-
-    let mut result = html.to_string();
-
-    for element in document.select(&img_selector) {
-        if let Some(src) = element.value().attr("src") {
-            // Skip data: URLs
-            if src.starts_with("data:") {
-                continue;
-            }
-
-            // Resolve the URL (handles both absolute and relative URLs)
-            let absolute_url = if src.starts_with("http://") || src.starts_with("https://") {
-                Some(src.to_string())
-            } else if let Some(ref base) = parsed_base {
-                // Try to resolve relative URL against base URL
-                base.join(src).ok().map(|u| u.to_string())
-            } else {
-                None
-            };
-
-            if let Some(url) = absolute_url {
-                let proxy_url = if let Some(ref_val) = referrer {
-                    create_proxy_url_with_referrer(&url, ref_val, secret, proxy_base_url)
-                } else {
-                    create_proxy_url(&url, secret, proxy_base_url)
-                };
-
-                // Replace the original src with the proxy URL and add lazy loading.
-                // Try the &amp; version first (more common after ammonia encodes & to &amp;)
-                let old_attr_amp = format!("src=\"{}\"", src.replace('&', "&amp;"));
-                let old_attr_raw = format!("src=\"{}\"", src);
-                let new_attr = format!("src=\"{}\" loading=\"lazy\" decoding=\"async\"", proxy_url);
-                if result.contains(&old_attr_amp) {
-                    result = result.replacen(&old_attr_amp, &new_attr, 1);
-                } else {
-                    result = result.replacen(&old_attr_raw, &new_attr, 1);
-                }
-            }
-        }
-    }
-
-    result
-}
-
-/// Add target="_blank" and referrerpolicy="no-referrer" to all external links
-fn add_privacy_attrs_to_links(html: &str) -> String {
-    let document = Html::parse_fragment(html);
-    let a_selector = Selector::parse("a[href]").expect("static CSS selector");
-
-    let mut result = html.to_string();
-
-    for element in document.select(&a_selector) {
-        if let Some(href) = element.value().attr("href") {
-            // Only process http/https links (external links)
-            if href.starts_with("http://") || href.starts_with("https://") {
-                let old_attr = format!("href=\"{}\"", href);
-                let new_attr = format!(
-                    "href=\"{}\" target=\"_blank\" referrerpolicy=\"no-referrer\"",
-                    href
-                );
-                result = result.replacen(&old_attr, &new_attr, 1);
-            }
-        }
-    }
-
-    result
+    // Steps 2-5 folded into a single streaming lol_html pass: remove tracking
+    // pixels, strip tracking params, rewrite image URLs to the signed proxy, and
+    // add link privacy attributes — all in one parse of the sanitized HTML.
+    rewrite_post_ammonia(&sanitized, secret, base_url, referrer, proxy_base_url)
 }
 
 #[cfg(test)]
@@ -505,7 +396,7 @@ mod tests {
     #[test]
     fn test_rewrite_image_urls() {
         let input = r#"<p>Text</p><img src="https://example.com/image.jpg" alt="Image">"#;
-        let output = rewrite_image_urls(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(output.contains("/api/proxy/image?url="));
         assert!(output.contains("&s="));
         assert!(!output.contains("src=\"https://example.com/image.jpg\""));
@@ -513,8 +404,12 @@ mod tests {
 
     #[test]
     fn test_rewrite_preserves_data_urls() {
+        // The post-ammonia rewrite must leave `data:` image sources untouched and
+        // never proxy them. (The full `sanitize_html` pipeline runs ammonia first,
+        // which drops the disallowed `data:` scheme outright — so this targets the
+        // rewrite pass directly, where the data: skip lives.)
         let input = r#"<img src="data:image/png;base64,abc123" alt="Data URL">"#;
-        let output = rewrite_image_urls(input, TEST_SECRET, None, None, None);
+        let output = rewrite_post_ammonia(input, TEST_SECRET, None, None, None);
         assert!(output.contains("data:image/png;base64,abc123"));
         assert!(!output.contains("/api/proxy/image"));
     }
@@ -522,7 +417,7 @@ mod tests {
     #[test]
     fn test_rewrite_multiple_images() {
         let input = r#"<img src="https://a.com/1.jpg"><img src="https://b.com/2.jpg">"#;
-        let output = rewrite_image_urls(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("src=\"https://a.com/1.jpg\""));
         assert!(!output.contains("src=\"https://b.com/2.jpg\""));
         // Both should be rewritten with signatures
@@ -639,7 +534,7 @@ mod tests {
     #[test]
     fn test_remove_1x1_pixel_images() {
         let input = r#"<p>Text</p><img src="https://example.com/pixel.gif" width="1" height="1">"#;
-        let output = remove_tracking_pixels(input);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("<img"));
         assert!(output.contains("<p>Text</p>"));
     }
@@ -647,54 +542,97 @@ mod tests {
     #[test]
     fn test_remove_zero_dimension_images() {
         let input = r#"<img src="https://example.com/hidden.gif" width="0">"#;
-        let output = remove_tracking_pixels(input);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("<img"));
 
         let input2 = r#"<img src="https://example.com/hidden.gif" height="0">"#;
-        let output2 = remove_tracking_pixels(input2);
+        let output2 = sanitize_html(input2, TEST_SECRET, None, None, None);
         assert!(!output2.contains("<img"));
     }
 
     #[test]
     fn test_remove_tracking_domain_images() {
         let input1 = r#"<img src="https://pixel.example.com/track.gif">"#;
-        let output1 = remove_tracking_pixels(input1);
+        let output1 = sanitize_html(input1, TEST_SECRET, None, None, None);
         assert!(!output1.contains("<img"));
 
         let input2 = r#"<img src="https://beacon.example.com/img.gif">"#;
-        let output2 = remove_tracking_pixels(input2);
+        let output2 = sanitize_html(input2, TEST_SECRET, None, None, None);
         assert!(!output2.contains("<img"));
 
         let input3 = r#"<img src="https://track.example.com/img.gif">"#;
-        let output3 = remove_tracking_pixels(input3);
+        let output3 = sanitize_html(input3, TEST_SECRET, None, None, None);
         assert!(!output3.contains("<img"));
 
         let input4 = r#"<img src="https://analytics.example.com/img.gif">"#;
-        let output4 = remove_tracking_pixels(input4);
+        let output4 = sanitize_html(input4, TEST_SECRET, None, None, None);
         assert!(!output4.contains("<img"));
     }
 
     #[test]
     fn test_remove_tracking_path_images() {
         let input1 = r#"<img src="https://example.com/pixel/tracker.gif">"#;
-        let output1 = remove_tracking_pixels(input1);
+        let output1 = sanitize_html(input1, TEST_SECRET, None, None, None);
         assert!(!output1.contains("<img"));
 
         let input2 = r#"<img src="https://example.com/beacon/img.gif">"#;
-        let output2 = remove_tracking_pixels(input2);
+        let output2 = sanitize_html(input2, TEST_SECRET, None, None, None);
         assert!(!output2.contains("<img"));
 
         let input3 = r#"<img src="https://example.com/1x1.gif">"#;
-        let output3 = remove_tracking_pixels(input3);
+        let output3 = sanitize_html(input3, TEST_SECRET, None, None, None);
         assert!(!output3.contains("<img"));
+    }
+
+    #[test]
+    fn test_remove_tracking_pixel_with_data_src_attr() {
+        // A tracking pixel may also carry a `data-src`; the real `src` is the
+        // flagged tracking URL and the tag must still be removed. ammonia strips
+        // the unknown `data-src` attribute, then the lol_html pass parses the tag
+        // structurally and removes it based on the real `src`.
+        let input = r#"<p>Text</p><img data-src="https://example.com/real.jpg" src="https://pixel.tracker.com/p.gif" width="1" height="1">"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(!output.contains("<img"), "tracking pixel should be removed");
+        assert!(output.contains("<p>Text</p>"));
+    }
+
+    #[test]
+    fn test_keep_normal_image_with_data_src_when_only_data_src_flagged() {
+        // A normal image whose `src` is NOT a tracking URL must be kept (and
+        // proxied) even if a `data-src` happens to look tracking-ish; only the
+        // real `src` counts. `promote_lazy_images` leaves the real `src` alone, so
+        // the kept image is the proxied photo, not the data-src URL.
+        let input = r#"<img data-src="https://pixel.tracker.com/x.gif" src="https://example.com/photo.jpg" width="800" height="600">"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(
+            output.contains("/api/proxy/image?url="),
+            "real image should be kept and proxied, got: {output}"
+        );
+        assert!(
+            !output.contains("pixel.tracker.com"),
+            "the tracking data-src must not survive, got: {output}"
+        );
+    }
+
+    #[test]
+    fn test_remove_multiple_tracking_pixels_single_pass() {
+        let input = r#"<img src="https://pixel.a.com/1.gif" width="1" height="1"><p>a</p><img src="https://beacon.b.com/2.gif"><p>b</p><img src="https://example.com/keep.jpg" width="800">"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(!output.contains("pixel.a.com"));
+        assert!(!output.contains("beacon.b.com"));
+        // The non-tracking image survives as a proxied URL.
+        assert!(output.contains("/api/proxy/image?url="));
+        assert!(output.contains("<p>a</p>"));
+        assert!(output.contains("<p>b</p>"));
     }
 
     #[test]
     fn test_preserve_normal_images() {
         let input = r#"<img src="https://example.com/photo.jpg" width="800" height="600">"#;
-        let output = remove_tracking_pixels(input);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(output.contains("<img"));
-        assert!(output.contains("photo.jpg"));
+        // The normal image is kept and proxied.
+        assert!(output.contains("/api/proxy/image?url="));
     }
 
     // ============ URL Tracking Parameter Tests ============
@@ -702,7 +640,7 @@ mod tests {
     #[test]
     fn test_strip_utm_parameters() {
         let input = r#"<a href="https://example.com/page?utm_source=twitter&utm_medium=social&utm_campaign=test">Link</a>"#;
-        let output = strip_tracking_params(input);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("utm_source"));
         assert!(!output.contains("utm_medium"));
         assert!(!output.contains("utm_campaign"));
@@ -712,7 +650,7 @@ mod tests {
     #[test]
     fn test_strip_facebook_click_id() {
         let input = r#"<a href="https://example.com/page?fbclid=ABC123">Link</a>"#;
-        let output = strip_tracking_params(input);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("fbclid"));
         assert!(output.contains("href=\"https://example.com/page\""));
     }
@@ -720,7 +658,7 @@ mod tests {
     #[test]
     fn test_strip_google_click_id() {
         let input = r#"<a href="https://example.com/page?gclid=XYZ789">Link</a>"#;
-        let output = strip_tracking_params(input);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("gclid"));
         assert!(output.contains("href=\"https://example.com/page\""));
     }
@@ -728,7 +666,7 @@ mod tests {
     #[test]
     fn test_strip_microsoft_click_id() {
         let input = r#"<a href="https://example.com/page?msclkid=MSC456">Link</a>"#;
-        let output = strip_tracking_params(input);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("msclkid"));
         assert!(output.contains("href=\"https://example.com/page\""));
     }
@@ -736,7 +674,7 @@ mod tests {
     #[test]
     fn test_preserve_non_tracking_parameters() {
         let input = r#"<a href="https://example.com/search?q=rust&page=2">Link</a>"#;
-        let output = strip_tracking_params(input);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(output.contains("q=rust"));
         assert!(output.contains("page=2"));
     }
@@ -744,7 +682,7 @@ mod tests {
     #[test]
     fn test_strip_multiple_tracking_params() {
         let input = r#"<a href="https://example.com/page?id=123&fbclid=FB1&gclid=GC1&utm_source=test&valid=yes">Link</a>"#;
-        let output = strip_tracking_params(input);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("fbclid"));
         assert!(!output.contains("gclid"));
         assert!(!output.contains("utm_source"));
@@ -755,15 +693,16 @@ mod tests {
     #[test]
     fn test_preserve_url_without_params() {
         let input = r#"<a href="https://example.com/page">Link</a>"#;
-        let output = strip_tracking_params(input);
-        assert_eq!(input, output);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        // A param-free URL is preserved verbatim in href (only privacy attrs added).
+        assert!(output.contains("href=\"https://example.com/page\""));
     }
 
     #[test]
     fn test_strip_matomo_params() {
         let input =
             r#"<a href="https://example.com/page?mtm_campaign=test&mtm_source=email">Link</a>"#;
-        let output = strip_tracking_params(input);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(!output.contains("mtm_campaign"));
         assert!(!output.contains("mtm_source"));
     }
@@ -811,7 +750,7 @@ mod tests {
     #[test]
     fn test_rewrite_relative_image_urls_with_base() {
         let input = r#"<img src="/images/photo.jpg" alt="Photo">"#;
-        let output = rewrite_image_urls(
+        let output = sanitize_html(
             input,
             TEST_SECRET,
             Some("https://example.com/article/123"),
@@ -825,7 +764,7 @@ mod tests {
     #[test]
     fn test_rewrite_relative_path_image_urls() {
         let input = r#"<img src="images/photo.jpg" alt="Photo">"#;
-        let output = rewrite_image_urls(
+        let output = sanitize_html(
             input,
             TEST_SECRET,
             Some("https://example.com/article/123"),
@@ -839,7 +778,7 @@ mod tests {
     #[test]
     fn test_rewrite_parent_relative_image_urls() {
         let input = r#"<img src="../images/photo.jpg" alt="Photo">"#;
-        let output = rewrite_image_urls(
+        let output = sanitize_html(
             input,
             TEST_SECRET,
             Some("https://example.com/article/123"),
@@ -853,7 +792,7 @@ mod tests {
     #[test]
     fn test_relative_images_without_base_url_unchanged() {
         let input = r#"<img src="/images/photo.jpg" alt="Photo">"#;
-        let output = rewrite_image_urls(input, TEST_SECRET, None, None, None);
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         // Without base URL, relative paths should remain unchanged
         assert!(output.contains("src=\"/images/photo.jpg\""));
         assert!(!output.contains("/api/proxy/image"));
@@ -861,11 +800,10 @@ mod tests {
 
     #[test]
     fn test_rewrite_image_url_with_query_params_containing_ampersand() {
-        // Ammonia encodes & to &amp; in attributes; scraper decodes it back when reading.
-        // The replacement must still succeed and proxy the URL.
-        let input =
-            r#"<img src="https://example.com/image.jpg?size=800&amp;format=webp" alt="Photo">"#;
-        let output = rewrite_image_urls(input, TEST_SECRET, None, None, None);
+        // The src carries a `&` in its query. lol_html decodes attribute values and
+        // re-encodes on write, so the rewrite must still succeed and proxy the URL.
+        let input = r#"<img src="https://example.com/image.jpg?size=800&format=webp" alt="Photo">"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(
             output.contains("/api/proxy/image?url="),
             "image should be proxied"
@@ -893,7 +831,7 @@ mod tests {
     #[test]
     fn test_mixed_absolute_and_relative_images() {
         let input = r#"<img src="https://cdn.example.com/abs.jpg"><img src="/images/rel.jpg">"#;
-        let output = rewrite_image_urls(
+        let output = sanitize_html(
             input,
             TEST_SECRET,
             Some("https://example.com/page"),
@@ -922,7 +860,7 @@ mod tests {
     #[test]
     fn test_rewrite_image_urls_with_proxy_base() {
         let input = r#"<img src="https://example.com/image.jpg">"#;
-        let output = rewrite_image_urls(
+        let output = sanitize_html(
             input,
             TEST_SECRET,
             None,
@@ -931,6 +869,23 @@ mod tests {
         );
         assert!(output.contains("https://rdrs.example.com/api/proxy/image?url="));
         assert!(!output.contains("src=\"/api/proxy/image"));
+    }
+
+    #[test]
+    fn test_sanitize_tracking_pixel_with_gt_in_src() {
+        // A tracking pixel whose src contains a literal `>` (e.g. an encoded
+        // query string) must still be removed cleanly. The previous substring-
+        // scanning pass keyed off the first `>` and could mis-bound such a tag;
+        // the lol_html pass parses the tag structurally, so the `>` inside the
+        // attribute value is handled correctly.
+        let input = r#"<p>keep</p><img src="https://pixel.tracker.com/p.gif?q=a>b" width="1" height="1"><p>tail</p>"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(
+            !output.contains("pixel.tracker.com"),
+            "tracking pixel with > in src should be removed, got: {output}"
+        );
+        assert!(output.contains("<p>keep</p>"), "got: {output}");
+        assert!(output.contains("<p>tail</p>"), "got: {output}");
     }
 
     #[test]
