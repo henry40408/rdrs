@@ -432,15 +432,6 @@ function applyFlashTemplates(parsed) {
     }
 }
 
-// Full-reload stub. The SPA router's `window.rdrsNavigate(path)` API
-// is preserved here as a thin wrapper around `location.href = path`,
-// letting existing CSR keyboard / dropdown / page-module code keep
-// working after router.js is removed. Per-page PRs delete each call
-// site as they migrate to SSR.
-window.rdrsNavigate = function(path) {
-    window.location.href = path;
-};
-
 // Sidebar mobile-toggle helpers. <rdrs-sidebar>'s render emits
 // inline `onclick="toggleSidebar()"` / `onclick="closeSidebar()"`,
 // which require global functions — assign to `window` because

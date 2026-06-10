@@ -16,34 +16,6 @@
     <link href="https://fonts.bunny.net/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/app.css?v={{ git_version }}">
     <link rel="modulepreload" href="/static/js/components/rdrs-flash.js?v={{ git_version }}">
-    <script>
-        // Theme controller
-        window.theme = {
-            syncToServer: async function(theme) {
-                try {
-                    await fetch('/api/user/settings/theme', {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ theme: theme === 'system' ? null : theme })
-                    });
-                } catch (e) { /* silent fail */ }
-            }
-        };
-
-        // bfcache restore helper
-        window.setupPersistedRestore = function(loadFn, getEntries, selectFn) {
-            window.onPersistedPageShow = async function() {
-                const idx = window._resumeIndex;
-                window._resumeIndex = undefined;
-                await loadFn();
-                const items = getEntries();
-                if (idx !== undefined && items.length > 0) {
-                    selectFn(Math.min(idx, items.length - 1));
-                }
-            };
-        };
-
-    </script>
     <script type="module" src="/static/js/components/rdrs-flash.js?v={{ git_version }}"></script>
     {% block head %}{% endblock %}
 </head>
@@ -52,12 +24,5 @@
     {% block flash %}{% endblock %}
     {% block content %}{% endblock %}
     {% endblock %}
-    <script>
-        window.addEventListener('pageshow', function(event) {
-            if (event.persisted && typeof window.onPersistedPageShow === 'function') {
-                window.onPersistedPageShow();
-            }
-        });
-    </script>
 </body>
 </html>
