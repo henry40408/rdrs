@@ -12,6 +12,6 @@
     "@playwright/test": "^1.60.0",
     "better-sqlite3": "^12.10.0",
     "nanoid": "^5.0.0",
-    "playwright-bdd": "^8.0.0"
+    "playwright-bdd": "^9.0.0"
   }
 }
