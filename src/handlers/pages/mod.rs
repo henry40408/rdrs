@@ -657,6 +657,7 @@ pub async fn user_settings_page(
     let (
         theme,
         entries_per_page,
+        retention_read_days,
         linkding_configured,
         linkding_api_url,
         kagi_configured,
@@ -667,6 +668,8 @@ pub async fn user_settings_page(
             let theme = user_settings::get_theme(conn, user_id).unwrap_or(None);
             let entries_per_page = user_settings::get_entries_per_page(conn, user_id)
                 .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+            let retention_read_days =
+                user_settings::get_retention_read_days(conn, user_id).unwrap_or(0);
             let save_config =
                 user_settings::get_save_services_config(conn, user_id).unwrap_or_default();
 
@@ -681,6 +684,7 @@ pub async fn user_settings_page(
             Ok::<_, AppError>((
                 theme,
                 entries_per_page,
+                retention_read_days,
                 linkding_configured,
                 linkding_api_url,
                 kagi_configured,
@@ -693,6 +697,7 @@ pub async fn user_settings_page(
         .unwrap_or((
             None,
             user_settings::DEFAULT_ENTRIES_PER_PAGE,
+            0,
             false,
             String::new(),
             false,
@@ -735,6 +740,7 @@ pub async fn user_settings_page(
             public_base_url,
             theme,
             entries_per_page,
+            retention_read_days,
             linkding_configured,
             linkding_api_url,
             kagi_configured,
@@ -2008,6 +2014,7 @@ pub struct UserSettingsTemplate {
     pub public_base_url: String,
     pub theme: Option<String>,
     pub entries_per_page: i64,
+    pub retention_read_days: i64,
     pub linkding_configured: bool,
     pub linkding_api_url: String,
     pub kagi_configured: bool,

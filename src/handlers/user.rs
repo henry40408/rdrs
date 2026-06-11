@@ -414,6 +414,7 @@ pub async fn change_password_form(
 pub struct UpdatePreferencesForm {
     pub theme: String,
     pub entries_per_page: i64,
+    pub retention_read_days: i64,
 }
 
 pub async fn update_preferences_form(
@@ -429,12 +430,14 @@ pub async fn update_preferences_form(
         _ => None,
     };
     let epp = req.entries_per_page;
+    let retention_read_days = req.retention_read_days;
 
     let result = state
         .db
         .user(move |conn| {
             user_settings::upsert(conn, user_id, epp)?;
             user_settings::update_theme(conn, user_id, theme)?;
+            user_settings::update_retention_read_days(conn, user_id, retention_read_days)?;
             Ok::<_, AppError>(())
         })
         .await;
