@@ -127,38 +127,6 @@ pub(super) fn apply_time_conditions(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_unread_hint_uses_unread_sort_index() {
-        let filter = EntryFilter {
-            unread_only: true,
-            read_after: None,
-            ..Default::default()
-        };
-        assert_eq!(
-            published_sort_entry_hint(&filter),
-            " INDEXED BY idx_entry_unread_sort"
-        );
-    }
-
-    #[test]
-    fn test_unread_snapshot_gets_no_unread_sort_hint() {
-        // Snapshot OR predicate is not covered by a WHERE read_at IS NULL index.
-        let filter = EntryFilter {
-            unread_only: true,
-            read_after: Some("2026-01-01 00:00:00".to_string()),
-            ..Default::default()
-        };
-        assert_ne!(
-            published_sort_entry_hint(&filter),
-            " INDEXED BY idx_entry_unread_sort"
-        );
-    }
-}
-
 /// Apply continuation-based pagination condition.
 ///
 /// Composite cursor uses the V2 bounded-OR form, which the SQLite planner
@@ -209,5 +177,37 @@ pub(super) fn apply_continuation_condition(
             conditions.push(format!("e.id {} ?{}", cmp, id_idx));
             params_vec.push(Box::new(*id));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unread_hint_uses_unread_sort_index() {
+        let filter = EntryFilter {
+            unread_only: true,
+            read_after: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            published_sort_entry_hint(&filter),
+            " INDEXED BY idx_entry_unread_sort"
+        );
+    }
+
+    #[test]
+    fn test_unread_snapshot_gets_no_unread_sort_hint() {
+        // Snapshot OR predicate is not covered by a WHERE read_at IS NULL index.
+        let filter = EntryFilter {
+            unread_only: true,
+            read_after: Some("2026-01-01 00:00:00".to_string()),
+            ..Default::default()
+        };
+        assert_ne!(
+            published_sort_entry_hint(&filter),
+            " INDEXED BY idx_entry_unread_sort"
+        );
     }
 }

@@ -2724,6 +2724,7 @@ async fn test_update_preferences_form() {
         .form(&json!({
             "theme": "dark",
             "entries_per_page": 50,
+            "retention_read_days": 0,
         }))
         .await;
 
@@ -2743,6 +2744,7 @@ async fn test_update_preferences_form_validation() {
         .form(&json!({
             "theme": "system",
             "entries_per_page": 5,
+            "retention_read_days": 0,
         }))
         .await;
 
