@@ -344,7 +344,8 @@ document.addEventListener('click', (event) => {
 // The reading pane renders disabled `[data-pane-prev]` / `[data-pane-next]`
 // buttons. After the pane opens we resolve the adjacent entry ids from
 // `GET /api/entries/{id}/neighbors`, scoped to the *current list filter*
-// (so "Next" inside the Unread inbox only walks unread entries, etc.),
+// (on unread views the filter is widened by the page's render-time
+// snapshot, so entries read during this page view stay reachable),
 // enable whichever direction has a neighbor, and remember the ids so a
 // click / keypress is an instant swap with no extra round-trip. The
 // endpoint resolves order from the DB, so prev/next also crosses
@@ -378,6 +379,18 @@ function currentEntryFilterParams() {
     else if (pathname === '/entries/summarized') out.set('has_summary', 'true');
     else if (feed) { out.set('feed_id', feed[1]); applyStatus(status); }
     else if (cat) { out.set('category_id', cat[1]); applyStatus(status); }
+    // Unread views get snapshot semantics: the server stamps the page with
+    // data-snapshot-at at render time, and echoing it back as read_after
+    // makes entries read *during* this page view (read_at >= snapshot) still
+    // count as unread for neighbor navigation — so j/k and Prev/Next can
+    // return to the entry the reader just finished. Entries read before the
+    // page loaded stay skipped, matching what the list rendered.
+    if (out.get('unread_only') === 'true') {
+        const snapshotAt = document
+            .querySelector('[data-entries-list]')
+            ?.getAttribute('data-snapshot-at');
+        if (snapshotAt) out.set('read_after', snapshotAt);
+    }
     return out.toString();
 }
 
