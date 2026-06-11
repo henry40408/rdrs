@@ -51,7 +51,17 @@ pub(super) fn apply_filter_conditions(
     }
 
     if filter.unread_only {
-        conditions.push("e.read_at IS NULL".to_string());
+        if let Some(ref read_after) = filter.read_after {
+            // Snapshot semantics: entries read during the current page view
+            // (read_at at-or-after the page's render instant) stay in the
+            // unread navigation set. `>=` (not `>`) so a same-second
+            // open-after-load still counts as in-snapshot.
+            let idx = params_vec.len() + 1;
+            conditions.push(format!("(e.read_at IS NULL OR e.read_at >= ?{})", idx));
+            params_vec.push(Box::new(read_after.clone()));
+        } else {
+            conditions.push("e.read_at IS NULL".to_string());
+        }
     }
 
     if filter.starred_only {

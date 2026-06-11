@@ -64,6 +64,13 @@ pub struct EntryFilter {
     pub read_only: bool,
     pub search: Option<String>,
     pub has_summary: Option<bool>,
+    /// Snapshot boundary for the unread filter — a UTC `YYYY-MM-DD HH:MM:SS`
+    /// string, the same format `datetime('now')` writes into `entry.read_at`.
+    /// When set together with `unread_only`, entries read at-or-after this
+    /// instant still count as unread, so reading-pane navigation can return
+    /// to entries the reader just finished during this page view. Ignored
+    /// when `unread_only` is false.
+    pub read_after: Option<String>,
 }
 
 /// Pagination cursor. The wire format on the API is opaque to clients; we
@@ -1664,6 +1671,80 @@ mod tests {
         let neighbors = find_neighbors(&conn, user_id, entries[3].id, &no_filter).unwrap();
         assert_eq!(neighbors.prev_id, Some(entries[4].id));
         assert_eq!(neighbors.next_id, Some(entries[2].id));
+    }
+
+    #[test]
+    fn test_find_neighbors_unread_only_read_after() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        // 5 entries published ascending — entries[4] is newest in the
+        // published-DESC list order.
+        let mut entries = Vec::new();
+        for i in 0..5 {
+            let published = Utc::now() + chrono::Duration::seconds(i * 10);
+            let (entry, _) = upsert_entry(
+                &conn,
+                feed_id,
+                &format!("guid-{}", i),
+                Some(&format!("Entry {}", i)),
+                None,
+                None,
+                None,
+                None,
+                Some(published),
+            )
+            .unwrap();
+            entries.push(entry);
+        }
+
+        // entries[1]: read an hour ago — before the snapshot boundary.
+        conn.execute(
+            "UPDATE entry SET read_at = datetime('now', '-1 hour') WHERE id = ?1",
+            params![entries[1].id],
+        )
+        .unwrap();
+        // entries[2]: read just now — inside the snapshot.
+        conn.execute(
+            "UPDATE entry SET read_at = datetime('now') WHERE id = ?1",
+            params![entries[2].id],
+        )
+        .unwrap();
+
+        // Snapshot boundary 10 minutes ago: the just-read entries[2] is
+        // inside it, the hour-old entries[1] is not.
+        let snapshot = (Utc::now() - chrono::Duration::minutes(10))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let filter = EntryFilter {
+            unread_only: true,
+            read_after: Some(snapshot),
+            ..Default::default()
+        };
+
+        // From entries[3]: next (older) lands on the just-read entries[2]
+        // — still reachable inside the snapshot.
+        let neighbors = find_neighbors(&conn, user_id, entries[3].id, &filter).unwrap();
+        assert_eq!(neighbors.prev_id, Some(entries[4].id));
+        assert_eq!(neighbors.next_id, Some(entries[2].id));
+
+        // From entries[2]: prev is the unread entries[3]; next skips the
+        // pre-snapshot entries[1] and lands on the unread entries[0].
+        let neighbors = find_neighbors(&conn, user_id, entries[2].id, &filter).unwrap();
+        assert_eq!(neighbors.prev_id, Some(entries[3].id));
+        assert_eq!(neighbors.next_id, Some(entries[0].id));
+
+        // Plain unread_only without read_after keeps the strict live
+        // filter: both read entries are skipped.
+        let strict = EntryFilter {
+            unread_only: true,
+            ..Default::default()
+        };
+        let neighbors = find_neighbors(&conn, user_id, entries[3].id, &strict).unwrap();
+        assert_eq!(neighbors.prev_id, Some(entries[4].id));
+        assert_eq!(neighbors.next_id, Some(entries[0].id));
     }
 
     #[test]

@@ -59,6 +59,7 @@ pub async fn get_entry_neighbors(
                 read_only: query.read_only,
                 has_summary: query.has_summary,
                 search: None,
+                read_after: None,
             };
             let neighbors = entry::find_neighbors(conn, user_id, id, &filter)?;
             Ok::<_, AppError>(neighbors)
