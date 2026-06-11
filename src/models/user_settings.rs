@@ -14,6 +14,7 @@ pub struct UserSettings {
     pub id: i64,
     pub user_id: i64,
     pub entries_per_page: i64,
+    pub retention_read_days: i64,
     pub save_services: Option<String>,
     pub theme: Option<String>, // "dark", "light", or NULL (system)
     pub created_at: DateTime<Utc>,
@@ -41,15 +42,16 @@ fn parse_datetime(s: &str) -> DateTime<Utc> {
 }
 
 fn row_to_user_settings(row: &rusqlite::Row) -> rusqlite::Result<UserSettings> {
-    let created_at: String = row.get(5)?;
-    let updated_at: String = row.get(6)?;
+    let created_at: String = row.get(6)?;
+    let updated_at: String = row.get(7)?;
 
     Ok(UserSettings {
         id: row.get(0)?,
         user_id: row.get(1)?,
         entries_per_page: row.get(2)?,
-        save_services: row.get(3)?,
-        theme: row.get(4)?,
+        retention_read_days: row.get(3)?,
+        save_services: row.get(4)?,
+        theme: row.get(5)?,
         created_at: parse_datetime(&created_at),
         updated_at: parse_datetime(&updated_at),
     })
@@ -57,7 +59,7 @@ fn row_to_user_settings(row: &rusqlite::Row) -> rusqlite::Result<UserSettings> {
 
 pub fn find_by_user_id(conn: &Connection, user_id: i64) -> AppResult<Option<UserSettings>> {
     conn.query_row(
-        "SELECT id, user_id, entries_per_page, save_services, theme, created_at, updated_at FROM user_settings WHERE user_id = ?1",
+        "SELECT id, user_id, entries_per_page, retention_read_days, save_services, theme, created_at, updated_at FROM user_settings WHERE user_id = ?1",
         params![user_id],
         row_to_user_settings,
     )
@@ -151,6 +153,35 @@ pub fn update_theme(conn: &Connection, user_id: i64, theme: Option<String>) -> A
         params![theme, user_id],
     )?;
 
+    Ok(())
+}
+
+/// Get the per-user read-entry retention threshold in days (0 = disabled).
+pub fn get_retention_read_days(conn: &Connection, user_id: i64) -> AppResult<i64> {
+    match find_by_user_id(conn, user_id)? {
+        Some(settings) => Ok(settings.retention_read_days),
+        None => Ok(0),
+    }
+}
+
+/// Set the per-user read-entry retention threshold in days. `0` disables
+/// retention for the user; negative values are rejected.
+pub fn update_retention_read_days(conn: &Connection, user_id: i64, days: i64) -> AppResult<()> {
+    if days < 0 {
+        return Err(AppError::Validation(
+            "retention_read_days must be >= 0".to_string(),
+        ));
+    }
+    // Ensure a row exists, then update (mirrors update_theme).
+    conn.execute(
+        "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)
+         ON CONFLICT(user_id) DO NOTHING",
+        params![user_id, DEFAULT_ENTRIES_PER_PAGE],
+    )?;
+    conn.execute(
+        "UPDATE user_settings SET retention_read_days = ?1, updated_at = datetime('now') WHERE user_id = ?2",
+        params![days, user_id],
+    )?;
     Ok(())
 }
 
@@ -267,5 +298,34 @@ mod tests {
         let settings = find_by_user_id(&conn, user.id).unwrap().unwrap();
         assert_eq!(settings.entries_per_page, 50);
         assert_eq!(settings.theme, Some("dark".to_string()));
+    }
+
+    #[test]
+    fn test_retention_read_days_default_zero() {
+        let conn = setup_db();
+        let user = user::create_user(&conn, "ret", "hash", Role::User).unwrap();
+        assert_eq!(get_retention_read_days(&conn, user.id).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_update_retention_read_days() {
+        let conn = setup_db();
+        let user = user::create_user(&conn, "ret", "hash", Role::User).unwrap();
+
+        update_retention_read_days(&conn, user.id, 30).unwrap();
+        assert_eq!(get_retention_read_days(&conn, user.id).unwrap(), 30);
+
+        // Preserves other settings.
+        upsert(&conn, user.id, 50).unwrap();
+        update_retention_read_days(&conn, user.id, 14).unwrap();
+        let s = find_by_user_id(&conn, user.id).unwrap().unwrap();
+        assert_eq!(s.retention_read_days, 14);
+        assert_eq!(s.entries_per_page, 50);
+
+        // Negatives are rejected.
+        assert!(matches!(
+            update_retention_read_days(&conn, user.id, -1),
+            Err(AppError::Validation(_))
+        ));
     }
 }
