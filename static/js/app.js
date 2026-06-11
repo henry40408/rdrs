@@ -595,33 +595,96 @@ document.addEventListener('rdrs:swap-complete', () => applyTimeTooltips());
 // register additional entries — every shortcut the keyboard handler
 // recognizes is listed here, grouped by where it applies.
 const KB_SHORTCUTS = [
-    { group: 'Entry list', key: 'j', desc: 'Next entry (opens it when the reading pane is open)' },
-    { group: 'Entry list', key: 'k', desc: 'Previous entry (opens it when the reading pane is open)' },
-    { group: 'Entry list', key: 'Enter', desc: 'Open selected entry' },
-    { group: 'Entry list', key: 's', desc: 'Toggle star' },
-    { group: 'Entry list', key: 'u / r', desc: 'Toggle read / unread' },
-    { group: 'Entry list', key: 'Space', desc: 'Scroll reading pane (toggle read when pane is empty)' },
-    { group: 'Entry list', key: 'Shift+Space', desc: 'Scroll reading pane up (when pane is open)' },
-    { group: 'Entry actions', key: 'b', desc: 'Open original in new tab' },
-    { group: 'Entry actions', key: 'Shift+B', desc: 'Save (Linkding)' },
-    { group: 'Entry actions', key: 'Shift+F', desc: 'Fetch full content (toggle with original)' },
-    { group: 'Entry actions', key: 'Shift+M', desc: 'Summarize (Kagi, when pane is open)' },
-    { group: 'Batch read', key: 'o', desc: 'Mark loaded rows as read' },
-    { group: 'Batch read', key: 'Shift+K', desc: 'Mark all as read (incl. unloaded)' },
-    { group: 'List filters', key: '1', desc: 'All' },
-    { group: 'List filters', key: '2', desc: 'Unread' },
-    { group: 'List filters', key: '3', desc: 'Read' },
-    { group: 'List filters', key: '4', desc: 'Starred' },
-    { group: 'Navigation', key: 'f', desc: 'Go to selected entry’s feed' },
-    { group: 'Navigation', key: 'c', desc: 'Go to selected entry’s category (parent category as fallback)' },
-    { group: 'Navigation', key: 'x', desc: 'Go to Unread (on category page)' },
-    { group: 'Navigation', key: '[', desc: 'Previous category (on category page)' },
-    { group: 'Navigation', key: ']', desc: 'Next category (on category page)' },
-    { group: 'Navigation', key: 'Shift+[', desc: 'Previous category with unread' },
-    { group: 'Navigation', key: 'Shift+]', desc: 'Next category with unread' },
-    { group: 'Help', key: 'Esc', desc: 'Close reading pane (when pane is open)' },
-    { group: 'Help', key: '?', desc: 'Toggle this help' },
+    { group: 'Navigation', key: 'j / k', desc: 'Next / previous entry (switches the open entry when the reading pane is open)' },
+    { group: 'Navigation', key: 'o / Enter', desc: 'Open selected entry' },
+    { group: 'Navigation', key: 'Space / Shift+Space', desc: 'Scroll reading pane down / up' },
+    { group: 'Navigation', key: 'Esc', desc: 'Close reading pane' },
+    { group: 'Entry actions', key: 'm', desc: 'Toggle read / unread' },
+    { group: 'Entry actions', key: 'f', desc: 'Toggle star' },
+    { group: 'Entry actions', key: 'v', desc: 'Open original in new tab' },
+    { group: 'Entry actions', key: 'd', desc: 'Fetch full content (toggle with original)' },
+    { group: 'Entry actions', key: 's', desc: 'Save (Linkding)' },
+    { group: 'Entry actions', key: 'a', desc: 'Summarize (Kagi)' },
+    { group: 'Batch read', key: 'A', desc: 'Mark loaded entries as read (asks to confirm)' },
+    { group: 'Go to', key: 'g u', desc: 'Unread inbox' },
+    { group: 'Go to', key: 'g a', desc: 'All entries' },
+    { group: 'Go to', key: 'g r', desc: 'Read' },
+    { group: 'Go to', key: 'g s', desc: 'Starred' },
+    { group: 'Go to', key: 'g m', desc: 'Summarized' },
+    { group: 'Go to', key: 'g f', desc: 'Selected entry’s feed' },
+    { group: 'Go to', key: 'g c', desc: 'Selected entry’s category (parent category on a feed page)' },
+    { group: 'Feed / category pages', key: '1-4', desc: 'Status filter: All / Unread / Read / Starred' },
+    { group: 'Feed / category pages', key: '[ / ]', desc: 'Previous / next category' },
+    { group: 'Feed / category pages', key: '{ / }', desc: 'Previous / next category with unread' },
+    { group: 'Other', key: '/', desc: 'Focus search (on the search page)' },
+    { group: 'Other', key: '?', desc: 'Toggle this help' },
 ];
+
+// ── "g" go-to sequences (miniflux-style two-key namespace) ───────────
+// A first `g` arms the namespace; the second key picks the target. Page
+// jumps (g u/a/r/s/m) work on every logged-in page; entry-relative jumps
+// (g f / g c) need a selected list row. The pending state times out so a
+// stray `g` doesn't swallow the next keystroke forever. The listener runs
+// in the CAPTURE phase and stops propagation when consuming the second
+// key, so `g s` can never double as the single-key Save shortcut.
+const GO_PAGES = {
+    u: '/',
+    a: '/entries',
+    r: '/entries/read',
+    s: '/entries/starred',
+    m: '/entries/summarized',
+};
+const GO_TIMEOUT_MS = 2000;
+let goPending = false;
+let goTimer = null;
+
+function clearGoPending() {
+    goPending = false;
+    if (goTimer) { clearTimeout(goTimer); goTimer = null; }
+}
+
+function goToEntryRelative(key) {
+    const row = document.querySelector('[data-entry-row].selected');
+    if (key === 'f') {
+        const link = row?.querySelector('.entry-item-meta a[href^="/feeds/"]');
+        if (link) window.location.href = link.getAttribute('href');
+        return;
+    }
+    // key === 'c' — prefer the selected entry's own category; fall back
+    // to the page-parent category on /feeds/{id}/entries (the sidebar
+    // exposes it as `active-category-id`).
+    const fromRow = row?.querySelector('.entry-item-meta a[href^="/categories/"]');
+    if (fromRow) { window.location.href = fromRow.getAttribute('href'); return; }
+    if (!window.location.pathname.startsWith('/feeds/')) return;
+    const sb = document.querySelector('rdrs-sidebar');
+    const catId = sb && sb.getAttribute('active-category-id');
+    if (catId) window.location.href = `/categories/${catId}/entries`;
+}
+
+function installGoNavigation() {
+    document.addEventListener('keydown', (e) => {
+        if (e.target.matches('input, textarea, select')) return;
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        if (goPending) {
+            const key = e.key;
+            clearGoPending();
+            // Consume the second key unconditionally: a mistyped sequence
+            // must not fire that key's unrelated single-key binding.
+            e.preventDefault();
+            e.stopPropagation();
+            const url = GO_PAGES[key];
+            if (url) { window.location.href = url; return; }
+            if (key === 'f' || key === 'c') goToEntryRelative(key);
+            return;
+        }
+        if (e.key === 'g') {
+            e.preventDefault();
+            goPending = true;
+            goTimer = setTimeout(clearGoPending, GO_TIMEOUT_MS);
+        }
+    }, true);
+}
+installGoNavigation();
 
 // `?` toggles the shortcut help overlay. Bound on `document` so it
 // works on every logged-in page, not only the entries-family routes.
@@ -717,6 +780,7 @@ function installEntriesKeyboard() {
                 if (currentPaneEntryId() != null) navigateNeighbor('prev');
                 else move(-1);
                 break;
+            case 'o':
             case 'Enter': {
                 const current = activeRow();
                 if (!current) return;
@@ -725,13 +789,22 @@ function installEntriesKeyboard() {
                 if (link) link.click();
                 break;
             }
-            case 's': {
+            case 'f': {
+                // Toggle star on the active row. The row form's action is
+                // state-dependent (`/star` or `/unstar`) — match either so
+                // one binding flips the state.
                 const current = activeRow();
                 if (!current) return;
-                // Row form's action is state-dependent now (`/star` or
-                // `/unstar`) — match either so the keystroke still flips
-                // the entry's starred state in one binding.
                 const form = current.querySelector('form[action$="/star"], form[action$="/unstar"]');
+                if (form) { e.preventDefault(); form.requestSubmit(); }
+                break;
+            }
+            case 'm': {
+                // Toggle read/unread on the active row (state-dependent
+                // action, same pattern as `f`).
+                const current = activeRow();
+                if (!current) return;
+                const form = current.querySelector('form[action$="/read"], form[action$="/unread"]');
                 if (form) { e.preventDefault(); form.requestSubmit(); }
                 break;
             }
@@ -752,73 +825,29 @@ function installEntriesKeyboard() {
                 window.location.href = options[idx].value;
                 break;
             }
-            case 'o': {
-                // Mark Above as Read — only fires on pages that render
-                // the button (feed/category). Delegates to the button's
-                // click handler so the confirm + fetch flow lives in
-                // one place.
+            case 'A': {
+                // Mark loaded rows as read — only fires on pages that
+                // render the button (feed/category/inbox). Delegates to
+                // the button's click handler so the confirm + fetch flow
+                // lives in one place.
                 const btn = document.getElementById('mark-above-read');
                 if (!btn) return;
                 e.preventDefault();
                 btn.click();
                 break;
             }
-            case 'K': {
-                // Mark All as Read — drives the list-pane "Mark as Read"
-                // dropdown's "All entries" option so the confirm + POST
-                // flow lives in one place. Only fires on pages that render
-                // the dropdown (feed / category / inbox).
-                const select = document.getElementById('mark-read-age');
-                if (!select) return;
-                e.preventDefault();
-                select.value = 'all';
-                select.dispatchEvent(new Event('change'));
-                break;
-            }
-            case 'c': {
-                // Prefer the selected entry's own category. The row's
-                // meta row already renders `<a href="/categories/{id}/…">`
-                // so we just follow it.
+            case 'v': {
+                // Open Original — open the row's external link in a new
+                // tab. The row only renders the `<a target="_blank">`
+                // when `r.link` is Some, so absence = no-op.
                 const current = activeRow();
-                const fromRow = current?.querySelector('.entry-item-meta a[href^="/categories/"]');
-                if (fromRow) {
-                    e.preventDefault();
-                    window.location.href = fromRow.getAttribute('href');
-                    break;
-                }
-                // No selection — fall back to the page-parent shortcut
-                // that only fires on `/feeds/{id}/entries`.
-                if (!window.location.pathname.startsWith('/feeds/')) return;
-                const sb = document.querySelector('rdrs-sidebar');
-                const catId = sb && sb.getAttribute('active-category-id');
-                if (!catId) return;
-                e.preventDefault();
-                window.location.href = `/categories/${catId}/entries`;
-                break;
-            }
-            case 'f': {
-                // Jump to the selected entry's feed page.
-                const current = activeRow();
-                const link = current?.querySelector('.entry-item-meta a[href^="/feeds/"]');
+                const link = current?.querySelector('a[target="_blank"]');
                 if (!link) return;
                 e.preventDefault();
-                window.location.href = link.getAttribute('href');
+                link.click();
                 break;
             }
-            case 'u':
-            case 'r': {
-                // Toggle read/unread on the active row. Mirrors the `s`
-                // (toggle star) and Space-when-pane-empty patterns —
-                // the row form's action is state-dependent (`/read` vs
-                // `/unread`), so matching either flips the entry in one
-                // binding regardless of current state.
-                const current = activeRow();
-                if (!current) return;
-                const form = current.querySelector('form[action$="/read"], form[action$="/unread"]');
-                if (form) { e.preventDefault(); form.requestSubmit(); }
-                break;
-            }
-            case 'F': {
+            case 'd': {
                 // Toggle between feed-supplied and externally-fetched
                 // article body. When the pane already shows the full
                 // content the Fetch button is replaced by a "Show
@@ -831,18 +860,7 @@ function installEntriesKeyboard() {
                 if (showOriginal) { e.preventDefault(); showOriginal.click(); }
                 break;
             }
-            case 'b': {
-                // Open Original — open the row's external link in a new
-                // tab. The row only renders the `<a target="_blank">`
-                // when `r.link` is Some, so absence = no-op.
-                const current = activeRow();
-                const link = current?.querySelector('a[target="_blank"]');
-                if (!link) return;
-                e.preventDefault();
-                link.click();
-                break;
-            }
-            case 'B': {
+            case 's': {
                 // Save (Linkding etc). Form is rendered only when the
                 // user has a save target configured — absent = no-op.
                 const form = paneForm('/save');
@@ -851,7 +869,7 @@ function installEntriesKeyboard() {
                 form.requestSubmit();
                 break;
             }
-            case 'M': {
+            case 'a': {
                 // Summarize via Kagi. Form is rendered only when Kagi is
                 // configured (or a summary is in-flight, in which case
                 // the button is disabled and paneForm() returns null).
@@ -859,13 +877,6 @@ function installEntriesKeyboard() {
                 if (!form) return;
                 e.preventDefault();
                 form.requestSubmit();
-                break;
-            }
-            case 'x': {
-                // On `/categories/{id}/entries`, jump to the unread inbox.
-                if (!window.location.pathname.startsWith('/categories/')) return;
-                e.preventDefault();
-                window.location.href = '/';
                 break;
             }
             case '[':
@@ -921,19 +932,13 @@ function installEntriesKeyboard() {
             case ' ': {
                 // Classic feed-reader convention: when an entry is loaded
                 // in the reading pane, Space pages the article down (and
-                // Shift+Space pages up). Falls back to toggle-read on the
-                // active list row when the pane is empty.
+                // Shift+Space pages up). One key, one meaning — no
+                // fallback action when the pane is empty.
                 const pane = document.getElementById('reading-pane');
-                if (pane && !pane.classList.contains('reading-pane-empty')) {
-                    e.preventDefault();
-                    const dir = e.shiftKey ? -1 : 1;
-                    pane.scrollBy({ top: dir * pane.clientHeight * 0.85, behavior: 'smooth' });
-                    break;
-                }
-                const current = activeRow();
-                if (!current) return;
-                const form = current.querySelector('form[action$="/read"], form[action$="/unread"]');
-                if (form) { e.preventDefault(); form.requestSubmit(); }
+                if (!pane || pane.classList.contains('reading-pane-empty')) return;
+                e.preventDefault();
+                const dir = e.shiftKey ? -1 : 1;
+                pane.scrollBy({ top: dir * pane.clientHeight * 0.85, behavior: 'smooth' });
                 break;
             }
         }

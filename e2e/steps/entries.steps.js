@@ -362,3 +362,22 @@ Then("I see no flash message", async ({ page }) => {
 Then("I see a flash message", async ({ page }) => {
   await expect(page.getByTestId("flash-message").first()).toBeVisible();
 });
+
+Then("the entry row for {string} shows as starred", async ({ page }, title) => {
+  // _entry_row.html renders a `.star-icon` span only when is_starred is true.
+  const row = page.getByTestId("entry-item").filter({ hasText: title }).first();
+  await expect(row.locator(".star-icon")).toBeVisible();
+});
+
+Then("the entry row for {string} shows as unread", async ({ page }, title) => {
+  const row = page.getByTestId("entry-item").filter({ hasText: title }).first();
+  await expect(row).not.toHaveClass(/entry-read/);
+});
+
+Then("I am on the all entries page", async ({ page, serverUrl }) => {
+  await page.waitForURL(`${serverUrl}/entries`);
+});
+
+Then("I am on the starred entries page", async ({ page, serverUrl }) => {
+  await page.waitForURL(`${serverUrl}/entries/starred`);
+});

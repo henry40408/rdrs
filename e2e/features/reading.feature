@@ -95,7 +95,7 @@ Feature: Reading entries
   Scenario: Opening a different entry clears flash banners from prior actions
     When I open the inbox
     And I click the entry titled "Test Entry 1"
-    And I press the "u" key
+    And I press the "m" key
     Then I see a success flash "Marked as unread"
     When I click the entry titled "Test Entry 2"
     Then the reading pane shows the title "Test Entry 2"
@@ -104,9 +104,9 @@ Feature: Reading entries
   Scenario: Acting on the same entry preserves an earlier flash banner
     When I open the inbox
     And I click the entry titled "Test Entry 1"
-    And I press the "u" key
+    And I press the "m" key
     Then I see a success flash "Marked as unread"
-    When I press the "s" key
+    When I press the "f" key
     Then I see a success flash "Marked as unread"
 
   # Uses the All view so reading an entry doesn't drop it from the list —
