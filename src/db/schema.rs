@@ -162,7 +162,6 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL UNIQUE REFERENCES user(id) ON DELETE CASCADE,
             entries_per_page INTEGER NOT NULL DEFAULT 30,
-            retention_read_days INTEGER NOT NULL DEFAULT 0,
             save_services TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -262,16 +261,15 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
     }
 
     if version < 8 {
-        // Add the per-user retention threshold to existing databases. The
-        // entry_tombstone table and idx_entry_unread_sort index are created via
-        // CREATE ... IF NOT EXISTS in the main batch above (picked up on
-        // restart, like the v5/v6/v7 indexes). `let _ =` swallows the
-        // duplicate-column error on fresh DBs where the main batch already added
-        // the column (mirrors the v1/v2 legacy ALTERs).
-        let _ = conn.execute(
+        // The entry_tombstone table and idx_entry_unread_sort index are created
+        // via CREATE ... IF NOT EXISTS in the main batch above (picked up on
+        // restart, like the v5/v6/v7 indexes). retention_read_days is added here
+        // only (mirrors how v4 adds `bucket`): the block runs exactly once per DB
+        // when version < 8, so the column is never already present — no swallow.
+        conn.execute(
             "ALTER TABLE user_settings ADD COLUMN retention_read_days INTEGER NOT NULL DEFAULT 0",
             [],
-        );
+        )?;
     }
 
     const LATEST_VERSION: i64 = 8;
@@ -463,5 +461,47 @@ mod tests {
             .filter_map(Result::ok)
             .collect();
         assert_eq!(indexes, vec!["idx_entry_feed_sort".to_string()]);
+    }
+
+    #[test]
+    fn test_init_db_user_settings_has_retention_read_days_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        // Verify retention_read_days column exists and defaults to 0
+        conn.execute(
+            "INSERT INTO user (username, password_hash) VALUES ('test', 'hash')",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO user_settings (user_id) VALUES (1)", [])
+            .unwrap();
+
+        let retention_read_days: i64 = conn
+            .query_row(
+                "SELECT retention_read_days FROM user_settings WHERE user_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retention_read_days, 0);
+    }
+
+    #[test]
+    fn test_init_db_unread_sort_index_exists() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let indexes: Vec<String> = conn
+            .prepare(
+                "SELECT name FROM sqlite_master \
+                 WHERE type='index' AND name='idx_entry_unread_sort'",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(indexes, vec!["idx_entry_unread_sort".to_string()]);
     }
 }
