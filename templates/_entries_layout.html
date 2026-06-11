@@ -46,7 +46,7 @@
                         </div>
                         {% endif %}
                     </div>
-                    <div class="list-pane-body" data-entries-list>
+                    <div class="list-pane-body" data-entries-list data-snapshot-at="{{ entries_layout.snapshot_at }}">
                         {% if entries.is_empty() %}
                             {% if entries_layout.onboarding %}
                                 <div class="empty-state-quiet onboarding-guide" data-testid="onboarding-guide">

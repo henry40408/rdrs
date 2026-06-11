@@ -131,17 +131,32 @@ Feature: Reading entries
     When I press the "k" key
     Then the reading pane shows the title "Test Entry 2"
 
-  # Neighbours honour the active filter: in the Unread inbox, opening an
-  # entry marks it read and so drops it from the unread set. "Previous"
-  # therefore skips the entry just read and lands on the next still-unread
-  # one — the same set the list filters to.
-  Scenario: Reading-pane navigation honours the unread filter
+  # Unread navigation uses snapshot semantics: entries read *during* this
+  # page view stay reachable (so "Previous" can return to the entry just
+  # read), while entries already read when the page loaded are skipped —
+  # the same set the list rendered.
+  Scenario: Unread navigation returns to the entry just read
     When I open the inbox
     And I click the entry titled "Test Entry 3"
     And I navigate to the "Next" entry in the reading pane
     Then the reading pane shows the title "Test Entry 4"
     When I navigate to the "Previous" entry in the reading pane
+    Then the reading pane shows the title "Test Entry 3"
+
+  Scenario: Unread navigation skips entries read before the page loaded
+    Given the entry titled "Test Entry 2" was marked read an hour ago
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    And I navigate to the "Next" entry in the reading pane
+    Then the reading pane shows the title "Test Entry 3"
+
+  Scenario: With the pane open in the inbox, k returns to the just-read entry
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    And I press the "j" key
     Then the reading pane shows the title "Test Entry 2"
+    When I press the "k" key
+    Then the reading pane shows the title "Test Entry 1"
 
   Scenario: Previous is disabled on the newest entry
     When I open the all entries page
