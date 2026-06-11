@@ -193,6 +193,39 @@ field to `UserSettingsResponse` (`:74`).
 - **Tombstone GC:** if tombstones ever need pruning, add an index on
   `created_at` and a TTL sweep. Deliberately deferred.
 
+## Benchmarks (pre-implementation, SQLite 3.51.2)
+
+Synthetic probes on faithful schema + indexes; the SQLite engine is the same as
+the bundled rusqlite, so query-planner/B-tree behavior is representative.
+
+**B. Refresh guard — `INSERT … WHERE NOT EXISTS (entry_tombstone)`** (50k new
+inserts, ~500B content; marginal cost of the tombstone probe vs a plain INSERT):
+
+| tombstone rows | plain INSERT | INSERT + guard | per-insert overhead |
+| --- | --- | --- | --- |
+| 0 | 0.123s | 0.129s | 0.13 µs |
+| 100k | 0.123s | 0.192s | 1.37 µs |
+| 1M | 0.120s | 0.213s | 1.86 µs |
+
+Worst case ~1.9 µs per *new* entry even against a 1M-row tombstone table;
+existing entries (UPDATE path) pay nothing. A refresh inserting ~100 new
+entries adds <0.2 ms. **Guard kept** — race-proof and negligible.
+
+**C. Retention victim SELECT** (1M entries, ~597k victims, 1 user / 10
+categories / 200 feeds; 2000 iterations of the `LIMIT 500` fetch):
+
+| case | per 500-row batch |
+| --- | --- |
+| disabled (`retention_read_days = 0`) | ~0.075 ms (short-circuits at `SCAN us`) |
+| enabled, current indexes | ~0.75 ms |
+| enabled, + candidate `idx_entry_retention` | ~0.73 ms (no gain) |
+
+Plan drives from `user_settings`, then range-scans `idx_entry_read_at`
+(`read_at > ? AND read_at < ?`). **No new index needed** — the candidate
+partial index gave no measurable improvement and is not added. Disabled installs
+pay nothing per tick. First full drain (~597k victims ≈ 1194 batches) does not
+degrade: deleted rows leave the index front, so each batch stays ~0.75 ms.
+
 ## Testing plan
 
 - **Unit (`cargo nextest run`):**
