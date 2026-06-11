@@ -872,10 +872,24 @@ pub fn list_by_user_with_continuation(
         (_, false) => "COALESCE(e.published_at, e.created_at) DESC, e.id DESC",
     };
 
+    // Page-0 (cursorless) index hint. Without it the planner walks
+    // category->feed->entry and temp-B-tree-sorts the whole corpus before
+    // LIMIT. Mirrors `list_by_user`'s hint, but only when there is no
+    // continuation predicate — at depth the predicate already drives the sort
+    // index, so we leave that proven-fast plan untouched. Only the
+    // published-order sorts have dedicated indexes.
+    let entry_hint = if pagination.sort_order == EntrySortOrder::PublishedAt
+        && pagination.continuation.is_none()
+    {
+        published_sort_entry_hint(filter)
+    } else {
+        ""
+    };
+
     let sql = format!(
         r#"
         SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}
-        FROM entry e
+        FROM entry e{}
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
         LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
@@ -883,6 +897,7 @@ pub fn list_by_user_with_continuation(
         ORDER BY {}
         LIMIT ?{}
         "#,
+        entry_hint,
         where_clause,
         order,
         params_vec.len() + 1
@@ -1230,6 +1245,7 @@ mod tests {
     use crate::models::category;
     use crate::models::feed;
     use crate::models::user::{self, Role};
+    use chrono::TimeZone;
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -2511,6 +2527,65 @@ mod tests {
         );
     }
 
+    #[test]
+    fn continuation_page0_unfiltered_uses_sort_ts_index() {
+        // Regression guard for the page-0 index hint added to
+        // `list_by_user_with_continuation`. Without `INDEXED BY idx_entry_sort_ts`
+        // the planner walks category->feed->entry and temp-B-tree-sorts the whole
+        // corpus before LIMIT — a ~350× slowdown on a large instance. The
+        // behavioral walk test (`test_continuation_walk_is_gapless_unfiltered`)
+        // would NOT catch a dropped hint because results are identical. This test
+        // pins the query plan directly.
+        //
+        // Mirrors the same pattern as `list_by_user_no_predicate_uses_sort_ts_index`:
+        // replicate the SQL shape the builder emits for the cursorless case and
+        // assert EXPLAIN QUERY PLAN mentions the index.
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "u");
+        let cat_id = create_test_category(&conn, user_id, "c");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+        for i in 1..=3 {
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    feed_id,
+                    format!("g{}", i),
+                    format!("2026-05-0{} 10:00:00", i)
+                ],
+            )
+            .unwrap();
+        }
+
+        // Hand-built copy of the SQL `list_by_user_with_continuation` emits for:
+        //   filter = EntryFilter::default(), sort_order = PublishedAt,
+        //   continuation = None, oldest_first = false, ot = None, nt = None.
+        // The entry hint resolves to " INDEXED BY idx_entry_sort_ts" because
+        // `is_no_entry_side_predicate` is true and sort_order is PublishedAt.
+        // The ORDER BY includes the tie-breaker `e.id DESC` that the continuation
+        // builder always appends (unlike list_by_user which omits it).
+        let sql = r#"
+            SELECT e.id
+            FROM entry e INDEXED BY idx_entry_sort_ts
+            INNER JOIN feed f ON e.feed_id = f.id
+            INNER JOIN category c ON f.category_id = c.id
+            LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
+            WHERE c.user_id = ?1
+            ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
+            LIMIT ?2
+        "#;
+        let plan = explain_plan_for(&conn, sql, &[&user_id, &51i64]);
+        assert!(
+            plan.contains("idx_entry_sort_ts"),
+            "plan missing sort_ts index: {}",
+            plan
+        );
+        assert!(
+            !plan.contains("USE TEMP B-TREE FOR ORDER BY"),
+            "plan must not temp-B-tree-sort: {}",
+            plan
+        );
+    }
+
     /// Locks the query plan for the snapshot-widened unread neighbours query.
     /// Without the `idx_entry_sort_ts` hint + entry-first CROSS JOIN that
     /// `find_neighbors` emits for unread filters, the planner answers the
@@ -2556,5 +2631,73 @@ mod tests {
             "plan must not scan via the read_at index: {}",
             plan
         );
+    }
+
+    #[test]
+    fn test_continuation_walk_is_gapless_unfiltered() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "walker");
+        let category_id = create_test_category(&conn, user_id, "C");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/walk.xml");
+        // 5 entries, distinct published_at so order is deterministic.
+        for i in 0..5 {
+            upsert_entry(
+                &conn,
+                feed_id,
+                &format!("g{i}"),
+                Some(&format!("T{i}")),
+                None,
+                None,
+                None,
+                None,
+                Some(
+                    chrono::Utc
+                        .with_ymd_and_hms(2024, 1, 1 + i as u32, 0, 0, 0)
+                        .unwrap(),
+                ),
+            )
+            .unwrap();
+        }
+
+        let filter = EntryFilter::default();
+        let mut cursor: Option<ContinuationCursor> = None;
+        let mut seen: Vec<i64> = Vec::new();
+        loop {
+            let params = ContinuationParams {
+                oldest_first: false,
+                limit: 3, // page size 2 + 1 sentinel
+                continuation: cursor.clone(),
+                ot: None,
+                nt: None,
+                sort_order: EntrySortOrder::PublishedAt,
+            };
+            let rows = list_by_user_with_continuation(&conn, user_id, &filter, &params).unwrap();
+            let has_more = rows.len() > 2;
+            let page = &rows[..rows.len().min(2)];
+            if page.is_empty() {
+                break;
+            }
+            for e in page {
+                seen.push(e.entry.id);
+            }
+            if !has_more {
+                break;
+            }
+            let last = page.last().unwrap();
+            let ts = fetch_sort_ts(&conn, last.entry.id, EntrySortOrder::PublishedAt)
+                .unwrap()
+                .unwrap();
+            cursor = Some(ContinuationCursor::Composite {
+                sort_ts: ts,
+                id: last.entry.id,
+            });
+        }
+
+        // All 5 seen exactly once, newest-first.
+        assert_eq!(seen.len(), 5, "walk must visit every entry once: {seen:?}");
+        let mut uniq = seen.clone();
+        uniq.sort_unstable();
+        uniq.dedup();
+        assert_eq!(uniq.len(), 5, "no duplicates across pages: {seen:?}");
     }
 }
