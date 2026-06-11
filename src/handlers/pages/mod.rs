@@ -101,6 +101,14 @@ pub struct FilterTab {
     pub active: bool,
 }
 
+/// Render-time snapshot boundary for unread-navigation, in the same UTC
+/// `YYYY-MM-DD HH:MM:SS` format `datetime('now')` writes into
+/// `entry.read_at`. Emitted as `data-snapshot-at` on `[data-entries-list]`;
+/// the client echoes it back as `read_after` on the neighbors API.
+pub(crate) fn snapshot_now() -> String {
+    chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
 /// Layout context shared by all entries-family pages (`_entries_layout.html`).
 #[derive(Debug, Clone)]
 pub struct EntriesLayoutContext {
@@ -153,6 +161,8 @@ pub struct EntriesLayoutContext {
     /// only by the landing page (`/`) when the account has no feeds; every
     /// other route leaves it `false`.
     pub onboarding: bool,
+    /// UTC instant captured when the page was rendered; see `snapshot_now()`.
+    pub snapshot_at: String,
 }
 
 /// Map an `EntryWithFeed` (+ optional summary status) to an `EntryRowView`.
@@ -550,6 +560,7 @@ pub async fn unread_page(
                 status_filter: None,
                 show_mark_above: true,
                 onboarding: no_feeds,
+                snapshot_at: snapshot_now(),
             },
         },
     )
@@ -1050,6 +1061,7 @@ pub async fn entries_page(
                 status_filter: None,
                 show_mark_above: false,
                 onboarding: false,
+                snapshot_at: snapshot_now(),
             },
         },
     )
@@ -1210,6 +1222,7 @@ pub async fn read_entries_page(
                 status_filter: None,
                 show_mark_above: false,
                 onboarding: false,
+                snapshot_at: snapshot_now(),
             },
         },
     )
@@ -1293,6 +1306,7 @@ pub async fn starred_entries_page(
                 status_filter: None,
                 show_mark_above: false,
                 onboarding: false,
+                snapshot_at: snapshot_now(),
             },
         },
     )
@@ -1376,6 +1390,7 @@ pub async fn summarized_entries_page(
                 status_filter: None,
                 show_mark_above: false,
                 onboarding: false,
+                snapshot_at: snapshot_now(),
             },
         },
     )
@@ -1517,6 +1532,7 @@ pub async fn category_entries_page(
             status_filter,
             show_mark_above: true,
             onboarding: false,
+            snapshot_at: snapshot_now(),
         },
     };
 
@@ -1796,6 +1812,7 @@ pub async fn feed_entries_page(
             status_filter,
             show_mark_above: true,
             onboarding: false,
+            snapshot_at: snapshot_now(),
         },
     };
 

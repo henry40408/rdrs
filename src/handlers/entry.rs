@@ -30,6 +30,10 @@ pub struct NeighborsQuery {
     pub feed_id: Option<i64>,
     pub category_id: Option<i64>,
     pub has_summary: Option<bool>,
+    /// Unread-snapshot boundary (UTC `YYYY-MM-DD HH:MM:SS`), forwarded into
+    /// `EntryFilter::read_after`. Sent by app.js from the page's
+    /// `data-snapshot-at` attribute on unread views.
+    pub read_after: Option<String>,
 }
 
 pub async fn get_entry_neighbors(
@@ -59,7 +63,7 @@ pub async fn get_entry_neighbors(
                 read_only: query.read_only,
                 has_summary: query.has_summary,
                 search: None,
-                read_after: None,
+                read_after: query.read_after,
             };
             let neighbors = entry::find_neighbors(conn, user_id, id, &filter)?;
             Ok::<_, AppError>(neighbors)
