@@ -21,6 +21,8 @@ use rdrs::models::{category, entry, feed};
 use rdrs::{auth, create_router, db, services, AppState, Config, DbPool};
 use rusqlite::Connection;
 use serde_json::json;
+use wiremock::matchers::{method, path_regex};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 struct TestApp {
     server: TestServer,
@@ -788,4 +790,289 @@ async fn test_unauthenticated_access_denied() {
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list")
         .await;
     assert_eq!(response.status_code(), StatusCode::UNAUTHORIZED);
+}
+
+// ============================================================================
+// RSS fixture used by wiremock-based subscribe/quickadd tests
+// ============================================================================
+
+const RSS_FIXTURE: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel>
+  <title>Mock Feed</title><description>D</description><link>https://e</link>
+  <item><guid>m1</guid><title>One</title><link>https://e/1</link><description>c1</description></item>
+</channel></rss>"#;
+
+// ============================================================================
+// Part A — pure validation / edit tests (no network required)
+// ============================================================================
+
+#[tokio::test]
+async fn test_subscription_subscribe_missing_stream_id() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app).await;
+
+    // POST ac=subscribe without `s` → 400 Bad Request
+    let form = vec![("ac", "subscribe".to_string())];
+    let response = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        .form(&form)
+        .await;
+    response.assert_status(StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_subscription_subscribe_bad_prefix() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app).await;
+
+    // Stream ID must start with "feed/"; bare URL should be rejected with 400
+    let form = vec![
+        ("ac", "subscribe".to_string()),
+        ("s", "https://example.com/feed.xml".to_string()),
+    ];
+    let response = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        .form(&form)
+        .await;
+    response.assert_status(StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_subscription_subscribe_empty_url() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app).await;
+
+    // "feed/" with nothing after the slash → empty URL → 400
+    let form = vec![("ac", "subscribe".to_string()), ("s", "feed/".to_string())];
+    let response = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        .form(&form)
+        .await;
+    response.assert_status(StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_subscription_edit_feed_not_found() {
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app).await;
+
+    // ac=edit with a URL that doesn't exist in the DB → 404
+    let form = vec![
+        ("ac", "edit".to_string()),
+        (
+            "s",
+            "feed/https://does-not-exist.example.com/rss".to_string(),
+        ),
+    ];
+    let response = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        .form(&form)
+        .await;
+    response.assert_status(StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_subscription_edit_add_label_moves_category() {
+    let app = create_test_app(default_test_config());
+    let user_id = setup_authenticated_user(&app).await;
+
+    let feed_url = "https://example.com/feed-to-move.xml";
+    create_test_feed(&app.db, user_id, "OldCat", feed_url).await;
+
+    // Move to a new category via ac=edit + a=user/-/label/NewCat
+    let form = vec![
+        ("ac", "edit".to_string()),
+        ("s", format!("feed/{}", feed_url)),
+        ("a", "user/-/label/NewCat".to_string()),
+    ];
+    let response = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        .form(&form)
+        .await;
+    response.assert_status_ok();
+
+    // DB: feed's category should now be "NewCat"
+    let found_url = feed_url.to_string();
+    let (cat_name, _feed_title) = app
+        .db
+        .user(move |conn| {
+            let f = feed::find_by_url_for_user(conn, &found_url, user_id)?
+                .ok_or(rdrs::error::AppError::FeedNotFound)?;
+            let cats = category::list_by_user(conn, user_id)?;
+            let cat = cats
+                .into_iter()
+                .find(|c| c.id == f.category_id)
+                .ok_or(rdrs::error::AppError::CategoryNotFound)?;
+            Ok::<_, rdrs::error::AppError>((cat.name, f.title))
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cat_name, "NewCat");
+}
+
+// ============================================================================
+// Part B — wiremock subscribe / quickadd success tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_subscription_subscribe_success() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(".*"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(RSS_FIXTURE)
+                .insert_header("content-type", "application/rss+xml"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let app = create_test_app(default_test_config());
+    let user_id = setup_authenticated_user(&app).await;
+
+    let feed_url = mock_server.uri();
+    let form = vec![
+        ("ac", "subscribe".to_string()),
+        ("s", format!("feed/{}", feed_url)),
+    ];
+    let response = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        .form(&form)
+        .await;
+    response.assert_status_ok();
+
+    // Verify feed row exists in the DB for this user
+    let url_clone = feed_url.clone();
+    let feed_exists = app
+        .db
+        .user(move |conn| {
+            Ok::<_, rdrs::error::AppError>(
+                feed::find_by_url_for_user(conn, &url_clone, user_id)?.is_some(),
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(feed_exists, "feed row should exist after subscribe");
+}
+
+#[tokio::test]
+async fn test_subscription_subscribe_with_label() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(".*"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(RSS_FIXTURE)
+                .insert_header("content-type", "application/rss+xml"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let app = create_test_app(default_test_config());
+    let user_id = setup_authenticated_user(&app).await;
+
+    let feed_url = mock_server.uri();
+    let form = vec![
+        ("ac", "subscribe".to_string()),
+        ("s", format!("feed/{}", feed_url)),
+        ("a", "user/-/label/Tech".to_string()),
+    ];
+    let response = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        .form(&form)
+        .await;
+    response.assert_status_ok();
+
+    // Verify feed is under the "Tech" category
+    let url_clone = feed_url.clone();
+    let cat_name = app
+        .db
+        .user(move |conn| {
+            let f = feed::find_by_url_for_user(conn, &url_clone, user_id)?
+                .ok_or(rdrs::error::AppError::FeedNotFound)?;
+            let cats = category::list_by_user(conn, user_id)?;
+            let cat = cats
+                .into_iter()
+                .find(|c| c.id == f.category_id)
+                .ok_or(rdrs::error::AppError::CategoryNotFound)?;
+            Ok::<_, rdrs::error::AppError>(cat.name)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cat_name, "Tech");
+}
+
+#[tokio::test]
+async fn test_subscription_subscribe_duplicate() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(".*"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(RSS_FIXTURE)
+                .insert_header("content-type", "application/rss+xml"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let app = create_test_app(default_test_config());
+    let user_id = setup_authenticated_user(&app).await;
+
+    // Pre-create the feed in the DB (same URL the mock server serves)
+    let feed_url = mock_server.uri();
+    create_test_feed(&app.db, user_id, "Existing", &feed_url).await;
+
+    // Attempt to subscribe again → 409 CONFLICT (AppError::FeedExists)
+    let form = vec![
+        ("ac", "subscribe".to_string()),
+        ("s", format!("feed/{}", feed_url)),
+    ];
+    let response = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        .form(&form)
+        .await;
+    response.assert_status(StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn test_quickadd_success() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(".*"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(RSS_FIXTURE)
+                .insert_header("content-type", "application/rss+xml"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let app = create_test_app(default_test_config());
+    setup_authenticated_user(&app).await;
+
+    let feed_url = mock_server.uri();
+    let form = vec![("quickadd", feed_url.clone())];
+    let response = app
+        .server
+        .post("/reader/api/0/subscription/quickadd")
+        .form(&form)
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["numResults"].as_i64().unwrap(), 1);
+    assert_eq!(
+        body["streamId"].as_str().unwrap(),
+        format!("feed/{}", feed_url)
+    );
 }
