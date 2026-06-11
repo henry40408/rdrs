@@ -198,38 +198,55 @@ pub(crate) fn row_view_from(
 }
 
 /// Fetch a page of entries and map them to `EntryRowView`s.
-/// Returns `(rows, next_cursor)` where `next_cursor` is `Some(offset + page_size)`
-/// when more results exist beyond this page.
+/// Returns `(rows, next_cursor)` where `next_cursor` is `Some(<sort_ts>|<id>)`
+/// (an opaque composite cursor token) when more results exist beyond this page.
 pub(crate) async fn build_entries_page(
     state: &AppState,
     user_id: i64,
     filter: entry::EntryFilter,
     sort: entry::EntrySortOrder,
     page_size: i64,
-    offset: i64,
-) -> (Vec<EntryRowView>, Option<i64>) {
+    cursor: Option<entry::ContinuationCursor>,
+) -> (Vec<EntryRowView>, Option<String>) {
     let result = state
         .db
         .read_user(move |conn| {
-            let rows = entry::list_by_user(conn, user_id, &filter, sort, page_size + 1, offset)?;
-            let ids: Vec<i64> = rows.iter().map(|e| e.entry.id).collect();
+            let params = entry::ContinuationParams {
+                oldest_first: false,
+                limit: page_size + 1,
+                continuation: cursor,
+                ot: None,
+                nt: None,
+                sort_order: sort,
+            };
+            let rows = entry::list_by_user_with_continuation(conn, user_id, &filter, &params)?;
+            let kept_len = rows.len().min(page_size as usize);
+            // Derive the next cursor from the last *kept* row when an extra
+            // (sentinel) row was returned. Mirrors greader/item.rs.
+            // Next cursor comes from the last KEPT row (the sentinel row beyond
+            // page_size is dropped). `.take(kept_len).last()` avoids an index
+            // subtraction and is None-safe when there are no rows.
+            let next = if rows.len() as i64 > page_size {
+                match rows.iter().take(kept_len).last() {
+                    Some(e) => entry::fetch_sort_ts(conn, e.entry.id, sort)?
+                        .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id)),
+                    None => None,
+                }
+            } else {
+                None
+            };
+            let ids: Vec<i64> = rows.iter().take(kept_len).map(|e| e.entry.id).collect();
             let statuses = entry_summary::get_statuses_for_entries(conn, user_id, &ids)?;
-            Ok::<_, AppError>((rows, statuses))
+            Ok::<_, AppError>((rows, kept_len, next, statuses))
         })
         .await
         .ok()
         .and_then(|r| r.ok())
-        .unwrap_or_else(|| (Vec::new(), HashMap::new()));
-    let (rows, statuses) = result;
-
-    let next_cursor = if rows.len() as i64 > page_size {
-        Some(offset + page_size)
-    } else {
-        None
-    };
+        .unwrap_or_else(|| (Vec::new(), 0, None, HashMap::new()));
+    let (rows, kept_len, next_cursor, statuses) = result;
     let views = rows
         .iter()
-        .take(page_size as usize)
+        .take(kept_len)
         .map(|e| row_view_from(e, statuses.get(&e.entry.id).copied()))
         .collect();
     (views, next_cursor)
@@ -237,11 +254,11 @@ pub(crate) async fn build_entries_page(
 
 /// Query parameters for the Load-More fragment dispatch on the 5 entries pages.
 /// When `fragment == Some(1)`, the handler returns an `EntriesFragmentTemplate`
-/// (prefix-rerender from offset 0 to `after + page_size`) instead of the full page.
+/// using the opaque cursor token in `after` to continue from where the last page left off.
 #[derive(serde::Deserialize, Default)]
 pub struct EntriesQuery {
     pub fragment: Option<u8>,
-    pub after: Option<i64>,
+    pub after: Option<String>,
     /// Status filter: `unread` / `read` / `starred`. Only meaningful on the
     /// feed + category entries pages (the 5 PR-10 routes have their own
     /// path-based modes). Any other value (or absence) is treated as
@@ -295,7 +312,7 @@ async fn maybe_build_reading_pane(
 #[template(path = "_entries_fragment.html")]
 pub(crate) struct EntriesFragmentTemplate {
     pub entries: Vec<EntryRowView>,
-    pub next_cursor: Option<i64>,
+    pub next_cursor: Option<String>,
     pub path: &'static str,
     /// Forwarded into the fragment's Load-More form so subsequent
     /// Load-More fetches keep the current `?status=` filter. `None` for
@@ -490,14 +507,17 @@ pub async fn unread_page(
     };
 
     if query.fragment == Some(1) {
-        let after = query.after.unwrap_or(0).max(0);
+        let cursor = query
+            .after
+            .as_deref()
+            .and_then(entry::ContinuationCursor::parse);
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
             PAGE_SIZE,
-            after,
+            cursor,
         )
         .await;
         return (
@@ -519,7 +539,7 @@ pub async fn unread_page(
         filter,
         entry::EntrySortOrder::PublishedAt,
         PAGE_SIZE,
-        0,
+        None,
     )
     .await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
@@ -1004,14 +1024,17 @@ pub async fn entries_page(
     let filter = entry::EntryFilter::default();
 
     if query.fragment == Some(1) {
-        let after = query.after.unwrap_or(0).max(0);
+        let cursor = query
+            .after
+            .as_deref()
+            .and_then(entry::ContinuationCursor::parse);
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
             PAGE_SIZE,
-            after,
+            cursor,
         )
         .await;
         return (
@@ -1033,7 +1056,7 @@ pub async fn entries_page(
         filter,
         entry::EntrySortOrder::PublishedAt,
         PAGE_SIZE,
-        0,
+        None,
     )
     .await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
@@ -1165,14 +1188,17 @@ pub async fn read_entries_page(
     };
 
     if query.fragment == Some(1) {
-        let after = query.after.unwrap_or(0).max(0);
+        let cursor = query
+            .after
+            .as_deref()
+            .and_then(entry::ContinuationCursor::parse);
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
             PAGE_SIZE,
-            after,
+            cursor,
         )
         .await;
         return (
@@ -1194,7 +1220,7 @@ pub async fn read_entries_page(
         filter,
         entry::EntrySortOrder::PublishedAt,
         PAGE_SIZE,
-        0,
+        None,
     )
     .await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
@@ -1249,14 +1275,17 @@ pub async fn starred_entries_page(
     };
 
     if query.fragment == Some(1) {
-        let after = query.after.unwrap_or(0).max(0);
+        let cursor = query
+            .after
+            .as_deref()
+            .and_then(entry::ContinuationCursor::parse);
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
             PAGE_SIZE,
-            after,
+            cursor,
         )
         .await;
         return (
@@ -1278,7 +1307,7 @@ pub async fn starred_entries_page(
         filter,
         entry::EntrySortOrder::PublishedAt,
         PAGE_SIZE,
-        0,
+        None,
     )
     .await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
@@ -1333,14 +1362,17 @@ pub async fn summarized_entries_page(
     };
 
     if query.fragment == Some(1) {
-        let after = query.after.unwrap_or(0).max(0);
+        let cursor = query
+            .after
+            .as_deref()
+            .and_then(entry::ContinuationCursor::parse);
         let (entries, next_cursor) = build_entries_page(
             &state,
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
             PAGE_SIZE,
-            after,
+            cursor,
         )
         .await;
         return (
@@ -1362,7 +1394,7 @@ pub async fn summarized_entries_page(
         filter,
         entry::EntrySortOrder::PublishedAt,
         PAGE_SIZE,
-        0,
+        None,
     )
     .await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
@@ -1447,7 +1479,10 @@ pub async fn category_entries_page(
         "starred" => filter.starred_only = true,
         _ => filter.unread_only = true,
     }
-    let offset = query.after.unwrap_or(0);
+    let cursor = query
+        .after
+        .as_deref()
+        .and_then(entry::ContinuationCursor::parse);
 
     let (entries, next_cursor) = build_entries_page(
         &state,
@@ -1455,7 +1490,7 @@ pub async fn category_entries_page(
         filter,
         entry::EntrySortOrder::PublishedAt,
         PAGE_SIZE,
-        offset,
+        cursor,
     )
     .await;
 
@@ -1723,7 +1758,10 @@ pub async fn feed_entries_page(
         "starred" => filter.starred_only = true,
         _ => filter.unread_only = true,
     }
-    let offset = query.after.unwrap_or(0);
+    let cursor = query
+        .after
+        .as_deref()
+        .and_then(entry::ContinuationCursor::parse);
 
     let (entries, next_cursor) = build_entries_page(
         &state,
@@ -1731,7 +1769,7 @@ pub async fn feed_entries_page(
         filter,
         entry::EntrySortOrder::PublishedAt,
         PAGE_SIZE,
-        offset,
+        cursor,
     )
     .await;
 
@@ -2223,7 +2261,7 @@ pub struct UnreadTemplate {
     pub layout: AppLayoutContext,
     pub entries: Vec<EntryRowView>,
     pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<i64>,
+    pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
 }
 
@@ -2245,7 +2283,7 @@ pub struct EntriesTemplate {
     pub layout: AppLayoutContext,
     pub entries: Vec<EntryRowView>,
     pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<i64>,
+    pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
 }
 
@@ -2267,7 +2305,7 @@ pub struct ReadEntriesTemplate {
     pub layout: AppLayoutContext,
     pub entries: Vec<EntryRowView>,
     pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<i64>,
+    pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
 }
 
@@ -2289,7 +2327,7 @@ pub struct StarredEntriesTemplate {
     pub layout: AppLayoutContext,
     pub entries: Vec<EntryRowView>,
     pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<i64>,
+    pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
 }
 
@@ -2311,7 +2349,7 @@ pub struct SummarizedEntriesTemplate {
     pub layout: AppLayoutContext,
     pub entries: Vec<EntryRowView>,
     pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<i64>,
+    pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
 }
 
@@ -2333,7 +2371,7 @@ pub struct FeedEntriesTemplate {
     pub layout: AppLayoutContext,
     pub entries: Vec<EntryRowView>,
     pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<i64>,
+    pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
 }
 
@@ -2355,7 +2393,7 @@ pub struct CategoryEntriesTemplate {
     pub layout: AppLayoutContext,
     pub entries: Vec<EntryRowView>,
     pub reading_pane: Option<ReadingPaneView>,
-    pub next_cursor: Option<i64>,
+    pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
 }
 
