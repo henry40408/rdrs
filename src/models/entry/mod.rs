@@ -558,13 +558,15 @@ pub fn upsert_entry_id(
     Ok(UpsertOutcome::Inserted(conn.last_insert_rowid()))
 }
 
+/// Idempotent `(feed_id, guid)` tombstone insert. Shared by the single-shot
+/// [`insert_tombstone`] helper and the batched `prune_read_retention_batch`
+/// loop so the statement text lives in exactly one place.
+const INSERT_TOMBSTONE_SQL: &str = "INSERT INTO entry_tombstone (feed_id, guid) VALUES (?1, ?2)
+     ON CONFLICT(feed_id, guid) DO NOTHING";
+
 /// Record a tombstone for `(feed_id, guid)`. Idempotent.
 pub fn insert_tombstone(conn: &Connection, feed_id: i64, guid: &str) -> AppResult<()> {
-    conn.execute(
-        "INSERT INTO entry_tombstone (feed_id, guid) VALUES (?1, ?2)
-         ON CONFLICT(feed_id, guid) DO NOTHING",
-        params![feed_id, guid],
-    )?;
+    conn.execute(INSERT_TOMBSTONE_SQL, params![feed_id, guid])?;
     Ok(())
 }
 
@@ -607,10 +609,7 @@ pub fn prune_read_retention_batch(conn: &Connection, batch_size: usize) -> AppRe
     }
 
     {
-        let mut ins = tx.prepare_cached(
-            "INSERT INTO entry_tombstone (feed_id, guid) VALUES (?1, ?2)
-             ON CONFLICT(feed_id, guid) DO NOTHING",
-        )?;
+        let mut ins = tx.prepare_cached(INSERT_TOMBSTONE_SQL)?;
         let mut del = tx.prepare_cached("DELETE FROM entry WHERE id = ?1")?;
         for (id, feed_id, guid) in &victims {
             ins.execute(params![feed_id, guid])?;

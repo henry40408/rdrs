@@ -9,6 +9,11 @@ pub const DEFAULT_ENTRIES_PER_PAGE: i64 = 30;
 pub const MIN_ENTRIES_PER_PAGE: i64 = 10;
 pub const MAX_ENTRIES_PER_PAGE: i64 = 100;
 
+/// Upper bound for the per-user read-entry retention threshold, in days
+/// (~10 years). Guards against absurd inputs; values this large already mean
+/// "effectively never delete", which `0` expresses directly.
+pub const MAX_RETENTION_READ_DAYS: i64 = 3650;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSettings {
     pub id: i64,
@@ -165,12 +170,14 @@ pub fn get_retention_read_days(conn: &Connection, user_id: i64) -> AppResult<i64
 }
 
 /// Set the per-user read-entry retention threshold in days. `0` disables
-/// retention for the user; negative values are rejected.
+/// retention for the user; values outside `0..=MAX_RETENTION_READ_DAYS` are
+/// rejected.
 pub fn update_retention_read_days(conn: &Connection, user_id: i64, days: i64) -> AppResult<()> {
-    if days < 0 {
-        return Err(AppError::Validation(
-            "retention_read_days must be >= 0".to_string(),
-        ));
+    if !(0..=MAX_RETENTION_READ_DAYS).contains(&days) {
+        return Err(AppError::Validation(format!(
+            "retention_read_days must be between 0 and {}",
+            MAX_RETENTION_READ_DAYS
+        )));
     }
     // Ensure a row exists, then update (mirrors update_theme).
     conn.execute(
@@ -327,5 +334,18 @@ mod tests {
             update_retention_read_days(&conn, user.id, -1),
             Err(AppError::Validation(_))
         ));
+
+        // Values above the upper bound are rejected.
+        assert!(matches!(
+            update_retention_read_days(&conn, user.id, MAX_RETENTION_READ_DAYS + 1),
+            Err(AppError::Validation(_))
+        ));
+
+        // The boundary itself is accepted.
+        update_retention_read_days(&conn, user.id, MAX_RETENTION_READ_DAYS).unwrap();
+        assert_eq!(
+            get_retention_read_days(&conn, user.id).unwrap(),
+            MAX_RETENTION_READ_DAYS
+        );
     }
 }
