@@ -22,6 +22,17 @@ Given("the entry titled {string} is marked read", async ({ seed, currentUser }, 
   seed.markRead(seed.findEntryIdByTitle(userId, title));
 });
 
+// Backdated so the read lands strictly BEFORE the page's render-time
+// snapshot — a datetime('now') read in the same second as the render would
+// fall inside the >= snapshot boundary and make skip-assertions flaky.
+Given(
+  "the entry titled {string} was marked read an hour ago",
+  async ({ seed, currentUser }, title) => {
+    const userId = seed.getUserId(currentUser.username);
+    seed.markRead(seed.findEntryIdByTitle(userId, title), "-1 hour");
+  }
+);
+
 Given("the entry titled {string} is starred", async ({ seed, currentUser }, title) => {
   const userId = seed.getUserId(currentUser.username);
   seed.markStarred(seed.findEntryIdByTitle(userId, title));
