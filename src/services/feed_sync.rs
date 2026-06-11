@@ -283,10 +283,11 @@ pub async fn refresh_feed(
     // Last-Modified; without this the feed's "last updated" would be misjudged.
     let http_last_modified = new_last_modified.as_deref().and_then(parse_timestamp);
 
-    let (new_entries, updated_entries) = db
+    let (new_entries, updated_entries, skipped_entries) = db
         .background(move |conn| {
             let mut new_entries = 0i64;
             let mut updated_entries = 0i64;
+            let mut skipped_entries = 0i64;
             let mut latest_entry_date: Option<chrono::DateTime<Utc>> = None;
 
             // Wrap the whole feed's upserts plus the fetch-result update in one
@@ -328,7 +329,7 @@ pub async fn refresh_feed(
                     });
                 }
 
-                let (_, is_new) = entry::upsert_entry_id(
+                match entry::upsert_entry_id(
                     &tx,
                     feed_id,
                     &guid,
@@ -338,12 +339,10 @@ pub async fn refresh_feed(
                     summary.as_deref(),
                     author.as_deref(),
                     published_at,
-                )?;
-
-                if is_new {
-                    new_entries += 1;
-                } else {
-                    updated_entries += 1;
+                )? {
+                    entry::UpsertOutcome::Inserted(_) => new_entries += 1,
+                    entry::UpsertOutcome::Updated(_) => updated_entries += 1,
+                    entry::UpsertOutcome::SkippedTombstoned => skipped_entries += 1,
                 }
             }
 
@@ -364,13 +363,13 @@ pub async fn refresh_feed(
 
             tx.commit()?;
 
-            Ok::<_, AppError>((new_entries, updated_entries))
+            Ok::<_, AppError>((new_entries, updated_entries, skipped_entries))
         })
         .await??;
 
     info!(
-        "Feed {} refreshed: {} new, {} updated",
-        feed_id, new_entries, updated_entries
+        "Feed {} refreshed: {} new, {} updated, {} skipped (tombstoned)",
+        feed_id, new_entries, updated_entries, skipped_entries
     );
 
     Ok(SyncResult {

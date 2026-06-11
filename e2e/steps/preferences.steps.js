@@ -40,3 +40,13 @@ Then("I can sign in with {string}", async ({ page, currentUser, serverUrl }, pas
   await page.getByTestId("login-submit").click();
   await page.waitForURL(`${serverUrl}/`);
 });
+
+When("I set the retention period to {string} days", async ({ page, serverUrl }, days) => {
+  await page.getByTestId("retention-read-days").fill(days);
+  await page.locator('form[action="/user-settings/preferences"] button[type=submit]').click();
+  await page.waitForURL(`${serverUrl}/user-settings`);
+});
+
+Then("the retention period field shows {string}", async ({ page }, value) => {
+  await expect(page.getByTestId("retention-read-days")).toHaveValue(value);
+});

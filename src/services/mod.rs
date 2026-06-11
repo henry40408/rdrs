@@ -1,4 +1,5 @@
 pub mod background;
+pub mod entry_retention;
 pub mod feed_discovery;
 pub mod feed_sync;
 pub mod html_entities;
@@ -17,6 +18,7 @@ pub mod summary_cleanup;
 pub mod summary_worker;
 
 pub use background::start_background_sync;
+pub use entry_retention::start_retention_worker;
 pub use feed_discovery::{discover_feed, DiscoveredFeed};
 pub use feed_sync::{refresh_feed, SyncResult};
 pub use html_entities::decode_html_entities;

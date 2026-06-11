@@ -22,3 +22,7 @@ Feature: Preferences
   Scenario: Changing my password lets me sign in with the new password
     When I change my password to "newpassword123"
     Then I can sign in with "newpassword123"
+
+  Scenario: Setting a read-article retention period persists
+    When I set the retention period to "30" days
+    Then the retention period field shows "30"

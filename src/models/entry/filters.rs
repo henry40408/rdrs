@@ -28,6 +28,12 @@ pub(super) fn published_sort_entry_hint(filter: &EntryFilter) -> &'static str {
         " INDEXED BY idx_entry_starred_sort"
     } else if filter.read_only {
         " INDEXED BY idx_entry_read_sort"
+    } else if filter.unread_only && filter.read_after.is_none() {
+        // Strict unread only. The snapshot case (read_after set) widens the
+        // predicate to `(read_at IS NULL OR read_at >= ?)`, which a
+        // `WHERE read_at IS NULL` partial index does not cover — leave it to
+        // its existing plan.
+        " INDEXED BY idx_entry_unread_sort"
     } else if is_no_entry_side_predicate(filter) {
         " INDEXED BY idx_entry_sort_ts"
     } else {
@@ -171,5 +177,37 @@ pub(super) fn apply_continuation_condition(
             conditions.push(format!("e.id {} ?{}", cmp, id_idx));
             params_vec.push(Box::new(*id));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unread_hint_uses_unread_sort_index() {
+        let filter = EntryFilter {
+            unread_only: true,
+            read_after: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            published_sort_entry_hint(&filter),
+            " INDEXED BY idx_entry_unread_sort"
+        );
+    }
+
+    #[test]
+    fn test_unread_snapshot_gets_no_unread_sort_hint() {
+        // Snapshot OR predicate is not covered by a WHERE read_at IS NULL index.
+        let filter = EntryFilter {
+            unread_only: true,
+            read_after: Some("2026-01-01 00:00:00".to_string()),
+            ..Default::default()
+        };
+        assert_ne!(
+            published_sort_entry_hint(&filter),
+            " INDEXED BY idx_entry_unread_sort"
+        );
     }
 }

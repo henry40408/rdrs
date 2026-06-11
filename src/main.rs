@@ -70,6 +70,11 @@ async fn main() {
     let cleanup_worker_handle =
         services::start_cleanup_worker(db.clone(), 1, 24, cancel_token.clone());
 
+    // Start read-entry retention worker (every 24h; per-user opt-in via
+    // user_settings.retention_read_days, 0 = disabled). No-op when nobody opted in.
+    let retention_worker_handle =
+        services::start_retention_worker(db.clone(), 24, cancel_token.clone());
+
     let state = AppState {
         db: db.clone(),
         config: Arc::new(config.clone()),
@@ -113,6 +118,7 @@ async fn main() {
             background_handle,
             summary_worker_handle,
             cleanup_worker_handle,
+            retention_worker_handle,
         );
     });
 
