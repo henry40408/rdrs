@@ -34,3 +34,18 @@ Feature: Category navigation shortcuts
     And the sidebar shows no unread for category "Cat B"
     And I press the "}" key
     Then I am on the entries page for category "Cat C"
+
+  Scenario: ] from the unread inbox enters the first category
+    When I open the inbox
+    And I press the "]" key
+    Then I am on the entries page for category "Cat A"
+
+  Scenario: [ from the unread inbox enters the last category
+    When I open the inbox
+    And I press the "[" key
+    Then I am on the entries page for category "Cat C"
+
+  Scenario: ] on a feed page continues from the feed's parent category
+    When I open the entries page for feed "Alpha Feed"
+    And I press the "]" key
+    Then I am on the entries page for category "Cat B"

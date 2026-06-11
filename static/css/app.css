@@ -2109,3 +2109,59 @@ summary {
         padding-right: var(--space-4);
     }
 }
+
+/* ===== Go-to key hint (which-key style, shown while `g` is pending) ===== */
+.kbd-hint {
+    position: fixed;
+    right: var(--space-4);
+    bottom: var(--space-4);
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    font-size: var(--font-sm);
+    color: var(--color-text);
+    max-width: calc(100vw - 2 * var(--space-4));
+}
+
+.kbd-hint kbd {
+    display: inline-block;
+    min-width: 1.4em;
+    padding: 1px 5px;
+    border: 1px solid var(--color-border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    background: var(--color-bg-tertiary, #f0f0f0);
+    font-family: var(--font-mono, monospace);
+    font-size: 0.85em;
+    line-height: 1.4;
+    text-align: center;
+}
+
+.kbd-hint-prefix {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.kbd-hint-items {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: var(--space-3);
+    row-gap: var(--space-1);
+    color: var(--color-text-muted);
+}
+
+.kbd-hint-items span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+}

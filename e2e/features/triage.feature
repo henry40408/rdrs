@@ -35,3 +35,17 @@ Feature: Triage entries (star, mark-read, summarize)
     And I click the entry titled "Test Entry 1"
     And I click the "Dismiss" button
     Then the reading pane summary is dismissed
+
+  Scenario: a starts summarization from the keyboard
+    Given the user has Kagi configured
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    And I press the "a" key
+    Then the reading pane shows a summary
+
+  Scenario: a dismisses an existing summary
+    Given the entry titled "Test Entry 1" has a summary
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    And I press the "a" key
+    Then the reading pane summary is dismissed

@@ -107,3 +107,12 @@ Then("the flash banner sits below the hamburger", async ({ page }) => {
   // button's left edge instead of being indented to clear it.
   expect(banner.x).toBeLessThan(toggle.x);
 });
+
+Then("the reading pane overlay is dismissed", async ({ page }) => {
+  // closeReadingPane() strips .reading-pane-active and restores the empty
+  // placeholder; at ≤1024px the pane without the active class is
+  // `display: none`, so it must be both class-free AND actually hidden.
+  const pane = page.locator("#reading-pane");
+  await expect(pane).not.toHaveClass(/reading-pane-active/);
+  await expect(pane).toBeHidden();
+});

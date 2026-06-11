@@ -362,3 +362,64 @@ Then("I see no flash message", async ({ page }) => {
 Then("I see a flash message", async ({ page }) => {
   await expect(page.getByTestId("flash-message").first()).toBeVisible();
 });
+
+Then("the entry row for {string} shows as starred", async ({ page }, title) => {
+  // _entry_row.html renders a `.star-icon` span only when is_starred is true.
+  const row = page.getByTestId("entry-item").filter({ hasText: title }).first();
+  await expect(row.locator(".star-icon")).toBeVisible();
+});
+
+Then("the entry row for {string} shows as unread", async ({ page }, title) => {
+  const row = page.getByTestId("entry-item").filter({ hasText: title }).first();
+  await expect(row).not.toHaveClass(/entry-read/);
+});
+
+Then("I am on the all entries page", async ({ page, serverUrl }) => {
+  await page.waitForURL(`${serverUrl}/entries`);
+});
+
+Then("I am on the starred entries page", async ({ page, serverUrl }) => {
+  await page.waitForURL(`${serverUrl}/entries/starred`);
+});
+
+Then("the go-to hint is visible", async ({ page }) => {
+  await expect(page.locator(".kbd-hint")).toBeVisible();
+});
+
+Then("the go-to hint is gone", async ({ page }) => {
+  await expect(page.locator(".kbd-hint")).toHaveCount(0);
+});
+
+When("I press the {string} key without refocusing", async ({ page }, key) => {
+  // The plain press step clicks <body> first, which would blur the help
+  // overlay (focus sits on its Esc button after show()) and can trigger
+  // its click-outside-to-close handler. Send the key to the currently
+  // focused element instead.
+  await page.keyboard.press(key);
+});
+
+Then("the keyboard shortcut help overlay is hidden", async ({ page }) => {
+  await expect(page.getByTestId("kb-help")).toBeHidden();
+});
+
+Then("the sidebar highlights All Entries", async ({ page }) => {
+  await expect(page.getByTestId("nav-entries")).toHaveClass(/active/);
+});
+
+Then("the sidebar highlights Starred", async ({ page }) => {
+  // The Starred sidebar item carries no data-testid — target by href.
+  await expect(page.locator('rdrs-sidebar a[href="/entries/starred"]')).toHaveClass(/active/);
+});
+
+Then("the help overlay descriptions are aligned", async ({ page }) => {
+  // Playwright CSS locators pierce the open shadow root. Compare the x of
+  // the first four Navigation-group descriptions (j/k, o/Enter, Space —
+  // the wide key combo — and Esc): pre-fix the Space row's key cell
+  // overflows its column and pushes its description right.
+  const descs = page.locator("rdrs-kb-help .shortcut-desc");
+  const x0 = (await descs.nth(0).boundingBox()).x;
+  for (let i = 1; i < 4; i++) {
+    const { x } = await descs.nth(i).boundingBox();
+    expect(Math.abs(x - x0)).toBeLessThan(1);
+  }
+});
