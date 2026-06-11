@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
+use chrono::TimeZone;
 use rdrs::{auth, create_router, db, services, AppState, Config, DbPool, Role};
 use rusqlite::Connection;
 use serde_json::json;
@@ -1222,10 +1223,7 @@ async fn test_category_entries_page_load_more_fragment() {
 
     let resp = app
         .server
-        .get(&format!(
-            "/categories/{}/entries?fragment=1&after=0",
-            cat_id
-        ))
+        .get(&format!("/categories/{}/entries?fragment=1", cat_id))
         .await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
@@ -1730,7 +1728,7 @@ async fn test_feed_entries_page_load_more_fragment() {
 
     let resp = app
         .server
-        .get(&format!("/feeds/{}/entries?fragment=1&after=0", feed_id))
+        .get(&format!("/feeds/{}/entries?fragment=1", feed_id))
         .await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
@@ -2744,4 +2742,112 @@ async fn test_summarized_entries_page_renders_ssr_rows() {
     );
     assert!(html.contains(r#"id="reading-pane""#));
     assert!(html.contains("Select an entry"));
+}
+
+#[tokio::test]
+async fn test_unread_load_more_uses_keyset_cursor() {
+    let app = create_test_app_named(default_test_config(), "test_unread_keyset");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "kuser", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "kuser", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    app.db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |r| r.get(0))
+                .unwrap();
+            let cat = rdrs::models::category::create_category(conn, user_id, "K").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/keyset-feed",
+                    title: Some("K Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            for i in 0..60u32 {
+                rdrs::models::entry::upsert_entry(
+                    conn,
+                    feed.id,
+                    &format!("kg-{i}"),
+                    Some(&format!("K {i}")),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(
+                        chrono::Utc
+                            .with_ymd_and_hms(2024, 1, 1, 0, i / 60, i % 60)
+                            .unwrap(),
+                    ),
+                )
+                .unwrap();
+            }
+        })
+        .await
+        .unwrap();
+
+    // Page 1 (full render): first 50 rows + a Load-More form with a cursor.
+    let html = app.server.get("/").await.text();
+    let entry_ids_page1: std::collections::HashSet<String> = extract_entry_ids(&html);
+    assert_eq!(entry_ids_page1.len(), 50, "page 1 shows the first 50");
+
+    // Extract the cursor token from the Load-More form's hidden `after` input.
+    let cursor = extract_after_value(&html).expect("Load-More form must carry an after cursor");
+    assert!(
+        cursor.contains('|'),
+        "cursor is a composite token, got {cursor:?}"
+    );
+
+    // Page 2 (fragment) via the cursor.
+    let encoded = cursor.replace(' ', "%20").replace('|', "%7C");
+    let frag = app
+        .server
+        .get(&format!("/?fragment=1&after={}", encoded))
+        .await
+        .text();
+    let entry_ids_page2 = extract_entry_ids(&frag);
+    assert_eq!(entry_ids_page2.len(), 10, "page 2 shows the remaining 10");
+    assert!(
+        entry_ids_page1.is_disjoint(&entry_ids_page2),
+        "keyset pages must not overlap"
+    );
+}
+
+// Pull `data-entry-id="N"` values out of rendered HTML.
+fn extract_entry_ids(html: &str) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let needle = "data-entry-id=\"";
+    let mut rest = html;
+    while let Some(i) = rest.find(needle) {
+        rest = &rest[i + needle.len()..];
+        if let Some(j) = rest.find('"') {
+            out.insert(rest[..j].to_string());
+            rest = &rest[j..];
+        }
+    }
+    out
+}
+
+// Pull the value of the Load-More form's hidden `after` input.
+fn extract_after_value(html: &str) -> Option<String> {
+    let needle = "name=\"after\" value=\"";
+    let i = html.find(needle)? + needle.len();
+    let rest = &html[i..];
+    let j = rest.find('"')?;
+    Some(rest[..j].to_string())
 }
