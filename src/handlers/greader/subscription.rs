@@ -492,6 +492,28 @@ fn extract_label_name(s: Option<&str>) -> Option<String> {
     })
 }
 
+/// Verify POST token if request is not via cookie auth.
+fn verify_post_token_if_needed(
+    auth: &GReaderUser,
+    state: &AppState,
+    token: Option<&str>,
+) -> AppResult<()> {
+    if auth.via_cookie {
+        // Cookie auth has SameSite protection, skip POST token
+        return Ok(());
+    }
+
+    if let Some(post_token) = token {
+        super::auth::verify_post_token(
+            &state.config.image_proxy_secret,
+            &auth.session.session_token,
+            post_token,
+        )?;
+    }
+    // Many clients don't send POST token, so we allow it for now
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::extract_label_name;
@@ -521,26 +543,4 @@ mod tests {
     fn extract_label_name_invalid_prefix() {
         assert_eq!(extract_label_name(Some("tag/something")), None);
     }
-}
-
-/// Verify POST token if request is not via cookie auth.
-fn verify_post_token_if_needed(
-    auth: &GReaderUser,
-    state: &AppState,
-    token: Option<&str>,
-) -> AppResult<()> {
-    if auth.via_cookie {
-        // Cookie auth has SameSite protection, skip POST token
-        return Ok(());
-    }
-
-    if let Some(post_token) = token {
-        super::auth::verify_post_token(
-            &state.config.image_proxy_secret,
-            &auth.session.session_token,
-            post_token,
-        )?;
-    }
-    // Many clients don't send POST token, so we allow it for now
-    Ok(())
 }
