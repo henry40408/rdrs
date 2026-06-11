@@ -26,6 +26,10 @@ pub async fn subscription_list(
             let feeds = feed::list_by_user(conn, user_id)?;
             let categories = category::list_by_user(conn, user_id)?;
 
+            // Resolve which feeds have an icon in one query instead of one per feed.
+            let feed_ids: Vec<i64> = feeds.iter().map(|f| f.id).collect();
+            let feeds_with_icon = image::existing_ids(conn, image::ENTITY_FEED, &feed_ids)?;
+
             let subs: Vec<Subscription> = feeds
                 .into_iter()
                 .map(|f| {
@@ -33,7 +37,7 @@ pub async fn subscription_list(
                     let cat_name = cat.map(|c| c.name.as_str()).unwrap_or("Uncategorized");
                     let cat_id = cat.map(|c| c.id).unwrap_or(0);
 
-                    let has_icon = image::exists(conn, image::ENTITY_FEED, f.id).unwrap_or(false);
+                    let has_icon = feeds_with_icon.contains(&f.id);
                     let icon_url = if has_icon {
                         format!("/api/feeds/{}/icon", f.id)
                     } else {

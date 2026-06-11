@@ -101,6 +101,13 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_entry_unread_feed
             ON entry(feed_id)
             WHERE read_at IS NULL;
+        -- Composite index for the per-feed / per-category list pages, which
+        -- filter by feed_id and ORDER BY COALESCE(published_at, created_at)
+        -- DESC. Without it the planner uses idx_entry_feed_id to filter then
+        -- builds a temp B-tree to sort; this index serves the filter and the
+        -- order together as a range scan. See migration v7.
+        CREATE INDEX IF NOT EXISTS idx_entry_feed_sort
+            ON entry(feed_id, COALESCE(published_at, created_at));
 
         CREATE TABLE IF NOT EXISTS entry_summary (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -226,7 +233,15 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         // bump records that the unread-count queries can rely on it.
     }
 
-    const LATEST_VERSION: i64 = 6;
+    if version < 7 {
+        // Composite index `idx_entry_feed_sort` for the per-feed/per-category
+        // list pages. Like the v5/v6 indexes it is created via
+        // `CREATE INDEX IF NOT EXISTS` in the main batch above, so existing
+        // databases pick it up on restart. The version bump records that the
+        // per-feed list query can rely on it.
+    }
+
+    const LATEST_VERSION: i64 = 7;
     if version < LATEST_VERSION {
         conn.pragma_update(None, "user_version", LATEST_VERSION)?;
     }
@@ -268,7 +283,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
     }
 
     #[test]
@@ -279,7 +294,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
     }
 
     #[test]
@@ -396,5 +411,23 @@ mod tests {
             .filter_map(Result::ok)
             .collect();
         assert_eq!(indexes, vec!["idx_entry_unread_feed".to_string()]);
+    }
+
+    #[test]
+    fn test_init_db_feed_sort_index_exists() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let indexes: Vec<String> = conn
+            .prepare(
+                "SELECT name FROM sqlite_master \
+                 WHERE type='index' AND name='idx_entry_feed_sort'",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(indexes, vec!["idx_entry_feed_sort".to_string()]);
     }
 }

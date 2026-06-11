@@ -756,10 +756,8 @@ pub async fn feeds_page(
             let all_feeds = feed::list_by_user(conn, user_id).unwrap_or_default();
             let unread_map = entry::count_unread_by_feed(conn, user_id).unwrap_or_default();
 
-            let cat_map: std::collections::HashMap<i64, String> = cats
-                .iter()
-                .map(|cat| (cat.id, cat.name.clone()))
-                .collect();
+            let cat_map: std::collections::HashMap<i64, String> =
+                cats.iter().map(|cat| (cat.id, cat.name.clone())).collect();
             let mut count_by_cat: std::collections::HashMap<i64, i64> =
                 std::collections::HashMap::new();
             for f in &all_feeds {
@@ -768,16 +766,19 @@ pub async fn feeds_page(
 
             let total_feed_count = all_feeds.len() as i64;
 
+            // Resolve which feeds have an icon in one query instead of one per feed.
+            let feed_ids: Vec<i64> = all_feeds.iter().map(|f| f.id).collect();
+            let feeds_with_icon = crate::models::image::existing_ids(
+                conn,
+                crate::models::image::ENTITY_FEED,
+                &feed_ids,
+            )
+            .unwrap_or_default();
+
             let row_views: Vec<FeedRowView> = all_feeds
                 .into_iter()
                 .map(|f| {
-                    let has_icon: i64 = conn
-                        .query_row(
-                            "SELECT COUNT(*) FROM image WHERE entity_type = 'feed' AND entity_id = ?1",
-                            [f.id],
-                            |row| row.get(0),
-                        )
-                        .unwrap_or(0);
+                    let has_icon = feeds_with_icon.contains(&f.id);
                     let (fetched_rel, fetched_dt) = format_relative_time(f.fetched_at);
                     let (updated_rel, updated_dt) = if f.feed_updated_at.is_some() {
                         format_relative_time(f.feed_updated_at)
@@ -798,7 +799,7 @@ pub async fn feeds_page(
                             .get(&f.category_id)
                             .cloned()
                             .unwrap_or_else(|| "Unknown".to_string()),
-                        has_icon: has_icon > 0,
+                        has_icon,
                         unread_count: *unread_map.get(&f.id).unwrap_or(&0),
                         id: f.id,
                         url: f.url,
