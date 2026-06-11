@@ -224,10 +224,10 @@ pub(crate) async fn build_entries_page(
             // Derive the next cursor from the last *kept* row when an extra
             // (sentinel) row was returned. Mirrors greader/item.rs.
             // Next cursor comes from the last KEPT row (the sentinel row beyond
-            // page_size is dropped). `.take(kept_len).last()` avoids an index
-            // subtraction and is None-safe when there are no rows.
+            // page_size is dropped). `.take(kept_len).next_back()` avoids an
+            // index subtraction and is None-safe when there are no rows.
             let next = if rows.len() as i64 > page_size {
-                match rows.iter().take(kept_len).last() {
+                match rows.iter().take(kept_len).next_back() {
                     Some(e) => entry::fetch_sort_ts(conn, e.entry.id, sort)?
                         .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id)),
                     None => None,
