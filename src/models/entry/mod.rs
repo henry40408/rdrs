@@ -986,26 +986,45 @@ pub fn find_neighbors(
         format!(" AND {}", next_conditions.join(" AND "))
     };
 
-    // Pin the same published-order index that `list_by_user` uses. Both
-    // prev/next sort by COALESCE(published_at, created_at), so the hint turns
-    // the planner's full `category -> feed -> entry` walk into an indexed
-    // range scan + LIMIT 1.
-    let entry_hint = published_sort_entry_hint(filter);
+    // Pin the published-order index and force the entry table to drive the
+    // join so the planner walks it in sort order and stops at LIMIT 1.
+    //
+    // The snapshot-widened unread predicate `(read_at IS NULL OR
+    // read_at >= ?)` needs special handling. `published_sort_entry_hint`
+    // returns no hint for unread, and the OR otherwise makes the planner pick
+    // a MULTI-INDEX OR that pulls the whole read-majority of the table into a
+    // temp B-tree just to take one row — an O(table) scan that grows with
+    // inbox size (~2ms/call at 50k entries, ~8ms at 200k, exec only). Pinning
+    // `idx_entry_sort_ts` and using CROSS JOIN to force entry-first ordering
+    // turns that into an indexed range scan that short-circuits at the first
+    // matching neighbour (~21µs, flat with inbox size), identical results.
+    //
+    // Gated on `read_after`: only the snapshot OR triggers the bad plan. The
+    // strict `read_at IS NULL` path (no `read_after`) keeps its prior plan,
+    // which can still use the partial `idx_entry_unread_feed` and so must not
+    // be force-pinned to the full sort index.
+    let (entry_hint, join_kw) = if filter.unread_only && filter.read_after.is_some() {
+        (" INDEXED BY idx_entry_sort_ts", "CROSS JOIN")
+    } else {
+        (published_sort_entry_hint(filter), "INNER JOIN")
+    };
 
     // Find previous entry (newer, comes before in DESC order)
     let prev_sql = format!(
         r#"
         SELECT e.id
-        FROM entry e{}
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
+        FROM entry e{hint}
+        {join} feed f ON e.feed_id = f.id
+        {join} category c ON f.category_id = c.id
         WHERE c.user_id = ?1
           AND COALESCE(e.published_at, e.created_at) > ?2
-          {}
+          {extra}
         ORDER BY COALESCE(e.published_at, e.created_at) ASC
         LIMIT 1
         "#,
-        entry_hint, prev_extra
+        hint = entry_hint,
+        join = join_kw,
+        extra = prev_extra
     );
     let prev_refs: Vec<&dyn rusqlite::ToSql> = prev_params.iter().map(|p| p.as_ref()).collect();
     let prev_id: Option<i64> = conn
@@ -1016,17 +1035,19 @@ pub fn find_neighbors(
     let next_sql = format!(
         r#"
         SELECT e.id
-        FROM entry e{}
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
+        FROM entry e{hint}
+        {join} feed f ON e.feed_id = f.id
+        {join} category c ON f.category_id = c.id
         WHERE c.user_id = ?1
           AND (COALESCE(e.published_at, e.created_at) < ?2
                OR (COALESCE(e.published_at, e.created_at) = ?2 AND e.id < ?3))
-          {}
+          {extra}
         ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
         LIMIT 1
         "#,
-        entry_hint, next_extra
+        hint = entry_hint,
+        join = join_kw,
+        extra = next_extra
     );
     let next_refs: Vec<&dyn rusqlite::ToSql> = next_params.iter().map(|p| p.as_ref()).collect();
     let next_id: Option<i64> = conn
@@ -2258,6 +2279,53 @@ mod tests {
         assert!(
             plan.contains("idx_entry_sort_ts"),
             "plan missing sort_ts index: {}",
+            plan
+        );
+    }
+
+    /// Locks the query plan for the snapshot-widened unread neighbours query.
+    /// Without the `idx_entry_sort_ts` hint + entry-first CROSS JOIN that
+    /// `find_neighbors` emits for unread filters, the planner answers the
+    /// `(read_at IS NULL OR read_at >= ?)` predicate with a MULTI-INDEX OR
+    /// that scans the read-majority of the table into a temp B-tree — an
+    /// O(table) scan per call that grows unbounded with inbox size. The hint
+    /// turns it into an indexed range scan that short-circuits at LIMIT 1.
+    #[test]
+    fn find_neighbors_unread_read_after_uses_sort_ts_not_multi_index_or() {
+        let conn = setup_db();
+        let _ = create_test_user(&conn, "u");
+        // Mirrors the next-side SQL `find_neighbors` builds for an unread
+        // filter with `read_after` set (see the join_kw / entry_hint branch).
+        let sql = r#"
+            SELECT e.id
+            FROM entry e INDEXED BY idx_entry_sort_ts
+            CROSS JOIN feed f ON e.feed_id = f.id
+            CROSS JOIN category c ON f.category_id = c.id
+            WHERE c.user_id = ?1
+              AND (COALESCE(e.published_at, e.created_at) < ?2
+                   OR (COALESCE(e.published_at, e.created_at) = ?2 AND e.id < ?3))
+              AND (e.read_at IS NULL OR e.read_at >= ?4)
+            ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
+            LIMIT 1
+        "#;
+        let plan = explain_plan_for(
+            &conn,
+            sql,
+            &[&1i64, &"2020-01-01 00:00:00", &1i64, &"2020-01-01 00:00:00"],
+        );
+        assert!(
+            plan.contains("idx_entry_sort_ts"),
+            "plan must pin idx_entry_sort_ts: {}",
+            plan
+        );
+        assert!(
+            !plan.contains("MULTI-INDEX OR"),
+            "plan must not fan out into a MULTI-INDEX OR: {}",
+            plan
+        );
+        assert!(
+            !plan.contains("idx_entry_read_at"),
+            "plan must not scan via the read_at index: {}",
             plan
         );
     }
