@@ -4527,12 +4527,23 @@ async fn test_entries_load_more_returns_row_fragments() {
         .unwrap()
         .unwrap();
 
-    // GET /entries?fragment=1&after=50 — append semantics: rows 50..74 only.
+    // GET /entries — fetch page 1 (50 entries) and extract the keyset cursor.
+    let page1 = app.server.get("/entries").await;
+    assert_eq!(page1.status_code(), StatusCode::OK);
+    let page1_html = page1.text();
+    // The load-more form contains <input type="hidden" name="after" value="<cursor>">.
+    let after_cursor = page1_html
+        .split("name=\"after\" value=\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .expect("page 1 should have a load-more cursor (75 entries > 50 page size)");
+
+    // GET /entries?fragment=1&after=<cursor> — append semantics: rows 50..74 only.
     let resp = app
         .server
         .get("/entries")
         .add_query_param("fragment", "1")
-        .add_query_param("after", "50")
+        .add_query_param("after", after_cursor)
         .await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
