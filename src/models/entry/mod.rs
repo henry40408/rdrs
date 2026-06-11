@@ -472,10 +472,19 @@ pub fn count_unread_by_category(
     Ok(map)
 }
 
-/// Upsert an entry, returning `(rowid, is_new)` without re-reading the full row.
+/// Result of an entry upsert. The insert path is guarded against tombstones,
+/// so a third "skipped" state exists alongside insert/update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpsertOutcome {
+    Inserted(i64),
+    Updated(i64),
+    SkippedTombstoned,
+}
+
+/// Upsert an entry, returning [`UpsertOutcome`] without re-reading the full row.
 ///
 /// This is the lean variant used by the feed-sync hot loop, which only needs
-/// the `is_new` flag. It avoids the full-row `find_by_id` re-read that
+/// the outcome flag. It avoids the full-row `find_by_id` re-read that
 /// [`upsert_entry`] performs, looks the existing row up by `id` only, and uses
 /// `prepare_cached` so the three hot statements are compiled once per
 /// connection rather than once per entry. Wrap a sync loop in a single
@@ -491,7 +500,7 @@ pub fn upsert_entry_id(
     summary: Option<&str>,
     author: Option<&str>,
     published_at: Option<DateTime<Utc>>,
-) -> AppResult<(i64, bool)> {
+) -> AppResult<UpsertOutcome> {
     let published_at_str = published_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
 
     // Look up only the id of any existing row (not the full record).
@@ -515,27 +524,48 @@ pub fn upsert_entry_id(
         )?
         .execute(params![title, link, content, summary, author, id])?;
 
-        return Ok((id, false));
+        return Ok(UpsertOutcome::Updated(id));
     }
 
-    conn.prepare_cached(
-        r#"
-        INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-        "#,
-    )?
-    .execute(params![
-        feed_id,
-        guid,
-        title,
-        link,
-        content,
-        summary,
-        author,
-        published_at_str
-    ])?;
+    // Insert, but never resurrect a tombstoned guid. The WHERE NOT EXISTS makes
+    // the tombstone check atomic with the insert, so a retention delete that
+    // commits between a separate check and this statement cannot bring the
+    // entry back as unread.
+    let inserted = conn
+        .prepare_cached(
+            r#"
+            INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at)
+            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+            WHERE NOT EXISTS (
+                SELECT 1 FROM entry_tombstone WHERE feed_id = ?1 AND guid = ?2
+            )
+            "#,
+        )?
+        .execute(params![
+            feed_id,
+            guid,
+            title,
+            link,
+            content,
+            summary,
+            author,
+            published_at_str
+        ])?;
 
-    Ok((conn.last_insert_rowid(), true))
+    if inserted == 0 {
+        return Ok(UpsertOutcome::SkippedTombstoned);
+    }
+    Ok(UpsertOutcome::Inserted(conn.last_insert_rowid()))
+}
+
+/// Record a tombstone for `(feed_id, guid)`. Idempotent.
+pub fn insert_tombstone(conn: &Connection, feed_id: i64, guid: &str) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO entry_tombstone (feed_id, guid) VALUES (?1, ?2)
+         ON CONFLICT(feed_id, guid) DO NOTHING",
+        params![feed_id, guid],
+    )?;
+    Ok(())
 }
 
 /// Upsert an entry and return the resulting [`Entry`] plus whether it was new.
@@ -555,7 +585,7 @@ pub fn upsert_entry(
     author: Option<&str>,
     published_at: Option<DateTime<Utc>>,
 ) -> AppResult<(Entry, bool)> {
-    let (id, is_new) = upsert_entry_id(
+    let (id, is_new) = match upsert_entry_id(
         conn,
         feed_id,
         guid,
@@ -565,7 +595,15 @@ pub fn upsert_entry(
         summary,
         author,
         published_at,
-    )?;
+    )? {
+        UpsertOutcome::Inserted(id) => (id, true),
+        UpsertOutcome::Updated(id) => (id, false),
+        UpsertOutcome::SkippedTombstoned => {
+            return Err(AppError::Internal(
+                "upsert_entry called for a tombstoned guid".to_string(),
+            ))
+        }
+    };
     let entry = find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)?;
     Ok((entry, is_new))
 }
@@ -1755,11 +1793,11 @@ mod tests {
         let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
 
         // First upsert: new row
-        let (id1, is_new) = upsert_entry_id(
+        let first = upsert_entry_id(
             &conn,
             feed_id,
             "guid-1",
-            Some("T1"),
+            Some("Title"),
             None,
             None,
             None,
@@ -1767,16 +1805,19 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(is_new);
+        let id1 = match first {
+            UpsertOutcome::Inserted(id) => id,
+            o => panic!("expected Inserted, got {o:?}"),
+        };
         let row = find_by_id(&conn, id1).unwrap().unwrap();
-        assert_eq!(row.title.as_deref(), Some("T1"));
+        assert_eq!(row.title.as_deref(), Some("Title"));
 
-        // Second upsert with same guid+feed: update, same id, is_new=false
-        let (id2, is_new) = upsert_entry_id(
+        // Second upsert with same guid+feed: update, same id
+        let second = upsert_entry_id(
             &conn,
             feed_id,
             "guid-1",
-            Some("T2"),
+            Some("Title 2"),
             None,
             None,
             None,
@@ -1784,10 +1825,74 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(!is_new);
-        assert_eq!(id1, id2);
-        let row = find_by_id(&conn, id2).unwrap().unwrap();
-        assert_eq!(row.title.as_deref(), Some("T2"));
+        assert!(matches!(second, UpsertOutcome::Updated(id) if id == id1));
+        let row = find_by_id(&conn, id1).unwrap().unwrap();
+        assert_eq!(row.title.as_deref(), Some("Title 2"));
+    }
+
+    #[test]
+    fn test_upsert_skips_tombstoned_guid() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        insert_tombstone(&conn, feed_id, "ghost").unwrap();
+        let outcome = upsert_entry_id(
+            &conn,
+            feed_id,
+            "ghost",
+            Some("Ghost"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(matches!(outcome, UpsertOutcome::SkippedTombstoned));
+        assert!(find_by_guid_and_feed(&conn, "ghost", feed_id)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn test_upsert_inserts_then_updates() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        let first = upsert_entry_id(
+            &conn,
+            feed_id,
+            "g1",
+            Some("First"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let id = match first {
+            UpsertOutcome::Inserted(id) => id,
+            other => panic!("expected Inserted, got {other:?}"),
+        };
+
+        let second = upsert_entry_id(
+            &conn,
+            feed_id,
+            "g1",
+            Some("Updated"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(matches!(second, UpsertOutcome::Updated(uid) if uid == id));
     }
 
     #[test]
