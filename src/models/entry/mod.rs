@@ -568,6 +568,60 @@ pub fn insert_tombstone(conn: &Connection, feed_id: i64, guid: &str) -> AppResul
     Ok(())
 }
 
+/// Delete up to `batch_size` read, aged, non-starred entries belonging to users
+/// who have opted into retention (`user_settings.retention_read_days > 0`),
+/// recording a tombstone for each. Returns the number of entries deleted.
+///
+/// One batch runs in a single transaction so the tombstone+delete pair is
+/// atomic against a concurrent feed refresh. Victims are gathered first (Rust
+/// side) so the delete targets exact ids rather than re-running a `LIMIT`
+/// without `ORDER BY`. Each user's own threshold is applied via the join.
+pub fn prune_read_retention_batch(conn: &Connection, batch_size: usize) -> AppResult<u64> {
+    let tx = conn.unchecked_transaction()?;
+
+    let victims: Vec<(i64, i64, String)> = {
+        let mut stmt = tx.prepare_cached(
+            r#"
+            SELECT e.id, e.feed_id, e.guid
+            FROM entry e
+            JOIN feed f           ON f.id = e.feed_id
+            JOIN category c       ON c.id = f.category_id
+            JOIN user_settings us ON us.user_id = c.user_id
+            WHERE us.retention_read_days > 0
+              AND e.read_at    IS NOT NULL
+              AND e.starred_at IS NULL
+              AND e.read_at < datetime('now', '-' || us.retention_read_days || ' days')
+            LIMIT ?1
+            "#,
+        )?;
+        let rows = stmt
+            .query_map(params![batch_size as i64], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+
+    if victims.is_empty() {
+        return Ok(0);
+    }
+
+    {
+        let mut ins = tx.prepare_cached(
+            "INSERT INTO entry_tombstone (feed_id, guid) VALUES (?1, ?2)
+             ON CONFLICT(feed_id, guid) DO NOTHING",
+        )?;
+        let mut del = tx.prepare_cached("DELETE FROM entry WHERE id = ?1")?;
+        for (id, feed_id, guid) in &victims {
+            ins.execute(params![feed_id, guid])?;
+            del.execute(params![id])?;
+        }
+    }
+
+    tx.commit()?;
+    Ok(victims.len() as u64)
+}
+
 /// Upsert an entry and return the resulting [`Entry`] plus whether it was new.
 ///
 /// Thin wrapper over [`upsert_entry_id`] for callers that need the full record
@@ -2804,5 +2858,123 @@ mod tests {
         uniq.sort_unstable();
         uniq.dedup();
         assert_eq!(uniq.len(), 5, "no duplicates across pages: {seen:?}");
+    }
+
+    #[test]
+    fn test_prune_respects_threshold_star_and_optin() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "pruneuser");
+        let cat_id = create_test_category(&conn, user_id, "PruneCat");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/prune.xml");
+
+        // Helper: insert a read entry aged `days_old` (and optionally starred).
+        let mk = |guid: &str, days: i64, starred: bool| {
+            upsert_entry_id(
+                &conn,
+                feed_id,
+                guid,
+                Some(guid),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE entry SET read_at = datetime('now', ?2) WHERE guid = ?1 AND feed_id = ?3",
+                rusqlite::params![guid, format!("-{days} days"), feed_id],
+            )
+            .unwrap();
+            if starred {
+                conn.execute(
+                    "UPDATE entry SET starred_at = datetime('now') WHERE guid = ?1 AND feed_id = ?2",
+                    rusqlite::params![guid, feed_id],
+                ).unwrap();
+            }
+        };
+        mk("old", 40, false); // read, 40d, not starred -> victim once enabled
+        mk("oldstar", 40, true); // starred -> never deleted
+        mk("fresh", 1, false); // too recent -> kept
+        upsert_entry_id(
+            &conn,
+            feed_id,
+            "unread",
+            Some("u"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap(); // unread
+
+        // Opt-in disabled (default 0): nothing pruned.
+        assert_eq!(prune_read_retention_batch(&conn, 500).unwrap(), 0);
+
+        // Enable retention at 30 days for the feed's owner.
+        let user_id_check: i64 = conn.query_row(
+            "SELECT c.user_id FROM feed f JOIN category c ON c.id = f.category_id WHERE f.id = ?1",
+            rusqlite::params![feed_id], |r| r.get(0),
+        ).unwrap();
+        crate::models::user_settings::update_retention_read_days(&conn, user_id_check, 30).unwrap();
+
+        // Only "old" is pruned; a tombstone is written for it.
+        assert_eq!(prune_read_retention_batch(&conn, 500).unwrap(), 1);
+        assert!(find_by_guid_and_feed(&conn, "old", feed_id)
+            .unwrap()
+            .is_none());
+        assert!(find_by_guid_and_feed(&conn, "oldstar", feed_id)
+            .unwrap()
+            .is_some());
+        assert!(find_by_guid_and_feed(&conn, "fresh", feed_id)
+            .unwrap()
+            .is_some());
+        assert!(find_by_guid_and_feed(&conn, "unread", feed_id)
+            .unwrap()
+            .is_some());
+
+        // Tombstone present -> a refresh serving "old" again is skipped.
+        let outcome = upsert_entry_id(
+            &conn,
+            feed_id,
+            "old",
+            Some("Old"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(matches!(outcome, UpsertOutcome::SkippedTombstoned));
+
+        // Idempotent: nothing left to prune.
+        assert_eq!(prune_read_retention_batch(&conn, 500).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_prune_batch_size_limits_rows() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "batchuser");
+        let cat_id = create_test_category(&conn, user_id, "BatchCat");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/batch.xml");
+        let user_id_check: i64 = conn.query_row(
+            "SELECT c.user_id FROM feed f JOIN category c ON c.id = f.category_id WHERE f.id = ?1",
+            rusqlite::params![feed_id], |r| r.get(0),
+        ).unwrap();
+        crate::models::user_settings::update_retention_read_days(&conn, user_id_check, 1).unwrap();
+        for i in 0..5 {
+            let g = format!("g{i}");
+            upsert_entry_id(&conn, feed_id, &g, Some(&g), None, None, None, None, None).unwrap();
+            conn.execute(
+                "UPDATE entry SET read_at = datetime('now', '-10 days') WHERE guid = ?1 AND feed_id = ?2",
+                rusqlite::params![g, feed_id],
+            ).unwrap();
+        }
+        assert_eq!(prune_read_retention_batch(&conn, 2).unwrap(), 2);
+        assert_eq!(prune_read_retention_batch(&conn, 2).unwrap(), 2);
+        assert_eq!(prune_read_retention_batch(&conn, 2).unwrap(), 1);
+        assert_eq!(prune_read_retention_batch(&conn, 2).unwrap(), 0);
     }
 }
