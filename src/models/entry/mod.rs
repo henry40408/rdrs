@@ -2527,6 +2527,65 @@ mod tests {
         );
     }
 
+    #[test]
+    fn continuation_page0_unfiltered_uses_sort_ts_index() {
+        // Regression guard for the page-0 index hint added to
+        // `list_by_user_with_continuation`. Without `INDEXED BY idx_entry_sort_ts`
+        // the planner walks category->feed->entry and temp-B-tree-sorts the whole
+        // corpus before LIMIT — a ~350× slowdown on a large instance. The
+        // behavioral walk test (`test_continuation_walk_is_gapless_unfiltered`)
+        // would NOT catch a dropped hint because results are identical. This test
+        // pins the query plan directly.
+        //
+        // Mirrors the same pattern as `list_by_user_no_predicate_uses_sort_ts_index`:
+        // replicate the SQL shape the builder emits for the cursorless case and
+        // assert EXPLAIN QUERY PLAN mentions the index.
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "u");
+        let cat_id = create_test_category(&conn, user_id, "c");
+        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+        for i in 1..=3 {
+            conn.execute(
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    feed_id,
+                    format!("g{}", i),
+                    format!("2026-05-0{} 10:00:00", i)
+                ],
+            )
+            .unwrap();
+        }
+
+        // Hand-built copy of the SQL `list_by_user_with_continuation` emits for:
+        //   filter = EntryFilter::default(), sort_order = PublishedAt,
+        //   continuation = None, oldest_first = false, ot = None, nt = None.
+        // The entry hint resolves to " INDEXED BY idx_entry_sort_ts" because
+        // `is_no_entry_side_predicate` is true and sort_order is PublishedAt.
+        // The ORDER BY includes the tie-breaker `e.id DESC` that the continuation
+        // builder always appends (unlike list_by_user which omits it).
+        let sql = r#"
+            SELECT e.id
+            FROM entry e INDEXED BY idx_entry_sort_ts
+            INNER JOIN feed f ON e.feed_id = f.id
+            INNER JOIN category c ON f.category_id = c.id
+            LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
+            WHERE c.user_id = ?1
+            ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
+            LIMIT ?2
+        "#;
+        let plan = explain_plan_for(&conn, sql, &[&user_id, &51i64]);
+        assert!(
+            plan.contains("idx_entry_sort_ts"),
+            "plan missing sort_ts index: {}",
+            plan
+        );
+        assert!(
+            !plan.contains("USE TEMP B-TREE FOR ORDER BY"),
+            "plan must not temp-B-tree-sort: {}",
+            plan
+        );
+    }
+
     /// Locks the query plan for the snapshot-widened unread neighbours query.
     /// Without the `idx_entry_sort_ts` hint + entry-first CROSS JOIN that
     /// `find_neighbors` emits for unread filters, the planner answers the
