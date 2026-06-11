@@ -1707,22 +1707,26 @@ summary {
         column-gap: var(--space-2);
     }
 
-    /* On narrow viewports the fixed hamburger overlays the top-left of
-       <main>. Keep the banner background edge-to-edge but push its
-       content right so the icon + message clear the button. (4rem
-       comfortably clears `.sidebar-toggle` at `left: space-4` plus its
-       width.) */
-    .main-content > .banner-stack .banner {
-        padding-inline-start: var(--space-16);
+    /* On narrow viewports the fixed hamburger floats over the top-left
+       of <main>. Start the banner stack below it — with the same
+       --space-4 gap under the button as above/left of it — so banners
+       stay full-width instead of indenting their content to dodge the
+       button (which read as the button punching a hole in the banner).
+       Clearance = button top offset + button height + gap:
+       --space-4 + (--font-xl + 2 × --space-2 + 2px border) + --space-4
+       = 16 + 38 + 16 = 70px. `line-height: 1` on .sidebar-toggle makes
+       --font-xl the content height. */
+    .main-content > .banner-stack:not(:empty) {
+        padding-top: calc(2 * var(--space-4) + var(--font-xl) + 2 * var(--space-2) + 2px);
     }
 
-    /* When the flash is visible, trim the top padding that normally
-       reserves space for the floating hamburger by roughly the
-       single-banner height (≈ 1 line of `--font-sm` + 16px padding ≈
-       36px). The remainder still clears the hamburger when it sticks
-       out below a short banner stack, and — most importantly — keeps
-       the heading at roughly the same Y position whether the banner
-       is shown or dismissed (no visible jump on dismiss). */
+    /* While a banner is visible, the banner-stack's own padding-top
+       (above) already clears the floating hamburger, so the header
+       below no longer needs its --space-16 clearance — trim it to
+       normal section spacing. The heading sits lower while a banner
+       is shown and moves up on dismiss; that's inherent to banners
+       now occupying real vertical space below the button instead of
+       rendering underneath it. */
     body:has(.main-content > .banner-stack:not(:empty)) .list-pane-header,
     body:has(.main-content > .banner-stack:not(:empty)) .page-content {
         padding-top: var(--space-6);

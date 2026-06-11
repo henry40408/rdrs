@@ -53,6 +53,13 @@ Feature: Responsive layout
     When I open the categories page
     Then the categories table is shown as cards
 
+  @mobile
+  Scenario: Flash banner clears the hamburger on mobile
+    Given I am viewing on a mobile screen
+    When I open the inbox
+    And a flash banner is shown
+    Then the flash banner sits below the hamburger
+
   @tablet
   Scenario: Sidebar is a drawer on tablet
     Given I am viewing on a tablet screen

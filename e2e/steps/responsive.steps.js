@@ -88,3 +88,22 @@ Then("the reading pane is visible on mobile", async ({ page }) => {
 When("I tap the reading-pane back button", async ({ page }) => {
   await page.getByTestId("reading-pane-back").click();
 });
+
+When("a flash banner is shown", async ({ page }) => {
+  // Drive the page-level <rdrs-flash> API directly — same entry point the
+  // app's own JS uses (window.flash is installed by rdrs-flash.js).
+  await page.evaluate(() =>
+    window.flash.show("success", "Marked older than 1 week entries as read.")
+  );
+  await expect(page.locator(".banner")).toBeVisible();
+});
+
+Then("the flash banner sits below the hamburger", async ({ page }) => {
+  const toggle = await page.locator(".sidebar-toggle").boundingBox();
+  const banner = await page.locator(".banner").first().boundingBox();
+  // Below the button (no overlap)…
+  expect(banner.y).toBeGreaterThanOrEqual(toggle.y + toggle.height);
+  // …and full-width: the banner's left edge reaches past the floating
+  // button's left edge instead of being indented to clear it.
+  expect(banner.x).toBeLessThan(toggle.x);
+});
