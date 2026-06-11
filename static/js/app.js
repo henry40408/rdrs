@@ -604,7 +604,7 @@ const KB_SHORTCUTS = [
     { group: 'Entry actions', key: 'v', desc: 'Open original in new tab' },
     { group: 'Entry actions', key: 'd', desc: 'Fetch full content (toggle with original)' },
     { group: 'Entry actions', key: 's', desc: 'Save (Linkding)' },
-    { group: 'Entry actions', key: 'a', desc: 'Summarize (Kagi)' },
+    { group: 'Entry actions', key: 'a', desc: 'Summarize / dismiss summary (Kagi)' },
     { group: 'Batch read', key: 'A', desc: 'Mark loaded entries as read (asks to confirm)' },
     { group: 'Go to', key: 'g u', desc: 'Unread inbox' },
     { group: 'Go to', key: 'g a', desc: 'All entries' },
@@ -613,9 +613,9 @@ const KB_SHORTCUTS = [
     { group: 'Go to', key: 'g m', desc: 'Summarized' },
     { group: 'Go to', key: 'g f', desc: 'Selected entry’s feed' },
     { group: 'Go to', key: 'g c', desc: 'Selected entry’s category (parent category on a feed page)' },
+    { group: 'Go to', key: '[ / ]', desc: 'Previous / next category' },
+    { group: 'Go to', key: '{ / }', desc: 'Previous / next category with unread' },
     { group: 'Feed / category pages', key: '1-4', desc: 'Status filter: All / Unread / Read / Starred' },
-    { group: 'Feed / category pages', key: '[ / ]', desc: 'Previous / next category' },
-    { group: 'Feed / category pages', key: '{ / }', desc: 'Previous / next category with unread' },
     { group: 'Other', key: '/', desc: 'Focus search (on the search page)' },
     { group: 'Other', key: '?', desc: 'Toggle this help' },
 ];
@@ -638,9 +638,34 @@ const GO_TIMEOUT_MS = 2000;
 let goPending = false;
 let goTimer = null;
 
+// Which-key style hint shown at the bottom-right while the `g` namespace
+// is pending. Lifecycle is tied to goPending: shown when `g` arms it,
+// removed when the sequence completes, is cancelled, or times out.
+const GO_HINT_ITEMS = [
+    ['u', 'Unread'], ['a', 'All'], ['r', 'Read'], ['s', 'Starred'],
+    ['m', 'Summarized'], ['f', 'Feed'], ['c', 'Category'],
+];
+
+function showGoHint() {
+    if (document.querySelector('.kbd-hint')) return;
+    const hint = document.createElement('div');
+    hint.className = 'kbd-hint';
+    const items = GO_HINT_ITEMS
+        .map(([k, label]) => `<span><kbd>${k}</kbd> ${label}</span>`)
+        .join('');
+    hint.innerHTML = `<span class="kbd-hint-prefix"><kbd>g</kbd> go to…</span>`
+        + `<div class="kbd-hint-items">${items}</div>`;
+    document.body.appendChild(hint);
+}
+
+function hideGoHint() {
+    document.querySelector('.kbd-hint')?.remove();
+}
+
 function clearGoPending() {
     goPending = false;
     if (goTimer) { clearTimeout(goTimer); goTimer = null; }
+    hideGoHint();
 }
 
 function goToEntryRelative(key) {
@@ -680,6 +705,7 @@ function installGoNavigation() {
         if (e.key === 'g') {
             e.preventDefault();
             goPending = true;
+            showGoHint();
             goTimer = setTimeout(clearGoPending, GO_TIMEOUT_MS);
         }
     }, true);
@@ -870,9 +896,15 @@ function installEntriesKeyboard() {
                 break;
             }
             case 'a': {
-                // Summarize via Kagi. Form is rendered only when Kagi is
-                // configured (or a summary is in-flight, in which case
-                // the button is disabled and paneForm() returns null).
+                // Summarize via Kagi — or, when a summary is already on
+                // screen, dismiss it. The dismiss button only renders
+                // inside a mounted .summary-box, so its presence is the
+                // "summary is showing" signal; clicking it reuses the
+                // DELETE + clear flow in installSummaryActions().
+                const pane = document.getElementById('reading-pane');
+                if (!pane || pane.classList.contains('reading-pane-empty')) return;
+                const dismiss = pane.querySelector('[data-summary-dismiss]');
+                if (dismiss) { e.preventDefault(); dismiss.click(); break; }
                 const form = paneForm('/summarize');
                 if (!form) return;
                 e.preventDefault();
@@ -883,37 +915,39 @@ function installEntriesKeyboard() {
             case ']':
             case '{':
             case '}': {
-                // Prev/Next category nav — only on /categories/{id}/entries
-                // where "current category" is unambiguous. `[`/`]` walk the
-                // full sidebar list (with wrap); `Shift+[`/`Shift+]` (which
-                // come through as `{`/`}` on US layout) skip categories with
-                // zero unread. Decide shift-vs-not from the resulting
-                // character (`{`/`}`) rather than `e.shiftKey` so test
-                // harnesses that synthesize the character without the
-                // modifier still hit the unread-skipping branch.
-                const m = window.location.pathname.match(/^\/categories\/(\d+)\/entries/);
-                if (!m) return;
+                // Category navigation. Starting point: the current category
+                // on /categories/{id}/entries; the feed's parent category on
+                // /feeds/{id}/entries (the sidebar exposes it as
+                // `active-category-id`); on every other list page (inbox,
+                // /entries*) `]`/`}` enter at the first (unread) category and
+                // `[`/`{` at the last. Wrapping always stays inside the
+                // category list — it never cycles back out to Unread/All.
                 const sb = document.querySelector('rdrs-sidebar');
                 const cats = sb?._data?.categories || [];
                 if (cats.length === 0) return;
-                const currentId = parseInt(m[1], 10);
-                const idx = cats.findIndex(c => c.id === currentId);
-                if (idx === -1) return;
+                const catPage = window.location.pathname.match(/^\/categories\/(\d+)\/entries/);
+                const parentCatId = parseInt(sb?.getAttribute('active-category-id') || '0', 10);
+                const currentId = catPage
+                    ? parseInt(catPage[1], 10)
+                    : (window.location.pathname.startsWith('/feeds/') && parentCatId) ? parentCatId
+                    : null;
                 const len = cats.length;
                 const forward = e.key === ']' || e.key === '}';
                 const step = forward ? 1 : -1;
                 const unreadOnly = e.key === '{' || e.key === '}';
+                // Virtual start index when there is no current category:
+                // forward starts just before the first item, backward just
+                // after the last, so the first probe lands on cats[0] /
+                // cats[len - 1]. An unknown current id degrades the same way.
+                let idx = currentId != null ? cats.findIndex(c => c.id === currentId) : -1;
+                if (idx === -1) idx = forward ? -1 : len;
                 let target = null;
-                if (unreadOnly) {
-                    for (let i = 1; i <= len; i++) {
-                        const probe = cats[((idx + i * step) % len + len) % len];
-                        if (probe.unread_count > 0 && probe.id !== currentId) {
-                            target = probe;
-                            break;
-                        }
-                    }
-                } else if (len > 1) {
-                    target = cats[((idx + step) % len + len) % len];
+                for (let i = 1; i <= len; i++) {
+                    const probe = cats[((idx + i * step) % len + len) % len];
+                    if (probe.id === currentId) continue;
+                    if (unreadOnly && probe.unread_count <= 0) continue;
+                    target = probe;
+                    break;
                 }
                 if (!target) return;
                 e.preventDefault();

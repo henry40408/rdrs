@@ -181,3 +181,26 @@ Feature: Reading entries
     And the delayed fragment response has settled
     Then the reading pane shows the title "Test Entry 2"
     And the URL has the ?entry= parameter for "Test Entry 2"
+
+  Scenario: Esc in the shortcut help closes only the help
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    And I press the "?" key
+    And I press the "Escape" key without refocusing
+    Then the keyboard shortcut help overlay is hidden
+    And the reading pane shows the title "Test Entry 1"
+
+  Scenario: Help overlay descriptions align across rows
+    When I open the inbox
+    And I press the "?" key
+    Then the help overlay descriptions are aligned
+
+  Scenario: All Entries stays highlighted across the /entries pages
+    When I open the read entries page
+    Then the sidebar highlights All Entries
+    When I open the summarized entries page
+    Then the sidebar highlights All Entries
+    When I open the all entries page
+    Then the sidebar highlights All Entries
+    When I open the starred entries page
+    Then the sidebar highlights Starred

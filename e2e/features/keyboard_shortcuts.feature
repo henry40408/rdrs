@@ -94,3 +94,10 @@ Feature: Keyboard shortcuts
     When I open the inbox
     And I press the "j" key
     Then pressing the "v" key opens a new tab at "/entry/1"
+
+  Scenario: Pressing g shows the go-to hint until the sequence completes
+    When I open the inbox
+    And I press the "g" key
+    Then the go-to hint is visible
+    When I press the "u" key
+    Then the go-to hint is gone

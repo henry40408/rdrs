@@ -91,7 +91,7 @@ class RdrsKbHelp extends HTMLElement {
                 }
                 .shortcut-key {
                     flex-shrink: 0;
-                    min-width: 7rem;
+                    width: 7rem;
                     text-align: right;
                 }
                 .shortcut-key kbd {
@@ -123,7 +123,7 @@ class RdrsKbHelp extends HTMLElement {
                         columns: 1;
                     }
                     .shortcut-key {
-                        min-width: 7rem;
+                        width: 7rem;
                     }
                 }
             </style>
@@ -141,7 +141,14 @@ class RdrsKbHelp extends HTMLElement {
             if (e.target === this) this.hide();
         });
         this.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') this.hide();
+            if (e.key !== 'Escape') return;
+            // Stop the event here: it would otherwise bubble on to the
+            // document-level entries handler, whose `help.isVisible` guard
+            // re-checks AFTER hide() has flipped it — and then closes the
+            // reading pane too.
+            e.preventDefault();
+            e.stopPropagation();
+            this.hide();
         });
     }
 

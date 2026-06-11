@@ -182,7 +182,7 @@ class RdrsSidebar extends HTMLElement {
                 <span class="sidebar-item-icon">&#x2B50;&#xFE0F;</span>
                 <span>Starred</span>
             </a>
-            <a href="/entries" class="sidebar-item${isActive('entries')}" data-testid="nav-entries">
+            <a href="/entries" class="sidebar-item${['all', 'read', 'summarized', 'entries'].includes(active) ? ' active' : ''}" data-testid="nav-entries">
                 <span class="sidebar-item-icon">&#x1F4F0;&#xFE0F;</span>
                 <span>All Entries</span>
             </a>
