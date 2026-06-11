@@ -204,6 +204,46 @@ field to `UserSettingsResponse` (`:74`).
 `entries_per_page` — label e.g. *"Delete read articles older than N days
 (0 = never)"*, min 0. SSR + vanilla JS, no new build tooling.
 
+### E. Unread-list ordered index (found while benchmarking this work)
+
+Benchmarking the retention speedup (below) surfaced a pre-existing, unrelated
+hot-path gap, **folded in here because the benchmark that found it lives in this
+work**: the **unread** list page — often the default home view — runs
+`USE TEMP B-TREE FOR ORDER BY` over *all* of a user's unread entries before
+`LIMIT`, ~143–162 ms on a 1M-entry instance. The read and starred list pages do
+not: `published_sort_entry_hint` (`src/models/entry/filters.rs:26`) already pins
+`idx_entry_read_sort` / `idx_entry_starred_sort` for those filters, but has **no
+unread branch**, so the unread list gets no ordered index.
+
+Fix (symmetric with the existing read/starred handling):
+
+1. Partial index mirroring `idx_entry_read_sort`:
+   ```sql
+   CREATE INDEX IF NOT EXISTS idx_entry_unread_sort
+       ON entry(COALESCE(published_at, created_at)) WHERE read_at IS NULL;
+   ```
+2. Extend `published_sort_entry_hint` to emit ` INDEXED BY idx_entry_unread_sort`
+   for the **strict** unread case only (`unread_only && read_after.is_none()`):
+
+   ```rust
+   } else if filter.unread_only && filter.read_after.is_none() {
+       " INDEXED BY idx_entry_unread_sort"
+   ```
+
+   The `INDEXED BY` hint is **required** — the index alone is not chosen; the
+   planner sticks to `idx_entry_read_at` + temp sort (the same documented bias
+   that forces `INDEXED BY idx_entry_unread_feed` elsewhere). The snapshot case
+   (`read_after.is_some()`) is excluded: its `(read_at IS NULL OR read_at >= ?)`
+   predicate is not covered by a `WHERE read_at IS NULL` partial index, so it
+   keeps its current plan (correctness over speed). The hint is applied only on
+   page-0 (cursorless); at depth the continuation predicate drives the sort.
+
+Effect: page-0 unread list goes from a whole-inbox temp sort to an ordered range
+scan that stops at `LIMIT` — **143 ms → 0.03 ms** at 1M entries (benchmarked).
+A regression check on the unhinted unread queries (e.g. `count_unread_by_user`)
+via `EXPLAIN QUERY PLAN` is part of the task — adding the index must not worsen
+their plans.
+
 ## Future expansion (not built, design-compatible)
 
 - **Unread retention:** add `retention_unread_days` column + form field; the
@@ -259,6 +299,36 @@ degrade: deleted rows leave the index front, so each batch stays ~0.75 ms.
 VACUUM reclaims the freed ~60% and scales linearly at **~650 MB/s** (stall ≈
 `db_size_MB / 650`). `optimize` and the checkpoint are effectively free. The
 20% gate means VACUUM only runs after a large drain, not on routine ticks.
+
+**D. Retention's effect on common home-page queries** (BEFORE: 1M entries, 85%
+old read; AFTER: 30-day retention applied → 174k entries, VACUUMed 1.5 GB →
+256 MB; warm cache, 300 iterations):
+
+| query | BEFORE | AFTER | speedup |
+| --- | --- | --- | --- |
+| keyset list page-0 (all / read) | 0.033 ms | 0.033 ms | **1.0×** |
+| `count_by_user` (all) | 19.3 ms | 3.0 ms | 6.5× |
+| unread list page-0 | 162 ms | 88 ms | 1.8× |
+| `count_unread_by_user` | 139 ms | 68 ms | 2.1× |
+| sidebar unread-by-category | 156 ms | 126 ms | 1.2× |
+
+Honest read: the **dominant query — first-page list load — does not speed up**
+(keyset + sort indexes are already table-size-independent). Speedups split into
+(a) genuine row-count reduction (only full-corpus `count`, 6.5×) and (b) VACUUM
+file compaction improving locality for the unread queries (1.2–2.1×) — the
+unread rows are *never deleted* (count identical before/after), so that gain is
+the maintenance VACUUM, not retention's delete. Net: retention is not a
+page-load speedup; section E is the real query win.
+
+**E. Unread-list page-0** (1M entries, ~100k unread):
+
+| plan | per query |
+| --- | --- |
+| current (`idx_entry_read_at` + `USE TEMP B-TREE`) | ~143 ms |
+| + `idx_entry_unread_sort` **with** `INDEXED BY` | ~0.03 ms |
+
+The index alone is not chosen (planner bias to `idx_entry_read_at`); the
+`INDEXED BY` hint is required. >1000× on the default home view at scale.
 
 ## Testing plan
 

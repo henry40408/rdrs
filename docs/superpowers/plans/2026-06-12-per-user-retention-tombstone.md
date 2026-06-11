@@ -4,7 +4,7 @@
 
 **Goal:** Add an opt-in, per-user retention policy that deletes old *read* entries, backed by an `entry_tombstone` table that prevents deleted entries from being re-imported as unread on the next feed refresh, plus a gated-VACUUM maintenance step so the database file actually shrinks.
 
-**Architecture:** A new `entry_tombstone(feed_id, guid, created_at)` table records deletions. The feed-sync insert path gains an atomic `WHERE NOT EXISTS (entry_tombstone)` guard. A new background worker (`entry_retention`) periodically prunes read+aged+non-starred entries per each user's `user_settings.retention_read_days` threshold (batches of 500, tombstone+delete per batch in one transaction), then runs maintenance (`PRAGMA optimize`, a `VACUUM` gated at ≥20% freelist, `wal_checkpoint(TRUNCATE)`). Opt-in lives in the existing user-settings UI; `0` = disabled (default).
+**Architecture:** A new `entry_tombstone(feed_id, guid, created_at)` table records deletions. The feed-sync insert path gains an atomic `WHERE NOT EXISTS (entry_tombstone)` guard. A new background worker (`entry_retention`) periodically prunes read+aged+non-starred entries per each user's `user_settings.retention_read_days` threshold (batches of 500, tombstone+delete per batch in one transaction), then runs maintenance (`PRAGMA optimize`, a `VACUUM` gated at ≥20% freelist, `wal_checkpoint(TRUNCATE)`). Opt-in lives in the existing user-settings UI; `0` = disabled (default). Also folds in an unrelated optimization found while benchmarking this work: an ordered `idx_entry_unread_sort` partial index + `INDEXED BY` hint that takes the unread list page from a whole-inbox temp sort to a range scan (143 ms → 0.03 ms at 1M entries).
 
 **Tech Stack:** Rust, rusqlite (raw SQL, `prepare_cached`), SQLite (WAL), tokio background worker + `CancellationToken`, Askama SSR template, playwright-bdd.
 
@@ -33,6 +33,7 @@
 - `src/handlers/user.rs` — accept `retention_read_days` in `UpdatePreferencesForm`.
 - `templates/user_settings.html` — number input in the preferences form.
 - `e2e/` — a BDD scenario for the new settings field.
+- `src/models/entry/filters.rs` — `published_sort_entry_hint` gains an unread branch (`INDEXED BY idx_entry_unread_sort`). The index itself is added in Task 1's schema batch. (Unread-list planner optimization, found while benchmarking.)
 
 ---
 
@@ -93,6 +94,18 @@ And add the tombstone table near the `entry` indexes (anywhere inside the batch)
         ) WITHOUT ROWID;
 ```
 
+Also add the unread-list ordered index alongside the other `entry` indexes (used by Task 10; mirrors the existing `idx_entry_read_sort`):
+
+```sql
+        -- Ordered partial index over unread entries for the unread list page,
+        -- mirroring idx_entry_read_sort. Without it the unread list does a
+        -- whole-inbox temp-B-tree sort (~143ms at 1M entries). Used via an
+        -- INDEXED BY hint in published_sort_entry_hint (Task 10).
+        CREATE INDEX IF NOT EXISTS idx_entry_unread_sort
+            ON entry(COALESCE(published_at, created_at))
+            WHERE read_at IS NULL;
+```
+
 - [ ] **Step 4: Add the v8 migration block and bump `LATEST_VERSION`**
 
 Replace the `if version < 7 { ... }` ... `const LATEST_VERSION: i64 = 7;` tail with an added block and bumped constant:
@@ -100,8 +113,9 @@ Replace the `if version < 7 { ... }` ... `const LATEST_VERSION: i64 = 7;` tail w
 ```rust
     if version < 8 {
         // Add the per-user retention threshold to existing databases. The
-        // entry_tombstone table is created via CREATE TABLE IF NOT EXISTS in the
-        // main batch above (picked up on restart). `let _ =` swallows the
+        // entry_tombstone table and idx_entry_unread_sort index are created via
+        // CREATE ... IF NOT EXISTS in the main batch above (picked up on
+        // restart, like the v5/v6/v7 indexes). `let _ =` swallows the
         // duplicate-column error on fresh DBs where the main batch already added
         // the column (mirrors the v1/v2 legacy ALTERs).
         let _ = conn.execute(
@@ -1097,7 +1111,92 @@ git commit -m "test(e2e): retention days settings field round-trips"
 
 ---
 
-### Task 10: Full verification + docs
+### Task 10: Unread-list ordered index hint (planner optimization)
+
+Discovered while benchmarking this work: the unread list page does a whole-inbox
+`USE TEMP B-TREE FOR ORDER BY` (~143 ms at 1M entries) because, unlike the read
+and starred filters, `published_sort_entry_hint` has no unread branch. The index
+itself was already added in Task 1; this task wires the `INDEXED BY` hint so the
+planner actually uses it (the index alone is not chosen). Per project rules,
+capture a before/after benchmark for this perf change.
+
+**Files:**
+- Modify: `src/models/entry/filters.rs` (`published_sort_entry_hint` ~`:26`, tests)
+
+- [ ] **Step 1: Write a failing planner test**
+
+In `src/models/entry/filters.rs` tests (follow the existing planner-shape tests in `src/models/entry/mod.rs:2441-2524` that assert `EXPLAIN QUERY PLAN` contains an index name — mirror that style; build a small in-memory DB via `init_db`, insert a couple of unread entries, and assert the plan for the strict-unread published-sort page-0 query):
+
+```rust
+    #[test]
+    fn test_unread_hint_uses_unread_sort_index() {
+        let filter = EntryFilter { unread_only: true, read_after: None, ..Default::default() };
+        assert_eq!(published_sort_entry_hint(&filter), " INDEXED BY idx_entry_unread_sort");
+    }
+
+    #[test]
+    fn test_unread_snapshot_gets_no_unread_sort_hint() {
+        // Snapshot OR predicate is not covered by a WHERE read_at IS NULL index.
+        let filter = EntryFilter {
+            unread_only: true,
+            read_after: Some("2026-01-01 00:00:00".to_string()),
+            ..Default::default()
+        };
+        assert_ne!(published_sort_entry_hint(&filter), " INDEXED BY idx_entry_unread_sort");
+    }
+```
+
+(If `EntryFilter` has no `Default`, construct it explicitly with all fields — copy the field list from `src/models/entry/mod.rs:59-74`.)
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `source /tmp/rdrs-env.sh && cargo nextest run -p rdrs filters`
+Expected: FAIL — hint returns `""` for unread.
+
+- [ ] **Step 3: Add the unread branch**
+
+In `published_sort_entry_hint` (`src/models/entry/filters.rs:26`), add the branch between `read_only` and `is_no_entry_side_predicate` (order matters — strict unread before the no-predicate fallback):
+
+```rust
+pub(super) fn published_sort_entry_hint(filter: &EntryFilter) -> &'static str {
+    if filter.starred_only {
+        " INDEXED BY idx_entry_starred_sort"
+    } else if filter.read_only {
+        " INDEXED BY idx_entry_read_sort"
+    } else if filter.unread_only && filter.read_after.is_none() {
+        // Strict unread only. The snapshot case (read_after set) widens the
+        // predicate to `(read_at IS NULL OR read_at >= ?)`, which a
+        // `WHERE read_at IS NULL` partial index does not cover — leave it to
+        // its existing plan.
+        " INDEXED BY idx_entry_unread_sort"
+    } else if is_no_entry_side_predicate(filter) {
+        " INDEXED BY idx_entry_sort_ts"
+    } else {
+        ""
+    }
+}
+```
+
+- [ ] **Step 4: Run to verify pass**
+
+Run: `source /tmp/rdrs-env.sh && cargo nextest run -p rdrs filters entry::`
+Expected: PASS (and the existing `find_neighbors` / list planner tests still pass — `find_neighbors` pins its own indexes explicitly and is unaffected).
+
+- [ ] **Step 5: Benchmark gate (before/after)**
+
+Confirm the win and check for regressions. With the in-memory or a seeded file DB, capture `EXPLAIN QUERY PLAN` for the strict-unread page-0 list (must now show `SCAN ... USING INDEX idx_entry_unread_sort`, not `USE TEMP B-TREE FOR ORDER BY`), and verify the unhinted `count_unread_by_user` plan did not regress. Reference numbers from the design benchmark: **143 ms → 0.03 ms** at 1M entries. (Reuse `/tmp/query_speedup_bench.sh`-style probing if a large dataset is wanted; record the before/after in the commit message per project perf-change rules.)
+
+- [ ] **Step 6: Commit**
+
+```bash
+cd /home/nixos/Develop/claude/rdrs && cargo fmt
+git add src/models/entry/filters.rs
+git commit -m "perf(entry): ordered unread index hint, unread list 143ms->0.03ms"
+```
+
+---
+
+### Task 11: Full verification + docs
 
 **Files:**
 - Modify: `README.md` (document the per-user retention setting, if README documents user settings — check first; do not add a new doc file)
