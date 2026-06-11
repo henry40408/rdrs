@@ -158,6 +158,28 @@ SQL pass covers all users — no per-user loop.
 Started in `src/main.rs` alongside `start_cleanup_worker`, and added to the
 graceful-shutdown handle list (`src/main.rs:115`).
 
+**Maintenance after the prune (reclaim disk).** Deleting rows does not shrink
+the `.sqlite3` file — freed pages go to the freelist and are reused, but never
+returned to the OS (rdrs sets no `auto_vacuum`; today it only runs
+`wal_checkpoint(TRUNCATE)` at shutdown, `src/db/pool.rs:128`). So after the
+batch loop finishes, the worker runs a maintenance step mirroring the
+**noadd** pattern (`noadd/src/db.rs:559` `run_maintenance`), on the write
+connection, **outside any transaction** (VACUUM cannot run in one):
+
+1. `PRAGMA optimize;` — refresh planner stats (≈0 ms).
+2. **Gated** `VACUUM;` — only when `freelist_count / page_count >= 0.20`
+   (reuse noadd's `VACUUM_FREELIST_RATIO = 0.20`). A normal tick deletes a
+   small fraction and stays under the gate, so VACUUM rarely fires; it triggers
+   after a big drain (first enable / long backlog).
+3. `PRAGMA wal_checkpoint(TRUNCATE);` — truncate the WAL a large prune or the
+   VACUUM can otherwise inflate (also fixes today's "WAL only truncated at
+   shutdown").
+
+Cost (benchmarked below): `optimize` and the checkpoint are ≈0 ms; VACUUM is a
+full-file rewrite holding an exclusive lock for ~`db_size_MB / 650` seconds
+(~0.5 s per 350 MB) and needs ~`db_size` free temp disk. The 20% gate keeps
+this rare; the stall is acceptable for a background worker.
+
 ### D. Opt-in: per-user setting + UI (default off)
 
 Retention is **opt-in, per user**, configured in the existing settings UI.
@@ -225,6 +247,18 @@ Plan drives from `user_settings`, then range-scans `idx_entry_read_at`
 partial index gave no measurable improvement and is not added. Disabled installs
 pay nothing per tick. First full drain (~597k victims ≈ 1194 batches) does not
 degrade: deleted rows leave the index front, so each batch stays ~0.75 ms.
+
+**C. Maintenance step** (DB at ~1 KB content/entry, after a 60% prune →
+~60% freelist, so the 20% gate fires):
+
+| entries | DB before | `optimize` | `VACUUM` | DB after | `wal_checkpoint(TRUNCATE)` |
+| --- | --- | --- | --- | --- | --- |
+| 250k | 347 MB | 0.00s | 0.56s | 138 MB | 0.00s |
+| 1M | 1385 MB | 0.01s | 2.10s | 551 MB | 0.00s |
+
+VACUUM reclaims the freed ~60% and scales linearly at **~650 MB/s** (stall ≈
+`db_size_MB / 650`). `optimize` and the checkpoint are effectively free. The
+20% gate means VACUUM only runs after a large drain, not on routine ticks.
 
 ## Testing plan
 
