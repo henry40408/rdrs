@@ -195,7 +195,9 @@ pub async fn read_chrome_data(
             let theme = user_settings::get_theme(conn, user_id).unwrap_or(None);
             let cats = category::list_by_user(conn, user_id).unwrap_or_default();
             let unread_by_cat = entry::count_unread_by_category(conn, user_id).unwrap_or_default();
-            let total_unread = entry::count_unread_by_user(conn, user_id).unwrap_or(0);
+            // Total unread is the sum of the per-category map already fetched —
+            // avoids a second full scan via count_unread_by_user.
+            let total_unread: i64 = unread_by_cat.values().sum();
             let has_feeds = crate::models::feed::count_by_user(conn, user_id).unwrap_or(0) > 0;
             let categories: Vec<SidebarCategoryDto> = cats
                 .into_iter()

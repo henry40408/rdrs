@@ -289,6 +289,13 @@ pub async fn refresh_feed(
             let mut updated_entries = 0i64;
             let mut latest_entry_date: Option<chrono::DateTime<Utc>> = None;
 
+            // Wrap the whole feed's upserts plus the fetch-result update in one
+            // transaction: collapses N per-entry commits into a single commit
+            // and makes each sync atomic (the read connection never observes a
+            // half-applied feed). `unchecked_transaction` because the actor
+            // closure only receives `&Connection`.
+            let tx = conn.unchecked_transaction()?;
+
             for item in parsed_feed.entries {
                 let guid = item.id;
 
@@ -321,8 +328,8 @@ pub async fn refresh_feed(
                     });
                 }
 
-                let (_, is_new) = entry::upsert_entry(
-                    conn,
+                let (_, is_new) = entry::upsert_entry_id(
+                    &tx,
                     feed_id,
                     &guid,
                     title.as_deref(),
@@ -346,7 +353,7 @@ pub async fn refresh_feed(
                 effective_feed_updated_at(feed_timestamp, latest_entry_date, http_last_modified);
 
             feed::update_fetch_result(
-                conn,
+                &tx,
                 feed_id,
                 Utc::now(),
                 None,
@@ -354,6 +361,8 @@ pub async fn refresh_feed(
                 new_last_modified.as_deref(),
                 effective_updated_at,
             )?;
+
+            tx.commit()?;
 
             Ok::<_, AppError>((new_entries, updated_entries))
         })

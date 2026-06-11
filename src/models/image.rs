@@ -85,6 +85,43 @@ pub fn exists(conn: &Connection, entity_type: &str, entity_id: i64) -> AppResult
     Ok(count > 0)
 }
 
+/// Return the subset of `entity_ids` that have an image of `entity_type`, as a
+/// set, in a single query. Replaces per-entity `exists` calls in list views
+/// (e.g. the Feeds page / GReader subscription list) that would otherwise issue
+/// one query per row. Empty input is a no-op returning an empty set.
+pub fn existing_ids(
+    conn: &Connection,
+    entity_type: &str,
+    entity_ids: &[i64],
+) -> AppResult<std::collections::HashSet<i64>> {
+    if entity_ids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+
+    // Placeholders ?2, ?3, ... ; ?1 is entity_type.
+    let placeholders: Vec<String> = entity_ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect();
+    let sql = format!(
+        "SELECT entity_id FROM image WHERE entity_type = ?1 AND entity_id IN ({})",
+        placeholders.join(", ")
+    );
+
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(entity_type.to_string())];
+    for id in entity_ids {
+        params_vec.push(Box::new(*id));
+    }
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+    let mut stmt = conn.prepare(&sql)?;
+    let ids = stmt
+        .query_map(params_refs.as_slice(), |row| row.get::<_, i64>(0))?
+        .collect::<Result<std::collections::HashSet<i64>, _>>()?;
+    Ok(ids)
+}
+
 pub fn needs_refresh(
     conn: &Connection,
     entity_type: &str,
@@ -183,6 +220,26 @@ mod tests {
         upsert(&conn, ENTITY_FEED, 1, &[1, 2, 3], "image/png", None).unwrap();
 
         assert!(exists(&conn, ENTITY_FEED, 1).unwrap());
+    }
+
+    #[test]
+    fn test_existing_ids() {
+        let conn = setup_db();
+
+        // Empty input is a no-op.
+        assert!(existing_ids(&conn, ENTITY_FEED, &[]).unwrap().is_empty());
+
+        upsert(&conn, ENTITY_FEED, 1, &[1], "image/png", None).unwrap();
+        upsert(&conn, ENTITY_FEED, 3, &[3], "image/png", None).unwrap();
+
+        let set = existing_ids(&conn, ENTITY_FEED, &[1, 2, 3, 4]).unwrap();
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&1));
+        assert!(set.contains(&3));
+        assert!(!set.contains(&2));
+
+        // entity_type is scoped — a different type returns nothing.
+        assert!(existing_ids(&conn, "entry", &[1, 3]).unwrap().is_empty());
     }
 
     #[test]

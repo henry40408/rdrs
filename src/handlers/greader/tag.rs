@@ -125,41 +125,43 @@ pub async fn edit_tag(
                 return Ok(());
             }
 
-            // Other operations: process individually (no bulk functions available)
-            for entry_id in &entry_ids {
-                // Verify ownership
-                let ewf =
-                    entry::find_by_id_with_feed(conn, *entry_id)?.ok_or(AppError::EntryNotFound)?;
-                category::find_by_id_and_user(conn, ewf.category_id, user_id)?
-                    .ok_or(AppError::EntryNotFound)?;
+            // Other operations: verify ownership for all ids once, then apply the
+            // tag changes as bulk UPDATEs inside a single transaction (instead of
+            // a per-entry read + UPDATE + re-read loop, untransacted).
+            let found = entry::find_by_ids_with_feed(conn, user_id, &entry_ids)?;
+            if found.len() != entry_ids.len() {
+                return Err(AppError::EntryNotFound);
+            }
 
-                // Apply add tag
-                if let Some(ref stream) = add_stream {
-                    match stream {
-                        StreamId::Starred => {
-                            entry::star_entry(conn, *entry_id)?;
-                        }
-                        StreamId::KeptUnread => {
-                            entry::mark_as_unread(conn, *entry_id)?;
-                        }
-                        _ => {}
-                    }
-                }
+            let tx = conn.unchecked_transaction()?;
 
-                // Apply remove tag
-                if let Some(ref stream) = remove_stream {
-                    match stream {
-                        StreamId::Read => {
-                            entry::mark_as_unread(conn, *entry_id)?;
-                        }
-                        StreamId::Starred => {
-                            entry::unstar_entry(conn, *entry_id)?;
-                        }
-                        _ => {}
+            // Apply add tag
+            if let Some(ref stream) = add_stream {
+                match stream {
+                    StreamId::Starred => {
+                        entry::star_by_ids(&tx, user_id, &entry_ids)?;
                     }
+                    StreamId::KeptUnread => {
+                        entry::mark_unread_by_ids(&tx, user_id, &entry_ids)?;
+                    }
+                    _ => {}
                 }
             }
 
+            // Apply remove tag
+            if let Some(ref stream) = remove_stream {
+                match stream {
+                    StreamId::Read => {
+                        entry::mark_unread_by_ids(&tx, user_id, &entry_ids)?;
+                    }
+                    StreamId::Starred => {
+                        entry::unstar_by_ids(&tx, user_id, &entry_ids)?;
+                    }
+                    _ => {}
+                }
+            }
+
+            tx.commit()?;
             Ok::<_, AppError>(())
         })
         .await??;

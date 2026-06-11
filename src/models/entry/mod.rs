@@ -472,6 +472,77 @@ pub fn count_unread_by_category(
     Ok(map)
 }
 
+/// Upsert an entry, returning `(rowid, is_new)` without re-reading the full row.
+///
+/// This is the lean variant used by the feed-sync hot loop, which only needs
+/// the `is_new` flag. It avoids the full-row `find_by_id` re-read that
+/// [`upsert_entry`] performs, looks the existing row up by `id` only, and uses
+/// `prepare_cached` so the three hot statements are compiled once per
+/// connection rather than once per entry. Wrap a sync loop in a single
+/// transaction (see `feed_sync`) to collapse the per-entry commits.
+#[allow(clippy::too_many_arguments)]
+pub fn upsert_entry_id(
+    conn: &Connection,
+    feed_id: i64,
+    guid: &str,
+    title: Option<&str>,
+    link: Option<&str>,
+    content: Option<&str>,
+    summary: Option<&str>,
+    author: Option<&str>,
+    published_at: Option<DateTime<Utc>>,
+) -> AppResult<(i64, bool)> {
+    let published_at_str = published_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
+
+    // Look up only the id of any existing row (not the full record).
+    let existing: Option<i64> = conn
+        .prepare_cached("SELECT id FROM entry WHERE guid = ?1 AND feed_id = ?2")?
+        .query_row(params![guid, feed_id], |row| row.get(0))
+        .optional()?;
+
+    if let Some(id) = existing {
+        // Update existing entry (preserve read_at, starred_at, and published_at)
+        // We don't update published_at because:
+        // 1. The published date shouldn't change for existing entries
+        // 2. Some feeds don't provide dates, causing fallback to current time on each refresh
+        conn.prepare_cached(
+            r#"
+            UPDATE entry
+            SET title = ?1, link = ?2, content = ?3, summary = ?4, author = ?5,
+                updated_at = datetime('now')
+            WHERE id = ?6
+            "#,
+        )?
+        .execute(params![title, link, content, summary, author, id])?;
+
+        return Ok((id, false));
+    }
+
+    conn.prepare_cached(
+        r#"
+        INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        "#,
+    )?
+    .execute(params![
+        feed_id,
+        guid,
+        title,
+        link,
+        content,
+        summary,
+        author,
+        published_at_str
+    ])?;
+
+    Ok((conn.last_insert_rowid(), true))
+}
+
+/// Upsert an entry and return the resulting [`Entry`] plus whether it was new.
+///
+/// Thin wrapper over [`upsert_entry_id`] for callers that need the full record
+/// (tests, summary worker/cleanup seeding). The feed-sync hot path should call
+/// [`upsert_entry_id`] directly to skip the extra full-row read this performs.
 #[allow(clippy::too_many_arguments)]
 pub fn upsert_entry(
     conn: &Connection,
@@ -484,50 +555,19 @@ pub fn upsert_entry(
     author: Option<&str>,
     published_at: Option<DateTime<Utc>>,
 ) -> AppResult<(Entry, bool)> {
-    let published_at_str = published_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
-
-    // Try to find existing entry
-    if let Some(existing) = find_by_guid_and_feed(conn, guid, feed_id)? {
-        // Update existing entry (preserve read_at, starred_at, and published_at)
-        // We don't update published_at because:
-        // 1. The published date shouldn't change for existing entries
-        // 2. Some feeds don't provide dates, causing fallback to current time on each refresh
-        conn.execute(
-            r#"
-            UPDATE entry
-            SET title = ?1, link = ?2, content = ?3, summary = ?4, author = ?5,
-                updated_at = datetime('now')
-            WHERE id = ?6
-            "#,
-            params![title, link, content, summary, author, existing.id],
-        )?;
-
-        let updated = find_by_id(conn, existing.id)?.ok_or(AppError::EntryNotFound)?;
-        return Ok((updated, false));
-    }
-
-    // Insert new entry
-    conn.execute(
-        r#"
-        INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-        "#,
-        params![
-            feed_id,
-            guid,
-            title,
-            link,
-            content,
-            summary,
-            author,
-            published_at_str
-        ],
+    let (id, is_new) = upsert_entry_id(
+        conn,
+        feed_id,
+        guid,
+        title,
+        link,
+        content,
+        summary,
+        author,
+        published_at,
     )?;
-
-    let id = conn.last_insert_rowid();
     let entry = find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)?;
-
-    Ok((entry, true))
+    Ok((entry, is_new))
 }
 
 pub fn mark_as_read(conn: &Connection, id: i64) -> AppResult<Entry> {
@@ -1089,12 +1129,23 @@ pub fn mark_all_read_by_category(
 /// Mark multiple entries as read by their IDs.
 /// Only marks entries that belong to the user (via feed -> category -> user).
 /// Returns the count of entries that were actually marked as read.
-pub fn mark_read_by_ids(conn: &Connection, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
+/// Apply a bulk `SET` to the given entry ids in a single statement, scoped to
+/// the feeds the user owns. `set_clause` is the `SET ...` body; `extra_where`
+/// is an optional predicate (e.g. `" AND read_at IS NULL"`) appended after the
+/// `id IN (...)` clause. Returns the number of rows updated. Empty `entry_ids`
+/// is a no-op returning 0.
+fn update_entries_by_ids(
+    conn: &Connection,
+    user_id: i64,
+    entry_ids: &[i64],
+    set_clause: &str,
+    extra_where: &str,
+) -> AppResult<i64> {
     if entry_ids.is_empty() {
         return Ok(0);
     }
 
-    // Build placeholders for IN clause
+    // Build placeholders for IN clause (?2, ?3, ...; ?1 is user_id)
     let placeholders: Vec<String> = entry_ids
         .iter()
         .enumerate()
@@ -1105,16 +1156,14 @@ pub fn mark_read_by_ids(conn: &Connection, user_id: i64, entry_ids: &[i64]) -> A
     let sql = format!(
         r#"
         UPDATE entry
-        SET read_at = datetime('now'), updated_at = datetime('now')
-        WHERE read_at IS NULL
-          AND id IN ({})
+        SET {set_clause}
+        WHERE id IN ({in_clause}){extra_where}
           AND feed_id IN (
               SELECT f.id FROM feed f
               INNER JOIN category c ON f.category_id = c.id
               WHERE c.user_id = ?1
           )
         "#,
-        in_clause
     );
 
     let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
@@ -1126,6 +1175,52 @@ pub fn mark_read_by_ids(conn: &Connection, user_id: i64, entry_ids: &[i64]) -> A
 
     let rows = conn.execute(&sql, params_refs.as_slice())?;
     Ok(rows as i64)
+}
+
+/// Bulk mark the given entries as read (only those currently unread), scoped to
+/// the user's feeds. Returns the number of rows updated.
+pub fn mark_read_by_ids(conn: &Connection, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
+    update_entries_by_ids(
+        conn,
+        user_id,
+        entry_ids,
+        "read_at = datetime('now'), updated_at = datetime('now')",
+        " AND read_at IS NULL",
+    )
+}
+
+/// Bulk mark the given entries as unread, scoped to the user's feeds.
+pub fn mark_unread_by_ids(conn: &Connection, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
+    update_entries_by_ids(
+        conn,
+        user_id,
+        entry_ids,
+        "read_at = NULL, updated_at = datetime('now')",
+        "",
+    )
+}
+
+/// Bulk star the given entries (only those not already starred), scoped to the
+/// user's feeds.
+pub fn star_by_ids(conn: &Connection, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
+    update_entries_by_ids(
+        conn,
+        user_id,
+        entry_ids,
+        "starred_at = datetime('now'), updated_at = datetime('now')",
+        " AND starred_at IS NULL",
+    )
+}
+
+/// Bulk unstar the given entries, scoped to the user's feeds.
+pub fn unstar_by_ids(conn: &Connection, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
+    update_entries_by_ids(
+        conn,
+        user_id,
+        entry_ids,
+        "starred_at = NULL, updated_at = datetime('now')",
+        "",
+    )
 }
 
 #[cfg(test)]
@@ -1634,6 +1729,139 @@ mod tests {
 
         // All user 1 entries should now be read
         assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_upsert_entry_id_returns_id_and_is_new() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        // First upsert: new row
+        let (id1, is_new) = upsert_entry_id(
+            &conn,
+            feed_id,
+            "guid-1",
+            Some("T1"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(is_new);
+        let row = find_by_id(&conn, id1).unwrap().unwrap();
+        assert_eq!(row.title.as_deref(), Some("T1"));
+
+        // Second upsert with same guid+feed: update, same id, is_new=false
+        let (id2, is_new) = upsert_entry_id(
+            &conn,
+            feed_id,
+            "guid-1",
+            Some("T2"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(!is_new);
+        assert_eq!(id1, id2);
+        let row = find_by_id(&conn, id2).unwrap().unwrap();
+        assert_eq!(row.title.as_deref(), Some("T2"));
+    }
+
+    #[test]
+    fn test_star_unstar_and_mark_unread_by_ids() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let user2_id = create_test_user(&conn, "testuser2");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let category2_id = create_test_category(&conn, user2_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+        let feed2_id = create_test_feed(&conn, category2_id, "https://example2.com/feed.xml");
+
+        let (e1, _) = upsert_entry(
+            &conn,
+            feed_id,
+            "g1",
+            Some("E1"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let (e2, _) = upsert_entry(
+            &conn,
+            feed_id,
+            "g2",
+            Some("E2"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let (other, _) = upsert_entry(
+            &conn,
+            feed2_id,
+            "g3",
+            Some("E3"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Star e1, e2 — only currently-unstarred rows count
+        let starred = star_by_ids(&conn, user_id, &[e1.id, e2.id]).unwrap();
+        assert_eq!(starred, 2);
+        assert!(find_by_id(&conn, e1.id)
+            .unwrap()
+            .unwrap()
+            .starred_at
+            .is_some());
+
+        // Starring again is a no-op (already starred)
+        assert_eq!(star_by_ids(&conn, user_id, &[e1.id, e2.id]).unwrap(), 0);
+
+        // Ownership scope: cannot star another user's entry
+        assert_eq!(star_by_ids(&conn, user_id, &[other.id]).unwrap(), 0);
+        assert!(find_by_id(&conn, other.id)
+            .unwrap()
+            .unwrap()
+            .starred_at
+            .is_none());
+
+        // Unstar e1
+        assert_eq!(unstar_by_ids(&conn, user_id, &[e1.id]).unwrap(), 1);
+        assert!(find_by_id(&conn, e1.id)
+            .unwrap()
+            .unwrap()
+            .starred_at
+            .is_none());
+
+        // Mark read then mark unread by ids
+        assert_eq!(
+            mark_read_by_ids(&conn, user_id, &[e1.id, e2.id]).unwrap(),
+            2
+        );
+        assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 0);
+        let unread = mark_unread_by_ids(&conn, user_id, &[e1.id, e2.id]).unwrap();
+        assert_eq!(unread, 2);
+        assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 2);
+
+        // Empty input is a no-op
+        assert_eq!(star_by_ids(&conn, user_id, &[]).unwrap(), 0);
+        assert_eq!(mark_unread_by_ids(&conn, user_id, &[]).unwrap(), 0);
     }
 
     #[test]
