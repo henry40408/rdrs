@@ -114,12 +114,11 @@ async fn fetch_favicon(site_url: &str, user_agent: &str) -> AppResult<Option<Fet
     };
 
     // Try /favicon.ico first
-    let favicon_url = format!(
-        "{}://{}/favicon.ico",
-        base_url.scheme(),
-        base_url.host_str().unwrap_or("")
-    );
-    if let Ok(Some(img)) = fetch_image(&favicon_url, user_agent).await {
+    let favicon_url = match base_url.join("/favicon.ico") {
+        Ok(u) => u,
+        Err(_) => return Ok(None),
+    };
+    if let Ok(Some(img)) = fetch_image(favicon_url.as_str(), user_agent).await {
         debug!("Fetched favicon from {}", favicon_url);
         return Ok(Some(img));
     }
@@ -320,18 +319,34 @@ mod tests {
         assert!(result.is_none());
     }
 
-    // NOTE: fetch_favicon_uses_favicon_ico is skipped because fetch_favicon constructs
-    // the favicon URL as "{scheme}://{host}/favicon.ico" using Url::host_str(), which
-    // drops the port number. This makes it impossible to point at a wiremock server
-    // running on a dynamic port without changing production code.
+    #[tokio::test]
+    async fn fetch_favicon_uses_favicon_ico() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/favicon.ico"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/x-icon")
+                    .set_body_bytes(PNG_BYTES.to_vec()),
+            )
+            .mount(&server)
+            .await;
+        let img = fetch_favicon(&server.uri(), "RDRS-Test/1.0")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            img.source_url.ends_with("/favicon.ico"),
+            "source_url was: {}",
+            img.source_url
+        );
+    }
 
     #[tokio::test]
     async fn fetch_favicon_falls_back_to_html_link() {
         let server = MockServer::start().await;
 
-        // /favicon.ico → 404 (the direct attempt will actually fail to connect on
-        // port 80 since host_str() drops the port, so this 404 is for the HTML
-        // fetch of / which goes to the site_url directly)
+        // /favicon.ico → 404 so the fallback HTML-link path is exercised
         Mock::given(method("GET"))
             .and(path("/favicon.ico"))
             .respond_with(ResponseTemplate::new(404))
