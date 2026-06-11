@@ -108,6 +108,25 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         -- order together as a range scan. See migration v7.
         CREATE INDEX IF NOT EXISTS idx_entry_feed_sort
             ON entry(feed_id, COALESCE(published_at, created_at));
+        -- Ordered partial index over unread entries for the unread list page,
+        -- mirroring idx_entry_read_sort. Without it the unread list does a
+        -- whole-inbox temp-B-tree sort (~143ms at 1M entries). Used via an
+        -- INDEXED BY hint in published_sort_entry_hint (a later task).
+        CREATE INDEX IF NOT EXISTS idx_entry_unread_sort
+            ON entry(COALESCE(published_at, created_at))
+            WHERE read_at IS NULL;
+
+        -- Tombstones for entries deleted by retention. Keyed by (feed_id, guid),
+        -- mirroring entry's UNIQUE(feed_id, guid). The refresh insert path checks
+        -- this so a deleted entry the feed still serves is not re-imported as
+        -- unread. created_at follows the schema-wide convention; kept forever
+        -- (lightweight, no GC). Cascades when the feed is deleted.
+        CREATE TABLE IF NOT EXISTS entry_tombstone (
+            feed_id    INTEGER NOT NULL REFERENCES feed(id) ON DELETE CASCADE,
+            guid       TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (feed_id, guid)
+        ) WITHOUT ROWID;
 
         CREATE TABLE IF NOT EXISTS entry_summary (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,6 +162,7 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL UNIQUE REFERENCES user(id) ON DELETE CASCADE,
             entries_per_page INTEGER NOT NULL DEFAULT 30,
+            retention_read_days INTEGER NOT NULL DEFAULT 0,
             save_services TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -241,7 +261,20 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         // per-feed list query can rely on it.
     }
 
-    const LATEST_VERSION: i64 = 7;
+    if version < 8 {
+        // Add the per-user retention threshold to existing databases. The
+        // entry_tombstone table and idx_entry_unread_sort index are created via
+        // CREATE ... IF NOT EXISTS in the main batch above (picked up on
+        // restart, like the v5/v6/v7 indexes). `let _ =` swallows the
+        // duplicate-column error on fresh DBs where the main batch already added
+        // the column (mirrors the v1/v2 legacy ALTERs).
+        let _ = conn.execute(
+            "ALTER TABLE user_settings ADD COLUMN retention_read_days INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+    }
+
+    const LATEST_VERSION: i64 = 8;
     if version < LATEST_VERSION {
         conn.pragma_update(None, "user_version", LATEST_VERSION)?;
     }
@@ -271,6 +304,7 @@ mod tests {
         assert!(tables.contains(&"passkey".to_string()));
         assert!(tables.contains(&"webauthn_challenge".to_string()));
         assert!(tables.contains(&"entry_summary".to_string()));
+        assert!(tables.contains(&"entry_tombstone".to_string()));
     }
 
     #[test]
@@ -283,7 +317,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
     }
 
     #[test]
@@ -294,7 +328,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
     }
 
     #[test]
