@@ -172,3 +172,12 @@ Feature: Reading entries
     And the reading-pane "Previous" button is enabled
     When I navigate to the "Next" entry in the reading pane
     Then the reading pane shows the title "Test Entry 4"
+
+  Scenario: A stale slow fragment response never overwrites a newer click
+    When I open the inbox
+    And the fragment response for the entry titled "Test Entry 1" is delayed
+    And I click the entry titled "Test Entry 1" without waiting for the pane
+    And I click the entry titled "Test Entry 2"
+    And the delayed fragment response has settled
+    Then the reading pane shows the title "Test Entry 2"
+    And the URL has the ?entry= parameter for "Test Entry 2"

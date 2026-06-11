@@ -111,6 +111,60 @@ async function paneEntryId(page) {
   return m ? m[1] : null;
 }
 
+// Hold one entry's fragment response for 600ms before serving it, recording
+// when the route finished (served — or aborted by the stale-response guard).
+// Drives the race scenario: a slow stale response must never overwrite the
+// entry the user clicked afterwards.
+const delayedFragments = new WeakMap();
+
+When(
+  "the fragment response for the entry titled {string} is delayed",
+  async ({ page, seed, currentUser }, title) => {
+    const userId = seed.getUserId(currentUser.username);
+    const entryId = seed.findEntryIdByTitle(userId, title);
+    const state = {};
+    state.done = new Promise((resolve) => {
+      state.resolve = resolve;
+    });
+    delayedFragments.set(page, state);
+    await page.route(`**/entries/${entryId}/fragment*`, async (route) => {
+      await new Promise((r) => setTimeout(r, 600));
+      try {
+        await route.continue();
+      } catch {
+        // The stale-response guard aborted this request while it was held
+        // here — exactly the post-fix behaviour; nothing left to serve.
+      }
+      state.resolve();
+    });
+  }
+);
+
+When(
+  "I click the entry titled {string} without waiting for the pane",
+  async ({ page }, title) => {
+    // Same locator as "I click the entry titled {string}" but WITHOUT the
+    // pane-not-empty wait — this click's response is being held by the
+    // delayed route, so the pane must still be empty when the next step
+    // clicks the second entry.
+    await page
+      .getByTestId("entry-item")
+      .filter({ hasText: title })
+      .first()
+      .getByTestId("entry-title-link")
+      .click();
+  }
+);
+
+When("the delayed fragment response has settled", async ({ page }) => {
+  const state = delayedFragments.get(page);
+  if (!state) throw new Error("no delayed fragment route was armed");
+  await state.done;
+  // Give a (stale) swap one tick to apply before the Then assertions —
+  // pre-fix, the bug manifests as the pane flipping back AFTER this point.
+  await page.waitForTimeout(100);
+});
+
 When(
   "I navigate to the {string} entry in the reading pane",
   async ({ page }, direction) => {

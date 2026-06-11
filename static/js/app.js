@@ -110,12 +110,33 @@ function cancelPaneImages(pane) {
     }
 }
 
+// Monotonic token + abort handle for reading-pane *navigation* fetches
+// (GET /entries/{id}/fragment — entry clicks, Show Original, popstate
+// restores, prev/next fallbacks). Clicking entry A then quickly entry B
+// used to leave both responses in flight: whichever arrived LAST won the
+// pane, so a slow stale A response could overwrite the just-opened B (and
+// replaceState the URL back to ?entry=A). Each new navigation bumps the
+// token and aborts the previous fetch; a response whose token is stale by
+// the time it lands is discarded instead of applied. Action swaps (POST
+// Save / Fetch-Full-Content) re-target the same entry and stay outside
+// the guard. Same stale-fetch discipline as applyNeighborButtons().
+let paneNavSeq = 0;
+let paneNavAbort = null;
+
 async function performSwap(url, init, defaultTarget, options) {
     const method = (init.method || 'GET').toUpperCase();
     // popstate-driven restores pass `skipHistory: true` because the browser
     // has already moved the address bar via back/forward — we must not push
     // or replace on top of the slot the user just navigated into.
     const skipHistory = options?.skipHistory === true;
+    const isPaneNav = method === 'GET' && defaultTarget === '#reading-pane';
+    let navSeq = null;
+    if (isPaneNav) {
+        navSeq = ++paneNavSeq;
+        paneNavAbort?.abort();
+        paneNavAbort = new AbortController();
+        init.signal = paneNavAbort.signal;
+    }
     // Before fetching the next entry, cancel the current pane's image loads so
     // they stop starving the connection pool — but only when navigating to a
     // *different* entry (action swaps like Save / Fetch-Full-Content re-target
@@ -130,6 +151,10 @@ async function performSwap(url, init, defaultTarget, options) {
     try {
         response = await fetch(url, init);
     } catch {
+        // A newer pane navigation aborted this fetch — drop it silently.
+        // Falling through to `location.href` would hard-navigate the page
+        // to a fragment URL the user has already moved past.
+        if (isPaneNav && navSeq !== paneNavSeq) return;
         if (method !== 'GET' && window.flash) {
             window.flash.error('Action failed — please try again.');
             return;
@@ -137,6 +162,9 @@ async function performSwap(url, init, defaultTarget, options) {
         window.location.href = url;
         return;
     }
+    // Superseded while the headers were in flight (abort loses this race
+    // when the reply was already buffered): discard before acting on it.
+    if (isPaneNav && navSeq !== paneNavSeq) return;
     if (!response.ok) {
         if (method !== 'GET' && window.flash) {
             window.flash.error('Action failed — please try again.');
@@ -145,7 +173,17 @@ async function performSwap(url, init, defaultTarget, options) {
         window.location.href = url;
         return;
     }
-    const text = await response.text();
+    let text;
+    try {
+        text = await response.text();
+    } catch {
+        // Aborted mid-body by a newer navigation (fetch itself had already
+        // resolved) — same silent drop as above.
+        if (isPaneNav && navSeq !== paneNavSeq) return;
+        window.location.href = url;
+        return;
+    }
+    if (isPaneNav && navSeq !== paneNavSeq) return;
     const parsed = new DOMParser().parseFromString(text, 'text/html');
 
     // Decide pushState vs replaceState BEFORE the DOM mutates: opening an
