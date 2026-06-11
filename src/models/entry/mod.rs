@@ -872,10 +872,24 @@ pub fn list_by_user_with_continuation(
         (_, false) => "COALESCE(e.published_at, e.created_at) DESC, e.id DESC",
     };
 
+    // Page-0 (cursorless) index hint. Without it the planner walks
+    // category->feed->entry and temp-B-tree-sorts the whole corpus before
+    // LIMIT. Mirrors `list_by_user`'s hint, but only when there is no
+    // continuation predicate — at depth the predicate already drives the sort
+    // index, so we leave that proven-fast plan untouched. Only the
+    // published-order sorts have dedicated indexes.
+    let entry_hint = if pagination.sort_order == EntrySortOrder::PublishedAt
+        && pagination.continuation.is_none()
+    {
+        published_sort_entry_hint(filter)
+    } else {
+        ""
+    };
+
     let sql = format!(
         r#"
         SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}
-        FROM entry e
+        FROM entry e{}
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
         LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
@@ -883,6 +897,7 @@ pub fn list_by_user_with_continuation(
         ORDER BY {}
         LIMIT ?{}
         "#,
+        entry_hint,
         where_clause,
         order,
         params_vec.len() + 1
@@ -1230,6 +1245,7 @@ mod tests {
     use crate::models::category;
     use crate::models::feed;
     use crate::models::user::{self, Role};
+    use chrono::TimeZone;
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -2556,5 +2572,73 @@ mod tests {
             "plan must not scan via the read_at index: {}",
             plan
         );
+    }
+
+    #[test]
+    fn test_continuation_walk_is_gapless_unfiltered() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "walker");
+        let category_id = create_test_category(&conn, user_id, "C");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/walk.xml");
+        // 5 entries, distinct published_at so order is deterministic.
+        for i in 0..5 {
+            upsert_entry(
+                &conn,
+                feed_id,
+                &format!("g{i}"),
+                Some(&format!("T{i}")),
+                None,
+                None,
+                None,
+                None,
+                Some(
+                    chrono::Utc
+                        .with_ymd_and_hms(2024, 1, 1 + i as u32, 0, 0, 0)
+                        .unwrap(),
+                ),
+            )
+            .unwrap();
+        }
+
+        let filter = EntryFilter::default();
+        let mut cursor: Option<ContinuationCursor> = None;
+        let mut seen: Vec<i64> = Vec::new();
+        loop {
+            let params = ContinuationParams {
+                oldest_first: false,
+                limit: 3, // page size 2 + 1 sentinel
+                continuation: cursor.clone(),
+                ot: None,
+                nt: None,
+                sort_order: EntrySortOrder::PublishedAt,
+            };
+            let rows = list_by_user_with_continuation(&conn, user_id, &filter, &params).unwrap();
+            let has_more = rows.len() > 2;
+            let page = &rows[..rows.len().min(2)];
+            if page.is_empty() {
+                break;
+            }
+            for e in page {
+                seen.push(e.entry.id);
+            }
+            if !has_more {
+                break;
+            }
+            let last = page.last().unwrap();
+            let ts = fetch_sort_ts(&conn, last.entry.id, EntrySortOrder::PublishedAt)
+                .unwrap()
+                .unwrap();
+            cursor = Some(ContinuationCursor::Composite {
+                sort_ts: ts,
+                id: last.entry.id,
+            });
+        }
+
+        // All 5 seen exactly once, newest-first.
+        assert_eq!(seen.len(), 5, "walk must visit every entry once: {seen:?}");
+        let mut uniq = seen.clone();
+        uniq.sort_unstable();
+        uniq.dedup();
+        assert_eq!(uniq.len(), 5, "no duplicates across pages: {seen:?}");
     }
 }
