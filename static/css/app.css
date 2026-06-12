@@ -1104,6 +1104,13 @@ td input[type="text"] {
     margin-bottom: var(--space-5);
 }
 
+/* Let the filter group shrink below its content so the wide category
+   <select> (capped at max-width: 100% via .select-auto) can't push the
+   page past a narrow viewport. Flex items default to min-width: auto. */
+.filter-bar .form-group {
+    min-width: 0;
+}
+
 /* Selects inside .filter-bar render at the same height as sibling
    button-style chips (e.g. .feed-filter-link on /feeds) so the row
    reads as one control strip rather than mismatched heights. */
