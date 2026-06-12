@@ -67,3 +67,33 @@ impl SaveServicesConfig {
         !self.configured_services().is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_services_config_json_roundtrip() {
+        let json = r#"{"linkding":{"api_url":"https://l","api_token":"t"}}"#;
+        let cfg = SaveServicesConfig::from_json(json).unwrap();
+        assert!(cfg.has_any_service());
+        let back = cfg.to_json().unwrap();
+        assert!(back.contains("https://l"));
+    }
+
+    #[test]
+    fn empty_config_has_no_service() {
+        let cfg = SaveServicesConfig::from_json("{}").unwrap();
+        assert!(!cfg.has_any_service());
+        assert!(cfg.configured_services().is_empty());
+    }
+
+    #[test]
+    fn configured_services_lists_linkding() {
+        let cfg = SaveServicesConfig::from_json(
+            r#"{"linkding":{"api_url":"https://l","api_token":"t"}}"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.configured_services(), vec!["linkding"]);
+    }
+}

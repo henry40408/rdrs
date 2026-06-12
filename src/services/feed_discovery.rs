@@ -136,3 +136,202 @@ fn parse_feed_content(feed_url: &str, content: &str) -> AppResult<DiscoveredFeed
         site_url,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const RSS: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel>
+        <title>Example Feed</title><description>Desc</description>
+        <link>https://example.com</link></channel></rss>"#;
+
+    #[tokio::test]
+    async fn discover_direct_feed_by_content_type() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/rss+xml")
+                    .set_body_string(RSS),
+            )
+            .mount(&server)
+            .await;
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        assert_eq!(result.title.as_deref(), Some("Example Feed"));
+        assert_eq!(result.description.as_deref(), Some("Desc"));
+    }
+
+    #[tokio::test]
+    async fn discover_via_html_link() {
+        let server = MockServer::start().await;
+        let html = r#"<html><head>
+            <link rel="alternate" type="application/rss+xml" href="/feed.xml">
+            </head><body>hi</body></html>"#;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string(html),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/feed.xml"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/rss+xml")
+                    .set_body_string(RSS),
+            )
+            .mount(&server)
+            .await;
+        let result = discover_feed(&format!("{}/", server.uri()), "RDRS-Test/1.0")
+            .await
+            .unwrap();
+        assert_eq!(result.feed_url, format!("{}/feed.xml", server.uri()));
+        assert_eq!(result.title.as_deref(), Some("Example Feed"));
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_url() {
+        let result = discover_feed("not a url", "ua").await;
+        assert!(matches!(result, Err(AppError::InvalidUrl)));
+    }
+
+    #[tokio::test]
+    async fn rejects_non_http_scheme() {
+        let result = discover_feed("ftp://example.com", "ua").await;
+        assert!(matches!(result, Err(AppError::InvalidUrl)));
+    }
+
+    #[tokio::test]
+    async fn discover_by_body_sniffing() {
+        // content-type is text/html but body looks like a feed — covers looks_like_feed
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string(RSS),
+            )
+            .mount(&server)
+            .await;
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        assert_eq!(result.title.as_deref(), Some("Example Feed"));
+    }
+
+    #[tokio::test]
+    async fn html_without_feed_link_errors() {
+        let server = MockServer::start().await;
+        let html = "<html><head></head><body>no feed here</body></html>";
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string(html),
+            )
+            .mount(&server)
+            .await;
+        let result = discover_feed(&format!("{}/", server.uri()), "RDRS-Test/1.0").await;
+        assert!(matches!(result, Err(AppError::NoFeedFound)));
+    }
+
+    #[tokio::test]
+    async fn first_fetch_non_success_errors() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0").await;
+        assert!(matches!(result, Err(AppError::FetchError(_))));
+    }
+
+    #[tokio::test]
+    async fn discovered_fetch_non_success_errors() {
+        let server = MockServer::start().await;
+        let html = r#"<html><head>
+            <link rel="alternate" type="application/rss+xml" href="/feed.xml">
+            </head><body>hi</body></html>"#;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string(html),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/feed.xml"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let result = discover_feed(&format!("{}/", server.uri()), "RDRS-Test/1.0").await;
+        assert!(matches!(result, Err(AppError::FetchError(_))));
+    }
+
+    #[tokio::test]
+    async fn malformed_feed_body_errors() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/rss+xml")
+                    .set_body_string("<rss><broken"),
+            )
+            .mount(&server)
+            .await;
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0").await;
+        assert!(matches!(result, Err(AppError::FeedParseError(_))));
+    }
+
+    #[tokio::test]
+    async fn sends_user_agent_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(header("user-agent", "RDRS-Test/1.0"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/rss+xml")
+                    .set_body_string(RSS),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        discover_feed(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        // MockServer verifies .expect(1) on drop
+    }
+
+    #[test]
+    fn is_feed_content_type_unit() {
+        assert!(is_feed_content_type("application/rss+xml"));
+        assert!(is_feed_content_type("application/atom+xml"));
+        assert!(is_feed_content_type("application/xml"));
+        assert!(is_feed_content_type("text/xml"));
+        assert!(!is_feed_content_type("text/html"));
+    }
+
+    #[test]
+    fn looks_like_feed_unit() {
+        assert!(looks_like_feed("<?xml version"));
+        assert!(looks_like_feed("<rss version="));
+        assert!(looks_like_feed("<feed xmlns="));
+        assert!(looks_like_feed("<RDF:RDF"));
+        assert!(!looks_like_feed("random text"));
+        assert!(!looks_like_feed("<html>"));
+    }
+
+    #[test]
+    fn find_feed_link_relative_resolution() {
+        let html = r#"<html><head>
+            <link rel="alternate" type="application/rss+xml" href="/f.xml">
+            </head></html>"#;
+        let base = Url::parse("https://x.com/a/b").unwrap();
+        let result = find_feed_link_in_html(html, &base).unwrap();
+        assert_eq!(result, "https://x.com/f.xml");
+    }
+}

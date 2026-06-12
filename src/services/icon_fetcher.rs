@@ -114,12 +114,11 @@ async fn fetch_favicon(site_url: &str, user_agent: &str) -> AppResult<Option<Fet
     };
 
     // Try /favicon.ico first
-    let favicon_url = format!(
-        "{}://{}/favicon.ico",
-        base_url.scheme(),
-        base_url.host_str().unwrap_or("")
-    );
-    if let Ok(Some(img)) = fetch_image(&favicon_url, user_agent).await {
+    let favicon_url = match base_url.join("/favicon.ico") {
+        Ok(u) => u,
+        Err(_) => return Ok(None),
+    };
+    if let Ok(Some(img)) = fetch_image(favicon_url.as_str(), user_agent).await {
         debug!("Fetched favicon from {}", favicon_url);
         return Ok(Some(img));
     }
@@ -210,6 +209,286 @@ fn resolve_url(href: &str, base_url: &Url) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const PNG_BYTES: &[u8] = &[0x89, 0x50, 0x4E, 0x47]; // PNG magic; non-empty
+
+    #[tokio::test]
+    async fn fetch_image_success_returns_bytes_and_type() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(PNG_BYTES.to_vec()),
+            )
+            .mount(&server)
+            .await;
+        let img = fetch_image(&server.uri(), "RDRS-Test/1.0")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(img.content_type, "image/png");
+        assert_eq!(img.data, PNG_BYTES);
+        assert_eq!(img.source_url, server.uri());
+    }
+
+    #[tokio::test]
+    async fn fetch_image_strips_content_type_params() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/svg+xml; charset=utf-8")
+                    .set_body_bytes(PNG_BYTES.to_vec()),
+            )
+            .mount(&server)
+            .await;
+        let img = fetch_image(&server.uri(), "RDRS-Test/1.0")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(img.content_type, "image/svg+xml");
+    }
+
+    #[tokio::test]
+    async fn fetch_image_non_success_is_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let result = fetch_image(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_image_non_image_type_is_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_bytes(b"hi".to_vec()),
+            )
+            .mount(&server)
+            .await;
+        let result = fetch_image(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_image_missing_type_is_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(PNG_BYTES.to_vec()))
+            .mount(&server)
+            .await;
+        let result = fetch_image(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_image_too_large_is_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(vec![0u8; 300 * 1024]),
+            )
+            .mount(&server)
+            .await;
+        let result = fetch_image(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_image_empty_body_is_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(vec![]),
+            )
+            .mount(&server)
+            .await;
+        let result = fetch_image(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_favicon_uses_favicon_ico() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/favicon.ico"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/x-icon")
+                    .set_body_bytes(PNG_BYTES.to_vec()),
+            )
+            .mount(&server)
+            .await;
+        let img = fetch_favicon(&server.uri(), "RDRS-Test/1.0")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            img.source_url.ends_with("/favicon.ico"),
+            "source_url was: {}",
+            img.source_url
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_favicon_falls_back_to_html_link() {
+        let server = MockServer::start().await;
+
+        // /favicon.ico → 404 so the fallback HTML-link path is exercised
+        Mock::given(method("GET"))
+            .and(path("/favicon.ico"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let icon_html =
+            r#"<html><head><link rel="icon" href="/icon.png"></head></html>"#.to_string();
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string(icon_html),
+            )
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/icon.png"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(PNG_BYTES.to_vec()),
+            )
+            .mount(&server)
+            .await;
+
+        let result = fetch_favicon(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        assert!(result.is_some());
+        let img = result.unwrap();
+        assert!(
+            img.source_url.ends_with("/icon.png"),
+            "source_url was: {}",
+            img.source_url
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_favicon_no_icon_is_none() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/favicon.ico"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let html_no_icon = r#"<html><head><title>No icon here</title></head></html>"#;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string(html_no_icon),
+            )
+            .mount(&server)
+            .await;
+
+        let result = fetch_favicon(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_feed_icon_prefers_icon_url() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/a"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(PNG_BYTES.to_vec()),
+            )
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/b"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(PNG_BYTES.to_vec()),
+            )
+            .mount(&server)
+            .await;
+
+        let icon_url = format!("{}/a", server.uri());
+        let logo_url = format!("{}/b", server.uri());
+        let result = fetch_feed_icon(Some(&icon_url), Some(&logo_url), None, "RDRS-Test/1.0")
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        let img = result.unwrap();
+        assert!(
+            img.source_url.ends_with("/a"),
+            "source_url was: {}",
+            img.source_url
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_feed_icon_falls_back_to_logo() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/a"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/b"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "image/png")
+                    .set_body_bytes(PNG_BYTES.to_vec()),
+            )
+            .mount(&server)
+            .await;
+
+        let icon_url = format!("{}/a", server.uri());
+        let logo_url = format!("{}/b", server.uri());
+        let result = fetch_feed_icon(Some(&icon_url), Some(&logo_url), None, "RDRS-Test/1.0")
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        let img = result.unwrap();
+        assert!(
+            img.source_url.ends_with("/b"),
+            "source_url was: {}",
+            img.source_url
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_feed_icon_all_none() {
+        let result = fetch_feed_icon(None, None, None, "RDRS-Test/1.0")
+            .await
+            .unwrap();
+        assert!(result.is_none());
+    }
 
     #[test]
     fn test_extract_href() {

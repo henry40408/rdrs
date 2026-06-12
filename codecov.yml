@@ -1,0 +1,15 @@
+# Coverage configuration. The binary entrypoint only executes in a live
+# process (socket bind, worker spawn) and is not unit-testable; exclude it
+# from the project coverage denominator.
+ignore:
+  - "src/main.rs"
+
+coverage:
+  status:
+    project:
+      default:
+        target: 90%
+        threshold: 1%
+    patch:
+      default:
+        target: 80%

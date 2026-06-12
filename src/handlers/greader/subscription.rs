@@ -513,3 +513,34 @@ fn verify_post_token_if_needed(
     // Many clients don't send POST token, so we allow it for now
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::extract_label_name;
+
+    #[test]
+    fn extract_label_name_dash_user() {
+        assert_eq!(
+            extract_label_name(Some("user/-/label/Foo")),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_label_name_numeric_user() {
+        assert_eq!(
+            extract_label_name(Some("user/12345/label/Foo")),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_label_name_none_input() {
+        assert_eq!(extract_label_name(None), None);
+    }
+
+    #[test]
+    fn extract_label_name_invalid_prefix() {
+        assert_eq!(extract_label_name(Some("tag/something")), None);
+    }
+}

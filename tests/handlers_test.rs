@@ -4670,3 +4670,585 @@ async fn test_sidebar_unread_returns_payload() {
         "payload must contain unread:2 in: {html}"
     );
 }
+
+// ============================================================================
+// handlers/feeds.rs — additional branch coverage (Part A: pure-DB tests)
+// ============================================================================
+
+#[tokio::test]
+async fn test_edit_feed_form_empty_url() {
+    let app = create_test_app_named(default_test_config(), "test_edit_feed_empty_url");
+    setup_authenticated_user(&app.server).await;
+    let (cat_id, feed_id) =
+        insert_test_feed(&app, "Tech", "https://empty-url-test.example.com/feed.xml").await;
+
+    let response = app
+        .server
+        .post(&format!("/feeds/{}/edit", feed_id))
+        .form(&json!({
+            "url": "",
+            "title": "Test Feed",
+            "description": "",
+            "site_url": "",
+            "category_id": cat_id,
+            "custom_user_agent": "",
+            "custom_referrer": "",
+        }))
+        .await;
+
+    // Empty url → error flash redirect back to the edit page.
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.header(header::LOCATION),
+        format!("/feeds/{}/edit", feed_id)
+    );
+
+    // Verify url unchanged in DB.
+    let url: String = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT url FROM feed WHERE id = ?1",
+                rusqlite::params![feed_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(url, "https://empty-url-test.example.com/feed.xml");
+}
+
+#[tokio::test]
+async fn test_edit_feed_form_not_found() {
+    let app = create_test_app_named(default_test_config(), "test_edit_feed_not_found");
+    setup_authenticated_user(&app.server).await;
+    let (cat_id, _) =
+        insert_test_feed(&app, "Tech", "https://notfound-test.example.com/feed.xml").await;
+
+    let response = app
+        .server
+        .post("/feeds/999999/edit")
+        .form(&json!({
+            "url": "https://notfound-test.example.com/feed.xml",
+            "title": "Test",
+            "description": "",
+            "site_url": "",
+            "category_id": cat_id,
+            "custom_user_agent": "",
+            "custom_referrer": "",
+        }))
+        .await;
+
+    // Not found → error flash redirect (no crash).
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds/999999/edit");
+}
+
+#[tokio::test]
+async fn test_edit_feed_form_other_users_feed() {
+    let app = create_test_app_named(default_test_config(), "test_edit_other_user_feed");
+    setup_authenticated_user(&app.server).await;
+
+    // Seed a feed under a different user (not testuser).
+    let other_feed_id: i64 = app
+        .db
+        .user(|conn| {
+            let other_uid: i64 = conn
+                .execute(
+                    "INSERT INTO user (username, password_hash, role) VALUES ('other_editfeed', 'x', 'user')",
+                    [],
+                )
+                .map(|_| conn.last_insert_rowid())
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, other_uid, "OtherCat").unwrap();
+            rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://other-edit.example.com/feed.xml",
+                    title: Some("Other Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap()
+            .id
+        })
+        .await
+        .unwrap();
+
+    // testuser tries to edit the other user's feed — the handler checks
+    // category ownership (find_by_id_and_user on the feed's category)
+    // which fails because the category belongs to other_editfeed.
+    let response = app
+        .server
+        .post(&format!("/feeds/{}/edit", other_feed_id))
+        .form(&json!({
+            "url": "https://other-edit.example.com/feed.xml",
+            "title": "Hacked",
+            "description": "",
+            "site_url": "",
+            "category_id": 1,
+            "custom_user_agent": "",
+            "custom_referrer": "",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+
+    // The other user's feed must be unchanged.
+    let title: String = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT title FROM feed WHERE id = ?1",
+                rusqlite::params![other_feed_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(title, "Other Feed");
+}
+
+#[tokio::test]
+async fn test_edit_feed_form_category_not_owned() {
+    let app = create_test_app_named(default_test_config(), "test_edit_feed_cat_not_owned");
+    setup_authenticated_user(&app.server).await;
+    let (cat_id, feed_id) = insert_test_feed(
+        &app,
+        "OwnedCat",
+        "https://cat-not-owned.example.com/feed.xml",
+    )
+    .await;
+
+    // Create a category that belongs to a different user.
+    let other_cat_id: i64 = app
+        .db
+        .user(|conn| {
+            let other_uid: i64 = conn
+                .execute(
+                    "INSERT INTO user (username, password_hash, role) VALUES ('other_catowner', 'x', 'user')",
+                    [],
+                )
+                .map(|_| conn.last_insert_rowid())
+                .unwrap();
+            rdrs::models::category::create_category(conn, other_uid, "NotMyCategory")
+                .unwrap()
+                .id
+        })
+        .await
+        .unwrap();
+
+    // testuser tries to move their feed into the other user's category.
+    let response = app
+        .server
+        .post(&format!("/feeds/{}/edit", feed_id))
+        .form(&json!({
+            "url": "https://cat-not-owned.example.com/feed.xml",
+            "title": "Test Feed",
+            "description": "",
+            "site_url": "",
+            "category_id": other_cat_id,
+            "custom_user_agent": "",
+            "custom_referrer": "",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+
+    // The feed's category must remain unchanged.
+    let actual_cat: i64 = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT category_id FROM feed WHERE id = ?1",
+                rusqlite::params![feed_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(actual_cat, cat_id);
+}
+
+#[tokio::test]
+async fn test_edit_feed_form_clear_user_agent() {
+    let app = create_test_app_named(default_test_config(), "test_edit_feed_clear_ua");
+    setup_authenticated_user(&app.server).await;
+
+    // Seed a feed and set a custom_user_agent on it directly.
+    let (cat_id, feed_id) =
+        insert_test_feed(&app, "Tech", "https://clear-ua.example.com/feed.xml").await;
+    app.db
+        .user(move |conn| {
+            conn.execute(
+                "UPDATE feed SET custom_user_agent = 'MyBot/1.0' WHERE id = ?1",
+                rusqlite::params![feed_id],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+
+    // POST edit with _clear_user_agent=on
+    let response = app
+        .server
+        .post(&format!("/feeds/{}/edit", feed_id))
+        .form(&json!({
+            "url": "https://clear-ua.example.com/feed.xml",
+            "title": "Test Feed",
+            "description": "",
+            "site_url": "",
+            "category_id": cat_id,
+            "custom_user_agent": "",
+            "custom_referrer": "",
+            "_clear_user_agent": "on",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.header(header::LOCATION),
+        format!("/feeds/{}/edit", feed_id)
+    );
+
+    // custom_user_agent must now be NULL.
+    let ua: Option<String> = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT custom_user_agent FROM feed WHERE id = ?1",
+                rusqlite::params![feed_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert!(
+        ua.is_none(),
+        "custom_user_agent should be NULL after _clear_user_agent=on, got: {:?}",
+        ua
+    );
+}
+
+#[tokio::test]
+async fn test_delete_feed_form_not_found() {
+    let app = create_test_app_named(default_test_config(), "test_delete_feed_not_found");
+    setup_authenticated_user(&app.server).await;
+
+    let response = app.server.post("/feeds/999999/delete").await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds");
+}
+
+#[tokio::test]
+async fn test_import_opml_form_invalid() {
+    let app = create_test_app_named(default_test_config(), "test_import_opml_invalid_form");
+    setup_authenticated_user(&app.server).await;
+
+    let invalid_xml = b"<not valid opml";
+    let part = Part::bytes(invalid_xml.as_ref())
+        .file_name("bad.opml")
+        .mime_type("application/xml");
+    let form = MultipartForm::new().add_part("file", part);
+    let response = app.server.post("/feeds/import").multipart(form).await;
+
+    // Parse error → error flash redirect to /feeds/import.
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds/import");
+
+    // No feeds created.
+    let count: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM feed", [], |row| row.get(0))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn test_import_opml_form_duplicate_skipped() {
+    let app = create_test_app_named(default_test_config(), "test_import_opml_dup_skipped");
+    setup_authenticated_user(&app.server).await;
+
+    // Pre-seed a feed with a specific URL in a specific category.
+    let feed_url = "https://dup-import.example.com/feed.xml";
+    insert_test_feed(&app, "DupCat", feed_url).await;
+
+    // Import OPML containing the same URL under the same category name.
+    let opml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>Dup Test</title></head>
+  <body>
+    <outline text="DupCat" title="DupCat">
+      <outline type="rss" text="Dup Feed" xmlUrl="{feed_url}"/>
+    </outline>
+  </body>
+</opml>"#
+    );
+    let part = Part::bytes(opml.into_bytes())
+        .file_name("subs.opml")
+        .mime_type("application/xml");
+    let form = MultipartForm::new().add_part("file", part);
+    let response = app.server.post("/feeds/import").multipart(form).await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds");
+
+    // Feed count for that URL must still be 1 (duplicate skipped).
+    let count: i64 = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM feed WHERE url = ?1",
+                rusqlite::params![feed_url],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 1,
+        "duplicate import must not create a second feed row"
+    );
+}
+
+// ============================================================================
+// handlers/feeds.rs — Part B: wiremock success-arm tests
+// ============================================================================
+
+const RSS_FIXTURE: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel>
+  <title>Mock Feed</title><description>Mock Desc</description><link>https://e</link>
+  <item><guid>m1</guid><title>One</title><link>https://e/1</link><description>c1</description></item>
+</channel></rss>"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_create_feed_form_success() {
+    use wiremock::matchers::{any, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let app = create_test_app_named(default_test_config(), "test_create_feed_success");
+    setup_authenticated_user(&app.server).await;
+
+    // Get the owned category id (the seeded "Uncategorized").
+    let cat_id: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row("SELECT id FROM category LIMIT 1", [], |row| row.get(0))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(any())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(RSS_FIXTURE)
+                .insert_header("content-type", "application/rss+xml"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let feed_url = mock_server.uri();
+
+    let response = app
+        .server
+        .post("/feeds")
+        .form(&json!({ "url": feed_url, "category_id": cat_id }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds");
+
+    // One feed row with that URL must exist.
+    let count: i64 = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM feed WHERE url = ?1",
+                rusqlite::params![feed_url],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "feed should have been created in the DB");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_create_feed_form_duplicate() {
+    use wiremock::matchers::{any, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let app = create_test_app_named(default_test_config(), "test_create_feed_dup");
+    setup_authenticated_user(&app.server).await;
+
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(any())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(RSS_FIXTURE)
+                .insert_header("content-type", "application/rss+xml"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let feed_url = mock_server.uri();
+
+    // Pre-create the feed.
+    insert_test_feed(&app, "Tech", &feed_url).await;
+
+    let cat_id: i64 = app
+        .db
+        .user(|conn| {
+            conn.query_row("SELECT id FROM category LIMIT 1", [], |row| row.get(0))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+    // POST create with the same URL.
+    let response = app
+        .server
+        .post("/feeds")
+        .form(&json!({ "url": feed_url, "category_id": cat_id }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds");
+
+    // Feed count must still be 1.
+    let count: i64 = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM feed WHERE url = ?1",
+                rusqlite::params![feed_url],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "duplicate create must not add a second feed row");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_refresh_feed_form_success() {
+    use wiremock::matchers::{any, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let app = create_test_app_named(default_test_config(), "test_refresh_feed_success");
+    setup_authenticated_user(&app.server).await;
+
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(any())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(RSS_FIXTURE)
+                .insert_header("content-type", "application/rss+xml"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let feed_url = mock_server.uri();
+    let (_, feed_id) = insert_test_feed(&app, "Tech", &feed_url).await;
+
+    let response = app
+        .server
+        .post(&format!("/feeds/{}/refresh", feed_id))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds");
+
+    // At least 1 entry should have been synced.
+    let entry_count: i64 = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM entry WHERE feed_id = ?1",
+                rusqlite::params![feed_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert!(
+        entry_count >= 1,
+        "refresh should have synced at least 1 entry, got {}",
+        entry_count
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_fetch_metadata_form_success() {
+    use wiremock::matchers::{any, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let app = create_test_app_named(default_test_config(), "test_fetch_metadata_success");
+    setup_authenticated_user(&app.server).await;
+
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(any())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(RSS_FIXTURE)
+                .insert_header("content-type", "application/rss+xml"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let feed_url = mock_server.uri();
+    let (_, feed_id) = insert_test_feed(&app, "Tech", &feed_url).await;
+
+    let response = app
+        .server
+        .post(&format!("/feeds/{}/fetch-metadata", feed_id))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.header(header::LOCATION),
+        format!("/feeds/{}/edit", feed_id)
+    );
+
+    // The RSS fixture has title "Mock Feed" and description "Mock Desc"; these
+    // must now be reflected in the DB.
+    let (title, description): (String, String) = app
+        .db
+        .user(move |conn| {
+            conn.query_row(
+                "SELECT title, description FROM feed WHERE id = ?1",
+                rusqlite::params![feed_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+    assert_eq!(title, "Mock Feed");
+    assert_eq!(description, "Mock Desc");
+}

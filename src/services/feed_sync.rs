@@ -469,8 +469,451 @@ pub async fn refresh_bucket(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::{init_db, DbPool};
+    use crate::error::AppError;
+    use crate::models::entry;
+    use crate::models::user::Role;
+    use crate::models::{category, feed, user};
     use crate::utils::datetime::normalize_timezone_format;
     use chrono::{Datelike, Timelike};
+    use rusqlite::Connection;
+    use wiremock::matchers::{header, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // ---------------------------------------------------------------------------
+    // Test infrastructure
+    // ---------------------------------------------------------------------------
+
+    /// Open a named shared-memory SQLite connection. Both write and read
+    /// connections must use the same name so the pool sees one database.
+    fn open_shared_memory(name: &str) -> Connection {
+        let uri = format!("file:{}?mode=memory&cache=shared", name);
+        Connection::open_with_flags(
+            uri,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+                | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        )
+        .unwrap()
+    }
+
+    /// Build a fully-initialized DbPool backed by a shared in-memory database.
+    /// Returns `(pool, handle)` — the caller **must** keep `handle` alive for
+    /// the duration of the test, otherwise the actor stops and every pool
+    /// operation returns `DbError::ActorStopped`.
+    fn seeded_pool(name: &str) -> (DbPool, tokio::task::JoinHandle<()>) {
+        let write_conn = open_shared_memory(name);
+        init_db(&write_conn).unwrap();
+        let read_conn = open_shared_memory(name);
+        DbPool::new(write_conn, read_conn)
+    }
+
+    /// Seed one user → category → feed whose URL points at `url`.
+    /// Returns the feed id.
+    async fn seed_feed(pool: &DbPool, url: &str) -> i64 {
+        let url = url.to_string();
+        pool.user(move |conn| {
+            let u = user::create_user(conn, "syncuser", "hash", Role::User).unwrap();
+            let cat = category::create_category(conn, u.id, "Tech").unwrap();
+            feed::create_feed(
+                conn,
+                &feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: &url,
+                    title: Some("F"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap()
+            .id
+        })
+        .await
+        .unwrap()
+    }
+
+    /// Like `seed_feed` but allows a custom user agent override.
+    async fn seed_feed_with_ua(pool: &DbPool, url: &str, custom_user_agent: &str) -> i64 {
+        let url = url.to_string();
+        let ua = custom_user_agent.to_string();
+        pool.user(move |conn| {
+            let u = user::create_user(conn, "uauser", "hash", Role::User).unwrap();
+            let cat = category::create_category(conn, u.id, "Tech").unwrap();
+            feed::create_feed(
+                conn,
+                &feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: &url,
+                    title: Some("F"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: Some(&ua),
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap()
+            .id
+        })
+        .await
+        .unwrap()
+    }
+
+    /// Minimal two-item RSS fixture — no `<icon>` or `<logo>` elements so the
+    /// icon fetcher is never triggered. `site_url: None` on the feed achieves
+    /// the same for the favicon fallback.
+    const RSS_TWO: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel><title>F</title>
+  <item><guid>g1</guid><title>One</title><link>https://e/1</link><description>c1</description>
+        <pubDate>Tue, 10 Jun 2025 10:00:00 GMT</pubDate></item>
+  <item><guid>g2</guid><title>Two</title><link>https://e/2</link><description>c2</description>
+        <pubDate>Tue, 10 Jun 2025 11:00:00 GMT</pubDate></item>
+</channel></rss>"#;
+
+    /// Same guids as RSS_TWO but with changed descriptions, to drive the
+    /// "updated entries" path.
+    const RSS_TWO_UPDATED: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel><title>F</title>
+  <item><guid>g1</guid><title>One</title><link>https://e/1</link><description>c1-v2</description>
+        <pubDate>Tue, 10 Jun 2025 10:00:00 GMT</pubDate></item>
+  <item><guid>g2</guid><title>Two</title><link>https://e/2</link><description>c2-v2</description>
+        <pubDate>Tue, 10 Jun 2025 11:00:00 GMT</pubDate></item>
+</channel></rss>"#;
+
+    // ---------------------------------------------------------------------------
+    // Happy-path: new entries are inserted
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn refresh_feed_inserts_new_entries() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/rss+xml")
+                    .set_body_string(RSS_TWO),
+            )
+            .mount(&server)
+            .await;
+
+        let (pool, _handle) = seeded_pool("feed_sync_happy");
+        let feed_id = seed_feed(&pool, &server.uri()).await;
+
+        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
+            .await
+            .unwrap();
+        assert_eq!(result.new_entries, 2);
+        assert_eq!(result.updated_entries, 0);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Feed not found
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn feed_not_found() {
+        let (pool, _handle) = seeded_pool("feed_sync_not_found");
+        let err = refresh_feed(pool, 999_999, "RDRS-Test/1.0")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::FeedNotFound),
+            "expected FeedNotFound, got {err:?}"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Existing entries are updated on second sync
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn updates_existing_entries() {
+        let server = MockServer::start().await;
+
+        // First request: original RSS
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/rss+xml")
+                    .set_body_string(RSS_TWO),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        // Second request: same guids, changed descriptions
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/rss+xml")
+                    .set_body_string(RSS_TWO_UPDATED),
+            )
+            .mount(&server)
+            .await;
+
+        let (pool, _handle) = seeded_pool("feed_sync_update");
+        let feed_id = seed_feed(&pool, &server.uri()).await;
+
+        let first = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
+            .await
+            .unwrap();
+        assert_eq!(first.new_entries, 2);
+
+        let second = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
+            .await
+            .unwrap();
+        assert_eq!(second.new_entries, 0);
+        assert_eq!(second.updated_entries, 2);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Tombstoned guids are skipped
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn skips_tombstoned_guid() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/rss+xml")
+                    .set_body_string(RSS_TWO),
+            )
+            .mount(&server)
+            .await;
+
+        let (pool, _handle) = seeded_pool("feed_sync_tombstone");
+        let feed_id = seed_feed(&pool, &server.uri()).await;
+
+        // Tombstone g1 before the sync
+        pool.user(move |conn| entry::insert_tombstone(conn, feed_id, "g1").unwrap())
+            .await
+            .unwrap();
+
+        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
+            .await
+            .unwrap();
+        assert_eq!(result.new_entries, 1, "g1 should be skipped");
+
+        // Verify g1 was not inserted
+        let found = pool
+            .user(move |conn| entry::find_by_guid_and_feed(conn, "g1", feed_id).unwrap())
+            .await
+            .unwrap();
+        assert!(found.is_none(), "g1 must not exist (tombstoned)");
+    }
+
+    // ---------------------------------------------------------------------------
+    // 304 Not Modified returns zero counts
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn not_modified_304() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(304))
+            .mount(&server)
+            .await;
+
+        let (pool, _handle) = seeded_pool("feed_sync_304");
+        let feed_id = seed_feed(&pool, &server.uri()).await;
+
+        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
+            .await
+            .unwrap();
+        assert_eq!(result.new_entries, 0);
+        assert_eq!(result.updated_entries, 0);
+    }
+
+    // ---------------------------------------------------------------------------
+    // HTTP 4xx/5xx persists a fetch error on the feed row
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn http_error_persists_fetch_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let (pool, _handle) = seeded_pool("feed_sync_fetch_err");
+        let feed_id = seed_feed(&pool, &server.uri()).await;
+
+        let err = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::FetchError(_)),
+            "expected FetchError, got {err:?}"
+        );
+
+        // Fetch error must have been written to the feed row
+        let fetch_error = pool
+            .user(move |conn| {
+                feed::find_by_id(conn, feed_id)
+                    .unwrap()
+                    .unwrap()
+                    .fetch_error
+            })
+            .await
+            .unwrap();
+        assert!(
+            fetch_error.is_some(),
+            "feed.fetch_error should be populated after HTTP error"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Malformed XML returns a parse error
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn malformed_xml_errors() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/rss+xml")
+                    .set_body_string("<rss><broken"),
+            )
+            .mount(&server)
+            .await;
+
+        let (pool, _handle) = seeded_pool("feed_sync_parse_err");
+        let feed_id = seed_feed(&pool, &server.uri()).await;
+
+        let err = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::FeedParseError(_)),
+            "expected FeedParseError, got {err:?}"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Conditional-GET headers are sent when etag/last_modified are set
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn sends_conditional_get_headers() {
+        let server = MockServer::start().await;
+
+        // The mock verifies that If-None-Match is included; `.expect(1)` makes
+        // wiremock fail the test if the header is never seen.
+        Mock::given(method("GET"))
+            .and(header("if-none-match", "\"abc123\""))
+            .respond_with(ResponseTemplate::new(304))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let (pool, _handle) = seeded_pool("feed_sync_cond_get");
+        let feed_id = seed_feed(&pool, &server.uri()).await;
+
+        // Write etag + last_modified directly onto the feed row
+        pool.user(move |conn| {
+            feed::update_fetch_result(
+                conn,
+                feed_id,
+                chrono::Utc::now(),
+                None,
+                Some("\"abc123\""),
+                Some("Mon, 09 Jun 2025 00:00:00 GMT"),
+                None,
+            )
+            .unwrap()
+        })
+        .await
+        .unwrap();
+
+        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
+            .await
+            .unwrap();
+        assert_eq!(result.new_entries, 0);
+        // wiremock verifies the expectation on server drop
+    }
+
+    // ---------------------------------------------------------------------------
+    // Per-feed custom User-Agent is sent
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn uses_custom_user_agent() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(header("user-agent", "Custom/9"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/rss+xml")
+                    .set_body_string(RSS_TWO),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let (pool, _handle) = seeded_pool("feed_sync_custom_ua");
+        let feed_id = seed_feed_with_ua(&pool, &server.uri(), "Custom/9").await;
+
+        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Default/1.0")
+            .await
+            .unwrap();
+        assert_eq!(result.new_entries, 2);
+        // wiremock verifies the User-Agent expectation on server drop
+    }
+
+    // ---------------------------------------------------------------------------
+    // refresh_bucket: empty bucket returns empty vec
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn refresh_bucket_empty() {
+        let (pool, _handle) = seeded_pool("feed_sync_bucket_empty");
+        // Use bucket 255 — no feeds hashed there in our empty DB
+        let results = refresh_bucket(pool, 255, "RDRS-Test/1.0").await;
+        assert!(results.is_empty());
+    }
+
+    // ---------------------------------------------------------------------------
+    // refresh_bucket: feeds in the bucket are synced
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn refresh_bucket_runs_feeds() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/rss+xml")
+                    .set_body_string(RSS_TWO),
+            )
+            .mount(&server)
+            .await;
+
+        let (pool, _handle) = seeded_pool("feed_sync_bucket_feeds");
+        let feed_id = seed_feed(&pool, &server.uri()).await;
+
+        // Discover which bucket the seeded feed was assigned
+        let bucket = pool
+            .user(move |conn| feed::find_by_id(conn, feed_id).unwrap().unwrap().bucket)
+            .await
+            .unwrap()
+            .expect("bucket should be set on create") as u8;
+
+        let results = refresh_bucket(pool, bucket, "RDRS-Test/1.0").await;
+
+        assert!(!results.is_empty(), "expected at least one result");
+        let matching = results.iter().find(|(id, _)| *id == feed_id);
+        assert!(matching.is_some(), "seeded feed should appear in results");
+        let (_, outcome) = matching.unwrap();
+        let sync = outcome.as_ref().expect("sync should succeed");
+        assert!(
+            sync.new_entries > 0,
+            "expected new entries from bucket sync"
+        );
+    }
 
     #[test]
     fn test_normalize_timezone_format() {

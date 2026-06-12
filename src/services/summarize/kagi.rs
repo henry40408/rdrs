@@ -42,8 +42,18 @@ pub struct SummarizeResult {
     pub error: Option<String>,
 }
 
+const KAGI_API_BASE: &str = "https://kagi.com";
+
 /// Summarize a URL using Kagi Universal Summarizer
 pub async fn summarize_url(config: &KagiConfig, url: &str) -> AppResult<SummarizeResult> {
+    summarize_url_with_base(KAGI_API_BASE, config, url).await
+}
+
+async fn summarize_url_with_base(
+    base: &str,
+    config: &KagiConfig,
+    url: &str,
+) -> AppResult<SummarizeResult> {
     if !config.is_configured() {
         return Ok(SummarizeResult {
             success: false,
@@ -58,7 +68,7 @@ pub async fn summarize_url(config: &KagiConfig, url: &str) -> AppResult<Summariz
         .map_err(|e| AppError::Internal(format!("Failed to build HTTP client: {}", e)))?;
 
     // Build the API URL with query parameters
-    let mut api_url = url::Url::parse("https://kagi.com/mother/summary_labs")
+    let mut api_url = url::Url::parse(&format!("{}/mother/summary_labs", base))
         .map_err(|e| AppError::Internal(format!("Failed to parse Kagi API URL: {}", e)))?;
 
     {
@@ -144,6 +154,8 @@ pub async fn summarize_url(config: &KagiConfig, url: &str) -> AppResult<Summariz
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{header, method, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_kagi_config_is_configured() {
@@ -181,5 +193,223 @@ mod tests {
 
         assert_eq!(config.session_token, "test");
         assert!(config.language.is_none());
+    }
+
+    #[tokio::test]
+    async fn summarize_success_strips_title_prefix() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(header("authorization", "session-tok"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "output_data": {"markdown": "Title: Foo\n\nThe body."}
+            })))
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "session-tok".into(),
+            language: None,
+        };
+        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert_eq!(result.output_text.as_deref(), Some("The body."));
+    }
+
+    #[tokio::test]
+    async fn not_configured() {
+        let config = KagiConfig {
+            session_token: "".into(),
+            language: None,
+        };
+        // No mock server needed — the not-configured early return fires before any HTTP call
+        let result = summarize_url_with_base("http://unused.invalid", &config, "https://x.com/a")
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("not configured"));
+    }
+
+    #[tokio::test]
+    async fn markdown_without_title_prefix() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "output_data": {"markdown": "Plain body"}
+            })))
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "tok".into(),
+            language: None,
+        };
+        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert_eq!(result.output_text.as_deref(), Some("Plain body"));
+    }
+
+    #[tokio::test]
+    async fn error_field_in_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "error": "nope"
+            })))
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "tok".into(),
+            language: None,
+        };
+        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("nope"));
+    }
+
+    #[tokio::test]
+    async fn no_output_data() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "tok".into(),
+            language: None,
+        };
+        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_deref().unwrap_or("").contains("No summary"));
+    }
+
+    #[tokio::test]
+    async fn invalid_token_401() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "tok".into(),
+            language: None,
+        };
+        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("Invalid session token"));
+    }
+
+    #[tokio::test]
+    async fn forbidden_403() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "tok".into(),
+            language: None,
+        };
+        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("Access forbidden"));
+    }
+
+    #[tokio::test]
+    async fn rate_limited_429() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(429))
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "tok".into(),
+            language: None,
+        };
+        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.as_deref().unwrap_or("").contains("Rate limit"));
+    }
+
+    #[tokio::test]
+    async fn server_error_500() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("x"))
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "tok".into(),
+            language: None,
+        };
+        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("Kagi error (500"));
+    }
+
+    #[tokio::test]
+    async fn malformed_json() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{bad"))
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "tok".into(),
+            language: None,
+        };
+        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a").await;
+        assert!(matches!(result, Err(AppError::Internal(_))));
+    }
+
+    #[tokio::test]
+    async fn language_adds_query_param() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("target_language", "fr"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "output_data": {"markdown": "Résumé"}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "tok".into(),
+            language: Some("fr".into()),
+        };
+        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
+            .await
+            .unwrap();
+        assert!(result.success);
+        // MockServer verifies the query param expectation on drop
     }
 }

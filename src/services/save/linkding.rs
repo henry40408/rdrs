@@ -163,6 +163,228 @@ fn construct_bookmark_url(base_url: &str, bookmark_id: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{header, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn save_success_returns_bookmark_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(header("authorization", "Token tok123"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": 42})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let config = LinkdingConfig {
+            api_url: server.uri(),
+            api_token: "tok123".into(),
+        };
+        let bookmark = BookmarkData {
+            url: "https://example.com/post".into(),
+            title: Some("Title".into()),
+            description: None,
+            tags: vec!["rust".into()],
+        };
+        let result = save_to_linkding(&config, &bookmark).await.unwrap();
+        assert!(result.success);
+        assert!(result.message.contains("Saved"));
+    }
+
+    #[tokio::test]
+    async fn not_configured_short_circuits() {
+        let config = LinkdingConfig {
+            api_url: "".into(),
+            api_token: "".into(),
+        };
+        let bookmark = BookmarkData {
+            url: "https://example.com".into(),
+            title: None,
+            description: None,
+            tags: vec![],
+        };
+        let result = save_to_linkding(&config, &bookmark).await.unwrap();
+        assert!(!result.success);
+        assert!(result.message.contains("not configured"));
+    }
+
+    #[tokio::test]
+    async fn duplicate_returns_friendly_message() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_string(r#"{"url":["already exists"]}"#),
+            )
+            .mount(&server)
+            .await;
+        let config = LinkdingConfig {
+            api_url: server.uri(),
+            api_token: "tok".into(),
+        };
+        let bookmark = BookmarkData {
+            url: "https://example.com".into(),
+            title: None,
+            description: None,
+            tags: vec![],
+        };
+        let result = save_to_linkding(&config, &bookmark).await.unwrap();
+        assert!(!result.success);
+        assert!(result.message.contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn bad_request_other() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("bad field"))
+            .mount(&server)
+            .await;
+        let config = LinkdingConfig {
+            api_url: server.uri(),
+            api_token: "tok".into(),
+        };
+        let bookmark = BookmarkData {
+            url: "https://example.com".into(),
+            title: None,
+            description: None,
+            tags: vec![],
+        };
+        let result = save_to_linkding(&config, &bookmark).await.unwrap();
+        assert!(!result.success);
+        assert!(result.message.contains("Bad request"));
+    }
+
+    #[tokio::test]
+    async fn invalid_token_401() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        let config = LinkdingConfig {
+            api_url: server.uri(),
+            api_token: "bad-token".into(),
+        };
+        let bookmark = BookmarkData {
+            url: "https://example.com".into(),
+            title: None,
+            description: None,
+            tags: vec![],
+        };
+        let result = save_to_linkding(&config, &bookmark).await.unwrap();
+        assert!(!result.success);
+        assert!(result.message.contains("Invalid API token"));
+    }
+
+    #[tokio::test]
+    async fn forbidden_403() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+        let config = LinkdingConfig {
+            api_url: server.uri(),
+            api_token: "tok".into(),
+        };
+        let bookmark = BookmarkData {
+            url: "https://example.com".into(),
+            title: None,
+            description: None,
+            tags: vec![],
+        };
+        let result = save_to_linkding(&config, &bookmark).await.unwrap();
+        assert!(!result.success);
+        assert!(result.message.contains("forbidden"));
+    }
+
+    #[tokio::test]
+    async fn not_found_404() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let config = LinkdingConfig {
+            api_url: server.uri(),
+            api_token: "tok".into(),
+        };
+        let bookmark = BookmarkData {
+            url: "https://example.com".into(),
+            title: None,
+            description: None,
+            tags: vec![],
+        };
+        let result = save_to_linkding(&config, &bookmark).await.unwrap();
+        assert!(!result.success);
+        assert!(result.message.contains("endpoint not found"));
+    }
+
+    #[tokio::test]
+    async fn server_error_500() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+            .mount(&server)
+            .await;
+        let config = LinkdingConfig {
+            api_url: server.uri(),
+            api_token: "tok".into(),
+        };
+        let bookmark = BookmarkData {
+            url: "https://example.com".into(),
+            title: None,
+            description: None,
+            tags: vec![],
+        };
+        let result = save_to_linkding(&config, &bookmark).await.unwrap();
+        assert!(!result.success);
+        assert!(result.message.contains("Linkding error (500"));
+    }
+
+    #[tokio::test]
+    async fn malformed_json_errors() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(201).set_body_string("{not json"))
+            .mount(&server)
+            .await;
+        let config = LinkdingConfig {
+            api_url: server.uri(),
+            api_token: "tok".into(),
+        };
+        let bookmark = BookmarkData {
+            url: "https://example.com".into(),
+            title: None,
+            description: None,
+            tags: vec![],
+        };
+        let result = save_to_linkding(&config, &bookmark).await;
+        assert!(matches!(result, Err(AppError::Internal(_))));
+    }
+
+    #[tokio::test]
+    async fn omits_empty_optional_fields() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(wiremock::matchers::body_json(
+                serde_json::json!({"url": "https://x/"}),
+            ))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": 1})))
+            .mount(&server)
+            .await;
+        let config = LinkdingConfig {
+            api_url: server.uri(),
+            api_token: "tok".into(),
+        };
+        let bookmark = BookmarkData {
+            url: "https://x/".into(),
+            title: None,
+            description: None,
+            tags: vec![],
+        };
+        let result = save_to_linkding(&config, &bookmark).await.unwrap();
+        assert!(result.success);
+    }
 
     #[test]
     fn test_normalize_api_url() {
