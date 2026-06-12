@@ -154,6 +154,12 @@ jobs:
       - uses: taiki-e/install-action@8c6986fc38d22c217606a7ad4f1d438eced263e0 # nextest
 
       - name: Generate coverage
+        # RDRS_FAST_HASH swaps Argon2 to minimal cost params for this run only.
+        # The integration tests register/log in hundreds of times; with the
+        # production (memory-hard) params each hash costs ~hundreds of ms in a
+        # debug build, dominating the suite. Never set in production.
+        env:
+          RDRS_FAST_HASH: "1"
         run: cargo llvm-cov nextest --lcov --output-path lcov.info
 
       - name: Upload coverage reports to Codecov
