@@ -528,6 +528,17 @@ window.closeSidebar = function() {
     if (toggle) toggle.style.display = '';
 };
 
+// Tap-outside-to-close for the mobile drawer. The scrim is a CSS
+// pseudo-element (no clickable element of its own), so we listen on the
+// document: a click that lands outside the open sidebar and isn't the
+// hamburger toggle closes the drawer.
+document.addEventListener('click', function(e) {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar || !sidebar.classList.contains('open')) return;
+    if (e.target.closest('#sidebar') || e.target.closest('.sidebar-toggle')) return;
+    window.closeSidebar();
+});
+
 installSwap();
 
 // Sidebar unread polling — fires every 20s on pages that mount the

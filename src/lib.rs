@@ -283,6 +283,7 @@ pub fn create_router(state: AppState) -> Router {
         .merge(handlers::greader::greader_routes())
         .nest("/api/greader.php", handlers::greader::greader_routes())
         .route("/static/{*path}", get(handlers::static_assets::serve))
+        .fallback(handlers::pages::not_found_page)
         .with_state(state)
         .layer(middleware::ETagLayer::new())
         .layer(middleware::DateHeaderLayer::new())

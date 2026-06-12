@@ -1311,7 +1311,7 @@ async fn test_settings_page() {
     // SSR content — no longer a CSR shell.
     assert!(!body.contains("<rdrs-settings-page>"));
     assert!(!body.contains("/static/js/pages/settings.js"));
-    assert!(body.contains("<h1>Settings</h1>"));
+    assert!(body.contains("<h1>App</h1>"));
 }
 
 #[tokio::test]

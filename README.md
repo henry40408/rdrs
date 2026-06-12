@@ -114,7 +114,7 @@ The interface supports vim-style keyboard navigation for efficient reading.
 
 Connect RDRS to your Linkding instance to save articles for later:
 
-1. Go to User Settings
+1. Go to Settings
 2. Enter your Linkding URL and API token
 3. Use the "Save" button on any entry
 

@@ -390,7 +390,7 @@ async fn test_user_settings_page_renders_ssr_content() {
     assert!(!body.contains("/static/js/pages/user-settings.js"));
 
     // SSR content present.
-    assert!(body.contains("<h1>User Settings</h1>"));
+    assert!(body.contains("<h1>Settings</h1>"));
     assert!(body.contains("Account Information"));
     assert!(body.contains("<form method=\"post\" action=\"/user-settings/password\">"));
     assert!(body.contains("<form method=\"post\" action=\"/user-settings/preferences\">"));
@@ -417,7 +417,7 @@ async fn test_settings_page_renders_ssr_content() {
     // Server-rendered content from default config: a single Configuration
     // table listing each env var with its description, default, and current
     // value (Configuration + Environment Variables sections are merged).
-    assert!(body.contains("<h1>Settings</h1>"));
+    assert!(body.contains("<h1>App</h1>"));
     assert!(body.contains("Configuration"));
     assert!(body.contains("DATABASE_URL"));
     assert!(body.contains("USER_AGENT"));
@@ -1857,6 +1857,35 @@ async fn test_feed_edit_page_not_found_renders_error_page() {
         body.contains("rdrs-sidebar"),
         "404 page should render inside the app chrome (sidebar present), got: {body}"
     );
+}
+
+#[tokio::test]
+async fn test_unknown_route_logged_in_renders_chrome_404() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/this-page-does-not-exist").await;
+    assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
+    let body = response.text();
+    assert!(
+        body.contains("Page not found"),
+        "fallback 404 should render the not-found heading, got: {body}"
+    );
+    assert!(
+        body.contains("rdrs-sidebar"),
+        "fallback 404 should render inside the app chrome (sidebar present), got: {body}"
+    );
+}
+
+#[tokio::test]
+async fn test_unknown_route_logged_out_redirects_to_login() {
+    let app = create_test_app(default_test_config());
+    setup_users(&app.db).await;
+
+    let response = app.server.get("/this-page-does-not-exist").await;
+    response.assert_status_see_other();
+    assert_eq!(response.header(axum::http::header::LOCATION), "/login");
 }
 
 #[tokio::test]

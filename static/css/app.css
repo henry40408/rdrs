@@ -270,6 +270,20 @@ code {
     font-weight: 600;
 }
 
+/* Category names are user-supplied and can overrun the sidebar (a long
+   unbroken word even spills past its right edge). Keep each to one line
+   and fade the trailing edge — same truncation language as the
+   categories table; the `title` on the row exposes the full name. The
+   badge keeps its own width; only the label shrinks. */
+.sidebar-item-label {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent);
+}
+
 .sidebar-item-icon {
     width: var(--icon-md);
     text-align: center;
@@ -844,6 +858,7 @@ th {
     font-size: var(--font-xs);
     text-transform: uppercase;
     letter-spacing: 0.05em;
+    white-space: nowrap;
 }
 
 td input[type="text"] {
@@ -1001,6 +1016,8 @@ td input[type="text"] {
     color: var(--color-text);
     display: inline;
     cursor: pointer;
+    overflow-wrap: break-word;
+    word-break: break-word;
 }
 
 .entry-item-title:hover {
@@ -1101,6 +1118,13 @@ td input[type="text"] {
     margin-bottom: var(--space-5);
 }
 
+/* Let the filter group shrink below its content so the wide category
+   <select> (capped at max-width: 100% via .select-auto) can't push the
+   page past a narrow viewport. Flex items default to min-width: auto. */
+.filter-bar .form-group {
+    min-width: 0;
+}
+
 /* Selects inside .filter-bar render at the same height as sibling
    button-style chips (e.g. .feed-filter-link on /feeds) so the row
    reads as one control strip rather than mismatched heights. */
@@ -1142,7 +1166,7 @@ td input[type="text"] {
 }
 
 .tab-bar a {
-    padding: var(--space-2) var(--space-4);
+    padding: var(--space-2) var(--space-3);
     font-size: var(--font-sm);
     font-weight: 500;
     color: var(--color-text-muted);
@@ -1339,12 +1363,12 @@ td input[type="text"] {
 .search-result:nth-child(6) { animation-delay: 0.24s; }
 .search-result:nth-child(n+7) { animation-delay: 0.28s; }
 
-/* Title sized between article h3 (--font-lg) and body — citation heading,
-   not page heading. */
+/* Title in the app (sans) style, body-sized — a citation heading,
+   not a page heading. */
 .search-result-title {
     display: block;
-    font-family: var(--font-display);
-    font-size: var(--font-lg);
+    font-family: var(--font-ui);
+    font-size: var(--font-base);
     font-weight: 600;
     color: var(--color-text);
     line-height: 1.35;
@@ -1359,8 +1383,6 @@ td input[type="text"] {
 .search-result-meta {
     font-family: var(--font-ui);
     font-size: var(--font-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
     color: var(--color-text-muted);
     margin-bottom: var(--space-2);
 }
@@ -1404,6 +1426,7 @@ mark {
 
 .select-auto {
     width: auto;
+    max-width: 100%;
 }
 
 .textarea-full {
@@ -1437,6 +1460,10 @@ mark {
 }
 
 /* Summary badges — shared geometry, per-state colour. */
+.entry-item-badges {
+    white-space: nowrap;
+}
+
 .summary-badge,
 .summary-badge-pending,
 .summary-badge-processing,
@@ -1614,6 +1641,15 @@ summary {
     .sidebar.open {
         transform: translateX(0);
         box-shadow: var(--shadow-lg);
+    }
+
+    /* Scrim under the open drawer (sidebar itself is z-index 100). */
+    body:has(.sidebar.open)::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 99;
+        background: var(--color-overlay);
     }
 
     .sidebar-close {
@@ -1942,6 +1978,7 @@ summary {
     justify-content: flex-end;
     height: 100%;
     min-width: 0;
+    position: relative;
 }
 .stats-bar {
     width: 100%;
@@ -1958,7 +1995,11 @@ summary {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 100%;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    text-align: center;
 }
 
 .stats-columns {
@@ -1968,6 +2009,7 @@ summary {
 }
 @media (max-width: 768px) {
     .stats-columns { grid-template-columns: 1fr; }
+    .stats-period-divider { display: none; }
 }
 
 .stats-bar-row { margin-bottom: var(--space-2); }
@@ -2019,26 +2061,29 @@ summary {
 }
 
 /* ===== Categories: inline rename form ===== */
-/* Editorial manuscript style — name reads as plain serif text;
+/* Inline rename — name reads as plain sans text matching the table cells;
    hairline rule on hover; gold rule on focus; SAVE appears like a
    typesetter's correction mark only when the row is being edited. */
 .cat-rename {
-    display: inline-flex;
+    display: flex;
     align-items: baseline;
     gap: var(--space-3);
 }
 
 .cat-rename input[type="text"] {
+    flex: 1;
+    min-width: 0;
     width: auto;
-    min-width: 14ch;
     padding: var(--space-1) 0;
     border: none;
     border-bottom: 1px solid transparent;
     border-radius: 0;
     background: transparent;
-    font-family: var(--font-body);
-    font-size: var(--font-base);
+    font-family: var(--font-ui);
+    font-size: var(--font-sm);
     color: var(--color-text);
+    white-space: nowrap;
+    overflow: hidden;
     transition: border-color 0.2s;
 }
 
@@ -2050,6 +2095,18 @@ summary {
     outline: none;
     border-bottom-color: var(--color-accent);
     box-shadow: none;
+}
+
+/* Truncate a too-long name by fading its trailing edge rather than the
+   browser's text-overflow ellipsis. `text-overflow: ellipsis` is useless
+   on an <input> in Firefox 151+ (the field-sizing rewrite, Bugzilla
+   2031757, dropped the glyph under the UA-forced `overflow: clip`), so a
+   fade is the only affordance that renders identically across engines.
+   `overflow: hidden` above is the no-mask fallback; skipped while editing
+   so the caret and full text stay visible. */
+.cat-rename input[type="text"]:not(:focus) {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent);
 }
 
 .cat-rename .cat-rename-save {

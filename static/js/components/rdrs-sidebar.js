@@ -143,8 +143,8 @@ class RdrsSidebar extends HTMLElement {
             <div class="sidebar-section-title">Categories</div>
             <div id="sidebar-categories">
                 ${cats.map(cat => `
-                <a href="/categories/${cat.id}/entries" class="sidebar-item${cat.id === activeCatId ? ' active' : ''}">
-                    <span>${escapeHtml(cat.name)}</span>
+                <a href="/categories/${cat.id}/entries" class="sidebar-item${cat.id === activeCatId ? ' active' : ''}" title="${escapeHtml(cat.name)}">
+                    <span class="sidebar-item-label">${escapeHtml(cat.name)}</span>
                     ${cat.unread_count > 0 ? `<span class="sidebar-badge">${cat.unread_count}</span>` : ''}
                 </a>
                 `).join('')}
