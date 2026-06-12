@@ -270,6 +270,20 @@ code {
     font-weight: 600;
 }
 
+/* Category names are user-supplied and can overrun the sidebar (a long
+   unbroken word even spills past its right edge). Keep each to one line
+   and fade the trailing edge — same truncation language as the
+   categories table; the `title` on the row exposes the full name. The
+   badge keeps its own width; only the label shrinks. */
+.sidebar-item-label {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent);
+}
+
 .sidebar-item-icon {
     width: var(--icon-md);
     text-align: center;
