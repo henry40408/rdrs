@@ -15,6 +15,15 @@ Feature: Responsive layout
     Then the sidebar is not visible
 
   @mobile
+  Scenario: Tapping outside the open sidebar drawer closes it on mobile
+    Given I am viewing on a mobile screen
+    When I open the inbox
+    And I tap the hamburger
+    Then the sidebar is visible
+    When I tap outside the sidebar
+    Then the sidebar is not visible
+
+  @mobile
   Scenario: Entry list is full-width single column on mobile
     Given I am viewing on a mobile screen
     And I have a feed with 5 test entries

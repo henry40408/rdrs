@@ -8,7 +8,7 @@ use axum::{
 use std::collections::HashMap;
 
 use crate::error::AppError;
-use crate::middleware::auth::{PageAdminUser, PageAuthUser};
+use crate::middleware::auth::{LoginRedirect, PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
 use crate::models::user_settings;
 use crate::models::SummaryStatus;
@@ -728,7 +728,7 @@ pub async fn user_settings_page(
     (
         flash,
         UserSettingsTemplate {
-            title: "User Settings",
+            title: "Settings",
             git_version: crate::GIT_VERSION,
             layout,
             username,
@@ -1158,7 +1158,7 @@ pub async fn settings_page(
     (
         flash,
         SettingsTemplate {
-            title: "Settings",
+            title: "App",
             git_version: crate::GIT_VERSION,
             layout,
             database_url: state.config.database_url.clone(),
@@ -1903,6 +1903,27 @@ pub async fn render_not_found(
         layout,
         heading,
         message: message.into(),
+    }
+}
+
+/// Router fallback: chrome-wrapped 404 for logged-in users, login
+/// redirect otherwise (matches the behavior of every other page route).
+pub async fn not_found_page(
+    State(state): State<AppState>,
+    flash: Flash,
+    auth_user: Result<PageAuthUser, LoginRedirect>,
+) -> Response {
+    match auth_user {
+        Ok(user) => render_not_found(
+            &state,
+            &user,
+            &flash,
+            "Page not found",
+            "The page you're looking for doesn't exist.",
+        )
+        .await
+        .into_response(),
+        Err(redirect) => redirect.into_response(),
     }
 }
 

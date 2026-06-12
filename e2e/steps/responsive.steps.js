@@ -38,6 +38,13 @@ When("I tap the sidebar close button", async ({ page }) => {
   await page.locator(".sidebar-close").click();
 });
 
+When("I tap outside the sidebar", async ({ page }) => {
+  // Click the dimmed area on the right half of the viewport, well clear of
+  // the left-anchored drawer — exercises the document-level tap-outside close.
+  const v = page.viewportSize();
+  await page.mouse.click(v.width - 10, Math.floor(v.height / 2));
+});
+
 Then("the sidebar is visible", async ({ page }) => {
   await expect(page.locator("#sidebar")).toHaveClass(/open/);
 });

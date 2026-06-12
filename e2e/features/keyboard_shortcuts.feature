@@ -75,8 +75,8 @@ Feature: Keyboard shortcuts
 
   Scenario: g a jumps to All entries from a non-entries page
     When I open the categories page
-    And I press the "g" key
-    And I press the "a" key
+    And I press the "g" key without refocusing
+    And I press the "a" key without refocusing
     Then I am on the all entries page
 
   Scenario: g s jumps to Starred instead of triggering save
