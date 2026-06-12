@@ -67,6 +67,10 @@ export async function spawnRdrs() {
       SIGNUP_ENABLED: "true",
       MULTI_USER_ENABLED: "true",
       RUST_LOG: "warn",
+      // This is always a throwaway test server. Use minimal Argon2 cost so the
+      // register/login each scenario performs costs microseconds instead of
+      // hundreds of ms — roughly halves the suite. Never set in production.
+      RDRS_FAST_HASH: "1",
     },
     stdio: "pipe",
   });
