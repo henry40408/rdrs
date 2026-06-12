@@ -2070,7 +2070,6 @@ summary {
     color: var(--color-text);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
     transition: border-color 0.2s;
 }
 
@@ -2084,18 +2083,16 @@ summary {
     box-shadow: none;
 }
 
-/* Firefox 151 regression (Bugzilla 2031757): the field-sizing rewrite
-   dropped the special-case that painted text-overflow ellipsis on an
-   <input> under the UA-forced `overflow: clip !important`, so long names
-   hard-cut mid-glyph with no affordance. No author CSS can restore the
-   real ellipsis on an input there, so fade the clipped edge instead.
-   Gated to Firefox via `-moz-appearance` (false in Chromium, which keeps
-   the real ellipsis above); skipped while editing so the caret/text show
-   in full. Self-heals — drops to no-op once Mozilla restores the glyph. */
-@supports (-moz-appearance: none) {
-    .cat-rename input[type="text"]:not(:focus) {
-        mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent);
-    }
+/* Truncate a too-long name by fading its trailing edge rather than the
+   browser's text-overflow ellipsis. `text-overflow: ellipsis` is useless
+   on an <input> in Firefox 151+ (the field-sizing rewrite, Bugzilla
+   2031757, dropped the glyph under the UA-forced `overflow: clip`), so a
+   fade is the only affordance that renders identically across engines.
+   `overflow: hidden` above is the no-mask fallback; skipped while editing
+   so the caret and full text stay visible. */
+.cat-rename input[type="text"]:not(:focus) {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 1.5em), transparent);
 }
 
 .cat-rename .cat-rename-save {
