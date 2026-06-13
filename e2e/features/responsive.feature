@@ -105,3 +105,27 @@ Feature: Responsive layout
     And I have a feed with 5 test entries
     When I open the inbox
     Then the entry list pane is narrower than the viewport
+
+  @mobile
+  Scenario: Inbox and drawer controls meet the 44px touch minimum on mobile
+    Given I am viewing on a mobile screen
+    And I have a feed with 5 test entries
+    When I open the inbox
+    Then the ".sidebar-toggle" control is at least 44px wide
+    And the ".sidebar-toggle" control is at least 44px tall
+    And the ".entry-action-btn" control is at least 44px tall
+    When I tap the hamburger
+    Then the ".sidebar-close" control is at least 44px wide
+    And the ".sidebar-close" control is at least 44px tall
+    And the ".sidebar-item" control is at least 44px tall
+    When I tap the sidebar close button
+    And I click the entry titled "Test Entry 1"
+    Then the reading pane is visible on mobile
+    And the ".reading-pane-back-link" control is at least 44px tall
+
+  @mobile
+  Scenario: Table action links meet the 44px touch minimum on mobile
+    Given I am viewing on a mobile screen
+    And I have a category named "Test Category"
+    When I open the categories page
+    Then the ".action-link" control is at least 44px tall

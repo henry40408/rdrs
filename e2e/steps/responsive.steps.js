@@ -123,3 +123,15 @@ Then("the reading pane overlay is dismissed", async ({ page }) => {
   await expect(pane).not.toHaveClass(/reading-pane-active/);
   await expect(pane).toBeHidden();
 });
+
+Then("the {string} control is at least {int}px tall", async ({ page }, selector, min) => {
+  const box = await page.locator(selector).first().boundingBox();
+  expect(box).not.toBeNull();
+  expect(box.height).toBeGreaterThanOrEqual(min);
+});
+
+Then("the {string} control is at least {int}px wide", async ({ page }, selector, min) => {
+  const box = await page.locator(selector).first().boundingBox();
+  expect(box).not.toBeNull();
+  expect(box.width).toBeGreaterThanOrEqual(min);
+});
