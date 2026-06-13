@@ -219,7 +219,7 @@ Feature: Reading entries
     When I open the read entries page
     Then the sidebar highlights All Entries
     When I open the summarized entries page
-    Then the sidebar highlights All Entries
+    Then the sidebar highlights Summarized
     When I open the all entries page
     Then the sidebar highlights All Entries
     When I open the starred entries page

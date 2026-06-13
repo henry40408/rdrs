@@ -421,6 +421,10 @@ Then("the sidebar highlights All Entries", async ({ page }) => {
   await expect(page.getByTestId("nav-entries")).toHaveClass(/active/);
 });
 
+Then("the sidebar highlights Summarized", async ({ page }) => {
+  await expect(page.getByTestId("nav-summarized")).toHaveClass(/active/);
+});
+
 Then("the sidebar Summarized item shows a count of {string}", async ({ page }, count) => {
   await expect(page.locator('[data-testid="nav-summarized"] #summarized-count')).toHaveText(count);
 });
