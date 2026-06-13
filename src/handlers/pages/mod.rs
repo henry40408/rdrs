@@ -2906,8 +2906,10 @@ mod tests {
 
     #[test]
     fn feed_color_index_fn_is_bounded() {
+        assert_eq!(super::feed_color_index(0), 0); // boundary: id 0
+        assert_eq!(super::feed_color_index(6), 0); // wraps at palette size
         assert_eq!(super::feed_color_index(13), 1); // 13 % 6 == 1
         assert_eq!(super::feed_color_index(-1), 5); // (-1).rem_euclid(6) == 5
-        assert!(super::feed_color_index(123_456) < 6);
+        assert!(super::feed_color_index(i64::MAX) < 6);
     }
 }
