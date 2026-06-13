@@ -282,7 +282,7 @@ pub fn delete_expired(conn: &Connection, hours: i64) -> AppResult<usize> {
 pub fn count_completed(conn: &Connection, user_id: i64) -> AppResult<i64> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM entry_summary WHERE user_id = ?1 AND status = 'completed'",
-        [user_id],
+        params![user_id],
         |row| row.get(0),
     )?;
     Ok(count)
