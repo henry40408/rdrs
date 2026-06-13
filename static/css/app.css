@@ -1806,9 +1806,10 @@ summary {
     }
 
     /* The entry-row toggles ship with padding:0 (.entry-item-actions
-       .entry-action-btn) — match that specificity here so the horizontal
-       room actually applies on mobile. */
-    .entry-item-actions .entry-action-btn {
+       .entry-action-btn). That rule sits later in source at equal 0-2-0,
+       so add the .entry-item ancestor here (0-3-0) to win regardless of
+       source order and apply the horizontal touch room on mobile. */
+    .entry-item .entry-item-actions .entry-action-btn {
         padding: var(--space-1) var(--space-2);
     }
 
