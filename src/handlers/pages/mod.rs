@@ -2825,9 +2825,10 @@ mod tests {
 
     #[test]
     fn feed_initial_uppercases_first_char() {
-        let ewf = ewf_with_title("anything");
-        let row = row_view_from(&ewf, None); // feed_title = "Feed"
-        assert_eq!(row.feed_initial(), "F");
+        let mut ewf = ewf_with_title("anything");
+        ewf.feed_title = Some("delta".to_string());
+        let row = row_view_from(&ewf, None);
+        assert_eq!(row.feed_initial(), "D");
     }
 
     #[test]
@@ -2839,11 +2840,24 @@ mod tests {
     }
 
     #[test]
+    fn feed_initial_uppercases_unicode() {
+        let mut ewf = ewf_with_title("anything");
+        ewf.feed_title = Some("über".to_string());
+        let row = row_view_from(&ewf, None);
+        assert_eq!(row.feed_initial(), "Ü");
+    }
+
+    #[test]
     fn feed_color_index_is_stable_and_bounded() {
         let mut ewf = ewf_with_title("anything");
         ewf.entry.feed_id = 13;
         let row = row_view_from(&ewf, None);
         assert_eq!(row.feed_color_index(), 1); // 13 % 6 == 1
+
+        // rem_euclid (not %) keeps the index non-negative for any id.
+        ewf.entry.feed_id = -1;
+        let row = row_view_from(&ewf, None);
+        assert_eq!(row.feed_color_index(), 5); // (-1).rem_euclid(6) == 5
         assert!(row.feed_color_index() < 6);
     }
 }
