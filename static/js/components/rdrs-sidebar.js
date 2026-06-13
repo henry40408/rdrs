@@ -189,7 +189,7 @@ class RdrsSidebar extends HTMLElement {
                 <span>Starred</span>
             </a>
             <a href="/entries/summarized" class="sidebar-item${isActive('summarized')}" data-testid="nav-summarized">
-                <span class="sidebar-item-icon">&#x2728;</span>
+                <span class="sidebar-item-icon">&#x2728;&#xFE0F;</span>
                 <span>Summarized</span>
                 <span class="sidebar-badge" id="summarized-count">${totalSummarized > 0 ? totalSummarized : ''}</span>
             </a>
