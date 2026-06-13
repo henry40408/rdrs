@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::sidebar_cache::SidebarCache;
 use super::summarize::kagi::{self, KagiConfig};
 use super::summary_cache::SummaryCache;
 use crate::db::DbPool;
@@ -21,6 +22,7 @@ pub struct SummaryJob {
 pub fn start_summary_worker(
     mut rx: mpsc::Receiver<SummaryJob>,
     cache: Arc<SummaryCache>,
+    sidebar_cache: Arc<SidebarCache>,
     db: DbPool,
     cancel_token: CancellationToken,
 ) -> JoinHandle<()> {
@@ -33,7 +35,7 @@ pub fn start_summary_worker(
                     tracing::info!("Summary worker stopping, draining remaining jobs...");
                     // Drain remaining jobs before exiting
                     while let Ok(job) = rx.try_recv() {
-                        process_summary_job(&job, &cache, &db).await;
+                        process_summary_job(&job, &cache, &sidebar_cache, &db).await;
                     }
                     break;
                 }
@@ -45,14 +47,19 @@ pub fn start_summary_worker(
                 }
             };
 
-            process_summary_job(&job, &cache, &db).await;
+            process_summary_job(&job, &cache, &sidebar_cache, &db).await;
         }
 
         tracing::info!("Summary worker stopped");
     })
 }
 
-async fn process_summary_job(job: &SummaryJob, cache: &Arc<SummaryCache>, db: &DbPool) {
+async fn process_summary_job(
+    job: &SummaryJob,
+    cache: &Arc<SummaryCache>,
+    sidebar_cache: &Arc<SidebarCache>,
+    db: &DbPool,
+) {
     tracing::debug!(
         "Processing summary job: user={}, entry={}, link={}",
         job.user_id,
@@ -131,6 +138,8 @@ async fn process_summary_job(job: &SummaryJob, cache: &Arc<SummaryCache>, db: &D
                     entry_summary::set_completed(conn, user_id, entry_id, &summary_text)
                 })
                 .await;
+            // A summary just completed — the sidebar "Summarized" badge must tick up.
+            sidebar_cache.bust(job.user_id);
         }
         Err(error) => {
             tracing::warn!("Summary failed for entry {}: {}", job.entry_id, error);
@@ -308,7 +317,13 @@ mod tests {
         let db = setup_test_db();
         let cancel_token = CancellationToken::new();
 
-        let handle = start_summary_worker(rx, cache, db, cancel_token.clone());
+        let handle = start_summary_worker(
+            rx,
+            cache,
+            Arc::new(SidebarCache::default()),
+            db,
+            cancel_token.clone(),
+        );
 
         // Send a job (it won't be processed properly without Kagi config, but that's OK)
         let _ = tx
@@ -334,7 +349,13 @@ mod tests {
         let db = setup_test_db();
         let cancel_token = CancellationToken::new();
 
-        let handle = start_summary_worker(rx, cache, db, cancel_token);
+        let handle = start_summary_worker(
+            rx,
+            cache,
+            Arc::new(SidebarCache::default()),
+            db,
+            cancel_token,
+        );
 
         // Drop the sender to close the channel
         drop(tx);
@@ -486,7 +507,13 @@ mod tests {
         .await
         .unwrap();
 
-        let handle = start_summary_worker(rx, cache.clone(), db, cancel_token.clone());
+        let handle = start_summary_worker(
+            rx,
+            cache.clone(),
+            Arc::new(SidebarCache::default()),
+            db,
+            cancel_token.clone(),
+        );
 
         // Send multiple jobs
         for i in 1..=3 {
