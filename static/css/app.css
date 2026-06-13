@@ -48,6 +48,9 @@
     /* Borders */
     --border-accent-width: 3px;
 
+    /* Touch */
+    --touch-min: 2.75rem;   /* 44px — WCAG 2.5.5 / iOS minimum tap target */
+
     /* Icon sizes */
     --icon-sm: 14px;
     --icon-md: 18px;
@@ -1734,7 +1737,7 @@ summary {
     }
 
     .entry-item {
-        padding: var(--space-3) var(--space-4);
+        padding: var(--space-4);
     }
 
     /* Banner stack: tighter padding on narrow viewports. */
@@ -1766,6 +1769,86 @@ summary {
     body:has(.main-content > .banner-stack:not(:empty)) .list-pane-header,
     body:has(.main-content > .banner-stack:not(:empty)) .page-content {
         padding-top: var(--space-6);
+    }
+
+    /* ===== Mobile touch baseline — 44px minimum tap targets ===== */
+
+    /* Buttons are already inline-flex & centered (base styles); just raise
+       them to the touch minimum. */
+    button,
+    .btn {
+        min-height: var(--touch-min);
+    }
+
+    /* Link- and text-styled controls have little or no padding by default —
+       turn them into real flex boxes so min-height centers the label and the
+       whole box is tappable, not just the glyph run. */
+    .action-link,
+    .actions a,
+    .tab-bar a,
+    .reading-pane-nav-btn,
+    .stats-period-btn,
+    .feed-filter-link,
+    .entry-action-btn,
+    .reading-pane-back-link,
+    .entry-item-meta a,
+    .breadcrumb a,
+    .search-result-title,
+    .link a {
+        display: inline-flex;
+        align-items: center;
+        min-height: var(--touch-min);
+    }
+
+    /* The entry-row toggles ship with padding:0 — give them horizontal room. */
+    .entry-action-btn {
+        padding: var(--space-1) var(--space-2);
+    }
+
+    /* Square icon-only controls: width AND height must reach the minimum. */
+    .sidebar-toggle,
+    .sidebar-close,
+    .banner-dismiss {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: var(--touch-min);
+        min-height: var(--touch-min);
+    }
+
+    /* Drawer rows. */
+    .sidebar-item {
+        min-height: var(--touch-min);
+    }
+
+    /* Form controls: touch height + 16px font to suppress iOS focus-zoom. */
+    input[type="text"],
+    input[type="password"],
+    input[type="url"],
+    input[type="email"],
+    input[type="number"],
+    input[type="search"],
+    input[type="date"],
+    select,
+    textarea {
+        min-height: var(--touch-min);
+        font-size: var(--font-base);
+    }
+
+    /* Legibility: lift the smallest interactive/secondary text to 14px. */
+    .entry-item-meta,
+    .entry-item-actions,
+    .action-link {
+        font-size: var(--font-sm);
+    }
+
+    /* Anti-mis-tap: widen gaps between adjacent tappable controls. */
+    .entry-item-actions {
+        gap: var(--space-4);
+    }
+
+    .tab-bar {
+        gap: var(--space-2);
     }
 }
 
