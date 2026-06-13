@@ -40,6 +40,11 @@ Feature: Reading entries
     Then I see 1 entry in the entry list
     And the first entry is titled "Test Entry 3"
 
+  Scenario: Sidebar shows a Summarized count badge
+    Given the entry titled "Test Entry 1" has a summary
+    When I open the inbox
+    Then the sidebar Summarized item shows a count of "1"
+
   Scenario: Single-feed view filters by that feed
     When I open the entries page for feed "Reading Feed"
     Then I see 5 entries in the entry list
