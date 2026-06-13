@@ -68,6 +68,8 @@ Feature: Responsive layout
     When I open the inbox
     And a flash banner is shown
     Then the flash banner sits below the hamburger
+    And the ".banner-dismiss" control is at least 44px wide
+    And the ".banner-dismiss" control is at least 44px tall
 
   @tablet
   Scenario: Sidebar is a drawer on tablet
@@ -105,3 +107,47 @@ Feature: Responsive layout
     And I have a feed with 5 test entries
     When I open the inbox
     Then the entry list pane is narrower than the viewport
+
+  @mobile
+  Scenario: Inbox and drawer controls meet the 44px touch minimum on mobile
+    Given I am viewing on a mobile screen
+    And I have a feed with 5 test entries
+    When I open the inbox
+    Then the ".sidebar-toggle" control is at least 44px wide
+    And the ".sidebar-toggle" control is at least 44px tall
+    And the ".entry-action-btn" control is at least 44px tall
+    And the ".filter-bar select" control is at least 44px tall
+    When I tap the hamburger
+    Then the ".sidebar-close" control is at least 44px wide
+    And the ".sidebar-close" control is at least 44px tall
+    And the ".sidebar-item" control is at least 44px tall
+    When I tap the sidebar close button
+    And I click the entry titled "Test Entry 1"
+    Then the reading pane is visible on mobile
+    And the ".reading-pane-back-link" control is at least 44px tall
+
+  @mobile
+  Scenario: Table action links meet the 44px touch minimum on mobile
+    Given I am viewing on a mobile screen
+    And I have a category named "Test Category"
+    When I open the categories page
+    Then the ".action-link" control is at least 44px tall
+    And the "#name" control is at least 44px tall
+
+  @mobile
+  Scenario: Tab bar links meet the 44px touch minimum on mobile
+    Given I am viewing on a mobile screen
+    And I have a feed with 5 test entries
+    When I open the all-entries page
+    Then the ".tab-bar a" control is at least 44px tall
+
+  @mobile
+  Scenario: Entry row redesign — favicon, full-width actions, sized meta on mobile
+    Given I am viewing on a mobile screen
+    And I have a feed with 5 test entries
+    When I open the inbox
+    Then the ".entry-favicon" control is at least 24px wide
+    And the ".entry-favicon" control is at least 24px tall
+    And the ".entry-item-meta a" control is at least 24px tall
+    And the ".entry-item-actions .entry-action-btn" controls each span at least 25% of the row
+    And the ".entry-action-btn" control is at least 44px tall

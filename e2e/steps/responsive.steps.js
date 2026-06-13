@@ -30,6 +30,10 @@ When("I open the categories page", async ({ page, serverUrl }) => {
   await page.goto(`${serverUrl}/categories`);
 });
 
+When("I open the all-entries page", async ({ page, serverUrl }) => {
+  await page.goto(`${serverUrl}/entries`);
+});
+
 When("I tap the hamburger", async ({ page }) => {
   await page.locator(".sidebar-toggle").click();
 });
@@ -122,4 +126,31 @@ Then("the reading pane overlay is dismissed", async ({ page }) => {
   const pane = page.locator("#reading-pane");
   await expect(pane).not.toHaveClass(/reading-pane-active/);
   await expect(pane).toBeHidden();
+});
+
+Then("the {string} control is at least {int}px tall", async ({ page }, selector, min) => {
+  const box = await page.locator(selector).first().boundingBox();
+  expect(box).not.toBeNull();
+  expect(box.height).toBeGreaterThanOrEqual(min);
+});
+
+Then("the {string} control is at least {int}px wide", async ({ page }, selector, min) => {
+  const box = await page.locator(selector).first().boundingBox();
+  expect(box).not.toBeNull();
+  expect(box.width).toBeGreaterThanOrEqual(min);
+});
+
+Then("the {string} controls each span at least {int}% of the row", async ({ page }, selector, pct) => {
+  // "row" = the first entry-item; scope the controls to that same row so the
+  // width comparison is against the row they live in (rows are uniform width).
+  const firstRow = page.getByTestId("entry-item").first();
+  const row = await firstRow.boundingBox();
+  expect(row).not.toBeNull();
+  const btns = await firstRow.locator(selector).all();
+  expect(btns.length).toBeGreaterThanOrEqual(2);
+  for (const b of btns) {
+    const box = await b.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeGreaterThanOrEqual((row.width * pct) / 100);
+  }
 });

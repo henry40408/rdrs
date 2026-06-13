@@ -48,6 +48,9 @@
     /* Borders */
     --border-accent-width: 3px;
 
+    /* Touch */
+    --touch-min: 2.75rem;   /* 44px — WCAG 2.5.5 / iOS minimum tap target */
+
     /* Icon sizes */
     --icon-sm: 14px;
     --icon-md: 18px;
@@ -983,81 +986,136 @@ td input[type="text"] {
     border: 0;
 }
 
-/* ===== Entry Items (List) ===== */
+/* ===== Entry Items (List) — editorial grid ===== */
 .entry-item {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+        "fav  head"
+        "fav  meta"
+        "foot foot";
+    column-gap: var(--space-3);
     padding: var(--space-4) var(--space-5);
     border-bottom: 1px solid var(--color-border-light);
     cursor: pointer;
     transition: background 0.1s;
 }
 
-.entry-item:hover {
-    background: var(--color-bg-secondary);
-}
+.entry-item:hover { background: var(--color-bg-secondary); }
 
 .entry-item.selected {
     background: var(--color-accent-subtle);
     box-shadow: inset var(--border-accent-width) 0 0 var(--color-accent);
 }
 
-.entry-item.entry-read {
-    opacity: 0.55;
-}
-
+.entry-item.entry-read { opacity: 0.62; }
 .entry-item.entry-read:hover,
-.entry-item.entry-read.selected {
-    opacity: 1;
-}
+.entry-item.entry-read.selected { opacity: 1; }
 
+/* Favicon spans the title+meta rows only (no tall empty column). */
+.entry-favicon {
+    grid-area: fav;
+    width: 24px;
+    height: 24px;
+    margin-top: 2px;
+    border-radius: var(--radius-control);
+    flex: none;
+    object-fit: cover;
+}
+.entry-favicon-chip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-family: var(--font-ui);
+    font-size: var(--font-xs);
+    font-weight: 700;
+}
+.fav-c0 { background: #7C6F9B; }
+.fav-c1 { background: #B05B3B; }
+.fav-c2 { background: #3B7A6B; }
+.fav-c3 { background: #4A6FA5; }
+.fav-c4 { background: #A6563E; }
+.fav-c5 { background: #6E8B3D; }
+
+/* Head: serif title + summary badges + right-aligned time. */
+.entry-head {
+    grid-area: head;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+}
 .entry-item-title {
     font-family: var(--font-ui);
+    /* Desktop sits next to the 14px sidebar, so the title matches that UI
+       scale; mobile bumps it to --font-base (see the media block). */
     font-size: var(--font-sm);
-    line-height: 1.4;
+    font-weight: 600;
+    line-height: 1.32;
     color: var(--color-text);
-    display: inline;
     cursor: pointer;
     overflow-wrap: break-word;
     word-break: break-word;
 }
-
-.entry-item-title:hover {
-    color: var(--color-accent);
+.entry-item-title:hover { color: var(--color-accent); }
+.entry-title-bold { font-weight: 600; }
+.entry-title-normal { font-weight: 400; }
+.entry-item-badges { flex: none; }
+.entry-time {
+    margin-left: auto;
+    flex: none;
+    font-family: var(--font-ui);
+    font-size: var(--font-xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
 }
 
-.entry-title-bold {
-    font-weight: 600;
-}
-
-.entry-title-normal {
-    font-weight: 400;
-}
-
+/* Meta: feed · category, flush-left with the title. */
 .entry-item-meta {
-    font-size: var(--font-xs);
-    margin-top: var(--space-2);
-    color: var(--color-text-muted);
+    grid-area: meta;
+    /* Inline text flow (not flex) so "feed · category" wraps naturally as one
+       run of text instead of two side-by-side blocks. */
+    margin-top: var(--space-1);
+    font-family: var(--font-ui);
+    font-size: var(--font-sm);
+    line-height: 1.5;
+    color: var(--color-text-secondary);
 }
+.entry-item-meta a { color: var(--color-text-secondary); }
+.entry-item-meta a:hover { color: var(--color-accent); }
+.entry-item-meta .meta-sep { color: var(--color-text-muted); }
 
+/* Actions: full-width strip. Desktop = quiet text links that brighten on
+   row hover; mobile (below) = full-width icon buttons. */
 .entry-item-actions {
-    margin-top: var(--space-2);
-    font-size: var(--font-xs);
+    grid-area: foot;
     display: flex;
-    gap: var(--space-3);
+    gap: var(--space-5);
+    margin-top: var(--space-2);
+    font-family: var(--font-ui);
+    font-size: var(--font-xs);
+    opacity: 0.72;
+    transition: opacity 0.1s;
 }
+.entry-item:hover .entry-item-actions,
+.entry-item.selected .entry-item-actions { opacity: 1; }
+.entry-action-btn,
+.entry-item-actions a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--color-text-secondary);
+    font: inherit;
+    cursor: pointer;
+}
+.entry-action-btn:hover,
+.entry-item-actions a:hover { color: var(--color-accent); }
 
-/* Quiet secondary links (entry meta/actions, breadcrumb): muted until
-   hovered, then accent. */
-.entry-item-meta a,
-.entry-item-actions a,
-.breadcrumb a {
-    color: var(--color-text-muted);
-}
-
-.entry-item-meta a:hover,
-.entry-item-actions a:hover,
-.breadcrumb a:hover {
-    color: var(--color-accent);
-}
+.breadcrumb a { color: var(--color-text-muted); }
+.breadcrumb a:hover { color: var(--color-accent); }
 
 /* ===== Actions (Table cell actions) ===== */
 .actions {
@@ -1433,11 +1491,6 @@ mark {
     width: 100%;
 }
 
-.star-icon {
-    color: var(--color-accent);
-    font-size: var(--font-xs);
-}
-
 .auth-divider {
     text-align: center;
     margin-bottom: var(--space-4);
@@ -1701,12 +1754,14 @@ summary {
         height: auto;
     }
 
+    /* Clear the fixed hamburger that floats at top:--space-4 with a
+       --touch-min (44px) box: --space-4 gap + button + --space-4 gap. */
     .page-content {
-        padding: var(--space-16) var(--space-4) var(--space-4);
+        padding: calc(2 * var(--space-4) + var(--touch-min)) var(--space-4) var(--space-4);
     }
 
     .list-pane-header {
-        padding: var(--space-16) var(--space-4) var(--space-3);
+        padding: calc(2 * var(--space-4) + var(--touch-min)) var(--space-4) var(--space-3);
     }
 
     /* Allow tab-bar to scroll edge-to-edge */
@@ -1733,14 +1788,59 @@ summary {
         align-items: center;
     }
 
-    .entry-item {
-        padding: var(--space-3) var(--space-4);
+    /* ===== Entry row (redesign) — mobile ===== */
+    .entry-item { padding: var(--space-4); }
+
+    /* No sidebar visible on mobile, so the larger title reads fine here. */
+    .entry-item-title { font-size: var(--font-base); }
+
+    /* Feed/category stay inline so "feed · category" wraps naturally. Vertical
+       padding (not min-height/inline-flex, which would break the wrap) gives
+       each inline link a ~28px hit box — inline links are exempt from the 44px
+       rule. No horizontal padding so they stay flush with the title. */
+    .entry-item-meta {
+        margin-top: var(--space-2);
+        line-height: 1.7;
+    }
+    .entry-item-meta a {
+        padding: 0.375rem 0;
     }
 
-    /* Banner stack: tighter padding on narrow viewports. */
+    /* Actions: full-width equal thirds, 44px tall, big icon, small padding,
+       always visible, icon-only (labels hidden). */
+    .entry-item-actions {
+        gap: var(--space-2);
+        margin-top: var(--space-3);
+        opacity: 1;
+    }
+    .entry-item-actions .action-label { display: none; }
+    /* The read/star buttons are form-wrapped; the form is the flex child, so
+       it carries the equal-thirds sizing and its button stretches to fill. */
+    .entry-item-actions form { flex: 1; }
+    .entry-action-btn,
+    .entry-item-actions a {
+        flex: 1;
+        justify-content: center;
+        gap: 0;
+        min-height: var(--touch-min);
+        padding: var(--space-2);
+        border: 1px solid var(--color-border-light);
+        border-radius: var(--radius-md);
+        font-size: var(--font-xl);
+    }
+
+    /* Banner stack: tighter padding on narrow viewports. The 44px dismiss
+       button makes the grid row taller than the text, so center every cell
+       (overriding the base align-items:start) and drop the icon's first-line
+       offset so the dot centers too. */
     .banner {
         padding: var(--space-2);
         column-gap: var(--space-2);
+        align-items: center;
+    }
+
+    .banner-icon {
+        margin-top: 0;
     }
 
     /* On narrow viewports the fixed hamburger floats over the top-left
@@ -1748,12 +1848,10 @@ summary {
        --space-4 gap under the button as above/left of it — so banners
        stay full-width instead of indenting their content to dodge the
        button (which read as the button punching a hole in the banner).
-       Clearance = button top offset + button height + gap:
-       --space-4 + (--font-xl + 2 × --space-2 + 2px border) + --space-4
-       = 16 + 38 + 16 = 70px. `line-height: 1` on .sidebar-toggle makes
-       --font-xl the content height. */
+       Clearance = --space-4 gap + --touch-min button + --space-4 gap
+       = 16 + 44 + 16 = 76px, matching the no-flash header clearance above. */
     .main-content > .banner-stack:not(:empty) {
-        padding-top: calc(2 * var(--space-4) + var(--font-xl) + 2 * var(--space-2) + 2px);
+        padding-top: calc(2 * var(--space-4) + var(--touch-min));
     }
 
     /* While a banner is visible, the banner-stack's own padding-top
@@ -1766,6 +1864,82 @@ summary {
     body:has(.main-content > .banner-stack:not(:empty)) .list-pane-header,
     body:has(.main-content > .banner-stack:not(:empty)) .page-content {
         padding-top: var(--space-6);
+    }
+
+    /* ===== Mobile touch baseline — 44px minimum tap targets ===== */
+
+    /* Buttons are already inline-flex & centered (base styles); just raise
+       them to the touch minimum. */
+    button,
+    .btn {
+        min-height: var(--touch-min);
+    }
+
+    /* Link- and text-styled controls have little or no padding by default —
+       turn them into real flex boxes so min-height centers the label and the
+       whole box is tappable, not just the glyph run. */
+    .action-link,
+    .actions a,
+    .tab-bar a,
+    .reading-pane-nav-btn,
+    .stats-period-btn,
+    .feed-filter-link,
+    .reading-pane-back-link,
+    .breadcrumb a,
+    .search-result-title,
+    .link a {
+        display: inline-flex;
+        align-items: center;
+        min-height: var(--touch-min);
+    }
+
+    /* Keep the full-row tap target for block-level title links. */
+    .search-result-title {
+        display: flex;
+    }
+
+    /* Square icon-only controls: width AND height must reach the minimum. */
+    .sidebar-toggle,
+    .sidebar-close,
+    .banner-dismiss {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: var(--touch-min);
+        min-height: var(--touch-min);
+    }
+
+    /* Drawer rows. */
+    .sidebar-item {
+        min-height: var(--touch-min);
+    }
+
+    /* Form controls: touch height + 16px font to suppress iOS focus-zoom. */
+    input[type="text"],
+    input[type="password"],
+    input[type="url"],
+    input[type="email"],
+    input[type="number"],
+    input[type="search"],
+    input[type="date"],
+    select,
+    textarea {
+        min-height: var(--touch-min);
+        font-size: var(--font-base);
+    }
+
+    /* Filter-bar selects need the 16px floor too (beats .filter-bar select). */
+    .filter-bar select {
+        font-size: var(--font-base);
+    }
+
+    /* Legibility: lift the smallest interactive/secondary text to 14px. */
+    .action-link {
+        font-size: var(--font-sm);
+    }
+
+    .tab-bar {
+        gap: var(--space-2);
     }
 }
 
@@ -2134,26 +2308,16 @@ summary {
     padding: 0 var(--space-5);
 }
 
-/* SSR form-button actions inside `.entry-item-actions`. Mirrors the
-   muted-text + accent-on-hover styling of `.entry-item-actions a` so
-   form-wrapped read/star buttons read as inline action links. */
+/* SSR form-button actions inside `.entry-item-actions`. The read/star
+   buttons are form-wrapped (to carry their POST target), so the form is the
+   flex child of `.entry-item-actions`; it must `display: contents`-style
+   forward layout to its button. We instead make the form a transparent flex
+   box that stretches its button, matching `.entry-action-btn`/`a` styling
+   from the editorial-grid block above. */
 .entry-item-actions form {
-    display: inline;
+    display: flex;
     margin: 0;
     padding: 0;
-}
-
-.entry-item-actions .entry-action-btn {
-    background: transparent;
-    border: none;
-    padding: 0;
-    color: var(--color-text-muted);
-    font: inherit;
-    cursor: pointer;
-}
-
-.entry-item-actions .entry-action-btn:hover {
-    color: var(--color-accent);
 }
 
 /* Mobile: align load-more / mark-above wrappers with .entry-item (which drops

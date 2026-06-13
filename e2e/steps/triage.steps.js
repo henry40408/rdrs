@@ -40,9 +40,13 @@ When("I mark the entry titled {string} read", async ({ page }, title) => {
 });
 
 Then("the entry titled {string} is marked starred", async ({ page }, title) => {
-  // After starring, _entry_row.html renders a <span class="star-icon">⭐</span> inside the row.
+  // Editorial redesign: the starred state lives on the star-action toggle —
+  // when starred it shows ★ and flips to aria-label "Unstar" + POST /unstar.
   const row = page.getByTestId("entry-item").filter({ hasText: title }).first();
-  await expect(row.locator(".star-icon")).toBeVisible();
+  await expect(row.getByTestId("entry-star-action")).toHaveAttribute(
+    "aria-label",
+    "Unstar",
+  );
 });
 
 Then("the sidebar starred count is at least {int}", async ({ page }, n) => {

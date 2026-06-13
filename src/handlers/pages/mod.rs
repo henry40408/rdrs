@@ -52,6 +52,23 @@ impl EntryRowView {
     pub fn summary_status_str(&self) -> Option<&'static str> {
         self.summary_status.map(|s| s.as_str())
     }
+
+    /// Uppercased first character of the feed title, for the favicon
+    /// letter-chip fallback shown when a feed has no icon. Returns "?" for
+    /// an empty title.
+    pub fn feed_initial(&self) -> String {
+        self.feed_title
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_else(|| "?".to_string())
+    }
+
+    /// Stable index 0..6 into the favicon fallback colour palette, derived
+    /// from the feed id so the same feed always gets the same colour.
+    pub fn feed_color_index(&self) -> u8 {
+        self.feed_id.rem_euclid(6) as u8
+    }
 }
 
 /// View-model for the reading pane (`_reading_pane.html`).
@@ -2804,5 +2821,43 @@ mod tests {
     fn build_snippet_strips_html_comments() {
         let out = build_snippet(Some("hello <!-- secret note --> world"), "", 200);
         assert_eq!(out, "hello world");
+    }
+
+    #[test]
+    fn feed_initial_uppercases_first_char() {
+        let mut ewf = ewf_with_title("anything");
+        ewf.feed_title = Some("delta".to_string());
+        let row = row_view_from(&ewf, None);
+        assert_eq!(row.feed_initial(), "D");
+    }
+
+    #[test]
+    fn feed_initial_handles_empty_title() {
+        let mut ewf = ewf_with_title("anything");
+        ewf.feed_title = Some(String::new());
+        let row = row_view_from(&ewf, None);
+        assert_eq!(row.feed_initial(), "?");
+    }
+
+    #[test]
+    fn feed_initial_uppercases_unicode() {
+        let mut ewf = ewf_with_title("anything");
+        ewf.feed_title = Some("über".to_string());
+        let row = row_view_from(&ewf, None);
+        assert_eq!(row.feed_initial(), "Ü");
+    }
+
+    #[test]
+    fn feed_color_index_is_stable_and_bounded() {
+        let mut ewf = ewf_with_title("anything");
+        ewf.entry.feed_id = 13;
+        let row = row_view_from(&ewf, None);
+        assert_eq!(row.feed_color_index(), 1); // 13 % 6 == 1
+
+        // rem_euclid (not %) keeps the index non-negative for any id.
+        ewf.entry.feed_id = -1;
+        let row = row_view_from(&ewf, None);
+        assert_eq!(row.feed_color_index(), 5); // (-1).rem_euclid(6) == 5
+        assert!(row.feed_color_index() < 6);
     }
 }
