@@ -1,3 +1,4 @@
+{%- import "_icons.html" as icons -%}
 {# Single entry row — editorial CSS-grid layout (see
    docs/superpowers/specs/2026-06-13-entry-item-redesign-design.md).
    Grid areas: "fav head" / "fav meta" / "foot foot". The form-wrapped
@@ -31,11 +32,11 @@
 
     <div class="entry-item-actions">
         <form method="post" action="/entries/{{ r.id }}/{% if r.is_read %}unread{% else %}read{% endif %}" data-swap="#entry-row-{{ r.id }}">
-            <button type="submit" class="entry-action-btn" data-testid="entry-read-action" aria-label="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %}"><span class="action-icon" aria-hidden="true">{% if r.is_read %}↺{% else %}✓{% endif %}</span><span class="action-label">{% if r.is_read %}unread{% else %}read{% endif %}</span></button>
+            <button type="submit" class="entry-action-btn" data-testid="entry-read-action" aria-label="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %}"><span class="action-icon" aria-hidden="true">{% if r.is_read %}{% call icons::unread() %}{% endcall %}{% else %}{% call icons::check() %}{% endcall %}{% endif %}</span><span class="action-label">{% if r.is_read %}unread{% else %}read{% endif %}</span></button>
         </form>
         <form method="post" action="/entries/{{ r.id }}/{% if r.is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ r.id }}">
-            <button type="submit" class="entry-action-btn" data-testid="entry-star-action" aria-label="{% if r.is_starred %}Unstar{% else %}Star{% endif %}"><span class="action-icon" aria-hidden="true">{% if r.is_starred %}★{% else %}☆{% endif %}</span><span class="action-label">{% if r.is_starred %}starred{% else %}star{% endif %}</span></button>
+            <button type="submit" class="entry-action-btn" data-testid="entry-star-action" aria-label="{% if r.is_starred %}Unstar{% else %}Star{% endif %}"><span class="action-icon" aria-hidden="true">{% if r.is_starred %}{% call icons::star(true) %}{% endcall %}{% else %}{% call icons::star(false) %}{% endcall %}{% endif %}</span><span class="action-label">{% if r.is_starred %}starred{% else %}star{% endif %}</span></button>
         </form>
-        {% if let Some(link) = r.link.as_ref() %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer" data-testid="entry-original-link" aria-label="Open original"><span class="action-icon" aria-hidden="true">↗</span><span class="action-label">original</span></a>{% endif %}
+        {% if let Some(link) = r.link.as_ref() %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer" data-testid="entry-original-link" aria-label="Open original"><span class="action-icon" aria-hidden="true">{% call icons::external() %}{% endcall %}</span><span class="action-label">original</span></a>{% endif %}
     </div>
 </div>

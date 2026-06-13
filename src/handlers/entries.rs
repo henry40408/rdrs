@@ -220,6 +220,8 @@ pub(crate) async fn build_reading_pane_view(
             .unwrap_or_else(|| "(no title)".to_string()),
         link: ewf.entry.link.clone(),
         feed_title: ewf.feed_title.clone().unwrap_or_default(),
+        feed_id: ewf.entry.feed_id,
+        feed_has_icon: ewf.feed_has_icon,
         author: ewf
             .entry
             .author

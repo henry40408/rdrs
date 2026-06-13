@@ -507,6 +507,9 @@ code {
     font-size: var(--font-sm);
     line-height: 1;
     padding: var(--space-2) var(--space-4);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
 }
 
 .reading-pane-nav-btn:hover:not(:disabled) {
@@ -519,6 +522,11 @@ code {
     cursor: default;
 }
 
+/* The prev/next word labels; hidden on mobile (icon-only) in the media block. */
+.nav-label {
+    display: inline;
+}
+
 .reading-pane-content {
     padding: var(--space-8) var(--space-10);
     max-width: var(--content-max-width);
@@ -529,7 +537,7 @@ code {
 
 .reading-pane-title {
     font-family: var(--font-display);
-    font-size: var(--font-3xl);
+    font-size: var(--font-2xl);
     font-weight: 700;
     line-height: 1.25;
     margin-bottom: var(--space-4);
@@ -546,21 +554,78 @@ code {
     align-items: center;
 }
 
-/* Mid-dot separators only when the author span is present — the author is
-   the only non-first <span> child; the time element is a <time>. Without
-   an author, feed + time fall back to plain whitespace separation. */
-.reading-pane-meta:has(> span:not(:first-child)) > *:not(:first-child)::before {
+/* Mid-dot separators before author/time, only when an author span is present.
+   Anchored to the feed-title so the leading favicon (img or chip span) never
+   gets a dot. */
+.reading-pane-meta:has(> span:not([data-testid]):not(.entry-favicon)) [data-testid="reading-pane-feed-title"] ~ *::before {
     content: "·";
     margin-right: var(--space-2);
+}
+
+.reading-pane-meta .entry-favicon {
+    margin-top: 0;
 }
 
 .reading-pane-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-3);
+    gap: var(--space-2);
     margin-bottom: var(--space-8);
     padding-bottom: var(--space-6);
     border-bottom: 1px solid var(--color-border-light);
+}
+
+/* Shared pane action control (also used by the summary-box Copy/Dismiss).
+   Icon + label, never wraps its label; desktop ~40px tall. */
+.rp-action {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 2.5rem;
+    padding: 0 var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    font-family: var(--font-ui);
+    font-size: var(--font-sm);
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.rp-action:hover {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+}
+
+.rp-action .action-icon {
+    color: var(--color-accent);
+}
+
+.rp-action:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* Inline SVG icons (outline set) for action + nav controls. Scale with the
+   surrounding font-size; stroke uses currentColor so they inherit the control
+   colour. Star uses the same path filled (.is-filled) for the active state. */
+.action-icon .ico,
+.reading-pane-nav-btn .ico {
+    width: 1.15em;
+    height: 1.15em;
+    display: block;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.action-icon .ico.is-filled {
+    fill: var(--color-accent);
+    stroke: none;
 }
 
 .reading-pane-article {
@@ -1786,6 +1851,69 @@ summary {
     .reading-pane-back-link {
         display: inline-flex;
         align-items: center;
+    }
+
+    /* Title is smaller on mobile (no sidebar to size against on desktop). */
+    .reading-pane-title {
+        font-size: var(--font-xl);
+    }
+
+    /* Prev/next become icon-only to save toolbar width; keep a square-ish
+       touch target (the generic baseline already sets min-height). */
+    .nav-label {
+        display: none;
+    }
+
+    .reading-pane-nav-btn {
+        min-width: var(--touch-min);
+        justify-content: center;
+    }
+
+    /* Actions move to a fixed bottom bar: thumb-reachable, available while the
+       article scrolls. flex:1 + space-around spreads 2-5 controls evenly. */
+    .reading-pane-actions {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 101;
+        margin: 0;
+        padding: var(--space-2);
+        gap: var(--space-1);
+        justify-content: space-around;
+        background: var(--color-bg-secondary);
+        border-top: 1px solid var(--color-border);
+        border-bottom: none;
+    }
+
+    /* Both the form-wrapped buttons and the bare <a> are direct children. */
+    .reading-pane-actions > * {
+        flex: 1;
+    }
+
+    .reading-pane-actions form {
+        display: flex;
+    }
+
+    /* Stacked icon-over-label, borderless, big icon, ≥48px tall. */
+    .reading-pane-actions .rp-action {
+        flex: 1;
+        flex-direction: column;
+        gap: 2px;
+        min-height: 3rem;
+        padding: var(--space-1);
+        border-color: transparent;
+        background: transparent;
+        font-size: var(--font-xs);
+    }
+
+    .reading-pane-actions .rp-action .action-icon {
+        font-size: var(--font-xl);
+    }
+
+    /* Clear the fixed bar so the last paragraph isn't hidden behind it. */
+    .reading-pane-content {
+        padding-bottom: calc(3rem + 2 * var(--space-2) + var(--space-4));
     }
 
     /* ===== Entry row (redesign) — mobile ===== */
