@@ -45,13 +45,13 @@ column-gap: var(--space-3);   /* 12px */
 
 - **`fav`** — leading feed favicon (24px, `--radius-control`). Spans only the
   `head`+`meta` rows so there is no tall empty column beside the action strip.
-- **`head`** — serif title + relative time. Title `var(--font-display)`
-  (Source Serif 4), 16px desktop / 16.5px mobile, weight 600 when unread / 400
-  when read, `color: var(--color-text)`. Time is `margin-left:auto`, muted,
-  `white-space:nowrap`.
+- **`head`** — title + relative time. Title `var(--font-ui)` (DM Sans, the UI
+  sans — a serif here read as out of place), `var(--font-base)`, weight 600 when
+  unread / 400 when read, `color: var(--color-text)`. Time is `margin-left:auto`,
+  muted, `white-space:nowrap`.
 - **`meta`** — feed link `·` category link. `var(--font-ui)`, ~12.5px desktop /
   13px mobile, `color: var(--color-text-secondary)` (darker than today's muted),
-  links weight 500, separator muted. Left edge is flush with the title.
+  normal weight, separator muted. Left edge is flush with the title.
 - **`foot`** — action strip spanning the full width from the row's left content
   edge (both grid columns).
 

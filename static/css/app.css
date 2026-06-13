@@ -1046,7 +1046,7 @@ td input[type="text"] {
     gap: var(--space-2);
 }
 .entry-item-title {
-    font-family: var(--font-display);
+    font-family: var(--font-ui);
     font-size: var(--font-base);
     font-weight: 600;
     line-height: 1.32;
@@ -1079,7 +1079,7 @@ td input[type="text"] {
     font-size: var(--font-sm);
     color: var(--color-text-secondary);
 }
-.entry-item-meta a { color: var(--color-text-secondary); font-weight: 500; }
+.entry-item-meta a { color: var(--color-text-secondary); }
 .entry-item-meta a:hover { color: var(--color-accent); }
 .entry-item-meta .meta-sep { color: var(--color-text-muted); }
 
