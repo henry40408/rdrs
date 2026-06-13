@@ -404,33 +404,55 @@ pub async fn unstar_entry_form(
     set_starred_state(state, auth_user.user.id, entry_id, false).await
 }
 
-/// Shared core for the idempotent star/unstar handlers.
+/// Shared core for the idempotent star/unstar handlers. Renders the response
+/// optimistically and enqueues the write off the critical path.
 async fn set_starred_state(
     state: AppState,
     user_id: i64,
     entry_id: i64,
     desired_starred: bool,
 ) -> AppResult<EntryActionMulti> {
-    let (result, status) = state
+    let mut ewf = state
         .db
-        .user(move |conn| {
-            let result = entry::set_starred_for_user(conn, user_id, entry_id, desired_starred)?;
-            let status = if let Some((ref e, _)) = result {
-                entry_summary::get_statuses_for_entries(conn, user_id, &[e.entry.id])?
-                    .get(&e.entry.id)
-                    .copied()
-            } else {
-                None
-            };
-            Ok::<_, AppError>((result, status))
+        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
+        .await??
+        .ok_or(AppError::EntryNotFound)?;
+    let status = state
+        .db
+        .read_user(move |conn| {
+            Ok::<_, AppError>(
+                entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])?
+                    .get(&entry_id)
+                    .copied(),
+            )
         })
         .await??;
-    let (ewf, _changed) = result.ok_or(AppError::EntryNotFound)?;
-    let payload_json = build_sidebar_unread(&state, user_id).await?;
+
+    let changed = ewf.entry.starred_at.is_some() != desired_starred;
+
+    // Optimistically reflect the new starred state in the row + pane button.
+    ewf.entry.starred_at = if desired_starred {
+        Some(ewf.entry.starred_at.unwrap_or_else(chrono::Utc::now))
+    } else {
+        None
+    };
+
+    // Starring does not affect unread counts (delta = 0).
+    let payload_json =
+        build_sidebar_unread_with_delta(&state, user_id, ewf.entry.feed_id, 0).await?;
     let pane_star_form = Some(PaneStarFormView {
         id: ewf.entry.id,
         is_starred: ewf.entry.starred_at.is_some(),
     });
+
+    if changed {
+        state.db.user_detached(move |conn| {
+            if let Err(e) = entry::set_starred_for_user(conn, user_id, entry_id, desired_starred) {
+                tracing::warn!("async set_starred failed for entry {entry_id}: {e}");
+            }
+        });
+    }
+
     Ok(EntryActionMulti {
         r: row_view_from(&ewf, status),
         sidebar_unread_payload_json: payload_json,
