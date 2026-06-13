@@ -3926,8 +3926,8 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
         "multi-target sidebar block must be present"
     );
     assert!(
-        html.contains("star-icon"),
-        "row must reflect starred state via the .star-icon span after first call"
+        html.contains("aria-label=\"Unstar\""),
+        "row must reflect starred state via the star toggle's Unstar aria-label after first call"
     );
     // Pane Star button swap must be present so the reading-pane button label
     // can flip to "Unstar" when the pane is visible.
@@ -3948,8 +3948,8 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
     assert!(
-        html2.contains("star-icon"),
-        "second /star call must be a no-op — row must still carry .star-icon"
+        html2.contains("aria-label=\"Unstar\""),
+        "second /star call must be a no-op — row star toggle must still show Unstar"
     );
     assert!(
         html2.contains(">Unstar<"),
@@ -4021,8 +4021,8 @@ async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
     assert!(
-        !html.contains("star-icon"),
-        "row must drop .star-icon after /unstar"
+        !html.contains("aria-label=\"Unstar\""),
+        "row star toggle must show Star (not Unstar) after /unstar"
     );
     assert!(
         html.contains(">Star<"),
@@ -4037,7 +4037,7 @@ async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
     assert!(
-        !html2.contains("star-icon"),
+        !html2.contains("aria-label=\"Unstar\""),
         "second /unstar call must be a no-op — row must still be unstarred"
     );
 }
