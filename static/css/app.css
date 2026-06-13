@@ -1704,12 +1704,14 @@ summary {
         height: auto;
     }
 
+    /* Clear the fixed hamburger that floats at top:--space-4 with a
+       --touch-min (44px) box: --space-4 gap + button + --space-4 gap. */
     .page-content {
-        padding: var(--space-16) var(--space-4) var(--space-4);
+        padding: calc(2 * var(--space-4) + var(--touch-min)) var(--space-4) var(--space-4);
     }
 
     .list-pane-header {
-        padding: var(--space-16) var(--space-4) var(--space-3);
+        padding: calc(2 * var(--space-4) + var(--touch-min)) var(--space-4) var(--space-3);
     }
 
     /* Allow tab-bar to scroll edge-to-edge */
@@ -1740,10 +1742,18 @@ summary {
         padding: var(--space-4);
     }
 
-    /* Banner stack: tighter padding on narrow viewports. */
+    /* Banner stack: tighter padding on narrow viewports. The 44px dismiss
+       button makes the grid row taller than the text, so center every cell
+       (overriding the base align-items:start) and drop the icon's first-line
+       offset so the dot centers too. */
     .banner {
         padding: var(--space-2);
         column-gap: var(--space-2);
+        align-items: center;
+    }
+
+    .banner-icon {
+        margin-top: 0;
     }
 
     /* On narrow viewports the fixed hamburger floats over the top-left
@@ -1751,12 +1761,10 @@ summary {
        --space-4 gap under the button as above/left of it — so banners
        stay full-width instead of indenting their content to dodge the
        button (which read as the button punching a hole in the banner).
-       Clearance = button top offset + button height + gap:
-       --space-4 + (--font-xl + 2 × --space-2 + 2px border) + --space-4
-       = 16 + 38 + 16 = 70px. `line-height: 1` on .sidebar-toggle makes
-       --font-xl the content height. */
+       Clearance = --space-4 gap + --touch-min button + --space-4 gap
+       = 16 + 44 + 16 = 76px, matching the no-flash header clearance above. */
     .main-content > .banner-stack:not(:empty) {
-        padding-top: calc(2 * var(--space-4) + var(--font-xl) + 2 * var(--space-2) + 2px);
+        padding-top: calc(2 * var(--space-4) + var(--touch-min));
     }
 
     /* While a banner is visible, the banner-stack's own padding-top
@@ -1790,6 +1798,7 @@ summary {
     .stats-period-btn,
     .feed-filter-link,
     .entry-action-btn,
+    .entry-item-actions a,
     .reading-pane-back-link,
     .entry-item-meta a,
     .breadcrumb a,
@@ -1855,9 +1864,12 @@ summary {
         font-size: var(--font-sm);
     }
 
-    /* Anti-mis-tap: widen gaps between adjacent tappable controls. */
+    /* Anti-mis-tap: widen gaps between adjacent tappable controls, and
+       vertically center the now-44px action items (read/star buttons vs the
+       plain "original" link) so they share a baseline instead of top-aligning. */
     .entry-item-actions {
         gap: var(--space-4);
+        align-items: center;
     }
 
     .tab-bar {
