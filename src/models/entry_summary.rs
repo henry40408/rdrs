@@ -277,6 +277,17 @@ pub fn delete_expired(conn: &Connection, hours: i64) -> AppResult<usize> {
     Ok(rows)
 }
 
+/// Count the user's entries that have a COMPLETED summary. Index-covered by
+/// `idx_entry_summary_user_status`. Used for the sidebar "Summarized" badge.
+pub fn count_completed(conn: &Connection, user_id: i64) -> AppResult<i64> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM entry_summary WHERE user_id = ?1 AND status = 'completed'",
+        [user_id],
+        |row| row.get(0),
+    )?;
+    Ok(count)
+}
+
 /// Check if a summary record exists (any status)
 pub fn exists(conn: &Connection, user_id: i64, entry_id: i64) -> AppResult<bool> {
     let count: i64 = conn.query_row(
@@ -514,5 +525,69 @@ mod tests {
         );
         assert_eq!(SummaryStatus::parse("failed"), Some(SummaryStatus::Failed));
         assert_eq!(SummaryStatus::parse("invalid"), None);
+    }
+
+    #[test]
+    fn count_completed_counts_only_completed_for_user() {
+        let conn = setup_db();
+        let u1 = create_test_user(&conn, "u1");
+        let u2 = create_test_user(&conn, "u2");
+
+        // create_test_entry reuses the same category name per user, so build
+        // entries manually with unique GUIDs for the multi-entry u1 scenario.
+        let cat1 = category::create_category(&conn, u1, "Tech1").unwrap().id;
+        let feed1 = feed::create_feed(
+            &conn,
+            &feed::CreateFeedParams {
+                category_id: cat1,
+                url: "https://example.com/feed1.xml",
+                title: Some("Feed 1"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
+        .unwrap()
+        .id;
+
+        let make_entry = |guid: &str| -> i64 {
+            entry::upsert_entry(
+                &conn,
+                feed1,
+                guid,
+                Some("Test Entry"),
+                Some("https://example.com/entry"),
+                Some("Content"),
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+            .0
+            .id
+        };
+
+        let e1 = make_entry("g1");
+        let e2 = make_entry("g2");
+        let e3 = make_entry("g3");
+        let e4 = make_entry("g4");
+        // u2 gets its own entry via the helper (first call, no conflict)
+        let e5 = create_test_entry(&conn, u2);
+
+        upsert_pending(&conn, u1, e1).unwrap();
+        set_completed(&conn, u1, e1, "s").unwrap();
+        upsert_pending(&conn, u1, e2).unwrap();
+        set_completed(&conn, u1, e2, "s").unwrap();
+        upsert_pending(&conn, u1, e3).unwrap();
+        upsert_pending(&conn, u1, e4).unwrap();
+        set_failed(&conn, u1, e4, "err").unwrap();
+        upsert_pending(&conn, u2, e5).unwrap();
+        set_completed(&conn, u2, e5, "s").unwrap();
+
+        assert_eq!(count_completed(&conn, u1).unwrap(), 2);
+        assert_eq!(count_completed(&conn, u2).unwrap(), 1);
+        assert_eq!(count_completed(&conn, 99999).unwrap(), 0);
     }
 }
