@@ -2014,6 +2014,7 @@ pub async fn build_app_layout(
         is_masquerading,
         categories: chrome.categories,
         total_unread: chrome.total_unread,
+        total_summarized: chrome.total_summarized,
     };
     let sidebar_bootstrap_json = serialize_sidebar_for_script(&sidebar);
     let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
