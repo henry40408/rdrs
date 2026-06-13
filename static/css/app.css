@@ -1814,11 +1814,14 @@ summary {
         display: flex;
     }
 
-    /* The entry-row toggles ship with padding:0 (.entry-item-actions
-       .entry-action-btn). That rule sits later in source at equal 0-2-0,
-       so add the .entry-item ancestor here (0-3-0) to win regardless of
-       source order and apply the horizontal touch room on mobile. */
-    .entry-item .entry-item-actions .entry-action-btn {
+    /* Give the read/star toggles AND the "original" link the same horizontal
+       padding so the spacing between all three action items is uniform (the
+       buttons would otherwise carry padding the bare link lacks). The toggles
+       ship with padding:0 (.entry-item-actions .entry-action-btn, later in
+       source at equal 0-2-0), so the .entry-item ancestor (0-3-0) is needed to
+       win regardless of source order. */
+    .entry-item .entry-item-actions .entry-action-btn,
+    .entry-item .entry-item-actions a {
         padding: var(--space-1) var(--space-2);
     }
 
