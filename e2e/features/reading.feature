@@ -219,3 +219,12 @@ Feature: Reading entries
     Then the sidebar highlights All Entries
     When I open the starred entries page
     Then the sidebar highlights Starred
+
+  @mobile
+  Scenario: Reading-pane actions sit in a touch-sized bottom bar on mobile
+    Given I am viewing on a mobile screen
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    Then the reading pane is visible on mobile
+    And the ".rp-action" control is at least 44px tall
+    And the ".reading-pane-actions" control is at least 300px wide
