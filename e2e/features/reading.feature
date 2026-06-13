@@ -227,4 +227,4 @@ Feature: Reading entries
     And I click the entry titled "Test Entry 1"
     Then the reading pane is visible on mobile
     And the ".rp-action" control is at least 44px tall
-    And the ".reading-pane-actions" control is at least 300px wide
+    And the ".reading-pane-actions" control is at least 360px wide
