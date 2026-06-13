@@ -141,8 +141,12 @@ Then("the {string} control is at least {int}px wide", async ({ page }, selector,
 });
 
 Then("the {string} controls each span at least {int}% of the row", async ({ page }, selector, pct) => {
-  const row = await page.getByTestId("entry-item").first().boundingBox();
-  const btns = await page.locator(selector).all();
+  // "row" = the first entry-item; scope the controls to that same row so the
+  // width comparison is against the row they live in (rows are uniform width).
+  const firstRow = page.getByTestId("entry-item").first();
+  const row = await firstRow.boundingBox();
+  expect(row).not.toBeNull();
+  const btns = await firstRow.locator(selector).all();
   expect(btns.length).toBeGreaterThanOrEqual(2);
   for (const b of btns) {
     const box = await b.boundingBox();
