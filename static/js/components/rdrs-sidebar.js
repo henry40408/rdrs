@@ -106,6 +106,11 @@ class RdrsSidebar extends HTMLElement {
             const total = data.total_unread || 0;
             totalEl.textContent = total > 0 ? String(total) : '';
         }
+        const sumEl = this.querySelector('#summarized-count');
+        if (sumEl) {
+            const sum = data.total_summarized || 0;
+            sumEl.textContent = sum > 0 ? String(sum) : '';
+        }
         const catContainer = this.querySelector('#sidebar-categories');
         if (!catContainer) return;
         for (const cat of data.categories || []) {
@@ -135,6 +140,7 @@ class RdrsSidebar extends HTMLElement {
         const isMasq = data ? !!data.is_masquerading : false;
         const cats = data ? data.categories : [];
         const totalUnread = data ? data.total_unread : 0;
+        const totalSummarized = data ? data.total_summarized : 0;
 
         const isActive = (name) => active === name ? ' active' : '';
 
@@ -182,7 +188,12 @@ class RdrsSidebar extends HTMLElement {
                 <span class="sidebar-item-icon">&#x2B50;&#xFE0F;</span>
                 <span>Starred</span>
             </a>
-            <a href="/entries" class="sidebar-item${['all', 'read', 'summarized', 'entries'].includes(active) ? ' active' : ''}" data-testid="nav-entries">
+            <a href="/entries/summarized" class="sidebar-item${isActive('summarized')}" data-testid="nav-summarized">
+                <span class="sidebar-item-icon">&#x2728;</span>
+                <span>Summarized</span>
+                <span class="sidebar-badge" id="summarized-count">${totalSummarized > 0 ? totalSummarized : ''}</span>
+            </a>
+            <a href="/entries" class="sidebar-item${['all', 'read', 'entries'].includes(active) ? ' active' : ''}" data-testid="nav-entries">
                 <span class="sidebar-item-icon">&#x1F4F0;&#xFE0F;</span>
                 <span>All Entries</span>
             </a>
