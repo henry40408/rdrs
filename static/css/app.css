@@ -507,6 +507,9 @@ code {
     font-size: var(--font-sm);
     line-height: 1;
     padding: var(--space-2) var(--space-4);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
 }
 
 .reading-pane-nav-btn:hover:not(:disabled) {
@@ -604,6 +607,25 @@ code {
 .rp-action:disabled {
     opacity: 0.5;
     cursor: default;
+}
+
+/* Inline SVG icons (outline set) for action + nav controls. Scale with the
+   surrounding font-size; stroke uses currentColor so they inherit the control
+   colour. Star uses the same path filled (.is-filled) for the active state. */
+.action-icon .ico,
+.reading-pane-nav-btn .ico {
+    width: 1.15em;
+    height: 1.15em;
+    display: block;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.action-icon .ico.is-filled {
+    fill: currentColor;
+    stroke: none;
 }
 
 .reading-pane-article {
