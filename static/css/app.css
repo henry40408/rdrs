@@ -624,7 +624,7 @@ code {
     stroke-linejoin: round;
 }
 .action-icon .ico.is-filled {
-    fill: currentColor;
+    fill: var(--color-accent);
     stroke: none;
 }
 
