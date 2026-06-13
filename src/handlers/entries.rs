@@ -451,6 +451,7 @@ async fn set_starred_state(
                 tracing::warn!("async set_starred failed for entry {entry_id}: {e}");
             }
         });
+        // No sidebar_cache.bust here: starring does not change unread counts.
     }
 
     Ok(EntryActionMulti {
