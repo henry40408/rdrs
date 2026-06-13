@@ -3652,24 +3652,20 @@ async fn test_entry_fragment_renders_reading_pane() {
         html.contains(r##"data-swap-target="#sidebar-unread""##),
         "response must include a multi-target sidebar block"
     );
-    // Verify the entry is actually marked read in the DB.
+    // The mark-as-read write is now async (user_detached); a user() read-back
+    // is FIFO-ordered behind it, so it observes the applied write.
     let read_at: Option<String> = app
         .db
-        .read_user(move |conn| {
-            conn.query_row(
-                "SELECT read_at FROM entry WHERE id = ?1",
-                [entry_id],
-                |row| row.get(0),
-            )
+        .user(move |conn| {
+            conn.query_row("SELECT read_at FROM entry WHERE id = ?1", [entry_id], |r| {
+                r.get::<_, Option<String>>(0)
+            })
             .map_err(rdrs::error::AppError::from)
         })
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        read_at.is_some(),
-        "opening fragment must auto-mark the entry as read"
-    );
+    assert!(read_at.is_some(), "entry must be marked read after open");
 }
 
 /// A real top-level browser navigation to the partial-only `/fragment` route

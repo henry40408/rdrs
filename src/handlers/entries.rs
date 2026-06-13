@@ -105,36 +105,49 @@ pub async fn entry_fragment(
         return Ok(Redirect::to(&format!("/entries?entry={entry_id}")).into_response());
     }
 
-    // Verify ownership, mark unread→read, re-fetch the entry to reflect the
-    // new state, and pick up the summary status — all in a single write
-    // transaction. Marking-as-read on a `GET` is unusual REST-wise, but it
-    // matches the feed-reader convention (Reeder / FreshRSS / etc. behave the
-    // same way) and the operation is idempotent on the read row.
-    let (ewf, status, marked_read) = state
+    // Read current state on the READ connection (not blocked by a background
+    // sync's write transaction under WAL).
+    let mut ewf = state
         .db
-        .user(move |conn| {
-            let pre = entry::find_by_id_for_user(conn, user_id, entry_id)?
-                .ok_or(AppError::EntryNotFound)?;
-            let marked_read = pre.entry.read_at.is_none();
-            if marked_read {
-                entry::mark_as_read(conn, entry_id)?;
-            }
-            let post = entry::find_by_id_for_user(conn, user_id, entry_id)?
-                .ok_or(AppError::EntryNotFound)?;
-            let status = entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])?
-                .get(&entry_id)
-                .copied();
-            Ok::<_, AppError>((post, status, marked_read))
+        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
+        .await??
+        .ok_or(AppError::EntryNotFound)?;
+    let status = state
+        .db
+        .read_user(move |conn| {
+            Ok::<_, AppError>(
+                entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])?
+                    .get(&entry_id)
+                    .copied(),
+            )
         })
         .await??;
-    if marked_read {
-        state.sidebar_cache.bust(user_id);
+
+    let was_unread = ewf.entry.read_at.is_none();
+    let feed_id = ewf.entry.feed_id;
+
+    // Optimistically reflect the read state in the rendered row + pane.
+    if was_unread {
+        ewf.entry.read_at = Some(chrono::Utc::now());
     }
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
     let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
     let row = row_view_from(&ewf, status);
-    let sidebar_unread_payload_json = build_sidebar_unread(&state, user_id).await?;
+    let sidebar_unread_payload_json =
+        build_sidebar_unread_with_delta(&state, user_id, feed_id, if was_unread { -1 } else { 0 })
+            .await?;
+
+    // Enqueue the real write off the critical path (only when it changes state).
+    if was_unread {
+        state.db.user_detached(move |conn| {
+            if let Err(e) = entry::mark_as_read(conn, entry_id) {
+                tracing::warn!("async mark_as_read failed for entry {entry_id}: {e}");
+            }
+        });
+        state.sidebar_cache.bust(user_id);
+    }
+
     Ok(OpenEntryMulti {
         pane,
         r: row,
@@ -339,6 +352,35 @@ pub(crate) async fn build_sidebar_unread(state: &AppState, user_id: i64) -> AppR
     Ok(serde_json::to_string(&counts).unwrap_or_else(|_| "[]".to_string()))
 }
 
+/// Like `build_sidebar_unread`, but applies an in-memory `delta` to one feed's
+/// unread count so an optimistic response (whose DB write hasn't landed yet)
+/// shows the correct number. `delta` is `-1` (marked read), `+1` (marked
+/// unread), or `0` (no change, e.g. star/unstar). Mirrors
+/// `unread_counts_per_feed`'s "positive counts only" shape.
+pub(crate) async fn build_sidebar_unread_with_delta(
+    state: &AppState,
+    user_id: i64,
+    feed_id: i64,
+    delta: i64,
+) -> AppResult<String> {
+    let mut counts = state
+        .db
+        .read_user(move |conn| entry::unread_counts_per_feed(conn, user_id))
+        .await??;
+    if delta != 0 {
+        match counts.iter_mut().find(|c| c.feed_id == feed_id) {
+            Some(c) => c.unread = (c.unread + delta).max(0),
+            None if delta > 0 => counts.push(entry::UnreadCount {
+                feed_id,
+                unread: delta,
+            }),
+            None => {}
+        }
+        counts.retain(|c| c.unread > 0);
+    }
+    Ok(serde_json::to_string(&counts).unwrap_or_else(|_| "[]".to_string()))
+}
+
 /// `POST /entries/{id}/star` — idempotently mark the entry as starred.
 /// No-op when the entry is already starred. Response includes the pane-
 /// star-form swap so the reading pane button label flips to "Unstar"
@@ -362,33 +404,56 @@ pub async fn unstar_entry_form(
     set_starred_state(state, auth_user.user.id, entry_id, false).await
 }
 
-/// Shared core for the idempotent star/unstar handlers.
+/// Shared core for the idempotent star/unstar handlers. Renders the response
+/// optimistically and enqueues the write off the critical path.
 async fn set_starred_state(
     state: AppState,
     user_id: i64,
     entry_id: i64,
     desired_starred: bool,
 ) -> AppResult<EntryActionMulti> {
-    let (result, status) = state
+    let mut ewf = state
         .db
-        .user(move |conn| {
-            let result = entry::set_starred_for_user(conn, user_id, entry_id, desired_starred)?;
-            let status = if let Some((ref e, _)) = result {
-                entry_summary::get_statuses_for_entries(conn, user_id, &[e.entry.id])?
-                    .get(&e.entry.id)
-                    .copied()
-            } else {
-                None
-            };
-            Ok::<_, AppError>((result, status))
+        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
+        .await??
+        .ok_or(AppError::EntryNotFound)?;
+    let status = state
+        .db
+        .read_user(move |conn| {
+            Ok::<_, AppError>(
+                entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])?
+                    .get(&entry_id)
+                    .copied(),
+            )
         })
         .await??;
-    let (ewf, _changed) = result.ok_or(AppError::EntryNotFound)?;
-    let payload_json = build_sidebar_unread(&state, user_id).await?;
+
+    let changed = ewf.entry.starred_at.is_some() != desired_starred;
+
+    // Optimistically reflect the new starred state in the row + pane button.
+    ewf.entry.starred_at = if desired_starred {
+        Some(ewf.entry.starred_at.unwrap_or_else(chrono::Utc::now))
+    } else {
+        None
+    };
+
+    // Starring does not affect unread counts (delta = 0).
+    let payload_json =
+        build_sidebar_unread_with_delta(&state, user_id, ewf.entry.feed_id, 0).await?;
     let pane_star_form = Some(PaneStarFormView {
         id: ewf.entry.id,
         is_starred: ewf.entry.starred_at.is_some(),
     });
+
+    if changed {
+        state.db.user_detached(move |conn| {
+            if let Err(e) = entry::set_starred_for_user(conn, user_id, entry_id, desired_starred) {
+                tracing::warn!("async set_starred failed for entry {entry_id}: {e}");
+            }
+        });
+        // No sidebar_cache.bust here: starring does not change unread counts.
+    }
+
     Ok(EntryActionMulti {
         r: row_view_from(&ewf, status),
         sidebar_unread_payload_json: payload_json,
@@ -420,32 +485,52 @@ pub async fn unread_entry_form(
     set_read_state(state, auth_user.user.id, entry_id, false).await
 }
 
-/// Shared core for the two idempotent read/unread handlers.
+/// Shared core for the two idempotent read/unread handlers. Renders the
+/// response optimistically and enqueues the write off the critical path.
 async fn set_read_state(
     state: AppState,
     user_id: i64,
     entry_id: i64,
     desired_read: bool,
 ) -> AppResult<EntryActionMulti> {
-    let (result, status) = state
+    let mut ewf = state
         .db
-        .user(move |conn| {
-            let result = entry::set_read_for_user(conn, user_id, entry_id, desired_read)?;
-            let status = if let Some((ref e, _)) = result {
-                entry_summary::get_statuses_for_entries(conn, user_id, &[e.entry.id])?
-                    .get(&e.entry.id)
-                    .copied()
-            } else {
-                None
-            };
-            Ok::<_, AppError>((result, status))
+        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
+        .await??
+        .ok_or(AppError::EntryNotFound)?;
+    let status = state
+        .db
+        .read_user(move |conn| {
+            Ok::<_, AppError>(
+                entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])?
+                    .get(&entry_id)
+                    .copied(),
+            )
         })
         .await??;
-    let (ewf, changed) = result.ok_or(AppError::EntryNotFound)?;
-    if changed {
-        state.sidebar_cache.bust(user_id);
-    }
-    let payload_json = build_sidebar_unread(&state, user_id).await?;
+
+    let changed = ewf.entry.read_at.is_some() != desired_read;
+    let feed_id = ewf.entry.feed_id;
+
+    // Optimistically reflect the new read state in the row.
+    ewf.entry.read_at = if desired_read {
+        Some(ewf.entry.read_at.unwrap_or_else(chrono::Utc::now))
+    } else {
+        None
+    };
+
+    // Unread count: -1 when newly read, +1 when newly unread, else unchanged.
+    let delta = if changed {
+        if desired_read {
+            -1
+        } else {
+            1
+        }
+    } else {
+        0
+    };
+    let payload_json = build_sidebar_unread_with_delta(&state, user_id, feed_id, delta).await?;
+
     let flash = if !desired_read && changed {
         Some(FlashPayload {
             level: "success",
@@ -454,6 +539,16 @@ async fn set_read_state(
     } else {
         None
     };
+
+    if changed {
+        state.db.user_detached(move |conn| {
+            if let Err(e) = entry::set_read_for_user(conn, user_id, entry_id, desired_read) {
+                tracing::warn!("async set_read failed for entry {entry_id}: {e}");
+            }
+        });
+        state.sidebar_cache.bust(user_id);
+    }
+
     Ok(EntryActionMulti {
         r: row_view_from(&ewf, status),
         sidebar_unread_payload_json: payload_json,

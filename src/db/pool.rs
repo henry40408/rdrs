@@ -2,6 +2,7 @@ use std::fmt;
 use std::time::Duration;
 
 use rusqlite::Connection;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
@@ -188,6 +189,40 @@ impl DbPool {
         T: Send + 'static,
     {
         self.execute(DbPriority::Background, f).await
+    }
+
+    /// Enqueue a write-actor closure with User priority and return
+    /// immediately, WITHOUT awaiting its result. Ordering is preserved (single
+    /// FIFO `user_tx`), so rapid star→unstar still applies in submission order.
+    ///
+    /// Fire-and-forget: the closure must log its own errors (the caller cannot
+    /// observe success/failure). Used for optimistic state-flip writes whose
+    /// HTTP response is rendered before the write lands; a dropped write
+    /// self-heals on the next sidebar poll / page reload.
+    pub fn user_detached<F>(&self, f: F)
+    where
+        F: FnOnce(&Connection) + Send + 'static,
+    {
+        // The response receiver is dropped immediately; the actor's
+        // `msg.respond.send(...)` then fails silently (already handled in
+        // `process_message`). `try_send` never blocks the caller.
+        let (resp_tx, _resp_rx) = oneshot::channel();
+        let msg = DbMessage {
+            work: Box::new(move |conn| {
+                f(conn);
+                Box::new(()) as Box<dyn std::any::Any + Send>
+            }),
+            respond: resp_tx,
+        };
+        match self.user_tx.try_send(msg) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                error!("user_detached: write queue full; dropping write (self-heals on next poll)")
+            }
+            Err(TrySendError::Closed(_)) => {
+                error!("user_detached: db actor stopped; write dropped")
+            }
+        }
     }
 
     /// Execute a read-only closure on the read connection with the given priority.
@@ -737,5 +772,56 @@ mod tests {
         drop(user_tx);
         let join_result = handle.await;
         assert!(join_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_user_detached_eventually_applies() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE d (id INTEGER PRIMARY KEY, v INTEGER);")
+            .unwrap();
+        let (pool, _h) = DbPool::new(conn, Connection::open_in_memory().unwrap());
+
+        // Fire-and-forget: returns immediately (no .await on the write itself).
+        pool.user_detached(|conn| {
+            conn.execute("INSERT INTO d (v) VALUES (1)", []).unwrap();
+        });
+
+        // Flush via a FIFO sentinel: a subsequent user() call runs on the same
+        // write actor AFTER the detached write, so the row is guaranteed present.
+        let count = pool
+            .user(|conn| {
+                conn.query_row("SELECT COUNT(*) FROM d", [], |r| r.get::<_, i64>(0))
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_user_detached_preserves_submission_order() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE seq (n INTEGER);").unwrap();
+        let (pool, _h) = DbPool::new(conn, Connection::open_in_memory().unwrap());
+
+        for i in 0..5 {
+            pool.user_detached(move |conn| {
+                conn.execute("INSERT INTO seq (n) VALUES (?1)", [i])
+                    .unwrap();
+            });
+        }
+
+        // Sentinel flush, then assert FIFO order (0,1,2,3,4).
+        let rows: Vec<i64> = pool
+            .user(|conn| {
+                let mut stmt = conn.prepare("SELECT n FROM seq ORDER BY rowid").unwrap();
+                stmt.query_map([], |r| r.get::<_, i64>(0))
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        assert_eq!(rows, vec![0, 1, 2, 3, 4]);
     }
 }
