@@ -485,32 +485,52 @@ pub async fn unread_entry_form(
     set_read_state(state, auth_user.user.id, entry_id, false).await
 }
 
-/// Shared core for the two idempotent read/unread handlers.
+/// Shared core for the two idempotent read/unread handlers. Renders the
+/// response optimistically and enqueues the write off the critical path.
 async fn set_read_state(
     state: AppState,
     user_id: i64,
     entry_id: i64,
     desired_read: bool,
 ) -> AppResult<EntryActionMulti> {
-    let (result, status) = state
+    let mut ewf = state
         .db
-        .user(move |conn| {
-            let result = entry::set_read_for_user(conn, user_id, entry_id, desired_read)?;
-            let status = if let Some((ref e, _)) = result {
-                entry_summary::get_statuses_for_entries(conn, user_id, &[e.entry.id])?
-                    .get(&e.entry.id)
-                    .copied()
-            } else {
-                None
-            };
-            Ok::<_, AppError>((result, status))
+        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
+        .await??
+        .ok_or(AppError::EntryNotFound)?;
+    let status = state
+        .db
+        .read_user(move |conn| {
+            Ok::<_, AppError>(
+                entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])?
+                    .get(&entry_id)
+                    .copied(),
+            )
         })
         .await??;
-    let (ewf, changed) = result.ok_or(AppError::EntryNotFound)?;
-    if changed {
-        state.sidebar_cache.bust(user_id);
-    }
-    let payload_json = build_sidebar_unread(&state, user_id).await?;
+
+    let changed = ewf.entry.read_at.is_some() != desired_read;
+    let feed_id = ewf.entry.feed_id;
+
+    // Optimistically reflect the new read state in the row.
+    ewf.entry.read_at = if desired_read {
+        Some(ewf.entry.read_at.unwrap_or_else(chrono::Utc::now))
+    } else {
+        None
+    };
+
+    // Unread count: -1 when newly read, +1 when newly unread, else unchanged.
+    let delta = if changed {
+        if desired_read {
+            -1
+        } else {
+            1
+        }
+    } else {
+        0
+    };
+    let payload_json = build_sidebar_unread_with_delta(&state, user_id, feed_id, delta).await?;
+
     let flash = if !desired_read && changed {
         Some(FlashPayload {
             level: "success",
@@ -519,6 +539,16 @@ async fn set_read_state(
     } else {
         None
     };
+
+    if changed {
+        state.db.user_detached(move |conn| {
+            if let Err(e) = entry::set_read_for_user(conn, user_id, entry_id, desired_read) {
+                tracing::warn!("async set_read failed for entry {entry_id}: {e}");
+            }
+        });
+        state.sidebar_cache.bust(user_id);
+    }
+
     Ok(EntryActionMulti {
         r: row_view_from(&ewf, status),
         sidebar_unread_payload_json: payload_json,
