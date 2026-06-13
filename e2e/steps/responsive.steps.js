@@ -30,6 +30,10 @@ When("I open the categories page", async ({ page, serverUrl }) => {
   await page.goto(`${serverUrl}/categories`);
 });
 
+When("I open the all-entries page", async ({ page, serverUrl }) => {
+  await page.goto(`${serverUrl}/entries`);
+});
+
 When("I tap the hamburger", async ({ page }) => {
   await page.locator(".sidebar-toggle").click();
 });

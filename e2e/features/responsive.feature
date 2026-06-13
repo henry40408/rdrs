@@ -68,6 +68,8 @@ Feature: Responsive layout
     When I open the inbox
     And a flash banner is shown
     Then the flash banner sits below the hamburger
+    And the ".banner-dismiss" control is at least 44px wide
+    And the ".banner-dismiss" control is at least 44px tall
 
   @tablet
   Scenario: Sidebar is a drawer on tablet
@@ -114,6 +116,7 @@ Feature: Responsive layout
     Then the ".sidebar-toggle" control is at least 44px wide
     And the ".sidebar-toggle" control is at least 44px tall
     And the ".entry-action-btn" control is at least 44px tall
+    And the ".filter-bar select" control is at least 44px tall
     When I tap the hamburger
     Then the ".sidebar-close" control is at least 44px wide
     And the ".sidebar-close" control is at least 44px tall
@@ -129,3 +132,11 @@ Feature: Responsive layout
     And I have a category named "Test Category"
     When I open the categories page
     Then the ".action-link" control is at least 44px tall
+    And the "#name" control is at least 44px tall
+
+  @mobile
+  Scenario: Tab bar links meet the 44px touch minimum on mobile
+    Given I am viewing on a mobile screen
+    And I have a feed with 5 test entries
+    When I open the all-entries page
+    Then the ".tab-bar a" control is at least 44px tall
