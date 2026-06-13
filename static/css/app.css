@@ -1489,11 +1489,6 @@ mark {
     width: 100%;
 }
 
-.star-icon {
-    color: var(--color-accent);
-    font-size: var(--font-xs);
-}
-
 .auth-divider {
     text-align: center;
     margin-bottom: var(--space-4);
