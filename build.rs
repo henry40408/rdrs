@@ -51,15 +51,23 @@ fn generate_favicons() {
     let options = resvg::usvg::Options::default();
     let tree = resvg::usvg::Tree::from_data(&svg_data, &options).expect("Failed to parse SVG");
 
-    // Generate PNGs in various sizes
+    // Opaque background for the Apple touch icon. iOS does not support
+    // transparency on home-screen icons (transparent pixels render as black) and
+    // applies its own rounded-corner mask. We therefore flatten the icon onto a
+    // solid background matching the SVG's outer frame color (#1A0E08) so the
+    // corners stay full-bleed instead of transparent/self-rounded.
+    let apple_bg = resvg::tiny_skia::Color::from_rgba8(0x1A, 0x0E, 0x08, 0xFF);
+
+    // Generate PNGs in various sizes. Favicons keep a transparent background;
+    // the Apple touch icon is rendered opaque and full-bleed.
     let sizes = [
-        (16, "favicon-16x16.png"),
-        (32, "favicon-32x32.png"),
-        (180, "apple-touch-icon.png"),
+        (16, "favicon-16x16.png", None),
+        (32, "favicon-32x32.png", None),
+        (180, "apple-touch-icon.png", Some(apple_bg)),
     ];
 
-    for (size, filename) in sizes {
-        let png_data = render_svg_to_png(&tree, size);
+    for (size, filename, background) in sizes {
+        let png_data = render_svg_to_png(&tree, size, background);
         let path = out_path.join(filename);
         std::fs::write(&path, &png_data).unwrap_or_else(|_| panic!("Failed to write {}", filename));
     }
@@ -71,11 +79,21 @@ fn generate_favicons() {
     std::fs::copy("favicon.svg", out_path.join("favicon.svg")).expect("Failed to copy favicon.svg");
 }
 
-fn render_svg_to_png(tree: &resvg::usvg::Tree, size: u32) -> Vec<u8> {
+fn render_svg_to_png(
+    tree: &resvg::usvg::Tree,
+    size: u32,
+    background: Option<resvg::tiny_skia::Color>,
+) -> Vec<u8> {
     let tree_size = tree.size();
     let scale = size as f32 / tree_size.width().max(tree_size.height());
 
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).unwrap();
+
+    // Fill with an opaque background before rendering so transparent areas of
+    // the SVG (e.g. its rounded corners) become solid instead of transparent.
+    if let Some(color) = background {
+        pixmap.fill(color);
+    }
 
     // Calculate centering offset
     let scaled_w = tree_size.width() * scale;
@@ -99,7 +117,7 @@ fn generate_ico(tree: &resvg::usvg::Tree, out_path: &Path) {
 
     // Add 16x16 and 32x32 images
     for size in [16u32, 32u32] {
-        let png_data = render_svg_to_png(tree, size);
+        let png_data = render_svg_to_png(tree, size, None);
         let img = image::load_from_memory(&png_data).expect("Failed to load PNG");
         let rgba = img.to_rgba8();
         let ico_image = ico::IconImage::from_rgba_data(size, size, rgba.into_raw());

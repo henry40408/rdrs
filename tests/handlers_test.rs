@@ -2096,6 +2096,23 @@ async fn test_apple_touch_icon() {
         .to_str()
         .unwrap();
     assert_eq!(content_type, "image/png");
+
+    // iOS home-screen icons do not support transparency (transparent pixels
+    // render as black) and iOS applies its own rounded-corner mask. The Apple
+    // touch icon must therefore be a fully-opaque, full-bleed square: every
+    // corner pixel must have alpha == 255.
+    let img = image::load_from_memory(&response.into_bytes())
+        .expect("apple-touch-icon must be a decodable image")
+        .to_rgba8();
+    let (w, h) = img.dimensions();
+    assert_eq!((w, h), (180, 180));
+    for (x, y) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
+        assert_eq!(
+            img.get_pixel(x, y).0[3],
+            255,
+            "corner pixel ({x},{y}) must be fully opaque, not transparent"
+        );
+    }
 }
 
 // ============================================================================
