@@ -375,9 +375,13 @@ Then("I see a flash message", async ({ page }) => {
 });
 
 Then("the entry row for {string} shows as starred", async ({ page }, title) => {
-  // _entry_row.html renders a `.star-icon` span only when is_starred is true.
+  // Editorial redesign: the starred state lives on the star-action toggle —
+  // when starred it shows ★ and flips to aria-label "Unstar" + POST /unstar.
   const row = page.getByTestId("entry-item").filter({ hasText: title }).first();
-  await expect(row.locator(".star-icon")).toBeVisible();
+  await expect(row.getByTestId("entry-star-action")).toHaveAttribute(
+    "aria-label",
+    "Unstar",
+  );
 });
 
 Then("the entry row for {string} shows as unread", async ({ page }, title) => {
