@@ -1047,7 +1047,9 @@ td input[type="text"] {
 }
 .entry-item-title {
     font-family: var(--font-ui);
-    font-size: var(--font-base);
+    /* Desktop sits next to the 14px sidebar, so the title matches that UI
+       scale; mobile bumps it to --font-base (see the media block). */
+    font-size: var(--font-sm);
     font-weight: 600;
     line-height: 1.32;
     color: var(--color-text);
@@ -1788,6 +1790,9 @@ summary {
 
     /* ===== Entry row (redesign) — mobile ===== */
     .entry-item { padding: var(--space-4); }
+
+    /* No sidebar visible on mobile, so the larger title reads fine here. */
+    .entry-item-title { font-size: var(--font-base); }
 
     /* Feed/category stay inline so "feed · category" wraps naturally. Vertical
        padding (not min-height/inline-flex, which would break the wrap) gives
