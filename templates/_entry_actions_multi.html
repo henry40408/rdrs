@@ -4,5 +4,5 @@
 <template data-flash data-level="{{ f.level }}">{{ f.message }}</template>
 {% endif %}
 {% if let Some(psf) = pane_star_form.as_ref() %}
-<template data-swap-target="#reading-pane-star-form-{{ psf.id }}"><form id="reading-pane-star-form-{{ psf.id }}" method="post" action="/entries/{{ psf.id }}/{% if psf.is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ psf.id }}"><button type="submit" class="btn-secondary btn-sm">{% if psf.is_starred %}Unstar{% else %}Star{% endif %}</button></form></template>
+<template data-swap-target="#reading-pane-star-form-{{ psf.id }}"><form id="reading-pane-star-form-{{ psf.id }}" method="post" action="/entries/{{ psf.id }}/{% if psf.is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ psf.id }}"><button type="submit" class="rp-action" aria-label="{% if psf.is_starred %}Unstar{% else %}Star{% endif %}"><span class="action-icon" aria-hidden="true">{% if psf.is_starred %}★{% else %}☆{% endif %}</span><span class="action-label">{% if psf.is_starred %}Starred{% else %}Star{% endif %}</span></button></form></template>
 {% endif %}

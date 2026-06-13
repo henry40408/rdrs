@@ -3628,6 +3628,21 @@ async fn test_entry_fragment_renders_reading_pane() {
     );
     assert!(html.contains("Hello World"), "entry title must appear");
     assert!(html.contains("Body text here"), "entry body must appear");
+    // Editorial redesign: meta shows the feed favicon chip (feed "Test Feed"
+    // has no icon -> coloured initial chip "T").
+    assert!(
+        html.contains("entry-favicon-chip"),
+        "reading pane meta must render the favicon chip fallback"
+    );
+    // Actions use the shared .rp-action control with stable aria-labels.
+    assert!(
+        html.contains(r#"class="rp-action""#),
+        "reading pane actions must use the .rp-action control"
+    );
+    assert!(
+        html.contains(r#"aria-label="Mark Unread""#),
+        "Mark Unread action must keep its accessible name"
+    );
     // Auto-mark-as-read: response carries the updated row + sidebar blocks.
     assert!(
         html.contains(&format!(r##"data-swap-target="#entry-row-{}""##, entry_id)),
@@ -3936,8 +3951,8 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
         "multi-target response must include the pane-star-form swap"
     );
     assert!(
-        html.contains(">Unstar<"),
-        "pane-star-form swap payload must render the Unstar label"
+        html.contains(r#"aria-label="Unstar""#),
+        "pane-star-form swap payload must render the Unstar aria-label"
     );
 
     // Second /star — idempotent, entry stays starred (no toggle back).
@@ -3952,8 +3967,8 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
         "second /star call must be a no-op — row star toggle must still show Unstar"
     );
     assert!(
-        html2.contains(">Unstar<"),
-        "pane-star-form payload must still show Unstar after no-op"
+        html2.contains(r#"aria-label="Unstar""#),
+        "pane-star-form payload must still show Unstar aria-label after no-op"
     );
 }
 
