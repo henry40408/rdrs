@@ -139,3 +139,14 @@ Then("the {string} control is at least {int}px wide", async ({ page }, selector,
   expect(box).not.toBeNull();
   expect(box.width).toBeGreaterThanOrEqual(min);
 });
+
+Then("the {string} controls each span at least {int}% of the row", async ({ page }, selector, pct) => {
+  const row = await page.getByTestId("entry-item").first().boundingBox();
+  const btns = await page.locator(selector).all();
+  expect(btns.length).toBeGreaterThanOrEqual(2);
+  for (const b of btns) {
+    const box = await b.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeGreaterThanOrEqual((row.width * pct) / 100);
+  }
+});
