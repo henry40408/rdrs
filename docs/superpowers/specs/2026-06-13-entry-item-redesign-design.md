@@ -92,10 +92,13 @@ label is hidden) MUST carry an `aria-label` / `title` ("Star", "Mark read",
 ### Touch sizing
 
 - Action buttons (primary controls): **44px** min-height on mobile.
-- Feed / category (inline links): **24px** min-height on mobile, **no horizontal
-  padding** so the first link is flush-left with the title. 24px is the WCAG
-  2.5.8 (AA) floor; inline text links are formally exempt from 2.5.5's 44px, so
-  24px is a deliberate, compliant choice.
+- Feed / category: kept as plain **inline** links so "feed · category" wraps
+  naturally as one text run (not two side-by-side flex blocks). Vertical padding
+  gives each link a ~28px hit box (≥ the WCAG 2.5.8 AA 24px floor) without
+  breaking the wrap; **no horizontal padding** so the first link is flush-left
+  with the title. Inline text links are formally exempt from 2.5.5's 44px, so
+  this is a deliberate, compliant choice. (min-height/inline-flex is avoided
+  here because it would make each link an atomic box and break wrapping.)
 
 ### States (unchanged semantics, restyled)
 

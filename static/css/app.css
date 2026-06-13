@@ -1071,12 +1071,12 @@ td input[type="text"] {
 /* Meta: feed · category, flush-left with the title. */
 .entry-item-meta {
     grid-area: meta;
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
+    /* Inline text flow (not flex) so "feed · category" wraps naturally as one
+       run of text instead of two side-by-side blocks. */
     margin-top: var(--space-1);
     font-family: var(--font-ui);
     font-size: var(--font-sm);
+    line-height: 1.5;
     color: var(--color-text-secondary);
 }
 .entry-item-meta a { color: var(--color-text-secondary); }
@@ -1789,13 +1789,16 @@ summary {
     /* ===== Entry row (redesign) — mobile ===== */
     .entry-item { padding: var(--space-4); }
 
-    /* Feed/category: 24px tap area (AA floor; inline links are exempt from
-       the 44px rule), no horizontal padding so they stay flush with title. */
-    .entry-item-meta { margin-top: var(--space-2); }
+    /* Feed/category stay inline so "feed · category" wraps naturally. Vertical
+       padding (not min-height/inline-flex, which would break the wrap) gives
+       each inline link a ~28px hit box — inline links are exempt from the 44px
+       rule. No horizontal padding so they stay flush with the title. */
+    .entry-item-meta {
+        margin-top: var(--space-2);
+        line-height: 1.7;
+    }
     .entry-item-meta a {
-        display: inline-flex;
-        align-items: center;
-        min-height: 24px;
+        padding: 0.375rem 0;
     }
 
     /* Actions: full-width equal thirds, 44px tall, big icon, small padding,
