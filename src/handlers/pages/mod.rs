@@ -27,6 +27,22 @@ pub use time_format::{compute_freshness, format_relative_time, format_relative_t
 // Entries-family shared view structs (PR-10)
 // ============================================================================
 
+/// Uppercased first character of a feed title, for the favicon letter-chip
+/// fallback shown when a feed has no icon. Returns "?" for an empty title.
+pub(crate) fn feed_initial(feed_title: &str) -> String {
+    feed_title
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_else(|| "?".to_string())
+}
+
+/// Stable index 0..6 into the favicon fallback colour palette, derived from
+/// the feed id so the same feed always gets the same colour.
+pub(crate) fn feed_color_index(feed_id: i64) -> u8 {
+    feed_id.rem_euclid(6) as u8
+}
+
 /// View-model for one row in the entries list (`_entry_row.html`).
 #[derive(Debug, Clone)]
 pub struct EntryRowView {
@@ -57,17 +73,13 @@ impl EntryRowView {
     /// letter-chip fallback shown when a feed has no icon. Returns "?" for
     /// an empty title.
     pub fn feed_initial(&self) -> String {
-        self.feed_title
-            .chars()
-            .next()
-            .map(|c| c.to_uppercase().to_string())
-            .unwrap_or_else(|| "?".to_string())
+        feed_initial(&self.feed_title)
     }
 
     /// Stable index 0..6 into the favicon fallback colour palette, derived
     /// from the feed id so the same feed always gets the same colour.
     pub fn feed_color_index(&self) -> u8 {
-        self.feed_id.rem_euclid(6) as u8
+        feed_color_index(self.feed_id)
     }
 }
 
@@ -82,6 +94,8 @@ pub struct ReadingPaneView {
     pub title: String,
     pub link: Option<String>,
     pub feed_title: String,
+    pub feed_id: i64,
+    pub feed_has_icon: bool,
     pub author: Option<String>,
     pub published_at_iso: Option<String>,
     pub published_relative: String,
@@ -98,6 +112,20 @@ pub struct ReadingPaneView {
     /// pane swaps "Fetch Full Content" for a "Show Original" link in
     /// this case so the user can revert.
     pub is_full_content: bool,
+}
+
+impl ReadingPaneView {
+    /// Uppercased first character of the feed title for the favicon
+    /// letter-chip fallback (mirrors `EntryRowView::feed_initial`).
+    pub fn feed_initial(&self) -> String {
+        feed_initial(&self.feed_title)
+    }
+
+    /// Stable favicon-palette index derived from the feed id (mirrors
+    /// `EntryRowView::feed_color_index`).
+    pub fn feed_color_index(&self) -> u8 {
+        feed_color_index(self.feed_id)
+    }
 }
 
 /// One segment of a breadcrumb trail rendered above the page `<h1>`. `href =
@@ -2859,5 +2887,27 @@ mod tests {
         let row = row_view_from(&ewf, None);
         assert_eq!(row.feed_color_index(), 5); // (-1).rem_euclid(6) == 5
         assert!(row.feed_color_index() < 6);
+    }
+
+    #[test]
+    fn feed_initial_fn_uppercases_first_char() {
+        assert_eq!(super::feed_initial("daring fireball"), "D");
+    }
+
+    #[test]
+    fn feed_initial_fn_handles_empty() {
+        assert_eq!(super::feed_initial(""), "?");
+    }
+
+    #[test]
+    fn feed_initial_fn_uppercases_unicode() {
+        assert_eq!(super::feed_initial("über"), "Ü");
+    }
+
+    #[test]
+    fn feed_color_index_fn_is_bounded() {
+        assert_eq!(super::feed_color_index(13), 1); // 13 % 6 == 1
+        assert_eq!(super::feed_color_index(-1), 5); // (-1).rem_euclid(6) == 5
+        assert!(super::feed_color_index(123_456) < 6);
     }
 }
