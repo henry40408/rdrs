@@ -50,10 +50,14 @@ async fn main() {
     // Create summary worker channel (buffer size 100)
     let (summary_tx, summary_rx) = services::create_summary_channel(100);
 
+    // Create sidebar cache
+    let sidebar_cache = Arc::new(services::SidebarCache::default());
+
     // Start summary worker
     let summary_worker_handle = services::start_summary_worker(
         summary_rx,
         summary_cache.clone(),
+        sidebar_cache.clone(),
         db.clone(),
         cancel_token.clone(),
     );
@@ -81,7 +85,7 @@ async fn main() {
         webauthn: Arc::new(webauthn),
         summary_cache,
         summary_tx,
-        sidebar_cache: Arc::new(services::SidebarCache::default()),
+        sidebar_cache,
     };
 
     // Start background sync task

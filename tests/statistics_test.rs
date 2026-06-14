@@ -371,3 +371,29 @@ async fn test_api_sidebar_returns_categories_with_unread() {
     assert_eq!(cats[0]["unread_count"], 2);
     assert_eq!(body["total_unread"], 2);
 }
+
+#[tokio::test]
+async fn test_api_sidebar_total_summarized() {
+    let app = create_test_app("test_api_sidebar_total_summarized");
+    let (admin_id, _user_id) = setup_users(&app.db).await;
+    seed_entries(&app.db, admin_id).await;
+
+    // Seed a completed summary for the first entry (belongs to admin_id).
+    // upsert_pending first — set_completed is a no-op without an existing row.
+    // Do this BEFORE hitting /api/sidebar so the cache is cold when we read.
+    app.db
+        .user(move |conn| {
+            let entry_id: i64 =
+                conn.query_row("SELECT id FROM entry ORDER BY id LIMIT 1", [], |r| r.get(0))?;
+            rdrs::models::entry_summary::upsert_pending(conn, admin_id, entry_id)?;
+            rdrs::models::entry_summary::set_completed(conn, admin_id, entry_id, "summary text")
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    login(&app.server, "admin").await;
+
+    let body: Value = app.server.get("/api/sidebar").await.json();
+    assert_eq!(body["total_summarized"], 1);
+}

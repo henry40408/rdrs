@@ -12,6 +12,7 @@ pub struct CachedChrome {
     pub theme: Option<String>,
     pub categories: Vec<SidebarCategoryDto>,
     pub total_unread: i64,
+    pub total_summarized: i64,
 }
 
 /// In-memory per-user cache for sidebar chrome data — replaces the 4 SQL
@@ -74,6 +75,7 @@ mod tests {
                 unread_count: unread,
             }],
             total_unread: unread,
+            total_summarized: 0,
         }
     }
 

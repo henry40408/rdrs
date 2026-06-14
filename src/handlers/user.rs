@@ -134,6 +134,7 @@ pub struct SidebarResponse {
     pub is_masquerading: bool,
     pub categories: Vec<SidebarCategoryDto>,
     pub total_unread: i64,
+    pub total_summarized: i64,
 }
 
 /// Raw chrome data needed for every authenticated page render: theme,
@@ -146,6 +147,7 @@ pub struct ChromeData {
     pub theme: Option<String>,
     pub categories: Vec<SidebarCategoryDto>,
     pub total_unread: i64,
+    pub total_summarized: i64,
     /// Only set when `original_user_id` is passed (i.e. session is
     /// masquerading). `None` outside the masquerade path.
     pub original_user_is_admin: Option<bool>,
@@ -185,6 +187,7 @@ pub async fn read_chrome_data(
             theme: cached.theme,
             categories: cached.categories,
             total_unread: cached.total_unread,
+            total_summarized: cached.total_summarized,
             original_user_is_admin,
         };
     }
@@ -198,6 +201,8 @@ pub async fn read_chrome_data(
             // Total unread is the sum of the per-category map already fetched —
             // avoids a second full scan via count_unread_by_user.
             let total_unread: i64 = unread_by_cat.values().sum();
+            let total_summarized =
+                crate::models::entry_summary::count_completed(conn, user_id).unwrap_or(0);
             let has_feeds = crate::models::feed::count_by_user(conn, user_id).unwrap_or(0) > 0;
             let categories: Vec<SidebarCategoryDto> = cats
                 .into_iter()
@@ -212,6 +217,7 @@ pub async fn read_chrome_data(
                     theme,
                     categories,
                     total_unread,
+                    total_summarized,
                 },
                 has_feeds,
             )
@@ -235,6 +241,7 @@ pub async fn read_chrome_data(
         theme: fresh.theme,
         categories: fresh.categories,
         total_unread: fresh.total_unread,
+        total_summarized: fresh.total_summarized,
         original_user_is_admin,
     }
 }
@@ -271,6 +278,7 @@ pub async fn build_sidebar_response(
         is_masquerading,
         categories: chrome.categories,
         total_unread: chrome.total_unread,
+        total_summarized: chrome.total_summarized,
     })
 }
 
