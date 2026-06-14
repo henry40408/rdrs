@@ -201,7 +201,10 @@ test.describe("Screenshots", () => {
       const suffix = theme === "dark" ? "-dark" : "";
 
       test(`unread list with reading pane (${theme})`, async ({ page }) => {
+        // `j` moves the list cursor to the first row; `o` opens it in the
+        // reading pane (j/k navigate the pane only once it's open).
         await page.keyboard.press("j");
+        await page.keyboard.press("o");
         await expect(page.locator(".reading-pane-title")).toBeVisible();
 
         await page.screenshot({
