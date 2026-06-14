@@ -108,6 +108,12 @@ Feature: Responsive layout
     When I open the inbox
     Then the entry list pane is narrower than the viewport
 
+  @desktop
+  Scenario: Sidebar nav icons are rendered as SVG
+    Given I am viewing on a desktop screen
+    When I open the inbox
+    Then the "[data-testid=nav-feeds] .sidebar-item-icon svg" element is visible
+
   @mobile
   Scenario: Inbox and drawer controls meet the 44px touch minimum on mobile
     Given I am viewing on a mobile screen

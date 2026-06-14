@@ -219,12 +219,12 @@ code {
     display: none;
     background: none;
     border: none;
-    font-size: var(--font-2xl);
     color: var(--color-text-muted);
     cursor: pointer;
     padding: var(--space-1);
     line-height: 1;
 }
+.sidebar-close .ico { width: 20px; height: 20px; }
 
 .sidebar-nav {
     flex: 1;
@@ -289,21 +289,13 @@ code {
 
 .sidebar-item-icon {
     width: var(--icon-md);
-    text-align: center;
-    font-size: 1rem;
-    line-height: 1;
+    height: var(--icon-md);
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
-
-[data-theme="dark"] .sidebar-item-icon {
-    opacity: 0.85;
-}
-
-@media (prefers-color-scheme: dark) {
-    :root:not([data-theme]) .sidebar-item-icon {
-        opacity: 0.85;
-    }
-}
+.sidebar-item-icon .ico { width: var(--icon-md); height: var(--icon-md); }
 
 .sidebar-badge {
     margin-left: auto;
@@ -378,11 +370,11 @@ code {
     border-radius: var(--radius-md);
     padding: var(--space-2);
     cursor: pointer;
-    font-size: var(--font-xl);
     line-height: 1;
     color: var(--color-text);
     box-shadow: var(--shadow-sm);
 }
+.sidebar-toggle .ico { width: 22px; height: 22px; }
 
 /* ===== Main Content Area ===== */
 .main-content {

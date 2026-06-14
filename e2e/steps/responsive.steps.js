@@ -140,6 +140,10 @@ Then("the {string} control is at least {int}px wide", async ({ page }, selector,
   expect(box.width).toBeGreaterThanOrEqual(min);
 });
 
+Then("the {string} element is visible", async ({ page }, selector) => {
+  await expect(page.locator(selector).first()).toBeVisible();
+});
+
 Then("the {string} controls each span at least {int}% of the row", async ({ page }, selector, pct) => {
   // "row" = the first entry-item; scope the controls to that same row so the
   // width comparison is against the row they live in (rows are uniform width).
