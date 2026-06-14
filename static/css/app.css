@@ -809,6 +809,9 @@ select {
 
 select {
     cursor: pointer;
+    /* Same 44px touch height on desktop as mobile so selects don't shrink
+       between breakpoints (see the former max-width:1024px override). */
+    min-height: var(--touch-min);
 }
 
 textarea {
@@ -1257,7 +1260,7 @@ td input[type="text"] {
    reads as one control strip rather than mismatched heights. */
 .filter-bar select {
     padding: var(--space-1) var(--space-3);
-    font-size: var(--font-sm);
+    font-size: var(--font-base);
 }
 
 /* Top-level forms inside .page-content (e.g. Add Feed on /feeds,
@@ -2038,7 +2041,8 @@ summary {
         min-height: var(--touch-min);
     }
 
-    /* Form controls: touch height + 16px font to suppress iOS focus-zoom. */
+    /* Form controls: touch height + 16px font to suppress iOS focus-zoom.
+       (select is sized unconditionally at base, so it's excluded here.) */
     input[type="text"],
     input[type="password"],
     input[type="url"],
@@ -2046,14 +2050,8 @@ summary {
     input[type="number"],
     input[type="search"],
     input[type="date"],
-    select,
     textarea {
         min-height: var(--touch-min);
-        font-size: var(--font-base);
-    }
-
-    /* Filter-bar selects need the 16px floor too (beats .filter-bar select). */
-    .filter-bar select {
         font-size: var(--font-base);
     }
 
@@ -2236,6 +2234,11 @@ summary {
 /* Chip-style toggle shared with the /feeds filter links. */
 .stats-period-btn,
 .feed-filter-link {
+    /* 44px touch height on every breakpoint so these chips stay level with
+       the sibling filter-bar selects (one control strip, not mismatched). */
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--touch-min);
     padding: var(--space-1) var(--space-3);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-control);
@@ -2257,6 +2260,9 @@ summary {
 .stats-period-divider { color: var(--color-text-muted); }
 .stats-period-dash { color: var(--color-text-muted); }
 .stats-date-input {
+    /* Match the 44px sibling chips/Apply button so the period row stays level
+       on desktop (date inputs already hit 44px on mobile). */
+    min-height: var(--touch-min);
     padding: var(--space-1) var(--space-2);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-control);
