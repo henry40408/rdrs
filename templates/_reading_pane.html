@@ -12,7 +12,7 @@
     {# Pane toolbar. On mobile it also holds the Back affordance (left); the
        prev/next nav sits at the right on every viewport. #}
     <div class="reading-pane-back">
-        <button type="button" class="reading-pane-back-link" data-pane-back data-testid="reading-pane-back">← Back to list</button>
+        <button type="button" class="reading-pane-back-link" data-pane-back data-testid="reading-pane-back"><span class="action-icon" aria-hidden="true">{% call icons::chevron_left() %}{% endcall %}</span><span>Back</span></button>
         {# Prev/Next navigation across the current filtered list. Rendered
            disabled; app.js resolves neighbours via
            `GET /api/entries/{id}/neighbors` after the pane opens and enables

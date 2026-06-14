@@ -219,12 +219,12 @@ code {
     display: none;
     background: none;
     border: none;
-    font-size: var(--font-2xl);
     color: var(--color-text-muted);
     cursor: pointer;
     padding: var(--space-1);
     line-height: 1;
 }
+.sidebar-close .ico { width: 20px; height: 20px; }
 
 .sidebar-nav {
     flex: 1;
@@ -289,21 +289,13 @@ code {
 
 .sidebar-item-icon {
     width: var(--icon-md);
-    text-align: center;
-    font-size: 1rem;
-    line-height: 1;
+    height: var(--icon-md);
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
-
-[data-theme="dark"] .sidebar-item-icon {
-    opacity: 0.85;
-}
-
-@media (prefers-color-scheme: dark) {
-    :root:not([data-theme]) .sidebar-item-icon {
-        opacity: 0.85;
-    }
-}
+.sidebar-item-icon .ico { width: var(--icon-md); height: var(--icon-md); }
 
 .sidebar-badge {
     margin-left: auto;
@@ -378,11 +370,11 @@ code {
     border-radius: var(--radius-md);
     padding: var(--space-2);
     cursor: pointer;
-    font-size: var(--font-xl);
     line-height: 1;
     color: var(--color-text);
     box-shadow: var(--shadow-sm);
 }
+.sidebar-toggle .ico { width: 22px; height: 22px; }
 
 /* ===== Main Content Area ===== */
 .main-content {
@@ -472,22 +464,27 @@ code {
     border-bottom: 1px solid var(--color-border-light);
 }
 
-/* Back-to-list button — mobile-only (the desktop split view never leaves
+/* Back button — mobile-only (the desktop split view never leaves
    the list). `margin-right: auto` pins it far left so the nav stays right.
    Revealed in the ≤1024px block. */
 .reading-pane-back-link {
-    display: none;
+    display: none;                       /* shown as inline-flex in the ≤1024px block */
     margin-right: auto;
+    gap: var(--space-2);
+    min-height: var(--touch-min);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
     background: none;
-    border: 0;
-    padding: 0;
     font: inherit;
     color: var(--color-accent);
     cursor: pointer;
 }
+.reading-pane-back-link .action-icon .ico { width: 18px; height: 18px; }
 
 .reading-pane-back-link:hover {
     color: var(--color-accent-hover);
+    border-color: var(--color-accent);
 }
 
 /* Prev/Next navigation. Buttons render disabled and app.js enables whichever
@@ -609,13 +606,8 @@ code {
     cursor: default;
 }
 
-/* Inline SVG icons (outline set) for action + nav controls. Scale with the
-   surrounding font-size; stroke uses currentColor so they inherit the control
-   colour. Star uses the same path filled (.is-filled) for the active state. */
-.action-icon .ico,
-.reading-pane-nav-btn .ico {
-    width: 1.15em;
-    height: 1.15em;
+/* Base inline-icon styling (stroke set; size per context). */
+.ico {
     display: block;
     fill: none;
     stroke: currentColor;
@@ -623,10 +615,10 @@ code {
     stroke-linecap: round;
     stroke-linejoin: round;
 }
-.action-icon .ico.is-filled {
-    fill: var(--color-accent);
-    stroke: none;
-}
+.ico.is-filled { fill: currentColor; stroke: none; }
+.action-icon .ico,
+.reading-pane-nav-btn .ico { width: 1.15em; height: 1.15em; }
+.action-icon .ico.is-filled { fill: var(--color-accent); }
 
 .reading-pane-article {
     font-family: var(--font-body);
@@ -1026,6 +1018,7 @@ td input[type="text"] {
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
 }
+.banner-dismiss .ico { width: 18px; height: 18px; }
 
 /* Tinted wash + border per level; border-left picks up the level colour
    via the theme-aware tokens. (Dark border-left values matched the dark
@@ -1051,15 +1044,8 @@ td input[type="text"] {
     border: 0;
 }
 
-/* ===== Entry Items (List) — editorial grid ===== */
+/* ===== Entry Items (List) — head / meta / actions ===== */
 .entry-item {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    grid-template-areas:
-        "fav  head"
-        "fav  meta"
-        "foot foot";
-    column-gap: var(--space-3);
     padding: var(--space-4) var(--space-5);
     border-bottom: 1px solid var(--color-border-light);
     cursor: pointer;
@@ -1077,12 +1063,11 @@ td input[type="text"] {
 .entry-item.entry-read:hover,
 .entry-item.entry-read.selected { opacity: 1; }
 
-/* Favicon spans the title+meta rows only (no tall empty column). */
+/* Favicon inline in the meta row. */
 .entry-favicon {
-    grid-area: fav;
     width: 24px;
     height: 24px;
-    margin-top: 2px;
+    margin-top: 0;
     border-radius: var(--radius-control);
     flex: none;
     object-fit: cover;
@@ -1103,14 +1088,15 @@ td input[type="text"] {
 .fav-c4 { background: #A6563E; }
 .fav-c5 { background: #6E8B3D; }
 
-/* Head: serif title + summary badges + right-aligned time. */
+/* Head row: title + right-pinned status cluster (star, summary sparkle, time). */
 .entry-head {
-    grid-area: head;
     display: flex;
-    align-items: baseline;
+    align-items: flex-start;
     gap: var(--space-2);
 }
 .entry-item-title {
+    flex: 1;
+    min-width: 0;
     font-family: var(--font-ui);
     /* Desktop sits next to the 14px sidebar, so the title matches that UI
        scale; mobile bumps it to --font-base (see the media block). */
@@ -1118,16 +1104,24 @@ td input[type="text"] {
     font-weight: 600;
     line-height: 1.32;
     color: var(--color-text);
-    cursor: pointer;
     overflow-wrap: break-word;
     word-break: break-word;
 }
 .entry-item-title:hover { color: var(--color-accent); }
 .entry-title-bold { font-weight: 600; }
 .entry-title-normal { font-weight: 400; }
-.entry-item-badges { flex: none; }
+.entry-status {
+    flex: none;
+    align-self: flex-start;
+    height: 1.32em;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-sm);
+}
+.entry-status .ico { width: 1.15em; height: 1.15em; }
+.entry-status-star { color: var(--color-accent); display: inline-flex; }
 .entry-time {
-    margin-left: auto;
     flex: none;
     font-family: var(--font-ui);
     font-size: var(--font-xs);
@@ -1135,11 +1129,11 @@ td input[type="text"] {
     white-space: nowrap;
 }
 
-/* Meta: feed · category, flush-left with the title. */
+/* Meta row: inline favicon + feed · category. */
 .entry-item-meta {
-    grid-area: meta;
-    /* Inline text flow (not flex) so "feed · category" wraps naturally as one
-       run of text instead of two side-by-side blocks. */
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     margin-top: var(--space-1);
     font-family: var(--font-ui);
     font-size: var(--font-sm);
@@ -1153,12 +1147,11 @@ td input[type="text"] {
 /* Actions: full-width strip. Desktop = quiet text links that brighten on
    row hover; mobile (below) = full-width icon buttons. */
 .entry-item-actions {
-    grid-area: foot;
     display: flex;
     gap: var(--space-5);
     margin-top: var(--space-2);
     font-family: var(--font-ui);
-    font-size: var(--font-xs);
+    font-size: var(--font-sm);
     opacity: 0.72;
     transition: opacity 0.1s;
 }
@@ -1577,38 +1570,24 @@ mark {
     background: #ffffff;
 }
 
-/* Summary badges — shared geometry, per-state colour. */
-.entry-item-badges {
-    white-space: nowrap;
-}
-
+/* Summary-status badges — one sparkle glyph, colour + fill carry meaning.
+   Icon sizes via 1.15em of the status-cluster font (set on .entry-status). */
 .summary-badge,
 .summary-badge-pending,
 .summary-badge-processing,
 .summary-badge-failed {
-    margin-left: var(--space-1);
-    font-size: var(--font-xs);
+    display: inline-flex;
+    align-items: center;
 }
-
-.summary-badge {
-    color: var(--color-accent);
-    font-weight: normal;
-}
-
-.summary-badge-pending {
-    color: var(--color-text-muted);
-}
-
+.summary-badge { color: var(--color-accent); }            /* completed, filled */
+.summary-badge-pending { color: var(--color-text-muted); } /* outline */
 .summary-badge-processing {
-    color: var(--color-accent);
-    animation: blink 1s infinite;
+    color: var(--color-accent);                            /* outline, pulsing */
+    animation: summary-pulse 1s ease-in-out infinite;
 }
+.summary-badge-failed { color: var(--color-error); }       /* failed, filled */
 
-.summary-badge-failed {
-    color: var(--color-error);
-}
-
-@keyframes blink {
+@keyframes summary-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
 }
@@ -1919,12 +1898,18 @@ summary {
     /* ===== Entry row (redesign) — mobile ===== */
     .entry-item { padding: var(--space-4); }
 
-    /* No sidebar visible on mobile, so the larger title reads fine here. */
-    .entry-item-title { font-size: var(--font-base); }
+    /* No sidebar visible on mobile, so the larger title reads fine here.
+       display:flex + min-height gives it a 44px tap target (WCAG 2.5.5). */
+    .entry-item-title {
+        font-size: var(--font-base);
+        display: flex;
+        align-items: center;
+        min-height: var(--touch-min);
+    }
+    .entry-status { font-size: var(--font-base); }
 
-    /* Feed/category stay inline so "feed · category" wraps naturally. Vertical
-       padding (not min-height/inline-flex, which would break the wrap) gives
-       each inline link a ~28px hit box — inline links are exempt from the 44px
+    /* Feed/category flex row with favicon. Vertical padding on the links
+       gives each one a ~28px hit box — inline links are exempt from the 44px
        rule. No horizontal padding so they stay flush with the title. */
     .entry-item-meta {
         margin-top: var(--space-2);
@@ -2068,6 +2053,50 @@ summary {
 
     .tab-bar {
         gap: var(--space-2);
+    }
+
+    /* Sidebar chrome links: logo and sign-out link */
+    .sidebar-logo,
+    .sidebar-footer a {
+        display: inline-flex;
+        align-items: center;
+        min-height: var(--touch-min);
+        min-width: var(--touch-min);
+    }
+
+    /* Horizontal pills: ensure full 44px in both axes */
+    .tab-bar a,
+    .feed-filter-link,
+    .stats-period-btn,
+    .actions a {
+        min-width: var(--touch-min);
+        justify-content: center;
+    }
+
+    /* Checkbox + radio wrapped in label become a 44px tappable row */
+    label:has(> input[type="checkbox"]),
+    label:has(> input[type="radio"]) {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        min-height: var(--touch-min);
+    }
+    input[type="checkbox"],
+    input[type="radio"] {
+        width: 1.25rem;
+        height: 1.25rem;
+        accent-color: var(--color-accent);
+        flex-shrink: 0;
+    }
+
+    /* File input */
+    input[type="file"] { min-height: var(--touch-min); }
+
+    /* Disclosure summary — padding only to preserve native ▸/▾ marker */
+    summary {
+        min-height: var(--touch-min);
+        padding: var(--space-3) 0;
+        box-sizing: border-box;
     }
 }
 
@@ -2434,6 +2463,13 @@ summary {
     margin-top: var(--space-4);
     margin-bottom: var(--space-4);
     padding: 0 var(--space-5);
+}
+
+/* "Mark Above as Read" reads cramped at btn-sm on desktop; give it a
+   comfortable size. Mobile still gets 44px from the touch baseline. */
+#mark-above-read {
+    font-size: var(--font-sm);
+    padding: var(--space-2) var(--space-4);
 }
 
 /* SSR form-button actions inside `.entry-item-actions`. The read/star

@@ -95,7 +95,7 @@ class RdrsFlash extends HTMLElement {
         dismiss.className = 'banner-dismiss';
         dismiss.setAttribute('aria-label', 'Dismiss notification');
         dismiss.setAttribute('data-testid', 'flash-close');
-        dismiss.textContent = '×';
+        dismiss.innerHTML = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
         dismiss.addEventListener('click', () => {
             banner.remove();
             // Return focus to the original trigger if still in the DOM and visible,

@@ -19,6 +19,22 @@
 
 import { escapeHtml } from '/static/js/utils.js';
 
+const ICON = {
+  inbox: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.4 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.4-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.8 1.1z"/></svg>',
+  star: '<svg class="ico is-filled" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.7 5.5 6 .9-4.3 4.2 1 6L12 17.3 6.6 20l1-6L3.3 9.9l6-.9z"/></svg>',
+  sparkle: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-4.9L6 9.3l4.3-1.7z"/><path d="M18 15l.7 1.8L20.5 17.5l-1.8.7L18 20l-.7-1.8L15.5 17.5l1.8-.7z"/></svg>',
+  list: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>',
+  rss: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1.6" fill="currentColor" stroke="none"/></svg>',
+  folder: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  search: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
+  barchart: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 20v-6M12 20V4M18 20v-9"/><path d="M4 20h16"/></svg>',
+  user: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></svg>',
+  cog: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  shield: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v5c0 5-3.5 8-8 9.5C7.5 19 4 16 4 11V6z"/></svg>',
+  menu: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>',
+  close: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+};
+
 const SIDEBAR_CACHE_KEY = 'rdrs.sidebar.v1';
 
 function readBootstrap() {
@@ -164,66 +180,66 @@ class RdrsSidebar extends HTMLElement {
 
         const adminLink = isAdmin ? `
             <a href="/admin" class="sidebar-item${isActive('admin')}" data-testid="nav-admin">
-                <span class="sidebar-item-icon">&#x1F6E1;&#xFE0F;</span>
+                <span class="sidebar-item-icon">${ICON.shield}</span>
                 <span>Admin</span>
             </a>` : '';
 
         this.innerHTML = `
-<button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Open menu">&#9776;</button>
+<button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Open menu">${ICON.menu}</button>
 
 <aside class="sidebar" id="sidebar" data-testid="main-nav">
     ${masqBanner}
     <div class="sidebar-header">
         <a href="/" class="sidebar-logo">rdrs</a>
-        <button class="sidebar-close" onclick="closeSidebar()" aria-label="Close menu">&times;</button>
+        <button class="sidebar-close" onclick="closeSidebar()" aria-label="Close menu">${ICON.close}</button>
     </div>
     <nav class="sidebar-nav">
         <div class="sidebar-section">
             <a href="/" class="sidebar-item${isActive('unread')}" data-testid="nav-unread">
-                <span class="sidebar-item-icon">&#x1F4EC;&#xFE0F;</span>
+                <span class="sidebar-item-icon">${ICON.inbox}</span>
                 <span>Unread</span>
                 <span class="sidebar-badge" id="unread-count">${totalUnread > 0 ? totalUnread : ''}</span>
             </a>
             <a href="/entries/starred" class="sidebar-item${isActive('starred')}">
-                <span class="sidebar-item-icon">&#x2B50;&#xFE0F;</span>
+                <span class="sidebar-item-icon">${ICON.star}</span>
                 <span>Starred</span>
             </a>
             <a href="/entries/summarized" class="sidebar-item${isActive('summarized')}" data-testid="nav-summarized">
-                <span class="sidebar-item-icon">&#x2728;&#xFE0F;</span>
+                <span class="sidebar-item-icon">${ICON.sparkle}</span>
                 <span>Summarized</span>
                 <span class="sidebar-badge" id="summarized-count">${totalSummarized > 0 ? totalSummarized : ''}</span>
             </a>
             <a href="/entries" class="sidebar-item${['all', 'read', 'entries'].includes(active) ? ' active' : ''}" data-testid="nav-entries">
-                <span class="sidebar-item-icon">&#x1F4F0;&#xFE0F;</span>
+                <span class="sidebar-item-icon">${ICON.list}</span>
                 <span>All Entries</span>
             </a>
         </div>
         ${categoriesHtml}
         <div class="sidebar-section">
             <a href="/feeds" class="sidebar-item${isActive('feeds')}" data-testid="nav-feeds">
-                <span class="sidebar-item-icon">&#x1F4E1;&#xFE0F;</span>
+                <span class="sidebar-item-icon">${ICON.rss}</span>
                 <span>Feeds</span>
             </a>
             <a href="/categories" class="sidebar-item${isActive('categories')}" data-testid="nav-categories">
-                <span class="sidebar-item-icon">&#x1F5C2;&#xFE0F;</span>
+                <span class="sidebar-item-icon">${ICON.folder}</span>
                 <span>Categories</span>
             </a>
         </div>
         <div class="sidebar-section">
             <a href="/search" class="sidebar-item${isActive('search')}" data-testid="nav-search">
-                <span class="sidebar-item-icon">&#x1F50D;&#xFE0F;</span>
+                <span class="sidebar-item-icon">${ICON.search}</span>
                 <span>Search</span>
             </a>
             <a href="/statistics" class="sidebar-item${isActive('statistics')}" data-testid="nav-statistics">
-                <span class="sidebar-item-icon">&#x1F4CA;&#xFE0F;</span>
+                <span class="sidebar-item-icon">${ICON.barchart}</span>
                 <span>Statistics</span>
             </a>
             <a href="/user-settings" class="sidebar-item${isActive('user-settings')}" data-testid="nav-settings">
-                <span class="sidebar-item-icon">&#x1F464;&#xFE0F;</span>
+                <span class="sidebar-item-icon">${ICON.user}</span>
                 <span>Settings</span>
             </a>
             <a href="/settings" class="sidebar-item${isActive('settings')}">
-                <span class="sidebar-item-icon">&#x2699;&#xFE0F;</span>
+                <span class="sidebar-item-icon">${ICON.cog}</span>
                 <span>App</span>
             </a>
             ${adminLink}

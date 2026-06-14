@@ -34,6 +34,27 @@ When("I open the all-entries page", async ({ page, serverUrl }) => {
   await page.goto(`${serverUrl}/entries`);
 });
 
+When("I open the feeds page", async ({ page, serverUrl }) => {
+  await page.goto(`${serverUrl}/feeds`);
+});
+
+When("I open the import page", async ({ page, serverUrl }) => {
+  await page.goto(`${serverUrl}/feeds/import`);
+});
+
+When("I open the edit page for feed {string}", async ({ page }, feedTitle) => {
+  await page
+    .getByTestId("feeds-table")
+    .locator("tr")
+    .filter({ hasText: feedTitle })
+    .getByRole("link", { name: "edit" })
+    .click();
+});
+
+When("I expand the {string} disclosure", async ({ page }, label) => {
+  await page.locator("summary", { hasText: label }).click();
+});
+
 When("I tap the hamburger", async ({ page }) => {
   await page.locator(".sidebar-toggle").click();
 });
@@ -138,6 +159,10 @@ Then("the {string} control is at least {int}px wide", async ({ page }, selector,
   const box = await page.locator(selector).first().boundingBox();
   expect(box).not.toBeNull();
   expect(box.width).toBeGreaterThanOrEqual(min);
+});
+
+Then("the {string} element is visible", async ({ page }, selector) => {
+  await expect(page.locator(selector).first()).toBeVisible();
 });
 
 Then("the {string} controls each span at least {int}% of the row", async ({ page }, selector, pct) => {
