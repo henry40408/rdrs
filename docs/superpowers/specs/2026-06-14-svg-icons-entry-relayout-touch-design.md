@@ -184,19 +184,41 @@ elements) across the main pages (entries, feeds, feed-edit, import, categories,
 search, settings, user-settings, statistics) and records each rendered bounding
 box, flagging anything < 44px in either axis.
 
-**Classify & fix:** each sub-44px hit is either a genuine gap (fix in the mobile
-touch-baseline block, following the established per-control-type pattern) or an
-intentional exemption that is documented (no silent passes). Known going in:
+The audit is implemented as a reusable spec, `e2e/scripts/touch-audit.spec.js`
+(run via `scripts/audit.config.js`), kept in the tree as a regression tool.
 
-- `input[type="file"]` (`feeds_import.html`) — add to the touch block.
-- `input[type="checkbox"]` (`feed_edit.html`) — make the wrapping `<label>` a
-  44px tappable row (`min-height`, flex-centre) and enlarge the box.
+**Audit results** — 11 distinct genuine sub-44px targets (caption `<label>`s
+that pair with a separate control via `for=`, and inline `.entry-item-meta`
+links, are excluded as non-targets/exemptions). Fixes, all `min-height`/
+`min-width: 44px` with flex-centring, no background/text-decoration changes:
+
+| Target | Measured | Fix | Breakpoint |
+| --- | --- | --- | --- |
+| Sidebar logout link | 49×19 | min-height 44px | mobile |
+| Sidebar `.sidebar-logo` ("rdrs") | 41×30 | min-height 44px | mobile |
+| **Entry title link** (primary tap) | 87×21 | **min-height 44px on `.entry-item-title`** (option A — CSS only; pads short single-line titles, multi-line already exceed it) | mobile |
+| Filter tabs (`.tab-bar a`) | 39–42×44 | min-width 44px | mobile |
+| Feeds filter (`.feed-filter-link`) | 41×44 | min-width 44px | mobile |
+| Stats period (`.stats-period-btn`) | 41×44 | min-width 44px | mobile |
+| Feed "edit" link | 39×44 | min-width 44px | mobile |
+| Checkbox box (`input[type=checkbox]`) | 13×13 | enlarge to ~20px (`width/height` + `accent-color`) | mobile |
+| Checkbox label row ("Disable HTTP/2") | 317×21 | wrapping `<label>` → 44px flex row | mobile |
+| File input (`input[type=file]`) | 253×21 | min-height 44px | mobile |
+| `<summary>` disclosure ("HTTP Settings") | 317×27 | **min-height 44px via padding** (not `display:flex`, so the native ▸/▾ marker is preserved) | mobile |
+
 - `input[type="radio"]` — none exist; nothing to do.
 - `.entry-item-meta a` inline links — intentionally ~28px (WCAG 2.5.8 AA + wrap
   preservation); documented exemption, unchanged.
 
-The audit may surface additional sites (e.g. table-row action links,
-pagination); those are fixed under the same pattern or documented.
+### Desktop: "Mark Above as Read"
+
+Separately from the mobile audit, `#mark-above-read` (`.btn-sm`,
+`_entries_layout.html`) reads too small on **desktop**: `.btn-sm` is `--font-xs`
++ `space-1/space-2` padding (~24px tall), and the 44px floor only applies in the
+`≤1024px` block, so desktop has no minimum. Fix: give this button a comfortable
+desktop size — `--font-sm` with `space-2`/`space-4` padding (~36px tall) — while
+keeping the mobile 44px from the touch baseline. Scoped to this button (not a
+global `.btn-sm` change).
 
 ## Testing
 
@@ -209,9 +231,12 @@ pagination); those are fixed under the same pattern or documented.
 - **Sidebar:** nav `data-testid`s (`nav-unread`, `nav-feeds`, …) and chrome
   `aria-label`s unchanged; existing sidebar e2e should pass. Add an assertion
   that sidebar item icons render as `<svg>` (no emoji).
-- **Touch targets:** extend `e2e/features/responsive.feature` with per-control
-  ≥44px assertions for each newly-covered control (checkbox label, file input,
-  plus any surfaced).
+- **Touch targets:** the audit spec (`e2e/scripts/touch-audit.spec.js`) is
+  retained as a regression tool; extend `e2e/features/responsive.feature` with
+  per-control ≥44px assertions for each fixed control (entry title, sidebar
+  logout/logo, filter/period pills, feed-edit link, checkbox label row, file
+  input, `<summary>`). The "Mark Above as Read" fix is **desktop** — assert its
+  rendered height at a desktop viewport (not the 44px mobile rule).
 - **Build/run notes:** CSS is `include_str!`'d into the binary — `cargo build`
   before e2e after CSS/Rust edits; `npx bddgen` after `.feature` changes; tests
   run with `RDRS_FAST_HASH`; this box needs the OpenSSL env re-sourced before
