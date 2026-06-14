@@ -615,13 +615,8 @@ code {
     cursor: default;
 }
 
-/* Inline SVG icons (outline set) for action + nav controls. Scale with the
-   surrounding font-size; stroke uses currentColor so they inherit the control
-   colour. Star uses the same path filled (.is-filled) for the active state. */
-.action-icon .ico,
-.reading-pane-nav-btn .ico {
-    width: 1.15em;
-    height: 1.15em;
+/* Base inline-icon styling (stroke set; size per context). */
+.ico {
     display: block;
     fill: none;
     stroke: currentColor;
@@ -629,10 +624,10 @@ code {
     stroke-linecap: round;
     stroke-linejoin: round;
 }
-.action-icon .ico.is-filled {
-    fill: var(--color-accent);
-    stroke: none;
-}
+.ico.is-filled { fill: currentColor; stroke: none; }
+.action-icon .ico,
+.reading-pane-nav-btn .ico { width: 1.15em; height: 1.15em; }
+.action-icon .ico.is-filled { fill: var(--color-accent); }
 
 .reading-pane-article {
     font-family: var(--font-body);
