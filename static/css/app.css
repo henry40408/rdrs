@@ -1582,33 +1582,24 @@ mark {
     white-space: nowrap;
 }
 
+/* Summary-status badges — one sparkle glyph, colour + fill carry meaning.
+   Icon sizes via 1.15em of the status-cluster font (set on .entry-status). */
 .summary-badge,
 .summary-badge-pending,
 .summary-badge-processing,
 .summary-badge-failed {
-    margin-left: var(--space-1);
-    font-size: var(--font-xs);
+    display: inline-flex;
+    align-items: center;
 }
-
-.summary-badge {
-    color: var(--color-accent);
-    font-weight: normal;
-}
-
-.summary-badge-pending {
-    color: var(--color-text-muted);
-}
-
+.summary-badge { color: var(--color-accent); }            /* completed, filled */
+.summary-badge-pending { color: var(--color-text-muted); } /* outline */
 .summary-badge-processing {
-    color: var(--color-accent);
-    animation: blink 1s infinite;
+    color: var(--color-accent);                            /* outline, pulsing */
+    animation: summary-pulse 1s ease-in-out infinite;
 }
+.summary-badge-failed { color: var(--color-error); }       /* failed, filled */
 
-.summary-badge-failed {
-    color: var(--color-error);
-}
-
-@keyframes blink {
+@keyframes summary-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
 }

@@ -15,10 +15,10 @@
     <div class="entry-head">
         <a href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" class="entry-item-title {% if r.is_read %}entry-title-normal{% else %}entry-title-bold{% endif %}" data-testid="entry-title-link">{{ r.title }}</a>
         <span class="entry-item-badges">{% match r.summary_status_str() %}
-            {% when Some("completed") %}<span title="Has Summary" class="summary-badge">✅</span>
-            {% when Some("pending") %}<span title="Pending" class="summary-badge-pending">⏳</span>
-            {% when Some("processing") %}<span title="Processing" class="summary-badge-processing">🔄</span>
-            {% when Some("failed") %}<span title="Failed" class="summary-badge-failed">❌</span>
+            {% when Some("completed") %}<span title="Has Summary" class="summary-badge" aria-hidden="true">{% call icons::summary(true) %}{% endcall %}</span>
+            {% when Some("pending") %}<span title="Pending" class="summary-badge-pending" aria-hidden="true">{% call icons::summary(false) %}{% endcall %}</span>
+            {% when Some("processing") %}<span title="Processing" class="summary-badge-processing" aria-hidden="true">{% call icons::summary(false) %}{% endcall %}</span>
+            {% when Some("failed") %}<span title="Failed" class="summary-badge-failed" aria-hidden="true">{% call icons::summary(true) %}{% endcall %}</span>
             {% when _ %}
         {% endmatch %}</span>
         <time class="entry-time" datetime="{{ r.published_at_iso }}">{{ r.published_relative }}</time>
