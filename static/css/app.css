@@ -1071,6 +1071,10 @@ td input[type="text"] {
     border-radius: var(--radius-control);
     flex: none;
     object-fit: cover;
+    /* White tile so dark favicons (e.g. GitHub, Stack Overflow) stay visible
+       in dark mode instead of blending into the dark background. The colour
+       chip variant re-overrides this via .fav-c* below. */
+    background: #ffffff;
 }
 .entry-favicon-chip {
     display: flex;
