@@ -10,3 +10,4 @@
 {% macro close() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>{% endmacro %}
 {% macro chevron_left() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>{% endmacro %}
 {% macro chevron_right() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>{% endmacro %}
+{% macro summary(filled) %}<svg class="ico{% if filled %} is-filled{% endif %}" viewBox="0 0 24 24" aria-hidden="true">{% if filled %}<path d="M12 3L14 10L21 12L14 14L12 21L10 14L3 12L10 10Z"/>{% else %}<g transform="translate(1.2 1.2) scale(0.9)"><path d="M12 3L14 10L21 12L14 14L12 21L10 14L3 12L10 10Z"/></g>{% endif %}</svg>{% endmacro %}
