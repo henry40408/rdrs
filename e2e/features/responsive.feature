@@ -180,6 +180,7 @@ Feature: Responsive layout
     And I have a feed with 5 test entries
     When I open the feeds page
     And I open the edit page for feed "Mobile Feed"
+    And I expand the "HTTP Settings" disclosure
     Then the "label:has(> input[type='checkbox'])" control is at least 44px tall
     And the "summary" control is at least 44px tall
 

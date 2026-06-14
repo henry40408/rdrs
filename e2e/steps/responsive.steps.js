@@ -51,6 +51,10 @@ When("I open the edit page for feed {string}", async ({ page }, feedTitle) => {
     .click();
 });
 
+When("I expand the {string} disclosure", async ({ page }, label) => {
+  await page.locator("summary", { hasText: label }).click();
+});
+
 When("I tap the hamburger", async ({ page }) => {
   await page.locator(".sidebar-toggle").click();
 });
