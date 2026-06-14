@@ -2466,6 +2466,13 @@ summary {
     padding: 0 var(--space-5);
 }
 
+/* "Mark Above as Read" reads cramped at btn-sm on desktop; give it a
+   comfortable size. Mobile still gets 44px from the touch baseline. */
+#mark-above-read {
+    font-size: var(--font-sm);
+    padding: var(--space-2) var(--space-4);
+}
+
 /* SSR form-button actions inside `.entry-item-actions`. The read/star
    buttons are form-wrapped (to carry their POST target), so the form is the
    flex child of `.entry-item-actions`; it must `display: contents`-style

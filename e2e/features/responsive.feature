@@ -114,6 +114,13 @@ Feature: Responsive layout
     When I open the inbox
     Then the "[data-testid=nav-feeds] .sidebar-item-icon svg" element is visible
 
+  @desktop
+  Scenario: Mark Above as Read button is comfortably sized on desktop
+    Given I am viewing on a desktop screen
+    And I have a feed with 5 test entries
+    When I open the inbox
+    Then the "[data-testid=mark-above-btn]" control is at least 34px tall
+
   @mobile
   Scenario: Inbox and drawer controls meet the 44px touch minimum on mobile
     Given I am viewing on a mobile screen
