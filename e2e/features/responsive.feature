@@ -158,3 +158,26 @@ Feature: Responsive layout
     And the ".entry-item-meta a" control is at least 24px tall
     And the ".entry-item-actions .entry-action-btn" controls each span at least 25% of the row
     And the ".entry-action-btn" control is at least 44px tall
+
+  @mobile
+  Scenario: Sidebar chrome links meet the 44px touch minimum on mobile
+    Given I am viewing on a mobile screen
+    When I open the inbox
+    And I tap the hamburger
+    Then the ".sidebar-logo" control is at least 44px tall
+    And the ".sidebar-footer a" control is at least 44px tall
+
+  @mobile
+  Scenario: Feed edit form controls meet the 44px touch minimum on mobile
+    Given I am viewing on a mobile screen
+    And I have a feed with 5 test entries
+    When I open the feeds page
+    And I open the edit page for feed "Mobile Feed"
+    Then the "label:has(> input[type='checkbox'])" control is at least 44px tall
+    And the "summary" control is at least 44px tall
+
+  @mobile
+  Scenario: Import page file input meets the 44px touch minimum on mobile
+    Given I am viewing on a mobile screen
+    When I open the import page
+    Then the "input[type='file']" control is at least 44px tall

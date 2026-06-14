@@ -34,6 +34,23 @@ When("I open the all-entries page", async ({ page, serverUrl }) => {
   await page.goto(`${serverUrl}/entries`);
 });
 
+When("I open the feeds page", async ({ page, serverUrl }) => {
+  await page.goto(`${serverUrl}/feeds`);
+});
+
+When("I open the import page", async ({ page, serverUrl }) => {
+  await page.goto(`${serverUrl}/feeds/import`);
+});
+
+When("I open the edit page for feed {string}", async ({ page }, feedTitle) => {
+  await page
+    .getByTestId("feeds-table")
+    .locator("tr")
+    .filter({ hasText: feedTitle })
+    .getByRole("link", { name: "edit" })
+    .click();
+});
+
 When("I tap the hamburger", async ({ page }) => {
   await page.locator(".sidebar-toggle").click();
 });
