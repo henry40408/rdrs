@@ -1,3 +1,4 @@
+{%- import "_icons.html" as icons -%}
 {% macro flash(messages) %}
 {% if !messages.is_empty() %}
 <div class="banner-stack" role="region" aria-label="Notifications" tabindex="-1">
@@ -6,7 +7,7 @@
         <span class="banner-icon" aria-hidden="true"></span>
         <div class="banner-body"><span class="sr-only">{{ msg.level_name() }}: </span><span class="banner-message">{{ msg.message }}</span></div>
         <time class="banner-time" datetime="{{ msg.timestamp_iso() }}" data-testid="flash-time">{{ msg.formatted_time() }}</time>
-        <button type="button" class="banner-dismiss" aria-label="Dismiss notification" data-testid="flash-close" onclick="this.closest('.banner').remove();">&times;</button>
+        <button type="button" class="banner-dismiss" aria-label="Dismiss notification" data-testid="flash-close" onclick="this.closest('.banner').remove();">{% call icons::close() %}{% endcall %}</button>
     </div>
     {% endfor %}
 </div>

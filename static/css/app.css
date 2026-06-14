@@ -1032,6 +1032,7 @@ td input[type="text"] {
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
 }
+.banner-dismiss .ico { width: 18px; height: 18px; }
 
 /* Tinted wash + border per level; border-left picks up the level colour
    via the theme-aware tokens. (Dark border-left values matched the dark
