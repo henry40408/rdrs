@@ -472,22 +472,28 @@ code {
     border-bottom: 1px solid var(--color-border-light);
 }
 
-/* Back-to-list button — mobile-only (the desktop split view never leaves
+/* Back button — mobile-only (the desktop split view never leaves
    the list). `margin-right: auto` pins it far left so the nav stays right.
    Revealed in the ≤1024px block. */
 .reading-pane-back-link {
     display: none;
     margin-right: auto;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--touch-min);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
     background: none;
-    border: 0;
-    padding: 0;
     font: inherit;
     color: var(--color-accent);
     cursor: pointer;
 }
+.reading-pane-back-link .action-icon .ico { width: 18px; height: 18px; }
 
 .reading-pane-back-link:hover {
     color: var(--color-accent-hover);
+    border-color: var(--color-accent);
 }
 
 /* Prev/Next navigation. Buttons render disabled and app.js enables whichever
