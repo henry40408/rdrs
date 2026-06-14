@@ -27,9 +27,11 @@
         {% else %}
         <span class="entry-favicon entry-favicon-chip fav-c{{ r.feed_color_index() }}" aria-hidden="true">{{ r.feed_initial() }}</span>
         {% endif %}
-        <a href="/feeds/{{ r.feed_id }}/entries">{{ r.feed_title }}</a>
-        <span class="meta-sep">·</span>
-        <a href="/categories/{{ r.category_id }}/entries">{{ r.category_name }}</a>
+        <span class="entry-meta-text">
+            <a href="/feeds/{{ r.feed_id }}/entries">{{ r.feed_title }}</a>
+            <span class="meta-sep">·</span>
+            <a href="/categories/{{ r.category_id }}/entries">{{ r.category_name }}</a>
+        </span>
     </div>
 
     <div class="entry-item-actions">

@@ -1098,9 +1098,9 @@ td input[type="text"] {
     flex: 1;
     min-width: 0;
     font-family: var(--font-ui);
-    /* Desktop sits next to the 14px sidebar, so the title matches that UI
-       scale; mobile bumps it to --font-base (see the media block). */
-    font-size: var(--font-sm);
+    /* Title is the row's focal point: bumped to --font-base on desktop for
+       emphasis (was --font-sm); mobile goes one step further (see media block). */
+    font-size: var(--font-base);
     font-weight: 600;
     line-height: 1.32;
     color: var(--color-text);
@@ -1132,13 +1132,20 @@ td input[type="text"] {
 /* Meta row: inline favicon + feed · category. */
 .entry-item-meta {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--space-2);
-    margin-top: var(--space-1);
+    /* Bigger gap below the title to let the emphasized headline breathe. */
+    margin-top: var(--space-2);
     font-family: var(--font-ui);
     font-size: var(--font-sm);
     line-height: 1.5;
     color: var(--color-text-secondary);
+}
+/* feed · category as a single inline text run that wraps as a unit, rather
+   than two side-by-side flex blocks that get squeezed. */
+.entry-meta-text {
+    flex: 1;
+    min-width: 0;
 }
 .entry-item-meta a { color: var(--color-text-secondary); }
 .entry-item-meta a:hover { color: var(--color-accent); }
@@ -1901,7 +1908,7 @@ summary {
     /* No sidebar visible on mobile, so the larger title reads fine here.
        display:flex + min-height gives it a 44px tap target (WCAG 2.5.5). */
     .entry-item-title {
-        font-size: var(--font-base);
+        font-size: var(--font-lg);
         display: flex;
         align-items: center;
         min-height: var(--touch-min);
