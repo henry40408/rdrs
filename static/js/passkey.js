@@ -58,12 +58,12 @@ class RdrsPasskeys extends HTMLElement {
                 list.innerHTML = '<p class="muted">No passkeys registered yet.</p>';
                 return;
             }
-            list.innerHTML = '<table><thead><tr><th>Name</th><th>Created</th><th>Last Used</th><th>Actions</th></tr></thead><tbody>'
+            list.innerHTML = '<table class="mobile-cards"><thead><tr><th>Name</th><th>Created</th><th>Last Used</th><th>Actions</th></tr></thead><tbody>'
                 + data.passkeys.map(p => `
                 <tr id="passkey-row-${p.id}">
-                    <td><span id="passkey-name-${p.id}">${escapeHtml(p.name)}</span></td>
-                    <td>${escapeHtml(p.created_at)}</td>
-                    <td>${escapeHtml(p.last_used_at || 'Never')}</td>
+                    <td data-label="Name"><span id="passkey-name-${p.id}">${escapeHtml(p.name)}</span></td>
+                    <td data-label="Created">${escapeHtml(p.created_at)}</td>
+                    <td data-label="Last Used">${escapeHtml(p.last_used_at || 'Never')}</td>
                     <td class="actions">
                         <a href="#" data-passkey-action="rename" data-passkey-id="${p.id}">Rename</a>
                         <a href="#" data-passkey-action="delete" data-passkey-id="${p.id}">Delete</a>

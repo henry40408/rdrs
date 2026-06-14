@@ -2166,6 +2166,18 @@ summary {
         display: none;
     }
 
+    /* Passkey card actions (the list is JS-rendered by <rdrs-passkeys>):
+       entry-item-style full-width bordered buttons. Scoped to rdrs-passkeys
+       so the Feeds card actions keep their compact text-link treatment. */
+    rdrs-passkeys table.mobile-cards tbody td.actions a {
+        flex: 1;
+        justify-content: center;
+        min-height: var(--touch-min);
+        padding: var(--space-2);
+        border: 1px solid var(--color-border-light);
+        border-radius: var(--radius-md);
+    }
+
     /* Hide feed health info in card mode */
     .feed-health-info { display: none; }
 
