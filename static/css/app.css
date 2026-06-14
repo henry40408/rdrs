@@ -1051,15 +1051,8 @@ td input[type="text"] {
     border: 0;
 }
 
-/* ===== Entry Items (List) — editorial grid ===== */
+/* ===== Entry Items (List) — head / meta / actions ===== */
 .entry-item {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    grid-template-areas:
-        "fav  head"
-        "fav  meta"
-        "foot foot";
-    column-gap: var(--space-3);
     padding: var(--space-4) var(--space-5);
     border-bottom: 1px solid var(--color-border-light);
     cursor: pointer;
@@ -1077,12 +1070,11 @@ td input[type="text"] {
 .entry-item.entry-read:hover,
 .entry-item.entry-read.selected { opacity: 1; }
 
-/* Favicon spans the title+meta rows only (no tall empty column). */
+/* Favicon inline in the meta row. */
 .entry-favicon {
-    grid-area: fav;
     width: 24px;
     height: 24px;
-    margin-top: 2px;
+    margin-top: 0;
     border-radius: var(--radius-control);
     flex: none;
     object-fit: cover;
@@ -1103,14 +1095,15 @@ td input[type="text"] {
 .fav-c4 { background: #A6563E; }
 .fav-c5 { background: #6E8B3D; }
 
-/* Head: serif title + summary badges + right-aligned time. */
+/* Head row: title + right-pinned status cluster (star, summary sparkle, time). */
 .entry-head {
-    grid-area: head;
     display: flex;
-    align-items: baseline;
+    align-items: flex-start;
     gap: var(--space-2);
 }
 .entry-item-title {
+    flex: 1;
+    min-width: 0;
     font-family: var(--font-ui);
     /* Desktop sits next to the 14px sidebar, so the title matches that UI
        scale; mobile bumps it to --font-base (see the media block). */
@@ -1118,16 +1111,24 @@ td input[type="text"] {
     font-weight: 600;
     line-height: 1.32;
     color: var(--color-text);
-    cursor: pointer;
     overflow-wrap: break-word;
     word-break: break-word;
 }
 .entry-item-title:hover { color: var(--color-accent); }
 .entry-title-bold { font-weight: 600; }
 .entry-title-normal { font-weight: 400; }
-.entry-item-badges { flex: none; }
+.entry-status {
+    flex: none;
+    align-self: flex-start;
+    height: 1.32em;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-sm);
+}
+.entry-status .ico { width: 1.15em; height: 1.15em; }
+.entry-status-star { color: var(--color-accent); display: inline-flex; }
 .entry-time {
-    margin-left: auto;
     flex: none;
     font-family: var(--font-ui);
     font-size: var(--font-xs);
@@ -1135,11 +1136,11 @@ td input[type="text"] {
     white-space: nowrap;
 }
 
-/* Meta: feed · category, flush-left with the title. */
+/* Meta row: inline favicon + feed · category. */
 .entry-item-meta {
-    grid-area: meta;
-    /* Inline text flow (not flex) so "feed · category" wraps naturally as one
-       run of text instead of two side-by-side blocks. */
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     margin-top: var(--space-1);
     font-family: var(--font-ui);
     font-size: var(--font-sm);
@@ -1153,12 +1154,11 @@ td input[type="text"] {
 /* Actions: full-width strip. Desktop = quiet text links that brighten on
    row hover; mobile (below) = full-width icon buttons. */
 .entry-item-actions {
-    grid-area: foot;
     display: flex;
     gap: var(--space-5);
     margin-top: var(--space-2);
     font-family: var(--font-ui);
-    font-size: var(--font-xs);
+    font-size: var(--font-sm);
     opacity: 0.72;
     transition: opacity 0.1s;
 }
@@ -1577,11 +1577,6 @@ mark {
     background: #ffffff;
 }
 
-/* Summary badges — shared geometry, per-state colour. */
-.entry-item-badges {
-    white-space: nowrap;
-}
-
 /* Summary-status badges — one sparkle glyph, colour + fill carry meaning.
    Icon sizes via 1.15em of the status-cluster font (set on .entry-status). */
 .summary-badge,
@@ -1910,12 +1905,18 @@ summary {
     /* ===== Entry row (redesign) — mobile ===== */
     .entry-item { padding: var(--space-4); }
 
-    /* No sidebar visible on mobile, so the larger title reads fine here. */
-    .entry-item-title { font-size: var(--font-base); }
+    /* No sidebar visible on mobile, so the larger title reads fine here.
+       display:flex + min-height gives it a 44px tap target (WCAG 2.5.5). */
+    .entry-item-title {
+        font-size: var(--font-base);
+        display: flex;
+        align-items: center;
+        min-height: var(--touch-min);
+    }
+    .entry-status { font-size: var(--font-base); }
 
-    /* Feed/category stay inline so "feed · category" wraps naturally. Vertical
-       padding (not min-height/inline-flex, which would break the wrap) gives
-       each inline link a ~28px hit box — inline links are exempt from the 44px
+    /* Feed/category flex row with favicon. Vertical padding on the links
+       gives each one a ~28px hit box — inline links are exempt from the 44px
        rule. No horizontal padding so they stay flush with the title. */
     .entry-item-meta {
         margin-top: var(--space-2);
