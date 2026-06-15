@@ -48,6 +48,20 @@ Given("the entry titled {string} has a failed summary", async ({ seed, currentUs
   seed.insertFailedSummary(seed.findEntryIdByTitle(userId, title), userId);
 });
 
+Given("the entry titled {string} has content with a broken image", async ({ seed, currentUser }, title) => {
+  const userId = seed.getUserId(currentUser.username);
+  const entryId = seed.findEntryIdByTitle(userId, title);
+  seed.setEntryContent(
+    entryId,
+    '<p>x</p><img src="https://images.internal/missing.jpg" alt="Missing diagram">',
+  );
+});
+
+Then("the reading pane shows a broken-image fallback", async ({ page }) => {
+  await expect(page.locator(".reading-pane-article .rp-broken-image")).toBeVisible();
+  await expect(page.locator(".rp-broken-cap")).toContainText("Image unavailable");
+});
+
 Given("all entries in category {string} are marked read", async ({ seed, currentUser }, name) => {
   const userId = seed.getUserId(currentUser.username);
   seed.markCategoryRead(userId, name);
