@@ -7,6 +7,7 @@ const VIEWPORTS = {
   mobile: { width: 375, height: 667 },
   tablet: { width: 768, height: 1024 },
   desktop: { width: 1280, height: 800 },
+  wide: { width: 1400, height: 900 },
 };
 
 Given("I am viewing on a {word} screen", async ({ page }, kind) => {
@@ -163,6 +164,25 @@ Then("the {string} control is at least {int}px wide", async ({ page }, selector,
 
 Then("the {string} element is visible", async ({ page }, selector) => {
   await expect(page.locator(selector).first()).toBeVisible();
+});
+
+Then("the entry-list filter bar fits on one row", async ({ page }) => {
+  // The filter bar holds the status-filter and Mark-as-Read selects. They must
+  // stay on a single row inside the fixed-width list pane — if they wrap, the
+  // second .form-group drops to a larger top offset.
+  const groups = page.locator(".filter-bar > .form-group");
+  const count = await groups.count();
+  expect(count).toBeGreaterThanOrEqual(2);
+  const tops = [];
+  for (let i = 0; i < count; i++) {
+    const box = await groups.nth(i).boundingBox();
+    expect(box).not.toBeNull();
+    tops.push(box.y);
+  }
+  const minTop = Math.min(...tops);
+  for (const top of tops) {
+    expect(Math.abs(top - minTop)).toBeLessThan(4);
+  }
 });
 
 Then("the {string} controls each span at least {int}% of the row", async ({ page }, selector, pct) => {

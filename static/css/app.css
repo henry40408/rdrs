@@ -534,7 +534,7 @@ code {
 
 .reading-pane-title {
     font-family: var(--font-display);
-    font-size: var(--font-2xl);
+    font-size: var(--font-3xl);
     font-weight: 700;
     line-height: 1.25;
     margin-bottom: var(--space-4);
@@ -1242,7 +1242,7 @@ td input[type="text"] {
 /* ===== Filter Bar ===== */
 .filter-bar {
     display: flex;
-    gap: var(--space-4);
+    gap: var(--space-2);
     flex-wrap: wrap;
     align-items: flex-end;
     margin-bottom: var(--space-5);
@@ -1259,8 +1259,8 @@ td input[type="text"] {
    button-style chips (e.g. .feed-filter-link on /feeds) so the row
    reads as one control strip rather than mismatched heights. */
 .filter-bar select {
-    padding: var(--space-1) var(--space-3);
-    font-size: var(--font-base);
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--font-sm);
 }
 
 /* Top-level forms inside .page-content (e.g. Add Feed on /feeds,
@@ -1865,11 +1865,6 @@ summary {
     .reading-pane-back-link {
         display: inline-flex;
         align-items: center;
-    }
-
-    /* Title is smaller on mobile (no sidebar to size against on desktop). */
-    .reading-pane-title {
-        font-size: var(--font-xl);
     }
 
     /* Prev/next become icon-only to save toolbar width; keep a square-ish
