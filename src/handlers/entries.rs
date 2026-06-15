@@ -235,7 +235,8 @@ pub(crate) async fn build_reading_pane_view(
         proxy_base_url,
     );
 
-    let (summary_text, summary_in_flight) = resolve_summary(state, user_id, entry_id).await?;
+    let (summary_text, summary_in_flight, summary_error) =
+        resolve_summary(state, user_id, entry_id).await?;
 
     let published_at = ewf.entry.published_at;
     Ok(ReadingPaneView {
@@ -262,28 +263,29 @@ pub(crate) async fn build_reading_pane_view(
         is_starred: ewf.entry.starred_at.is_some(),
         summary_text,
         summary_in_flight,
+        summary_error,
         has_kagi,
         has_save,
         is_full_content: false,
     })
 }
 
-/// Resolve `(summary_text, summary_in_flight)` for an entry. Reads the
-/// in-memory cache first; on miss or terminal-failed state falls back to
-/// the `entry_summary` table so a completed summary persisted in a
-/// previous session is still surfaced.
+/// Resolve `(summary_text, summary_in_flight, summary_error)` for an entry.
+/// Reads the in-memory cache first; on miss or terminal-failed state falls back
+/// to the `entry_summary` table so a completed summary persisted in a previous
+/// session is still surfaced.
 async fn resolve_summary(
     state: &AppState,
     user_id: i64,
     entry_id: i64,
-) -> AppResult<(Option<String>, bool)> {
+) -> AppResult<(Option<String>, bool, Option<String>)> {
     if let Some(cached) = state.summary_cache.get(user_id, entry_id) {
         match cached.status {
-            SummaryStatus::Completed => return Ok((cached.summary_text, false)),
-            SummaryStatus::Pending | SummaryStatus::Processing => return Ok((None, true)),
+            SummaryStatus::Completed => return Ok((cached.summary_text, false, None)),
+            SummaryStatus::Pending | SummaryStatus::Processing => return Ok((None, true, None)),
             SummaryStatus::Failed => {
-                // Fall through to DB — the DB row may have been refreshed
-                // by a retry that hasn't been written into the cache yet.
+                // Fall through to DB — a retry may have refreshed the row
+                // without yet updating the cache.
             }
         }
     }
@@ -293,11 +295,11 @@ async fn resolve_summary(
         .await??;
     match db_entry {
         Some(s) => match s.status {
-            SummaryStatus::Completed => Ok((s.summary_text, false)),
-            SummaryStatus::Pending | SummaryStatus::Processing => Ok((None, true)),
-            SummaryStatus::Failed => Ok((None, false)),
+            SummaryStatus::Completed => Ok((s.summary_text, false, None)),
+            SummaryStatus::Pending | SummaryStatus::Processing => Ok((None, true, None)),
+            SummaryStatus::Failed => Ok((None, false, s.error_message)),
         },
-        None => Ok((None, false)),
+        None => Ok((None, false, None)),
     }
 }
 

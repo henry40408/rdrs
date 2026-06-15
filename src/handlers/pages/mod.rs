@@ -104,6 +104,11 @@ pub struct ReadingPaneView {
     pub is_starred: bool,
     pub summary_text: Option<String>,
     pub summary_in_flight: bool,
+    /// `Some(error_message)` when the latest summary attempt failed. Lets the
+    /// reading pane render the failed branch (error banner + Retry / Clear) and
+    /// distinguishes `failed` from "no summary" (both leave `summary_text` None
+    /// and `summary_in_flight` false).
+    pub summary_error: Option<String>,
     pub has_kagi: bool,
     pub has_save: bool,
     /// `true` after `POST /entries/{id}/fetch-full-content` succeeds —
