@@ -118,9 +118,17 @@ fn harvest_image_dimensions(html: &str) -> String {
             .get_attribute("data-original-height")
             .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
             .or_else(|| style_dim(&style, "height"));
-        if let (Some(w), Some(h)) = (w, h) {
-            el.set_attribute("width", &w)?;
-            el.set_attribute("height", &h)?;
+        // Require a positive integer pair: a harvested 0 (e.g.
+        // `style="width:0px"`) would inject `width="0"` and collapse the box to
+        // zero height while suppressing the 16/9 loading fallback.
+        let positive = |s: &Option<String>| {
+            s.as_deref()
+                .and_then(|v| v.parse::<u32>().ok())
+                .is_some_and(|n| n > 0)
+        };
+        if positive(&w) && positive(&h) {
+            el.set_attribute("width", &w.unwrap())?;
+            el.set_attribute("height", &h.unwrap())?;
         }
         Ok(())
     });
@@ -985,6 +993,15 @@ mod tests {
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(output.contains("width=\"100\""), "{output}");
         assert!(!output.contains("width=\"800\""), "{output}");
+    }
+
+    #[test]
+    fn test_harvest_skips_zero_dimensions() {
+        // A harvested 0 would collapse the box to zero height — never inject it.
+        let input = r#"<img src="https://e.com/a.jpg" style="width:0px;height:0px">"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(!output.contains("width=\"0\""), "{output}");
+        assert!(!output.contains("height=\"0\""), "{output}");
     }
 
     #[test]
