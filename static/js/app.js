@@ -117,6 +117,45 @@ function cancelPaneImages(pane) {
     }
 }
 
+// Reading-pane content images: flip the server-set data-img-state="loading"
+// skeleton to "loaded" on load, or replace the image with a dashed-box
+// fallback on error. Idempotent per image via data-img-init.
+function markBrokenImage(img) {
+    const box = document.createElement('div');
+    box.className = 'rp-broken-image';
+    box.innerHTML =
+        '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="1.5" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/>' +
+        '<path d="M3 16l5-5 4 4"/><circle cx="8.5" cy="9" r="1.3"/><path d="M4 4l16 16"/></svg>';
+    const cap = document.createElement('span');
+    cap.className = 'rp-broken-cap';
+    const alt = (img.getAttribute('alt') || '').trim();
+    // textContent — never innerHTML — so alt text can't inject markup.
+    cap.textContent = alt ? `Image unavailable — ${alt}` : 'Image unavailable';
+    box.appendChild(cap);
+    // Preserve reserved height for dimensioned images.
+    const w = img.getAttribute('width');
+    const h = img.getAttribute('height');
+    if (w && h) box.style.aspectRatio = `${w} / ${h}`;
+    img.replaceWith(box);
+}
+
+function initPaneImages() {
+    const pane = document.getElementById('reading-pane');
+    if (!pane) return;
+    for (const img of pane.querySelectorAll('.reading-pane-article img:not([data-img-init])')) {
+        img.setAttribute('data-img-init', '');
+        // Already settled (e.g. cached) before we attached handlers.
+        if (img.complete) {
+            if (img.naturalWidth > 0) img.setAttribute('data-img-state', 'loaded');
+            else markBrokenImage(img);
+            continue;
+        }
+        img.addEventListener('load', () => img.setAttribute('data-img-state', 'loaded'), { once: true });
+        img.addEventListener('error', () => markBrokenImage(img), { once: true });
+    }
+}
+
 // Monotonic token + abort handle for reading-pane *navigation* fetches
 // (GET /entries/{id}/fragment — entry clicks, Show Original, popstate
 // restores, prev/next fallbacks). Clicking entry A then quickly entry B
@@ -620,7 +659,9 @@ function applyTimeTooltips(root) {
     }
 }
 applyTimeTooltips();
+initPaneImages();
 document.addEventListener('rdrs:swap-complete', () => applyTimeTooltips());
+document.addEventListener('rdrs:swap-complete', () => initPaneImages());
 
 // Single source of truth for the in-app shortcut help. Pages don't
 // register additional entries — every shortcut the keyboard handler
