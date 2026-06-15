@@ -43,6 +43,11 @@ Given("the entry titled {string} has a summary", async ({ seed, currentUser }, t
   seed.insertSummary(seed.findEntryIdByTitle(userId, title), userId);
 });
 
+Given("the entry titled {string} has a failed summary", async ({ seed, currentUser }, title) => {
+  const userId = seed.getUserId(currentUser.username);
+  seed.insertFailedSummary(seed.findEntryIdByTitle(userId, title), userId);
+});
+
 Given("all entries in category {string} are marked read", async ({ seed, currentUser }, name) => {
   const userId = seed.getUserId(currentUser.username);
   seed.markCategoryRead(userId, name);
@@ -445,4 +450,28 @@ Then("the help overlay descriptions are aligned", async ({ page }) => {
     const { x } = await descs.nth(i).boundingBox();
     expect(Math.abs(x - x0)).toBeLessThan(1);
   }
+});
+
+Then("I see the summary error banner", async ({ page }) => {
+  await expect(page.locator("[data-summary-error]")).toBeVisible();
+});
+
+Then("I do not see the summary error banner", async ({ page }) => {
+  await expect(page.locator("[data-summary-error]")).toHaveCount(0);
+});
+
+Then("I see a {string} summary action", async ({ page }, label) => {
+  await expect(
+    page.locator("#rp-summary-container").getByRole("button", { name: label }),
+  ).toBeVisible();
+});
+
+When("I click the {string} summary action", async ({ page }, label) => {
+  await page
+    .locator("#rp-summary-container")
+    .getByRole("button", { name: label })
+    .click();
+  // Wait for the #rp-summary-container swap to settle rather than using
+  // networkidle (flaky with the app's background sidebar polling).
+  await page.locator("[data-summary-error]").waitFor({ state: "detached" });
 });

@@ -126,6 +126,18 @@ export class SeedHelper {
     }
   }
 
+  insertFailedSummary(entryId, userId, errorMessage = "Kagi API returned 503.") {
+    const db = new Database(this.dbPath);
+    try {
+      db.prepare(
+        `INSERT OR IGNORE INTO entry_summary (user_id, entry_id, status, error_message)
+         VALUES (?, ?, 'failed', ?)`
+      ).run(userId, entryId, errorMessage);
+    } finally {
+      db.close();
+    }
+  }
+
   configureKagi(userId, sessionToken = "e2e-test-token") {
     // Seeds a fake Kagi config so the reading-pane Summarize button is rendered.
     // The token is bogus — actual Kagi calls will fail at request time, which

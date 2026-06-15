@@ -1,8 +1,47 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+/// Maximum wall-clock time for a single Kagi summarization request. A hung
+/// request would otherwise occupy the single worker indefinitely and block
+/// every user's queued summaries. NEVER lower this in production without
+/// confirming Kagi's worst-case latency.
+const SUMMARY_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Result of racing a summarization future against cancellation + timeout.
+pub(crate) enum SummaryOutcome {
+    Completed(String),
+    Failed(String),
+    Cancelled,
+}
+
+/// Race a summarization future against an external cancellation token and a
+/// hard timeout. `biased` makes cancellation win deterministically when the
+/// token is already cancelled. On timeout the future is dropped (the in-flight
+/// HTTP request is aborted) and a `Failed("Summarization timed out")` is
+/// returned.
+pub(crate) async fn run_summary<F>(
+    token: &CancellationToken,
+    timeout: Duration,
+    fut: F,
+) -> SummaryOutcome
+where
+    F: std::future::Future<Output = Result<String, String>>,
+{
+    tokio::select! {
+        biased;
+        _ = token.cancelled() => SummaryOutcome::Cancelled,
+        res = tokio::time::timeout(timeout, fut) => match res {
+            Ok(Ok(text)) => SummaryOutcome::Completed(text),
+            Ok(Err(e)) => SummaryOutcome::Failed(e),
+            Err(_elapsed) => SummaryOutcome::Failed("Summarization timed out".to_string()),
+        }
+    }
+}
 
 use super::sidebar_cache::SidebarCache;
 use super::summarize::kagi::{self, KagiConfig};
@@ -18,12 +57,18 @@ pub struct SummaryJob {
     pub entry_link: String,
 }
 
+/// Per-entry cancellation tokens for in-flight / queued summary jobs, keyed by
+/// `(user_id, entry_id)`. The cancel handler cancels + removes the token; the
+/// worker creates one on dequeue (if absent) and removes it when the job ends.
+pub type CancelRegistry = Arc<Mutex<HashMap<(i64, i64), CancellationToken>>>;
+
 /// Start the summary worker that processes jobs from the queue
 pub fn start_summary_worker(
     mut rx: mpsc::Receiver<SummaryJob>,
     cache: Arc<SummaryCache>,
     sidebar_cache: Arc<SidebarCache>,
     db: DbPool,
+    cancels: CancelRegistry,
     cancel_token: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -35,7 +80,7 @@ pub fn start_summary_worker(
                     tracing::info!("Summary worker stopping, draining remaining jobs...");
                     // Drain remaining jobs before exiting
                     while let Ok(job) = rx.try_recv() {
-                        process_summary_job(&job, &cache, &sidebar_cache, &db).await;
+                        process_summary_job(&job, &cache, &sidebar_cache, &db, &cancels).await;
                     }
                     break;
                 }
@@ -47,7 +92,7 @@ pub fn start_summary_worker(
                 }
             };
 
-            process_summary_job(&job, &cache, &sidebar_cache, &db).await;
+            process_summary_job(&job, &cache, &sidebar_cache, &db, &cancels).await;
         }
 
         tracing::info!("Summary worker stopped");
@@ -59,6 +104,35 @@ async fn process_summary_job(
     cache: &Arc<SummaryCache>,
     sidebar_cache: &Arc<SidebarCache>,
     db: &DbPool,
+    cancels: &CancelRegistry,
+) {
+    let key = (job.user_id, job.entry_id);
+
+    // Get-or-create this job's cancellation token. Covers startup-recovered
+    // jobs too (they never pass through the enqueue handler).
+    let token = {
+        let mut map = cancels.lock().unwrap();
+        map.entry(key).or_default().clone()
+    };
+
+    // Cancelled while still queued — the cancel handler already deleted the
+    // record. Drop the token and skip.
+    if token.is_cancelled() {
+        cancels.lock().unwrap().remove(&key);
+        return;
+    }
+
+    run_summary_job_body(job, cache, sidebar_cache, db, &token).await;
+
+    cancels.lock().unwrap().remove(&key);
+}
+
+async fn run_summary_job_body(
+    job: &SummaryJob,
+    cache: &Arc<SummaryCache>,
+    sidebar_cache: &Arc<SidebarCache>,
+    db: &DbPool,
+    token: &CancellationToken,
 ) {
     tracing::debug!(
         "Processing summary job: user={}, entry={}, link={}",
@@ -67,15 +141,22 @@ async fn process_summary_job(
         job.entry_link
     );
 
-    // Mark as processing in both cache and DB
-    cache.set_processing(job.user_id, job.entry_id);
+    // Mark as processing in the DB first. If the row no longer exists, the job
+    // was cancelled (its record deleted) while it sat in the queue — abort
+    // without repopulating the cache, or the cancelled summary would be
+    // resurrected from the cache on the next render.
     {
         let user_id = job.user_id;
         let entry_id = job.entry_id;
-        let _ = db
+        if let Ok(Err(crate::error::AppError::NotFound(_))) = db
             .background(move |conn| entry_summary::set_processing(conn, user_id, entry_id))
-            .await;
+            .await
+        {
+            cache.remove(job.user_id, job.entry_id);
+            return;
+        }
     }
+    cache.set_processing(job.user_id, job.entry_id);
 
     // Get Kagi config for the user
     let user_id = job.user_id;
@@ -120,36 +201,56 @@ async fn process_summary_job(
         }
     };
 
-    // Call Kagi API
-    match summarize_with_kagi(&kagi_config, &job.entry_link).await {
-        Ok(summary_text) => {
+    // Race the Kagi call against cancellation + timeout.
+    match run_summary(
+        token,
+        SUMMARY_TIMEOUT,
+        summarize_with_kagi(&kagi_config, &job.entry_link),
+    )
+    .await
+    {
+        SummaryOutcome::Completed(summary_text) => {
             tracing::debug!(
                 "Summary completed for entry {}: {} chars",
                 job.entry_id,
                 summary_text.len()
             );
-            // Update cache
-            cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
-            // Update DB
             let user_id = job.user_id;
             let entry_id = job.entry_id;
-            let _ = db
+            let text = summary_text.clone();
+            let db_res = db
                 .background(move |conn| {
-                    entry_summary::set_completed(conn, user_id, entry_id, &summary_text)
+                    entry_summary::set_completed(conn, user_id, entry_id, &text)
                 })
                 .await;
-            // A summary just completed — the sidebar "Summarized" badge must tick up.
-            sidebar_cache.bust(job.user_id);
+            if let Ok(Err(crate::error::AppError::NotFound(_))) = db_res {
+                // Cancelled mid-flight (row deleted) — do not repopulate the cache.
+                cache.remove(job.user_id, job.entry_id);
+            } else {
+                cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
+                // A summary just completed — the sidebar "Summarized" badge must tick up.
+                sidebar_cache.bust(job.user_id);
+            }
         }
-        Err(error) => {
+        SummaryOutcome::Failed(error) => {
             tracing::warn!("Summary failed for entry {}: {}", job.entry_id, error);
-            cache.set_failed(job.user_id, job.entry_id, error.clone());
-            // Update DB
             let user_id = job.user_id;
             let entry_id = job.entry_id;
-            let _ = db
-                .background(move |conn| entry_summary::set_failed(conn, user_id, entry_id, &error))
+            let err = error.clone();
+            let db_res = db
+                .background(move |conn| entry_summary::set_failed(conn, user_id, entry_id, &err))
                 .await;
+            if let Ok(Err(crate::error::AppError::NotFound(_))) = db_res {
+                // Cancelled mid-flight (row deleted) — do not repopulate the cache.
+                cache.remove(job.user_id, job.entry_id);
+            } else {
+                cache.set_failed(job.user_id, job.entry_id, error.clone());
+            }
+        }
+        SummaryOutcome::Cancelled => {
+            // The cancel handler owns cleanup (delete + cache remove + sidebar
+            // bust). Write nothing back.
+            tracing::debug!("Summary cancelled for entry {}", job.entry_id);
         }
     }
 }
@@ -226,6 +327,10 @@ mod tests {
     use crate::models::user::Role;
     use crate::models::{category, entry, feed, user};
     use rusqlite::Connection;
+
+    fn registry() -> CancelRegistry {
+        Arc::new(Mutex::new(HashMap::new()))
+    }
 
     fn open_shared_memory(name: &str) -> Connection {
         let uri = format!("file:{}?mode=memory&cache=shared", name);
@@ -322,6 +427,7 @@ mod tests {
             cache,
             Arc::new(SidebarCache::default()),
             db,
+            registry(),
             cancel_token.clone(),
         );
 
@@ -354,6 +460,7 @@ mod tests {
             cache,
             Arc::new(SidebarCache::default()),
             db,
+            registry(),
             cancel_token,
         );
 
@@ -494,6 +601,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_summary_completes() {
+        let token = CancellationToken::new();
+        let out = run_summary(&token, std::time::Duration::from_secs(1), async {
+            Ok::<String, String>("hello".to_string())
+        })
+        .await;
+        assert!(matches!(out, SummaryOutcome::Completed(s) if s == "hello"));
+    }
+
+    #[tokio::test]
+    async fn run_summary_propagates_failure() {
+        let token = CancellationToken::new();
+        let out = run_summary(&token, std::time::Duration::from_secs(1), async {
+            Err::<String, String>("boom".to_string())
+        })
+        .await;
+        assert!(matches!(out, SummaryOutcome::Failed(e) if e == "boom"));
+    }
+
+    #[tokio::test]
+    async fn run_summary_times_out() {
+        let token = CancellationToken::new();
+        let out = run_summary(&token, std::time::Duration::from_millis(20), async {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            Ok::<String, String>("late".to_string())
+        })
+        .await;
+        assert!(matches!(out, SummaryOutcome::Failed(e) if e == "Summarization timed out"));
+    }
+
+    #[tokio::test]
+    async fn run_summary_cancels_before_completion() {
+        let token = CancellationToken::new();
+        token.cancel();
+        let out = run_summary(&token, std::time::Duration::from_secs(1), async {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            Ok::<String, String>("never".to_string())
+        })
+        .await;
+        assert!(matches!(out, SummaryOutcome::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn cancelled_while_queued_does_not_repopulate_cache() {
+        let db = setup_test_db();
+
+        let (user_id, entry_id) = db
+            .user(|conn| {
+                let u = user::create_user(conn, "canceluser", "hash", Role::User)
+                    .unwrap()
+                    .id;
+                let cat = category::create_category(conn, u, "Tech").unwrap().id;
+                let feed_id = feed::create_feed(
+                    conn,
+                    &feed::CreateFeedParams {
+                        category_id: cat,
+                        url: "https://example.com/feed.xml",
+                        title: Some("Feed"),
+                        description: None,
+                        site_url: None,
+                        custom_user_agent: None,
+                        http2_disabled: None,
+                        custom_referrer: None,
+                    },
+                )
+                .unwrap()
+                .id;
+                let (entry_obj, _) = entry::upsert_entry(
+                    conn,
+                    feed_id,
+                    "guid-cancelled",
+                    Some("Cancelled Entry"),
+                    Some("https://example.com/x"),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+                // Intentionally do NOT create an entry_summary row — this
+                // simulates the cancel handler having already deleted it while
+                // the job was still sitting in the queue.
+                (u, entry_obj.id)
+            })
+            .await
+            .unwrap();
+
+        let cache = Arc::new(SummaryCache::new(100, 24));
+        let sidebar = Arc::new(SidebarCache::default());
+        let cancels = registry();
+
+        // Pre-seed the cache as if enqueue set it to pending, to prove the
+        // worker removes the stale cache entry rather than promoting it.
+        cache.set_pending(user_id, entry_id);
+
+        let job = SummaryJob {
+            user_id,
+            entry_id,
+            entry_link: "https://example.com/x".to_string(),
+        };
+
+        process_summary_job(&job, &cache, &sidebar, &db, &cancels).await;
+
+        // The set_processing UPDATE hits 0 rows (no summary row exists) ->
+        // AppError::NotFound -> worker removes the stale cache entry instead
+        // of repopulating it.
+        assert!(
+            cache.get(user_id, entry_id).is_none(),
+            "cache must not be repopulated for a cancelled (row-deleted) job"
+        );
+
+        // Confirm no row was resurrected in the DB either.
+        let row = db
+            .read_user(move |c| entry_summary::find_by_user_and_entry(c, user_id, entry_id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            row.is_none(),
+            "no entry_summary row must exist after a cancelled job"
+        );
+    }
+
+    #[tokio::test]
     async fn test_worker_drains_jobs_on_cancellation() {
         let (tx, rx) = create_summary_channel(10);
         let cache = Arc::new(SummaryCache::new(100, 24));
@@ -512,6 +743,7 @@ mod tests {
             cache.clone(),
             Arc::new(SidebarCache::default()),
             db,
+            registry(),
             cancel_token.clone(),
         );
 

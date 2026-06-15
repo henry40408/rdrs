@@ -35,5 +35,6 @@ pub use summarize::KagiConfig;
 pub use summary_cache::{create_summary_cache, SummaryCache, SummaryCacheEntry, SummaryStatus};
 pub use summary_cleanup::start_cleanup_worker;
 pub use summary_worker::{
-    create_summary_channel, recover_incomplete_jobs, start_summary_worker, SummaryJob,
+    create_summary_channel, recover_incomplete_jobs, start_summary_worker, CancelRegistry,
+    SummaryJob,
 };

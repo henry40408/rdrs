@@ -69,9 +69,26 @@ impl IntoResponse for ReadingPaneWithFlash {
 /// stays put.
 #[derive(Template)]
 #[template(path = "_summarize_pending.html")]
-pub struct SummarizePending;
+pub struct SummarizePending {
+    pub id: i64,
+}
 
 impl IntoResponse for SummarizePending {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Response for `POST /entries/{id}/summarize/cancel`. Swaps
+/// `#rp-summary-container` back to its empty state after a cancel / clear.
+#[derive(Template)]
+#[template(path = "_summary_cleared.html")]
+pub struct SummarizeCleared;
+
+impl IntoResponse for SummarizeCleared {
     fn into_response(self) -> Response {
         match self.render() {
             Ok(html) => Html(html).into_response(),
@@ -220,7 +237,8 @@ pub(crate) async fn build_reading_pane_view(
         proxy_base_url,
     );
 
-    let (summary_text, summary_in_flight) = resolve_summary(state, user_id, entry_id).await?;
+    let (summary_text, summary_in_flight, summary_error) =
+        resolve_summary(state, user_id, entry_id).await?;
 
     let published_at = ewf.entry.published_at;
     Ok(ReadingPaneView {
@@ -247,28 +265,29 @@ pub(crate) async fn build_reading_pane_view(
         is_starred: ewf.entry.starred_at.is_some(),
         summary_text,
         summary_in_flight,
+        summary_error,
         has_kagi,
         has_save,
         is_full_content: false,
     })
 }
 
-/// Resolve `(summary_text, summary_in_flight)` for an entry. Reads the
-/// in-memory cache first; on miss or terminal-failed state falls back to
-/// the `entry_summary` table so a completed summary persisted in a
-/// previous session is still surfaced.
+/// Resolve `(summary_text, summary_in_flight, summary_error)` for an entry.
+/// Reads the in-memory cache first; on miss or terminal-failed state falls back
+/// to the `entry_summary` table so a completed summary persisted in a previous
+/// session is still surfaced.
 async fn resolve_summary(
     state: &AppState,
     user_id: i64,
     entry_id: i64,
-) -> AppResult<(Option<String>, bool)> {
+) -> AppResult<(Option<String>, bool, Option<String>)> {
     if let Some(cached) = state.summary_cache.get(user_id, entry_id) {
         match cached.status {
-            SummaryStatus::Completed => return Ok((cached.summary_text, false)),
-            SummaryStatus::Pending | SummaryStatus::Processing => return Ok((None, true)),
+            SummaryStatus::Completed => return Ok((cached.summary_text, false, None)),
+            SummaryStatus::Pending | SummaryStatus::Processing => return Ok((None, true, None)),
             SummaryStatus::Failed => {
-                // Fall through to DB — the DB row may have been refreshed
-                // by a retry that hasn't been written into the cache yet.
+                // Fall through to DB — a retry may have refreshed the row
+                // without yet updating the cache.
             }
         }
     }
@@ -278,11 +297,11 @@ async fn resolve_summary(
         .await??;
     match db_entry {
         Some(s) => match s.status {
-            SummaryStatus::Completed => Ok((s.summary_text, false)),
-            SummaryStatus::Pending | SummaryStatus::Processing => Ok((None, true)),
-            SummaryStatus::Failed => Ok((None, false)),
+            SummaryStatus::Completed => Ok((s.summary_text, false, None)),
+            SummaryStatus::Pending | SummaryStatus::Processing => Ok((None, true, None)),
+            SummaryStatus::Failed => Ok((None, false, s.error_message)),
         },
-        None => Ok((None, false)),
+        None => Ok((None, false, None)),
     }
 }
 
@@ -635,7 +654,47 @@ pub async fn summarize_entry_form(
         })
         .await;
 
-    Ok(SummarizePending)
+    Ok(SummarizePending { id: entry_id })
+}
+
+/// `POST /entries/{id}/summarize/cancel` — cancel an in-flight / queued
+/// summarization (or clear a failed one) and delete the record, returning the
+/// summary container to its empty state.
+///
+/// Cancel (in-flight) and Clear (failed) share this endpoint: both mean "stop
+/// and remove this summary". A failed record simply has no live token, so the
+/// registry lookup misses and we just delete. Ownership is enforced by
+/// `find_by_id_for_user`'s join constraint (404 otherwise).
+pub async fn summarize_cancel_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<SummarizeCleared> {
+    let user_id = auth_user.user.id;
+
+    // Validate ownership and delete the record in one write txn.
+    state
+        .db
+        .user(move |conn| {
+            entry::find_by_id_for_user(conn, user_id, entry_id)?.ok_or(AppError::EntryNotFound)?;
+            entry_summary::delete(conn, user_id, entry_id)?;
+            Ok::<_, crate::error::AppError>(())
+        })
+        .await??;
+
+    // Cancel + drop any in-flight / queued token for this entry.
+    let token = {
+        let mut map = state.summary_cancels.lock().unwrap();
+        map.remove(&(user_id, entry_id))
+    };
+    if let Some(token) = token {
+        token.cancel();
+    }
+
+    state.summary_cache.remove(user_id, entry_id);
+    state.sidebar_cache.bust(user_id);
+
+    Ok(SummarizeCleared)
 }
 
 /// `POST /entries/{id}/fetch-full-content` — fetch the source article from

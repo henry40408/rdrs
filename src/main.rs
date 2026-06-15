@@ -53,12 +53,17 @@ async fn main() {
     // Create sidebar cache
     let sidebar_cache = Arc::new(services::SidebarCache::default());
 
+    // Per-entry cancellation tokens for summary jobs (cancel/abort support)
+    let summary_cancels: rdrs::services::CancelRegistry =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+
     // Start summary worker
     let summary_worker_handle = services::start_summary_worker(
         summary_rx,
         summary_cache.clone(),
         sidebar_cache.clone(),
         db.clone(),
+        summary_cancels.clone(),
         cancel_token.clone(),
     );
 
@@ -86,6 +91,7 @@ async fn main() {
         summary_cache,
         summary_tx,
         sidebar_cache,
+        summary_cancels,
     };
 
     // Start background sync task

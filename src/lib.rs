@@ -51,6 +51,7 @@ pub struct AppState {
     pub summary_cache: Arc<SummaryCache>,
     pub summary_tx: mpsc::Sender<SummaryJob>,
     pub sidebar_cache: Arc<SidebarCache>,
+    pub summary_cancels: services::CancelRegistry,
 }
 
 pub fn create_router(state: AppState) -> Router {
@@ -206,6 +207,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/entries/{id}/summarize",
             post(handlers::entries::summarize_entry_form),
+        )
+        .route(
+            "/entries/{id}/summarize/cancel",
+            post(handlers::entries::summarize_cancel_form),
         )
         .route(
             "/entries/{id}/fetch-full-content",

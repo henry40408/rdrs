@@ -1,0 +1,7 @@
+{# `POST /entries/{id}/summarize/cancel` response. Cancels any in-flight /
+   queued job and deletes the summary record, returning the summary container
+   to its empty (no-summary) state. Swaps ONLY `#rp-summary-container` so the
+   article body is untouched. #}
+<template data-swap-target="#rp-summary-container">
+    <div class="rp-summary-container" id="rp-summary-container" data-summary-container></div>
+</template>

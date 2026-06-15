@@ -36,6 +36,7 @@ fn create_test_server(config: Config) -> TestServer {
         summary_cache,
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
+        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let app = create_router(state);
