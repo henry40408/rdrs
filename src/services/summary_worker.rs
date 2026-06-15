@@ -141,15 +141,22 @@ async fn run_summary_job_body(
         job.entry_link
     );
 
-    // Mark as processing in both cache and DB
-    cache.set_processing(job.user_id, job.entry_id);
+    // Mark as processing in the DB first. If the row no longer exists, the job
+    // was cancelled (its record deleted) while it sat in the queue — abort
+    // without repopulating the cache, or the cancelled summary would be
+    // resurrected from the cache on the next render.
     {
         let user_id = job.user_id;
         let entry_id = job.entry_id;
-        let _ = db
+        if let Ok(Err(crate::error::AppError::NotFound(_))) = db
             .background(move |conn| entry_summary::set_processing(conn, user_id, entry_id))
-            .await;
+            .await
+        {
+            cache.remove(job.user_id, job.entry_id);
+            return;
+        }
     }
+    cache.set_processing(job.user_id, job.entry_id);
 
     // Get Kagi config for the user
     let user_id = job.user_id;
@@ -208,25 +215,37 @@ async fn run_summary_job_body(
                 job.entry_id,
                 summary_text.len()
             );
-            cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
             let user_id = job.user_id;
             let entry_id = job.entry_id;
-            let _ = db
+            let text = summary_text.clone();
+            let db_res = db
                 .background(move |conn| {
-                    entry_summary::set_completed(conn, user_id, entry_id, &summary_text)
+                    entry_summary::set_completed(conn, user_id, entry_id, &text)
                 })
                 .await;
-            // A summary just completed — the sidebar "Summarized" badge must tick up.
-            sidebar_cache.bust(job.user_id);
+            if let Ok(Err(crate::error::AppError::NotFound(_))) = db_res {
+                // Cancelled mid-flight (row deleted) — do not repopulate the cache.
+                cache.remove(job.user_id, job.entry_id);
+            } else {
+                cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
+                // A summary just completed — the sidebar "Summarized" badge must tick up.
+                sidebar_cache.bust(job.user_id);
+            }
         }
         SummaryOutcome::Failed(error) => {
             tracing::warn!("Summary failed for entry {}: {}", job.entry_id, error);
-            cache.set_failed(job.user_id, job.entry_id, error.clone());
             let user_id = job.user_id;
             let entry_id = job.entry_id;
-            let _ = db
-                .background(move |conn| entry_summary::set_failed(conn, user_id, entry_id, &error))
+            let err = error.clone();
+            let db_res = db
+                .background(move |conn| entry_summary::set_failed(conn, user_id, entry_id, &err))
                 .await;
+            if let Ok(Err(crate::error::AppError::NotFound(_))) = db_res {
+                // Cancelled mid-flight (row deleted) — do not repopulate the cache.
+                cache.remove(job.user_id, job.entry_id);
+            } else {
+                cache.set_failed(job.user_id, job.entry_id, error.clone());
+            }
         }
         SummaryOutcome::Cancelled => {
             // The cancel handler owns cleanup (delete + cache remove + sidebar
@@ -622,6 +641,87 @@ mod tests {
         })
         .await;
         assert!(matches!(out, SummaryOutcome::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn cancelled_while_queued_does_not_repopulate_cache() {
+        let db = setup_test_db();
+
+        let (user_id, entry_id) = db
+            .user(|conn| {
+                let u = user::create_user(conn, "canceluser", "hash", Role::User)
+                    .unwrap()
+                    .id;
+                let cat = category::create_category(conn, u, "Tech").unwrap().id;
+                let feed_id = feed::create_feed(
+                    conn,
+                    &feed::CreateFeedParams {
+                        category_id: cat,
+                        url: "https://example.com/feed.xml",
+                        title: Some("Feed"),
+                        description: None,
+                        site_url: None,
+                        custom_user_agent: None,
+                        http2_disabled: None,
+                        custom_referrer: None,
+                    },
+                )
+                .unwrap()
+                .id;
+                let (entry_obj, _) = entry::upsert_entry(
+                    conn,
+                    feed_id,
+                    "guid-cancelled",
+                    Some("Cancelled Entry"),
+                    Some("https://example.com/x"),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+                // Intentionally do NOT create an entry_summary row — this
+                // simulates the cancel handler having already deleted it while
+                // the job was still sitting in the queue.
+                (u, entry_obj.id)
+            })
+            .await
+            .unwrap();
+
+        let cache = Arc::new(SummaryCache::new(100, 24));
+        let sidebar = Arc::new(SidebarCache::default());
+        let cancels = registry();
+
+        // Pre-seed the cache as if enqueue set it to pending, to prove the
+        // worker removes the stale cache entry rather than promoting it.
+        cache.set_pending(user_id, entry_id);
+
+        let job = SummaryJob {
+            user_id,
+            entry_id,
+            entry_link: "https://example.com/x".to_string(),
+        };
+
+        process_summary_job(&job, &cache, &sidebar, &db, &cancels).await;
+
+        // The set_processing UPDATE hits 0 rows (no summary row exists) ->
+        // AppError::NotFound -> worker removes the stale cache entry instead
+        // of repopulating it.
+        assert!(
+            cache.get(user_id, entry_id).is_none(),
+            "cache must not be repopulated for a cancelled (row-deleted) job"
+        );
+
+        // Confirm no row was resurrected in the DB either.
+        let row = db
+            .read_user(move |c| entry_summary::find_by_user_and_entry(c, user_id, entry_id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            row.is_none(),
+            "no entry_summary row must exist after a cancelled job"
+        );
     }
 
     #[tokio::test]
