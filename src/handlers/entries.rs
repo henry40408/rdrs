@@ -69,7 +69,9 @@ impl IntoResponse for ReadingPaneWithFlash {
 /// stays put.
 #[derive(Template)]
 #[template(path = "_summarize_pending.html")]
-pub struct SummarizePending;
+pub struct SummarizePending {
+    pub id: i64,
+}
 
 impl IntoResponse for SummarizePending {
     fn into_response(self) -> Response {
@@ -652,7 +654,7 @@ pub async fn summarize_entry_form(
         })
         .await;
 
-    Ok(SummarizePending)
+    Ok(SummarizePending { id: entry_id })
 }
 
 /// `POST /entries/{id}/summarize/cancel` — cancel an in-flight / queued

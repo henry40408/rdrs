@@ -80,6 +80,11 @@
         <div class="rp-summary-container" id="rp-summary-container" data-summary-container>
             {% if pane.summary_in_flight %}
             <div class="summary-box">
+                <div class="summary-actions">
+                    <form method="post" action="/entries/{{ pane.id }}/summarize/cancel" data-swap="#rp-summary-container">
+                        <button type="submit" class="rp-action" aria-label="Cancel summarization"><span class="action-icon" aria-hidden="true">{% call icons::close() %}{% endcall %}</span><span class="action-label">Cancel</span></button>
+                    </form>
+                </div>
                 <p class="muted">Summarizing… (refresh to see the result)</p>
             </div>
             {% else if let Some(summary) = pane.summary_text.as_ref() %}
@@ -88,8 +93,6 @@
                     <button type="button" class="rp-action" data-summary-copy aria-label="Copy summary"><span class="action-icon" aria-hidden="true">{% call icons::copy() %}{% endcall %}</span><span class="action-label">Copy</span></button>
                     <button type="button" class="rp-action" data-summary-dismiss data-entry-id="{{ pane.id }}" aria-label="Dismiss summary"><span class="action-icon" aria-hidden="true">{% call icons::close() %}{% endcall %}</span><span class="action-label">Dismiss</span></button>
                 </div>
-                {# Title + link rendered inside the box so what users see
-                   matches what the Copy button writes to the clipboard. #}
                 <div class="summary-header">
                     <div class="summary-title" data-summary-title>{{ pane.title }}</div>
                     {% if let Some(link) = pane.link.as_ref() %}
@@ -97,6 +100,18 @@
                     {% endif %}
                 </div>
                 <blockquote class="rp-summary-content">{{ summary|safe }}</blockquote>
+            </div>
+            {% else if let Some(error) = pane.summary_error.as_ref() %}
+            <div class="summary-box">
+                <div class="summary-actions">
+                    <form method="post" action="/entries/{{ pane.id }}/summarize" data-swap="#rp-summary-container">
+                        <button type="submit" class="rp-action" aria-label="Retry summarization"><span class="action-icon" aria-hidden="true">{% call icons::refresh() %}{% endcall %}</span><span class="action-label">Retry</span></button>
+                    </form>
+                    <form method="post" action="/entries/{{ pane.id }}/summarize/cancel" data-swap="#rp-summary-container">
+                        <button type="submit" class="rp-action" aria-label="Clear failed summary"><span class="action-icon" aria-hidden="true">{% call icons::close() %}{% endcall %}</span><span class="action-label">Clear</span></button>
+                    </form>
+                </div>
+                <div class="summary-error-banner" data-summary-error><span class="action-icon" aria-hidden="true">{% call icons::close() %}{% endcall %}</span><span>Summarization failed: {{ error }}</span></div>
             </div>
             {% endif %}
         </div>
