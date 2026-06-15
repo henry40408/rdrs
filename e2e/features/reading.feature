@@ -244,3 +244,9 @@ Feature: Reading entries
     Then the reading pane is visible on mobile
     And the ".rp-action" control is at least 44px tall
     And the ".reading-pane-actions" control is at least 360px wide
+
+  Scenario: A broken content image shows the dashed-box fallback
+    Given the entry titled "Test Entry 3" has content with a broken image
+    When I open the inbox
+    And I click the entry titled "Test Entry 3"
+    Then the reading pane shows a broken-image fallback
