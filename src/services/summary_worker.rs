@@ -1,8 +1,52 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+/// Maximum wall-clock time for a single Kagi summarization request. A hung
+/// request would otherwise occupy the single worker indefinitely and block
+/// every user's queued summaries. NEVER lower this in production without
+/// confirming Kagi's worst-case latency.
+// allow(dead_code): wired into the worker loop in the next task
+#[allow(dead_code)]
+const SUMMARY_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Result of racing a summarization future against cancellation + timeout.
+// allow(dead_code): variants consumed by the worker loop wired up in the next task
+#[allow(dead_code)]
+pub(crate) enum SummaryOutcome {
+    Completed(String),
+    Failed(String),
+    Cancelled,
+}
+
+/// Race a summarization future against an external cancellation token and a
+/// hard timeout. `biased` makes cancellation win deterministically when the
+/// token is already cancelled. On timeout the future is dropped (the in-flight
+/// HTTP request is aborted) and a `Failed("Summarization timed out")` is
+/// returned.
+// allow(dead_code): called from the worker loop wired up in the next task
+#[allow(dead_code)]
+pub(crate) async fn run_summary<F>(
+    token: &CancellationToken,
+    timeout: Duration,
+    fut: F,
+) -> SummaryOutcome
+where
+    F: std::future::Future<Output = Result<String, String>>,
+{
+    tokio::select! {
+        biased;
+        _ = token.cancelled() => SummaryOutcome::Cancelled,
+        res = tokio::time::timeout(timeout, fut) => match res {
+            Ok(Ok(text)) => SummaryOutcome::Completed(text),
+            Ok(Err(e)) => SummaryOutcome::Failed(e),
+            Err(_elapsed) => SummaryOutcome::Failed("Summarization timed out".to_string()),
+        }
+    }
+}
 
 use super::sidebar_cache::SidebarCache;
 use super::summarize::kagi::{self, KagiConfig};
@@ -491,6 +535,49 @@ mod tests {
         // Verify job was queued
         let job = rx.try_recv().unwrap();
         assert_eq!(job.entry_link, "https://example.com/article2");
+    }
+
+    #[tokio::test]
+    async fn run_summary_completes() {
+        let token = CancellationToken::new();
+        let out = run_summary(&token, std::time::Duration::from_secs(1), async {
+            Ok::<String, String>("hello".to_string())
+        })
+        .await;
+        assert!(matches!(out, SummaryOutcome::Completed(s) if s == "hello"));
+    }
+
+    #[tokio::test]
+    async fn run_summary_propagates_failure() {
+        let token = CancellationToken::new();
+        let out = run_summary(&token, std::time::Duration::from_secs(1), async {
+            Err::<String, String>("boom".to_string())
+        })
+        .await;
+        assert!(matches!(out, SummaryOutcome::Failed(e) if e == "boom"));
+    }
+
+    #[tokio::test]
+    async fn run_summary_times_out() {
+        let token = CancellationToken::new();
+        let out = run_summary(&token, std::time::Duration::from_millis(20), async {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            Ok::<String, String>("late".to_string())
+        })
+        .await;
+        assert!(matches!(out, SummaryOutcome::Failed(e) if e == "Summarization timed out"));
+    }
+
+    #[tokio::test]
+    async fn run_summary_cancels_before_completion() {
+        let token = CancellationToken::new();
+        token.cancel();
+        let out = run_summary(&token, std::time::Duration::from_secs(1), async {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            Ok::<String, String>("never".to_string())
+        })
+        .await;
+        assert!(matches!(out, SummaryOutcome::Cancelled));
     }
 
     #[tokio::test]
