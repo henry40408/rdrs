@@ -80,8 +80,14 @@ function setFormBusy(form) {
     btn.disabled = true;
     const label = deriveBusyLabel(form.action);
     if (label) {
-        btn.dataset.busyOriginalLabel = btn.textContent;
-        btn.textContent = label;
+        // Update only the `.action-label` span when present so the sibling
+        // `.action-icon` SVG survives. Writing `btn.textContent` would replace
+        // every child node (icon included) — and the icon-over-label buttons
+        // whose swap target is a *sibling* (e.g. Summarize → #rp-summary-container)
+        // are not re-rendered by the swap, so the wiped icon never comes back.
+        const labelEl = btn.querySelector('.action-label') || btn;
+        btn.dataset.busyOriginalLabel = labelEl.textContent;
+        labelEl.textContent = label;
     }
 }
 
@@ -91,7 +97,8 @@ function clearFormBusy(form) {
     if (!btn) return;
     btn.disabled = false;
     if (btn.dataset.busyOriginalLabel != null) {
-        btn.textContent = btn.dataset.busyOriginalLabel;
+        const labelEl = btn.querySelector('.action-label') || btn;
+        labelEl.textContent = btn.dataset.busyOriginalLabel;
         delete btn.dataset.busyOriginalLabel;
     }
 }
