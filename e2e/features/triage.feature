@@ -28,6 +28,7 @@ Feature: Triage entries (star, mark-read, summarize)
     And I click the entry titled "Test Entry 1"
     And I click the "Summarize" button
     Then the reading pane shows a summary
+    And the "Summarize" button still shows its icon
 
   Scenario: Dismissing a summary clears the summary from the reading pane
     Given the entry titled "Test Entry 1" has a summary
