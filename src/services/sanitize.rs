@@ -302,6 +302,7 @@ fn rewrite_post_ammonia(
                 el.set_attribute("src", &proxy_url)?;
                 el.set_attribute("loading", "lazy")?;
                 el.set_attribute("decoding", "async")?;
+                el.set_attribute("data-img-state", "loading")?;
             }
         }
         Ok(())
@@ -984,5 +985,12 @@ mod tests {
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(output.contains("width=\"100\""), "{output}");
         assert!(!output.contains("width=\"800\""), "{output}");
+    }
+
+    #[test]
+    fn test_img_tagged_loading_state() {
+        let input = r#"<img src="https://e.com/a.jpg" alt="x">"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(output.contains("data-img-state=\"loading\""), "{output}");
     }
 }
