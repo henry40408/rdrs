@@ -238,6 +238,7 @@ RDRS supports passwordless authentication via WebAuthn/Passkey:
 - Blocks tracking domains (pixel.*, analytics.*, etc.)
 - Removes 1x1 tracking pixels
 - Fixes relative image URLs
+- Harvests `width`/`height` attributes from `<img>` tags before sanitization and re-applies them as `data-w`/`data-h` hints; the reading-pane JS uses these to show a sized skeleton while images load and a broken-image fallback on error
 
 **Full Content Extraction** (`readability.rs`):
 - Fetches article URL
