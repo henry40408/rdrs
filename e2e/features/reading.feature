@@ -45,6 +45,17 @@ Feature: Reading entries
     When I open the inbox
     Then the sidebar Summarized item shows a count of "1"
 
+  Scenario: Failed summary shows an error with Retry and Clear
+    Given the user has Kagi configured
+    And the entry titled "Test Entry 3" has a failed summary
+    When I open the inbox
+    And I click the entry titled "Test Entry 3"
+    Then I see the summary error banner
+    And I see a "Retry" summary action
+    And I see a "Clear" summary action
+    When I click the "Clear" summary action
+    Then I do not see the summary error banner
+
   Scenario: Single-feed view filters by that feed
     When I open the entries page for feed "Reading Feed"
     Then I see 5 entries in the entry list
