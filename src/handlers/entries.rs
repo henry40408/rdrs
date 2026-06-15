@@ -80,6 +80,21 @@ impl IntoResponse for SummarizePending {
     }
 }
 
+/// Response for `POST /entries/{id}/summarize/cancel`. Swaps
+/// `#rp-summary-container` back to its empty state after a cancel / clear.
+#[derive(Template)]
+#[template(path = "_summary_cleared.html")]
+pub struct SummarizeCleared;
+
+impl IntoResponse for SummarizeCleared {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
 /// `GET /entries/{id}/fragment` — returns the reading-pane HTML fragment for
 /// the given entry. The entry must belong to the authenticated user; otherwise
 /// a 404 is returned (same semantics as the JSON `/api/entries/{id}` endpoint
@@ -636,6 +651,46 @@ pub async fn summarize_entry_form(
         .await;
 
     Ok(SummarizePending)
+}
+
+/// `POST /entries/{id}/summarize/cancel` — cancel an in-flight / queued
+/// summarization (or clear a failed one) and delete the record, returning the
+/// summary container to its empty state.
+///
+/// Cancel (in-flight) and Clear (failed) share this endpoint: both mean "stop
+/// and remove this summary". A failed record simply has no live token, so the
+/// registry lookup misses and we just delete. Ownership is enforced by
+/// `find_by_id_for_user`'s join constraint (404 otherwise).
+pub async fn summarize_cancel_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<SummarizeCleared> {
+    let user_id = auth_user.user.id;
+
+    // Validate ownership and delete the record in one write txn.
+    state
+        .db
+        .user(move |conn| {
+            entry::find_by_id_for_user(conn, user_id, entry_id)?.ok_or(AppError::EntryNotFound)?;
+            entry_summary::delete(conn, user_id, entry_id)?;
+            Ok::<_, crate::error::AppError>(())
+        })
+        .await??;
+
+    // Cancel + drop any in-flight / queued token for this entry.
+    let token = {
+        let mut map = state.summary_cancels.lock().unwrap();
+        map.remove(&(user_id, entry_id))
+    };
+    if let Some(token) = token {
+        token.cancel();
+    }
+
+    state.summary_cache.remove(user_id, entry_id);
+    state.sidebar_cache.bust(user_id);
+
+    Ok(SummarizeCleared)
 }
 
 /// `POST /entries/{id}/fetch-full-content` — fetch the source article from

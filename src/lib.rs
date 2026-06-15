@@ -209,6 +209,10 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::entries::summarize_entry_form),
         )
         .route(
+            "/entries/{id}/summarize/cancel",
+            post(handlers::entries::summarize_cancel_form),
+        )
+        .route(
             "/entries/{id}/fetch-full-content",
             post(handlers::entries::fetch_full_content_form),
         )
