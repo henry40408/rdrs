@@ -57,6 +57,7 @@ fn create_test_app(config: Config) -> TestApp {
         summary_cache,
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
+        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let app = create_router(state);
@@ -774,6 +775,7 @@ async fn test_unauthenticated_access_denied() {
         summary_cache,
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
+        summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let app = create_router(state);

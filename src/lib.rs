@@ -51,6 +51,7 @@ pub struct AppState {
     pub summary_cache: Arc<SummaryCache>,
     pub summary_tx: mpsc::Sender<SummaryJob>,
     pub sidebar_cache: Arc<SidebarCache>,
+    pub summary_cancels: services::CancelRegistry,
 }
 
 pub fn create_router(state: AppState) -> Router {

@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -9,13 +10,9 @@ use tokio_util::sync::CancellationToken;
 /// request would otherwise occupy the single worker indefinitely and block
 /// every user's queued summaries. NEVER lower this in production without
 /// confirming Kagi's worst-case latency.
-// allow(dead_code): wired into the worker loop in the next task
-#[allow(dead_code)]
 const SUMMARY_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Result of racing a summarization future against cancellation + timeout.
-// allow(dead_code): variants consumed by the worker loop wired up in the next task
-#[allow(dead_code)]
 pub(crate) enum SummaryOutcome {
     Completed(String),
     Failed(String),
@@ -27,8 +24,6 @@ pub(crate) enum SummaryOutcome {
 /// token is already cancelled. On timeout the future is dropped (the in-flight
 /// HTTP request is aborted) and a `Failed("Summarization timed out")` is
 /// returned.
-// allow(dead_code): called from the worker loop wired up in the next task
-#[allow(dead_code)]
 pub(crate) async fn run_summary<F>(
     token: &CancellationToken,
     timeout: Duration,
@@ -62,12 +57,18 @@ pub struct SummaryJob {
     pub entry_link: String,
 }
 
+/// Per-entry cancellation tokens for in-flight / queued summary jobs, keyed by
+/// `(user_id, entry_id)`. The cancel handler cancels + removes the token; the
+/// worker creates one on dequeue (if absent) and removes it when the job ends.
+pub type CancelRegistry = Arc<Mutex<HashMap<(i64, i64), CancellationToken>>>;
+
 /// Start the summary worker that processes jobs from the queue
 pub fn start_summary_worker(
     mut rx: mpsc::Receiver<SummaryJob>,
     cache: Arc<SummaryCache>,
     sidebar_cache: Arc<SidebarCache>,
     db: DbPool,
+    cancels: CancelRegistry,
     cancel_token: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -79,7 +80,7 @@ pub fn start_summary_worker(
                     tracing::info!("Summary worker stopping, draining remaining jobs...");
                     // Drain remaining jobs before exiting
                     while let Ok(job) = rx.try_recv() {
-                        process_summary_job(&job, &cache, &sidebar_cache, &db).await;
+                        process_summary_job(&job, &cache, &sidebar_cache, &db, &cancels).await;
                     }
                     break;
                 }
@@ -91,7 +92,7 @@ pub fn start_summary_worker(
                 }
             };
 
-            process_summary_job(&job, &cache, &sidebar_cache, &db).await;
+            process_summary_job(&job, &cache, &sidebar_cache, &db, &cancels).await;
         }
 
         tracing::info!("Summary worker stopped");
@@ -103,6 +104,35 @@ async fn process_summary_job(
     cache: &Arc<SummaryCache>,
     sidebar_cache: &Arc<SidebarCache>,
     db: &DbPool,
+    cancels: &CancelRegistry,
+) {
+    let key = (job.user_id, job.entry_id);
+
+    // Get-or-create this job's cancellation token. Covers startup-recovered
+    // jobs too (they never pass through the enqueue handler).
+    let token = {
+        let mut map = cancels.lock().unwrap();
+        map.entry(key).or_default().clone()
+    };
+
+    // Cancelled while still queued — the cancel handler already deleted the
+    // record. Drop the token and skip.
+    if token.is_cancelled() {
+        cancels.lock().unwrap().remove(&key);
+        return;
+    }
+
+    run_summary_job_body(job, cache, sidebar_cache, db, &token).await;
+
+    cancels.lock().unwrap().remove(&key);
+}
+
+async fn run_summary_job_body(
+    job: &SummaryJob,
+    cache: &Arc<SummaryCache>,
+    sidebar_cache: &Arc<SidebarCache>,
+    db: &DbPool,
+    token: &CancellationToken,
 ) {
     tracing::debug!(
         "Processing summary job: user={}, entry={}, link={}",
@@ -164,17 +194,21 @@ async fn process_summary_job(
         }
     };
 
-    // Call Kagi API
-    match summarize_with_kagi(&kagi_config, &job.entry_link).await {
-        Ok(summary_text) => {
+    // Race the Kagi call against cancellation + timeout.
+    match run_summary(
+        token,
+        SUMMARY_TIMEOUT,
+        summarize_with_kagi(&kagi_config, &job.entry_link),
+    )
+    .await
+    {
+        SummaryOutcome::Completed(summary_text) => {
             tracing::debug!(
                 "Summary completed for entry {}: {} chars",
                 job.entry_id,
                 summary_text.len()
             );
-            // Update cache
             cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
-            // Update DB
             let user_id = job.user_id;
             let entry_id = job.entry_id;
             let _ = db
@@ -185,15 +219,19 @@ async fn process_summary_job(
             // A summary just completed — the sidebar "Summarized" badge must tick up.
             sidebar_cache.bust(job.user_id);
         }
-        Err(error) => {
+        SummaryOutcome::Failed(error) => {
             tracing::warn!("Summary failed for entry {}: {}", job.entry_id, error);
             cache.set_failed(job.user_id, job.entry_id, error.clone());
-            // Update DB
             let user_id = job.user_id;
             let entry_id = job.entry_id;
             let _ = db
                 .background(move |conn| entry_summary::set_failed(conn, user_id, entry_id, &error))
                 .await;
+        }
+        SummaryOutcome::Cancelled => {
+            // The cancel handler owns cleanup (delete + cache remove + sidebar
+            // bust). Write nothing back.
+            tracing::debug!("Summary cancelled for entry {}", job.entry_id);
         }
     }
 }
@@ -270,6 +308,10 @@ mod tests {
     use crate::models::user::Role;
     use crate::models::{category, entry, feed, user};
     use rusqlite::Connection;
+
+    fn registry() -> CancelRegistry {
+        Arc::new(Mutex::new(HashMap::new()))
+    }
 
     fn open_shared_memory(name: &str) -> Connection {
         let uri = format!("file:{}?mode=memory&cache=shared", name);
@@ -366,6 +408,7 @@ mod tests {
             cache,
             Arc::new(SidebarCache::default()),
             db,
+            registry(),
             cancel_token.clone(),
         );
 
@@ -398,6 +441,7 @@ mod tests {
             cache,
             Arc::new(SidebarCache::default()),
             db,
+            registry(),
             cancel_token,
         );
 
@@ -599,6 +643,7 @@ mod tests {
             cache.clone(),
             Arc::new(SidebarCache::default()),
             db,
+            registry(),
             cancel_token.clone(),
         );
 
