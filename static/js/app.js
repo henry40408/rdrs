@@ -152,7 +152,15 @@ function initPaneImages() {
             continue;
         }
         img.addEventListener('load', () => img.setAttribute('data-img-state', 'loaded'), { once: true });
-        img.addEventListener('error', () => markBrokenImage(img), { once: true });
+        img.addEventListener('error', () => {
+            // cancelPaneImages() drops `src` to abort in-flight downloads when
+            // navigating away; that also fires `error` on the outgoing pane's
+            // images. A dropped `src` means cancellation, not a load failure —
+            // skip it so we don't build a throwaway broken-box (and flash it)
+            // on a pane that's about to be replaced.
+            if (!img.getAttribute('src')) return;
+            markBrokenImage(img);
+        }, { once: true });
     }
 }
 
