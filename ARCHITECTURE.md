@@ -293,6 +293,10 @@ RDRS integrates with Kagi AI for automatic article summarization:
 4. Worker calls Kagi API and stores result in `entry_summary` table
 5. Summary is cached and returned to client
 
+**Cancellation & Timeout:**
+- Each in-flight or queued job has a `CancellationToken` in a shared `CancelRegistry` keyed by `(user_id, entry_id)`. A `POST /entries/{id}/summarize/cancel` request cancels the token (aborting the in-flight HTTP request) and deletes the record.
+- Each Kagi request races against a 90-second hard timeout; on expiry the request is dropped and the summary is marked `failed`.
+
 **Status Tracking:**
 - Summaries track state: pending, processing, completed, failed
 - Failed requests include error messages for debugging
