@@ -676,6 +676,50 @@ code {
     border-radius: var(--radius-md);
 }
 
+/* Loading skeleton: a static tinted block until JS flips data-img-state to
+   "loaded". Set server-side in sanitize so it shows on first paint. */
+.reading-pane-article img[data-img-state="loading"] {
+    background: var(--color-bg-secondary);
+}
+
+/* Dimensionless images reserve a 16/9 box while loading so the pane doesn't
+   collapse; the natural ratio takes over once loaded (the unavoidable
+   first-view ratio settle). Article images are display:block already, so this
+   never affects inline glyphs. */
+.reading-pane-article img[data-img-state="loading"]:not([width]):not([height]) {
+    aspect-ratio: 16 / 9;
+    width: 100%;
+    object-fit: cover;
+}
+
+/* Broken-image fallback (JS replaces the <img> with this on error). Dashed box,
+   neutral palette, centered glyph + alt caption. */
+.rp-broken-image {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    aspect-ratio: 16 / 9;
+    margin: var(--space-6) auto;
+    padding: var(--space-4);
+    text-align: center;
+    background: var(--color-bg-secondary);
+    border: 1px dashed var(--color-border-light);
+    border-radius: var(--radius-md);
+}
+.rp-broken-image .ico {
+    width: 28px;
+    height: 28px;
+    color: var(--color-text-muted);
+    opacity: 0.6;
+}
+.rp-broken-cap {
+    font-family: var(--font-ui);
+    font-size: var(--font-sm);
+    color: var(--color-text-muted);
+}
+
 .reading-pane-article figure {
     margin: var(--space-8) 0;
 }
