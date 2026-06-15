@@ -471,5 +471,7 @@ When("I click the {string} summary action", async ({ page }, label) => {
     .locator("#rp-summary-container")
     .getByRole("button", { name: label })
     .click();
-  await page.waitForLoadState("networkidle");
+  // Wait for the #rp-summary-container swap to settle rather than using
+  // networkidle (flaky with the app's background sidebar polling).
+  await page.locator("[data-summary-error]").waitFor({ state: "detached" });
 });
