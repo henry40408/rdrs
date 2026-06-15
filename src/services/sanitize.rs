@@ -83,6 +83,54 @@ fn is_tracking_param(name: &str) -> bool {
 /// Attributes that carry the real image URL for lazy-loaded images, in priority order.
 const LAZY_SRC_ATTRS: &[&str] = &["data-src", "data-lazy-src", "data-original"];
 
+/// Parse a `width:NNpx` / `height:NNpx` integer out of an inline `style`.
+fn style_dim(style: &str, prop: &str) -> Option<String> {
+    for decl in style.split(';') {
+        let mut kv = decl.splitn(2, ':');
+        let key = kv.next()?.trim();
+        if !key.eq_ignore_ascii_case(prop) {
+            continue;
+        }
+        let val = kv.next()?.trim();
+        let digits: String = val.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            return Some(digits);
+        }
+    }
+    None
+}
+
+/// Pre-ammonia pass: for any `<img>` lacking BOTH `width` and `height`, inject
+/// them from `data-original-width`/`data-original-height` or an inline
+/// `style="width:..px;height:..px"`. Ammonia strips those hint sources, so this
+/// must run before it. Only injects when a usable integer PAIR is found.
+fn harvest_image_dimensions(html: &str) -> String {
+    let handler = element!("img", |el| {
+        if el.get_attribute("width").is_some() || el.get_attribute("height").is_some() {
+            return Ok(());
+        }
+        let style = el.get_attribute("style").unwrap_or_default();
+        let w = el
+            .get_attribute("data-original-width")
+            .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+            .or_else(|| style_dim(&style, "width"));
+        let h = el
+            .get_attribute("data-original-height")
+            .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+            .or_else(|| style_dim(&style, "height"));
+        if let (Some(w), Some(h)) = (w, h) {
+            el.set_attribute("width", &w)?;
+            el.set_attribute("height", &h)?;
+        }
+        Ok(())
+    });
+    rewrite_str(
+        html,
+        RewriteStrSettings::new().append_element_content_handler(handler),
+    )
+    .unwrap_or_else(|_| html.to_string())
+}
+
 /// Promote lazy-loaded image URLs into `src` before sanitization.
 ///
 /// Many sites (e.g. WordPress with lazy-load plugins) ship a `data:` SVG
@@ -332,6 +380,7 @@ pub fn sanitize_html(
     // Step 0: Promote lazy-loaded image URLs into src before ammonia drops the
     // data: placeholder and the unknown data-* attributes.
     let unlazied = promote_lazy_images(content);
+    let unlazied = harvest_image_dimensions(&unlazied);
 
     // Step 1: Ammonia sanitization (already adds rel="noopener noreferrer")
     let sanitized = Builder::default()
@@ -913,5 +962,27 @@ mod tests {
             output.contains("height=\"480\""),
             "height must survive: {output}"
         );
+    }
+
+    #[test]
+    fn test_harvest_dims_from_data_original() {
+        let input = r#"<img src="https://e.com/a.jpg" data-original-width="800" data-original-height="600">"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(output.contains("width=\"800\""), "{output}");
+        assert!(output.contains("height=\"600\""), "{output}");
+    }
+    #[test]
+    fn test_harvest_dims_from_style() {
+        let input = r#"<img src="https://e.com/a.jpg" style="width:320px;height:240px">"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(output.contains("width=\"320\""), "{output}");
+        assert!(output.contains("height=\"240\""), "{output}");
+    }
+    #[test]
+    fn test_harvest_skips_when_dims_present() {
+        let input = r#"<img src="https://e.com/a.jpg" width="100" height="50" data-original-width="800" data-original-height="600">"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(output.contains("width=\"100\""), "{output}");
+        assert!(!output.contains("width=\"800\""), "{output}");
     }
 }
