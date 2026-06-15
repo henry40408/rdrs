@@ -900,4 +900,18 @@ mod tests {
         );
         assert!(output.contains("https://rdrs.example.com/api/proxy/image?url="));
     }
+
+    #[test]
+    fn test_image_width_height_preserved() {
+        let input = r#"<img src="https://example.com/a.jpg" width="640" height="480" alt="x">"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(
+            output.contains("width=\"640\""),
+            "width must survive: {output}"
+        );
+        assert!(
+            output.contains("height=\"480\""),
+            "height must survive: {output}"
+        );
+    }
 }
