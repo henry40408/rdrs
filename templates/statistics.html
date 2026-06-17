@@ -137,8 +137,7 @@
                         </div>
                         <div class="stats-card stats-card-admin">
                             <div class="stats-card-value">{{ db.reclaimable_fmt }}</div>
-                            <div class="stats-card-sub">{{ db.frag_pct }}% of file</div>
-                            <div class="stats-card-label">Reclaimable</div>
+                            <div class="stats-card-label">Reclaimable · {{ db.frag_pct }}% of file</div>
                         </div>
                         <div class="stats-card stats-card-admin">
                             <div class="stats-card-value" data-testid="stat-db-total-entries">{{ db.total_entries }}</div>
