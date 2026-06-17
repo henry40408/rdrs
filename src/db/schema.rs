@@ -81,6 +81,7 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_entry_read_at ON entry(read_at);
         CREATE INDEX IF NOT EXISTS idx_entry_starred_at ON entry(starred_at);
         CREATE INDEX IF NOT EXISTS idx_entry_sort_ts ON entry(COALESCE(published_at, created_at));
+        CREATE INDEX IF NOT EXISTS idx_entry_created_at ON entry(created_at);
         -- Partial indexes for the Starred / Read list pages. The list-by-user
         -- query orders by COALESCE(published_at, created_at) DESC with the
         -- selectivity predicate baked in; without these the planner falls back
@@ -272,7 +273,14 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         )?;
     }
 
-    const LATEST_VERSION: i64 = 8;
+    if version < 9 {
+        // idx_entry_created_at is created via CREATE INDEX IF NOT EXISTS in the
+        // main batch above (picked up on restart, like the v5/v6/v7 indexes).
+        // The version bump records that MIN/MAX(created_at) admin stats can rely
+        // on the index endpoint optimization being available.
+    }
+
+    const LATEST_VERSION: i64 = 9;
     if version < LATEST_VERSION {
         conn.pragma_update(None, "user_version", LATEST_VERSION)?;
     }
@@ -315,7 +323,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
     }
 
     #[test]
@@ -326,7 +334,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
     }
 
     #[test]
@@ -503,5 +511,19 @@ mod tests {
             .filter_map(Result::ok)
             .collect();
         assert_eq!(indexes, vec!["idx_entry_unread_sort".to_string()]);
+    }
+
+    #[test]
+    fn test_init_db_creates_entry_created_at_index() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_entry_created_at'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 1);
     }
 }

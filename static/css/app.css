@@ -2373,6 +2373,9 @@ summary {
 .stats-card-admin {
     border: 1px solid var(--color-accent);
 }
+.stats-cards--db { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 768px) { .stats-cards--db { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 480px) { .stats-cards--db { grid-template-columns: 1fr; } }
 
 .stats-section {
     margin-bottom: var(--space-6);
@@ -2455,9 +2458,10 @@ summary {
 }
 
 .stats-admin-section {
-    border-top: 1px solid var(--color-border);
-    padding-top: var(--space-6);
     margin-top: var(--space-6);
+}
+.stats-admin-section h2 {
+    margin-top: 0;
 }
 
 /* Feed health */
