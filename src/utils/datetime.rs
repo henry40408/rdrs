@@ -108,9 +108,15 @@ pub fn normalize_timezone_format(text: &str) -> String {
     text.to_string()
 }
 
-/// Parse a datetime string from the database (stored as SQL datetime or RFC 3339).
-/// Falls back to `Utc::now()` if parsing fails.
-pub fn parse_datetime(s: &str) -> DateTime<Utc> {
+/// Parse a datetime string from the database, returning `None` if every
+/// supported format fails. Tries, in order: RFC 3339, SQL datetime
+/// (`%Y-%m-%d %H:%M:%S`), dateparser (RFC 2822 and other localized formats),
+/// then the Chinese date format.
+///
+/// Prefer this over [`parse_datetime`] when an unparseable value must be
+/// distinguished from a valid one (e.g. aggregates over timestamps, where the
+/// `Utc::now()` fallback would silently corrupt the result).
+pub fn try_parse_datetime(s: &str) -> Option<DateTime<Utc>> {
     // Try RFC 3339 first (standard format)
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
@@ -120,9 +126,15 @@ pub fn parse_datetime(s: &str) -> DateTime<Utc> {
         })
         // Then try dateparser for various formats (RFC 2822, localized dates, etc.)
         .or_else(|_| dateparser::parse(s).map(|dt| dt.with_timezone(&Utc)))
+        .ok()
         // Then try Chinese date format
-        .or_else(|_| parse_chinese_datetime(s).ok_or(()))
-        .unwrap_or_else(|_| Utc::now())
+        .or_else(|| parse_chinese_datetime(s))
+}
+
+/// Parse a datetime string from the database (stored as SQL datetime or RFC 3339).
+/// Falls back to `Utc::now()` if parsing fails.
+pub fn parse_datetime(s: &str) -> DateTime<Utc> {
+    try_parse_datetime(s).unwrap_or_else(Utc::now)
 }
 
 /// Custom timestamp parser for feed-rs that handles:
@@ -164,6 +176,23 @@ mod tests {
         assert_eq!(dt.day(), 6);
         assert_eq!(dt.hour(), 14);
         assert_eq!(dt.minute(), 28);
+    }
+
+    #[test]
+    fn test_try_parse_datetime_supported_formats() {
+        // SQL datetime and RFC 3339 both parse to the same instant.
+        assert!(try_parse_datetime("2026-01-06 14:28:00").is_some());
+        assert!(try_parse_datetime("2026-01-06T14:28:00Z").is_some());
+        let a = try_parse_datetime("2026-01-06 14:28:00").unwrap();
+        let b = try_parse_datetime("2026-01-06T14:28:00Z").unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_try_parse_datetime_garbage_is_none() {
+        // Unparseable input returns None (no Utc::now() fallback).
+        assert!(try_parse_datetime("not a date").is_none());
+        assert!(try_parse_datetime("").is_none());
     }
 
     #[test]
