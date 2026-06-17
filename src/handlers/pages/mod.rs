@@ -2154,12 +2154,40 @@ pub struct FeedStatsView {
     pub width_percent: f64,
 }
 
+/// Format a byte count for display (binary units, one decimal above 1 KB).
+fn format_db_bytes(bytes: i64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let b = bytes as f64;
+    if b >= GB {
+        format!("{:.1} GB", b / GB)
+    } else if b >= MB {
+        format!("{:.1} MB", b / MB)
+    } else if b >= KB {
+        format!("{:.1} KB", b / KB)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
 /// Site-wide stats block shown to non-masquerading admins.
 pub struct AdminStatsView {
     pub total_users: i64,
     pub total_feeds: i64,
     pub total_entries: i64,
     pub read_rate_fmt: String,
+}
+
+/// Database storage + record stats block (admin, non-masquerading).
+pub struct AdminDatabaseStatsView {
+    pub size_fmt: String,
+    pub reclaimable_fmt: String,
+    pub frag_pct: i64,
+    pub total_entries: i64,
+    pub avg_per_day_fmt: String,
+    pub coverage_fmt: String,
+    pub tombstone_count: i64,
 }
 
 /// Per-route template for `/statistics`.
@@ -2183,6 +2211,7 @@ pub struct StatisticsTemplate {
     pub categories: Vec<CategoryStatsView>,
     pub top_feeds: Vec<FeedStatsView>,
     pub admin: Option<AdminStatsView>,
+    pub admin_db: Option<AdminDatabaseStatsView>,
 }
 
 impl IntoResponse for StatisticsTemplate {
@@ -2553,7 +2582,7 @@ pub async fn statistics_page(
     let to_c = to.clone();
     let chart_from_c = chart_from.clone();
 
-    let (overview, daily, cats, feeds, admin_counts, admin_entry_stats) = state
+    let (overview, daily, cats, feeds, admin_counts, admin_entry_stats, admin_db_stats) = state
         .db
         .read_user(move |c| {
             let overview =
@@ -2577,6 +2606,11 @@ pub async fn statistics_page(
             } else {
                 None
             };
+            let admin_db_stats = if show_admin_stats {
+                crate::models::statistics::get_admin_database_stats(c).ok()
+            } else {
+                None
+            };
             Ok::<_, AppError>((
                 overview,
                 daily,
@@ -2584,6 +2618,7 @@ pub async fn statistics_page(
                 feeds,
                 admin_counts,
                 admin_entry_stats,
+                admin_db_stats,
             ))
         })
         .await
@@ -2663,6 +2698,16 @@ pub async fn statistics_page(
         _ => None,
     };
 
+    let admin_db = admin_db_stats.map(|s| AdminDatabaseStatsView {
+        size_fmt: format_db_bytes(s.db_size_bytes),
+        reclaimable_fmt: format_db_bytes(s.reclaimable_bytes),
+        frag_pct: (s.fragmentation_ratio * 100.0).round() as i64,
+        total_entries: s.total_entries,
+        avg_per_day_fmt: format!("{}", s.avg_new_entries_per_day.round() as i64),
+        coverage_fmt: format!("{}d", s.coverage_days.round() as i64),
+        tombstone_count: s.tombstone_count,
+    });
+
     (
         flash,
         StatisticsTemplate {
@@ -2683,6 +2728,7 @@ pub async fn statistics_page(
             categories,
             top_feeds,
             admin,
+            admin_db,
         },
     )
 }
@@ -2917,5 +2963,14 @@ mod tests {
         assert_eq!(super::feed_color_index(13), 1); // 13 % 6 == 1
         assert_eq!(super::feed_color_index(-1), 5); // (-1).rem_euclid(6) == 5
         assert!(super::feed_color_index(i64::MAX) < 6);
+    }
+
+    #[test]
+    fn test_format_db_bytes() {
+        assert_eq!(super::format_db_bytes(0), "0 B");
+        assert_eq!(super::format_db_bytes(512), "512 B");
+        assert_eq!(super::format_db_bytes(1536), "1.5 KB");
+        assert_eq!(super::format_db_bytes(5 * 1024 * 1024), "5.0 MB");
+        assert_eq!(super::format_db_bytes(3 * 1024 * 1024 * 1024), "3.0 GB");
     }
 }
