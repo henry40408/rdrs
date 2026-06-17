@@ -351,14 +351,19 @@ pub fn get_admin_database_stats(conn: &Connection) -> AppResult<AdminDatabaseSta
     let tombstone_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM entry_tombstone", [], |row| row.get(0))?;
 
-    let parse = |s: &str| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok();
+    // Use the fallible parser (not parse_datetime, whose Utc::now() fallback
+    // would silently corrupt these aggregates on an unparseable timestamp).
     let (coverage_days, avg_new_entries_per_day) = match (
-        min_created.as_deref().and_then(parse),
-        max_created.as_deref().and_then(parse),
+        min_created
+            .as_deref()
+            .and_then(crate::utils::datetime::try_parse_datetime),
+        max_created
+            .as_deref()
+            .and_then(crate::utils::datetime::try_parse_datetime),
     ) {
         (Some(min), Some(max)) => {
             let coverage = (max - min).num_seconds() as f64 / 86_400.0;
-            let now = chrono::Utc::now().naive_utc();
+            let now = chrono::Utc::now();
             let age_days = (now - min).num_seconds() as f64 / 86_400.0;
             let avg = if age_days > 0.0 {
                 total_entries as f64 / age_days
@@ -689,6 +694,28 @@ mod tests {
             s.coverage_days
         );
         // created_at is in the past, so age > 0 and avg is positive & finite.
+        assert!(s.avg_new_entries_per_day > 0.0 && s.avg_new_entries_per_day.is_finite());
+    }
+
+    #[test]
+    fn test_admin_database_stats_parses_rfc3339_created_at() {
+        let conn = setup_db();
+        let user_id = create_user_with_data(&conn);
+        let feed_id = get_feed_id(&conn, user_id);
+
+        // RFC 3339 timestamps spanning exactly 2 days. The previous SQL-only
+        // parser would have failed these and collapsed coverage to 0.0.
+        insert_entry_created_at(&conn, feed_id, "a", "2024-01-01T00:00:00Z");
+        insert_entry_created_at(&conn, feed_id, "b", "2024-01-03T00:00:00Z");
+
+        let s = get_admin_database_stats(&conn).unwrap();
+
+        assert_eq!(s.total_entries, 2);
+        assert!(
+            (s.coverage_days - 2.0).abs() < 1e-6,
+            "coverage was {}",
+            s.coverage_days
+        );
         assert!(s.avg_new_entries_per_day > 0.0 && s.avg_new_entries_per_day.is_finite());
     }
 }
