@@ -127,6 +127,38 @@
                     </div>
                 </div>
                 {% endif %}
+                {% if let Some(db) = admin_db %}
+                <div class="stats-admin-section">
+                    <h2>Database</h2>
+                    <div class="stats-cards stats-cards--db">
+                        <div class="stats-card stats-card-admin">
+                            <div class="stats-card-value">{{ db.size_fmt }}</div>
+                            <div class="stats-card-label">Database Size</div>
+                        </div>
+                        <div class="stats-card stats-card-admin">
+                            <div class="stats-card-value">{{ db.reclaimable_fmt }}</div>
+                            <div class="stats-card-sub">{{ db.frag_pct }}% of file</div>
+                            <div class="stats-card-label">Reclaimable</div>
+                        </div>
+                        <div class="stats-card stats-card-admin">
+                            <div class="stats-card-value" data-testid="stat-db-total-entries">{{ db.total_entries }}</div>
+                            <div class="stats-card-label">Total Entries</div>
+                        </div>
+                        <div class="stats-card stats-card-admin">
+                            <div class="stats-card-value">{{ db.avg_per_day_fmt }}</div>
+                            <div class="stats-card-label">Avg New / Day</div>
+                        </div>
+                        <div class="stats-card stats-card-admin">
+                            <div class="stats-card-value">{{ db.coverage_fmt }}</div>
+                            <div class="stats-card-label">Coverage</div>
+                        </div>
+                        <div class="stats-card stats-card-admin">
+                            <div class="stats-card-value" data-testid="stat-db-pruned">{{ db.tombstone_count }}</div>
+                            <div class="stats-card-label">Pruned Entries</div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </main>
     </div>
