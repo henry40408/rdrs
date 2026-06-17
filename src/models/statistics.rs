@@ -68,6 +68,17 @@ impl AdminEntryStats {
     }
 }
 
+/// Admin database storage + record stats (period-independent).
+pub struct AdminDatabaseStats {
+    pub db_size_bytes: i64,
+    pub reclaimable_bytes: i64,
+    pub fragmentation_ratio: f64,
+    pub total_entries: i64,
+    pub avg_new_entries_per_day: f64,
+    pub coverage_days: f64,
+    pub tombstone_count: i64,
+}
+
 /// Get personal overview metrics for a user within a date range.
 ///
 /// `from` and `to` are date strings in `YYYY-MM-DD` format. The range is
@@ -317,6 +328,59 @@ pub fn get_admin_entry_stats(
     })
 }
 
+/// Get site-wide database storage + record stats (period-independent).
+pub fn get_admin_database_stats(conn: &Connection) -> AppResult<AdminDatabaseStats> {
+    let page_count: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
+    let page_size: i64 = conn.pragma_query_value(None, "page_size", |row| row.get(0))?;
+    let freelist: i64 = conn.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
+
+    let db_size_bytes = page_count * page_size;
+    let reclaimable_bytes = freelist * page_size;
+    let fragmentation_ratio = if db_size_bytes > 0 {
+        reclaimable_bytes as f64 / db_size_bytes as f64
+    } else {
+        0.0
+    };
+
+    let total_entries: i64 = conn.query_row("SELECT COUNT(*) FROM entry", [], |row| row.get(0))?;
+    // Bare MIN/MAX so SQLite uses the idx_entry_created_at endpoint optimization.
+    let min_created: Option<String> =
+        conn.query_row("SELECT MIN(created_at) FROM entry", [], |row| row.get(0))?;
+    let max_created: Option<String> =
+        conn.query_row("SELECT MAX(created_at) FROM entry", [], |row| row.get(0))?;
+    let tombstone_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM entry_tombstone", [], |row| row.get(0))?;
+
+    let parse = |s: &str| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok();
+    let (coverage_days, avg_new_entries_per_day) = match (
+        min_created.as_deref().and_then(parse),
+        max_created.as_deref().and_then(parse),
+    ) {
+        (Some(min), Some(max)) => {
+            let coverage = (max - min).num_seconds() as f64 / 86_400.0;
+            let now = chrono::Utc::now().naive_utc();
+            let age_days = (now - min).num_seconds() as f64 / 86_400.0;
+            let avg = if age_days > 0.0 {
+                total_entries as f64 / age_days
+            } else {
+                0.0
+            };
+            (coverage, avg)
+        }
+        _ => (0.0, 0.0),
+    };
+
+    Ok(AdminDatabaseStats {
+        db_size_bytes,
+        reclaimable_bytes,
+        fragmentation_ratio,
+        total_entries,
+        avg_new_entries_per_day,
+        coverage_days,
+        tombstone_count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +432,30 @@ mod tests {
         )
         .unwrap();
         conn.last_insert_rowid()
+    }
+
+    /// Helper: insert an entry with an explicit created_at (YYYY-MM-DD HH:MM:SS).
+    fn insert_entry_created_at(
+        conn: &Connection,
+        feed_id: i64,
+        guid: &str,
+        created_at: &str,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO entry (feed_id, guid, created_at) VALUES (?1, ?2, ?3)",
+            params![feed_id, guid, created_at],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    /// Helper: insert a tombstone row.
+    fn insert_tombstone(conn: &Connection, feed_id: i64, guid: &str) {
+        conn.execute(
+            "INSERT INTO entry_tombstone (feed_id, guid) VALUES (?1, ?2)",
+            params![feed_id, guid],
+        )
+        .unwrap();
     }
 
     /// Helper: mark entry as read at a specific datetime.
@@ -555,5 +643,52 @@ mod tests {
         assert_eq!(stats.total_entries, 2);
         assert_eq!(stats.read_entries, 1);
         assert!((stats.read_rate() - 50.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_admin_database_stats_empty() {
+        let conn = setup_db();
+        create_user_with_data(&conn);
+
+        let s = get_admin_database_stats(&conn).unwrap();
+
+        // A freshly-initialized DB still has pages, so size is positive.
+        assert!(s.db_size_bytes > 0);
+        assert!(s.reclaimable_bytes >= 0);
+        assert!((0.0..=1.0).contains(&s.fragmentation_ratio));
+        // No entries / tombstones yet → record metrics are zero.
+        assert_eq!(s.total_entries, 0);
+        assert_eq!(s.coverage_days, 0.0);
+        assert_eq!(s.avg_new_entries_per_day, 0.0);
+        assert_eq!(s.tombstone_count, 0);
+    }
+
+    #[test]
+    fn test_admin_database_stats_with_data() {
+        let conn = setup_db();
+        let user_id = create_user_with_data(&conn);
+        let feed_id = get_feed_id(&conn, user_id);
+
+        // 4 entries spanning exactly 3 days (2024-01-01 .. 2024-01-04).
+        insert_entry_created_at(&conn, feed_id, "a", "2024-01-01 00:00:00");
+        insert_entry_created_at(&conn, feed_id, "b", "2024-01-02 00:00:00");
+        insert_entry_created_at(&conn, feed_id, "c", "2024-01-03 00:00:00");
+        insert_entry_created_at(&conn, feed_id, "d", "2024-01-04 00:00:00");
+
+        insert_tombstone(&conn, feed_id, "dead-1");
+        insert_tombstone(&conn, feed_id, "dead-2");
+
+        let s = get_admin_database_stats(&conn).unwrap();
+
+        assert_eq!(s.total_entries, 4);
+        assert_eq!(s.tombstone_count, 2);
+        // span = 2024-01-04 - 2024-01-01 = 3 days exactly.
+        assert!(
+            (s.coverage_days - 3.0).abs() < 1e-6,
+            "coverage was {}",
+            s.coverage_days
+        );
+        // created_at is in the past, so age > 0 and avg is positive & finite.
+        assert!(s.avg_new_entries_per_day > 0.0 && s.avg_new_entries_per_day.is_finite());
     }
 }
