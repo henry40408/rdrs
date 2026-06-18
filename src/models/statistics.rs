@@ -13,17 +13,23 @@ pub struct PersonalOverview {
 }
 
 impl PersonalOverview {
-    /// Unread = total published in period minus those read in period.
-    /// Clamped to 0 since total and read use different date columns.
+    /// Unread = entries published in the period that are not yet read.
+    ///
+    /// `read_entries` counts the read subset of the *same* publish cohort as
+    /// `total_entries`, so this difference is always non-negative — no clamp
+    /// needed (and none wanted: a clamp would mask a future cohort regression).
     pub fn unread_entries(&self) -> i64 {
-        (self.total_entries - self.read_entries).max(0)
+        self.total_entries - self.read_entries
     }
 
+    /// Fraction of period-published entries that have been read.
+    ///
+    /// Naturally bounded to 0–100% because read is a subset of total.
     pub fn read_rate(&self) -> f64 {
         if self.total_entries == 0 {
             0.0
         } else {
-            ((self.read_entries as f64 / self.total_entries as f64) * 100.0).min(100.0)
+            (self.read_entries as f64 / self.total_entries as f64) * 100.0
         }
     }
 }
@@ -92,11 +98,14 @@ pub struct AdminEntryStats {
 }
 
 impl AdminEntryStats {
+    /// Fraction of period-published entries (site-wide) that have been read.
+    ///
+    /// Naturally bounded to 0–100% because read is a subset of total.
     pub fn read_rate(&self) -> f64 {
         if self.total_entries == 0 {
             0.0
         } else {
-            ((self.read_entries as f64 / self.total_entries as f64) * 100.0).min(100.0)
+            (self.read_entries as f64 / self.total_entries as f64) * 100.0
         }
     }
 }
@@ -136,6 +145,10 @@ pub fn get_personal_overview(
         |row| row.get(0),
     )?;
 
+    // Read/starred counts are the read/starred *subset of the same publish
+    // cohort* as total_entries — i.e. entries published in the period that
+    // have since been read/starred (whenever) — not "reading activity in the
+    // period". This keeps Read ⊆ Total so Unread and Read Rate stay coherent.
     let read_entries: i64 = conn.query_row(
         r#"
         SELECT COUNT(e.id)
@@ -143,8 +156,9 @@ pub fn get_personal_overview(
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
         WHERE c.user_id = ?1
-          AND e.read_at >= ?2
-          AND e.read_at < ?3
+          AND COALESCE(e.published_at, e.created_at) >= ?2
+          AND COALESCE(e.published_at, e.created_at) < ?3
+          AND e.read_at IS NOT NULL
         "#,
         params![user_id, from, to],
         |row| row.get(0),
@@ -157,8 +171,9 @@ pub fn get_personal_overview(
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
         WHERE c.user_id = ?1
-          AND e.starred_at >= ?2
-          AND e.starred_at < ?3
+          AND COALESCE(e.published_at, e.created_at) >= ?2
+          AND COALESCE(e.published_at, e.created_at) < ?3
+          AND e.starred_at IS NOT NULL
         "#,
         params![user_id, from, to],
         |row| row.get(0),
@@ -344,12 +359,15 @@ pub fn get_admin_entry_stats(
         |row| row.get(0),
     )?;
 
+    // Read subset of the same publish cohort as total_entries (see
+    // get_personal_overview), so Site Read Rate stays bounded to 0–100%.
     let read_entries: i64 = conn.query_row(
         r#"
         SELECT COUNT(id)
         FROM entry
-        WHERE read_at >= ?1
-          AND read_at < ?2
+        WHERE COALESCE(published_at, created_at) >= ?1
+          AND COALESCE(published_at, created_at) < ?2
+          AND read_at IS NOT NULL
         "#,
         params![from, to],
         |row| row.get(0),
@@ -396,13 +414,14 @@ pub fn get_admin_database_stats(conn: &Connection) -> AppResult<AdminDatabaseSta
     ) {
         (Some(min), Some(max)) => {
             let coverage = (max - min).num_seconds() as f64 / 86_400.0;
-            let now = chrono::Utc::now();
-            let age_days = (now - min).num_seconds() as f64 / 86_400.0;
-            let avg = if age_days > 0.0 {
-                total_entries as f64 / age_days
-            } else {
-                0.0
-            };
+            // Average over the span we actually retain entries for, not the
+            // age since the oldest entry: retention prunes read entries, so
+            // `total_entries / age` systematically understated the rate (old
+            // unread entries stretch the denominator while their pruned
+            // neighbours are gone from the numerator). Numerator and
+            // denominator now cover the same retained set. Guard a sub-day
+            // span (single entry, or all created the same day) at 1 day.
+            let avg = total_entries as f64 / coverage.max(1.0);
             (coverage, avg)
         }
         _ => (0.0, 0.0),
@@ -549,6 +568,46 @@ mod tests {
         assert_eq!(overview.read_entries, 2);
         assert_eq!(overview.starred_entries, 1);
         assert_eq!(overview.unread_entries(), 1);
+    }
+
+    #[test]
+    fn test_personal_overview_uses_publish_cohort() {
+        // Read/starred counts must be the read/starred subset of the entries
+        // *published in the period* — not "activity in the period". This pins
+        // the fix for Unread always 0 / Read Rate always 100%.
+        let conn = setup_db();
+        let user_id = create_user_with_data(&conn);
+        let feed_id = get_feed_id(&conn, user_id);
+
+        // Published BEFORE the period but read+starred DURING it. The old
+        // activity-based query counted these; the publish cohort must not.
+        let old = insert_entry(&conn, feed_id, "old", "2023-12-01");
+        mark_read(&conn, old, "2024-01-15");
+        mark_starred(&conn, old, "2024-01-16");
+
+        // In cohort, read inside the period, also starred.
+        let e1 = insert_entry(&conn, feed_id, "e1", "2024-01-05");
+        mark_read(&conn, e1, "2024-01-06");
+        mark_starred(&conn, e1, "2024-01-07");
+
+        // In cohort, never read → unread.
+        insert_entry(&conn, feed_id, "e2", "2024-01-10");
+
+        // In cohort, read AFTER the period ends → still "read" (read_at set).
+        let e3 = insert_entry(&conn, feed_id, "e3", "2024-01-20");
+        mark_read(&conn, e3, "2024-03-01");
+
+        let overview = get_personal_overview(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
+
+        assert_eq!(overview.total_entries, 3, "old (Dec) entry excluded");
+        assert_eq!(overview.read_entries, 2, "e1 + e3, not the Dec entry");
+        assert_eq!(overview.starred_entries, 1, "only e1, not the Dec entry");
+        assert_eq!(overview.unread_entries(), 1, "e2");
+        assert!(
+            (overview.read_rate() - (2.0 / 3.0 * 100.0)).abs() < 1e-6,
+            "read_rate was {}",
+            overview.read_rate()
+        );
     }
 
     #[test]
@@ -750,10 +809,15 @@ mod tests {
 
         mark_read(&conn, e1, "2024-01-06");
 
+        // Published before the period but read inside it: the old query
+        // counted this toward read_entries and could push the rate past 100%.
+        let old = insert_entry(&conn, feed_id, "g-old", "2023-12-01");
+        mark_read(&conn, old, "2024-01-07");
+
         let stats = get_admin_entry_stats(&conn, "2024-01-01", "2024-02-01").unwrap();
 
-        assert_eq!(stats.total_entries, 2);
-        assert_eq!(stats.read_entries, 1);
+        assert_eq!(stats.total_entries, 2, "Dec entry is outside the period");
+        assert_eq!(stats.read_entries, 1, "only g1; the Dec entry is excluded");
         assert!((stats.read_rate() - 50.0).abs() < 1e-6);
     }
 
@@ -800,8 +864,30 @@ mod tests {
             "coverage was {}",
             s.coverage_days
         );
-        // created_at is in the past, so age > 0 and avg is positive & finite.
-        assert!(s.avg_new_entries_per_day > 0.0 && s.avg_new_entries_per_day.is_finite());
+        // avg = retained entries / coverage span = 4 / 3. Now deterministic
+        // (no Utc::now() in the denominator) and unaffected by prune drift.
+        assert!(
+            (s.avg_new_entries_per_day - 4.0 / 3.0).abs() < 1e-6,
+            "avg was {}",
+            s.avg_new_entries_per_day
+        );
+    }
+
+    #[test]
+    fn test_admin_database_stats_avg_guards_subday_span() {
+        // A single entry → coverage span 0 → denominator guarded at 1 day so
+        // the average is finite (and equals the entry count) rather than inf.
+        let conn = setup_db();
+        let user_id = create_user_with_data(&conn);
+        let feed_id = get_feed_id(&conn, user_id);
+
+        insert_entry_created_at(&conn, feed_id, "only", "2024-01-01 12:00:00");
+
+        let s = get_admin_database_stats(&conn).unwrap();
+
+        assert_eq!(s.total_entries, 1);
+        assert_eq!(s.coverage_days, 0.0);
+        assert!((s.avg_new_entries_per_day - 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -823,6 +909,11 @@ mod tests {
             "coverage was {}",
             s.coverage_days
         );
-        assert!(s.avg_new_entries_per_day > 0.0 && s.avg_new_entries_per_day.is_finite());
+        // avg = 2 entries / 2-day span = 1.0 exactly.
+        assert!(
+            (s.avg_new_entries_per_day - 1.0).abs() < 1e-6,
+            "avg was {}",
+            s.avg_new_entries_per_day
+        );
     }
 }
