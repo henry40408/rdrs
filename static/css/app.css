@@ -2393,6 +2393,12 @@ summary {
     padding-top: var(--space-6);
     padding-bottom: var(--space-6);
     position: relative;
+    /* Edge-bar tooltips extend past the chart; clip horizontally so they
+       never add a page-wide horizontal scrollbar on narrow viewports
+       (e.g. iPhone SE). `clip` coexists with overflow-y: visible, so the
+       tooltip still floats up into the reserved top padding. */
+    overflow-x: clip;
+    overflow-y: visible;
 }
 .stats-bar-col {
     flex: 1;
@@ -2458,6 +2464,17 @@ summary {
 .stats-bar-col:focus .stats-bar-tip {
     opacity: 1;
     visibility: visible;
+}
+/* Keep the outermost tooltips inside the chart so they stay fully readable
+   (the overflow-x: clip above is the safety net for dense, many-bar views). */
+.stats-bar-col:first-child .stats-bar-tip {
+    left: 0;
+    transform: translateX(0);
+}
+.stats-bar-col:last-child .stats-bar-tip {
+    left: auto;
+    right: 0;
+    transform: translateX(0);
 }
 
 .stats-columns {

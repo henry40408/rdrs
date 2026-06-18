@@ -23,8 +23,34 @@ Given("I have a feed with {int} test entries", async ({ seed, currentUser }, cou
   seed.seedTestEntries(feedId, count);
 });
 
+Given("I have read entries across several days", async ({ seed, currentUser }) => {
+  const userId = seed.getUserId(currentUser.username);
+  const categoryId = seed.createCategory(userId, `Cat-${currentUser.username}`);
+  const feedId = seed.createFeed(
+    categoryId,
+    `https://example.com/${currentUser.username}.xml`,
+    "Stats Feed",
+  );
+  // One read entry per day across the default 7-day window so the chart
+  // renders a full row of bars (incl. the rightmost, whose tooltip is what
+  // used to overflow the viewport).
+  const ids = seed.seedTestEntries(feedId, 8);
+  ids.forEach((id, dayOffset) => seed.markRead(id, `-${dayOffset} days`));
+});
+
 When("I open the inbox", async ({ page, serverUrl }) => {
   await page.goto(`${serverUrl}/`);
+});
+
+When("I hover the last daily-read bar", async ({ page }) => {
+  await page.locator(".stats-bar-col").last().hover();
+});
+
+Then("the page has no horizontal scroll", async ({ page }) => {
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
 });
 
 When("I open the categories page", async ({ page, serverUrl }) => {

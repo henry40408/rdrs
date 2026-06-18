@@ -195,3 +195,14 @@ Feature: Responsive layout
     Given I am viewing on a mobile screen
     When I open the import page
     Then the "input[type='file']" control is at least 44px tall
+
+  @mobile
+  Scenario: Statistics Daily Read chart never causes horizontal scroll on mobile
+    Given I am viewing on a mobile screen
+    And I have read entries across several days
+    When I open the statistics page
+    Then the ".stats-chart" element is visible
+    And the page has no horizontal scroll
+    When I hover the last daily-read bar
+    Then the ".stats-bar-col:last-child .stats-bar-tip" element is visible
+    And the page has no horizontal scroll
