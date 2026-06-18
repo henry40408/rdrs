@@ -2390,8 +2390,15 @@ summary {
     align-items: flex-end;
     gap: 2px;
     height: 160px;
+    padding-top: var(--space-6);
     padding-bottom: var(--space-6);
     position: relative;
+    /* Edge-bar tooltips extend past the chart; clip horizontally so they
+       never add a page-wide horizontal scrollbar on narrow viewports
+       (e.g. iPhone SE). `clip` coexists with overflow-y: visible, so the
+       tooltip still floats up into the reserved top padding. */
+    overflow-x: clip;
+    overflow-y: visible;
 }
 .stats-bar-col {
     flex: 1;
@@ -2424,6 +2431,43 @@ summary {
     right: 0;
     text-align: center;
 }
+.stats-bar-col:focus {
+    outline: none;
+}
+.stats-bar-col:focus-visible .stats-bar,
+.stats-bar-col:hover .stats-bar {
+    background: var(--color-accent-hover);
+}
+.stats-bar-tip {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: var(--space-1);
+    padding: 2px var(--space-2);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: nowrap;
+    color: var(--color-text);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.1s;
+    pointer-events: none;
+    z-index: 5;
+}
+.stats-bar-col:hover .stats-bar-tip,
+.stats-bar-col:focus .stats-bar-tip {
+    opacity: 1;
+    visibility: visible;
+}
+/* statistics.js shifts an edge tooltip horizontally (overriding the
+   translateX baseline below) so it stays inside the chart. Without JS the
+   overflow-x: clip above keeps the page from scrolling; outermost tooltips
+   simply clip at the edge and the value remains in each bar's aria-label. */
 
 .stats-columns {
     display: grid;
@@ -2433,6 +2477,17 @@ summary {
 @media (max-width: 768px) {
     .stats-columns { grid-template-columns: 1fr; }
     .stats-period-divider { display: none; }
+    /* Dense charts (bucketed 30d/90d) pack too many bars to label every one on
+       a narrow screen, so each MM/DD label truncates to "03/…". Show every
+       other label (plus the last) and let the shown ones overflow into the
+       now-empty neighbouring columns instead of clipping. */
+    .stats-chart--dense .stats-bar-label {
+        overflow: visible;
+        text-overflow: clip;
+    }
+    .stats-chart--dense .stats-bar-col:nth-child(even):not(:last-child) .stats-bar-label {
+        display: none;
+    }
 }
 
 .stats-bar-row { margin-bottom: var(--space-2); }

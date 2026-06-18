@@ -23,8 +23,97 @@ Given("I have a feed with {int} test entries", async ({ seed, currentUser }, cou
   seed.seedTestEntries(feedId, count);
 });
 
+Given("I have read entries across several days", async ({ seed, currentUser }) => {
+  const userId = seed.getUserId(currentUser.username);
+  const categoryId = seed.createCategory(userId, `Cat-${currentUser.username}`);
+  const feedId = seed.createFeed(
+    categoryId,
+    `https://example.com/${currentUser.username}.xml`,
+    "Stats Feed",
+  );
+  // One read entry per day across the default 7-day window so the chart
+  // renders a full row of bars (incl. the rightmost, whose tooltip is what
+  // used to overflow the viewport).
+  const ids = seed.seedTestEntries(feedId, 8);
+  ids.forEach((id, dayOffset) => seed.markRead(id, `-${dayOffset} days`));
+});
+
 When("I open the inbox", async ({ page, serverUrl }) => {
   await page.goto(`${serverUrl}/`);
+});
+
+Given("I have read entries spanning several weeks", async ({ seed, currentUser }) => {
+  const userId = seed.getUserId(currentUser.username);
+  const categoryId = seed.createCategory(userId, `Cat-${currentUser.username}`);
+  const feedId = seed.createFeed(
+    categoryId,
+    `https://example.com/${currentUser.username}.xml`,
+    "Stats Feed",
+  );
+  // One read entry per day across ~30 days so a 90d range has plenty of
+  // activity to bucket into bars.
+  const ids = seed.seedTestEntries(feedId, 30);
+  ids.forEach((id, dayOffset) => seed.markRead(id, `-${dayOffset} days`));
+});
+
+When("I open the statistics page for the {string} period", async ({ page, serverUrl }, period) => {
+  await page.goto(`${serverUrl}/statistics?period=${period}`);
+});
+
+When("I hover the last daily-read bar", async ({ page }) => {
+  await page.locator(".stats-bar-col").last().hover();
+});
+
+When("I hover daily-read bar number {int}", async ({ page }, n) => {
+  await page.locator(".stats-bar-col").nth(n - 1).hover();
+});
+
+Then("the visible daily-read tooltip is within the viewport", async ({ page }) => {
+  const rect = await page.evaluate(() => {
+    const tip = [...document.querySelectorAll(".stats-bar-tip")].find(
+      (t) => getComputedStyle(t).visibility === "visible",
+    );
+    if (!tip) return null;
+    const r = tip.getBoundingClientRect();
+    return { left: r.left, right: r.right, vw: document.documentElement.clientWidth };
+  });
+  expect(rect, "a tooltip should be visible").not.toBeNull();
+  expect(rect.left).toBeGreaterThanOrEqual(-0.5);
+  expect(rect.right).toBeLessThanOrEqual(rect.vw + 0.5);
+});
+
+Then("the daily-read chart is visible", async ({ page }) => {
+  await expect(page.locator(".stats-chart")).toBeVisible();
+});
+
+Then("the daily-read chart has at most {int} bars", async ({ page }, max) => {
+  const count = await page.locator(".stats-bar-col").count();
+  expect(count).toBeGreaterThan(0);
+  expect(count).toBeLessThanOrEqual(max);
+});
+
+Then("some daily-read axis labels are hidden", async ({ page }) => {
+  const total = await page.locator(".stats-bar-label").count();
+  const visible = await page.locator(".stats-bar-label:visible").count();
+  expect(total).toBeGreaterThan(0);
+  expect(visible).toBeLessThan(total);
+});
+
+Then("the daily-read bars are each at least {int}px wide", async ({ page }, min) => {
+  const cols = await page.locator(".stats-bar-col").all();
+  expect(cols.length).toBeGreaterThan(0);
+  for (const col of cols) {
+    const box = await col.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeGreaterThanOrEqual(min);
+  }
+});
+
+Then("the page has no horizontal scroll", async ({ page }) => {
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
 });
 
 When("I open the categories page", async ({ page, serverUrl }) => {

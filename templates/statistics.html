@@ -1,5 +1,9 @@
 {% extends "app_layout.html" %}
 
+{% block page_script %}
+    <script type="module" src="/static/js/statistics.js?v={{ layout.git_version }}"></script>
+{% endblock %}
+
 {% block page %}
     <div class="app-layout">
         <rdrs-sidebar active="statistics"></rdrs-sidebar>
@@ -54,9 +58,10 @@
                     {% if daily_max == 0 %}
                         <p class="muted">No read activity in this period</p>
                     {% else %}
-                        <div class="stats-chart">
+                        <div class="stats-chart{% if daily_read_counts.len() > 10 %} stats-chart--dense{% endif %}">
                             {% for d in daily_read_counts %}
-                                <div class="stats-bar-col" title="{{ d.date }}: {{ d.count }}">
+                                <div class="stats-bar-col" tabindex="0" aria-label="{{ d.date_label }}: {{ d.count }} read">
+                                    <div class="stats-bar-tip" role="tooltip">{{ d.date_label }}: <strong>{{ d.count }}</strong></div>
                                     <div class="stats-bar" style="height: {{ d.height_percent }}%"></div>
                                     <div class="stats-bar-label">{{ d.short_label }}</div>
                                 </div>
