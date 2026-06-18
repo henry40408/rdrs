@@ -2477,6 +2477,17 @@ summary {
 @media (max-width: 768px) {
     .stats-columns { grid-template-columns: 1fr; }
     .stats-period-divider { display: none; }
+    /* Dense charts (bucketed 30d/90d) pack too many bars to label every one on
+       a narrow screen, so each MM/DD label truncates to "03/…". Show every
+       other label (plus the last) and let the shown ones overflow into the
+       now-empty neighbouring columns instead of clipping. */
+    .stats-chart--dense .stats-bar-label {
+        overflow: visible;
+        text-overflow: clip;
+    }
+    .stats-chart--dense .stats-bar-col:nth-child(even):not(:last-child) .stats-bar-label {
+        display: none;
+    }
 }
 
 .stats-bar-row { margin-bottom: var(--space-2); }

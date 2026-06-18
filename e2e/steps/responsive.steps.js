@@ -92,6 +92,13 @@ Then("the daily-read chart has at most {int} bars", async ({ page }, max) => {
   expect(count).toBeLessThanOrEqual(max);
 });
 
+Then("some daily-read axis labels are hidden", async ({ page }) => {
+  const total = await page.locator(".stats-bar-label").count();
+  const visible = await page.locator(".stats-bar-label:visible").count();
+  expect(total).toBeGreaterThan(0);
+  expect(visible).toBeLessThan(total);
+});
+
 Then("the daily-read bars are each at least {int}px wide", async ({ page }, min) => {
   const cols = await page.locator(".stats-bar-col").all();
   expect(cols.length).toBeGreaterThan(0);

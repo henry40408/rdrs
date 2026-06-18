@@ -58,7 +58,7 @@
                     {% if daily_max == 0 %}
                         <p class="muted">No read activity in this period</p>
                     {% else %}
-                        <div class="stats-chart">
+                        <div class="stats-chart{% if daily_read_counts.len() > 10 %} stats-chart--dense{% endif %}">
                             {% for d in daily_read_counts %}
                                 <div class="stats-bar-col" tabindex="0" aria-label="{{ d.date_label }}: {{ d.count }} read">
                                     <div class="stats-bar-tip" role="tooltip">{{ d.date_label }}: <strong>{{ d.count }}</strong></div>
