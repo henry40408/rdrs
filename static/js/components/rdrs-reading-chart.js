@@ -6,6 +6,7 @@
 class RdrsReadingChart extends HTMLElement {
     connectedCallback() {
         this.card = this.querySelector('[data-chart-card]');
+        if (!this.card) return;
         this.cols = Array.from(this.querySelectorAll('.stats-bar-col'));
         this._active = null;
 

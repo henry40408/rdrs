@@ -72,6 +72,7 @@
     --color-accent: light-dark(#B8860B, #D4A853);
     --color-accent-hover: light-dark(#9A7209, #E0BA6A);
     --color-accent-subtle: light-dark(rgba(184, 134, 11, 0.1), rgba(212, 168, 83, 0.12));
+    --color-accent-muted: light-dark(rgba(184, 134, 11, 0.4), rgba(212, 168, 83, 0.4));
     --color-success: light-dark(#2D7A3A, #4ADE80);
     --color-error: light-dark(#B91C1C, #F87171);
     --color-warning: light-dark(#92610E, #FBBF24);
@@ -2390,7 +2391,6 @@ summary {
     display: flex;
     align-items: stretch;
     gap: var(--space-2);
-    margin-bottom: var(--space-6);
     touch-action: manipulation;
 }
 .stats-y-axis {
@@ -2444,7 +2444,7 @@ summary {
 }
 .stats-bar {
     width: 100%;
-    background: var(--color-accent-subtle);
+    background: var(--color-accent-muted);
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     min-height: 2px;
     transition: height 0.2s, background 0.15s;
