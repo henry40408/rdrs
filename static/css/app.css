@@ -2464,17 +2464,10 @@ summary {
     opacity: 1;
     visibility: visible;
 }
-/* Keep the outermost tooltips inside the chart so they stay fully readable
-   (the overflow-x: clip above is the safety net for dense, many-bar views). */
-.stats-bar-col:first-child .stats-bar-tip {
-    left: 0;
-    transform: translateX(0);
-}
-.stats-bar-col:last-child .stats-bar-tip {
-    left: auto;
-    right: 0;
-    transform: translateX(0);
-}
+/* statistics.js shifts an edge tooltip horizontally (overriding the
+   translateX baseline below) so it stays inside the chart. Without JS the
+   overflow-x: clip above keeps the page from scrolling; outermost tooltips
+   simply clip at the edge and the value remains in each bar's aria-label. */
 
 .stats-columns {
     display: grid;

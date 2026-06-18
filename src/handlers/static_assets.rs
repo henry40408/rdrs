@@ -9,6 +9,10 @@ const FILES: &[(&str, &str)] = &[
     ("css/app.css", include_str!("../../static/css/app.css")),
     ("js/app.js", include_str!("../../static/js/app.js")),
     ("js/passkey.js", include_str!("../../static/js/passkey.js")),
+    (
+        "js/statistics.js",
+        include_str!("../../static/js/statistics.js"),
+    ),
     ("js/utils.js", include_str!("../../static/js/utils.js")),
     (
         "js/components/rdrs-flash.js",

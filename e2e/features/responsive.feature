@@ -216,3 +216,7 @@ Feature: Responsive layout
     And the daily-read chart has at most 14 bars
     And the daily-read bars are each at least 16px wide
     And the page has no horizontal scroll
+    When I hover daily-read bar number 2
+    Then the visible daily-read tooltip is within the viewport
+    When I hover the last daily-read bar
+    Then the visible daily-read tooltip is within the viewport

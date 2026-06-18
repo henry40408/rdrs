@@ -1,5 +1,9 @@
 {% extends "app_layout.html" %}
 
+{% block page_script %}
+    <script type="module" src="/static/js/statistics.js?v={{ layout.git_version }}"></script>
+{% endblock %}
+
 {% block page %}
     <div class="app-layout">
         <rdrs-sidebar active="statistics"></rdrs-sidebar>

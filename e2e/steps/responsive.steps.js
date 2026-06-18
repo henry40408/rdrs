@@ -64,6 +64,24 @@ When("I hover the last daily-read bar", async ({ page }) => {
   await page.locator(".stats-bar-col").last().hover();
 });
 
+When("I hover daily-read bar number {int}", async ({ page }, n) => {
+  await page.locator(".stats-bar-col").nth(n - 1).hover();
+});
+
+Then("the visible daily-read tooltip is within the viewport", async ({ page }) => {
+  const rect = await page.evaluate(() => {
+    const tip = [...document.querySelectorAll(".stats-bar-tip")].find(
+      (t) => getComputedStyle(t).visibility === "visible",
+    );
+    if (!tip) return null;
+    const r = tip.getBoundingClientRect();
+    return { left: r.left, right: r.right, vw: document.documentElement.clientWidth };
+  });
+  expect(rect, "a tooltip should be visible").not.toBeNull();
+  expect(rect.left).toBeGreaterThanOrEqual(-0.5);
+  expect(rect.right).toBeLessThanOrEqual(rect.vw + 0.5);
+});
+
 Then("the daily-read chart is visible", async ({ page }) => {
   await expect(page.locator(".stats-chart")).toBeVisible();
 });
