@@ -31,7 +31,9 @@ Given("I have read articles over several days", async ({ currentUser, seed }) =>
 
 When("I tap the tallest read-activity bar", async ({ page }) => {
   // The chart renders oldest → newest; the last column is today, which has count 3.
-  await page.locator("rdrs-reading-chart .stats-bar-col").last().click();
+  const bar = page.locator("rdrs-reading-chart .stats-bar-col").last();
+  await bar.waitFor();
+  await bar.click();
 });
 
 Then("the chart info card shows a read count", async ({ page }) => {
