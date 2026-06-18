@@ -2453,7 +2453,6 @@ summary {
     background: var(--color-bg);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    box-shadow: var(--shadow-lg);
     opacity: 0;
     visibility: hidden;
     transition: opacity 0.1s;
