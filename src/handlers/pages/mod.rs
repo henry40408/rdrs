@@ -2140,6 +2140,13 @@ pub struct DailyReadView {
     pub short_label: String,
 }
 
+/// One Y-axis gridline + label on the daily-read chart. `percent` is the
+/// distance from the chart bottom, against the nice-max scale.
+pub struct TickView {
+    pub value: i64,
+    pub percent: f64,
+}
+
 /// One row in the "Entries by Category" list, with pre-computed bar width.
 pub struct CategoryStatsView {
     pub name: String,
@@ -2152,6 +2159,44 @@ pub struct FeedStatsView {
     pub title: String,
     pub count: i64,
     pub width_percent: f64,
+}
+
+/// Pick a "nice" tick step (1-2-5 × 10ⁿ) targeting ~4 ticks for the given max.
+fn nice_step(max: i64) -> i64 {
+    if max <= 4 {
+        return 1;
+    }
+    let raw = max as f64 / 4.0;
+    let mag = 10f64.powf(raw.log10().floor());
+    let norm = raw / mag;
+    let nice = if norm <= 1.0 {
+        1.0
+    } else if norm <= 2.0 {
+        2.0
+    } else if norm <= 5.0 {
+        5.0
+    } else {
+        10.0
+    };
+    ((nice * mag).round() as i64).max(1)
+}
+
+/// Nice-max ceiling + Y-axis ticks for a chart whose largest value is `max`
+/// (`max > 0`). Bars are scaled against the returned `nice_max` so their tops
+/// align with the gridlines.
+fn compute_y_axis(max: i64) -> (i64, Vec<TickView>) {
+    let step = nice_step(max);
+    let nice_max = ((max + step - 1) / step) * step;
+    let mut ticks = Vec::new();
+    let mut v = step;
+    while v <= nice_max {
+        ticks.push(TickView {
+            value: v,
+            percent: (v as f64 * 100.0) / nice_max as f64,
+        });
+        v += step;
+    }
+    (nice_max, ticks)
 }
 
 /// Format a byte count for display (binary units, one decimal above 1 KB).
@@ -2208,6 +2253,7 @@ pub struct StatisticsTemplate {
     pub read_rate_fmt: String,
     pub daily_max: i64,
     pub daily_read_counts: Vec<DailyReadView>,
+    pub y_ticks: Vec<TickView>,
     pub categories: Vec<CategoryStatsView>,
     pub top_feeds: Vec<FeedStatsView>,
     pub admin: Option<AdminStatsView>,
@@ -2636,6 +2682,11 @@ pub async fn statistics_page(
     };
 
     let daily_max = daily.iter().map(|d| d.count).max().unwrap_or(0);
+    let (daily_scale_max, y_ticks) = if daily_max > 0 {
+        compute_y_axis(daily_max)
+    } else {
+        (0, Vec::new())
+    };
     let cat_max = cats.iter().map(|c| c.count).max().unwrap_or(0);
     let feed_max = feeds.iter().map(|f| f.count).max().unwrap_or(0);
 
@@ -2648,8 +2699,8 @@ pub async fn statistics_page(
             } else {
                 date_str.clone()
             };
-            let height_percent = if daily_max > 0 {
-                (d.count as f64 * 100.0) / daily_max as f64
+            let height_percent = if daily_scale_max > 0 {
+                (d.count as f64 * 100.0) / daily_scale_max as f64
             } else {
                 0.0
             };
@@ -2725,6 +2776,7 @@ pub async fn statistics_page(
             read_rate_fmt: format!("{:.1}", overview.read_rate()),
             daily_max,
             daily_read_counts,
+            y_ticks,
             categories,
             top_feeds,
             admin,
@@ -2972,5 +3024,45 @@ mod tests {
         assert_eq!(super::format_db_bytes(1536), "1.5 KB");
         assert_eq!(super::format_db_bytes(5 * 1024 * 1024), "5.0 MB");
         assert_eq!(super::format_db_bytes(3 * 1024 * 1024 * 1024), "3.0 GB");
+    }
+
+    #[test]
+    fn nice_step_small_maxes_are_one() {
+        assert_eq!(super::nice_step(1), 1);
+        assert_eq!(super::nice_step(3), 1);
+        assert_eq!(super::nice_step(4), 1);
+    }
+
+    #[test]
+    fn nice_step_uses_one_two_five_progression() {
+        assert_eq!(super::nice_step(8), 2);
+        assert_eq!(super::nice_step(11), 5);
+        assert_eq!(super::nice_step(50), 20);
+    }
+
+    #[test]
+    fn compute_y_axis_single_day() {
+        let (nice_max, ticks) = super::compute_y_axis(1);
+        assert_eq!(nice_max, 1);
+        assert_eq!(ticks.len(), 1);
+        assert_eq!(ticks[0].value, 1);
+        assert!((ticks[0].percent - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn compute_y_axis_rounds_up_to_nice_max() {
+        let (nice_max, ticks) = super::compute_y_axis(11);
+        assert_eq!(nice_max, 15);
+        let values: Vec<i64> = ticks.iter().map(|t| t.value).collect();
+        assert_eq!(values, vec![5, 10, 15]);
+        assert!((ticks[1].percent - (10.0 * 100.0 / 15.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn compute_y_axis_exact_small_range() {
+        let (nice_max, ticks) = super::compute_y_axis(4);
+        assert_eq!(nice_max, 4);
+        let values: Vec<i64> = ticks.iter().map(|t| t.value).collect();
+        assert_eq!(values, vec![1, 2, 3, 4]);
     }
 }
