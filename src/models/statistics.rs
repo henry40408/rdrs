@@ -34,6 +34,39 @@ pub struct DailyReadCount {
     pub count: i64,
 }
 
+/// A contiguous span of days collapsed into one chart bar.
+///
+/// `start == end` when the bucket covers a single day; otherwise it spans
+/// `[start, end]` inclusive and `count` is the sum over those days.
+pub struct DailyBucket {
+    pub start: NaiveDate,
+    pub end: NaiveDate,
+    pub count: i64,
+}
+
+/// Collapse per-day read counts into at most `max_bars` contiguous buckets so
+/// a dense date range stays readable (and tappable) as a fixed number of bars.
+///
+/// Each bucket covers `ceil(len / max_bars)` consecutive days; when the input
+/// already fits within `max_bars`, every bucket is a single day (no change).
+/// Input is assumed chronologically ordered, as produced by
+/// [`get_daily_read_counts`].
+pub fn bucket_daily_counts(daily: &[DailyReadCount], max_bars: usize) -> Vec<DailyBucket> {
+    let max_bars = max_bars.max(1);
+    if daily.is_empty() {
+        return Vec::new();
+    }
+    let bucket_size = daily.len().div_ceil(max_bars);
+    daily
+        .chunks(bucket_size)
+        .map(|chunk| DailyBucket {
+            start: chunk.first().expect("chunk is non-empty").date,
+            end: chunk.last().expect("chunk is non-empty").date,
+            count: chunk.iter().map(|d| d.count).sum(),
+        })
+        .collect()
+}
+
 /// A category with its entry count.
 pub struct CategoryCount {
     pub name: String,
@@ -570,6 +603,80 @@ mod tests {
         assert_eq!(counts[1].count, 2); // Jan 2: e1+e2 read
         assert_eq!(counts[2].count, 1); // Jan 3: e3 read
         assert_eq!(counts[3].count, 0); // Jan 4: nothing
+    }
+
+    /// Build a chronological run of `DailyReadCount`s starting at `2024-01-01`,
+    /// one per element of `counts`.
+    fn daily_run(counts: &[i64]) -> Vec<DailyReadCount> {
+        let start = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        counts
+            .iter()
+            .enumerate()
+            .map(|(i, &count)| DailyReadCount {
+                date: start + chrono::Duration::days(i as i64),
+                count,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_bucket_daily_counts_empty() {
+        assert!(bucket_daily_counts(&[], 14).is_empty());
+    }
+
+    #[test]
+    fn test_bucket_daily_counts_no_aggregation_within_max() {
+        let daily = daily_run(&[0, 2, 1, 0]);
+        let buckets = bucket_daily_counts(&daily, 14);
+
+        assert_eq!(buckets.len(), 4);
+        for (i, b) in buckets.iter().enumerate() {
+            assert_eq!(b.start, daily[i].date);
+            assert_eq!(b.end, daily[i].date, "single-day bucket spans one day");
+            assert_eq!(b.count, daily[i].count);
+        }
+    }
+
+    #[test]
+    fn test_bucket_daily_counts_aggregates_over_max() {
+        // 15 days > max 14 → bucket_size = ceil(15/14) = 2 → ceil(15/2) = 8 buckets.
+        let daily = daily_run(&[1; 15]);
+        let buckets = bucket_daily_counts(&daily, 14);
+
+        assert_eq!(buckets.len(), 8);
+        // First bucket spans the first two days, summed.
+        assert_eq!(
+            buckets[0].start,
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+        );
+        assert_eq!(buckets[0].end, NaiveDate::from_ymd_opt(2024, 1, 2).unwrap());
+        assert_eq!(buckets[0].count, 2);
+        // Every bucket holds at most 14 bars and no bucket exceeds bucket_size days.
+        assert!(buckets.len() <= 14);
+    }
+
+    #[test]
+    fn test_bucket_daily_counts_last_bucket_partial() {
+        // 15 days, size 2 → last (8th) bucket has a single leftover day.
+        let daily = daily_run(&[1; 15]);
+        let buckets = bucket_daily_counts(&daily, 14);
+
+        let last = buckets.last().unwrap();
+        assert_eq!(last.start, NaiveDate::from_ymd_opt(2024, 1, 15).unwrap());
+        assert_eq!(last.end, NaiveDate::from_ymd_opt(2024, 1, 15).unwrap());
+        assert_eq!(last.count, 1);
+    }
+
+    #[test]
+    fn test_bucket_daily_counts_sums_within_bucket() {
+        // 28 days → size = ceil(28/14) = 2; counts 1..=28 → bucket 0 = 1+2 = 3.
+        let counts: Vec<i64> = (1..=28).collect();
+        let daily = daily_run(&counts);
+        let buckets = bucket_daily_counts(&daily, 14);
+
+        assert_eq!(buckets.len(), 14);
+        assert_eq!(buckets[0].count, 3); // 1 + 2
+        assert_eq!(buckets[13].count, 55); // 27 + 28
     }
 
     #[test]

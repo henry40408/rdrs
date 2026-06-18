@@ -206,3 +206,13 @@ Feature: Responsive layout
     When I hover the last daily-read bar
     Then the ".stats-bar-col:last-child .stats-bar-tip" element is visible
     And the page has no horizontal scroll
+
+  @mobile
+  Scenario: Dense statistics ranges bucket into a tappable number of bars on mobile
+    Given I am viewing on a mobile screen
+    And I have read entries spanning several weeks
+    When I open the statistics page for the "90d" period
+    Then the daily-read chart is visible
+    And the daily-read chart has at most 14 bars
+    And the daily-read bars are each at least 16px wide
+    And the page has no horizontal scroll

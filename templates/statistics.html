@@ -56,8 +56,8 @@
                     {% else %}
                         <div class="stats-chart">
                             {% for d in daily_read_counts %}
-                                <div class="stats-bar-col" tabindex="0" aria-label="{{ d.date }}: {{ d.count }} read">
-                                    <div class="stats-bar-tip" role="tooltip">{{ d.date }}: <strong>{{ d.count }}</strong></div>
+                                <div class="stats-bar-col" tabindex="0" aria-label="{{ d.date_label }}: {{ d.count }} read">
+                                    <div class="stats-bar-tip" role="tooltip">{{ d.date_label }}: <strong>{{ d.count }}</strong></div>
                                     <div class="stats-bar" style="height: {{ d.height_percent }}%"></div>
                                     <div class="stats-bar-label">{{ d.short_label }}</div>
                                 </div>

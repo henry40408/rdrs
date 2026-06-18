@@ -42,8 +42,46 @@ When("I open the inbox", async ({ page, serverUrl }) => {
   await page.goto(`${serverUrl}/`);
 });
 
+Given("I have read entries spanning several weeks", async ({ seed, currentUser }) => {
+  const userId = seed.getUserId(currentUser.username);
+  const categoryId = seed.createCategory(userId, `Cat-${currentUser.username}`);
+  const feedId = seed.createFeed(
+    categoryId,
+    `https://example.com/${currentUser.username}.xml`,
+    "Stats Feed",
+  );
+  // One read entry per day across ~30 days so a 90d range has plenty of
+  // activity to bucket into bars.
+  const ids = seed.seedTestEntries(feedId, 30);
+  ids.forEach((id, dayOffset) => seed.markRead(id, `-${dayOffset} days`));
+});
+
+When("I open the statistics page for the {string} period", async ({ page, serverUrl }, period) => {
+  await page.goto(`${serverUrl}/statistics?period=${period}`);
+});
+
 When("I hover the last daily-read bar", async ({ page }) => {
   await page.locator(".stats-bar-col").last().hover();
+});
+
+Then("the daily-read chart is visible", async ({ page }) => {
+  await expect(page.locator(".stats-chart")).toBeVisible();
+});
+
+Then("the daily-read chart has at most {int} bars", async ({ page }, max) => {
+  const count = await page.locator(".stats-bar-col").count();
+  expect(count).toBeGreaterThan(0);
+  expect(count).toBeLessThanOrEqual(max);
+});
+
+Then("the daily-read bars are each at least {int}px wide", async ({ page }, min) => {
+  const cols = await page.locator(".stats-bar-col").all();
+  expect(cols.length).toBeGreaterThan(0);
+  for (const col of cols) {
+    const box = await col.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeGreaterThanOrEqual(min);
+  }
 });
 
 Then("the page has no horizontal scroll", async ({ page }) => {

@@ -2132,9 +2132,14 @@ impl IntoResponse for AdminTemplate {
     }
 }
 
-/// One day in the daily-read chart, with pre-computed bar height + label.
+/// One bar in the daily-read chart, with pre-computed bar height + labels.
+///
+/// A bar may span more than one day once the range is bucketed (see
+/// [`crate::models::statistics::bucket_daily_counts`]); `date_label` is the
+/// human-facing span shown in the tooltip, while `short_label` is the compact
+/// axis label under the bar.
 pub struct DailyReadView {
-    pub date: String,
+    pub date_label: String,
     pub count: i64,
     pub height_percent: f64,
     pub short_label: String,
@@ -2635,27 +2640,34 @@ pub async fn statistics_page(
         (String::new(), String::new())
     };
 
-    let daily_max = daily.iter().map(|d| d.count).max().unwrap_or(0);
+    // Collapse the per-day series into at most MAX_DAILY_BARS bars so dense
+    // ranges (30d/90d) stay wide enough to tap on mobile instead of degrading
+    // into hairline bars. 7-day ranges fit within the cap and stay per-day.
+    const MAX_DAILY_BARS: usize = 14;
+    let buckets = crate::models::statistics::bucket_daily_counts(&daily, MAX_DAILY_BARS);
+
+    let daily_max = buckets.iter().map(|b| b.count).max().unwrap_or(0);
     let cat_max = cats.iter().map(|c| c.count).max().unwrap_or(0);
     let feed_max = feeds.iter().map(|f| f.count).max().unwrap_or(0);
 
-    let daily_read_counts = daily
+    let daily_read_counts = buckets
         .into_iter()
-        .map(|d| {
-            let date_str = d.date.format("%Y-%m-%d").to_string();
-            let short_label = if date_str.len() >= 10 {
-                format!("{}/{}", &date_str[5..7], &date_str[8..10])
+        .map(|b| {
+            let short_label = b.start.format("%m/%d").to_string();
+            let date_label = if b.start == b.end {
+                b.start.format("%Y-%m-%d").to_string()
             } else {
-                date_str.clone()
+                // Multi-day bucket: full start date, compact end date.
+                format!("{} – {}", b.start.format("%Y-%m-%d"), b.end.format("%m/%d"))
             };
             let height_percent = if daily_max > 0 {
-                (d.count as f64 * 100.0) / daily_max as f64
+                (b.count as f64 * 100.0) / daily_max as f64
             } else {
                 0.0
             };
             DailyReadView {
-                date: date_str,
-                count: d.count,
+                date_label,
+                count: b.count,
                 height_percent,
                 short_label,
             }
