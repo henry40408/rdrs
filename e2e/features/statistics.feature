@@ -8,3 +8,8 @@ Feature: Daily Read Articles chart
     When I open the statistics page
     And I tap the tallest read-activity bar
     Then the chart info card shows a read count
+
+  Scenario: The info card appears just above the tapped bar
+    When I open the statistics page
+    And I tap the single-read bar
+    Then the info card sits just above that bar

@@ -42,3 +42,24 @@ Then("the chart info card shows a read count", async ({ page }) => {
   // Format is "MM/DD · N"; assert it ends with the count 3.
   await expect(card).toContainText(/·\s*3$/);
 });
+
+When("I tap the single-read bar", async ({ page }) => {
+  // The "yesterday" column has count 1 — a short bar, well below the chart top.
+  const bar = page.locator('rdrs-reading-chart .stats-bar-col[data-count="1"]').first();
+  await bar.waitFor();
+  await bar.click();
+});
+
+Then("the info card sits just above that bar", async ({ page }) => {
+  const card = page.locator("rdrs-reading-chart .stats-chart-card");
+  // Measure the visible coloured fill (.stats-bar), not the full-height column.
+  const barFill = page.locator('rdrs-reading-chart .stats-bar-col[data-count="1"] .stats-bar').first();
+  await expect(card).toBeVisible();
+  const cardBox = await card.boundingBox();
+  const barBox = await barFill.boundingBox();
+  // The card's bottom edge should hover just above the bar fill's top edge — a
+  // small gap, NOT floating at the chart's top edge regardless of bar height.
+  const gap = barBox.y - (cardBox.y + cardBox.height);
+  expect(gap).toBeGreaterThanOrEqual(0);
+  expect(gap).toBeLessThanOrEqual(12);
+});

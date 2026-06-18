@@ -43,10 +43,15 @@ class RdrsReadingChart extends HTMLElement {
         col.classList.add('is-active');
 
         this.card.textContent = `${col.dataset.date} · ${col.dataset.count}`;
+        // Anchor the card to the visible bar fill, not the full-height column —
+        // otherwise it floats at the chart's top edge for every short bar.
         const wrapRect = this.getBoundingClientRect();
-        const colRect = col.getBoundingClientRect();
-        const left = colRect.left - wrapRect.left + colRect.width / 2;
+        const bar = col.querySelector('.stats-bar') || col;
+        const barRect = bar.getBoundingClientRect();
+        const left = barRect.left - wrapRect.left + barRect.width / 2;
+        const top = barRect.top - wrapRect.top - 6;
         this.card.style.left = `${left}px`;
+        this.card.style.top = `${top}px`;
         this.card.hidden = false;
     }
 
