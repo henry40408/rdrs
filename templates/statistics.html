@@ -54,14 +54,27 @@
                     {% if daily_max == 0 %}
                         <p class="muted">No read activity in this period</p>
                     {% else %}
-                        <div class="stats-chart">
-                            {% for d in daily_read_counts %}
-                                <div class="stats-bar-col" title="{{ d.date }}: {{ d.count }}">
-                                    <div class="stats-bar" style="height: {{ d.height_percent }}%"></div>
-                                    <div class="stats-bar-label">{{ d.short_label }}</div>
-                                </div>
-                            {% endfor %}
-                        </div>
+                        <rdrs-reading-chart class="stats-chart-wrap">
+                            <div class="stats-y-axis" aria-hidden="true">
+                                {% for t in y_ticks %}
+                                    <span class="stats-y-tick" style="bottom: {{ t.percent }}%">{{ t.value }}</span>
+                                {% endfor %}
+                            </div>
+                            <div class="stats-chart">
+                                {% for t in y_ticks %}
+                                    <div class="stats-gridline" style="bottom: {{ t.percent }}%" aria-hidden="true"></div>
+                                {% endfor %}
+                                {% for d in daily_read_counts %}
+                                    <div class="stats-bar-col" data-date="{{ d.short_label }}" data-count="{{ d.count }}"
+                                         title="{{ d.date }}: {{ d.count }}" tabindex="0" role="button"
+                                         aria-label="{{ d.date }}: {{ d.count }} read">
+                                        <div class="stats-bar" style="height: {{ d.height_percent }}%"></div>
+                                        <div class="stats-bar-label">{{ d.short_label }}</div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                            <div class="stats-chart-card" data-chart-card hidden></div>
+                        </rdrs-reading-chart>
                     {% endif %}
                 </div>
 

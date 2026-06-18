@@ -2385,13 +2385,46 @@ summary {
     margin-bottom: var(--space-3);
 }
 
+.stats-chart-wrap {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    gap: var(--space-2);
+    margin-bottom: var(--space-6);
+    touch-action: manipulation;
+}
+.stats-y-axis {
+    position: relative;
+    width: 1.75rem;
+    height: 160px;
+    flex-shrink: 0;
+}
+.stats-y-tick {
+    position: absolute;
+    right: 0;
+    transform: translateY(50%);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    color: var(--color-text-muted);
+    line-height: 1;
+}
 .stats-chart {
+    flex: 1;
     display: flex;
     align-items: flex-end;
     gap: 2px;
     height: 160px;
-    padding-bottom: var(--space-6);
+    margin-bottom: var(--space-6);
     position: relative;
+    min-width: 0;
+}
+.stats-gridline {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--color-border-light);
+    z-index: 0;
 }
 .stats-bar-col {
     flex: 1;
@@ -2402,13 +2435,23 @@ summary {
     height: 100%;
     min-width: 0;
     position: relative;
+    z-index: 1;
+    cursor: pointer;
+}
+.stats-bar-col:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
 }
 .stats-bar {
     width: 100%;
-    background: var(--color-accent);
+    background: var(--color-accent-subtle);
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     min-height: 2px;
-    transition: height 0.2s;
+    transition: height 0.2s, background 0.15s;
+}
+.stats-bar-col.is-active .stats-bar,
+.stats-bar-col:hover .stats-bar {
+    background: var(--color-accent);
 }
 .stats-bar-label {
     font-family: var(--font-ui);
@@ -2423,6 +2466,24 @@ summary {
     left: 0;
     right: 0;
     text-align: center;
+}
+.stats-chart-card {
+    position: absolute;
+    top: 0;
+    transform: translate(-50%, -100%);
+    background: var(--color-text);
+    color: var(--color-bg);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    line-height: 1;
+    padding: 0.3rem 0.5rem;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 2;
+}
+.stats-chart-card[hidden] {
+    display: none;
 }
 
 .stats-columns {
