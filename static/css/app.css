@@ -856,6 +856,19 @@ select {
     /* Same 44px touch height on desktop as mobile so selects don't shrink
        between breakpoints (see the former max-width:1024px override). */
     min-height: var(--touch-min);
+    /* iOS WebKit renders <select> as a native menulist that ignores the
+       author font-size, so the control stayed small while the rest of the
+       UI scaled up (it looked fine on Chromium/Firefox). Drop the native
+       appearance so the text is laid out by the normal CSS box — font-size
+       now applies consistently across engines — and supply our own chevron
+       (muted grey works in both themes). */
+    -webkit-appearance: none;
+    appearance: none;
+    padding-right: var(--space-8);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' stroke='%238A847D' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right var(--space-3) center;
+    background-size: 12px 8px;
 }
 
 textarea {
@@ -1303,7 +1316,10 @@ td input[type="text"] {
    button-style chips (e.g. .feed-filter-link on /feeds) so the row
    reads as one control strip rather than mismatched heights. */
 .filter-bar select {
-    padding: var(--space-1) var(--space-2);
+    /* Extra right padding leaves room for the inherited chevron; the
+       base select's background-position is nudged in to match below. */
+    padding: var(--space-1) var(--space-6) var(--space-1) var(--space-2);
+    background-position: right var(--space-2) center;
     font-size: var(--font-sm);
 }
 
