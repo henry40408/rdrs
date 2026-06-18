@@ -174,4 +174,8 @@
             </div>
         </main>
     </div>
+    {% block page_script %}
+    <link rel="modulepreload" href="/static/js/components/rdrs-reading-chart.js?v={{ layout.git_version }}">
+    <script type="module" src="/static/js/components/rdrs-reading-chart.js?v={{ layout.git_version }}"></script>
+    {% endblock %}
 {% endblock %}
