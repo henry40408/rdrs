@@ -44,6 +44,11 @@ async fn main() {
     // Create cancellation token for graceful shutdown
     let cancel_token = CancellationToken::new();
 
+    // Event bus for SSE live updates (sidebar + summary). Capacity covers a
+    // burst of mutations without lagging a slow subscriber; a lagged receiver
+    // recovers via a sidebar resync signal.
+    let events = services::EventBus::new(256);
+
     // Create summary cache (max 1000 entries, 24 hour TTL)
     let summary_cache = services::create_summary_cache(1000, 24);
 
@@ -92,6 +97,8 @@ async fn main() {
         summary_tx,
         sidebar_cache,
         summary_cancels,
+        events: events.clone(),
+        shutdown: cancel_token.clone(),
     };
 
     // Start background sync task

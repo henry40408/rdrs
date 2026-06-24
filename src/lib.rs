@@ -52,6 +52,8 @@ pub struct AppState {
     pub summary_tx: mpsc::Sender<SummaryJob>,
     pub sidebar_cache: Arc<SidebarCache>,
     pub summary_cancels: services::CancelRegistry,
+    pub events: services::EventBus,
+    pub shutdown: tokio_util::sync::CancellationToken,
 }
 
 pub fn create_router(state: AppState) -> Router {
