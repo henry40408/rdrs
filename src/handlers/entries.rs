@@ -97,6 +97,24 @@ impl IntoResponse for SummarizeCleared {
     }
 }
 
+/// `GET /entries/{id}/summary/fragment` — re-renders `#rp-summary-container`
+/// for the entry's current summary state. Used by the SSE client to refresh
+/// the open reading pane when a `summary` event arrives.
+#[derive(Template)]
+#[template(path = "_summary_fragment.html")]
+pub struct SummaryFragment {
+    pub pane: ReadingPaneView,
+}
+
+impl IntoResponse for SummaryFragment {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
 /// `GET /entries/{id}/fragment` — returns the reading-pane HTML fragment for
 /// the given entry. The entry must belong to the authenticated user; otherwise
 /// a 404 is returned (same semantics as the JSON `/api/entries/{id}` endpoint
@@ -172,6 +190,25 @@ pub async fn entry_fragment(
         sidebar_unread_payload_json,
     }
     .into_response())
+}
+
+/// `GET /entries/{id}/summary/fragment` — returns the summary container swap
+/// fragment for the entry. Ownership enforced by `find_by_id_for_user` (404
+/// otherwise). Does NOT mark the entry read (unlike `entry_fragment`).
+pub async fn summary_fragment(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<SummaryFragment> {
+    let user_id = auth_user.user.id;
+    let ewf = state
+        .db
+        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
+        .await??
+        .ok_or(AppError::EntryNotFound)?;
+    // has_save/has_kagi are irrelevant to the summary container; pass false.
+    let pane = build_reading_pane_view(&state, user_id, &ewf, false, false).await?;
+    Ok(SummaryFragment { pane })
 }
 
 /// Read the user's save-services config + Kagi config to drive the

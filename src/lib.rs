@@ -189,6 +189,13 @@ pub fn create_router(state: AppState) -> Router {
             "/entries/{id}/fragment",
             get(handlers::entries::entry_fragment),
         )
+        // Summary container fragment endpoint — re-renders only #rp-summary-container
+        // for the SSE client. Registered before other /entries/{id}/... routes so
+        // the literal `summary/fragment` segments resolve before `{action}` wildcards.
+        .route(
+            "/entries/{id}/summary/fragment",
+            get(handlers::entries::summary_fragment),
+        )
         // Star / read toggle action endpoints. Return multi-target HTML
         // (`_entry_actions_multi.html`) swapping the row + sidebar-unread.
         // Registered after /entries/{id}/fragment so literal path segments
