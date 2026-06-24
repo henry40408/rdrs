@@ -78,6 +78,16 @@ the cross-cutting facts that span multiple files.
 - **Google Reader API** compatibility lives under `handlers/greader/` so existing
   GReader clients (FeedMe, Read You, etc.) can sync.
 
+- **SSE live updates** (`handlers/events.rs`, `services/events.rs`). A single
+  authenticated `GET /events` endpoint streams per-user `sidebar` / `summary`
+  signals from an in-memory `EventBus` (a thin wrapper over
+  `tokio::sync::broadcast`). Mutation paths call `emit_sidebar` or
+  `emit_summary`; the browser's one `EventSource` refetches `/api/sidebar` on
+  `sidebar` and rewrites the entry-row badge + swaps the reading pane's summary
+  container on `summary`. The stream `select!`s on the global `CancellationToken`
+  so SIGINT tears it down promptly. `/events` is registered outside the
+  ETag/Compression/Timeout layers in `lib.rs`.
+
 - **Security cross-cuts:** Ammonia HTML sanitization + tracking-param/pixel
   removal (`services/sanitize.rs`); HMAC-SHA256 signed image proxy
   (`services/image_proxy.rs`); shared SSRF validation (`utils/url_validation.rs`)

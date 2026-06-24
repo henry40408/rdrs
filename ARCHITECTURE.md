@@ -60,6 +60,7 @@ src/
 │   ├── static_assets.rs # Static JS assets (embedded at compile time)
 │   ├── proxy.rs         # Image proxy
 │   ├── health.rs        # Health check endpoint
+│   ├── events.rs        # SSE live-update stream
 │   └── greader/         # Google Reader API compatibility
 │       ├── auth.rs      # ClientLogin authentication
 │       ├── subscription.rs # Subscription list/edit, OPML import
@@ -74,6 +75,7 @@ src/
 │
 ├── services/            # Business logic
 │   ├── background.rs    # Background sync scheduler
+│   ├── events.rs        # In-memory EventBus for SSE live updates
 │   ├── feed_sync.rs     # Feed refresh logic
 │   ├── feed_discovery.rs# Feed URL detection
 │   ├── readability.rs   # Content extraction
@@ -271,6 +273,15 @@ instead of re-downloading every image.
   - Used by Google Reader API when `PUBLIC_BASE_URL` is configured
   - Required for native RSS clients (e.g., NetNewsWire) that render HTML directly
   - Configured via `PUBLIC_BASE_URL` environment variable
+
+### SSE Live Updates
+
+A single `GET /events` endpoint (`handlers/events.rs`) streams per-user Server-Sent Events to each open browser tab. Mutation paths (mark-read, mark-unread, mark-all, summarize, etc.) call `EventBus::emit_sidebar` or `emit_summary` on the shared in-memory `EventBus` (`services/events.rs`), which is a thin wrapper over a `tokio::sync::broadcast` channel. The browser's `EventSource` (wired up in `installSse()` in `static/js/app.js`) handles two event types:
+
+- **`sidebar`** — triggers a notify-and-fetch refresh of `/api/sidebar`, updating the unread/summarized badge counts without a page reload.
+- **`summary`** — carries `{entry_id, status}` JSON; the client rewrites the entry-row badge and, if that entry is open in the reading pane, swaps `GET /entries/{id}/summary/fragment` into `#rp-summary-container`.
+
+The stream loops with a `select!` that races event delivery against the global `CancellationToken`, so SIGINT cleanly tears down all open SSE connections as part of graceful shutdown. `/events` is registered outside the ETag, Compression, Date-header, and Timeout middleware layers — those layers buffer or time-limit responses, which is fatal for a long-lived stream.
 
 ### External Services
 
