@@ -89,6 +89,18 @@ Feature: Reading entries
     And I click the "Fetch Full Content" button
     Then the reading pane shows the original feed body
 
+  Scenario: Reader can cancel a slow full-content fetch
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    And the fetch full content response for the entry titled "Test Entry 1" is delayed
+    And I click the "Fetch Full Content" button
+    Then I see a "Cancel" fetch full content action
+    When I click the "Cancel" button
+    Then the delayed fetch full content response has settled
+    And the reading pane shows the original feed body
+    And I see a "Fetch Full Content" button
+    And I see no flash message
+
   Scenario: Clicking an entry syncs ?entry= into the URL and survives a reload
     When I open the inbox
     And I click the entry titled "Test Entry 1"
