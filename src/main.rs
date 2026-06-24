@@ -96,7 +96,7 @@ async fn main() {
         webauthn: Arc::new(webauthn),
         summary_cache,
         summary_tx,
-        sidebar_cache,
+        sidebar_cache: sidebar_cache.clone(),
         summary_cancels,
         events: events.clone(),
         shutdown: cancel_token.clone(),
@@ -107,6 +107,8 @@ async fn main() {
         db.clone(),
         config.user_agent.clone(),
         cancel_token.clone(),
+        sidebar_cache.clone(),
+        events.clone(),
     );
 
     let app = create_router(state);

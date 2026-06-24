@@ -300,6 +300,28 @@ pub fn update_fetch_result(
     Ok(())
 }
 
+/// Distinct owning user ids for the given feeds (a feed belongs to one
+/// category, which belongs to one user). Empty input → empty output.
+pub fn owner_user_ids_for_feeds(conn: &Connection, feed_ids: &[i64]) -> AppResult<Vec<i64>> {
+    if feed_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = std::iter::repeat_n("?", feed_ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT DISTINCT c.user_id \
+         FROM feed f JOIN category c ON c.id = f.category_id \
+         WHERE f.id IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params = rusqlite::params_from_iter(feed_ids.iter());
+    let rows = stmt
+        .query_map(params, |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 pub fn list_by_bucket(conn: &Connection, bucket: u8) -> AppResult<Vec<Feed>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {} FROM feed WHERE bucket = ?1",
@@ -644,6 +666,50 @@ mod tests {
 
         // Feed should be deleted too
         assert!(find_by_id(&conn, feed.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn owner_user_ids_for_feeds_returns_distinct_owners() {
+        let conn = setup_db();
+        let u1 = user::create_user(&conn, "u1", "h", Role::User).unwrap().id;
+        let u2 = user::create_user(&conn, "u2", "h", Role::User).unwrap().id;
+        let c1 = create_test_category(&conn, u1, "A");
+        let c2 = create_test_category(&conn, u2, "B");
+        let f1 = create_feed(
+            &conn,
+            &CreateFeedParams {
+                category_id: c1,
+                url: "https://a/f",
+                title: Some("a"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
+        .unwrap()
+        .id;
+        let f2 = create_feed(
+            &conn,
+            &CreateFeedParams {
+                category_id: c2,
+                url: "https://b/f",
+                title: Some("b"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
+        .unwrap()
+        .id;
+
+        let mut owners = owner_user_ids_for_feeds(&conn, &[f1, f2]).unwrap();
+        owners.sort_unstable();
+        assert_eq!(owners, vec![u1, u2]);
+        assert!(owner_user_ids_for_feeds(&conn, &[]).unwrap().is_empty());
     }
 
     #[test]
