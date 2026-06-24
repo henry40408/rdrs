@@ -185,7 +185,8 @@ pub fn create_router(state: AppState) -> Router {
         )
         // Summary container fragment endpoint — re-renders only #rp-summary-container
         // for the SSE client. Registered before other /entries/{id}/... routes so
-        // the literal `summary/fragment` segments resolve before `{action}` wildcards.
+        // the literal `summary/fragment` segments resolve before the bare `{id}`
+        // parameter route in axum's trie router.
         .route(
             "/entries/{id}/summary/fragment",
             get(handlers::entries::summary_fragment),

@@ -63,7 +63,7 @@ pub fn start_background_sync(
                         .collect();
                     if !changed_feed_ids.is_empty() {
                         match db
-                            .background(move |conn| {
+                            .read_background(move |conn| {
                                 feed::owner_user_ids_for_feeds(conn, &changed_feed_ids)
                             })
                             .await

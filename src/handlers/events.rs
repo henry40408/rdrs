@@ -13,11 +13,16 @@ use crate::middleware::auth::PageAuthUser;
 use crate::services::{EventKind, SummaryEventData, UserEvent};
 use crate::AppState;
 
+/// Build the `sidebar` SSE event (no data payload; the client just refetches).
+fn sidebar_event() -> Event {
+    Event::default().event("sidebar").data("1")
+}
+
 /// Map a domain event to its SSE wire form. `Sidebar` carries no data (the
 /// client just refetches); `Summary` carries `{entry_id, status}`.
 fn to_sse_event(ev: &UserEvent) -> Event {
     match &ev.kind {
-        EventKind::Sidebar => Event::default().event("sidebar").data("1"),
+        EventKind::Sidebar => sidebar_event(),
         EventKind::Summary { entry_id, status } => {
             let payload = SummaryEventData {
                 entry_id: *entry_id,
@@ -34,7 +39,7 @@ fn to_sse_event(ev: &UserEvent) -> Event {
 /// A `sidebar` resync nudge, emitted when the broadcast receiver lags so the
 /// client refetches and converges.
 fn sidebar_resync_event() -> Event {
-    Event::default().event("sidebar").data("1")
+    sidebar_event()
 }
 
 /// Build the per-connection SSE stream: deliver this user's events, drop other

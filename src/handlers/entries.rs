@@ -398,10 +398,10 @@ impl IntoResponse for OpenEntryMulti {
     }
 }
 
-/// Like `build_sidebar_unread`, but applies an in-memory `delta` to one feed's
-/// unread count so an optimistic response (whose DB write hasn't landed yet)
-/// shows the correct number. `delta` is `-1` (marked read), `+1` (marked
-/// unread), or `0` (no change, e.g. star/unstar). Mirrors
+/// Builds the sidebar-unread JSON payload, applying an in-memory `delta` to
+/// one feed's unread count so an optimistic response (whose DB write hasn't
+/// landed yet) shows the correct number. `delta` is `-1` (marked read),
+/// `+1` (marked unread), or `0` (no change, e.g. star/unstar). Mirrors
 /// `unread_counts_per_feed`'s "positive counts only" shape.
 pub(crate) async fn build_sidebar_unread_with_delta(
     state: &AppState,

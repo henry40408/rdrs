@@ -36,7 +36,10 @@ When(
 Then(
   "within 5 seconds the sidebar unread count decreases by one without a reload",
   async ({ page }) => {
-    const before = unreadCountBefore.get(page) ?? 0;
+    const before = unreadCountBefore.get(page);
+    if (before === undefined) {
+      throw new Error('unread count was not captured in the When step');
+    }
     const expected = Math.max(0, before - 1);
     const el = page.locator("#unread-count").first();
 
