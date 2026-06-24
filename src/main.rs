@@ -70,6 +70,7 @@ async fn main() {
         db.clone(),
         summary_cancels.clone(),
         cancel_token.clone(),
+        events.clone(),
     );
 
     // Recover incomplete summary jobs from database

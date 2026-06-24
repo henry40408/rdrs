@@ -163,6 +163,7 @@ pub async fn entry_fragment(
             }
         });
         state.sidebar_cache.bust(user_id);
+        state.events.emit_sidebar(user_id);
     }
 
     Ok(OpenEntryMulti {
@@ -566,6 +567,7 @@ async fn set_read_state(
             }
         });
         state.sidebar_cache.bust(user_id);
+        state.events.emit_sidebar(user_id);
     }
 
     Ok(EntryActionMulti {
@@ -654,6 +656,10 @@ pub async fn summarize_entry_form(
         })
         .await;
 
+    state
+        .events
+        .emit_summary(user_id, entry_id, Some(SummaryStatus::Pending));
+
     Ok(SummarizePending { id: entry_id })
 }
 
@@ -693,6 +699,8 @@ pub async fn summarize_cancel_form(
 
     state.summary_cache.remove(user_id, entry_id);
     state.sidebar_cache.bust(user_id);
+    state.events.emit_summary(user_id, entry_id, None);
+    state.events.emit_sidebar(user_id);
 
     Ok(SummarizeCleared)
 }

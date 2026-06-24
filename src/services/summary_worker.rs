@@ -48,6 +48,7 @@ use super::summarize::kagi::{self, KagiConfig};
 use super::summary_cache::SummaryCache;
 use crate::db::DbPool;
 use crate::models::{entry_summary, user_settings};
+use crate::services::{EventBus, SummaryStatus};
 
 /// A job to summarize an entry
 #[derive(Debug, Clone)]
@@ -70,6 +71,7 @@ pub fn start_summary_worker(
     db: DbPool,
     cancels: CancelRegistry,
     cancel_token: CancellationToken,
+    events: EventBus,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         tracing::info!("Summary worker started");
@@ -80,7 +82,7 @@ pub fn start_summary_worker(
                     tracing::info!("Summary worker stopping, draining remaining jobs...");
                     // Drain remaining jobs before exiting
                     while let Ok(job) = rx.try_recv() {
-                        process_summary_job(&job, &cache, &sidebar_cache, &db, &cancels).await;
+                        process_summary_job(&job, &cache, &sidebar_cache, &db, &cancels, &events).await;
                     }
                     break;
                 }
@@ -92,7 +94,7 @@ pub fn start_summary_worker(
                 }
             };
 
-            process_summary_job(&job, &cache, &sidebar_cache, &db, &cancels).await;
+            process_summary_job(&job, &cache, &sidebar_cache, &db, &cancels, &events).await;
         }
 
         tracing::info!("Summary worker stopped");
@@ -105,6 +107,7 @@ async fn process_summary_job(
     sidebar_cache: &Arc<SidebarCache>,
     db: &DbPool,
     cancels: &CancelRegistry,
+    events: &EventBus,
 ) {
     let key = (job.user_id, job.entry_id);
 
@@ -122,7 +125,7 @@ async fn process_summary_job(
         return;
     }
 
-    run_summary_job_body(job, cache, sidebar_cache, db, &token).await;
+    run_summary_job_body(job, cache, sidebar_cache, db, &token, events).await;
 
     cancels.lock().unwrap().remove(&key);
 }
@@ -133,6 +136,7 @@ async fn run_summary_job_body(
     sidebar_cache: &Arc<SidebarCache>,
     db: &DbPool,
     token: &CancellationToken,
+    events: &EventBus,
 ) {
     tracing::debug!(
         "Processing summary job: user={}, entry={}, link={}",
@@ -157,6 +161,7 @@ async fn run_summary_job_body(
         }
     }
     cache.set_processing(job.user_id, job.entry_id);
+    events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Processing));
 
     // Get Kagi config for the user
     let user_id = job.user_id;
@@ -175,12 +180,14 @@ async fn run_summary_job_body(
                     entry_summary::set_failed(conn, user_id, entry_id, &error_msg)
                 })
                 .await;
+            events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
             return;
         }
         Err(e) => {
             tracing::error!("Failed to access DB: {}", e);
             let error_msg = "Internal error: DB access failed".to_string();
             cache.set_failed(job.user_id, job.entry_id, error_msg);
+            events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
             return;
         }
     };
@@ -197,6 +204,7 @@ async fn run_summary_job_body(
                     entry_summary::set_failed(conn, user_id, entry_id, &error_msg)
                 })
                 .await;
+            events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
             return;
         }
     };
@@ -230,6 +238,8 @@ async fn run_summary_job_body(
                 cache.set_completed(job.user_id, job.entry_id, summary_text.clone());
                 // A summary just completed — the sidebar "Summarized" badge must tick up.
                 sidebar_cache.bust(job.user_id);
+                events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Completed));
+                events.emit_sidebar(job.user_id);
             }
         }
         SummaryOutcome::Failed(error) => {
@@ -245,6 +255,7 @@ async fn run_summary_job_body(
                 cache.remove(job.user_id, job.entry_id);
             } else {
                 cache.set_failed(job.user_id, job.entry_id, error.clone());
+                events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
             }
         }
         SummaryOutcome::Cancelled => {
@@ -325,7 +336,8 @@ mod tests {
     use super::*;
     use crate::db::init_db;
     use crate::models::user::Role;
-    use crate::models::{category, entry, feed, user};
+    use crate::models::{category, entry, entry_summary, feed, user};
+    use crate::services::{EventBus, EventKind};
     use rusqlite::Connection;
 
     fn registry() -> CancelRegistry {
@@ -429,6 +441,7 @@ mod tests {
             db,
             registry(),
             cancel_token.clone(),
+            EventBus::new(8),
         );
 
         // Send a job (it won't be processed properly without Kagi config, but that's OK)
@@ -462,6 +475,7 @@ mod tests {
             db,
             registry(),
             cancel_token,
+            EventBus::new(8),
         );
 
         // Drop the sender to close the channel
@@ -702,7 +716,7 @@ mod tests {
             entry_link: "https://example.com/x".to_string(),
         };
 
-        process_summary_job(&job, &cache, &sidebar, &db, &cancels).await;
+        process_summary_job(&job, &cache, &sidebar, &db, &cancels, &EventBus::new(8)).await;
 
         // The set_processing UPDATE hits 0 rows (no summary row exists) ->
         // AppError::NotFound -> worker removes the stale cache entry instead
@@ -745,6 +759,7 @@ mod tests {
             db,
             registry(),
             cancel_token.clone(),
+            EventBus::new(8),
         );
 
         // Send multiple jobs
@@ -767,5 +782,88 @@ mod tests {
         // Worker should stop after draining
         let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
         assert!(result.is_ok(), "Worker should stop after draining jobs");
+    }
+
+    #[tokio::test]
+    async fn worker_emits_processing_then_terminal_event() {
+        let (tx, rx) = create_summary_channel(10);
+        let cache = Arc::new(SummaryCache::new(100, 24));
+        let db = setup_test_db();
+        let cancel_token = CancellationToken::new();
+        let bus = EventBus::new(32);
+        let mut sub = bus.subscribe();
+
+        // Seed a user + entry + pending summary so set_processing finds a row.
+        let (user_id, entry_id) = db
+            .user(|conn| {
+                let u = user::create_user(conn, "emit", "hash", Role::User)
+                    .unwrap()
+                    .id;
+                let cat = category::create_category(conn, u, "Tech").unwrap().id;
+                let feed_id = feed::create_feed(
+                    conn,
+                    &feed::CreateFeedParams {
+                        category_id: cat,
+                        url: "https://example.com/feed.xml",
+                        title: Some("F"),
+                        description: None,
+                        site_url: None,
+                        custom_user_agent: None,
+                        http2_disabled: None,
+                        custom_referrer: None,
+                    },
+                )
+                .unwrap()
+                .id;
+                let (e, _) = entry::upsert_entry(
+                    conn,
+                    feed_id,
+                    "g",
+                    Some("T"),
+                    Some("https://example.com/a"),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+                entry_summary::upsert_pending(conn, u, e.id).unwrap();
+                (u, e.id)
+            })
+            .await
+            .unwrap();
+
+        let handle = start_summary_worker(
+            rx,
+            cache,
+            Arc::new(SidebarCache::default()),
+            db,
+            registry(),
+            cancel_token.clone(),
+            bus,
+        );
+        tx.send(SummaryJob {
+            user_id,
+            entry_id,
+            entry_link: "https://example.com/a".into(),
+        })
+        .await
+        .unwrap();
+
+        // First event must be Summary{Processing} for this entry. (Kagi is not
+        // configured in tests, so the job then fails — we assert only the
+        // processing emission, which is deterministic.)
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(3), sub.recv())
+            .await
+            .expect("an event should be emitted")
+            .unwrap();
+        assert_eq!(ev.user_id, user_id);
+        assert!(matches!(
+            ev.kind,
+            EventKind::Summary { entry_id: e, status: Some(SummaryStatus::Processing) } if e == entry_id
+        ));
+
+        cancel_token.cancel();
+        let _ = handle.await;
     }
 }
