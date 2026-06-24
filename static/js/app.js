@@ -31,10 +31,19 @@ function installSwap() {
     document.addEventListener('submit', async (event) => {
         const form = event.target.closest('form[data-swap]');
         if (!form) return;
-        const target = form.getAttribute('data-swap');
         event.preventDefault();
+        if (form.matches('[data-cancel-swap][aria-busy="true"]')) {
+            abortFormSwap(form);
+            return;
+        }
+        const target = form.getAttribute('data-swap');
         const method = (form.method || 'GET').toUpperCase();
         const init = { method };
+        const controller = form.hasAttribute('data-cancel-swap') ? new AbortController() : null;
+        if (controller) {
+            init.signal = controller.signal;
+            formSwapAborts.set(form, controller);
+        }
         let url = form.action;
         if (method === 'GET') {
             // GET requests carry form data in the query string, not the
@@ -47,7 +56,7 @@ function installSwap() {
         } else {
             init.body = new FormData(form);
         }
-        setFormBusy(form);
+        setFormBusy(form, { cancellable: !!controller });
         try {
             await performSwap(url, init, target);
         } finally {
@@ -55,9 +64,18 @@ function installSwap() {
             // call below is a no-op on the detached node. On failure
             // (POST error → flash) the original form is still mounted
             // and gets its button restored.
+            formSwapAborts.delete(form);
             clearFormBusy(form);
         }
     });
+}
+
+const formSwapAborts = new WeakMap();
+
+function abortFormSwap(form) {
+    const controller = formSwapAborts.get(form);
+    if (!controller) return;
+    controller.abort();
 }
 
 // Map slow form-swap actions to their busy-state button label. Anything not
@@ -73,12 +91,26 @@ function deriveBusyLabel(actionUrl) {
     return m ? BUSY_LABELS[m[1]] : null;
 }
 
-function setFormBusy(form) {
+function setFormBusy(form, options = {}) {
     form.setAttribute('aria-busy', 'true');
     const btn = form.querySelector('button[type="submit"], button:not([type])');
     if (!btn) return;
-    btn.disabled = true;
-    const label = deriveBusyLabel(form.action);
+    const label = options.cancellable
+        ? btn.dataset.cancelLabel
+        : deriveBusyLabel(form.action);
+    btn.dataset.busyOriginalAriaLabel = btn.getAttribute('aria-label') || '';
+    if (options.cancellable) {
+        btn.classList.add('is-cancel');
+        btn.setAttribute('aria-label', btn.dataset.cancelAriaLabel || label || 'Cancel');
+        const defaultIcon = btn.querySelector('.action-icon-default');
+        const cancelIcon = btn.querySelector('.action-icon-cancel');
+        if (defaultIcon && cancelIcon) {
+            defaultIcon.hidden = true;
+            cancelIcon.hidden = false;
+        }
+    } else {
+        btn.disabled = true;
+    }
     if (label) {
         // Update only the `.action-label` span when present so the sibling
         // `.action-icon` SVG survives. Writing `btn.textContent` would replace
@@ -96,6 +128,21 @@ function clearFormBusy(form) {
     const btn = form.querySelector('button[type="submit"], button:not([type])');
     if (!btn) return;
     btn.disabled = false;
+    btn.classList.remove('is-cancel');
+    if (btn.dataset.busyOriginalAriaLabel != null) {
+        if (btn.dataset.busyOriginalAriaLabel) {
+            btn.setAttribute('aria-label', btn.dataset.busyOriginalAriaLabel);
+        } else {
+            btn.removeAttribute('aria-label');
+        }
+        delete btn.dataset.busyOriginalAriaLabel;
+    }
+    const defaultIcon = btn.querySelector('.action-icon-default');
+    const cancelIcon = btn.querySelector('.action-icon-cancel');
+    if (defaultIcon && cancelIcon) {
+        defaultIcon.hidden = false;
+        cancelIcon.hidden = true;
+    }
     if (btn.dataset.busyOriginalLabel != null) {
         const labelEl = btn.querySelector('.action-label') || btn;
         labelEl.textContent = btn.dataset.busyOriginalLabel;
@@ -205,6 +252,7 @@ async function performSwap(url, init, defaultTarget, options) {
     try {
         response = await fetch(url, init);
     } catch {
+        if (init.signal?.aborted) return;
         // A newer pane navigation aborted this fetch — drop it silently.
         // Falling through to `location.href` would hard-navigate the page
         // to a fragment URL the user has already moved past.
@@ -231,6 +279,7 @@ async function performSwap(url, init, defaultTarget, options) {
     try {
         text = await response.text();
     } catch {
+        if (init.signal?.aborted) return;
         // Aborted mid-body by a newer navigation (fetch itself had already
         // resolved) — same silent drop as above.
         if (isPaneNav && navSeq !== paneNavSeq) return;

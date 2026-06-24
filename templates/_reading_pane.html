@@ -57,8 +57,8 @@
                them). Lets the user revert from a Fetch-Full-Content view. #}
             <a href="/entries/{{ pane.id }}/fragment" data-swap="#reading-pane" class="rp-action" aria-label="Show Original"><span class="action-icon" aria-hidden="true">{% call icons::revert() %}{% endcall %}</span><span class="action-label">Original</span></a>
             {% else %}
-            <form method="post" action="/entries/{{ pane.id }}/fetch-full-content" data-swap="#reading-pane">
-                <button type="submit" class="rp-action" aria-label="Fetch Full Content"><span class="action-icon" aria-hidden="true">{% call icons::document() %}{% endcall %}</span><span class="action-label">Full content</span></button>
+            <form method="post" action="/entries/{{ pane.id }}/fetch-full-content" data-swap="#reading-pane" data-cancel-swap>
+                <button type="submit" class="rp-action" aria-label="Fetch Full Content" data-cancel-label="Cancel" data-cancel-aria-label="Cancel"><span class="action-icon action-icon-default" aria-hidden="true">{% call icons::document() %}{% endcall %}</span><span class="action-icon action-icon-cancel" aria-hidden="true" hidden>{% call icons::close() %}{% endcall %}</span><span class="action-label">Full content</span></button>
             </form>
             {% endif %}
             {% if pane.has_kagi || pane.summary_in_flight %}

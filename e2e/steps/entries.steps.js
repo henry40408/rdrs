@@ -146,6 +146,7 @@ async function paneEntryId(page) {
 // Drives the race scenario: a slow stale response must never overwrite the
 // entry the user clicked afterwards.
 const delayedFragments = new WeakMap();
+const delayedFullContentFetches = new WeakMap();
 
 When(
   "the fragment response for the entry titled {string} is delayed",
@@ -192,6 +193,43 @@ When("the delayed fragment response has settled", async ({ page }) => {
   await state.done;
   // Give a (stale) swap one tick to apply before the Then assertions —
   // pre-fix, the bug manifests as the pane flipping back AFTER this point.
+  await page.waitForTimeout(100);
+});
+
+When(
+  "the fetch full content response for the entry titled {string} is delayed",
+  async ({ page, seed, currentUser }, title) => {
+    const userId = seed.getUserId(currentUser.username);
+    const entryId = seed.findEntryIdByTitle(userId, title);
+    const state = {};
+    state.done = new Promise((resolve) => {
+      state.resolve = resolve;
+    });
+    delayedFullContentFetches.set(page, state);
+    await page.route(`**/entries/${entryId}/fetch-full-content*`, async (route) => {
+      await new Promise((r) => setTimeout(r, 600));
+      try {
+        await route.continue();
+      } catch {}
+      state.resolve();
+    });
+  }
+);
+
+Then("I see a {string} fetch full content action", async ({ page }, label) => {
+  const action = page.locator('form[action*="/fetch-full-content"] button');
+  await expect(action).toHaveAccessibleName(label);
+  await expect(action).toContainText(label);
+});
+
+Then("I see a {string} button", async ({ page }, label) => {
+  await expect(page.getByRole("button", { name: label })).toBeVisible();
+});
+
+Then("the delayed fetch full content response has settled", async ({ page }) => {
+  const state = delayedFullContentFetches.get(page);
+  if (!state) throw new Error("no delayed full-content route was armed");
+  await state.done;
   await page.waitForTimeout(100);
 });
 

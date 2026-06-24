@@ -601,6 +601,16 @@ code {
     color: var(--color-accent);
 }
 
+.rp-action.is-cancel {
+    color: var(--color-error);
+    border-color: var(--color-error);
+    background: var(--color-bg);
+}
+
+.rp-action.is-cancel .action-icon {
+    color: var(--color-error);
+}
+
 .rp-action:disabled {
     opacity: 0.5;
     cursor: default;
