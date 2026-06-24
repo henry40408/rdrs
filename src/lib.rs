@@ -57,7 +57,10 @@ pub struct AppState {
 }
 
 pub fn create_router(state: AppState) -> Router {
-    Router::new()
+    // `core` holds every existing route. The ETag/Date/Compression/Timeout
+    // layers below buffer the response body or abort after SERVER_REQUEST_TIMEOUT
+    // — both fatal to a long-lived SSE stream — so they wrap `core` only.
+    let core = Router::new()
         // Health check
         .route("/health", get(handlers::health::health_check))
         // Favicon routes
@@ -291,12 +294,18 @@ pub fn create_router(state: AppState) -> Router {
         .nest("/api/greader.php", handlers::greader::greader_routes())
         .route("/static/{*path}", get(handlers::static_assets::serve))
         .fallback(handlers::pages::not_found_page)
-        .with_state(state)
         .layer(middleware::ETagLayer::new())
         .layer(middleware::DateHeaderLayer::new())
         .layer(CompressionLayer::new().gzip(true).br(true))
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             SERVER_REQUEST_TIMEOUT,
-        ))
+        ));
+
+    Router::new()
+        // SSE lives outside the layers above. It still gets `state` via the
+        // shared `.with_state` below.
+        .route("/events", get(handlers::events::events_stream))
+        .merge(core)
+        .with_state(state)
 }

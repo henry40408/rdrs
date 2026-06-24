@@ -5289,3 +5289,20 @@ async fn test_fetch_metadata_form_success() {
     assert_eq!(title, "Mock Feed");
     assert_eq!(description, "Mock Desc");
 }
+
+// ============================================================================
+// SSE /events endpoint auth-gate test
+// ============================================================================
+
+#[tokio::test]
+async fn events_endpoint_requires_auth() {
+    let server = create_test_server(default_test_config());
+    // GET /events without a session cookie — PageAuthUser redirects to /login.
+    let response = server.get("/events").await;
+    assert!(
+        response.status_code().is_redirection()
+            || response.status_code() == StatusCode::UNAUTHORIZED,
+        "unauthenticated /events must not stream; got {}",
+        response.status_code()
+    );
+}

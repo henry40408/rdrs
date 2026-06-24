@@ -117,15 +117,21 @@ async fn main() {
         .await
         .expect("Failed to bind");
 
-    // Start server with graceful shutdown
+    // Start server with graceful shutdown. Cancelling the token from inside
+    // the shutdown future ends every in-flight SSE stream so the server does
+    // not hang waiting on long-lived connections.
+    let shutdown_token = cancel_token.clone();
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            shutdown_token.cancel();
+        })
         .await
         .expect("Server failed");
 
     tracing::info!("Server stopped, initiating graceful shutdown...");
 
-    // Cancel background tasks
+    // Cancel background tasks (idempotent — already cancelled above).
     cancel_token.cancel();
 
     // Wait for background tasks to complete (with timeout)
