@@ -60,7 +60,7 @@ fn create_server(db_name: &str, mut mutate: impl FnMut(&mut Config)) -> TestServ
 
 fn seed_user(db_name: &str, name: &str, role: rdrs::models::user::Role) {
     let conn = open_shared_memory(db_name);
-    rdrs::models::user::create_user(&conn, name, "$argon2id$invalid", role).unwrap();
+    rdrs::models::user::create_user(&conn, name, "!", role).unwrap();
 }
 
 #[tokio::test]
@@ -147,4 +147,32 @@ async fn test_disabled_user_rejected() {
     let res = server.get("/").add_header("Remote-User", "carol").await;
 
     assert!(res.maybe_cookie("session_token").is_none());
+    assert_eq!(res.header("location"), "/login");
+}
+
+#[tokio::test]
+async fn test_existing_user_role_recomputed_on_login() {
+    let db_name = "fa_test_role_recompute";
+    let server = create_server(db_name, |c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    });
+    // Seed the user as Admin; the groups header will NOT include "admins".
+    seed_user(db_name, "dave", rdrs::models::user::Role::Admin);
+
+    let res = server
+        .get("/")
+        .add_header("Remote-User", "dave")
+        .add_header("Remote-Groups", "users")
+        .await;
+
+    // Login must succeed with a session cookie.
+    assert!(res.status_code().is_redirection());
+    assert!(res.maybe_cookie("session_token").is_some());
+
+    // Role must have been demoted from Admin → User.
+    let conn = open_shared_memory(db_name);
+    let user = rdrs::models::user::find_by_username(&conn, "dave")
+        .unwrap()
+        .unwrap();
+    assert_eq!(user.role, rdrs::models::user::Role::User);
 }
