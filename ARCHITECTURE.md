@@ -133,6 +133,7 @@ Loads settings from environment variables:
 - `AUTH_PROXY_GROUPS_HEADER` - Header name carrying comma-separated group names from the proxy
 - `AUTH_PROXY_ADMIN_GROUP` - Group membership grants the admin role; active only when both this and `AUTH_PROXY_GROUPS_HEADER` are set
 - `DISABLE_LOCAL_AUTH` - Hides the browser password form and makes `POST /api/session` return 403; does not affect GReader `ClientLogin` or passkey auth; startup refuses if set without `AUTH_PROXY_HEADER`
+- `AUTH_PROXY_LOGOUT_URL` - When set, Sign Out redirects the browser here to end the IdP/SSO session (e.g. Authelia's logout URL); when unset, Sign Out clears the local session and the proxy header re-authenticates on the next request
 
 ### Error Handling (`error.rs`)
 
@@ -260,6 +261,10 @@ Forward-auth, local password, and passkey authentication all work simultaneously
 
 1. The reverse proxy **must** authoritatively set (and strip any client-supplied copy of) the identity and groups headers on every request before forwarding to RDRS. A downstream client that can inject these headers bypasses the trust model entirely.
 2. The reverse proxy **must** be configured to bypass forward-auth for `/accounts/ClientLogin` and `/reader/api/...` so native GReader clients (FeedMe, Read You, etc.) can still authenticate with their stored username and password.
+
+**Logout under forward-auth:**
+
+Sign Out always clears the local `session_token` cookie (with `Path=/`) and deletes the server-side session. The forward-auth middleware re-authenticates whenever there is no *valid* session cookie — a stale or expired cookie no longer blocks re-authentication. This means that under forward-auth, a local Sign Out normally bounces the user straight back in via the proxy header (matching the linkding/Miniflux behavior). If `AUTH_PROXY_LOGOUT_URL` is set, Sign Out instead redirects the browser there (e.g. the Authelia logout URL) so the IdP/SSO session is also terminated. Additionally, `/login` redirects an already-authenticated user to `/` rather than rendering the login form again.
 
 ## Services
 
