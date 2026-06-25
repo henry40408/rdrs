@@ -44,6 +44,11 @@ async fn main() {
     // Create cancellation token for graceful shutdown
     let cancel_token = CancellationToken::new();
 
+    // Event bus for SSE live updates (sidebar + summary). Capacity covers a
+    // burst of mutations without lagging a slow subscriber; a lagged receiver
+    // recovers via a sidebar resync signal.
+    let events = services::EventBus::new(256);
+
     // Create summary cache (max 1000 entries, 24 hour TTL)
     let summary_cache = services::create_summary_cache(1000, 24);
 
@@ -65,6 +70,7 @@ async fn main() {
         db.clone(),
         summary_cancels.clone(),
         cancel_token.clone(),
+        events.clone(),
     );
 
     // Recover incomplete summary jobs from database
@@ -90,8 +96,10 @@ async fn main() {
         webauthn: Arc::new(webauthn),
         summary_cache,
         summary_tx,
-        sidebar_cache,
+        sidebar_cache: sidebar_cache.clone(),
         summary_cancels,
+        events: events.clone(),
+        shutdown: cancel_token.clone(),
     };
 
     // Start background sync task
@@ -99,6 +107,8 @@ async fn main() {
         db.clone(),
         config.user_agent.clone(),
         cancel_token.clone(),
+        sidebar_cache.clone(),
+        events.clone(),
     );
 
     let app = create_router(state);
@@ -110,15 +120,21 @@ async fn main() {
         .await
         .expect("Failed to bind");
 
-    // Start server with graceful shutdown
+    // Start server with graceful shutdown. Cancelling the token from inside
+    // the shutdown future ends every in-flight SSE stream so the server does
+    // not hang waiting on long-lived connections.
+    let shutdown_token = cancel_token.clone();
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            shutdown_token.cancel();
+        })
         .await
         .expect("Server failed");
 
     tracing::info!("Server stopped, initiating graceful shutdown...");
 
-    // Cancel background tasks
+    // Cancel background tasks (idempotent — already cancelled above).
     cancel_token.cancel();
 
     // Wait for background tasks to complete (with timeout)

@@ -46,7 +46,10 @@ const KAGI_API_BASE: &str = "https://kagi.com";
 
 /// Summarize a URL using Kagi Universal Summarizer
 pub async fn summarize_url(config: &KagiConfig, url: &str) -> AppResult<SummarizeResult> {
-    summarize_url_with_base(KAGI_API_BASE, config, url).await
+    // `KAGI_API_BASE` env redirects the endpoint to a local stub for tests/E2E.
+    // It is NEVER set in production — the default is the real Kagi host.
+    let base = std::env::var("KAGI_API_BASE").unwrap_or_else(|_| KAGI_API_BASE.to_string());
+    summarize_url_with_base(&base, config, url).await
 }
 
 async fn summarize_url_with_base(
@@ -389,6 +392,32 @@ mod tests {
         };
         let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a").await;
         assert!(matches!(result, Err(AppError::Internal(_))));
+    }
+
+    #[tokio::test]
+    async fn summarize_url_honors_kagi_api_base_env() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "output_data": {"markdown": "E2E mock summary body."}
+            })))
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "tok".into(),
+            language: None,
+        };
+        // `set_var`/`remove_var` are `unsafe` in this toolchain (process-global
+        // mutation); the `unsafe` blocks are required. cargo-nextest runs each
+        // test in its own process, so this env mutation cannot race other tests.
+        unsafe { std::env::set_var("KAGI_API_BASE", server.uri()) };
+        let result = summarize_url(&config, "https://x.com/a").await.unwrap();
+        unsafe { std::env::remove_var("KAGI_API_BASE") };
+        assert!(result.success);
+        assert_eq!(
+            result.output_text.as_deref(),
+            Some("E2E mock summary body.")
+        );
     }
 
     #[tokio::test]

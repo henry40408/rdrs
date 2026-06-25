@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use chrono::Utc;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, Duration};
@@ -5,12 +7,17 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use super::feed_sync;
+use super::sidebar_cache::SidebarCache;
 use crate::db::DbPool;
+use crate::models::feed;
+use crate::services::EventBus;
 
 pub fn start_background_sync(
     db: DbPool,
     user_agent: String,
     cancel_token: CancellationToken,
+    sidebar_cache: Arc<SidebarCache>,
+    events: EventBus,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         info!("Background sync task started");
@@ -46,6 +53,31 @@ pub fn start_background_sync(
                             error!("Background sync feed {} failed: {}", feed_id, e);
                         }
                     }
+
+                    // Feeds that gained unread entries this cycle: bust each
+                    // owner's sidebar cache and nudge their open tabs to refetch.
+                    let changed_feed_ids: Vec<i64> = results
+                        .iter()
+                        .filter(|(_, r)| matches!(r, Ok(s) if s.new_entries > 0))
+                        .map(|(id, _)| *id)
+                        .collect();
+                    if !changed_feed_ids.is_empty() {
+                        match db
+                            .read_background(move |conn| {
+                                feed::owner_user_ids_for_feeds(conn, &changed_feed_ids)
+                            })
+                            .await
+                        {
+                            Ok(Ok(user_ids)) => {
+                                for uid in user_ids {
+                                    sidebar_cache.bust(uid);
+                                    events.emit_sidebar(uid);
+                                }
+                            }
+                            Ok(Err(e)) => error!("sidebar owner lookup failed: {e}"),
+                            Err(e) => error!("sidebar owner lookup DB error: {e}"),
+                        }
+                    }
                 }
             }
         }
@@ -58,6 +90,7 @@ pub fn start_background_sync(
 mod tests {
     use super::*;
     use crate::db::init_db;
+    use crate::services::EventBus;
     use rusqlite::Connection;
 
     fn setup_db_pool() -> DbPool {
@@ -73,7 +106,13 @@ mod tests {
         let db = setup_db_pool();
         let cancel_token = CancellationToken::new();
 
-        let handle = start_background_sync(db, "Test-Agent/1.0".to_string(), cancel_token.clone());
+        let handle = start_background_sync(
+            db,
+            "Test-Agent/1.0".to_string(),
+            cancel_token.clone(),
+            Arc::new(SidebarCache::default()),
+            EventBus::new(8),
+        );
 
         // Cancel immediately
         cancel_token.cancel();
@@ -91,7 +130,13 @@ mod tests {
         let db = setup_db_pool();
         let cancel_token = CancellationToken::new();
 
-        let handle = start_background_sync(db, "Test-Agent/1.0".to_string(), cancel_token.clone());
+        let handle = start_background_sync(
+            db,
+            "Test-Agent/1.0".to_string(),
+            cancel_token.clone(),
+            Arc::new(SidebarCache::default()),
+            EventBus::new(8),
+        );
 
         // Give worker time to run one tick (interval starts immediately with first tick)
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;

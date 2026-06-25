@@ -65,6 +65,8 @@ fn create_test_server(config: Config) -> TestServer {
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
         summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        events: rdrs::services::EventBus::new(16),
+        shutdown: tokio_util::sync::CancellationToken::new(),
     };
 
     let app = create_router(state);
@@ -89,6 +91,8 @@ fn create_test_app(config: Config) -> TestApp {
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
         summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        events: rdrs::services::EventBus::new(16),
+        shutdown: tokio_util::sync::CancellationToken::new(),
     };
 
     let app = create_router(state);
@@ -3546,6 +3550,8 @@ fn create_test_app_named(config: Config, name: &str) -> TestApp {
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
         summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        events: rdrs::services::EventBus::new(16),
+        shutdown: tokio_util::sync::CancellationToken::new(),
     };
 
     let app = create_router(state);
@@ -4602,107 +4608,6 @@ async fn test_entries_load_more_returns_row_fragments() {
 }
 
 // ============================================================================
-// GET /sidebar/unread — PR-10 T7
-// ============================================================================
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn test_sidebar_unread_returns_payload() {
-    let app = create_test_app_named(default_test_config(), "test_sidebar_unread_payload");
-
-    // Register and log in as alice.
-    app.server
-        .post("/api/register")
-        .json(&json!({ "username": "alice_su", "password": "pw123456" }))
-        .await
-        .assert_status(StatusCode::CREATED);
-    app.server
-        .post("/api/session")
-        .json(&json!({ "username": "alice_su", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
-
-    // Seed: category + feed + 2 unread entries.
-    let feed_id: i64 = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "T7 Cat").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://su/feed",
-                    title: Some("SU Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            // 2 unread entries.
-            rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-su-1",
-                Some("SU Entry 1"),
-                Some("https://su/1"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-su-2",
-                Some("SU Entry 2"),
-                Some("https://su/2"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            feed.id
-        })
-        .await
-        .unwrap();
-
-    let response = app.server.get("/sidebar/unread").await;
-
-    assert_eq!(response.status_code(), StatusCode::OK);
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    assert!(
-        content_type.starts_with("text/html"),
-        "expected text/html, got: {content_type}"
-    );
-    let html = response.text();
-    assert!(
-        html.contains(r#"id="sidebar-unread""#),
-        "sidebar-unread id must be present in: {html}"
-    );
-    // The data-payload attribute contains JSON with feed_id and unread:2.
-    let feed_id_str = feed_id.to_string();
-    assert!(
-        html.contains(&format!(r#""feed_id":{feed_id_str}"#)),
-        "payload must contain feed_id={feed_id_str} in: {html}"
-    );
-    assert!(
-        html.contains(r#""unread":2"#),
-        "payload must contain unread:2 in: {html}"
-    );
-}
-
-// ============================================================================
 // handlers/feeds.rs — additional branch coverage (Part A: pure-DB tests)
 // ============================================================================
 
@@ -5282,4 +5187,17 @@ async fn test_fetch_metadata_form_success() {
         .unwrap();
     assert_eq!(title, "Mock Feed");
     assert_eq!(description, "Mock Desc");
+}
+
+// ============================================================================
+// SSE /events endpoint auth-gate test
+// ============================================================================
+
+#[tokio::test]
+async fn events_endpoint_requires_auth() {
+    let server = create_test_server(default_test_config());
+    // GET /events without a session cookie — PageAuthUser redirects to /login.
+    let response = server.get("/events").await;
+    // PageAuthUser always redirects unauthenticated requests to /login (303).
+    response.assert_status(StatusCode::SEE_OTHER);
 }

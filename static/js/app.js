@@ -350,7 +350,7 @@ async function performSwap(url, init, defaultTarget, options) {
 
 // Extract the entry id embedded in a swap URL like `/entries/123/fragment`
 // or `/entries/123/save`. Returns null when the URL doesn't address an
-// entry (e.g. `/sidebar/unread`, `/entries?after=…`).
+// entry (e.g. `/entries?after=…`).
 function entryIdFromSwapUrl(url) {
     const m = (url || '').match(/\/entries\/(\d+)(?:\/|$|\?)/);
     return m ? m[1] : null;
@@ -644,39 +644,80 @@ document.addEventListener('click', function(e) {
 
 installSwap();
 
-// Sidebar unread polling — fires every 20s on pages that mount the
-// SSR sidebar-unread block (the 5 entries-family routes in PR-10).
-// The payload is JSON in the `data-payload` attribute; we dispatch a
-// custom event so `<rdrs-sidebar>` can apply the new counts.
-//
-// NOTE: as of PR-10, `<rdrs-sidebar>` reads from `#rdrs-sidebar-bootstrap`
-// (a <script> tag) and has no listener for `rdrs:sidebar-unread`. The
-// dispatch is a forward-compatible hook — PR-12 will wire up the listener
-// so the sidebar live-updates counts without a page reload. For now the
-// live-apply of the sidebar UI is deferred; the data is still refreshed
-// in the DOM `data-payload` attribute so it is available to future code.
-function installSidebarPolling() {
-    const host = document.getElementById('sidebar-unread');
-    if (!host) return;
-    const tick = async () => {
-        try {
-            const resp = await fetch('/sidebar/unread', { credentials: 'same-origin' });
-            if (!resp.ok) return;
-            const html = await resp.text();
-            const doc = new DOMParser().parseFromString(html, 'text/html');
-            const node = doc.getElementById('sidebar-unread');
-            if (!node) return;
-            const payload = node.getAttribute('data-payload') || '[]';
-            const target = document.getElementById('sidebar-unread');
-            if (target) target.setAttribute('data-payload', payload);
-            document.dispatchEvent(new CustomEvent('rdrs:sidebar-unread', {
-                detail: JSON.parse(payload),
-            }));
-        } catch {}
-    };
-    setInterval(tick, 20000);
+// Live updates over a single SSE stream (replaces the old 20s sidebar poll).
+// `sidebar` → refetch /api/sidebar (notify-and-fetch). `summary` → update the
+// row badge from the event's status and, if the entry is open, swap the
+// reading pane's summary container. EventSource reconnects natively; on
+// (re)connect we resync the sidebar to catch anything missed while offline.
+const SUMMARY_ICON_FILLED =
+    '<svg class="ico is-filled" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3L14 10L21 12L14 14L12 21L10 14L3 12L10 10Z"/></svg>';
+const SUMMARY_ICON_OUTLINE =
+    '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(1.2 1.2) scale(0.9)"><path d="M12 3L14 10L21 12L14 14L12 21L10 14L3 12L10 10Z"/></g></svg>';
+// status -> [badge class, title, filled?]; null clears the badge.
+const SUMMARY_BADGE = {
+    completed:  ['summary-badge', 'Has Summary', true],
+    pending:    ['summary-badge-pending', 'Pending', false],
+    processing: ['summary-badge-processing', 'Processing', false],
+    failed:     ['summary-badge-failed', 'Failed', true],
+};
+const BADGE_SELECTOR =
+    '.summary-badge, .summary-badge-pending, .summary-badge-processing, .summary-badge-failed';
+
+function renderSummaryBadge(row, status) {
+    const existing = row.querySelector(BADGE_SELECTOR);
+    if (!status || !SUMMARY_BADGE[status]) { existing?.remove(); return; }
+    const [cls, title, filled] = SUMMARY_BADGE[status];
+    const svg = filled ? SUMMARY_ICON_FILLED : SUMMARY_ICON_OUTLINE;
+    if (existing) {
+        existing.className = cls;
+        existing.title = title;
+        existing.innerHTML = svg;
+        return;
+    }
+    // Insert before the <time> element so badge ordering matches the SSR row.
+    const span = document.createElement('span');
+    span.className = cls;
+    span.title = title;
+    span.setAttribute('aria-hidden', 'true');
+    span.innerHTML = svg;
+    const statusCluster = row.querySelector('.entry-status');
+    const time = statusCluster?.querySelector('.entry-time');
+    if (statusCluster && time) statusCluster.insertBefore(span, time);
+    else statusCluster?.appendChild(span);
 }
-installSidebarPolling();
+
+function refreshSidebar() {
+    document.querySelector('rdrs-sidebar')?.refresh();
+}
+
+function onSummaryEvent(data) {
+    const { entry_id, status } = data;
+    const row = document.querySelector(`[data-entry-row][data-entry-id="${entry_id}"]`);
+    if (row) renderSummaryBadge(row, status);
+    // If the affected entry is the one open in the reading pane, swap its
+    // summary container to reflect the new state (replaces "refresh to see").
+    if (String(currentPaneEntryId()) === String(entry_id)) {
+        performSwap(`/entries/${entry_id}/summary/fragment`, { method: 'GET' }, '#rp-summary-container');
+    }
+}
+
+function installSse() {
+    // Only on the logged-in surface (the sidebar element is the marker).
+    if (!document.querySelector('rdrs-sidebar')) return;
+    let es;
+    try {
+        es = new EventSource('/events', { withCredentials: true });
+    } catch {
+        return; // EventSource unavailable — no live updates, page still works.
+    }
+    es.addEventListener('open', () => refreshSidebar());
+    es.addEventListener('sidebar', () => refreshSidebar());
+    es.addEventListener('summary', (e) => {
+        try { onSummaryEvent(JSON.parse(e.data)); } catch {}
+    });
+    // EventSource auto-reconnects on transient errors; nothing to do here.
+}
+installSse();
 
 // After every successful partial swap (mark-read, mark-unread, mark-all,
 // batch read, OPML import surface, etc.), ask <rdrs-sidebar> to refetch.
@@ -1111,8 +1152,7 @@ installEntriesKeyboard();
 
 // Reading-pane summary controls (Kagi Universal Summarizer output).
 // Copy is a clipboard write; Dismiss DELETEs the cached summary and
-// strips the summary block + the entry row's summary badge so the
-// state matches what `/sidebar/unread` will report on the next mount.
+// strips the summary block + the entry row's summary badge.
 function installSummaryActions() {
     document.addEventListener('click', async (e) => {
         const copyBtn = e.target.closest('[data-summary-copy]');

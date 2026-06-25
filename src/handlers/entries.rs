@@ -97,6 +97,24 @@ impl IntoResponse for SummarizeCleared {
     }
 }
 
+/// `GET /entries/{id}/summary/fragment` — re-renders `#rp-summary-container`
+/// for the entry's current summary state. Used by the SSE client to refresh
+/// the open reading pane when a `summary` event arrives.
+#[derive(Template)]
+#[template(path = "_summary_fragment.html")]
+pub struct SummaryFragment {
+    pub pane: ReadingPaneView,
+}
+
+impl IntoResponse for SummaryFragment {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
 /// `GET /entries/{id}/fragment` — returns the reading-pane HTML fragment for
 /// the given entry. The entry must belong to the authenticated user; otherwise
 /// a 404 is returned (same semantics as the JSON `/api/entries/{id}` endpoint
@@ -163,6 +181,7 @@ pub async fn entry_fragment(
             }
         });
         state.sidebar_cache.bust(user_id);
+        state.events.emit_sidebar(user_id);
     }
 
     Ok(OpenEntryMulti {
@@ -171,6 +190,25 @@ pub async fn entry_fragment(
         sidebar_unread_payload_json,
     }
     .into_response())
+}
+
+/// `GET /entries/{id}/summary/fragment` — returns the summary container swap
+/// fragment for the entry. Ownership enforced by `find_by_id_for_user` (404
+/// otherwise). Does NOT mark the entry read (unlike `entry_fragment`).
+pub async fn summary_fragment(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    AxumPath(entry_id): AxumPath<i64>,
+) -> AppResult<SummaryFragment> {
+    let user_id = auth_user.user.id;
+    let ewf = state
+        .db
+        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
+        .await??
+        .ok_or(AppError::EntryNotFound)?;
+    // has_save/has_kagi are irrelevant to the summary container; pass false.
+    let pane = build_reading_pane_view(&state, user_id, &ewf, false, false).await?;
+    Ok(SummaryFragment { pane })
 }
 
 /// Read the user's save-services config + Kagi config to drive the
@@ -360,21 +398,10 @@ impl IntoResponse for OpenEntryMulti {
     }
 }
 
-/// Build the JSON payload for the `#sidebar-unread` block by querying unread
-/// counts per feed for the given user. Used by star/read action endpoints and
-/// the dedicated `/sidebar/unread` polling endpoint (T7).
-pub(crate) async fn build_sidebar_unread(state: &AppState, user_id: i64) -> AppResult<String> {
-    let counts = state
-        .db
-        .read_user(move |conn| entry::unread_counts_per_feed(conn, user_id))
-        .await??;
-    Ok(serde_json::to_string(&counts).unwrap_or_else(|_| "[]".to_string()))
-}
-
-/// Like `build_sidebar_unread`, but applies an in-memory `delta` to one feed's
-/// unread count so an optimistic response (whose DB write hasn't landed yet)
-/// shows the correct number. `delta` is `-1` (marked read), `+1` (marked
-/// unread), or `0` (no change, e.g. star/unstar). Mirrors
+/// Builds the sidebar-unread JSON payload, applying an in-memory `delta` to
+/// one feed's unread count so an optimistic response (whose DB write hasn't
+/// landed yet) shows the correct number. `delta` is `-1` (marked read),
+/// `+1` (marked unread), or `0` (no change, e.g. star/unstar). Mirrors
 /// `unread_counts_per_feed`'s "positive counts only" shape.
 pub(crate) async fn build_sidebar_unread_with_delta(
     state: &AppState,
@@ -566,6 +593,7 @@ async fn set_read_state(
             }
         });
         state.sidebar_cache.bust(user_id);
+        state.events.emit_sidebar(user_id);
     }
 
     Ok(EntryActionMulti {
@@ -574,35 +602,6 @@ async fn set_read_state(
         flash,
         pane_star_form: None,
     })
-}
-
-/// Fragment template for the sidebar-unread polling block — renders `_sidebar_unread.html`
-/// and is returned by `GET /sidebar/unread`.
-#[derive(Template)]
-#[template(path = "_sidebar_unread.html")]
-pub struct SidebarUnreadFragment {
-    pub payload_json: String,
-}
-
-impl IntoResponse for SidebarUnreadFragment {
-    fn into_response(self) -> Response {
-        match self.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-/// `GET /sidebar/unread` — returns the `_sidebar_unread.html` partial with the
-/// current unread-count payload. Used by `app.js` as the polling target for the
-/// sidebar unread-count display (polled every 20 s via `setInterval`).
-pub async fn sidebar_unread_fragment(
-    auth_user: PageAuthUser,
-    State(state): State<AppState>,
-) -> AppResult<SidebarUnreadFragment> {
-    let user_id = auth_user.user.id;
-    let payload_json = build_sidebar_unread(&state, user_id).await?;
-    Ok(SidebarUnreadFragment { payload_json })
 }
 
 /// `POST /entries/{id}/summarize` — queue a summarization job for the entry
@@ -654,6 +653,10 @@ pub async fn summarize_entry_form(
         })
         .await;
 
+    state
+        .events
+        .emit_summary(user_id, entry_id, Some(SummaryStatus::Pending));
+
     Ok(SummarizePending { id: entry_id })
 }
 
@@ -693,6 +696,8 @@ pub async fn summarize_cancel_form(
 
     state.summary_cache.remove(user_id, entry_id);
     state.sidebar_cache.bust(user_id);
+    state.events.emit_summary(user_id, entry_id, None);
+    state.events.emit_sidebar(user_id);
 
     Ok(SummarizeCleared)
 }

@@ -58,6 +58,8 @@ fn create_test_app(config: Config) -> TestApp {
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
         summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        events: rdrs::services::EventBus::new(16),
+        shutdown: tokio_util::sync::CancellationToken::new(),
     };
 
     let app = create_router(state);
@@ -2289,4 +2291,64 @@ async fn test_delete_entry_summary() {
 
     let body: serde_json::Value = response.json();
     assert_eq!(body["success"], true);
+}
+
+// ============================================================================
+// Summary Fragment Tests (SSE swap endpoint)
+// ============================================================================
+
+#[tokio::test]
+async fn summary_fragment_renders_completed_summary() {
+    let app = create_test_app(default_test_config());
+    let (user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
+    login(&app.server).await;
+
+    let entry_id = entry_ids[0];
+
+    // Insert a completed summary directly in the DB.
+    app.db
+        .user(move |conn| {
+            rdrs::models::entry_summary::upsert_pending(conn, user_id, entry_id)?;
+            rdrs::models::entry_summary::set_completed(
+                conn,
+                user_id,
+                entry_id,
+                "<p>Test summary content</p>",
+            )?;
+            Ok::<(), rdrs::error::AppError>(())
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    let response = app
+        .server
+        .get(&format!("/entries/{}/summary/fragment", entry_id))
+        .await;
+    assert_eq!(response.status_code(), axum::http::StatusCode::OK);
+    let body = response.text();
+    assert!(
+        body.contains(r##"data-swap-target="#rp-summary-container""##),
+        "body should contain swap target attribute"
+    );
+    assert!(
+        body.contains("rp-summary-content"),
+        "body should contain completed summary blockquote class"
+    );
+}
+
+#[tokio::test]
+async fn summary_fragment_404_for_other_users_entry() {
+    let app = create_test_app(default_test_config());
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
+        setup_second_user_data(&app.db).await;
+    login(&app.server).await;
+
+    // User 1 is logged in; try to access user 2's entry summary fragment — must return 404.
+    let response = app
+        .server
+        .get(&format!("/entries/{}/summary/fragment", other_entry_ids[0]))
+        .await;
+    assert_eq!(response.status_code(), axum::http::StatusCode::NOT_FOUND);
 }

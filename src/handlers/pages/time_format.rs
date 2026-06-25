@@ -82,3 +82,139 @@ pub fn compute_freshness(
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+
+    /// A timestamp `d` in the past, for driving the "ago" branches. Values are
+    /// chosen comfortably inside each band so sub-second test latency can't tip
+    /// them across a boundary.
+    fn ago(d: Duration) -> Option<chrono::DateTime<Utc>> {
+        Some(Utc::now() - d)
+    }
+
+    #[test]
+    fn compact_none_renders_dash() {
+        assert_eq!(format_relative_time_compact(None), "—");
+    }
+
+    #[test]
+    fn compact_covers_every_band() {
+        assert_eq!(
+            format_relative_time_compact(ago(Duration::seconds(30))),
+            "now"
+        );
+        assert_eq!(
+            format_relative_time_compact(ago(Duration::minutes(5))),
+            "5m"
+        );
+        assert_eq!(format_relative_time_compact(ago(Duration::hours(3))), "3h");
+        assert_eq!(format_relative_time_compact(ago(Duration::days(4))), "4d");
+        // 45 days / 30 = 1 month band
+        assert_eq!(format_relative_time_compact(ago(Duration::days(45))), "1mo");
+        // 400 days / 365 = 1 year band
+        assert_eq!(format_relative_time_compact(ago(Duration::days(400))), "1y");
+    }
+
+    #[test]
+    fn relative_none_is_never_with_empty_tooltip() {
+        let (text, iso) = format_relative_time(None);
+        assert_eq!(text, "Never");
+        assert!(iso.is_empty());
+    }
+
+    #[test]
+    fn relative_just_now_and_tooltip_is_rfc3339() {
+        let dt = Utc::now() - Duration::seconds(30);
+        let (text, iso) = format_relative_time(Some(dt));
+        assert_eq!(text, "Just now");
+        assert_eq!(iso, dt.to_rfc3339());
+    }
+
+    #[test]
+    fn relative_singular_units() {
+        assert_eq!(
+            format_relative_time(ago(Duration::seconds(61))).0,
+            "1 minute ago"
+        );
+        assert_eq!(
+            format_relative_time(ago(Duration::seconds(3700))).0,
+            "1 hour ago"
+        );
+        assert_eq!(
+            format_relative_time(ago(Duration::hours(25))).0,
+            "1 day ago"
+        );
+        assert_eq!(
+            format_relative_time(ago(Duration::days(35))).0,
+            "1 month ago"
+        );
+        assert_eq!(
+            format_relative_time(ago(Duration::days(400))).0,
+            "1 year ago"
+        );
+    }
+
+    #[test]
+    fn relative_plural_units() {
+        assert_eq!(
+            format_relative_time(ago(Duration::minutes(5))).0,
+            "5 minutes ago"
+        );
+        assert_eq!(
+            format_relative_time(ago(Duration::hours(5))).0,
+            "5 hours ago"
+        );
+        assert_eq!(format_relative_time(ago(Duration::days(5))).0, "5 days ago");
+        assert_eq!(
+            format_relative_time(ago(Duration::days(95))).0,
+            "3 months ago"
+        );
+        assert_eq!(
+            format_relative_time(ago(Duration::days(800))).0,
+            "2 years ago"
+        );
+    }
+
+    #[test]
+    fn freshness_from_feed_updated_at() {
+        assert_eq!(
+            compute_freshness(ago(Duration::days(10)), None),
+            (String::new(), "fresh".to_string())
+        );
+        assert_eq!(
+            compute_freshness(ago(Duration::days(60)), None),
+            ("feed-freshness-warning".to_string(), "warning".to_string())
+        );
+        assert_eq!(
+            compute_freshness(ago(Duration::days(120)), None),
+            ("feed-freshness-stale".to_string(), "stale".to_string())
+        );
+    }
+
+    #[test]
+    fn freshness_falls_back_to_fetched_at() {
+        assert_eq!(
+            compute_freshness(None, ago(Duration::days(10))),
+            ("muted".to_string(), "fresh".to_string())
+        );
+        assert_eq!(
+            compute_freshness(None, ago(Duration::days(60))),
+            ("feed-freshness-warning".to_string(), "warning".to_string())
+        );
+        assert_eq!(
+            compute_freshness(None, ago(Duration::days(120))),
+            ("feed-freshness-stale".to_string(), "stale".to_string())
+        );
+    }
+
+    #[test]
+    fn freshness_unknown_is_stale() {
+        assert_eq!(
+            compute_freshness(None, None),
+            ("feed-freshness-stale".to_string(), "stale".to_string())
+        );
+    }
+}

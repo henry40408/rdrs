@@ -52,10 +52,15 @@ pub struct AppState {
     pub summary_tx: mpsc::Sender<SummaryJob>,
     pub sidebar_cache: Arc<SidebarCache>,
     pub summary_cancels: services::CancelRegistry,
+    pub events: services::EventBus,
+    pub shutdown: tokio_util::sync::CancellationToken,
 }
 
 pub fn create_router(state: AppState) -> Router {
-    Router::new()
+    // `core` holds every existing route. The ETag/Date/Compression/Timeout
+    // layers below buffer the response body or abort after SERVER_REQUEST_TIMEOUT
+    // — both fatal to a long-lived SSE stream — so they wrap `core` only.
+    let core = Router::new()
         // Health check
         .route("/health", get(handlers::health::health_check))
         // Favicon routes
@@ -79,12 +84,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/user", get(handlers::user::get_current_user))
         .route("/api/me", get(handlers::user::get_me))
         .route("/api/sidebar", get(handlers::user::get_sidebar))
-        // GET /sidebar/unread — SSR polling target for the sidebar unread-count
-        // block. Polled by app.js every 20 s; returns `_sidebar_unread.html`.
-        .route(
-            "/sidebar/unread",
-            get(handlers::entries::sidebar_unread_fragment),
-        )
         .route("/api/user-settings", get(handlers::user::get_user_settings))
         .route("/api/user/settings/theme", get(handlers::user::get_theme))
         .route(
@@ -183,6 +182,14 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/entries/{id}/fragment",
             get(handlers::entries::entry_fragment),
+        )
+        // Summary container fragment endpoint — re-renders only #rp-summary-container
+        // for the SSE client. Registered before other /entries/{id}/... routes so
+        // the literal `summary/fragment` segments resolve before the bare `{id}`
+        // parameter route in axum's trie router.
+        .route(
+            "/entries/{id}/summary/fragment",
+            get(handlers::entries::summary_fragment),
         )
         // Star / read toggle action endpoints. Return multi-target HTML
         // (`_entry_actions_multi.html`) swapping the row + sidebar-unread.
@@ -289,12 +296,18 @@ pub fn create_router(state: AppState) -> Router {
         .nest("/api/greader.php", handlers::greader::greader_routes())
         .route("/static/{*path}", get(handlers::static_assets::serve))
         .fallback(handlers::pages::not_found_page)
-        .with_state(state)
         .layer(middleware::ETagLayer::new())
         .layer(middleware::DateHeaderLayer::new())
         .layer(CompressionLayer::new().gzip(true).br(true))
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             SERVER_REQUEST_TIMEOUT,
-        ))
+        ));
+
+    Router::new()
+        // SSE lives outside the layers above. It still gets `state` via the
+        // shared `.with_state` below.
+        .route("/events", get(handlers::events::events_stream))
+        .merge(core)
+        .with_state(state)
 }

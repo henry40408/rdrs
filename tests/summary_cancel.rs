@@ -51,6 +51,8 @@ fn create_test_app(config: Config, db_name: &str) -> TestApp {
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
         summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        events: rdrs::services::EventBus::new(16),
+        shutdown: tokio_util::sync::CancellationToken::new(),
     };
 
     let app = create_router(state.clone());
@@ -194,6 +196,36 @@ async fn test_cancel_non_owner_returns_404() {
         .post(&format!("/entries/{}/summarize/cancel", eid))
         .await;
     response.assert_status_not_found();
+}
+
+// ============================================================================
+// Case: summarize POST emits a Pending event on the EventBus
+// ============================================================================
+
+#[tokio::test]
+async fn summarize_emits_pending_event() {
+    let app = create_test_app(default_test_config(), "test_summarize_emits_pending");
+    let mut sub = app.state.events.subscribe();
+    let (uid, eid) = setup_user_with_entry(&app.db, "pendinguser", "password123").await;
+    login(&app.server, "pendinguser", "password123").await;
+
+    app.server
+        .post(&format!("/entries/{}/summarize", eid))
+        .await
+        .assert_status_ok();
+
+    let ev = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+        .await
+        .expect("event emitted")
+        .unwrap();
+    assert_eq!(ev.user_id, uid);
+    assert!(matches!(
+        ev.kind,
+        rdrs::services::EventKind::Summary {
+            status: Some(rdrs::services::SummaryStatus::Pending),
+            ..
+        }
+    ));
 }
 
 // ============================================================================

@@ -1,0 +1,7 @@
+{# GET /entries/{id}/summary/fragment — re-renders #rp-summary-container so an
+   SSE summary event can swap the reading pane without a full reload. #}
+<template data-swap-target="#rp-summary-container">
+    <div class="rp-summary-container" id="rp-summary-container" data-summary-container>
+        {% include "_summary_container_inner.html" %}
+    </div>
+</template>

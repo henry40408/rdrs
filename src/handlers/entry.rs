@@ -312,6 +312,8 @@ pub async fn delete_entry_summary(
     state.summary_cache.remove(user_id, id);
     // A summary was removed; the completed-summary count may have dropped — refresh the sidebar badge.
     state.sidebar_cache.bust(user_id);
+    state.events.emit_summary(user_id, id, None);
+    state.events.emit_sidebar(user_id);
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
