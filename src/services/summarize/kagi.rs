@@ -407,7 +407,9 @@ mod tests {
             session_token: "tok".into(),
             language: None,
         };
-        // cargo-nextest runs each test in its own process, so set_var is safe (edition 2021).
+        // `set_var`/`remove_var` are `unsafe` in this toolchain (process-global
+        // mutation); the `unsafe` blocks are required. cargo-nextest runs each
+        // test in its own process, so this env mutation cannot race other tests.
         unsafe { std::env::set_var("KAGI_API_BASE", server.uri()) };
         let result = summarize_url(&config, "https://x.com/a").await.unwrap();
         unsafe { std::env::remove_var("KAGI_API_BASE") };
