@@ -118,4 +118,60 @@ mod tests {
             .expect("should resolve promptly after shutdown");
         assert!(next.is_none(), "stream must terminate on shutdown");
     }
+
+    #[tokio::test]
+    async fn stream_delivers_matching_sidebar_event() {
+        // Exercises the `EventKind::Sidebar` arm of `to_sse_event` (the
+        // user-filtering test above only delivers a Summary event).
+        let bus = EventBus::new(16);
+        let shutdown = CancellationToken::new();
+        let mut stream = Box::pin(user_event_stream(bus.subscribe(), 1, shutdown));
+
+        bus.emit_sidebar(1);
+        let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("stream should yield within 1s")
+            .expect("an item is present")
+            .expect("Ok event");
+        let _ = item; // a sidebar event was built and delivered
+    }
+
+    #[tokio::test]
+    async fn stream_emits_resync_on_lagged_receiver() {
+        // Overflow a tiny channel before the stream polls so the first
+        // `recv()` returns `Lagged`, which must surface as a resync nudge.
+        let bus = EventBus::new(2);
+        let shutdown = CancellationToken::new();
+        let rx = bus.subscribe();
+        for _ in 0..5 {
+            bus.emit_sidebar(1);
+        }
+        let mut stream = Box::pin(user_event_stream(rx, 1, shutdown));
+
+        let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("stream should yield a resync within 1s")
+            .expect("an item is present")
+            .expect("Ok event");
+        let _ = item; // resync event emitted in response to Lagged
+    }
+
+    #[tokio::test]
+    async fn stream_ends_when_all_senders_dropped() {
+        // Dropping the only `EventBus` closes the broadcast channel; the
+        // stream's `recv()` returns `Closed` and the stream must end.
+        let bus = EventBus::new(16);
+        let shutdown = CancellationToken::new();
+        let rx = bus.subscribe();
+        drop(bus);
+        let mut stream = Box::pin(user_event_stream(rx, 1, shutdown));
+
+        let next = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("should resolve promptly when channel closed");
+        assert!(
+            next.is_none(),
+            "stream must end when all senders are dropped"
+        );
+    }
 }

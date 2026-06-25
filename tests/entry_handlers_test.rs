@@ -2318,6 +2318,7 @@ async fn summary_fragment_renders_completed_summary() {
             Ok::<(), rdrs::error::AppError>(())
         })
         .await
+        .unwrap()
         .unwrap();
 
     let response = app
