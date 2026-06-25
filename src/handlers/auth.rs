@@ -98,6 +98,9 @@ pub async fn login(
     jar: CookieJar,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<(CookieJar, Json<LoginResponse>)> {
+    if state.config.disable_local_auth {
+        return Err(AppError::Forbidden);
+    }
     let (user, new_session) = state
         .db
         .user(move |conn| {

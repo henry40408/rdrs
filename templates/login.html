@@ -14,9 +14,12 @@
             <button type="button" id="passkey-login-btn" class="btn-primary auth-passkey-btn">
                 Login with Passkey
             </button>
+            {% if local_auth_enabled %}
             <p class="muted auth-divider">or use password</p>
+            {% endif %}
         </div>
 
+        {% if local_auth_enabled %}
         <form id="login-form" data-testid="login-form">
             <div class="form-group">
                 <label for="username">Username</label>
@@ -28,6 +31,7 @@
             </div>
             <button type="submit" class="btn-block" data-testid="login-submit">Sign In</button>
         </form>
+        {% endif %}
         {% if signup_enabled %}
         <div class="link">
             <a href="/register">Create an account</a>
@@ -62,7 +66,8 @@
         return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
     }
 
-    document.getElementById('login-form').addEventListener('submit', async (e) => {
+    const loginForm = document.getElementById('login-form');
+    if (loginForm) loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const errorDiv = document.getElementById('error');
         errorDiv.style.display = 'none';

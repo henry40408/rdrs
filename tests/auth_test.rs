@@ -852,6 +852,29 @@ async fn test_page_request_slides_session_expiry_forward() {
 }
 
 #[tokio::test]
+async fn test_disable_local_auth_blocks_password_login() {
+    let mut config = default_test_config();
+    config.disable_local_auth = true;
+    config.auth_proxy_header = "Remote-User".to_string();
+    config.trusted_proxy_networks = rdrs::config::parse_trusted_networks("127.0.0.0/8").unwrap();
+    let server = create_test_server(config);
+
+    // Seed a normal password user.
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    // Password login is now forbidden.
+    let res = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await;
+    res.assert_status(StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn test_fresh_session_is_not_refreshed() {
     let server = create_test_server(default_test_config());
 
