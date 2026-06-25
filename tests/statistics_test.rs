@@ -49,6 +49,7 @@ fn create_test_app(name: &str) -> TestApp {
         disable_local_auth: false,
         auth_proxy_groups_header: String::new(),
         auth_proxy_admin_group: String::new(),
+        auth_proxy_logout_url: None,
     };
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);

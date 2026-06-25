@@ -30,6 +30,7 @@ pub struct Config {
     pub disable_local_auth: bool,
     pub auth_proxy_groups_header: String,
     pub auth_proxy_admin_group: String,
+    pub auth_proxy_logout_url: Option<String>,
 }
 
 /// Parse a comma-separated list of CIDR networks or bare IPs into `IpNet`s.
@@ -98,6 +99,9 @@ impl Config {
                 .unwrap_or(false),
             auth_proxy_groups_header: env::var("AUTH_PROXY_GROUPS_HEADER").unwrap_or_default(),
             auth_proxy_admin_group: env::var("AUTH_PROXY_ADMIN_GROUP").unwrap_or_default(),
+            auth_proxy_logout_url: env::var("AUTH_PROXY_LOGOUT_URL")
+                .ok()
+                .filter(|s| !s.is_empty()),
         })
     }
 
@@ -215,6 +219,7 @@ mod tests {
             disable_local_auth: false,
             auth_proxy_groups_header: String::new(),
             auth_proxy_admin_group: String::new(),
+            auth_proxy_logout_url: None,
         }
     }
 

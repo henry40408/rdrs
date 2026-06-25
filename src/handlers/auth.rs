@@ -137,16 +137,31 @@ pub async fn login(
     ))
 }
 
+#[derive(Debug, Serialize)]
+pub struct LogoutResponse {
+    pub redirect_to: String,
+}
+
 pub async fn logout(
     State(state): State<AppState>,
     jar: CookieJar,
     auth_user: AuthUser,
-) -> AppResult<CookieJar> {
+) -> AppResult<(CookieJar, Json<LogoutResponse>)> {
     let token = auth_user.session.session_token.clone();
     state
         .db
         .user(move |conn| session::delete_session(conn, &token))
         .await??;
 
-    Ok(jar.remove(SESSION_COOKIE_NAME))
+    // Removal must match the Path=/ the cookie was set with, or the browser
+    // keeps the (now-invalid) session_token cookie. Mirrors flash.rs.
+    let removal = Cookie::build((SESSION_COOKIE_NAME, "")).path("/").build();
+
+    let redirect_to = state
+        .config
+        .auth_proxy_logout_url
+        .clone()
+        .unwrap_or_else(|| "/login".to_string());
+
+    Ok((jar.remove(removal), Json(LogoutResponse { redirect_to })))
 }
