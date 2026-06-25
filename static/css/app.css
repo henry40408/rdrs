@@ -1035,7 +1035,7 @@ td input[type="text"] {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    padding: var(--space-2) var(--space-8) var(--space-2) 0;
+    padding: var(--space-2) var(--space-8) var(--space-2) var(--space-4);
 }
 
 /* anchor the eye on the running value; keep its top/bottom spacing even */
