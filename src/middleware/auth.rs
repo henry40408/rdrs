@@ -226,6 +226,7 @@ impl FromRequestParts<AppState> for AdminUser {
 pub struct PageAdminUser {
     pub user: User,
     pub session: Session,
+    pub via_forward_auth: bool,
 }
 
 impl FromRequestParts<AppState> for PageAdminUser {
@@ -263,6 +264,7 @@ impl FromRequestParts<AppState> for PageAdminUser {
         Ok(PageAdminUser {
             user: page_auth_user.user,
             session: page_auth_user.session,
+            via_forward_auth: page_auth_user.via_forward_auth,
         })
     }
 }

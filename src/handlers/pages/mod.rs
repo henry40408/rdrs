@@ -662,7 +662,7 @@ pub async fn admin_page(
     let auth_user = PageAuthUser {
         user: admin.user.clone(),
         session: admin.session.clone(),
-        via_forward_auth: false,
+        via_forward_auth: admin.via_forward_auth,
     };
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 

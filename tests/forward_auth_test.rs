@@ -284,6 +284,39 @@ async fn test_sidebar_reports_via_forward_auth_dynamically() {
 }
 
 #[tokio::test]
+async fn test_admin_page_sidebar_bootstrap_reports_via_forward_auth() {
+    let db_name = "fa_test_admin_sidebar_bootstrap";
+    let server = create_server(db_name, |c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    });
+    seed_user(db_name, "heidi", rdrs::models::user::Role::Admin);
+
+    // Establish session via forward-auth; include the admin group so the role
+    // is not demoted (create_server sets group_mapping_enabled with "admins").
+    server
+        .get("/")
+        .add_header("Remote-User", "heidi")
+        .add_header("Remote-Groups", "admins")
+        .await;
+
+    // Fetch /admin with the proxy header present.
+    let res = server
+        .get("/admin")
+        .add_header("Remote-User", "heidi")
+        .add_header("Remote-Groups", "admins")
+        .await;
+    res.assert_status_ok();
+
+    // The embedded rdrs-sidebar-bootstrap JSON must reflect via_forward_auth: true.
+    let body = res.text();
+    assert!(
+        body.contains("\"via_forward_auth\":true"),
+        "expected via_forward_auth:true in sidebar bootstrap JSON, got body snippet: {:?}",
+        body.get(0..500).unwrap_or(&body)
+    );
+}
+
+#[tokio::test]
 async fn test_valid_session_cookie_not_reminted() {
     let db_name = "fa_test_valid_cookie_not_reminted";
     let server = create_server(db_name, |c| {
