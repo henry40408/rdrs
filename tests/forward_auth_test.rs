@@ -4,11 +4,66 @@ use common::default_test_config;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use axum::http::{HeaderMap, HeaderName};
 use axum_test::TestServer;
 use rdrs::{
-    auth, config::parse_trusted_networks, create_router, db, services, AppState, Config, DbPool,
+    auth, config::parse_trusted_networks, create_router, db,
+    middleware::forward_auth::forward_auth_identity, services, AppState, Config, DbPool,
 };
 use rusqlite::Connection;
+
+fn header_map(pairs: &[(&str, &str)]) -> HeaderMap {
+    let mut h = HeaderMap::new();
+    for (k, v) in pairs {
+        h.insert(
+            HeaderName::from_bytes(k.as_bytes()).unwrap(),
+            v.parse().unwrap(),
+        );
+    }
+    h
+}
+
+#[test]
+fn test_forward_auth_identity() {
+    let mut cfg = default_test_config();
+    cfg.auth_proxy_header = "Remote-User".to_string();
+    cfg.trusted_proxy_networks = parse_trusted_networks("10.0.0.0/8").unwrap();
+
+    let trusted: std::net::IpAddr = "10.1.2.3".parse().unwrap();
+    let untrusted: std::net::IpAddr = "192.168.0.1".parse().unwrap();
+    let with_header = header_map(&[("Remote-User", "alice")]);
+
+    // trusted peer + header present → identity
+    assert_eq!(
+        forward_auth_identity(&cfg, Some(trusted), &with_header),
+        Some("alice".to_string())
+    );
+    // untrusted peer → None
+    assert_eq!(
+        forward_auth_identity(&cfg, Some(untrusted), &with_header),
+        None
+    );
+    // no peer IP → None
+    assert_eq!(forward_auth_identity(&cfg, None, &with_header), None);
+    // header missing → None
+    assert_eq!(
+        forward_auth_identity(&cfg, Some(trusted), &HeaderMap::new()),
+        None
+    );
+    // header empty → None
+    assert_eq!(
+        forward_auth_identity(&cfg, Some(trusted), &header_map(&[("Remote-User", "  ")])),
+        None
+    );
+
+    // feature off (empty header name) → None
+    let mut off = cfg.clone();
+    off.auth_proxy_header = String::new();
+    assert_eq!(
+        forward_auth_identity(&off, Some(trusted), &with_header),
+        None
+    );
+}
 
 fn open_shared_memory(name: &str) -> Connection {
     let uri = format!("file:{}?mode=memory&cache=shared", name);
