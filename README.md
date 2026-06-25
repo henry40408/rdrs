@@ -102,6 +102,65 @@ All configuration is done via environment variables:
 > passkeys. rdrs logs a startup warning while the RP origin still points at
 > `localhost`, and the active values are shown on the Settings page.
 
+## Authentication & SSO
+
+RDRS supports three authentication methods that all work simultaneously by
+default: local password, WebAuthn/passkeys, and **forward-auth (trusted-header)
+SSO**. `DISABLE_LOCAL_AUTH` is the only knob that narrows this set.
+
+### Forward-Auth (SSO)
+
+RDRS can delegate browser login to an external forward-auth proxy such as
+Authelia, authentik, or Traefik ForwardAuth. The proxy authenticates the user
+and forwards their identity in a trusted header; RDRS establishes a session from
+it. Existing accounts are matched by username — no migration is required.
+
+**Enable it** by setting (see the [Configuration](#configuration) table for all
+fields):
+
+- `AUTH_PROXY_HEADER` — the username header your proxy injects (e.g.
+  `Remote-User`).
+- `TRUSTED_PROXY_NETWORKS` — the CIDR(s)/IP(s) the proxy connects from. The
+  identity header is trusted only when the TCP peer falls within this set, so it
+  cannot be spoofed by a downstream client.
+
+**Optional:** `AUTH_PROXY_USER_CREATION` (JIT-create unknown users),
+`AUTH_PROXY_GROUPS_HEADER` + `AUTH_PROXY_ADMIN_GROUP` (map a group to the admin
+role on every login), `DISABLE_LOCAL_AUTH` (hide the password form), and
+`AUTH_PROXY_LOGOUT_URL` (redirect Sign Out to your IdP's logout endpoint to also
+end the SSO session; when unset, Sign Out clears the local session and the proxy
+header re-authenticates on the next request).
+
+**Reverse-proxy requirements:**
+
+1. The proxy **must** authoritatively set — and strip any client-supplied copy
+   of — the identity (and groups) headers on every request before forwarding to
+   RDRS. A downstream client able to inject these headers bypasses the trust
+   model entirely.
+2. The proxy **must** be configured to bypass forward-auth for the Google Reader
+   API paths — `/accounts/ClientLogin`, `/reader/api/...`, and the
+   FreshRSS-compatible `/api/greader.php/...` prefix — so native GReader clients
+   (FeedMe, Read You, etc.) can still authenticate with their stored username and
+   password. These paths authenticate via the GReader `ClientLogin` token, not
+   the proxy header. Example Authelia access-control rules:
+
+   ```yaml
+   access_control:
+     rules:
+       - domain: rdrs.example.com
+         policy: bypass
+         resources:
+           - '^/accounts/ClientLogin$'
+           - '^/reader/api/.*'
+           - '^/api/greader\.php/.*'   # FreshRSS-compatible prefix
+       - domain: rdrs.example.com
+         policy: one_factor            # everything else goes through SSO
+   ```
+
+> The trust model, middleware mechanics, and how the auth mode is detected per
+> request are documented in
+> [ARCHITECTURE.md](ARCHITECTURE.md#forward-auth-trusted-header-login).
+
 ## Usage
 
 ### Adding Feeds
@@ -118,6 +177,15 @@ The interface supports vim-style keyboard navigation for efficient reading.
 
 - **Export**: Download all your feeds as an OPML file from Settings
 - **Import**: Upload an OPML file to bulk-add feeds
+
+### AI Summaries
+
+RDRS can generate per-article summaries via the Kagi Universal Summarizer. This
+is configured per user:
+
+1. Go to Settings → Kagi Universal Summarizer
+2. Paste your Kagi session link and choose a target language
+3. Summaries are then generated on demand for entries
 
 ### Linkding Integration
 
@@ -154,7 +222,16 @@ volumes:
 docker build -t rdrs:latest .
 ```
 
-The Dockerfile uses multi-stage builds with a distroless base image for minimal size and attack surface.
+The Dockerfile uses multi-stage builds with a distroless base image for minimal
+size and attack surface. The build-stage design is described in
+[ARCHITECTURE.md](ARCHITECTURE.md#deployment).
+
+### Production Notes
+
+- Set `IMAGE_PROXY_SECRET` to a persistent value so image proxy URLs survive
+  restarts (otherwise it is auto-generated on each boot).
+- Mount the `/data` volume so the SQLite database persists.
+- Put RDRS behind a reverse proxy for TLS termination.
 
 ## Development
 
@@ -166,7 +243,7 @@ The Dockerfile uses multi-stage builds with a distroless base image for minimal 
 ### Running Tests
 
 ```bash
-cargo test
+cargo nextest run
 ```
 
 ### Project Structure

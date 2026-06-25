@@ -38,7 +38,7 @@ src/
 │   ├── user.rs          # User accounts
 │   ├── session.rs       # Session management
 │   ├── feed.rs          # RSS feeds
-│   ├── entry.rs         # Feed entries
+│   ├── entry/           # Feed entries (mod.rs + filters.rs query builder)
 │   ├── entry_summary.rs # Article summaries
 │   ├── category.rs      # Feed categories
 │   ├── image.rs         # Image storage
@@ -48,14 +48,16 @@ src/
 │   └── user_settings.rs # User preferences
 │
 ├── handlers/            # HTTP request handlers
-│   ├── pages.rs         # HTML page rendering
+│   ├── pages/           # HTML page rendering (mod.rs + script_json/search_text/time_format helpers)
 │   ├── auth.rs          # Authentication endpoints
 │   ├── passkey.rs       # Passkey/WebAuthn endpoints
 │   ├── admin.rs         # Admin operations
-│   ├── user.rs          # User operations
-│   ├── category.rs      # Category CRUD
-│   ├── feed.rs          # Feed CRUD
-│   ├── entry.rs         # Entry operations
+│   ├── user.rs          # User operations + sidebar payload
+│   ├── categories.rs    # Category form actions (SSR)
+│   ├── feeds.rs         # Feed form actions: create/edit/delete/refresh/OPML import (SSR)
+│   ├── feed.rs          # Per-feed JSON endpoints (e.g. icon)
+│   ├── entries.rs       # Entry SSR fragments + form actions (read/star/summarize/save)
+│   ├── entry.rs         # Per-entry JSON endpoints (summary, neighbors, full content)
 │   ├── favicon.rs       # Favicon serving (embedded at compile time)
 │   ├── static_assets.rs # Static JS assets (embedded at compile time)
 │   ├── proxy.rs         # Image proxy
@@ -75,19 +77,24 @@ src/
 │
 ├── services/            # Business logic
 │   ├── background.rs    # Background sync scheduler
+│   ├── entry_retention.rs # Read-entry retention/pruning worker
 │   ├── events.rs        # In-memory EventBus for SSE live updates
 │   ├── feed_sync.rs     # Feed refresh logic
 │   ├── feed_discovery.rs# Feed URL detection
 │   ├── readability.rs   # Content extraction
 │   ├── sanitize.rs      # HTML sanitization
+│   ├── html_entities.rs # HTML entity decoding for plain-text fields
 │   ├── opml.rs          # OPML import/export
 │   ├── icon_fetcher.rs  # Feed icon fetching
 │   ├── http.rs          # Shared HTTP client utilities
 │   ├── image_proxy.rs   # Secure image proxying
+│   ├── page_cache.rs    # Per-user TTL page-payload caches (moka)
+│   ├── sidebar_cache.rs # Per-user sidebar chrome cache
 │   ├── summary_cache.rs # Summary caching
 │   ├── summary_cleanup.rs # Summary cleanup task
 │   ├── summary_worker.rs# Summary generation worker
-│   ├── save/
+│   ├── save/            # External save targets
+│   │   ├── mod.rs       # Save dispatch
 │   │   └── linkding.rs  # Linkding integration
 │   └── summarize/       # AI summarization
 │       ├── mod.rs       # Summarizer trait
@@ -96,6 +103,7 @@ src/
 ├── middleware/          # HTTP middleware
 │   ├── auth.rs          # Session authentication
 │   ├── date_header.rs   # Date response header
+│   ├── etag.rs          # ETag / conditional-request handling
 │   ├── flash.rs         # Flash messages
 │   └── forward_auth.rs  # Forward-auth / trusted-header browser login
 │
@@ -149,7 +157,7 @@ Custom `AppError` type that maps to appropriate HTTP responses:
 
 Schema migrations are tracked using `PRAGMA user_version`. Each migration runs once and advances the version number, replacing the previous ad-hoc `ALTER TABLE` approach.
 
-SQLite schema with 10 tables:
+SQLite schema with 11 tables:
 
 | Table | Purpose |
 |-------|---------|
@@ -159,6 +167,7 @@ SQLite schema with 10 tables:
 | `feed` | Feed metadata with etag caching and bucket assignment |
 | `entry` | Feed items with read/starred status |
 | `entry_summary` | AI-generated article summaries |
+| `entry_tombstone` | Tombstones for retention-pruned entries; prevents re-insertion on the next sync (cascades when the feed is deleted) |
 | `image` | Polymorphic image storage |
 | `user_settings` | User preferences and service configs |
 | `passkey` | WebAuthn credential storage |
@@ -229,6 +238,8 @@ RDRS supports passwordless authentication via WebAuthn/Passkey:
 
 RDRS supports delegating browser authentication to an external forward-auth proxy (e.g., Authelia, authentik, Traefik ForwardAuth). When enabled, a Tower middleware (`middleware/forward_auth.rs`) intercepts browser page requests and attempts to establish a session from a trusted identity header before falling back to the normal cookie login flow.
 
+> **Operator setup** — the environment variables, reverse-proxy requirements (header stripping, GReader path bypass), and logout behavior live in [README.md → Authentication & SSO](README.md#authentication--sso). This section documents the internal mechanics.
+
 **Trust model:**
 
 The middleware checks the TCP peer IP of the incoming connection against a set of trusted CIDRs/IPs (`TRUSTED_PROXY_NETWORKS`). The peer address comes from the connection itself (`ConnectInfo`), not from `X-Forwarded-For`, so it cannot be spoofed by a downstream client. If the peer is untrusted, the identity header is ignored and the request proceeds to the normal session-cookie check. The middleware fails closed: any of untrusted peer, missing header, absent `ConnectInfo`, or DB error leaves the user unauthenticated.
@@ -253,31 +264,9 @@ Setting `DISABLE_LOCAL_AUTH=true` hides the browser password-entry form and make
 
 The middleware is applied only to browser page routes. It is never invoked for the prefixes `/api`, `/reader`, `/accounts`, `/events`, `/static`, `/favicon`, and `/health`. It also skips requests that already carry a valid session cookie, so it adds no overhead for already-logged-in users.
 
-**Forward and passkey auth coexist:**
+**Logout mechanics:**
 
-Forward-auth, local password, and passkey authentication all work simultaneously by default. `DISABLE_LOCAL_AUTH` is the only knob that narrows that set.
-
-**Operator warnings:**
-
-1. The reverse proxy **must** authoritatively set (and strip any client-supplied copy of) the identity and groups headers on every request before forwarding to RDRS. A downstream client that can inject these headers bypasses the trust model entirely.
-2. The reverse proxy **must** be configured to bypass forward-auth for `/accounts/ClientLogin`, `/reader/api/...`, and the FreshRSS-compatible `/api/greader.php/...` prefix so native GReader clients (FeedMe, Read You, etc.) can still authenticate with their stored username and password. These paths authenticate via the GReader `ClientLogin` token, not the proxy header. Example Authelia access-control rules:
-
-   ```yaml
-   access_control:
-     rules:
-       - domain: rdrs.example.com
-         policy: bypass
-         resources:
-           - '^/accounts/ClientLogin$'
-           - '^/reader/api/.*'
-           - '^/api/greader\.php/.*'   # FreshRSS-compatible prefix
-       - domain: rdrs.example.com
-         policy: one_factor            # everything else goes through SSO
-   ```
-
-**Logout under forward-auth:**
-
-Sign Out always clears the local `session_token` cookie (with `Path=/`) and deletes the server-side session. The forward-auth middleware re-authenticates whenever there is no *valid* session cookie — a stale or expired cookie no longer blocks re-authentication. This means that under forward-auth, a local Sign Out normally bounces the user straight back in via the proxy header (matching the linkding/Miniflux behavior). If `AUTH_PROXY_LOGOUT_URL` is set, Sign Out instead redirects the browser there (e.g. the Authelia logout URL) so the IdP/SSO session is also terminated. Additionally, `/login` redirects an already-authenticated user to `/` rather than rendering the login form again.
+Sign Out always clears the local `session_token` cookie (with `Path=/`) and deletes the server-side session. The forward-auth middleware re-authenticates whenever there is no *valid* session cookie — a stale or expired cookie no longer blocks re-authentication, which is what prevents a logout lockout under forward-auth. `/login` redirects an already-authenticated user to `/` rather than rendering the login form again. The user-facing logout behavior and the `AUTH_PROXY_LOGOUT_URL` knob are described in the README.
 
 **Auth-mode indicator:**
 
@@ -297,6 +286,13 @@ The sidebar shows an **SSO** pill when the current request is served through for
 - Parses feed with feed-rs library (with custom timestamp parser for Chinese date support)
 - Inserts new entries, skips duplicates
 - Processes feeds in parallel using `tokio::task::JoinSet` with a concurrency limit of 4
+
+### Entry Retention
+
+**Retention Worker** (`entry_retention.rs`):
+- Opt-in per user via `user_settings.retention_read_days` (`0` = disabled); a no-op when nobody has opted in.
+- Runs every 24 hours, pruning entries that are read, older than the configured window, and not starred, in batches.
+- Each pruned entry records an `entry_tombstone` (`feed_id`, `guid`) so the next feed sync does not re-insert it. Tombstones cascade-delete with their feed.
 
 ### Content Processing
 
@@ -348,6 +344,19 @@ A single `GET /events` endpoint (`handlers/events.rs`) streams per-user Server-S
 - **`summary`** — carries `{entry_id, status}` JSON; the client rewrites the entry-row badge and, if that entry is open in the reading pane, swaps `GET /entries/{id}/summary/fragment` into `#rp-summary-container`.
 
 The stream loops with a `select!` that races event delivery against the global `CancellationToken`, so SIGINT cleanly tears down all open SSE connections as part of graceful shutdown. `/events` is registered outside the ETag, Compression, Date-header, and Timeout middleware layers — those layers buffer or time-limit responses, which is fatal for a long-lived stream.
+
+### Caching
+
+In-memory, per-user caches reduce repeated work on hot read paths:
+
+- **Sidebar cache** (`sidebar_cache.rs`) — caches the per-user sidebar chrome
+  (feed/category tree and unread counts), replacing several SQL queries per
+  request. It excludes session-specific fields (e.g. the masquerade admin flag)
+  so one entry serves every request from the same `user_id`. It is bounded by
+  capacity and a TTL, and is explicitly busted by handlers, background sync, and
+  the summary worker whenever they change a user's feeds, entries, or counts.
+- **Page cache** (`page_cache.rs`) — a thin helper around `moka::sync::Cache`
+  giving page handlers per-user, TTL-bounded caches for their rendered payloads.
 
 ### External Services
 
@@ -422,6 +431,6 @@ Benefits:
 
 ### Production Considerations
 
-- Set `IMAGE_PROXY_SECRET` for persistent image URLs
-- Mount `/data` volume for database persistence
-- Consider reverse proxy for TLS termination
+Deployment and production configuration (image proxy secret, `/data`
+persistence, TLS via a reverse proxy) are documented in
+[README.md → Production Notes](README.md#production-notes).
