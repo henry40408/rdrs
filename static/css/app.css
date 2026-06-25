@@ -1017,12 +1017,31 @@ td input[type="text"] {
 .settings-th {
     text-align: left;
     padding-right: var(--space-8);
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
     width: 200px;
     font-weight: 600;
     color: var(--color-text-secondary);
     text-transform: none;
     letter-spacing: normal;
     font-size: var(--font-sm);
+}
+
+/* group label rows in the configuration table */
+.grouphdr td {
+    background: var(--color-accent-subtle);
+    color: var(--color-accent);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: var(--space-2) var(--space-8) var(--space-2) 0;
+}
+
+/* anchor the eye on the running value; keep its top/bottom spacing even */
+.settings-col-current {
+    background: var(--color-accent-subtle);
+    vertical-align: middle;
 }
 
 /* ===== Banner Stack (accessible flash messages) =====
@@ -2323,6 +2342,11 @@ summary {
         width: auto;
         min-width: 100px;
         padding-right: var(--space-3);
+    }
+
+    .page-content table.mobile-cards-settings .grouphdr td {
+        display: block;
+        width: 100%;
     }
 
     /* Stack action links */

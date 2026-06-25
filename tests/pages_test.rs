@@ -2883,3 +2883,46 @@ fn extract_after_value(html: &str) -> Option<String> {
     let j = rest.find('"')?;
     Some(rest[..j].to_string())
 }
+
+#[tokio::test]
+async fn test_settings_page_groups_and_forward_auth() {
+    let mut config = default_test_config();
+    config.auth_proxy_header = "Remote-User".to_string();
+    config.trusted_proxy_networks = rdrs::config::parse_trusted_networks("10.0.0.0/8").unwrap();
+    config.auth_proxy_admin_group = "admins".to_string();
+    let app = create_test_app_named(config, "test_settings_groups_fa");
+
+    app.server
+        .post("/api/register")
+        .json(&serde_json::json!({ "username": "admin", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&serde_json::json!({ "username": "admin", "password": "password123" }))
+        .await
+        .assert_status_ok();
+
+    let res = app.server.get("/settings").await;
+    res.assert_status_ok();
+    let body = res.text();
+    // group headers present
+    assert!(
+        body.contains("Authentication") && body.contains("Forward-Auth"),
+        "expected 'Authentication' and 'Forward-Auth' in body"
+    );
+    assert!(body.contains("Accounts"), "expected 'Accounts' in body");
+    // forward-auth rows present with current values reflected
+    assert!(
+        body.contains("AUTH_PROXY_HEADER"),
+        "expected AUTH_PROXY_HEADER in body"
+    );
+    assert!(
+        body.contains("Remote-User"),
+        "expected 'Remote-User' in body"
+    );
+    assert!(
+        body.contains("AUTH_PROXY_LOGOUT_URL"),
+        "expected AUTH_PROXY_LOGOUT_URL in body"
+    );
+}
