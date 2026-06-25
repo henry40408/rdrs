@@ -38,7 +38,7 @@ src/
 │   ├── user.rs          # User accounts
 │   ├── session.rs       # Session management
 │   ├── feed.rs          # RSS feeds
-│   ├── entry.rs         # Feed entries
+│   ├── entry/           # Feed entries (mod.rs + filters.rs query builder)
 │   ├── entry_summary.rs # Article summaries
 │   ├── category.rs      # Feed categories
 │   ├── image.rs         # Image storage
@@ -48,14 +48,16 @@ src/
 │   └── user_settings.rs # User preferences
 │
 ├── handlers/            # HTTP request handlers
-│   ├── pages.rs         # HTML page rendering
+│   ├── pages/           # HTML page rendering (mod.rs + script_json/search_text/time_format helpers)
 │   ├── auth.rs          # Authentication endpoints
 │   ├── passkey.rs       # Passkey/WebAuthn endpoints
 │   ├── admin.rs         # Admin operations
-│   ├── user.rs          # User operations
-│   ├── category.rs      # Category CRUD
-│   ├── feed.rs          # Feed CRUD
-│   ├── entry.rs         # Entry operations
+│   ├── user.rs          # User operations + sidebar payload
+│   ├── categories.rs    # Category form actions (SSR)
+│   ├── feeds.rs         # Feed form actions: create/edit/delete/refresh/OPML import (SSR)
+│   ├── feed.rs          # Per-feed JSON endpoints (e.g. icon)
+│   ├── entries.rs       # Entry SSR fragments + form actions (read/star/summarize/save)
+│   ├── entry.rs         # Per-entry JSON endpoints (summary, neighbors, full content)
 │   ├── favicon.rs       # Favicon serving (embedded at compile time)
 │   ├── static_assets.rs # Static JS assets (embedded at compile time)
 │   ├── proxy.rs         # Image proxy
@@ -75,19 +77,24 @@ src/
 │
 ├── services/            # Business logic
 │   ├── background.rs    # Background sync scheduler
+│   ├── entry_retention.rs # Read-entry retention/pruning worker
 │   ├── events.rs        # In-memory EventBus for SSE live updates
 │   ├── feed_sync.rs     # Feed refresh logic
 │   ├── feed_discovery.rs# Feed URL detection
 │   ├── readability.rs   # Content extraction
 │   ├── sanitize.rs      # HTML sanitization
+│   ├── html_entities.rs # HTML entity decoding for plain-text fields
 │   ├── opml.rs          # OPML import/export
 │   ├── icon_fetcher.rs  # Feed icon fetching
 │   ├── http.rs          # Shared HTTP client utilities
 │   ├── image_proxy.rs   # Secure image proxying
+│   ├── page_cache.rs    # Per-user TTL page-payload caches (moka)
+│   ├── sidebar_cache.rs # Per-user sidebar chrome cache
 │   ├── summary_cache.rs # Summary caching
 │   ├── summary_cleanup.rs # Summary cleanup task
 │   ├── summary_worker.rs# Summary generation worker
-│   ├── save/
+│   ├── save/            # External save targets
+│   │   ├── mod.rs       # Save dispatch
 │   │   └── linkding.rs  # Linkding integration
 │   └── summarize/       # AI summarization
 │       ├── mod.rs       # Summarizer trait
@@ -96,6 +103,7 @@ src/
 ├── middleware/          # HTTP middleware
 │   ├── auth.rs          # Session authentication
 │   ├── date_header.rs   # Date response header
+│   ├── etag.rs          # ETag / conditional-request handling
 │   ├── flash.rs         # Flash messages
 │   └── forward_auth.rs  # Forward-auth / trusted-header browser login
 │
@@ -149,7 +157,7 @@ Custom `AppError` type that maps to appropriate HTTP responses:
 
 Schema migrations are tracked using `PRAGMA user_version`. Each migration runs once and advances the version number, replacing the previous ad-hoc `ALTER TABLE` approach.
 
-SQLite schema with 10 tables:
+SQLite schema with 11 tables:
 
 | Table | Purpose |
 |-------|---------|
@@ -159,6 +167,7 @@ SQLite schema with 10 tables:
 | `feed` | Feed metadata with etag caching and bucket assignment |
 | `entry` | Feed items with read/starred status |
 | `entry_summary` | AI-generated article summaries |
+| `entry_tombstone` | Tombstones for retention-pruned entries; prevents re-insertion on the next sync (cascades when the feed is deleted) |
 | `image` | Polymorphic image storage |
 | `user_settings` | User preferences and service configs |
 | `passkey` | WebAuthn credential storage |
@@ -278,6 +287,13 @@ The sidebar shows an **SSO** pill when the current request is served through for
 - Inserts new entries, skips duplicates
 - Processes feeds in parallel using `tokio::task::JoinSet` with a concurrency limit of 4
 
+### Entry Retention
+
+**Retention Worker** (`entry_retention.rs`):
+- Opt-in per user via `user_settings.retention_read_days` (`0` = disabled); a no-op when nobody has opted in.
+- Runs every 24 hours, pruning entries that are read, older than the configured window, and not starred, in batches.
+- Each pruned entry records an `entry_tombstone` (`feed_id`, `guid`) so the next feed sync does not re-insert it. Tombstones cascade-delete with their feed.
+
 ### Content Processing
 
 **HTML Sanitization** (`sanitize.rs`):
@@ -328,6 +344,19 @@ A single `GET /events` endpoint (`handlers/events.rs`) streams per-user Server-S
 - **`summary`** — carries `{entry_id, status}` JSON; the client rewrites the entry-row badge and, if that entry is open in the reading pane, swaps `GET /entries/{id}/summary/fragment` into `#rp-summary-container`.
 
 The stream loops with a `select!` that races event delivery against the global `CancellationToken`, so SIGINT cleanly tears down all open SSE connections as part of graceful shutdown. `/events` is registered outside the ETag, Compression, Date-header, and Timeout middleware layers — those layers buffer or time-limit responses, which is fatal for a long-lived stream.
+
+### Caching
+
+In-memory, per-user caches reduce repeated work on hot read paths:
+
+- **Sidebar cache** (`sidebar_cache.rs`) — caches the per-user sidebar chrome
+  (feed/category tree and unread counts), replacing several SQL queries per
+  request. It excludes session-specific fields (e.g. the masquerade admin flag)
+  so one entry serves every request from the same `user_id`. It is bounded by
+  capacity and a TTL, and is explicitly busted by handlers, background sync, and
+  the summary worker whenever they change a user's feeds, entries, or counts.
+- **Page cache** (`page_cache.rs`) — a thin helper around `moka::sync::Cache`
+  giving page handlers per-user, TTL-bounded caches for their rendered payloads.
 
 ### External Services
 
