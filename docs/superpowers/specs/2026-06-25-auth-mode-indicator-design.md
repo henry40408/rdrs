@@ -16,41 +16,73 @@ the instance runs:
    into labeled groups with the columns reordered to **Variable · Current ·
    Default · Description**.
 
-## Why a schema change is needed
+## Why persistence is not needed
 
-The pill must reflect *how the current session authenticated*. The `session`
-row does not record that today, and it cannot be inferred after the fact. So we
-persist the auth method on the session at creation time.
+In a forward-auth deployment the proxy injects the identity header
+(`Remote-User`) on *every* request — the model linkding/Miniflux rely on. So
+whether the current request arrives through forward-auth is decidable at request
+time from the config + the TCP peer + the header, with no stored state. This
+avoids a schema migration entirely and reflects the live state (per request)
+rather than how the session was originally created.
 
 ## Components
 
-### 1. `session.auth_method` (schema migration)
+### 1. Determine forward-auth dynamically (no persistence, no schema change)
 
-- Add column `auth_method TEXT NOT NULL DEFAULT 'local'` to `session` via a new
-  `PRAGMA user_version` migration in `db/schema.rs`.
-- `Session` struct gains `pub auth_method: String`; `row_to_session` reads it;
-  every `SELECT` of session columns (`find_by_token`, `find_by_id`, any others)
-  includes it.
-- `create_session(conn, user_id)` becomes
-  `create_session(conn, user_id, auth_method: &str)`; the `INSERT` writes the
-  column. Update all four call sites:
-  - `src/middleware/forward_auth.rs` → `"forward_auth"`
-  - `src/handlers/auth.rs` (password login) → `"local"`
-  - `src/handlers/passkey.rs` (passkey) → `"local"`
-  - `src/handlers/greader/auth.rs` (ClientLogin) → `"local"`
-- Values are limited to `"local"` and `"forward_auth"` (distinguishing
-  password vs passkey is out of scope — the UI only needs forward-auth vs not).
-  Masquerade does not call `create_session` (it mutates an existing session), so
-  it is unaffected.
+- Add a shared helper in `src/middleware/forward_auth.rs`:
+
+  ```rust
+  /// The identity supplied by a trusted forward-auth proxy on this request, if
+  /// any. `None` when the feature is off, the peer is untrusted/unknown, or the
+  /// header is missing/empty. Shared by the middleware and the auth extractors.
+  pub fn forward_auth_identity(
+      config: &Config,
+      peer_ip: Option<std::net::IpAddr>,
+      headers: &axum::http::HeaderMap,
+  ) -> Option<String> {
+      if !config.auth_proxy_enabled() {
+          return None;
+      }
+      let ip = peer_ip?;
+      if !config.is_trusted_peer(ip) {
+          return None;
+      }
+      headers
+          .get(config.auth_proxy_header.as_str())
+          .and_then(|v| v.to_str().ok())
+          .map(|s| s.trim().to_string())
+          .filter(|s| !s.is_empty())
+  }
+  ```
+
+- The `forward_auth` middleware reuses this helper for its own peer-trust +
+  identity-header extraction (replacing its inline checks) so the logic lives in
+  one place.
+- `AuthUser` and `PageAuthUser` (`src/middleware/auth.rs`) gain a computed field
+  `pub via_forward_auth: bool`, set in their `from_request_parts` from
+  `forward_auth_identity(&state.config, peer_ip, &parts.headers).is_some()`,
+  where `peer_ip` comes from
+  `parts.extensions.get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip())`.
+- No schema change, no `session` table change, no `create_session` change.
+
+**Semantic note:** this reflects "this request is arriving through forward-auth
+right now," not "the session was created via forward-auth." Under
+`DISABLE_LOCAL_AUTH` (pure SSO) the two coincide. In a mixed deployment a
+password user who is also behind the proxy would show the pill — acceptable,
+since they are in fact being served through the SSO proxy.
 
 ### 2. `SidebarResponse.via_forward_auth` (backend exposure)
 
 - Add `pub via_forward_auth: bool` to `crate::handlers::user::SidebarResponse`
   (used by BOTH the SSR sidebar bootstrap and the `GET /api/sidebar` endpoint).
-- `build_app_layout` (`handlers/pages/mod.rs`) sets it from the current session:
-  `via_forward_auth: auth_user.session.auth_method == "forward_auth"`.
+- `build_app_layout` (`handlers/pages/mod.rs`) sets it from the extractor:
+  `via_forward_auth: auth_user.via_forward_auth` (its `auth_user` is a
+  `PageAuthUser`).
 - `get_sidebar` (`handlers/user.rs`, the `/api/sidebar` handler) sets the same
-  field from its `AuthUser`'s session, so a live refresh keeps the pill correct.
+  field from its `AuthUser`'s computed `via_forward_auth`, so a live refresh
+  keeps the pill correct. The proxy injects the identity header on `/api/sidebar`
+  too (it is in the middleware's SKIP_PREFIXES for auto-login, but the header is
+  still present for the extractor to read).
 - `serialize_sidebar_for_script` serializes the struct as-is, so the bootstrap
   JSON gains the field automatically.
 
@@ -119,24 +151,25 @@ persist the auth method on the session at creation time.
 ### 5. Documentation
 
 - `ARCHITECTURE.md` forward-auth section: add ~2 sentences — the sidebar shows
-  an **SSO** pill when the current session authenticated via forward-auth
-  (backed by the new `session.auth_method`), and the App page surfaces the
+  an **SSO** pill when the current request is served through forward-auth
+  (computed per request, no stored state), and the App page surfaces the
   forward-auth configuration. The six/seven env vars are already documented; do
   not duplicate them.
 
 ## Data flow
 
-login/forward-auth/passkey/ClientLogin → `create_session(..., auth_method)` →
-`session.auth_method` persisted → `AuthUser`/`PageAuthUser` carries the session
-→ `build_app_layout` / `get_sidebar` compute `via_forward_auth` →
-bootstrap JSON / `/api/sidebar` → `rdrs-sidebar.js` renders the pill.
+request arrives (proxy injects `Remote-User` when forward-authed) →
+`AuthUser`/`PageAuthUser` extractor computes `via_forward_auth` via
+`forward_auth_identity` (config + peer IP + header) → `build_app_layout` /
+`get_sidebar` copy it into `SidebarResponse` → bootstrap JSON / `/api/sidebar`
+→ `rdrs-sidebar.js` renders the pill.
 
 ## Testing
 
-- **Schema/model:** migration adds the column with default `'local'`;
-  `create_session` persists the passed method; `find_by_token`/`find_by_id`
-  round-trip `auth_method`. An existing-DB row (pre-migration) reads back as
-  `'local'`.
+- **Helper (unit):** `forward_auth_identity` returns `Some(user)` only when the
+  feature is enabled, the peer IP is trusted, and a non-empty header is present;
+  `None` otherwise (feature off / untrusted peer / missing peer IP / empty
+  header).
 - **Backend exposure (integration):** a forward-auth login yields a sidebar
   bootstrap / `/api/sidebar` with `via_forward_auth: true`; a password login
   yields `false`.
@@ -157,26 +190,28 @@ diff, and only commit regenerated images if a diff actually appears.
 
 ## Affected files
 
-- `src/db/schema.rs` — migration.
-- `src/models/session.rs` — `Session.auth_method`, `create_session` signature,
-  row mapping, SELECT/INSERT columns; tests.
-- `src/middleware/forward_auth.rs`, `src/handlers/auth.rs`,
-  `src/handlers/passkey.rs`, `src/handlers/greader/auth.rs` — pass the method.
-- `src/handlers/user.rs` — `SidebarResponse.via_forward_auth` + `get_sidebar`.
-- `src/handlers/pages/mod.rs` — `build_app_layout` flag; `SettingsTemplate`
-  forward-auth fields + population.
+- `src/middleware/forward_auth.rs` — `forward_auth_identity` helper; middleware
+  reuses it.
+- `src/middleware/auth.rs` — `AuthUser`/`PageAuthUser` gain computed
+  `via_forward_auth`.
+- `src/handlers/user.rs` — `SidebarResponse.via_forward_auth` + `get_sidebar`
+  populates it.
+- `src/handlers/pages/mod.rs` — `build_app_layout` copies the flag;
+  `SettingsTemplate` forward-auth fields + population.
 - `static/js/components/rdrs-sidebar.js` — pill rendering + rerender trigger.
 - `templates/settings.html` — grouped, reordered table.
 - `static/css/app.css` — `.sidebar-id`, `.sidebar-auth-pill`, `.grouphdr`,
   Current-column tint + balanced header padding.
 - `ARCHITECTURE.md` — short note.
-- Tests: `tests/auth_test.rs` / `tests/forward_auth_test.rs` / `tests/pages_test.rs`
-  as appropriate; `src/models/session.rs` unit tests.
+- Tests: `forward_auth.rs` unit tests for `forward_auth_identity`;
+  `tests/forward_auth_test.rs` / `tests/auth_test.rs` / `tests/pages_test.rs` as
+  appropriate for the integration assertions.
 
 ## Out-of-scope follow-ups
 
-- Distinguishing password vs passkey in `auth_method` (only `local` vs
-  `forward_auth` now).
+- Distinguishing password vs passkey (the indicator is forward-auth vs not).
+- Persisting the auth method on the session (decided against — computed
+  dynamically per request).
 - A "Sign-in method" row on the User Settings page (rejected option C).
 - Per-provider pill label from a configured provider name (label is the static
   "SSO").
