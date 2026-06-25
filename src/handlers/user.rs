@@ -135,6 +135,7 @@ pub struct SidebarResponse {
     pub categories: Vec<SidebarCategoryDto>,
     pub total_unread: i64,
     pub total_summarized: i64,
+    pub via_forward_auth: bool,
 }
 
 /// Raw chrome data needed for every authenticated page render: theme,
@@ -253,6 +254,7 @@ pub async fn build_sidebar_response(
     state: &AppState,
     user: &crate::models::User,
     session: &crate::models::session::Session,
+    via_forward_auth: bool,
 ) -> AppResult<SidebarResponse> {
     let is_masquerading = session.is_masquerading();
     let chrome = read_chrome_data(
@@ -279,6 +281,7 @@ pub async fn build_sidebar_response(
         categories: chrome.categories,
         total_unread: chrome.total_unread,
         total_summarized: chrome.total_summarized,
+        via_forward_auth,
     })
 }
 
@@ -288,7 +291,13 @@ pub async fn get_sidebar(
     State(state): State<AppState>,
     auth_user: AuthUser,
 ) -> AppResult<Json<SidebarResponse>> {
-    let payload = build_sidebar_response(&state, &auth_user.user, &auth_user.session).await?;
+    let payload = build_sidebar_response(
+        &state,
+        &auth_user.user,
+        &auth_user.session,
+        auth_user.via_forward_auth,
+    )
+    .await?;
     Ok(Json(payload))
 }
 

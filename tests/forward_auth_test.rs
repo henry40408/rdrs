@@ -256,6 +256,34 @@ async fn test_invalid_session_cookie_still_forward_auths() {
 }
 
 #[tokio::test]
+async fn test_sidebar_reports_via_forward_auth_dynamically() {
+    let db_name = "fa_test_sidebar_via_forward_auth";
+    let server = create_server(db_name, |c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    });
+    seed_user(db_name, "grace", rdrs::models::user::Role::User);
+
+    // Establish a session via forward-auth (page route mints the cookie).
+    server.get("/").add_header("Remote-User", "grace").await;
+
+    // With the proxy header present → via_forward_auth true.
+    let with = server
+        .get("/api/sidebar")
+        .add_header("Remote-User", "grace")
+        .await;
+    with.assert_status_ok();
+    assert_eq!(with.json::<serde_json::Value>()["via_forward_auth"], true);
+
+    // Same valid session, but no proxy header on this request → false (dynamic).
+    let without = server.get("/api/sidebar").await;
+    without.assert_status_ok();
+    assert_eq!(
+        without.json::<serde_json::Value>()["via_forward_auth"],
+        false
+    );
+}
+
+#[tokio::test]
 async fn test_valid_session_cookie_not_reminted() {
     let db_name = "fa_test_valid_cookie_not_reminted";
     let server = create_server(db_name, |c| {

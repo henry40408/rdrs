@@ -1,5 +1,7 @@
+use std::net::SocketAddr;
+
 use axum::{
-    extract::{FromRequestParts, OptionalFromRequestParts},
+    extract::{ConnectInfo, FromRequestParts, OptionalFromRequestParts},
     http::request::Parts,
     response::{IntoResponse, Response},
 };
@@ -17,6 +19,7 @@ pub const SESSION_COOKIE_NAME: &str = "session_token";
 pub struct AuthUser {
     pub user: User,
     pub session: Session,
+    pub via_forward_auth: bool,
 }
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -66,7 +69,22 @@ impl FromRequestParts<AppState> for AuthUser {
             return Err(AppError::UserDisabled);
         }
 
-        Ok(AuthUser { user, session })
+        let peer_ip = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|c| c.0.ip());
+        let via_forward_auth = crate::middleware::forward_auth::forward_auth_identity(
+            &state.config,
+            peer_ip,
+            &parts.headers,
+        )
+        .is_some();
+
+        Ok(AuthUser {
+            user,
+            session,
+            via_forward_auth,
+        })
     }
 }
 
@@ -75,6 +93,7 @@ impl FromRequestParts<AppState> for AuthUser {
 pub struct PageAuthUser {
     pub user: User,
     pub session: Session,
+    pub via_forward_auth: bool,
 }
 
 /// Redirect response for unauthorized page access
@@ -129,7 +148,22 @@ impl FromRequestParts<AppState> for PageAuthUser {
 
         let (user, session) = result.map_err(|_| LoginRedirect)?;
 
-        Ok(PageAuthUser { user, session })
+        let peer_ip = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|c| c.0.ip());
+        let via_forward_auth = crate::middleware::forward_auth::forward_auth_identity(
+            &state.config,
+            peer_ip,
+            &parts.headers,
+        )
+        .is_some();
+
+        Ok(PageAuthUser {
+            user,
+            session,
+            via_forward_auth,
+        })
     }
 }
 

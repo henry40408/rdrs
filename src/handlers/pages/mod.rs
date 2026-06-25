@@ -662,6 +662,7 @@ pub async fn admin_page(
     let auth_user = PageAuthUser {
         user: admin.user.clone(),
         session: admin.session.clone(),
+        via_forward_auth: false,
     };
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
@@ -2031,6 +2032,7 @@ pub async fn build_app_layout(
         categories: chrome.categories,
         total_unread: chrome.total_unread,
         total_summarized: chrome.total_summarized,
+        via_forward_auth: auth_user.via_forward_auth,
     };
     let sidebar_bootstrap_json = serialize_sidebar_for_script(&sidebar);
     let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
