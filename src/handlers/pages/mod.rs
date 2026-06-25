@@ -473,7 +473,15 @@ impl IntoResponse for LoginTemplate {
     }
 }
 
-pub async fn login_page(State(state): State<AppState>, flash: Flash) -> (Flash, LoginTemplate) {
+pub async fn login_page(
+    auth: Option<PageAuthUser>,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> Response {
+    if auth.is_some() {
+        return Redirect::to("/").into_response();
+    }
+
     let signup_enabled = state
         .db
         .read_user(|c| crate::models::user::count(c).ok())
@@ -492,6 +500,7 @@ pub async fn login_page(State(state): State<AppState>, flash: Flash) -> (Flash, 
             local_auth_enabled: !state.config.disable_local_auth,
         },
     )
+        .into_response()
 }
 
 #[derive(Template)]

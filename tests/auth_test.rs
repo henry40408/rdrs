@@ -951,6 +951,33 @@ async fn test_logout_redirect_uses_configured_url() {
 }
 
 #[tokio::test]
+async fn test_login_page_redirects_authenticated_to_root() {
+    let server = create_test_server(default_test_config());
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status_ok();
+
+    let res = server.get("/login").await;
+    assert!(res.status_code().is_redirection());
+    assert_eq!(res.header("location"), "/");
+}
+
+#[tokio::test]
+async fn test_login_page_renders_when_anonymous() {
+    let server = create_test_server(default_test_config());
+    let res = server.get("/login").await;
+    res.assert_status_ok();
+    assert!(res.text().contains("login-form") || res.text().contains("rdrs"));
+}
+
+#[tokio::test]
 async fn test_fresh_session_is_not_refreshed() {
     let server = create_test_server(default_test_config());
 

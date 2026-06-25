@@ -1,5 +1,5 @@
 use axum::{
-    extract::FromRequestParts,
+    extract::{FromRequestParts, OptionalFromRequestParts},
     http::request::Parts,
     response::{IntoResponse, Response},
 };
@@ -133,6 +133,20 @@ impl FromRequestParts<AppState> for PageAuthUser {
     }
 }
 
+impl OptionalFromRequestParts<AppState> for PageAuthUser {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Option<Self>, Self::Rejection> {
+        match <PageAuthUser as FromRequestParts<AppState>>::from_request_parts(parts, state).await {
+            Ok(user) => Ok(Some(user)),
+            Err(_) => Ok(None),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AdminUser {
     pub user: User,
@@ -187,7 +201,8 @@ impl FromRequestParts<AppState> for PageAdminUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let page_auth_user = PageAuthUser::from_request_parts(parts, state).await?;
+        let page_auth_user =
+            <PageAuthUser as FromRequestParts<AppState>>::from_request_parts(parts, state).await?;
 
         if page_auth_user.session.is_masquerading() {
             if let Some(original_user_id) = page_auth_user.session.original_user_id {
