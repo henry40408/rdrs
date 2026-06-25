@@ -1,13 +1,15 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use axum::{
     extract::{ConnectInfo, Request, State},
+    http::HeaderMap,
     middleware::Next,
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use time::Duration;
 
+use crate::config::Config;
 use crate::error::AppError;
 use crate::middleware::{FlashRedirect, SESSION_COOKIE_NAME};
 use crate::models::user::{self, Role};
@@ -43,6 +45,30 @@ pub fn role_from_groups(groups: &[String], admin_group: &str) -> Role {
     } else {
         Role::User
     }
+}
+
+/// The identity supplied by a trusted forward-auth proxy on this request, if
+/// any. Returns `None` when the feature is off, the peer IP is missing or not
+/// in `TRUSTED_PROXY_NETWORKS`, or the identity header is absent/empty. Shared
+/// by the middleware and the `AuthUser`/`PageAuthUser` extractors so the
+/// trust logic lives in one place.
+pub fn forward_auth_identity(
+    config: &Config,
+    peer_ip: Option<IpAddr>,
+    headers: &HeaderMap,
+) -> Option<String> {
+    if !config.auth_proxy_enabled() {
+        return None;
+    }
+    let ip = peer_ip?;
+    if !config.is_trusted_peer(ip) {
+        return None;
+    }
+    headers
+        .get(config.auth_proxy_header.as_str())
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 pub async fn forward_auth(
@@ -89,26 +115,12 @@ pub async fn forward_auth(
         }
     }
 
-    // Fail closed: without a known peer IP we cannot trust the header.
-    let Some(peer_ip) = req
+    // Trusted-peer + identity-header check (shared with the auth extractors).
+    let peer_ip = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
-        .map(|c| c.0.ip())
-    else {
-        return next.run(req).await;
-    };
-    if !config.is_trusted_peer(peer_ip) {
-        return next.run(req).await;
-    }
-
-    // Read the identity header.
-    let Some(username) = req
-        .headers()
-        .get(config.auth_proxy_header.as_str())
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-    else {
+        .map(|c| c.0.ip());
+    let Some(username) = forward_auth_identity(config, peer_ip, req.headers()) else {
         return next.run(req).await;
     };
 

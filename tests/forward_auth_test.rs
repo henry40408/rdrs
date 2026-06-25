@@ -4,11 +4,66 @@ use common::default_test_config;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use axum::http::{HeaderMap, HeaderName};
 use axum_test::TestServer;
 use rdrs::{
-    auth, config::parse_trusted_networks, create_router, db, services, AppState, Config, DbPool,
+    auth, config::parse_trusted_networks, create_router, db,
+    middleware::forward_auth::forward_auth_identity, services, AppState, Config, DbPool,
 };
 use rusqlite::Connection;
+
+fn header_map(pairs: &[(&str, &str)]) -> HeaderMap {
+    let mut h = HeaderMap::new();
+    for (k, v) in pairs {
+        h.insert(
+            HeaderName::from_bytes(k.as_bytes()).unwrap(),
+            v.parse().unwrap(),
+        );
+    }
+    h
+}
+
+#[test]
+fn test_forward_auth_identity() {
+    let mut cfg = default_test_config();
+    cfg.auth_proxy_header = "Remote-User".to_string();
+    cfg.trusted_proxy_networks = parse_trusted_networks("10.0.0.0/8").unwrap();
+
+    let trusted: std::net::IpAddr = "10.1.2.3".parse().unwrap();
+    let untrusted: std::net::IpAddr = "192.168.0.1".parse().unwrap();
+    let with_header = header_map(&[("Remote-User", "alice")]);
+
+    // trusted peer + header present → identity
+    assert_eq!(
+        forward_auth_identity(&cfg, Some(trusted), &with_header),
+        Some("alice".to_string())
+    );
+    // untrusted peer → None
+    assert_eq!(
+        forward_auth_identity(&cfg, Some(untrusted), &with_header),
+        None
+    );
+    // no peer IP → None
+    assert_eq!(forward_auth_identity(&cfg, None, &with_header), None);
+    // header missing → None
+    assert_eq!(
+        forward_auth_identity(&cfg, Some(trusted), &HeaderMap::new()),
+        None
+    );
+    // header empty → None
+    assert_eq!(
+        forward_auth_identity(&cfg, Some(trusted), &header_map(&[("Remote-User", "  ")])),
+        None
+    );
+
+    // feature off (empty header name) → None
+    let mut off = cfg.clone();
+    off.auth_proxy_header = String::new();
+    assert_eq!(
+        forward_auth_identity(&off, Some(trusted), &with_header),
+        None
+    );
+}
 
 fn open_shared_memory(name: &str) -> Connection {
     let uri = format!("file:{}?mode=memory&cache=shared", name);
@@ -198,6 +253,67 @@ async fn test_invalid_session_cookie_still_forward_auths() {
         .expect("a fresh session cookie should be minted");
     assert_ne!(fresh.value(), "stale-invalid");
     assert!(!fresh.value().is_empty());
+}
+
+#[tokio::test]
+async fn test_sidebar_reports_via_forward_auth_dynamically() {
+    let db_name = "fa_test_sidebar_via_forward_auth";
+    let server = create_server(db_name, |c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    });
+    seed_user(db_name, "grace", rdrs::models::user::Role::User);
+
+    // Establish a session via forward-auth (page route mints the cookie).
+    server.get("/").add_header("Remote-User", "grace").await;
+
+    // With the proxy header present → via_forward_auth true.
+    let with = server
+        .get("/api/sidebar")
+        .add_header("Remote-User", "grace")
+        .await;
+    with.assert_status_ok();
+    assert_eq!(with.json::<serde_json::Value>()["via_forward_auth"], true);
+
+    // Same valid session, but no proxy header on this request → false (dynamic).
+    let without = server.get("/api/sidebar").await;
+    without.assert_status_ok();
+    assert_eq!(
+        without.json::<serde_json::Value>()["via_forward_auth"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn test_admin_page_sidebar_bootstrap_reports_via_forward_auth() {
+    let db_name = "fa_test_admin_sidebar_bootstrap";
+    let server = create_server(db_name, |c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    });
+    seed_user(db_name, "heidi", rdrs::models::user::Role::Admin);
+
+    // Establish session via forward-auth; include the admin group so the role
+    // is not demoted (create_server sets group_mapping_enabled with "admins").
+    server
+        .get("/")
+        .add_header("Remote-User", "heidi")
+        .add_header("Remote-Groups", "admins")
+        .await;
+
+    // Fetch /admin with the proxy header present.
+    let res = server
+        .get("/admin")
+        .add_header("Remote-User", "heidi")
+        .add_header("Remote-Groups", "admins")
+        .await;
+    res.assert_status_ok();
+
+    // The embedded rdrs-sidebar-bootstrap JSON must reflect via_forward_auth: true.
+    let body = res.text();
+    assert!(
+        body.contains("\"via_forward_auth\":true"),
+        "expected via_forward_auth:true in sidebar bootstrap JSON, got body snippet: {:?}",
+        body.get(0..500).unwrap_or(&body)
+    );
 }
 
 #[tokio::test]

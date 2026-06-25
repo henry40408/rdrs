@@ -662,6 +662,7 @@ pub async fn admin_page(
     let auth_user = PageAuthUser {
         user: admin.user.clone(),
         session: admin.session.clone(),
+        via_forward_auth: admin.via_forward_auth,
     };
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
@@ -1232,6 +1233,23 @@ pub async fn settings_page(
             webauthn_rp_id: state.config.webauthn_rp_id.clone(),
             webauthn_rp_origin: state.config.webauthn_rp_origin.clone(),
             webauthn_rp_name: state.config.webauthn_rp_name.clone(),
+            auth_proxy_header: state.config.auth_proxy_header.clone(),
+            trusted_proxy_networks: state
+                .config
+                .trusted_proxy_networks
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            auth_proxy_user_creation: state.config.auth_proxy_user_creation,
+            auth_proxy_groups_header: state.config.auth_proxy_groups_header.clone(),
+            auth_proxy_admin_group: state.config.auth_proxy_admin_group.clone(),
+            disable_local_auth: state.config.disable_local_auth,
+            auth_proxy_logout_url: state
+                .config
+                .auth_proxy_logout_url
+                .clone()
+                .unwrap_or_default(),
         },
     )
 }
@@ -2031,6 +2049,7 @@ pub async fn build_app_layout(
         categories: chrome.categories,
         total_unread: chrome.total_unread,
         total_summarized: chrome.total_summarized,
+        via_forward_auth: auth_user.via_forward_auth,
     };
     let sidebar_bootstrap_json = serialize_sidebar_for_script(&sidebar);
     let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
@@ -2067,6 +2086,13 @@ pub struct SettingsTemplate {
     pub webauthn_rp_id: String,
     pub webauthn_rp_origin: String,
     pub webauthn_rp_name: String,
+    pub auth_proxy_header: String,
+    pub trusted_proxy_networks: String,
+    pub auth_proxy_user_creation: bool,
+    pub auth_proxy_groups_header: String,
+    pub auth_proxy_admin_group: String,
+    pub disable_local_auth: bool,
+    pub auth_proxy_logout_url: String,
 }
 
 impl IntoResponse for SettingsTemplate {
