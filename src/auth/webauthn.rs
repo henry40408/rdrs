@@ -40,6 +40,7 @@ mod tests {
             disable_local_auth: false,
             auth_proxy_groups_header: String::new(),
             auth_proxy_admin_group: String::new(),
+            auth_proxy_logout_url: None,
         }
     }
 

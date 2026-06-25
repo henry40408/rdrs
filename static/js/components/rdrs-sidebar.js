@@ -256,7 +256,12 @@ class RdrsSidebar extends HTMLElement {
             try {
                 const r = await fetch('/api/session', { method: 'DELETE' });
                 if (r.ok) {
-                    window.flash.redirect('/login', 'info', 'You have been logged out.');
+                    const d = await r.json();
+                    if (d.redirect_to.startsWith('/')) {
+                        window.flash.redirect(d.redirect_to, 'info', 'You have been logged out.');
+                    } else {
+                        window.location.href = d.redirect_to;
+                    }
                 } else {
                     window.flash.error('Logout failed');
                 }

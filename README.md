@@ -93,6 +93,7 @@ All configuration is done via environment variables:
 | `AUTH_PROXY_GROUPS_HEADER` | - | Header carrying comma-separated group names from the proxy (e.g. `Remote-Groups`). |
 | `AUTH_PROXY_ADMIN_GROUP` | - | Membership in this group grants the admin role, synced on every forward-auth login. Active only when `AUTH_PROXY_GROUPS_HEADER` is also set. |
 | `DISABLE_LOCAL_AUTH` | `false` | Hides the browser password form and rejects `POST /api/session` with 403. Does not affect GReader API or passkey auth. Requires `AUTH_PROXY_HEADER`. |
+| `AUTH_PROXY_LOGOUT_URL` | (unset) | When set, Sign Out redirects the browser here (e.g. the Authelia logout URL) to end the SSO session. When unset, Sign Out clears the local session and the proxy header re-authenticates on the next request (you return to the app). |
 
 > **Deploying behind a domain?** `WEBAUTHN_RP_ID` and `WEBAUTHN_RP_ORIGIN`
 > default to `localhost` and **must** be overridden to your public host (e.g.

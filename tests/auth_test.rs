@@ -874,6 +874,109 @@ async fn test_disable_local_auth_blocks_password_login() {
     res.assert_status(StatusCode::FORBIDDEN);
 }
 
+/// Collect raw Set-Cookie header values from a response.
+fn set_cookie_headers(res: &axum_test::TestResponse) -> Vec<String> {
+    res.headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
+        .collect()
+}
+
+#[tokio::test]
+async fn test_logout_clears_cookie_with_path() {
+    let server = create_test_server(default_test_config());
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status_ok();
+
+    let res = server.delete("/api/session").await;
+    res.assert_status_ok();
+
+    let removal = set_cookie_headers(&res)
+        .into_iter()
+        .find(|s| s.starts_with("session_token="))
+        .expect("logout must emit a session_token Set-Cookie");
+    assert!(
+        removal.contains("Path=/"),
+        "removal cookie must carry Path=/ to actually delete the session cookie: {removal}"
+    );
+}
+
+#[tokio::test]
+async fn test_logout_redirect_default_is_login() {
+    let server = create_test_server(default_test_config());
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status_ok();
+
+    let res = server.delete("/api/session").await;
+    let body: serde_json::Value = res.json();
+    assert_eq!(body["redirect_to"], "/login");
+}
+
+#[tokio::test]
+async fn test_logout_redirect_uses_configured_url() {
+    let mut config = default_test_config();
+    config.auth_proxy_logout_url = Some("https://auth.example.com/logout".to_string());
+    let server = create_test_server(config);
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status_ok();
+
+    let res = server.delete("/api/session").await;
+    let body: serde_json::Value = res.json();
+    assert_eq!(body["redirect_to"], "https://auth.example.com/logout");
+}
+
+#[tokio::test]
+async fn test_login_page_redirects_authenticated_to_root() {
+    let server = create_test_server(default_test_config());
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status_ok();
+
+    let res = server.get("/login").await;
+    assert!(res.status_code().is_redirection());
+    assert_eq!(res.header("location"), "/");
+}
+
+#[tokio::test]
+async fn test_login_page_renders_when_anonymous() {
+    let server = create_test_server(default_test_config());
+    let res = server.get("/login").await;
+    res.assert_status_ok();
+    assert!(res.text().contains("login-form") || res.text().contains("rdrs"));
+}
+
 #[tokio::test]
 async fn test_fresh_session_is_not_refreshed() {
     let server = create_test_server(default_test_config());

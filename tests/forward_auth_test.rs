@@ -176,3 +176,69 @@ async fn test_existing_user_role_recomputed_on_login() {
         .unwrap();
     assert_eq!(user.role, rdrs::models::user::Role::User);
 }
+
+#[tokio::test]
+async fn test_invalid_session_cookie_still_forward_auths() {
+    let db_name = "fa_test_invalid_cookie";
+    let server = create_server(db_name, |c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    });
+    seed_user(db_name, "erin", rdrs::models::user::Role::User);
+
+    // A stale/garbage session_token cookie must NOT block forward-auth.
+    let res = server
+        .get("/")
+        .add_header("Remote-User", "erin")
+        .add_cookie(cookie::Cookie::new("session_token", "stale-invalid"))
+        .await;
+
+    assert!(res.status_code().is_redirection());
+    let fresh = res
+        .maybe_cookie("session_token")
+        .expect("a fresh session cookie should be minted");
+    assert_ne!(fresh.value(), "stale-invalid");
+    assert!(!fresh.value().is_empty());
+}
+
+#[tokio::test]
+async fn test_valid_session_cookie_not_reminted() {
+    let db_name = "fa_test_valid_cookie_not_reminted";
+    let server = create_server(db_name, |c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    });
+    seed_user(db_name, "frank", rdrs::models::user::Role::User);
+
+    // First login mints a valid session (saved by the client jar).
+    server.get("/").add_header("Remote-User", "frank").await;
+
+    // Second request carries the now-valid cookie: the validity check must
+    // honour the existing session (pass through to the app) rather than
+    // treating it as invalid and re-minting.  Guards against a regression where
+    // the validity check wrongly rejects a good cookie, causing a redirect to
+    // /login and/or a new cookie to be issued.
+    let res = server.get("/").add_header("Remote-User", "frank").await;
+
+    // The valid session must NOT be re-minted.
+    let reminted = res
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .any(|s| s.starts_with("session_token="));
+    assert!(
+        !reminted,
+        "a valid session must not be re-minted on every request"
+    );
+
+    // The middleware must pass through to the app, not redirect to /login.
+    // (A logged-in GET / may itself redirect within the app, but it must never
+    // redirect to /login.)
+    let location = res
+        .maybe_header("location")
+        .and_then(|v| v.to_str().ok().map(|s| s.to_string()))
+        .unwrap_or_default();
+    assert_ne!(
+        location, "/login",
+        "a valid session must not be redirected to /login"
+    );
+}
