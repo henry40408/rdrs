@@ -260,7 +260,20 @@ Forward-auth, local password, and passkey authentication all work simultaneously
 **Operator warnings:**
 
 1. The reverse proxy **must** authoritatively set (and strip any client-supplied copy of) the identity and groups headers on every request before forwarding to RDRS. A downstream client that can inject these headers bypasses the trust model entirely.
-2. The reverse proxy **must** be configured to bypass forward-auth for `/accounts/ClientLogin` and `/reader/api/...` so native GReader clients (FeedMe, Read You, etc.) can still authenticate with their stored username and password.
+2. The reverse proxy **must** be configured to bypass forward-auth for `/accounts/ClientLogin`, `/reader/api/...`, and the FreshRSS-compatible `/api/greader.php/...` prefix so native GReader clients (FeedMe, Read You, etc.) can still authenticate with their stored username and password. These paths authenticate via the GReader `ClientLogin` token, not the proxy header. Example Authelia access-control rules:
+
+   ```yaml
+   access_control:
+     rules:
+       - domain: rdrs.example.com
+         policy: bypass
+         resources:
+           - '^/accounts/ClientLogin$'
+           - '^/reader/api/.*'
+           - '^/api/greader\.php/.*'   # FreshRSS-compatible prefix
+       - domain: rdrs.example.com
+         policy: one_factor            # everything else goes through SSO
+   ```
 
 **Logout under forward-auth:**
 
