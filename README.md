@@ -2,10 +2,12 @@
 
 [![CI](https://github.com/henry40408/rdrs/actions/workflows/ci.yml/badge.svg)](https://github.com/henry40408/rdrs/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/henry40408/rdrs/graph/badge.svg)](https://codecov.io/gh/henry40408/rdrs)
+[![Release](https://img.shields.io/github/v/release/henry40408/rdrs)](https://github.com/henry40408/rdrs/releases/latest)
 [![License](https://img.shields.io/github/license/henry40408/rdrs)](LICENSE.txt)
-[![Rust](https://img.shields.io/badge/rust-1.92%2B-blue.svg)](https://www.rust-lang.org/)
+[![Rust toolchain](https://img.shields.io/badge/dynamic/toml?url=https://raw.githubusercontent.com/henry40408/rdrs/main/rust-toolchain.toml&query=$.toolchain.channel&label=rust%20toolchain&logo=rust)](https://www.rust-lang.org/)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-blue.svg)](https://ghcr.io/henry40408/rdrs)
 [![Casual Maintenance Intended](https://casuallymaintained.tech/badge.svg)](https://casuallymaintained.tech/)
+[![Vibe Coded](https://img.shields.io/badge/vibe_coded-Claude-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
 
 A self-hosted RSS/Atom feed reader built with Rust. Privacy-focused, lightweight, and designed for personal use.
 
@@ -151,7 +153,7 @@ The Dockerfile uses multi-stage builds with a distroless base image for minimal 
 
 ### Prerequisites
 
-- Rust 1.95+
+- Rust 1.96 (pinned via `rust-toolchain.toml`; rustup installs it automatically)
 - SQLite (bundled via rusqlite)
 
 ### Running Tests
