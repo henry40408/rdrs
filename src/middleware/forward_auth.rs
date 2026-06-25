@@ -58,6 +58,15 @@ pub async fn forward_auth(
         return next.run(req).await;
     }
 
+    // Only engage for browser page routes; skip before any DB work so
+    // API/static requests with a session cookie don't pay a pointless lookup.
+    if SKIP_PREFIXES
+        .iter()
+        .any(|p| req.uri().path().starts_with(p))
+    {
+        return next.run(req).await;
+    }
+
     // Already carrying a VALID (non-expired) session → leave it to the normal
     // flow. A present-but-invalid cookie (e.g. after logout or expiry) must NOT
     // block forward-auth, or the user is locked out.
@@ -78,14 +87,6 @@ pub async fn forward_auth(
         if valid {
             return next.run(req).await;
         }
-    }
-
-    // Only engage for browser page routes.
-    if SKIP_PREFIXES
-        .iter()
-        .any(|p| req.uri().path().starts_with(p))
-    {
-        return next.run(req).await;
     }
 
     // Fail closed: without a known peer IP we cannot trust the header.

@@ -211,9 +211,14 @@ async fn test_valid_session_cookie_not_reminted() {
     // First login mints a valid session (saved by the client jar).
     server.get("/").add_header("Remote-User", "frank").await;
 
-    // Second request carries the now-valid cookie: middleware must pass through
-    // and NOT mint a new session_token.
+    // Second request carries the now-valid cookie: the validity check must
+    // honour the existing session (pass through to the app) rather than
+    // treating it as invalid and re-minting.  Guards against a regression where
+    // the validity check wrongly rejects a good cookie, causing a redirect to
+    // /login and/or a new cookie to be issued.
     let res = server.get("/").add_header("Remote-User", "frank").await;
+
+    // The valid session must NOT be re-minted.
     let reminted = res
         .headers()
         .get_all("set-cookie")
@@ -223,5 +228,17 @@ async fn test_valid_session_cookie_not_reminted() {
     assert!(
         !reminted,
         "a valid session must not be re-minted on every request"
+    );
+
+    // The middleware must pass through to the app, not redirect to /login.
+    // (A logged-in GET / may itself redirect within the app, but it must never
+    // redirect to /login.)
+    let location = res
+        .maybe_header("location")
+        .and_then(|v| v.to_str().ok().map(|s| s.to_string()))
+        .unwrap_or_default();
+    assert_ne!(
+        location, "/login",
+        "a valid session must not be redirected to /login"
     );
 }
