@@ -53,9 +53,31 @@ pub async fn forward_auth(
 ) -> Response {
     let config = &state.config;
 
-    // Feature off, or already carrying a session cookie → nothing to do.
-    if !config.auth_proxy_enabled() || jar.get(SESSION_COOKIE_NAME).is_some() {
+    // Feature off → nothing to do.
+    if !config.auth_proxy_enabled() {
         return next.run(req).await;
+    }
+
+    // Already carrying a VALID (non-expired) session → leave it to the normal
+    // flow. A present-but-invalid cookie (e.g. after logout or expiry) must NOT
+    // block forward-auth, or the user is locked out.
+    if let Some(token) = jar.get(SESSION_COOKIE_NAME).map(|c| c.value().to_string()) {
+        let valid = state
+            .db
+            .read_user(move |conn| {
+                Ok::<bool, AppError>(
+                    session::find_by_token(conn, &token)?
+                        .map(|s| !s.is_expired())
+                        .unwrap_or(false),
+                )
+            })
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(false);
+        if valid {
+            return next.run(req).await;
+        }
     }
 
     // Only engage for browser page routes.
