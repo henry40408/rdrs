@@ -302,6 +302,10 @@ pub fn create_router(state: AppState) -> Router {
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             SERVER_REQUEST_TIMEOUT,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::forward_auth::forward_auth,
         ));
 
     Router::new()

@@ -96,7 +96,8 @@ src/
 ├── middleware/          # HTTP middleware
 │   ├── auth.rs          # Session authentication
 │   ├── date_header.rs   # Date response header
-│   └── flash.rs         # Flash messages
+│   ├── flash.rs         # Flash messages
+│   └── forward_auth.rs  # Forward-auth / trusted-header browser login
 │
 └── auth/
     ├── password.rs      # Password hashing (Argon2)
@@ -126,6 +127,12 @@ Loads settings from environment variables:
 - `SERVER_PORT` - HTTP port
 - `SIGNUP_ENABLED` / `MULTI_USER_ENABLED` - Registration settings
 - `IMAGE_PROXY_SECRET` - HMAC secret for image proxy
+- `AUTH_PROXY_HEADER` - Header name carrying the username from a forward-auth proxy; empty disables the feature
+- `TRUSTED_PROXY_NETWORKS` - Comma-separated CIDRs/IPs whose TCP peer is allowed to supply the identity header; required when `AUTH_PROXY_HEADER` is set
+- `AUTH_PROXY_USER_CREATION` - Whether to JIT-create an account for an unknown proxy-provided username (`false` by default; on mismatch, redirects to `/login`)
+- `AUTH_PROXY_GROUPS_HEADER` - Header name carrying comma-separated group names from the proxy
+- `AUTH_PROXY_ADMIN_GROUP` - Group membership grants the admin role; active only when both this and `AUTH_PROXY_GROUPS_HEADER` are set
+- `DISABLE_LOCAL_AUTH` - Hides the browser password form and makes `POST /api/session` return 403; does not affect GReader `ClientLogin` or passkey auth; startup refuses if set without `AUTH_PROXY_HEADER`
 
 ### Error Handling (`error.rs`)
 
@@ -216,6 +223,43 @@ RDRS supports passwordless authentication via WebAuthn/Passkey:
 3. Browser prompts user to verify passkey
 4. Client sends assertion to server
 5. Server validates signature and creates session
+
+### Forward-Auth (Trusted-Header) Login
+
+RDRS supports delegating browser authentication to an external forward-auth proxy (e.g., Authelia, authentik, Traefik ForwardAuth). When enabled, a Tower middleware (`middleware/forward_auth.rs`) intercepts browser page requests and attempts to establish a session from a trusted identity header before falling back to the normal cookie login flow.
+
+**Trust model:**
+
+The middleware checks the TCP peer IP of the incoming connection against a set of trusted CIDRs/IPs (`TRUSTED_PROXY_NETWORKS`). The peer address comes from the connection itself (`ConnectInfo`), not from `X-Forwarded-For`, so it cannot be spoofed by a downstream client. If the peer is untrusted, the identity header is ignored and the request proceeds to the normal session-cookie check. The middleware fails closed: any of untrusted peer, missing header, absent `ConnectInfo`, or DB error leaves the user unauthenticated.
+
+**Username mapping (no schema change):**
+
+The proxy-provided username is matched against existing rdrs accounts by username. No database migration is required. Existing password accounts continue to work and automatically gain forward-auth login when their username matches the proxy-provided value.
+
+**JIT account creation:**
+
+When `AUTH_PROXY_USER_CREATION=true`, a proxy-provided username that matches no existing account causes a new local account to be created with a sentinel password hash (`"!"`) that cannot match any real password input, making local password login impossible for that account.
+
+**Group → role sync:**
+
+When both `AUTH_PROXY_GROUPS_HEADER` and `AUTH_PROXY_ADMIN_GROUP` are set, the user's role is recomputed from the groups header on every forward-auth login and persisted if it changed. The proxy/IdP is authoritative for role assignment while this mapping is active.
+
+**`DISABLE_LOCAL_AUTH` scope:**
+
+Setting `DISABLE_LOCAL_AUTH=true` hides the browser password-entry form and makes `POST /api/session` return HTTP 403. It does **not** affect GReader `ClientLogin` (`/accounts/ClientLogin`) or WebAuthn/passkey authentication, so native RSS clients and passkey users are unaffected.
+
+**Middleware scope:**
+
+The middleware is applied only to browser page routes. It is never invoked for the prefixes `/api`, `/reader`, `/accounts`, `/events`, `/static`, `/favicon`, and `/health`. It also skips requests that already carry a valid session cookie, so it adds no overhead for already-logged-in users.
+
+**Forward and passkey auth coexist:**
+
+Forward-auth, local password, and passkey authentication all work simultaneously by default. `DISABLE_LOCAL_AUTH` is the only knob that narrows that set.
+
+**Operator warnings:**
+
+1. The reverse proxy **must** authoritatively set (and strip any client-supplied copy of) the identity and groups headers on every request before forwarding to RDRS. A downstream client that can inject these headers bypasses the trust model entirely.
+2. The reverse proxy **must** be configured to bypass forward-auth for `/accounts/ClientLogin` and `/reader/api/...` so native GReader clients (FeedMe, Read You, etc.) can still authenticate with their stored username and password.
 
 ## Services
 

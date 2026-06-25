@@ -461,6 +461,7 @@ pub struct LoginTemplate {
     pub signup_enabled: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub git_version: &'static str,
+    pub local_auth_enabled: bool,
 }
 
 impl IntoResponse for LoginTemplate {
@@ -488,6 +489,7 @@ pub async fn login_page(State(state): State<AppState>, flash: Flash) -> (Flash, 
             signup_enabled,
             flash_messages: flash.messages,
             git_version: crate::GIT_VERSION,
+            local_auth_enabled: !state.config.disable_local_auth,
         },
     )
 }

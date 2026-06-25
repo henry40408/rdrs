@@ -34,6 +34,12 @@ mod tests {
             webauthn_rp_origin: "http://localhost:3000".to_string(),
             webauthn_rp_name: "rdrs".to_string(),
             public_base_url: None,
+            auth_proxy_header: String::new(),
+            trusted_proxy_networks: Vec::new(),
+            auth_proxy_user_creation: false,
+            disable_local_auth: false,
+            auth_proxy_groups_header: String::new(),
+            auth_proxy_admin_group: String::new(),
         }
     }
 

@@ -87,6 +87,12 @@ All configuration is done via environment variables:
 | `WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin URL |
 | `WEBAUTHN_RP_NAME` | `rdrs` | WebAuthn Relying Party display name |
 | `RUST_LOG` | - | Log level filter (e.g., `info`, `debug`, `rdrs=debug`) |
+| `AUTH_PROXY_HEADER` | - | Header carrying the username from a forward-auth proxy (e.g. `Remote-User`, `X-Forwarded-User`). Empty disables the feature. |
+| `TRUSTED_PROXY_NETWORKS` | - | Comma-separated CIDRs or bare IPs (e.g. `10.0.0.0/8, 192.168.1.5`). The TCP peer IP must fall within one of these for the identity header to be trusted. Required when `AUTH_PROXY_HEADER` is set. |
+| `AUTH_PROXY_USER_CREATION` | `false` | When `true`, JIT-create a local account for an unknown proxy-provided username instead of redirecting to `/login`. |
+| `AUTH_PROXY_GROUPS_HEADER` | - | Header carrying comma-separated group names from the proxy (e.g. `Remote-Groups`). |
+| `AUTH_PROXY_ADMIN_GROUP` | - | Membership in this group grants the admin role, synced on every forward-auth login. Active only when `AUTH_PROXY_GROUPS_HEADER` is also set. |
+| `DISABLE_LOCAL_AUTH` | `false` | Hides the browser password form and rejects `POST /api/session` with 403. Does not affect GReader API or passkey auth. Requires `AUTH_PROXY_HEADER`. |
 
 > **Deploying behind a domain?** `WEBAUTHN_RP_ID` and `WEBAUTHN_RP_ORIGIN`
 > default to `localhost` and **must** be overridden to your public host (e.g.

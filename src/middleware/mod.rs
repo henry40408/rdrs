@@ -2,6 +2,7 @@ pub mod auth;
 pub mod date_header;
 pub mod etag;
 pub mod flash;
+pub mod forward_auth;
 
 pub use auth::{AdminUser, AuthUser, PageAdminUser, PageAuthUser, SESSION_COOKIE_NAME};
 pub use date_header::DateHeaderLayer;

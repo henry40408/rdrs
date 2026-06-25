@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,7 +20,15 @@ async fn main() {
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let config = Config::from_env();
+    let config = Config::from_env().unwrap_or_else(|msg| {
+        eprintln!("Configuration error: {msg}");
+        std::process::exit(1);
+    });
+
+    if let Err(msg) = config.validate() {
+        eprintln!("Configuration error: {msg}");
+        std::process::exit(1);
+    }
 
     if config.image_proxy_secret_generated {
         tracing::warn!(
@@ -124,13 +133,16 @@ async fn main() {
     // the shutdown future ends every in-flight SSE stream so the server does
     // not hang waiting on long-lived connections.
     let shutdown_token = cancel_token.clone();
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            shutdown_token.cancel();
-        })
-        .await
-        .expect("Server failed");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        shutdown_token.cancel();
+    })
+    .await
+    .expect("Server failed");
 
     tracing::info!("Server stopped, initiating graceful shutdown...");
 
