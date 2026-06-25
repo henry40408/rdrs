@@ -19,7 +19,10 @@ async fn main() {
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let config = Config::from_env();
+    let config = Config::from_env().unwrap_or_else(|msg| {
+        eprintln!("Configuration error: {msg}");
+        std::process::exit(1);
+    });
 
     if let Err(msg) = config.validate() {
         eprintln!("Configuration error: {msg}");

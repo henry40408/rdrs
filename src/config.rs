@@ -61,14 +61,17 @@ pub fn parse_trusted_networks(raw: &str) -> Result<Vec<IpNet>, String> {
 }
 
 impl Config {
-    pub fn from_env() -> Self {
+    pub fn from_env() -> Result<Self, String> {
         let (image_proxy_secret, image_proxy_secret_generated) = Self::load_image_proxy_secret();
         let server_port = env::var("SERVER_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(3000);
 
-        Self {
+        let trusted_proxy_networks =
+            parse_trusted_networks(&env::var("TRUSTED_PROXY_NETWORKS").unwrap_or_default())?;
+
+        Ok(Self {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "rdrs.sqlite3".to_string()),
             server_port,
             signup_enabled: env::var("SIGNUP_ENABLED")
@@ -86,10 +89,7 @@ impl Config {
             webauthn_rp_name: env::var("WEBAUTHN_RP_NAME").unwrap_or_else(|_| "rdrs".to_string()),
             public_base_url: env::var("PUBLIC_BASE_URL").ok().filter(|s| !s.is_empty()),
             auth_proxy_header: env::var("AUTH_PROXY_HEADER").unwrap_or_default(),
-            trusted_proxy_networks: parse_trusted_networks(
-                &env::var("TRUSTED_PROXY_NETWORKS").unwrap_or_default(),
-            )
-            .unwrap_or_default(),
+            trusted_proxy_networks,
             auth_proxy_user_creation: env::var("AUTH_PROXY_USER_CREATION")
                 .map(|v| v.to_lowercase() == "true" || v == "1")
                 .unwrap_or(false),
@@ -98,7 +98,7 @@ impl Config {
                 .unwrap_or(false),
             auth_proxy_groups_header: env::var("AUTH_PROXY_GROUPS_HEADER").unwrap_or_default(),
             auth_proxy_admin_group: env::var("AUTH_PROXY_ADMIN_GROUP").unwrap_or_default(),
-        }
+        })
     }
 
     fn load_image_proxy_secret() -> (Vec<u8>, bool) {
@@ -140,10 +140,6 @@ impl Config {
 
     /// Validate cross-field invariants at startup. Returns the first problem.
     pub fn validate(&self) -> Result<(), String> {
-        // Surface CIDR parse errors with the offending entry.
-        if let Ok(raw) = std::env::var("TRUSTED_PROXY_NETWORKS") {
-            parse_trusted_networks(&raw)?;
-        }
         if self.auth_proxy_enabled() && self.trusted_proxy_networks.is_empty() {
             return Err(
                 "AUTH_PROXY_HEADER is set but TRUSTED_PROXY_NETWORKS is empty. \
