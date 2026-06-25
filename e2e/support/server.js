@@ -47,7 +47,7 @@ async function waitForServer(baseUrl, timeoutMs = 30_000) {
   throw new Error(`Server did not become ready within ${timeoutMs}ms`);
 }
 
-export async function spawnRdrs() {
+export async function spawnRdrs({ extraEnv = {} } = {}) {
   const projectRoot = path.resolve(__dirname, "..", "..");
   const binaryPath = path.join(projectRoot, "target", "debug", "rdrs");
   if (!existsSync(binaryPath)) {
@@ -71,6 +71,7 @@ export async function spawnRdrs() {
       // register/login each scenario performs costs microseconds instead of
       // hundreds of ms — roughly halves the suite. Never set in production.
       RDRS_FAST_HASH: "1",
+      ...extraEnv,
     },
     stdio: "pipe",
   });
@@ -99,6 +100,25 @@ export async function spawnMockFeedServer() {
   const server = http.createServer((_req, res) => {
     res.writeHead(200, { "Content-Type": "application/rss+xml" });
     res.end(MOCK_RSS_FEED);
+  });
+  const port = await findAvailablePort();
+  server.listen(port, "127.0.0.1");
+  return {
+    url: `http://127.0.0.1:${port}`,
+    cleanup: async () => {
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
+export async function spawnMockKagiServer() {
+  // Delay the response slightly so the pending/processing SSE event fires
+  // and is visible to the test before the completed event arrives.
+  const server = http.createServer((_req, res) => {
+    setTimeout(() => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ output_data: { markdown: "E2E mock summary body." } }));
+    }, 300);
   });
   const port = await findAvailablePort();
   server.listen(port, "127.0.0.1");

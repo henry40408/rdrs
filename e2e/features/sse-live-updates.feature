@@ -15,13 +15,6 @@ Feature: Live updates via SSE
     And a background request marks "Test Entry 1" as read
     Then within 5 seconds the sidebar unread count decreases by one without a reload
 
-  # Skipped: no Kagi stub/mock exists in the E2E harness. seed.configureKagi
-  # inserts a fake token so the Summarize button renders, but actual Kagi
-  # requests fail at runtime. Verifying the SSE summary path (pending→completed
-  # badge + container swap) requires either a real Kagi token or a local mock
-  # server. Standing up a new external-service mock is out of scope for this
-  # task — tracked as a follow-up.
-  @skip
   Scenario: Summary completes and the reading pane and row badge update live
     Given the user has Kagi configured
     When I open the inbox

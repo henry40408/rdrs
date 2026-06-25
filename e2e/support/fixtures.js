@@ -2,14 +2,26 @@ import { test as base } from "playwright-bdd";
 import { customAlphabet } from "nanoid";
 import { ApiHelper } from "./api.js";
 import { SeedHelper } from "./seed.js";
-import { spawnRdrs, spawnMockFeedServer } from "./server.js";
+import { spawnRdrs, spawnMockFeedServer, spawnMockKagiServer } from "./server.js";
 
 const nano = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 8);
 
 export const test = base.extend({
-  rdrsServer: [
+  kagiServer: [
     async ({}, use) => {
-      const server = await spawnRdrs();
+      const server = await spawnMockKagiServer();
+      try {
+        await use(server);
+      } finally {
+        await server.cleanup();
+      }
+    },
+    { scope: "worker" },
+  ],
+
+  rdrsServer: [
+    async ({ kagiServer }, use) => {
+      const server = await spawnRdrs({ extraEnv: { KAGI_API_BASE: kagiServer.url } });
       try {
         await use(server);
       } finally {
