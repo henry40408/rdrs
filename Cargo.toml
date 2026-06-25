@@ -70,6 +70,7 @@ libmimalloc-sys = { version = "0.1", features = ["extended"] }
 lol_html = "3.0.0"
 async-stream = "0.3"
 tokio-stream = "0.1"
+ipnet = "2.12"
 
 [build-dependencies]
 resvg = "0.47"

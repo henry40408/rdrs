@@ -21,6 +21,11 @@ async fn main() {
 
     let config = Config::from_env();
 
+    if let Err(msg) = config.validate() {
+        eprintln!("Configuration error: {msg}");
+        std::process::exit(1);
+    }
+
     if config.image_proxy_secret_generated {
         tracing::warn!(
             "IMAGE_PROXY_SECRET not set, using temporary key. Proxy URLs will be invalidated on restart."

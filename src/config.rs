@@ -1,6 +1,8 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
+use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use rand::Rng;
 use std::env;
+use std::net::IpAddr;
 
 /// Default user agent for HTTP requests (transparent and responsible crawling)
 pub const DEFAULT_USER_AGENT: &str = concat!(
@@ -22,6 +24,40 @@ pub struct Config {
     pub webauthn_rp_origin: String,
     pub webauthn_rp_name: String,
     pub public_base_url: Option<String>,
+    pub auth_proxy_header: String,
+    pub trusted_proxy_networks: Vec<IpNet>,
+    pub auth_proxy_user_creation: bool,
+    pub disable_local_auth: bool,
+    pub auth_proxy_groups_header: String,
+    pub auth_proxy_admin_group: String,
+}
+
+/// Parse a comma-separated list of CIDR networks or bare IPs into `IpNet`s.
+/// Whitespace around entries and empty entries are ignored. A bare IP becomes
+/// a host route (`/32` or `/128`).
+pub fn parse_trusted_networks(raw: &str) -> Result<Vec<IpNet>, String> {
+    let mut nets = Vec::new();
+    for part in raw.split(',') {
+        let s = part.trim();
+        if s.is_empty() {
+            continue;
+        }
+        if let Ok(net) = s.parse::<IpNet>() {
+            nets.push(net);
+        } else if let Ok(ip) = s.parse::<IpAddr>() {
+            let net = match ip {
+                IpAddr::V4(v4) => IpNet::V4(Ipv4Net::new(v4, 32).expect("host prefix is valid")),
+                IpAddr::V6(v6) => IpNet::V6(Ipv6Net::new(v6, 128).expect("host prefix is valid")),
+            };
+            nets.push(net);
+        } else {
+            return Err(format!(
+                "invalid CIDR or IP in TRUSTED_PROXY_NETWORKS: '{}'",
+                s
+            ));
+        }
+    }
+    Ok(nets)
 }
 
 impl Config {
@@ -49,6 +85,19 @@ impl Config {
                 .unwrap_or_else(|_| format!("http://localhost:{}", server_port)),
             webauthn_rp_name: env::var("WEBAUTHN_RP_NAME").unwrap_or_else(|_| "rdrs".to_string()),
             public_base_url: env::var("PUBLIC_BASE_URL").ok().filter(|s| !s.is_empty()),
+            auth_proxy_header: env::var("AUTH_PROXY_HEADER").unwrap_or_default(),
+            trusted_proxy_networks: parse_trusted_networks(
+                &env::var("TRUSTED_PROXY_NETWORKS").unwrap_or_default(),
+            )
+            .unwrap_or_default(),
+            auth_proxy_user_creation: env::var("AUTH_PROXY_USER_CREATION")
+                .map(|v| v.to_lowercase() == "true" || v == "1")
+                .unwrap_or(false),
+            disable_local_auth: env::var("DISABLE_LOCAL_AUTH")
+                .map(|v| v.to_lowercase() == "true" || v == "1")
+                .unwrap_or(false),
+            auth_proxy_groups_header: env::var("AUTH_PROXY_GROUPS_HEADER").unwrap_or_default(),
+            auth_proxy_admin_group: env::var("AUTH_PROXY_ADMIN_GROUP").unwrap_or_default(),
         }
     }
 
@@ -70,6 +119,46 @@ impl Config {
         let mut secret = vec![0u8; 32];
         rand::rng().fill_bytes(&mut secret);
         (secret, true)
+    }
+
+    /// Whether forward-auth (trusted-header) login is enabled.
+    pub fn auth_proxy_enabled(&self) -> bool {
+        !self.auth_proxy_header.is_empty()
+    }
+
+    /// Whether group → role mapping is active (both header and admin group set).
+    pub fn group_mapping_enabled(&self) -> bool {
+        !self.auth_proxy_groups_header.is_empty() && !self.auth_proxy_admin_group.is_empty()
+    }
+
+    /// Whether `ip` (the TCP peer) falls inside a trusted proxy network.
+    pub fn is_trusted_peer(&self, ip: IpAddr) -> bool {
+        self.trusted_proxy_networks
+            .iter()
+            .any(|net| net.contains(&ip))
+    }
+
+    /// Validate cross-field invariants at startup. Returns the first problem.
+    pub fn validate(&self) -> Result<(), String> {
+        // Surface CIDR parse errors with the offending entry.
+        if let Ok(raw) = std::env::var("TRUSTED_PROXY_NETWORKS") {
+            parse_trusted_networks(&raw)?;
+        }
+        if self.auth_proxy_enabled() && self.trusted_proxy_networks.is_empty() {
+            return Err(
+                "AUTH_PROXY_HEADER is set but TRUSTED_PROXY_NETWORKS is empty. \
+                 Refusing to trust an identity header without a trusted-source check."
+                    .to_string(),
+            );
+        }
+        if self.disable_local_auth && !self.auth_proxy_enabled() {
+            return Err(
+                "DISABLE_LOCAL_AUTH is set but AUTH_PROXY_HEADER is not configured. \
+                 This would leave no way to log in via the browser."
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 
     /// Whether a new account may be registered given the current user count.
@@ -124,6 +213,12 @@ mod tests {
             webauthn_rp_origin: "http://localhost:3000".to_string(),
             webauthn_rp_name: "rdrs".to_string(),
             public_base_url: None,
+            auth_proxy_header: String::new(),
+            trusted_proxy_networks: Vec::new(),
+            auth_proxy_user_creation: false,
+            disable_local_auth: false,
+            auth_proxy_groups_header: String::new(),
+            auth_proxy_admin_group: String::new(),
         }
     }
 
@@ -150,6 +245,65 @@ mod tests {
         };
         assert!(config_disabled.can_register(0));
         assert!(!config_disabled.can_register(1));
+    }
+
+    #[test]
+    fn test_parse_trusted_networks() {
+        let nets = parse_trusted_networks("10.0.0.0/8, 192.168.1.0/24 , 127.0.0.1").unwrap();
+        assert_eq!(nets.len(), 3);
+        assert!(parse_trusted_networks("").unwrap().is_empty());
+        assert!(parse_trusted_networks("not-an-ip").is_err());
+    }
+
+    #[test]
+    fn test_is_trusted_peer() {
+        let cfg = Config {
+            trusted_proxy_networks: parse_trusted_networks("10.0.0.0/8").unwrap(),
+            ..test_config()
+        };
+        assert!(cfg.is_trusted_peer("10.1.2.3".parse().unwrap()));
+        assert!(!cfg.is_trusted_peer("192.168.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_validate_header_requires_trusted_networks() {
+        // Header set, no trusted networks → error.
+        let bad = Config {
+            auth_proxy_header: "Remote-User".to_string(),
+            trusted_proxy_networks: Vec::new(),
+            ..test_config()
+        };
+        assert!(bad.validate().is_err());
+
+        // Header set with trusted networks → ok.
+        let good = Config {
+            auth_proxy_header: "Remote-User".to_string(),
+            trusted_proxy_networks: parse_trusted_networks("10.0.0.0/8").unwrap(),
+            ..test_config()
+        };
+        assert!(good.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_disable_local_auth_requires_header() {
+        let bad = Config {
+            disable_local_auth: true,
+            auth_proxy_header: String::new(),
+            ..test_config()
+        };
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn test_group_mapping_enabled() {
+        let off = test_config();
+        assert!(!off.group_mapping_enabled());
+        let on = Config {
+            auth_proxy_groups_header: "Remote-Groups".to_string(),
+            auth_proxy_admin_group: "admins".to_string(),
+            ..test_config()
+        };
+        assert!(on.group_mapping_enabled());
     }
 
     #[test]
