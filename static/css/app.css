@@ -331,6 +331,24 @@ code {
     white-space: nowrap;
 }
 
+.sidebar-id {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.sidebar-auth-pill {
+    flex: none;
+    font-size: var(--font-xs);
+    font-weight: 600;
+    color: var(--color-accent);
+    background: var(--color-accent-subtle);
+    padding: 0.1em 0.5em;
+    border-radius: var(--radius-lg);
+}
+
 .sidebar-footer a {
     color: var(--color-text-muted);
     font-size: var(--font-xs);

@@ -70,6 +70,7 @@ function isStructuralChange(prev, next) {
     if (prev.username !== next.username) return true;
     if (!!prev.is_admin !== !!next.is_admin) return true;
     if (!!prev.is_masquerading !== !!next.is_masquerading) return true;
+    if (!!prev.via_forward_auth !== !!next.via_forward_auth) return true;
     const key = (cats) => (cats || []).map((c) => `${c.id}:${c.name}`).join('|');
     return key(prev.categories) !== key(next.categories);
 }
@@ -154,6 +155,7 @@ class RdrsSidebar extends HTMLElement {
         const username = data ? data.username : '';
         const isAdmin = data ? !!data.is_admin : false;
         const isMasq = data ? !!data.is_masquerading : false;
+        const viaForwardAuth = data ? !!data.via_forward_auth : false;
         const cats = data ? data.categories : [];
         const totalUnread = data ? data.total_unread : 0;
         const totalSummarized = data ? data.total_summarized : 0;
@@ -246,7 +248,10 @@ class RdrsSidebar extends HTMLElement {
         </div>
     </nav>
     <div class="sidebar-footer">
-        <span class="sidebar-user">${escapeHtml(username)}</span>
+        <span class="sidebar-id">
+            <span class="sidebar-user">${escapeHtml(username)}</span>
+            ${viaForwardAuth ? '<span class="sidebar-auth-pill" data-testid="auth-pill">SSO</span>' : ''}
+        </span>
         <a href="#" data-testid="logout-btn" data-rdrs-logout>Sign Out</a>
     </div>
 </aside>`;
