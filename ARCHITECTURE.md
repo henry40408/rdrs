@@ -229,6 +229,8 @@ RDRS supports passwordless authentication via WebAuthn/Passkey:
 
 RDRS supports delegating browser authentication to an external forward-auth proxy (e.g., Authelia, authentik, Traefik ForwardAuth). When enabled, a Tower middleware (`middleware/forward_auth.rs`) intercepts browser page requests and attempts to establish a session from a trusted identity header before falling back to the normal cookie login flow.
 
+> **Operator setup** — the environment variables, reverse-proxy requirements (header stripping, GReader path bypass), and logout behavior live in [README.md → Authentication & SSO](README.md#authentication--sso). This section documents the internal mechanics.
+
 **Trust model:**
 
 The middleware checks the TCP peer IP of the incoming connection against a set of trusted CIDRs/IPs (`TRUSTED_PROXY_NETWORKS`). The peer address comes from the connection itself (`ConnectInfo`), not from `X-Forwarded-For`, so it cannot be spoofed by a downstream client. If the peer is untrusted, the identity header is ignored and the request proceeds to the normal session-cookie check. The middleware fails closed: any of untrusted peer, missing header, absent `ConnectInfo`, or DB error leaves the user unauthenticated.
@@ -253,31 +255,9 @@ Setting `DISABLE_LOCAL_AUTH=true` hides the browser password-entry form and make
 
 The middleware is applied only to browser page routes. It is never invoked for the prefixes `/api`, `/reader`, `/accounts`, `/events`, `/static`, `/favicon`, and `/health`. It also skips requests that already carry a valid session cookie, so it adds no overhead for already-logged-in users.
 
-**Forward and passkey auth coexist:**
+**Logout mechanics:**
 
-Forward-auth, local password, and passkey authentication all work simultaneously by default. `DISABLE_LOCAL_AUTH` is the only knob that narrows that set.
-
-**Operator warnings:**
-
-1. The reverse proxy **must** authoritatively set (and strip any client-supplied copy of) the identity and groups headers on every request before forwarding to RDRS. A downstream client that can inject these headers bypasses the trust model entirely.
-2. The reverse proxy **must** be configured to bypass forward-auth for `/accounts/ClientLogin`, `/reader/api/...`, and the FreshRSS-compatible `/api/greader.php/...` prefix so native GReader clients (FeedMe, Read You, etc.) can still authenticate with their stored username and password. These paths authenticate via the GReader `ClientLogin` token, not the proxy header. Example Authelia access-control rules:
-
-   ```yaml
-   access_control:
-     rules:
-       - domain: rdrs.example.com
-         policy: bypass
-         resources:
-           - '^/accounts/ClientLogin$'
-           - '^/reader/api/.*'
-           - '^/api/greader\.php/.*'   # FreshRSS-compatible prefix
-       - domain: rdrs.example.com
-         policy: one_factor            # everything else goes through SSO
-   ```
-
-**Logout under forward-auth:**
-
-Sign Out always clears the local `session_token` cookie (with `Path=/`) and deletes the server-side session. The forward-auth middleware re-authenticates whenever there is no *valid* session cookie — a stale or expired cookie no longer blocks re-authentication. This means that under forward-auth, a local Sign Out normally bounces the user straight back in via the proxy header (matching the linkding/Miniflux behavior). If `AUTH_PROXY_LOGOUT_URL` is set, Sign Out instead redirects the browser there (e.g. the Authelia logout URL) so the IdP/SSO session is also terminated. Additionally, `/login` redirects an already-authenticated user to `/` rather than rendering the login form again.
+Sign Out always clears the local `session_token` cookie (with `Path=/`) and deletes the server-side session. The forward-auth middleware re-authenticates whenever there is no *valid* session cookie — a stale or expired cookie no longer blocks re-authentication, which is what prevents a logout lockout under forward-auth. `/login` redirects an already-authenticated user to `/` rather than rendering the login form again. The user-facing logout behavior and the `AUTH_PROXY_LOGOUT_URL` knob are described in the README.
 
 **Auth-mode indicator:**
 
@@ -422,6 +402,6 @@ Benefits:
 
 ### Production Considerations
 
-- Set `IMAGE_PROXY_SECRET` for persistent image URLs
-- Mount `/data` volume for database persistence
-- Consider reverse proxy for TLS termination
+Deployment and production configuration (image proxy secret, `/data`
+persistence, TLS via a reverse proxy) are documented in
+[README.md → Production Notes](README.md#production-notes).
