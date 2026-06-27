@@ -71,17 +71,23 @@ impl DbPool {
     /// for the combined actor tasks.
     pub fn new(write_conn: Connection, read_conn: Connection) -> (Self, JoinHandle<()>) {
         // Enable WAL mode on write connection
-        if let Err(e) = write_conn.execute_batch("PRAGMA journal_mode=WAL;") {
-            error!("Failed to enable WAL mode: {}", e);
-        } else {
-            debug!("SQLite WAL mode enabled");
+        match write_conn.execute_batch("PRAGMA journal_mode=WAL;") {
+            Err(e) => {
+                error!("Failed to enable WAL mode: {}", e);
+            }
+            _ => {
+                debug!("SQLite WAL mode enabled");
+            }
         }
 
         // Set read connection to query-only mode for safety
-        if let Err(e) = read_conn.execute_batch("PRAGMA query_only=ON;") {
-            error!("Failed to enable query_only mode on read connection: {}", e);
-        } else {
-            debug!("Read connection query_only mode enabled");
+        match read_conn.execute_batch("PRAGMA query_only=ON;") {
+            Err(e) => {
+                error!("Failed to enable query_only mode on read connection: {}", e);
+            }
+            _ => {
+                debug!("Read connection query_only mode enabled");
+            }
         }
 
         // Tuning pragmas applied to both connections. synchronous=NORMAL is
@@ -340,13 +346,16 @@ const TUNING_PRAGMAS: &str = "\
 ";
 
 fn apply_tuning_pragmas(conn: &Connection, label: &str) {
-    if let Err(e) = conn.execute_batch(TUNING_PRAGMAS) {
-        error!(
-            "Failed to apply tuning pragmas on {} connection: {}",
-            label, e
-        );
-    } else {
-        debug!("SQLite tuning pragmas applied on {} connection", label);
+    match conn.execute_batch(TUNING_PRAGMAS) {
+        Err(e) => {
+            error!(
+                "Failed to apply tuning pragmas on {} connection: {}",
+                label, e
+            );
+        }
+        _ => {
+            debug!("SQLite tuning pragmas applied on {} connection", label);
+        }
     }
 }
 

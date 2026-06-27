@@ -8,7 +8,7 @@ use std::time::Duration;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use rdrs::{auth, create_router, db, services, AppState, Config, DbPool};
+use rdrs::{AppState, Config, DbPool, auth, create_router, db, services};
 use rusqlite::Connection;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

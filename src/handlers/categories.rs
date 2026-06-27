@@ -4,11 +4,11 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::AppState;
 use crate::error::AppError;
 use crate::middleware::auth::AuthUser;
 use crate::middleware::flash::FlashRedirect;
 use crate::models::category;
-use crate::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct CategoryNameForm {

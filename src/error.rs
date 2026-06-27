@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 use thiserror::Error;
@@ -132,40 +132,40 @@ impl IntoResponse for AppError {
             AppError::EntryNotFound => (StatusCode::NOT_FOUND, "Entry not found"),
             AppError::InvalidUrl => (StatusCode::BAD_REQUEST, "Invalid URL"),
             AppError::FetchError(msg) => {
-                return (StatusCode::BAD_GATEWAY, Json(json!({ "error": msg }))).into_response()
+                return (StatusCode::BAD_GATEWAY, Json(json!({ "error": msg }))).into_response();
             }
             AppError::NoFeedFound => (StatusCode::BAD_REQUEST, "No feed found at URL"),
             AppError::FeedParseError(msg) => {
-                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response();
             }
             AppError::Validation(msg) => {
-                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response();
             }
             AppError::OpmlParseError(msg) => {
-                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response();
             }
             AppError::InvalidImageUrl => (StatusCode::BAD_REQUEST, "Invalid image URL"),
             AppError::ImageFetchError(msg) => {
-                return (StatusCode::BAD_GATEWAY, Json(json!({ "error": msg }))).into_response()
+                return (StatusCode::BAD_GATEWAY, Json(json!({ "error": msg }))).into_response();
             }
             AppError::ImageTooLarge => (StatusCode::BAD_REQUEST, "Image too large"),
             AppError::UnsupportedImageType => (StatusCode::BAD_REQUEST, "Unsupported image type"),
             AppError::InvalidSignature => (StatusCode::BAD_REQUEST, "Invalid signature"),
             AppError::PasskeyNotFound => (StatusCode::NOT_FOUND, "Passkey not found"),
             AppError::PasskeyRegistrationFailed(msg) => {
-                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response();
             }
             AppError::PasskeyAuthenticationFailed(msg) => {
-                return (StatusCode::UNAUTHORIZED, Json(json!({ "error": msg }))).into_response()
+                return (StatusCode::UNAUTHORIZED, Json(json!({ "error": msg }))).into_response();
             }
             AppError::ChallengeNotFound => {
                 (StatusCode::BAD_REQUEST, "Challenge not found or expired")
             }
             AppError::NotFound(msg) => {
-                return (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response()
+                return (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response();
             }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
-            AppError::DbPool(ref e) => match e {
+            AppError::DbPool(e) => match e {
                 crate::db::DbError::Timeout => (
                     StatusCode::SERVICE_UNAVAILABLE,
                     "Database busy, please retry",

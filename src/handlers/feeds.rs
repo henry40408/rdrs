@@ -1,16 +1,16 @@
 use axum::{
+    Form,
     extract::{Multipart, Path, State},
     response::IntoResponse,
-    Form,
 };
 use serde::Deserialize;
 
+use crate::AppState;
 use crate::error::AppError;
-use crate::middleware::flash::FlashRedirect;
 use crate::middleware::AuthUser;
+use crate::middleware::flash::FlashRedirect;
 use crate::models::{category, feed};
 use crate::services::{feed_discovery, feed_sync, opml};
-use crate::AppState;
 
 // Form-action POST endpoints for the SSR /feeds page. Each accepts
 // application/x-www-form-urlencoded (or multipart for import) bodies and
@@ -375,11 +375,11 @@ pub async fn import_opml_form(
         if bytes.is_empty() {
             continue;
         }
-        if let Ok(text) = std::str::from_utf8(&bytes) {
-            if !text.trim().is_empty() {
-                content = text.to_string();
-                break;
-            }
+        if let Ok(text) = std::str::from_utf8(&bytes)
+            && !text.trim().is_empty()
+        {
+            content = text.to_string();
+            break;
         }
     }
     if content.trim().is_empty() {

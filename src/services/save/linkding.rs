@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{BookmarkData, SaveResult};
 use crate::error::{AppError, AppResult};
-use crate::services::http::{send_with_retry_on_error, RetryConfig, EXTERNAL_API_TIMEOUT};
+use crate::services::http::{EXTERNAL_API_TIMEOUT, RetryConfig, send_with_retry_on_error};
 
 /// Linkding service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -3,7 +3,7 @@ use scraper::{Html, Selector};
 use url::Url;
 
 use crate::error::{AppError, AppResult};
-use crate::services::http::{send_with_retry_on_error, RetryConfig, SHARED_CLIENT};
+use crate::services::http::{RetryConfig, SHARED_CLIENT, send_with_retry_on_error};
 
 #[derive(Debug, Clone)]
 pub struct DiscoveredFeed {

@@ -15,10 +15,10 @@ use common::default_test_config;
 
 use std::sync::Arc;
 
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum_test::TestServer;
 use rdrs::models::{category, entry, feed};
-use rdrs::{auth, create_router, db, services, AppState, Config, DbPool};
+use rdrs::{AppState, Config, DbPool, auth, create_router, db, services};
 use rusqlite::Connection;
 use serde_json::json;
 use wiremock::matchers::{method, path_regex};

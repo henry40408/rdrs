@@ -13,7 +13,7 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use axum_test::TestServer;
 use chrono::TimeZone;
-use rdrs::{auth, create_router, db, services, AppState, Config, DbPool, Role};
+use rdrs::{AppState, Config, DbPool, Role, auth, create_router, db, services};
 use rusqlite::Connection;
 use serde_json::json;
 
@@ -313,7 +313,7 @@ async fn test_unread_page_entry_query_invalid_id_falls_back_to_empty_pane() {
 async fn test_unread_page_entry_query_other_user_falls_back_to_empty_pane() {
     let app = create_test_app_named(default_test_config(), "test_unread_entry_query_other_user");
     setup_users(&app.db).await; // creates `admin` and `user`
-                                // Entry belongs to `user`; we log in as `admin`.
+    // Entry belongs to `user`; we log in as `admin`.
     let entry_id = seed_one_entry(&app.db, "user", "cross-user").await;
     login(&app.server, "admin").await;
 

@@ -1,11 +1,11 @@
 mod common;
 use common::default_test_config;
 
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum_test::TestServer;
 use chrono::{DateTime, Duration, Utc};
-use rdrs::{auth, create_router, db, services, AppState, Config, DbPool};
-use rusqlite::{params, Connection};
+use rdrs::{AppState, Config, DbPool, auth, create_router, db, services};
+use rusqlite::{Connection, params};
 use serde_json::json;
 
 fn open_shared_memory(name: &str) -> Connection {

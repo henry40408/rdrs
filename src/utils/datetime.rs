@@ -69,12 +69,12 @@ fn parse_chinese_datetime(s: &str) -> Option<DateTime<Utc>> {
     let naive_dt = NaiveDateTime::new(date, time);
 
     // Parse timezone offset if present
-    if let Some(tz_str) = time_parts.get(1) {
-        if let Some(offset_secs) = parse_timezone_offset(tz_str) {
-            let offset = FixedOffset::east_opt(offset_secs)?;
-            let dt = naive_dt.and_local_timezone(offset).single()?;
-            return Some(dt.with_timezone(&Utc));
-        }
+    if let Some(tz_str) = time_parts.get(1)
+        && let Some(offset_secs) = parse_timezone_offset(tz_str)
+    {
+        let offset = FixedOffset::east_opt(offset_secs)?;
+        let dt = naive_dt.and_local_timezone(offset).single()?;
+        return Some(dt.with_timezone(&Utc));
     }
 
     Some(naive_dt.and_utc())
@@ -89,19 +89,18 @@ pub fn normalize_timezone_format(text: &str) -> String {
     // Check if ends with timezone like "+08:00" or "-05:30" (6 chars)
     if len >= 6 {
         let suffix = &text[len - 6..];
-        if let Some(sign) = suffix.chars().next() {
-            if (sign == '+' || sign == '-')
-                && suffix.chars().nth(3) == Some(':')
-                && suffix[1..3].chars().all(|c| c.is_ascii_digit())
-                && suffix[4..6].chars().all(|c| c.is_ascii_digit())
-            {
-                // Convert "+08:00" to "+0800"
-                let mut result = text[..len - 6].to_string();
-                result.push(sign);
-                result.push_str(&suffix[1..3]);
-                result.push_str(&suffix[4..6]);
-                return result;
-            }
+        if let Some(sign) = suffix.chars().next()
+            && (sign == '+' || sign == '-')
+            && suffix.chars().nth(3) == Some(':')
+            && suffix[1..3].chars().all(|c| c.is_ascii_digit())
+            && suffix[4..6].chars().all(|c| c.is_ascii_digit())
+        {
+            // Convert "+08:00" to "+0800"
+            let mut result = text[..len - 6].to_string();
+            result.push(sign);
+            result.push_str(&suffix[1..3]);
+            result.push_str(&suffix[4..6]);
+            return result;
         }
     }
 

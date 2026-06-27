@@ -2,7 +2,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
-use crate::services::http::{send_with_retry_on_error, RetryConfig, EXTERNAL_API_TIMEOUT};
+use crate::services::http::{EXTERNAL_API_TIMEOUT, RetryConfig, send_with_retry_on_error};
 
 /// Kagi Universal Summarizer configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,10 +79,10 @@ async fn summarize_url_with_base(
         query.append_pair("summary_type", "summary");
         query.append_pair("url", url);
 
-        if let Some(lang) = &config.language {
-            if !lang.is_empty() {
-                query.append_pair("target_language", lang);
-            }
+        if let Some(lang) = &config.language
+            && !lang.is_empty()
+        {
+            query.append_pair("target_language", lang);
         }
     }
 
@@ -230,11 +230,13 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("not configured"));
+        assert!(
+            result
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("not configured")
+        );
     }
 
     #[tokio::test]
@@ -310,11 +312,13 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Invalid session token"));
+        assert!(
+            result
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("Invalid session token")
+        );
     }
 
     #[tokio::test]
@@ -332,11 +336,13 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Access forbidden"));
+        assert!(
+            result
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("Access forbidden")
+        );
     }
 
     #[tokio::test]
@@ -372,11 +378,13 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Kagi error (500"));
+        assert!(
+            result
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("Kagi error (500")
+        );
     }
 
     #[tokio::test]

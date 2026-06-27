@@ -8,8 +8,8 @@
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use axum::body::{to_bytes, Body};
-use axum::http::{header, HeaderValue, Request, StatusCode};
+use axum::body::{Body, to_bytes};
+use axum::http::{HeaderValue, Request, StatusCode, header};
 use axum::response::Response;
 use sha2::{Digest, Sha256};
 use tower::{Layer, Service};
@@ -94,13 +94,13 @@ where
                 HeaderValue::from_str(&etag).expect("etag is ascii"),
             );
 
-            if let Some(client_value) = if_none_match {
-                if etag_matches(&client_value, &etag) {
-                    parts.status = StatusCode::NOT_MODIFIED;
-                    parts.headers.remove(header::CONTENT_LENGTH);
-                    parts.headers.remove(header::CONTENT_TYPE);
-                    return Ok(Response::from_parts(parts, Body::empty()));
-                }
+            if let Some(client_value) = if_none_match
+                && etag_matches(&client_value, &etag)
+            {
+                parts.status = StatusCode::NOT_MODIFIED;
+                parts.headers.remove(header::CONTENT_LENGTH);
+                parts.headers.remove(header::CONTENT_TYPE);
+                return Ok(Response::from_parts(parts, Body::empty()));
             }
 
             Ok(Response::from_parts(parts, Body::from(bytes)))

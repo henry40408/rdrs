@@ -1,15 +1,15 @@
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use serde::{Deserialize, Serialize};
 use time::Duration;
 
+use crate::AppState;
 use crate::auth::{hash_password, verify_password};
 use crate::error::{AppError, AppResult};
 use crate::middleware::{AuthUser, SESSION_COOKIE_NAME};
 use crate::models::category;
 use crate::models::session;
 use crate::models::user::{self, Role};
-use crate::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {

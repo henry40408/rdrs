@@ -8,9 +8,9 @@ use common::default_test_config;
 
 use std::sync::Arc;
 
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum_test::TestServer;
-use rdrs::{auth, create_router, db, services, AppState, Config, DbPool};
+use rdrs::{AppState, Config, DbPool, auth, create_router, db, services};
 use rusqlite::Connection;
 
 fn open_shared_memory(name: &str) -> Connection {

@@ -1,13 +1,13 @@
 use axum::{
     extract::{Path, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 
+use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::middleware::AuthUser;
 use crate::models::{category, feed, image};
-use crate::AppState;
 
 pub async fn get_feed_icon(
     State(state): State<AppState>,

@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Format (CI gate): `cargo fmt --all -- --check` — run `cargo fmt` before committing.
 - Lint (CI gate): `cargo clippy -- -D warnings` — warnings fail the build.
+- Supply-chain (CI gate): `cargo deny check` — advisories, licenses, bans, sources.
 - Build: `cargo build` (debug) / `cargo build --release`.
 - Test: `cargo nextest run` (the project uses nextest, not `cargo test`).
 - Single test: `cargo nextest run <substring>` (e.g. `cargo nextest run test_create_category`).

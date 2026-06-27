@@ -31,15 +31,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache dependencies
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -49,6 +41,17 @@ jobs:
 
       - name: Build
         run: cargo build --verbose
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@10c3493d811a9096cee4fdf287e41e852f6a51ba # 1.94.0
+      - uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2
+        with:
+          tool: cargo-deny@0.18.9
+      - name: cargo deny check
+        run: cargo deny check
 
   e2e-tests:
     needs: build-and-test
@@ -68,15 +71,7 @@ jobs:
         uses: dtolnay/rust-toolchain@10c3493d811a9096cee4fdf287e41e852f6a51ba # 1.94.0
 
       - name: Cache Rust dependencies
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Build binary
         run: cargo build
@@ -138,16 +133,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Cache dependencies
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-coverage-
-            ${{ runner.os }}-cargo-
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - uses: taiki-e/install-action@ad25acb6b9413207b3174a4202c12aa9133691c6 # cargo-llvm-cov
 

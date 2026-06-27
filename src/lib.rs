@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use axum::{
-    routing::{delete, get, post, put},
     Router,
+    routing::{delete, get, post, put},
 };
 use tokio::sync::mpsc;
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer};

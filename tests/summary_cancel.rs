@@ -11,7 +11,7 @@ use common::default_test_config;
 use std::sync::Arc;
 
 use axum_test::TestServer;
-use rdrs::{auth, create_router, db, services, AppState, Config, DbPool, Role};
+use rdrs::{AppState, Config, DbPool, Role, auth, create_router, db, services};
 use rusqlite::Connection;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;

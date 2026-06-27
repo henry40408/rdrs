@@ -1,18 +1,18 @@
 use axum::{
     extract::{Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use url::Url;
 
 use crate::{
+    AppState,
     error::{AppError, AppResult},
-    services::http::{send_with_retry_on_error, RetryConfig, SHARED_CLIENT},
+    services::http::{RetryConfig, SHARED_CLIENT, send_with_retry_on_error},
     services::{verify_signature, verify_signature_with_referrer},
     utils::url_validation,
-    AppState,
 };
 
 const MAX_IMAGE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
@@ -156,10 +156,10 @@ pub async fn proxy_image(
     .to_string();
 
     // Check Content-Length if available
-    if let Some(content_length) = response.content_length() {
-        if content_length > MAX_IMAGE_SIZE {
-            return Err(AppError::ImageTooLarge);
-        }
+    if let Some(content_length) = response.content_length()
+        && content_length > MAX_IMAGE_SIZE
+    {
+        return Err(AppError::ImageTooLarge);
     }
 
     // Read the body with size limit

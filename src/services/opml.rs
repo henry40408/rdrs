@@ -1,7 +1,7 @@
+use quick_xml::XmlVersion;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::reader::Reader;
 use quick_xml::writer::Writer;
-use quick_xml::XmlVersion;
 use std::io::Cursor;
 
 use crate::error::{AppError, AppResult};
@@ -205,13 +205,13 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                 } else {
                     // This is a category (Start outline without xmlUrl)
                     // Save previous category if exists
-                    if let Some(cat_name) = current_category.take() {
-                        if !current_feeds.is_empty() {
-                            outlines.push(OpmlOutline {
-                                category_name: cat_name,
-                                feeds: std::mem::take(&mut current_feeds),
-                            });
-                        }
+                    if let Some(cat_name) = current_category.take()
+                        && !current_feeds.is_empty()
+                    {
+                        outlines.push(OpmlOutline {
+                            category_name: cat_name,
+                            feeds: std::mem::take(&mut current_feeds),
+                        });
                     }
 
                     current_category = text.or(title);
@@ -273,13 +273,13 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                     depth -= 1;
                     if depth == 0 {
                         // End of category
-                        if let Some(cat_name) = current_category.take() {
-                            if !current_feeds.is_empty() {
-                                outlines.push(OpmlOutline {
-                                    category_name: cat_name,
-                                    feeds: std::mem::take(&mut current_feeds),
-                                });
-                            }
+                        if let Some(cat_name) = current_category.take()
+                            && !current_feeds.is_empty()
+                        {
+                            outlines.push(OpmlOutline {
+                                category_name: cat_name,
+                                feeds: std::mem::take(&mut current_feeds),
+                            });
                         }
                     }
                 }
@@ -297,13 +297,13 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
     }
 
     // Handle any remaining category
-    if let Some(cat_name) = current_category {
-        if !current_feeds.is_empty() {
-            outlines.push(OpmlOutline {
-                category_name: cat_name,
-                feeds: current_feeds,
-            });
-        }
+    if let Some(cat_name) = current_category
+        && !current_feeds.is_empty()
+    {
+        outlines.push(OpmlOutline {
+            category_name: cat_name,
+            feeds: current_feeds,
+        });
     }
 
     if outlines.is_empty() {

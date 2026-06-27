@@ -7,13 +7,13 @@ use axum::{
 
 use std::collections::HashMap;
 
+use crate::AppState;
 use crate::error::AppError;
 use crate::middleware::auth::{LoginRedirect, PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage};
-use crate::models::user_settings;
 use crate::models::SummaryStatus;
+use crate::models::user_settings;
 use crate::models::{category, entry, entry_summary, feed};
-use crate::AppState;
 
 mod script_json;
 mod search_text;

@@ -1,5 +1,5 @@
 use ammonia::Builder;
-use lol_html::{element, rewrite_str, RewriteStrSettings};
+use lol_html::{RewriteStrSettings, element, rewrite_str};
 use scraper::{Html, Selector};
 use std::collections::HashSet;
 use url::Url;
@@ -157,10 +157,10 @@ fn promote_lazy_images(html: &str) -> String {
 
         // Keep a real (non-placeholder) src as-is.
         let current_src = el.attr("src");
-        if let Some(src) = current_src {
-            if !src.starts_with("data:") {
-                continue;
-            }
+        if let Some(src) = current_src
+            && !src.starts_with("data:")
+        {
+            continue;
         }
 
         // Find the first usable lazy URL (non-empty, not another placeholder).

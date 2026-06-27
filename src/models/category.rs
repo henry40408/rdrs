@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
 use crate::error::{AppError, AppResult};
@@ -253,9 +253,11 @@ mod tests {
         let category = create_category(&conn, user1, "Books").unwrap();
 
         // user2 cannot access user1's category
-        assert!(find_by_id_and_user(&conn, category.id, user2)
-            .unwrap()
-            .is_none());
+        assert!(
+            find_by_id_and_user(&conn, category.id, user2)
+                .unwrap()
+                .is_none()
+        );
 
         // user2 cannot update user1's category
         let result = update_name(&conn, category.id, user2, "Novels");

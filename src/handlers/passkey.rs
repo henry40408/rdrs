@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use serde::{Deserialize, Serialize};
@@ -9,10 +9,10 @@ use time::Duration;
 use uuid::Uuid;
 use webauthn_rs::prelude::*;
 
+use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::middleware::{AuthUser, SESSION_COOKIE_NAME};
 use crate::models::{passkey, session, user, webauthn_challenge};
-use crate::AppState;
 
 // --- Registration ---
 

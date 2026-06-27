@@ -1,17 +1,17 @@
 use axum::{
+    Form,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Form,
 };
 use serde::Deserialize;
 
+use crate::AppState;
 use crate::error::{AppError, AppResult};
-use crate::middleware::flash::FlashRedirect;
 use crate::middleware::AdminUser;
+use crate::middleware::flash::FlashRedirect;
 use crate::models::session;
 use crate::models::user::{self, Role};
-use crate::AppState;
 
 pub async fn stop_masquerade(
     State(state): State<AppState>,

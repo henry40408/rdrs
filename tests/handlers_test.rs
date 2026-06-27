@@ -13,10 +13,10 @@ use common::default_test_config;
 
 use std::sync::Arc;
 
-use axum::http::{header, HeaderName, HeaderValue, StatusCode};
-use axum_test::multipart::{MultipartForm, Part};
+use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum_test::TestServer;
-use rdrs::{auth, create_router, db, services, AppState, Config, DbPool, Role};
+use axum_test::multipart::{MultipartForm, Part};
+use rdrs::{AppState, Config, DbPool, Role, auth, create_router, db, services};
 use rusqlite::Connection;
 use serde_json::json;
 
@@ -1706,10 +1706,12 @@ async fn test_passkey_auth_start_with_invalid_passkey_data() {
     response.assert_status_unauthorized();
 
     let body: serde_json::Value = response.json();
-    assert!(body["error"]
-        .as_str()
-        .unwrap()
-        .contains("No valid passkeys"));
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("No valid passkeys")
+    );
 }
 
 #[tokio::test]

@@ -7,11 +7,11 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 
+use crate::AppState;
 use crate::error::AppError;
 use crate::middleware::flash::FlashRedirect;
 use crate::models::session::{self, Session};
 use crate::models::user::{self, User};
-use crate::AppState;
 
 pub const SESSION_COOKIE_NAME: &str = "session_token";
 

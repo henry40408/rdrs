@@ -56,19 +56,19 @@ pub fn validate_url(url: &Url) -> Result<(), UrlValidationError> {
     }
 
     // Try to parse as IP address and check for private ranges
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_private_ip(&ip) {
-            return Err(UrlValidationError::PrivateIp);
-        }
+    if let Ok(ip) = host.parse::<IpAddr>()
+        && is_private_ip(&ip)
+    {
+        return Err(UrlValidationError::PrivateIp);
     }
 
     // Also check if it's an IPv6 address in brackets
-    if host.starts_with('[') && host.ends_with(']') {
-        if let Ok(ip) = host[1..host.len() - 1].parse::<IpAddr>() {
-            if is_private_ip(&ip) {
-                return Err(UrlValidationError::PrivateIp);
-            }
-        }
+    if host.starts_with('[')
+        && host.ends_with(']')
+        && let Ok(ip) = host[1..host.len() - 1].parse::<IpAddr>()
+        && is_private_ip(&ip)
+    {
+        return Err(UrlValidationError::PrivateIp);
     }
 
     Ok(())

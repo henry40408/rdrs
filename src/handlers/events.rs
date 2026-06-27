@@ -5,13 +5,13 @@ use axum::{
     extract::State,
     response::sse::{Event, KeepAlive, Sse},
 };
-use tokio::sync::broadcast::{error::RecvError, Receiver};
+use tokio::sync::broadcast::{Receiver, error::RecvError};
 use tokio_stream::Stream;
 use tokio_util::sync::CancellationToken;
 
+use crate::AppState;
 use crate::middleware::auth::PageAuthUser;
 use crate::services::{EventKind, SummaryEventData, UserEvent};
-use crate::AppState;
 
 /// Build the `sidebar` SSE event (no data payload; the client just refetches).
 fn sidebar_event() -> Event {
