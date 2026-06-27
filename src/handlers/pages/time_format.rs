@@ -23,7 +23,7 @@ pub fn format_relative_time_compact(dt: Option<chrono::DateTime<chrono::Utc>>) -
 }
 
 /// Format a datetime as a human-readable relative time string.
-/// Returns (relative_text, iso_datetime_for_tooltip).
+/// Returns (`relative_text`, `iso_datetime_for_tooltip`).
 pub fn format_relative_time(dt: Option<chrono::DateTime<chrono::Utc>>) -> (String, String) {
     match dt {
         None => ("Never".to_string(), String::new()),
@@ -54,7 +54,7 @@ pub fn format_relative_time(dt: Option<chrono::DateTime<chrono::Utc>>) -> (Strin
     }
 }
 
-/// Compute freshness CSS class and key from feed_updated_at and fetched_at.
+/// Compute freshness CSS class and key from `feed_updated_at` and `fetched_at`.
 pub fn compute_freshness(
     feed_updated_at: Option<chrono::DateTime<chrono::Utc>>,
     fetched_at: Option<chrono::DateTime<chrono::Utc>>,

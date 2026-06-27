@@ -1,4 +1,4 @@
-//! Integration tests for GReader API, Feed, Entry handlers
+//! Integration tests for `GReader` API, Feed, Entry handlers
 //!
 //! This test file covers:
 //! - handlers/greader/tag.rs (category CRUD via rename-tag, disable-tag, tag/list)
@@ -122,7 +122,7 @@ async fn setup_authenticated_user(server: &TestServer) {
         .assert_status_ok();
 }
 
-/// Helper to create a category via GReader rename-tag (s==dest creates idempotently)
+/// Helper to create a category via `GReader` rename-tag (s==dest creates idempotently)
 async fn create_category(server: &TestServer, name: &str) {
     let form = vec![
         ("s", format!("user/-/label/{}", name)),
@@ -3148,7 +3148,7 @@ async fn test_delete_category_form_succeeds() {
 // ============================================================================
 
 /// Helper: insert a feed directly via the model (skips network discovery).
-/// Returns (category_id, feed_id).
+/// Returns (`category_id`, `feed_id`).
 async fn insert_test_feed(app: &TestApp, category_name: &str, feed_url: &str) -> (i64, i64) {
     let cat_name = category_name.to_string();
     let url = feed_url.to_string();
@@ -3533,7 +3533,7 @@ async fn test_import_opml_form_succeeds() {
 // ============================================================================
 
 /// Isolated app factory used by the fragment tests so they don't share the
-/// `test_handlers_app` SQLite in-memory database with the rest of the suite.
+/// `test_handlers_app` `SQLite` in-memory database with the rest of the suite.
 fn create_test_app_named(config: Config, name: &str) -> TestApp {
     let write_conn = open_shared_memory(name);
     db::init_db(&write_conn).unwrap();
@@ -3774,7 +3774,7 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
     );
 }
 
-/// The media proxy serves a stable ETag (the per-URL request signature). A
+/// The media proxy serves a stable `ETag` (the per-URL request signature). A
 /// conditional request that already holds it gets a 304 with no origin fetch,
 /// mirroring miniflux's media proxy.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

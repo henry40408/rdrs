@@ -1,5 +1,5 @@
-//! Verifies the ETagLayer:
-//! - 2xx HTML responses get a weak ETag header.
+//! Verifies the `ETagLayer`:
+//! - 2xx HTML responses get a weak `ETag` header.
 //! - Repeating the request with If-None-Match returns 304.
 //! - Non-HTML responses are not touched.
 

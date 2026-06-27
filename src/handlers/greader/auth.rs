@@ -60,7 +60,7 @@ impl FromRequestParts<AppState> for GReaderUser {
         // 2. Fallback: session cookie
         let jar = CookieJar::from_request_parts(parts, state)
             .await
-            .map_err(|_| AppError::Unauthorized)?;
+            .map_err(|_e| AppError::Unauthorized)?;
 
         let token = jar
             .get(SESSION_COOKIE_NAME)
@@ -121,7 +121,7 @@ pub struct ClientLoginForm {
 
 /// `POST /accounts/ClientLogin`
 ///
-/// Google Reader ClientLogin: accepts form-encoded Email + Passwd,
+/// Google Reader `ClientLogin`: accepts form-encoded Email + Passwd,
 /// returns `SID`, `LSID`, `Auth` in text/plain.
 pub async fn client_login(
     State(state): State<AppState>,
@@ -162,7 +162,7 @@ pub async fn client_login(
 /// `GET /reader/api/0/token`
 ///
 /// Returns a short-lived POST token for CSRF protection.
-/// The token is HMAC(secret, session_token + timestamp).
+/// The token is HMAC(secret, `session_token` + timestamp).
 pub async fn get_post_token(auth: GReaderUser, State(state): State<AppState>) -> AppResult<String> {
     let token = generate_post_token(
         &state.config.image_proxy_secret,
@@ -189,7 +189,7 @@ pub fn verify_post_token(secret: &[u8], session_token: &str, post_token: &str) -
         return Err(AppError::Unauthorized);
     }
 
-    let timestamp: i64 = parts[0].parse().map_err(|_| AppError::Unauthorized)?;
+    let timestamp: i64 = parts[0].parse().map_err(|_e| AppError::Unauthorized)?;
 
     let now = Utc::now().timestamp();
     if now - timestamp > POST_TOKEN_VALIDITY_SECS {

@@ -37,7 +37,7 @@ pub struct SaveServicesConfig {
 }
 
 impl SaveServicesConfig {
-    /// Parse JSON string into SaveServicesConfig
+    /// Parse JSON string into `SaveServicesConfig`
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
@@ -50,12 +50,7 @@ impl SaveServicesConfig {
     /// Get list of configured service names
     pub fn configured_services(&self) -> Vec<&'static str> {
         let mut services = Vec::new();
-        if self
-            .linkding
-            .as_ref()
-            .map(|c| c.is_configured())
-            .unwrap_or(false)
-        {
+        if self.linkding.as_ref().is_some_and(|c| c.is_configured()) {
             services.push("linkding");
         }
         // Add more services here as they are implemented

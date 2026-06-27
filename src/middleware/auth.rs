@@ -31,7 +31,7 @@ impl FromRequestParts<AppState> for AuthUser {
     ) -> Result<Self, Self::Rejection> {
         let jar = CookieJar::from_request_parts(parts, state)
             .await
-            .map_err(|_| AppError::Unauthorized)?;
+            .map_err(|_e| AppError::Unauthorized)?;
 
         let token = jar
             .get(SESSION_COOKIE_NAME)
@@ -114,7 +114,7 @@ impl FromRequestParts<AppState> for PageAuthUser {
     ) -> Result<Self, Self::Rejection> {
         let jar = CookieJar::from_request_parts(parts, state)
             .await
-            .map_err(|_| LoginRedirect)?;
+            .map_err(|_e| LoginRedirect)?;
 
         let token = jar
             .get(SESSION_COOKIE_NAME)
@@ -126,7 +126,7 @@ impl FromRequestParts<AppState> for PageAuthUser {
             .db
             .user(move |conn| {
                 let mut session = session::find_by_token(conn, &token_clone)
-                    .map_err(|_| ())?
+                    .map_err(|_e| ())?
                     .ok_or(())?;
                 if session.is_expired() {
                     let _ = session::delete_session(conn, &token_clone);
@@ -136,7 +136,7 @@ impl FromRequestParts<AppState> for PageAuthUser {
                     session.expires_at = new_expires_at;
                 }
                 let user = user::find_by_id(conn, session.user_id)
-                    .map_err(|_| ())?
+                    .map_err(|_e| ())?
                     .ok_or(())?;
                 if user.is_disabled() {
                     return Err(());
@@ -144,9 +144,9 @@ impl FromRequestParts<AppState> for PageAuthUser {
                 Ok((user, session))
             })
             .await
-            .map_err(|_| LoginRedirect)?;
+            .map_err(|_e| LoginRedirect)?;
 
-        let (user, session) = result.map_err(|_| LoginRedirect)?;
+        let (user, session) = result.map_err(|_e| LoginRedirect)?;
 
         let peer_ip = parts
             .extensions
@@ -245,12 +245,12 @@ impl FromRequestParts<AppState> for PageAdminUser {
                     .db
                     .read_user(move |conn| {
                         user::find_by_id(conn, original_user_id)
-                            .map_err(|_| ())?
+                            .map_err(|_e| ())?
                             .ok_or(())
                     })
                     .await
-                    .map_err(|_| LoginRedirect)?
-                    .map_err(|_| LoginRedirect)?;
+                    .map_err(|_e| LoginRedirect)?
+                    .map_err(|_e| LoginRedirect)?;
                 if !original_user.is_admin() {
                     return Err(LoginRedirect);
                 }

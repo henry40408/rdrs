@@ -87,7 +87,7 @@ pub fn exists(conn: &Connection, entity_type: &str, entity_id: i64) -> AppResult
 
 /// Return the subset of `entity_ids` that have an image of `entity_type`, as a
 /// set, in a single query. Replaces per-entity `exists` calls in list views
-/// (e.g. the Feeds page / GReader subscription list) that would otherwise issue
+/// (e.g. the Feeds page / `GReader` subscription list) that would otherwise issue
 /// one query per row. Empty input is a no-op returning an empty set.
 pub fn existing_ids(
     conn: &Connection,

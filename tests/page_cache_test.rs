@@ -1,4 +1,4 @@
-//! Verifies the page_cache helper: insert/get round-trip, manual
+//! Verifies the `page_cache` helper: insert/get round-trip, manual
 //! invalidation, and TTL expiry. The helper is a thin wrapper over
 //! `moka::sync::Cache`; these tests pin the contract page-handlers
 //! will rely on.

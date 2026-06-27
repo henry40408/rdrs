@@ -129,9 +129,9 @@ pub(super) fn apply_time_conditions(
 
 /// Apply continuation-based pagination condition.
 ///
-/// Composite cursor uses the V2 bounded-OR form, which the SQLite planner
-/// can convert to an indexed range scan even when sort_ts is an expression
-/// (`COALESCE(...)`). See PoC at `docs/superpowers/specs/2026-04-26-composite-cursor-pagination-design.md`.
+/// Composite cursor uses the V2 bounded-OR form, which the `SQLite` planner
+/// can convert to an indexed range scan even when `sort_ts` is an expression
+/// (`COALESCE(...)`). See `PoC` at `docs/superpowers/specs/2026-04-26-composite-cursor-pagination-design.md`.
 pub(super) fn apply_continuation_condition(
     conditions: &mut Vec<String>,
     params_vec: &mut Vec<Box<dyn rusqlite::ToSql>>,

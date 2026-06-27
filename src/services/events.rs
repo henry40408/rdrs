@@ -88,7 +88,7 @@ mod tests {
                 assert_eq!(entry_id, 99);
                 assert_eq!(status, Some(SummaryStatus::Completed));
             }
-            _ => panic!("expected Summary"),
+            EventKind::Sidebar => panic!("expected Summary"),
         }
     }
 

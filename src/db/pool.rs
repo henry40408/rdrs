@@ -19,7 +19,7 @@ pub enum DbPriority {
     Background,
 }
 
-/// Error type for DbPool operations.
+/// Error type for `DbPool` operations.
 #[derive(Debug)]
 pub enum DbError {
     /// The actor task has stopped; the connection is no longer available.
@@ -46,7 +46,7 @@ struct DbMessage {
     respond: oneshot::Sender<Box<dyn std::any::Any + Send>>,
 }
 
-/// A prioritized database connection pool backed by SQLite connections.
+/// A prioritized database connection pool backed by `SQLite` connections.
 ///
 /// All database access goes through actor tasks that own the `Connection`s.
 /// User-priority work is always processed before background-priority work.
@@ -64,10 +64,10 @@ pub struct DbPool {
 }
 
 impl DbPool {
-    /// Create a new DbPool, spawning actor tasks for both write and read connections.
+    /// Create a new `DbPool`, spawning actor tasks for both write and read connections.
     ///
     /// Enables WAL mode on the write connection and sets the read connection
-    /// to query-only mode for safety. Returns the DbPool and the JoinHandle
+    /// to query-only mode for safety. Returns the `DbPool` and the `JoinHandle`
     /// for the combined actor tasks.
     pub fn new(write_conn: Connection, read_conn: Connection) -> (Self, JoinHandle<()>) {
         // Enable WAL mode on write connection
@@ -168,12 +168,12 @@ impl DbPool {
             DbPriority::Background => &self.bg_tx,
         };
 
-        tx.send(msg).await.map_err(|_| DbError::ActorStopped)?;
+        tx.send(msg).await.map_err(|_e| DbError::ActorStopped)?;
 
         let boxed = tokio::time::timeout(DB_EXECUTE_TIMEOUT, resp_rx)
             .await
-            .map_err(|_| DbError::Timeout)?
-            .map_err(|_| DbError::ActorStopped)?;
+            .map_err(|_e| DbError::Timeout)?
+            .map_err(|_e| DbError::ActorStopped)?;
 
         // Downcast back to T
         Ok(*boxed.downcast::<T>().expect("DbPool type mismatch"))
@@ -223,10 +223,10 @@ impl DbPool {
         match self.user_tx.try_send(msg) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
-                error!("user_detached: write queue full; dropping write (self-heals on next poll)")
+                error!("user_detached: write queue full; dropping write (self-heals on next poll)");
             }
             Err(TrySendError::Closed(_)) => {
-                error!("user_detached: db actor stopped; write dropped")
+                error!("user_detached: db actor stopped; write dropped");
             }
         }
     }
@@ -252,12 +252,12 @@ impl DbPool {
             DbPriority::Background => &self.read_bg_tx,
         };
 
-        tx.send(msg).await.map_err(|_| DbError::ActorStopped)?;
+        tx.send(msg).await.map_err(|_e| DbError::ActorStopped)?;
 
         let boxed = tokio::time::timeout(DB_EXECUTE_TIMEOUT, resp_rx)
             .await
-            .map_err(|_| DbError::Timeout)?
-            .map_err(|_| DbError::ActorStopped)?;
+            .map_err(|_e| DbError::Timeout)?
+            .map_err(|_e| DbError::ActorStopped)?;
 
         Ok(*boxed.downcast::<T>().expect("DbPool type mismatch"))
     }
@@ -297,15 +297,12 @@ async fn actor_loop(
             biased;
 
             msg = user_rx.recv() => {
-                match msg {
-                    Some(msg) => process_message(&conn, msg),
-                    None => {
-                        // User channel closed — drain background and exit
-                        while let Ok(msg) = bg_rx.try_recv() {
-                            process_message(&conn, msg);
-                        }
-                        break;
+                if let Some(msg) = msg { process_message(&conn, msg) } else {
+                    // User channel closed — drain background and exit
+                    while let Ok(msg) = bg_rx.try_recv() {
+                        process_message(&conn, msg);
                     }
+                    break;
                 }
                 // After processing one user message, drain any remaining user messages
                 while let Ok(msg) = user_rx.try_recv() {
@@ -314,15 +311,12 @@ async fn actor_loop(
             }
 
             msg = bg_rx.recv() => {
-                match msg {
-                    Some(msg) => process_message(&conn, msg),
-                    None => {
-                        // Background channel closed — continue with user only
-                        while let Some(msg) = user_rx.recv().await {
-                            process_message(&conn, msg);
-                        }
-                        break;
+                if let Some(msg) = msg { process_message(&conn, msg) } else {
+                    // Background channel closed — continue with user only
+                    while let Some(msg) = user_rx.recv().await {
+                        process_message(&conn, msg);
                     }
+                    break;
                 }
             }
         }
@@ -689,7 +683,7 @@ mod tests {
         let _: &dyn std::error::Error = &err;
     }
 
-    /// Helper to open a shared in-memory SQLite connection by URI name.
+    /// Helper to open a shared in-memory `SQLite` connection by URI name.
     fn open_shared_memory(name: &str) -> Connection {
         let uri = format!("file:{}?mode=memory&cache=shared", name);
         Connection::open_with_flags(

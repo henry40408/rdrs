@@ -22,7 +22,7 @@ pub fn verify_signature(url: &str, signature: &str, secret: &[u8]) -> bool {
 }
 
 /// Creates a proxy URL with signature for an image URL.
-/// If base_url is provided, returns an absolute URL; otherwise returns a relative path.
+/// If `base_url` is provided, returns an absolute URL; otherwise returns a relative path.
 pub fn create_proxy_url(original_url: &str, secret: &[u8], base_url: Option<&str>) -> String {
     let encoded = URL_SAFE_NO_PAD.encode(original_url);
     let signature = sign_url(original_url, secret);
@@ -56,7 +56,7 @@ pub fn verify_signature_with_referrer(
 }
 
 /// Creates a proxy URL with signature for an image URL, including a referrer parameter.
-/// If base_url is provided, returns an absolute URL; otherwise returns a relative path.
+/// If `base_url` is provided, returns an absolute URL; otherwise returns a relative path.
 pub fn create_proxy_url_with_referrer(
     original_url: &str,
     referrer: &str,

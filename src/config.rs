@@ -76,11 +76,9 @@ impl Config {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "rdrs.sqlite3".to_string()),
             server_port,
             signup_enabled: env::var("SIGNUP_ENABLED")
-                .map(|v| v.to_lowercase() == "true" || v == "1")
-                .unwrap_or(false),
+                .is_ok_and(|v| v.to_lowercase() == "true" || v == "1"),
             multi_user_enabled: env::var("MULTI_USER_ENABLED")
-                .map(|v| v.to_lowercase() == "true" || v == "1")
-                .unwrap_or(false),
+                .is_ok_and(|v| v.to_lowercase() == "true" || v == "1"),
             image_proxy_secret,
             image_proxy_secret_generated,
             user_agent: env::var("USER_AGENT").unwrap_or_else(|_| DEFAULT_USER_AGENT.to_string()),
@@ -92,11 +90,9 @@ impl Config {
             auth_proxy_header: env::var("AUTH_PROXY_HEADER").unwrap_or_default(),
             trusted_proxy_networks,
             auth_proxy_user_creation: env::var("AUTH_PROXY_USER_CREATION")
-                .map(|v| v.to_lowercase() == "true" || v == "1")
-                .unwrap_or(false),
+                .is_ok_and(|v| v.to_lowercase() == "true" || v == "1"),
             disable_local_auth: env::var("DISABLE_LOCAL_AUTH")
-                .map(|v| v.to_lowercase() == "true" || v == "1")
-                .unwrap_or(false),
+                .is_ok_and(|v| v.to_lowercase() == "true" || v == "1"),
             auth_proxy_groups_header: env::var("AUTH_PROXY_GROUPS_HEADER").unwrap_or_default(),
             auth_proxy_admin_group: env::var("AUTH_PROXY_ADMIN_GROUP").unwrap_or_default(),
             auth_proxy_logout_url: env::var("AUTH_PROXY_LOGOUT_URL")
@@ -171,7 +167,7 @@ impl Config {
         user_count == 0 || (self.signup_enabled && self.multi_user_enabled)
     }
 
-    /// A startup warning about WebAuthn relying-party config that would silently
+    /// A startup warning about `WebAuthn` relying-party config that would silently
     /// break passkeys in a real deployment, or `None` when the config looks
     /// deployable. Returns a message when the RP origin still points at
     /// `localhost` (the default), or when it disagrees with `PUBLIC_BASE_URL`.

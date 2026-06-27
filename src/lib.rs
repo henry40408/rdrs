@@ -40,7 +40,11 @@ pub fn reclaim_memory() {
     // SAFETY: `mi_collect` is a thread-safe collection call with no
     // side-effects beyond reclaiming memory; `true` forces it to also return
     // memory to the OS.
-    unsafe { libmimalloc_sys::mi_collect(true) }
+    // Legitimate FFI call into mimalloc; no safe alternative exists.
+    #[allow(unsafe_code)]
+    unsafe {
+        libmimalloc_sys::mi_collect(true);
+    }
 }
 
 #[derive(Clone)]

@@ -6,7 +6,7 @@ use crate::handlers::user::SidebarCategoryDto;
 
 /// Cached per-user chrome data. Excludes session-specific fields (the
 /// masquerade admin flag), so the same entry serves every request from
-/// the same user_id regardless of session.
+/// the same `user_id` regardless of session.
 #[derive(Clone, Default)]
 pub struct CachedChrome {
     pub theme: Option<String>,

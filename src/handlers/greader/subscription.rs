@@ -34,8 +34,8 @@ pub async fn subscription_list(
                 .into_iter()
                 .map(|f| {
                     let cat = categories.iter().find(|c| c.id == f.category_id);
-                    let cat_name = cat.map(|c| c.name.as_str()).unwrap_or("Uncategorized");
-                    let cat_id = cat.map(|c| c.id).unwrap_or(0);
+                    let cat_name = cat.map_or("Uncategorized", |c| c.name.as_str());
+                    let cat_id = cat.map_or(0, |c| c.id);
 
                     let has_icon = feeds_with_icon.contains(&f.id);
                     let icon_url = if has_icon {

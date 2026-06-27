@@ -42,8 +42,8 @@ pub struct ProxyQuery {
 fn decode_referrer(encoded: &str) -> AppResult<String> {
     let bytes = URL_SAFE_NO_PAD
         .decode(encoded)
-        .map_err(|_| AppError::InvalidImageUrl)?;
-    String::from_utf8(bytes).map_err(|_| AppError::InvalidImageUrl)
+        .map_err(|_e| AppError::InvalidImageUrl)?;
+    String::from_utf8(bytes).map_err(|_e| AppError::InvalidImageUrl)
 }
 
 /// Verifies the proxy URL signature, accounting for optional referrer.
@@ -75,8 +75,7 @@ pub async fn proxy_image(
     if headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
-        .map(|v| v == etag || v == "*")
-        .unwrap_or(false)
+        .is_some_and(|v| v == etag || v == "*")
     {
         return Ok((
             StatusCode::NOT_MODIFIED,
@@ -91,8 +90,8 @@ pub async fn proxy_image(
     // Decode the base64 URL
     let url_bytes = URL_SAFE_NO_PAD
         .decode(&query.url)
-        .map_err(|_| AppError::InvalidImageUrl)?;
-    let url_str = String::from_utf8(url_bytes).map_err(|_| AppError::InvalidImageUrl)?;
+        .map_err(|_e| AppError::InvalidImageUrl)?;
+    let url_str = String::from_utf8(url_bytes).map_err(|_e| AppError::InvalidImageUrl)?;
 
     // Decode referrer if present
     let referrer = query.r.as_deref().map(decode_referrer).transpose()?;
@@ -108,8 +107,8 @@ pub async fn proxy_image(
     }
 
     // Parse and validate the URL
-    let url = Url::parse(&url_str).map_err(|_| AppError::InvalidImageUrl)?;
-    url_validation::validate_url(&url).map_err(|_| AppError::InvalidImageUrl)?;
+    let url = Url::parse(&url_str).map_err(|_e| AppError::InvalidImageUrl)?;
+    url_validation::validate_url(&url).map_err(|_e| AppError::InvalidImageUrl)?;
 
     // Fetch the image through the shared, connection-pooled client.
     let url_str = url.to_string();

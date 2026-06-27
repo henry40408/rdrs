@@ -1,7 +1,7 @@
 //! Reproducible micro-benchmark for `sanitize_html`.
 //!
 //! Run with:
-//!   cargo run --release --example bench_sanitize
+//!   cargo run --release --example `bench_sanitize`
 //!
 //! Generates a representative large article (many images + links) and times the
 //! full `sanitize_html` pipeline over many iterations. Used to capture

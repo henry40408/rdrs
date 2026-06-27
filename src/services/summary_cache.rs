@@ -54,7 +54,7 @@ impl SummaryCacheEntry {
     }
 }
 
-/// Cache key: (user_id, entry_id)
+/// Cache key: (`user_id`, `entry_id`)
 type CacheKey = (i64, i64);
 
 /// LRU cache for summaries with TTL support
@@ -118,7 +118,7 @@ impl SummaryCache {
     }
 }
 
-/// Create an Arc-wrapped SummaryCache for sharing across threads
+/// Create an Arc-wrapped `SummaryCache` for sharing across threads
 pub fn create_summary_cache(max_capacity: u64, ttl_hours: u64) -> Arc<SummaryCache> {
     Arc::new(SummaryCache::new(max_capacity, ttl_hours))
 }

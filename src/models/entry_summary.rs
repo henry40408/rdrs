@@ -240,7 +240,7 @@ pub fn get_statuses_for_entries(
 }
 
 /// Find incomplete summaries (pending or processing) for recovery on startup
-/// Returns (user_id, entry_id, entry_link) tuples
+/// Returns (`user_id`, `entry_id`, `entry_link`) tuples
 pub fn find_incomplete(conn: &Connection) -> AppResult<Vec<(i64, i64, String)>> {
     let mut stmt = conn.prepare(
         r#"

@@ -36,7 +36,7 @@ pub struct StreamContentsQuery {
     pub nt: Option<i64>,
     /// Sort order: `o` for oldest first
     pub r: Option<String>,
-    /// Search query (RDRS extension, not part of standard GReader API)
+    /// Search query (RDRS extension, not part of standard `GReader` API)
     pub q: Option<String>,
     /// Filter to entries with/without summary (RDRS extension)
     pub has_summary: Option<String>,
@@ -144,8 +144,7 @@ pub async fn stream_contents(
 
     let updated = entries
         .first()
-        .map(|e| e.entry.updated_at.timestamp())
-        .unwrap_or(0);
+        .map_or(0, |e| e.entry.updated_at.timestamp());
 
     Ok(Json(StreamContentsResponse {
         id: stream_id_str,
@@ -396,8 +395,7 @@ async fn fetch_items_by_ids(
 
     let updated = entries
         .first()
-        .map(|e| e.entry.updated_at.timestamp())
-        .unwrap_or(0);
+        .map_or(0, |e| e.entry.updated_at.timestamp());
 
     Ok(Json(StreamContentsResponse {
         id: "user/-/state/com.google/reading-list".to_string(),
@@ -430,22 +428,22 @@ fn build_entry_filter_from_params(
 
     // Apply stream ID filter
     match stream_id {
-        StreamId::ReadingList => {} // all entries
         StreamId::Read => filter.read_only = true,
         StreamId::Starred => filter.starred_only = true,
         StreamId::KeptUnread => filter.unread_only = true,
-        StreamId::Label(_) => {} // category_id set later
-        StreamId::Feed(_) => {}  // feed_id set later
+        // ReadingList = all entries; Label/Feed have their category_id/feed_id
+        // applied later, so none of them constrain the base filter here.
+        StreamId::ReadingList | StreamId::Label(_) | StreamId::Feed(_) => {}
     }
 
     // Apply exclude tag
     if let Some(xt_str) = xt
         && let Ok(xt_stream) = StreamId::parse(xt_str)
     {
-        match xt_stream {
-            StreamId::Read => filter.unread_only = true,
-            StreamId::Starred => {} // exclude starred — no direct filter, ignore for now
-            _ => {}
+        // Only excluding "read" maps to a filter; other excluded tags
+        // (e.g. starred) have no direct filter, so they are ignored.
+        if let StreamId::Read = xt_stream {
+            filter.unread_only = true;
         }
     }
 

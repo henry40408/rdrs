@@ -471,7 +471,7 @@ mod tests {
         user_id
     }
 
-    /// Helper: get the feed_id for the first feed belonging to user's category.
+    /// Helper: get the `feed_id` for the first feed belonging to user's category.
     fn get_feed_id(conn: &Connection, user_id: i64) -> i64 {
         conn.query_row(
             "SELECT f.id FROM feed f INNER JOIN category c ON f.category_id = c.id WHERE c.user_id = ?1 LIMIT 1",
@@ -481,7 +481,7 @@ mod tests {
         .unwrap()
     }
 
-    /// Helper: insert an entry with a specific published_at date (YYYY-MM-DD).
+    /// Helper: insert an entry with a specific `published_at` date (YYYY-MM-DD).
     fn insert_entry(conn: &Connection, feed_id: i64, guid: &str, published_at: &str) -> i64 {
         conn.execute(
             "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
@@ -491,7 +491,7 @@ mod tests {
         conn.last_insert_rowid()
     }
 
-    /// Helper: insert an entry with an explicit created_at (YYYY-MM-DD HH:MM:SS).
+    /// Helper: insert an entry with an explicit `created_at` (YYYY-MM-DD HH:MM:SS).
     fn insert_entry_created_at(
         conn: &Connection,
         feed_id: i64,

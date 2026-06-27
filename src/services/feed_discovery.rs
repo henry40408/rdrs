@@ -15,7 +15,7 @@ pub struct DiscoveredFeed {
 
 pub async fn discover_feed(url: &str, user_agent: &str) -> AppResult<DiscoveredFeed> {
     // Validate URL
-    let parsed_url = Url::parse(url).map_err(|_| AppError::InvalidUrl)?;
+    let parsed_url = Url::parse(url).map_err(|_e| AppError::InvalidUrl)?;
 
     if parsed_url.scheme() != "http" && parsed_url.scheme() != "https" {
         return Err(AppError::InvalidUrl);
@@ -100,13 +100,13 @@ fn find_feed_link_in_html(html: &str, base_url: &Url) -> AppResult<String> {
            link[rel="alternate"][type="application/atom+xml"],
            link[rel="alternate"][type="application/xml"]"#,
     )
-    .map_err(|_| AppError::Internal("Failed to parse selector".to_string()))?;
+    .map_err(|_e| AppError::Internal("Failed to parse selector".to_string()))?;
 
     for element in document.select(&selector) {
         if let Some(href) = element.value().attr("href") {
             let feed_url = base_url
                 .join(href)
-                .map_err(|_| AppError::InvalidUrl)?
+                .map_err(|_e| AppError::InvalidUrl)?
                 .to_string();
             return Ok(feed_url);
         }

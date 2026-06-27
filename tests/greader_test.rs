@@ -68,7 +68,7 @@ fn create_test_app(config: Config) -> TestApp {
     TestApp { server, db }
 }
 
-/// Register and login a user via session cookie. Returns user_id.
+/// Register and login a user via session cookie. Returns `user_id`.
 async fn setup_authenticated_user(app: &TestApp) -> i64 {
     app.server
         .post("/api/register")
@@ -100,7 +100,7 @@ async fn setup_authenticated_user(app: &TestApp) -> i64 {
         .unwrap()
 }
 
-/// Create a category and feed directly in DB. Returns (category_id, feed_id).
+/// Create a category and feed directly in DB. Returns (`category_id`, `feed_id`).
 async fn create_test_feed(db: &DbPool, user_id: i64, cat_name: &str, feed_url: &str) -> (i64, i64) {
     let cat_name = cat_name.to_string();
     let feed_url = feed_url.to_string();
@@ -531,8 +531,7 @@ async fn test_edit_tag_mark_read() {
     let reading_list_count = counts
         .iter()
         .find(|c| c["id"].as_str().unwrap().contains("reading-list"))
-        .map(|c| c["count"].as_i64().unwrap())
-        .unwrap_or(0);
+        .map_or(0, |c| c["count"].as_i64().unwrap());
     assert_eq!(reading_list_count, 0);
 }
 
@@ -569,8 +568,7 @@ async fn test_edit_tag_mark_read_multiple() {
     let reading_list_count = counts
         .iter()
         .find(|c| c["id"].as_str().unwrap().contains("reading-list"))
-        .map(|c| c["count"].as_i64().unwrap())
-        .unwrap_or(0);
+        .map_or(0, |c| c["count"].as_i64().unwrap());
     assert_eq!(reading_list_count, 0);
 }
 
@@ -611,8 +609,7 @@ async fn test_edit_tag_mark_read_rejects_unknown_entry() {
     let reading_list_count = counts
         .iter()
         .find(|c| c["id"].as_str().unwrap().contains("reading-list"))
-        .map(|c| c["count"].as_i64().unwrap())
-        .unwrap_or(0);
+        .map_or(0, |c| c["count"].as_i64().unwrap());
     assert_eq!(reading_list_count, 2);
 }
 
@@ -707,9 +704,7 @@ async fn test_mark_all_as_read() {
         .unwrap()
         .iter()
         .find(|c| c["id"].as_str().unwrap().contains("reading-list"));
-    let count = reading_list
-        .map(|c| c["count"].as_i64().unwrap())
-        .unwrap_or(0);
+    let count = reading_list.map_or(0, |c| c["count"].as_i64().unwrap());
     assert_eq!(count, 0);
 }
 

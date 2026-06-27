@@ -484,7 +484,7 @@ mod tests {
     // Test infrastructure
     // ---------------------------------------------------------------------------
 
-    /// Open a named shared-memory SQLite connection. Both write and read
+    /// Open a named shared-memory `SQLite` connection. Both write and read
     /// connections must use the same name so the pool sees one database.
     fn open_shared_memory(name: &str) -> Connection {
         let uri = format!("file:{}?mode=memory&cache=shared", name);
@@ -497,7 +497,7 @@ mod tests {
         .unwrap()
     }
 
-    /// Build a fully-initialized DbPool backed by a shared in-memory database.
+    /// Build a fully-initialized `DbPool` backed by a shared in-memory database.
     /// Returns `(pool, handle)` — the caller **must** keep `handle` alive for
     /// the duration of the test, otherwise the actor stops and every pool
     /// operation returns `DbError::ActorStopped`.
@@ -572,7 +572,7 @@ mod tests {
         <pubDate>Tue, 10 Jun 2025 11:00:00 GMT</pubDate></item>
 </channel></rss>"#;
 
-    /// Same guids as RSS_TWO but with changed descriptions, to drive the
+    /// Same guids as `RSS_TWO` but with changed descriptions, to drive the
     /// "updated entries" path.
     const RSS_TWO_UPDATED: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel><title>F</title>
   <item><guid>g1</guid><title>One</title><link>https://e/1</link><description>c1-v2</description>
@@ -824,7 +824,7 @@ mod tests {
                 Some("Mon, 09 Jun 2025 00:00:00 GMT"),
                 None,
             )
-            .unwrap()
+            .unwrap();
         })
         .await
         .unwrap();

@@ -131,30 +131,21 @@ impl IntoResponse for AppError {
             AppError::FeedExists => (StatusCode::CONFLICT, "Feed already exists"),
             AppError::EntryNotFound => (StatusCode::NOT_FOUND, "Entry not found"),
             AppError::InvalidUrl => (StatusCode::BAD_REQUEST, "Invalid URL"),
-            AppError::FetchError(msg) => {
+            AppError::FetchError(msg) | AppError::ImageFetchError(msg) => {
                 return (StatusCode::BAD_GATEWAY, Json(json!({ "error": msg }))).into_response();
+            }
+            AppError::FeedParseError(msg)
+            | AppError::Validation(msg)
+            | AppError::OpmlParseError(msg)
+            | AppError::PasskeyRegistrationFailed(msg) => {
+                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response();
             }
             AppError::NoFeedFound => (StatusCode::BAD_REQUEST, "No feed found at URL"),
-            AppError::FeedParseError(msg) => {
-                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response();
-            }
-            AppError::Validation(msg) => {
-                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response();
-            }
-            AppError::OpmlParseError(msg) => {
-                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response();
-            }
             AppError::InvalidImageUrl => (StatusCode::BAD_REQUEST, "Invalid image URL"),
-            AppError::ImageFetchError(msg) => {
-                return (StatusCode::BAD_GATEWAY, Json(json!({ "error": msg }))).into_response();
-            }
             AppError::ImageTooLarge => (StatusCode::BAD_REQUEST, "Image too large"),
             AppError::UnsupportedImageType => (StatusCode::BAD_REQUEST, "Unsupported image type"),
             AppError::InvalidSignature => (StatusCode::BAD_REQUEST, "Invalid signature"),
             AppError::PasskeyNotFound => (StatusCode::NOT_FOUND, "Passkey not found"),
-            AppError::PasskeyRegistrationFailed(msg) => {
-                return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response();
-            }
             AppError::PasskeyAuthenticationFailed(msg) => {
                 return (StatusCode::UNAUTHORIZED, Json(json!({ "error": msg }))).into_response();
             }
