@@ -7,8 +7,8 @@ use std::sync::Arc;
 use axum::http::{HeaderMap, HeaderName};
 use axum_test::TestServer;
 use rdrs::{
-    auth, config::parse_trusted_networks, create_router, db,
-    middleware::forward_auth::forward_auth_identity, services, AppState, Config, DbPool,
+    AppState, Config, DbPool, auth, config::parse_trusted_networks, create_router, db,
+    middleware::forward_auth::forward_auth_identity, services,
 };
 use rusqlite::Connection;
 

@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
-use rdrs::{auth, create_router, db, services, AppState, Config, DbPool, Role};
+use rdrs::{AppState, Config, DbPool, Role, auth, create_router, db, services};
 use rusqlite::Connection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct TestApp {
     server: TestServer,

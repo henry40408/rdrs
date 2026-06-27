@@ -6,16 +6,15 @@ use axum::{
 };
 
 use crate::{
+    AppState,
     error::{AppError, AppResult},
-    handlers::pages::{format_relative_time, row_view_from, EntryRowView, ReadingPaneView},
+    handlers::pages::{EntryRowView, ReadingPaneView, format_relative_time, row_view_from},
     middleware::auth::PageAuthUser,
     models::{entry, entry_summary, user_settings},
     services::{
-        fetch_and_extract, sanitize_html,
-        save::{linkding, BookmarkData},
-        SummaryJob, SummaryStatus,
+        SummaryJob, SummaryStatus, fetch_and_extract, sanitize_html,
+        save::{BookmarkData, linkding},
     },
-    AppState,
 };
 
 /// Fragment template for the reading pane — renders `_reading_pane.html`
@@ -567,11 +566,7 @@ async fn set_read_state(
 
     // Unread count: -1 when newly read, +1 when newly unread, else unchanged.
     let delta = if changed {
-        if desired_read {
-            -1
-        } else {
-            1
-        }
+        if desired_read { -1 } else { 1 }
     } else {
         0
     };
@@ -803,15 +798,15 @@ pub async fn save_entry_form(
 
     let mut succeeded: Vec<String> = Vec::new();
     let mut failed: Vec<String> = Vec::new();
-    if let Some(linkding_cfg) = save_config.linkding.as_ref() {
-        if linkding_cfg.is_configured() {
-            match linkding::save_to_linkding(linkding_cfg, &bookmark).await {
-                Ok(result) if result.success => {
-                    succeeded.push("Linkding".to_string());
-                }
-                Ok(result) => failed.push(format!("Linkding: {}", result.message)),
-                Err(e) => failed.push(format!("Linkding: {e}")),
+    if let Some(linkding_cfg) = save_config.linkding.as_ref()
+        && linkding_cfg.is_configured()
+    {
+        match linkding::save_to_linkding(linkding_cfg, &bookmark).await {
+            Ok(result) if result.success => {
+                succeeded.push("Linkding".to_string());
             }
+            Ok(result) => failed.push(format!("Linkding: {}", result.message)),
+            Err(e) => failed.push(format!("Linkding: {e}")),
         }
     }
 

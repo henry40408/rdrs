@@ -1,17 +1,17 @@
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Form, Json};
+use axum::{Form, Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::AppState;
 use crate::auth::{hash_password, verify_password};
 use crate::error::{AppError, AppResult};
-use crate::middleware::flash::FlashRedirect;
 use crate::middleware::AuthUser;
+use crate::middleware::flash::FlashRedirect;
 use crate::models::session;
 use crate::models::user;
 use crate::models::user_settings;
 use crate::models::{category, entry};
 use crate::services::{KagiConfig, LinkdingConfig};
-use crate::AppState;
 
 #[derive(Debug, Serialize)]
 pub struct MeResponse {
@@ -348,12 +348,13 @@ pub async fn update_theme(
     let user_id = auth_user.user.id;
 
     // Validate theme value
-    if let Some(ref theme) = req.theme {
-        if theme != "dark" && theme != "light" {
-            return Err(AppError::Validation(
-                "Theme must be 'dark', 'light', or null".to_string(),
-            ));
-        }
+    if let Some(ref theme) = req.theme
+        && theme != "dark"
+        && theme != "light"
+    {
+        return Err(AppError::Validation(
+            "Theme must be 'dark', 'light', or null".to_string(),
+        ));
     }
 
     state

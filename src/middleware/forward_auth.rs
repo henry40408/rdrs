@@ -9,12 +9,12 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use time::Duration;
 
+use crate::AppState;
 use crate::config::Config;
 use crate::error::AppError;
 use crate::middleware::{FlashRedirect, SESSION_COOKIE_NAME};
 use crate::models::user::{self, Role};
 use crate::models::{category, session};
-use crate::AppState;
 
 /// Path prefixes that must never trigger forward-auth auto-login: machine
 /// endpoints (GReader native clients, JSON/passkey APIs, SSE, static assets)
@@ -149,10 +149,10 @@ pub async fn forward_auth(
                     if u.is_disabled() {
                         return Ok::<Option<String>, AppError>(None);
                     }
-                    if let Some(role) = desired_role {
-                        if u.role != role {
-                            user::update_role(conn, u.id, role)?;
-                        }
+                    if let Some(role) = desired_role
+                        && u.role != role
+                    {
+                        user::update_role(conn, u.id, role)?;
                     }
                     u
                 }

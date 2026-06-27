@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
@@ -596,12 +596,11 @@ pub fn prune_read_retention_batch(conn: &Connection, batch_size: usize) -> AppRe
             LIMIT ?1
             "#,
         )?;
-        let rows = stmt
-            .query_map(params![batch_size as i64], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        rows
+
+        stmt.query_map(params![batch_size as i64], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
     };
 
     if victims.is_empty() {
@@ -654,7 +653,7 @@ pub fn upsert_entry(
         UpsertOutcome::SkippedTombstoned => {
             return Err(AppError::Internal(
                 "upsert_entry called for a tombstoned guid".to_string(),
-            ))
+            ));
         }
     };
     let entry = find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)?;
@@ -1104,7 +1103,7 @@ pub fn find_neighbors(
             return Ok(EntryNeighbors {
                 prev_id: None,
                 next_id: None,
-            })
+            });
         }
     };
 
@@ -1904,9 +1903,11 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(outcome, UpsertOutcome::SkippedTombstoned));
-        assert!(find_by_guid_and_feed(&conn, "ghost", feed_id)
-            .unwrap()
-            .is_none());
+        assert!(
+            find_by_guid_and_feed(&conn, "ghost", feed_id)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1998,30 +1999,36 @@ mod tests {
         // Star e1, e2 — only currently-unstarred rows count
         let starred = star_by_ids(&conn, user_id, &[e1.id, e2.id]).unwrap();
         assert_eq!(starred, 2);
-        assert!(find_by_id(&conn, e1.id)
-            .unwrap()
-            .unwrap()
-            .starred_at
-            .is_some());
+        assert!(
+            find_by_id(&conn, e1.id)
+                .unwrap()
+                .unwrap()
+                .starred_at
+                .is_some()
+        );
 
         // Starring again is a no-op (already starred)
         assert_eq!(star_by_ids(&conn, user_id, &[e1.id, e2.id]).unwrap(), 0);
 
         // Ownership scope: cannot star another user's entry
         assert_eq!(star_by_ids(&conn, user_id, &[other.id]).unwrap(), 0);
-        assert!(find_by_id(&conn, other.id)
-            .unwrap()
-            .unwrap()
-            .starred_at
-            .is_none());
+        assert!(
+            find_by_id(&conn, other.id)
+                .unwrap()
+                .unwrap()
+                .starred_at
+                .is_none()
+        );
 
         // Unstar e1
         assert_eq!(unstar_by_ids(&conn, user_id, &[e1.id]).unwrap(), 1);
-        assert!(find_by_id(&conn, e1.id)
-            .unwrap()
-            .unwrap()
-            .starred_at
-            .is_none());
+        assert!(
+            find_by_id(&conn, e1.id)
+                .unwrap()
+                .unwrap()
+                .starred_at
+                .is_none()
+        );
 
         // Mark read then mark unread by ids
         assert_eq!(
@@ -2920,18 +2927,26 @@ mod tests {
 
         // Only "old" is pruned; a tombstone is written for it.
         assert_eq!(prune_read_retention_batch(&conn, 500).unwrap(), 1);
-        assert!(find_by_guid_and_feed(&conn, "old", feed_id)
-            .unwrap()
-            .is_none());
-        assert!(find_by_guid_and_feed(&conn, "oldstar", feed_id)
-            .unwrap()
-            .is_some());
-        assert!(find_by_guid_and_feed(&conn, "fresh", feed_id)
-            .unwrap()
-            .is_some());
-        assert!(find_by_guid_and_feed(&conn, "unread", feed_id)
-            .unwrap()
-            .is_some());
+        assert!(
+            find_by_guid_and_feed(&conn, "old", feed_id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            find_by_guid_and_feed(&conn, "oldstar", feed_id)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            find_by_guid_and_feed(&conn, "fresh", feed_id)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            find_by_guid_and_feed(&conn, "unread", feed_id)
+                .unwrap()
+                .is_some()
+        );
 
         // Tombstone present -> a refresh serving "old" again is skipped.
         let outcome = upsert_entry_id(

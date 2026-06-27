@@ -1,12 +1,12 @@
-use axum::{extract::State, Form, Json};
+use axum::{Form, Json, extract::State};
 use serde::Deserialize;
 
+use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::models::{category, entry, feed};
-use crate::AppState;
 
 use super::auth::GReaderUser;
-use super::types::{item_id_to_entry_id, StreamId, Tag, TagListResponse};
+use super::types::{StreamId, Tag, TagListResponse, item_id_to_entry_id};
 
 /// `GET /reader/api/0/tag/list`
 pub async fn tag_list(
@@ -323,7 +323,7 @@ pub async fn rename_tag(
         _ => {
             return Err(AppError::Validation(
                 "Destination must be a label tag".into(),
-            ))
+            ));
         }
     };
 

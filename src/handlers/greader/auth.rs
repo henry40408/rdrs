@@ -1,19 +1,19 @@
 use axum::{
+    Form,
     extract::{FromRequestParts, State},
     http::request::Parts,
-    Form,
 };
 use axum_extra::extract::CookieJar;
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
+use crate::AppState;
 use crate::auth::verify_password;
 use crate::error::{AppError, AppResult};
 use crate::middleware::auth::SESSION_COOKIE_NAME;
 use crate::models::session::{self, Session};
 use crate::models::user::{self, User};
-use crate::AppState;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -42,22 +42,19 @@ impl FromRequestParts<AppState> for GReaderUser {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         // 1. Try Authorization header: "GoogleLogin auth=<token>"
-        if let Some(auth_header) = parts.headers.get("authorization") {
-            if let Ok(auth_str) = auth_header.to_str() {
-                if let Some(token) = auth_str
-                    .strip_prefix("GoogleLogin auth=")
-                    .map(|s| s.trim().to_string())
-                {
-                    if !token.is_empty() {
-                        let (session, user) = validate_token(state, &token).await?;
-                        return Ok(GReaderUser {
-                            user,
-                            session,
-                            via_cookie: false,
-                        });
-                    }
-                }
-            }
+        if let Some(auth_header) = parts.headers.get("authorization")
+            && let Ok(auth_str) = auth_header.to_str()
+            && let Some(token) = auth_str
+                .strip_prefix("GoogleLogin auth=")
+                .map(|s| s.trim().to_string())
+            && !token.is_empty()
+        {
+            let (session, user) = validate_token(state, &token).await?;
+            return Ok(GReaderUser {
+                user,
+                session,
+                via_cookie: false,
+            });
         }
 
         // 2. Fallback: session cookie

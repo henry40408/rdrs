@@ -1,20 +1,21 @@
 use axum::{
-    extract::{Path, Query, State},
     Form, Json,
+    extract::{Path, Query, State},
 };
 use serde::Deserialize;
 
 use std::collections::HashMap;
 
+use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::models::{category, entry, entry_summary, feed};
 use crate::services::sanitize_html;
-use crate::AppState;
 
 use super::auth::GReaderUser;
 use super::types::{
-    entry_id_to_item_id, item_id_to_entry_id, GReaderAlternateLink, GReaderContent, GReaderItem,
-    GReaderLink, GReaderOrigin, ItemRef, StreamContentsResponse, StreamId, StreamItemIdsResponse,
+    GReaderAlternateLink, GReaderContent, GReaderItem, GReaderLink, GReaderOrigin, ItemRef,
+    StreamContentsResponse, StreamId, StreamItemIdsResponse, entry_id_to_item_id,
+    item_id_to_entry_id,
 };
 
 // --- stream/contents ---
@@ -438,24 +439,24 @@ fn build_entry_filter_from_params(
     }
 
     // Apply exclude tag
-    if let Some(xt_str) = xt {
-        if let Ok(xt_stream) = StreamId::parse(xt_str) {
-            match xt_stream {
-                StreamId::Read => filter.unread_only = true,
-                StreamId::Starred => {} // exclude starred — no direct filter, ignore for now
-                _ => {}
-            }
+    if let Some(xt_str) = xt
+        && let Ok(xt_stream) = StreamId::parse(xt_str)
+    {
+        match xt_stream {
+            StreamId::Read => filter.unread_only = true,
+            StreamId::Starred => {} // exclude starred — no direct filter, ignore for now
+            _ => {}
         }
     }
 
     // Apply include tag
-    if let Some(it_str) = it {
-        if let Ok(it_stream) = StreamId::parse(it_str) {
-            match it_stream {
-                StreamId::Read => filter.read_only = true,
-                StreamId::Starred => filter.starred_only = true,
-                _ => {}
-            }
+    if let Some(it_str) = it
+        && let Ok(it_stream) = StreamId::parse(it_str)
+    {
+        match it_stream {
+            StreamId::Read => filter.read_only = true,
+            StreamId::Starred => filter.starred_only = true,
+            _ => {}
         }
     }
 

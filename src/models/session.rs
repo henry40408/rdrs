@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use rand::RngExt;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::{AppError, AppResult};
 

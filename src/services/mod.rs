@@ -21,22 +21,22 @@ pub mod summary_worker;
 pub use background::start_background_sync;
 pub use entry_retention::start_retention_worker;
 pub use events::{EventBus, EventKind, SummaryEventData, UserEvent};
-pub use feed_discovery::{discover_feed, DiscoveredFeed};
-pub use feed_sync::{refresh_feed, SyncResult};
+pub use feed_discovery::{DiscoveredFeed, discover_feed};
+pub use feed_sync::{SyncResult, refresh_feed};
 pub use html_entities::decode_html_entities;
 pub use image_proxy::{
     create_proxy_url, create_proxy_url_with_referrer, sign_url, sign_url_with_referrer,
     verify_signature, verify_signature_with_referrer,
 };
-pub use opml::{export_opml, parse_opml, OpmlFeed, OpmlOutline};
-pub use readability::{fetch_and_extract, ExtractedContent};
+pub use opml::{OpmlFeed, OpmlOutline, export_opml, parse_opml};
+pub use readability::{ExtractedContent, fetch_and_extract};
 pub use sanitize::sanitize_html;
 pub use save::{BookmarkData, LinkdingConfig, SaveResult, SaveServicesConfig};
 pub use sidebar_cache::{CachedChrome, SidebarCache};
 pub use summarize::KagiConfig;
-pub use summary_cache::{create_summary_cache, SummaryCache, SummaryCacheEntry, SummaryStatus};
+pub use summary_cache::{SummaryCache, SummaryCacheEntry, SummaryStatus, create_summary_cache};
 pub use summary_cleanup::start_cleanup_worker;
 pub use summary_worker::{
-    create_summary_channel, recover_incomplete_jobs, start_summary_worker, CancelRegistry,
-    SummaryJob,
+    CancelRegistry, SummaryJob, create_summary_channel, recover_incomplete_jobs,
+    start_summary_worker,
 };

@@ -1,4 +1,4 @@
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use rand::Rng;
 use std::env;
@@ -108,10 +108,10 @@ impl Config {
     fn load_image_proxy_secret() -> (Vec<u8>, bool) {
         if let Ok(secret_str) = env::var("IMAGE_PROXY_SECRET") {
             // Try to decode as base64 first
-            if let Ok(decoded) = STANDARD.decode(&secret_str) {
-                if decoded.len() >= 16 {
-                    return (decoded, false);
-                }
+            if let Ok(decoded) = STANDARD.decode(&secret_str)
+                && decoded.len() >= 16
+            {
+                return (decoded, false);
             }
             // Use raw bytes if at least 16 characters
             if secret_str.len() >= 16 {
@@ -183,14 +183,14 @@ impl Config {
                 self.webauthn_rp_origin
             ));
         }
-        if let Some(base) = &self.public_base_url {
-            if base.trim_end_matches('/') != self.webauthn_rp_origin.trim_end_matches('/') {
-                return Some(format!(
-                    "WEBAUTHN_RP_ORIGIN ('{}') does not match PUBLIC_BASE_URL ('{}'). Passkeys \
+        if let Some(base) = &self.public_base_url
+            && base.trim_end_matches('/') != self.webauthn_rp_origin.trim_end_matches('/')
+        {
+            return Some(format!(
+                "WEBAUTHN_RP_ORIGIN ('{}') does not match PUBLIC_BASE_URL ('{}'). Passkeys \
                      may be rejected — align WEBAUTHN_RP_ORIGIN with the URL users access.",
-                    self.webauthn_rp_origin, base
-                ));
-            }
+                self.webauthn_rp_origin, base
+            ));
         }
         None
     }

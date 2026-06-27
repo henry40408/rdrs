@@ -1,16 +1,16 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
 
+use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::middleware::auth::AuthUser;
-use crate::models::{category, entry, entry_summary, user_settings, SummaryStatus};
+use crate::models::{SummaryStatus, category, entry, entry_summary, user_settings};
 use crate::services::http::JOB_QUEUE_TIMEOUT;
-use crate::services::save::{linkding, BookmarkData, SaveResult};
-use crate::services::{fetch_and_extract, sanitize_html, SummaryJob};
-use crate::AppState;
+use crate::services::save::{BookmarkData, SaveResult, linkding};
+use crate::services::{SummaryJob, fetch_and_extract, sanitize_html};
 
 #[derive(Debug, Serialize)]
 pub struct FetchFullContentResponse {
@@ -369,11 +369,11 @@ pub async fn save_to_services(
     let mut results = Vec::new();
 
     // Linkding
-    if let Some(linkding_config) = &save_config.linkding {
-        if linkding_config.is_configured() {
-            let result = linkding::save_to_linkding(linkding_config, &entry_data).await?;
-            results.push(result);
-        }
+    if let Some(linkding_config) = &save_config.linkding
+        && linkding_config.is_configured()
+    {
+        let result = linkding::save_to_linkding(linkding_config, &entry_data).await?;
+        results.push(result);
     }
 
     // Future services can be added here:

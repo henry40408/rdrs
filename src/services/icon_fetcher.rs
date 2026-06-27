@@ -3,7 +3,7 @@ use tracing::debug;
 use url::Url;
 
 use crate::error::AppResult;
-use crate::services::http::{send_with_retry_on_error, RetryConfig, ICON_TIMEOUT, SHARED_CLIENT};
+use crate::services::http::{ICON_TIMEOUT, RetryConfig, SHARED_CLIENT, send_with_retry_on_error};
 
 const MAX_ICON_SIZE: usize = 256 * 1024; // 256KB
 
@@ -20,26 +20,26 @@ pub async fn fetch_feed_icon(
     user_agent: &str,
 ) -> AppResult<Option<FetchedImage>> {
     // Try icon_url first
-    if let Some(url) = icon_url {
-        if let Ok(Some(img)) = fetch_image(url, user_agent).await {
-            debug!("Fetched icon from feed icon_url: {}", url);
-            return Ok(Some(img));
-        }
+    if let Some(url) = icon_url
+        && let Ok(Some(img)) = fetch_image(url, user_agent).await
+    {
+        debug!("Fetched icon from feed icon_url: {}", url);
+        return Ok(Some(img));
     }
 
     // Try logo_url
-    if let Some(url) = logo_url {
-        if let Ok(Some(img)) = fetch_image(url, user_agent).await {
-            debug!("Fetched icon from feed logo_url: {}", url);
-            return Ok(Some(img));
-        }
+    if let Some(url) = logo_url
+        && let Ok(Some(img)) = fetch_image(url, user_agent).await
+    {
+        debug!("Fetched icon from feed logo_url: {}", url);
+        return Ok(Some(img));
     }
 
     // Fallback to favicon
-    if let Some(url) = site_url {
-        if let Ok(Some(img)) = fetch_favicon(url, user_agent).await {
-            return Ok(Some(img));
-        }
+    if let Some(url) = site_url
+        && let Ok(Some(img)) = fetch_favicon(url, user_agent).await
+    {
+        return Ok(Some(img));
     }
 
     Ok(None)
@@ -142,11 +142,11 @@ async fn fetch_favicon(site_url: &str, user_agent: &str) -> AppResult<Option<Fet
         _ => return Ok(None),
     };
 
-    if let Some(icon_url) = extract_favicon_from_html(&html, &base_url) {
-        if let Ok(Some(img)) = fetch_image(&icon_url, user_agent).await {
-            debug!("Fetched favicon from HTML link: {}", icon_url);
-            return Ok(Some(img));
-        }
+    if let Some(icon_url) = extract_favicon_from_html(&html, &base_url)
+        && let Ok(Some(img)) = fetch_image(&icon_url, user_agent).await
+    {
+        debug!("Fetched favicon from HTML link: {}", icon_url);
+        return Ok(Some(img));
     }
 
     Ok(None)

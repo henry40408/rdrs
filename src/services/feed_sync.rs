@@ -7,7 +7,7 @@ use crate::db::DbPool;
 use crate::error::{AppError, AppResult};
 use crate::models::{entry, feed, image};
 use crate::services::http::{
-    send_with_retry_on_error, RetryConfig, FEED_SYNC_TIMEOUT, SHARED_CLIENT, SHARED_CLIENT_H1,
+    FEED_SYNC_TIMEOUT, RetryConfig, SHARED_CLIENT, SHARED_CLIENT_H1, send_with_retry_on_error,
 };
 use crate::services::icon_fetcher;
 use crate::utils::datetime::parse_timestamp;
@@ -69,16 +69,16 @@ pub async fn refresh_feed(
         headers.insert(USER_AGENT, value);
     }
 
-    if let Some(ref etag) = feed_data.etag {
-        if let Ok(value) = HeaderValue::from_str(etag) {
-            headers.insert(IF_NONE_MATCH, value);
-        }
+    if let Some(ref etag) = feed_data.etag
+        && let Ok(value) = HeaderValue::from_str(etag)
+    {
+        headers.insert(IF_NONE_MATCH, value);
     }
 
-    if let Some(ref last_modified) = feed_data.last_modified {
-        if let Ok(value) = HeaderValue::from_str(last_modified) {
-            headers.insert(IF_MODIFIED_SINCE, value);
-        }
+    if let Some(ref last_modified) = feed_data.last_modified
+        && let Ok(value) = HeaderValue::from_str(last_modified)
+    {
+        headers.insert(IF_MODIFIED_SINCE, value);
     }
 
     let retry_config = RetryConfig::default();
@@ -469,7 +469,7 @@ pub async fn refresh_bucket(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{init_db, DbPool};
+    use crate::db::{DbPool, init_db};
     use crate::error::AppError;
     use crate::models::entry;
     use crate::models::user::Role;
