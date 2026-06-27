@@ -7,9 +7,12 @@ on:
     branches: [main]
 
 jobs:
-  # Cheap fail-fast gate: fmt + clippy on Linux only. The expensive jobs
-  # (build, e2e-tests, coverage) all wait on this, so a lint failure doesn't
-  # burn their runners.
+  # fmt + clippy on Linux. Runs in parallel with everything else — no gating.
+  # GitHub Actions caches aren't shared across jobs, so a "lint gate" can't hand
+  # its compiled artifacts to downstream jobs; it would only serialize a second
+  # compile onto the critical path for no wall-clock win. And the cheap checks
+  # (fmt, deny) don't validate compilation anyway, so they make poor fail-fast
+  # gates for a Rust project. Full parallelism is simplest and fastest.
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -32,12 +35,11 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
 
-  # Cross-platform build / portability check. fmt + clippy live in the lint
-  # gate above, so this is build-only. macOS is a portability sanity check;
-  # RDRS deploys to Linux servers. (Windows was dropped earlier: 5-9 min per
-  # PR for no deployment value.)
+  # Cross-platform build / portability check (build-only; fmt + clippy live in
+  # the lint job). macOS is a portability sanity check; RDRS deploys to Linux
+  # servers. (Windows was dropped earlier: 5-9 min per PR for no deployment
+  # value.)
   build:
-    needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -70,7 +72,6 @@ jobs:
         run: cargo deny check
 
   e2e-tests:
-    needs: lint
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -138,7 +139,6 @@ jobs:
           retention-days: 14
 
   coverage:
-    needs: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
