@@ -95,7 +95,7 @@ pub fn item_id_to_entry_id(s: &str) -> AppResult<i64> {
             return Ok(0);
         }
         return i64::from_str_radix(hex, 16)
-            .map_err(|_| AppError::Validation(format!("Invalid item ID: {}", s)));
+            .map_err(|_e| AppError::Validation(format!("Invalid item ID: {}", s)));
     }
 
     // Short format: try decimal first, then hex (some clients send bare hex like "0000000000005da1")
@@ -108,14 +108,14 @@ pub fn item_id_to_entry_id(s: &str) -> AppResult<i64> {
         return Ok(0);
     }
     i64::from_str_radix(hex, 16)
-        .map_err(|_| AppError::Validation(format!("Invalid item ID: {}", s)))
+        .map_err(|_e| AppError::Validation(format!("Invalid item ID: {}", s)))
 }
 
 // --- Shared response types ---
 
 /// Standard Google Reader item entry in stream/contents response.
 /// Includes RDRS extension fields (prefixed with `_`) for Web UI use.
-/// Third-party GReader clients safely ignore unknown fields.
+/// Third-party `GReader` clients safely ignore unknown fields.
 #[derive(Debug, Serialize)]
 pub struct GReaderItem {
     pub id: String,

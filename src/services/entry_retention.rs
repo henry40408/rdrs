@@ -11,14 +11,15 @@ use crate::models::entry;
 /// Entries deleted per transaction during a drain.
 const BATCH_SIZE: usize = 500;
 /// Run a full VACUUM only when freed pages reach this fraction of the file. A
-/// full VACUUM rewrites the whole database under a write lock (~db_size/650
+/// full VACUUM rewrites the whole database under a write lock (~`db_size/650`
 /// seconds), so it is not worth doing for the handful of pages a routine prune
 /// frees — only after a large drain.
 const VACUUM_FREELIST_RATIO: f64 = 0.20;
 
-/// Start the retention worker. Every `interval_hours` it prunes read+aged
-/// +non-starred entries for users who opted in (`user_settings.retention_read_days
-/// > 0`), then runs maintenance. A no-op when nobody opted in.
+/// Start the retention worker. Every `interval_hours` it prunes read, aged,
+/// non-starred entries for users who opted in (those with
+/// `user_settings.retention_read_days > 0`), then runs maintenance. A no-op
+/// when nobody opted in.
 pub fn start_retention_worker(
     db: DbPool,
     interval_hours: u64,

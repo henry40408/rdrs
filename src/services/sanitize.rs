@@ -141,7 +141,7 @@ fn harvest_image_dimensions(html: &str) -> String {
 
 /// Promote lazy-loaded image URLs into `src` before sanitization.
 ///
-/// Many sites (e.g. WordPress with lazy-load plugins) ship a `data:` SVG
+/// Many sites (e.g. `WordPress` with lazy-load plugins) ship a `data:` SVG
 /// placeholder in `src` and keep the real URL in a `data-*` attribute. Ammonia
 /// later drops both the `data:` src (disallowed scheme) and the unknown `data-*`
 /// attribute, leaving an empty `<img>` and making images disappear. Running this
@@ -174,26 +174,23 @@ fn promote_lazy_images(html: &str) -> String {
         };
 
         let new_src = format!("src=\"{}\"", real);
-        match current_src {
+        if let Some(placeholder) = current_src {
             // Replace the `data:` placeholder src with the real URL.
-            Some(placeholder) => {
-                let old_amp = format!("src=\"{}\"", placeholder.replace('&', "&amp;"));
-                let old_raw = format!("src=\"{}\"", placeholder);
-                if result.contains(&old_amp) {
-                    result = result.replacen(&old_amp, &new_src, 1);
-                } else {
-                    result = result.replacen(&old_raw, &new_src, 1);
-                }
+            let old_amp = format!("src=\"{}\"", placeholder.replace('&', "&amp;"));
+            let old_raw = format!("src=\"{}\"", placeholder);
+            if result.contains(&old_amp) {
+                result = result.replacen(&old_amp, &new_src, 1);
+            } else {
+                result = result.replacen(&old_raw, &new_src, 1);
             }
+        } else {
             // No src at all: convert the lazy attribute into `src`.
-            None => {
-                let old_amp = format!("{}=\"{}\"", attr_name, real.replace('&', "&amp;"));
-                let old_raw = format!("{}=\"{}\"", attr_name, real);
-                if result.contains(&old_amp) {
-                    result = result.replacen(&old_amp, &new_src, 1);
-                } else {
-                    result = result.replacen(&old_raw, &new_src, 1);
-                }
+            let old_amp = format!("{}=\"{}\"", attr_name, real.replace('&', "&amp;"));
+            let old_raw = format!("{}=\"{}\"", attr_name, real);
+            if result.contains(&old_amp) {
+                result = result.replacen(&old_amp, &new_src, 1);
+            } else {
+                result = result.replacen(&old_raw, &new_src, 1);
             }
         }
     }

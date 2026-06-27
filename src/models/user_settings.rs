@@ -27,7 +27,7 @@ pub struct UserSettings {
 }
 
 impl UserSettings {
-    /// Parse save_services JSON into SaveServicesConfig
+    /// Parse `save_services` JSON into `SaveServicesConfig`
     pub fn get_save_services_config(&self) -> SaveServicesConfig {
         self.save_services
             .as_ref()
@@ -99,7 +99,7 @@ pub fn upsert(conn: &Connection, user_id: i64, entries_per_page: i64) -> AppResu
     ))
 }
 
-/// Get SaveServicesConfig for a user
+/// Get `SaveServicesConfig` for a user
 pub fn get_save_services_config(conn: &Connection, user_id: i64) -> AppResult<SaveServicesConfig> {
     match find_by_user_id(conn, user_id)? {
         Some(settings) => Ok(settings.get_save_services_config()),
@@ -107,7 +107,7 @@ pub fn get_save_services_config(conn: &Connection, user_id: i64) -> AppResult<Sa
     }
 }
 
-/// Update save_services configuration for a user
+/// Update `save_services` configuration for a user
 pub fn update_save_services(
     conn: &Connection,
     user_id: i64,

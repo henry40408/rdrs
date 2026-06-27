@@ -216,7 +216,7 @@ pub async fn summarize_entry(
 
     tokio::time::timeout(JOB_QUEUE_TIMEOUT, state.summary_tx.send(job))
         .await
-        .map_err(|_| {
+        .map_err(|_e| {
             AppError::Internal("Summary queue is full, please try again later".to_string())
         })?
         .map_err(|e| AppError::Internal(format!("Failed to queue summary job: {}", e)))?;

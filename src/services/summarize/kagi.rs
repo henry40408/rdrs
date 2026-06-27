@@ -418,9 +418,17 @@ mod tests {
         // `set_var`/`remove_var` are `unsafe` in this toolchain (process-global
         // mutation); the `unsafe` blocks are required. cargo-nextest runs each
         // test in its own process, so this env mutation cannot race other tests.
-        unsafe { std::env::set_var("KAGI_API_BASE", server.uri()) };
+        // Test-only env mutation; nextest isolates each test in its own process.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("KAGI_API_BASE", server.uri());
+        };
         let result = summarize_url(&config, "https://x.com/a").await.unwrap();
-        unsafe { std::env::remove_var("KAGI_API_BASE") };
+        // Test-only env mutation; nextest isolates each test in its own process.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::remove_var("KAGI_API_BASE");
+        };
         assert!(result.success);
         assert_eq!(
             result.output_text.as_deref(),

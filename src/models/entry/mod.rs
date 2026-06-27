@@ -80,7 +80,7 @@ pub struct EntryFilter {
 #[derive(Debug, Clone)]
 pub enum ContinuationCursor {
     /// New `(sort_ts, id)` composite. `sort_ts` is the entry's sort-field
-    /// value as TEXT (the same byte-string SQLite stores), so the predicate
+    /// value as TEXT (the same byte-string `SQLite` stores), so the predicate
     /// compares against an indexed column without conversion.
     Composite { sort_ts: String, id: i64 },
     /// Legacy `e.id < ?` cursor — accepted on input only; emitted only by
@@ -121,7 +121,7 @@ pub struct ContinuationParams {
     pub ot: Option<i64>,
     /// Newest timestamp (seconds since epoch)
     pub nt: Option<i64>,
-    /// Sort order (default: PublishedAt)
+    /// Sort order (default: `PublishedAt`)
     pub sort_order: EntrySortOrder,
 }
 
@@ -250,7 +250,7 @@ pub fn find_by_id_for_user(
     .map_err(AppError::Database)
 }
 
-/// Fetch the sort-field value (as the exact TEXT string SQLite stores) for
+/// Fetch the sort-field value (as the exact TEXT string `SQLite` stores) for
 /// emitting a composite cursor. Returns `None` if the entry doesn't exist.
 pub fn fetch_sort_ts(
     conn: &Connection,
@@ -412,7 +412,7 @@ pub fn count_unread_by_user(conn: &Connection, user_id: i64) -> AppResult<i64> {
     Ok(count)
 }
 
-/// Returns a map of feed_id -> unread count for a user
+/// Returns a map of `feed_id` -> unread count for a user
 pub fn count_unread_by_feed(
     conn: &Connection,
     user_id: i64,
@@ -442,7 +442,7 @@ pub fn count_unread_by_feed(
     Ok(map)
 }
 
-/// Returns a map of category_id -> unread count for a user
+/// Returns a map of `category_id` -> unread count for a user
 pub fn count_unread_by_category(
     conn: &Connection,
     user_id: i64,
@@ -689,7 +689,7 @@ pub fn mark_as_unread(conn: &Connection, id: i64) -> AppResult<Entry> {
     find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
 }
 
-/// Explicitly star an entry (set starred_at if not already set).
+/// Explicitly star an entry (set `starred_at` if not already set).
 pub fn star_entry(conn: &Connection, id: i64) -> AppResult<Entry> {
     let rows = conn.execute(
         "UPDATE entry SET starred_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1 AND starred_at IS NULL",
@@ -703,7 +703,7 @@ pub fn star_entry(conn: &Connection, id: i64) -> AppResult<Entry> {
     find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
 }
 
-/// Explicitly unstar an entry (clear starred_at).
+/// Explicitly unstar an entry (clear `starred_at`).
 pub fn unstar_entry(conn: &Connection, id: i64) -> AppResult<Entry> {
     let rows = conn.execute(
         "UPDATE entry SET starred_at = NULL, updated_at = datetime('now') WHERE id = ?1",
@@ -864,7 +864,7 @@ pub fn find_by_ids_with_feed(
 }
 
 /// List entry IDs with timestamps for a user, using continuation-based pagination.
-/// Returns Vec<(entry_id, timestamp_usec)>.
+/// Returns Vec<(`entry_id`, `timestamp_usec`)>.
 pub fn list_ids_by_user(
     conn: &Connection,
     user_id: i64,
@@ -1071,11 +1071,11 @@ pub struct EntryNeighbors {
 }
 
 /// Find neighboring entries (prev/next) for a given entry within a user's entries.
-/// Entries are ordered by COALESCE(published_at, created_at) DESC.
-/// - prev_id: the entry that comes before (newer/higher in list)
-/// - next_id: the entry that comes after (older/lower in list)
+/// Entries are ordered by `COALESCE(published_at`, `created_at`) DESC.
+/// - `prev_id`: the entry that comes before (newer/higher in list)
+/// - `next_id`: the entry that comes after (older/lower in list)
 ///
-/// Uses EntryFilter to support all filtering conditions (unread, starred, read, feed, category, has_summary).
+/// Uses `EntryFilter` to support all filtering conditions (unread, starred, read, feed, category, `has_summary`).
 pub fn find_neighbors(
     conn: &Connection,
     user_id: i64,
@@ -2234,7 +2234,7 @@ mod tests {
                 assert_eq!(sort_ts, "2026-04-26 12:34:56");
                 assert_eq!(id, 142);
             }
-            _ => panic!("expected Composite"),
+            ContinuationCursor::LegacyId(_) => panic!("expected Composite"),
         }
     }
 
@@ -2243,7 +2243,7 @@ mod tests {
         let c = ContinuationCursor::parse("142").expect("legacy parses");
         match c {
             ContinuationCursor::LegacyId(id) => assert_eq!(id, 142),
-            _ => panic!("expected LegacyId"),
+            ContinuationCursor::Composite { .. } => panic!("expected LegacyId"),
         }
     }
 

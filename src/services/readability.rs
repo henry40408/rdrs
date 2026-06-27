@@ -14,8 +14,8 @@ pub struct ExtractedContent {
 /// Fetches HTML from URL and extracts readable content using readability crate.
 pub async fn fetch_and_extract(url: &str, user_agent: &str) -> AppResult<ExtractedContent> {
     // Parse and validate URL (SSRF protection)
-    let parsed_url = Url::parse(url).map_err(|_| AppError::InvalidUrl)?;
-    url_validation::validate_url(&parsed_url).map_err(|_| AppError::InvalidUrl)?;
+    let parsed_url = Url::parse(url).map_err(|_e| AppError::InvalidUrl)?;
+    url_validation::validate_url(&parsed_url).map_err(|_e| AppError::InvalidUrl)?;
 
     // Fetch HTML via the shared, connection-pooled client (User-Agent per request).
     let url_owned = url.to_string();

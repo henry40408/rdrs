@@ -29,7 +29,7 @@ pub struct MeResponse {
 }
 
 /// Returns the current user augmented with session-derived flags
-/// (is_admin, is_masquerading) used by CSR pages to decide what UI to show.
+/// (`is_admin`, `is_masquerading`) used by CSR pages to decide what UI to show.
 pub async fn get_me(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -42,7 +42,7 @@ pub async fn get_me(
                     .db
                     .read_user(move |conn| user::find_by_id(conn, original_id))
                     .await??;
-                original.map(|u| u.is_admin()).unwrap_or(false)
+                original.is_some_and(|u| u.is_admin())
             }
             None => false,
         }
@@ -99,11 +99,11 @@ pub async fn get_user_settings(
                 user_settings::get_save_services_config(conn, user_id).unwrap_or_default();
 
             let linkding = save_config.linkding.as_ref();
-            let linkding_configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
+            let linkding_configured = linkding.is_some_and(|c| c.is_configured());
             let linkding_api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
 
             let kagi = save_config.kagi.as_ref();
-            let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
+            let kagi_configured = kagi.is_some_and(|c| c.is_configured());
             let kagi_language = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
 
             Ok::<_, AppError>(UserSettingsResponse {
@@ -175,8 +175,7 @@ pub async fn read_chrome_data(
                 user::find_by_id(conn, id)
                     .ok()
                     .flatten()
-                    .map(|u| u.is_admin())
-                    .unwrap_or(false)
+                    .is_some_and(|u| u.is_admin())
             })
             .await
             .ok(),
@@ -307,7 +306,7 @@ pub async fn get_current_user(auth_user: AuthUser) -> Json<crate::models::User> 
 
 fn extract_kagi_session_token(session_link: &str) -> Result<String, AppError> {
     let url = Url::parse(session_link.trim())
-        .map_err(|_| AppError::Validation("Invalid session link URL".to_string()))?;
+        .map_err(|_e| AppError::Validation("Invalid session link URL".to_string()))?;
 
     url.query_pairs()
         .find(|(key, _)| key == "token")

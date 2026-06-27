@@ -61,7 +61,7 @@ fn create_test_app(config: Config, db_name: &str) -> TestApp {
     TestApp { server, db, state }
 }
 
-/// Seed a user, category, feed, and one entry. Returns (user_id, entry_id).
+/// Seed a user, category, feed, and one entry. Returns (`user_id`, `entry_id`).
 async fn setup_user_with_entry(db: &DbPool, username: &str, password: &str) -> (i64, i64) {
     let username = username.to_owned();
     let password = password.to_owned();

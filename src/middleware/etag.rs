@@ -1,9 +1,9 @@
-//! Tower middleware that attaches a weak ETag to 2xx text/html
+//! Tower middleware that attaches a weak `ETag` to 2xx text/html
 //! responses and converts to 304 when the client's If-None-Match
 //! matches.
 //!
 //! Wired innermost so the body it hashes is the uncompressed one;
-//! CompressionLayer runs after this on the response path.
+//! `CompressionLayer` runs after this on the response path.
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use tower::{Layer, Service};
 
 /// Maximum body size (bytes) the middleware will buffer to compute
-/// an ETag. Bodies larger than this pass through untouched.
+/// an `ETag`. Bodies larger than this pass through untouched.
 /// 4 MiB covers any reasonable SSR HTML page; anything larger is
 /// almost certainly a streamed asset and shouldn't be buffered.
 const MAX_BUFFER_BYTES: usize = 4 * 1024 * 1024;
@@ -73,19 +73,18 @@ where
             }
 
             let (mut parts, body) = response.into_parts();
-            let bytes = match to_bytes(body, MAX_BUFFER_BYTES).await {
-                Ok(b) => b,
-                Err(_) => {
-                    // Body too large or stream error — return a fresh
-                    // empty 200 with a hint header. Production handlers
-                    // should not exceed MAX_BUFFER_BYTES for HTML; if
-                    // they do we want a loud signal in tests.
-                    let response = Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(Body::empty())
-                        .expect("static response");
-                    return Ok(response);
-                }
+            let bytes = if let Ok(b) = to_bytes(body, MAX_BUFFER_BYTES).await {
+                b
+            } else {
+                // Body too large or stream error — return a fresh
+                // empty 200 with a hint header. Production handlers
+                // should not exceed MAX_BUFFER_BYTES for HTML; if
+                // they do we want a loud signal in tests.
+                let response = Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::empty())
+                    .expect("static response");
+                return Ok(response);
             };
 
             let etag = compute_weak_etag(&bytes);
@@ -116,8 +115,7 @@ fn is_taggable(response: &Response) -> bool {
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .map(|ct| ct.starts_with("text/html"))
-        .unwrap_or(false)
+        .is_some_and(|ct| ct.starts_with("text/html"))
 }
 
 fn compute_weak_etag(body: &[u8]) -> String {

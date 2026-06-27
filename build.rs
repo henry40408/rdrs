@@ -37,8 +37,10 @@ fn get_git_version() -> String {
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| "dev".to_string())
+        .map_or_else(
+            || "dev".to_string(),
+            |o| String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        )
 }
 
 fn generate_favicons() {

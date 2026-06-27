@@ -33,8 +33,7 @@ pub(crate) fn feed_initial(feed_title: &str) -> String {
     feed_title
         .chars()
         .next()
-        .map(|c| c.to_uppercase().to_string())
-        .unwrap_or_else(|| "?".to_string())
+        .map_or_else(|| "?".to_string(), |c| c.to_uppercase().to_string())
 }
 
 /// Stable index 0..6 into the favicon fallback colour palette, derived from
@@ -174,9 +173,9 @@ pub struct EntriesLayoutContext {
     /// "summarized"`), false for `/` (unread) since unread is not a tab.
     pub show_tab_bar: bool,
     /// When `Some(stream_id)`, render the "Mark as Read..." dropdown
-    /// above the list with the given GReader stream as its scope. The
+    /// above the list with the given `GReader` stream as its scope. The
     /// `<select>` carries `data-mark-read-scope` so `app.js` picks up
-    /// the scope dynamically. Stream IDs follow GReader format:
+    /// the scope dynamically. Stream IDs follow `GReader` format:
     /// `user/-/state/com.google/reading-list` for global bulk,
     /// `feed/<feed_url>` for per-feed, `user/-/label/<category_name>`
     /// for per-category. `None` means the dropdown is not rendered.
@@ -220,12 +219,10 @@ pub(crate) fn row_view_from(
     e: &entry::EntryWithFeed,
     summary_status: Option<SummaryStatus>,
 ) -> EntryRowView {
-    let title = e
-        .entry
-        .title
-        .as_deref()
-        .map(crate::services::decode_html_entities)
-        .unwrap_or_else(|| "(no title)".to_string());
+    let title = e.entry.title.as_deref().map_or_else(
+        || "(no title)".to_string(),
+        crate::services::decode_html_entities,
+    );
     let published_at = e.entry.published_at.unwrap_or(e.entry.created_at);
     EntryRowView {
         id: e.entry.id,
@@ -357,7 +354,7 @@ async fn maybe_build_reading_pane(
 
 /// Fragment template for the Load-More response.
 /// Wraps a re-rendered `data-entries-list` div in a multi-target `<template>` block
-/// so `app.js` swap() replaces `[data-entries-list]` in-place.
+/// so `app.js` `swap()` replaces `[data-entries-list]` in-place.
 #[derive(Template)]
 #[template(path = "_entries_fragment.html")]
 pub(crate) struct EntriesFragmentTemplate {
@@ -391,7 +388,7 @@ pub struct StatisticsQuery {
 }
 
 /// Resolve the date range from period query params.
-/// Returns (from_str, to_str, active_period) as ISO date strings for SQL.
+/// Returns (`from_str`, `to_str`, `active_period`) as ISO date strings for SQL.
 pub fn resolve_statistics_period(query: &StatisticsQuery) -> (String, String, String) {
     let today = chrono::Utc::now().date_naive();
     let default_from = today - chrono::Duration::days(7);
@@ -488,8 +485,7 @@ pub async fn login_page(
         .await
         .ok()
         .flatten()
-        .map(|count| state.config.can_register(count))
-        .unwrap_or(false);
+        .is_some_and(|count| state.config.can_register(count));
 
     (
         flash.clone(),
@@ -530,8 +526,7 @@ pub async fn register_page(
         .await
         .ok()
         .flatten()
-        .map(|count| state.config.can_register(count))
-        .unwrap_or(false);
+        .is_some_and(|count| state.config.can_register(count));
 
     (
         flash.clone(),
@@ -613,8 +608,7 @@ pub async fn unread_page(
             .db
             .read_user(move |conn| feed::count_by_user(conn, user_id).unwrap_or(0))
             .await
-            .map(|count| count == 0)
-            .unwrap_or(false);
+            .is_ok_and(|count| count == 0);
 
     (
         flash,
@@ -703,9 +697,9 @@ pub async fn admin_page(
 }
 
 /// Serves `/user-settings` rendered fully server-side. Account info,
-/// GReader URLs, password / preferences / Linkding / Kagi forms targeting
+/// `GReader` URLs, password / preferences / Linkding / Kagi forms targeting
 /// `/user-settings/*` form-action endpoints, and a `<rdrs-passkeys>` mount
-/// for the WebAuthn UI are all populated directly from `state.config` + DB.
+/// for the `WebAuthn` UI are all populated directly from `state.config` + DB.
 pub async fn user_settings_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -736,11 +730,11 @@ pub async fn user_settings_page(
                 user_settings::get_save_services_config(conn, user_id).unwrap_or_default();
 
             let linkding = save_config.linkding.as_ref();
-            let linkding_configured = linkding.map(|c| c.is_configured()).unwrap_or(false);
+            let linkding_configured = linkding.is_some_and(|c| c.is_configured());
             let linkding_api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
 
             let kagi = save_config.kagi.as_ref();
-            let kagi_configured = kagi.map(|c| c.is_configured()).unwrap_or(false);
+            let kagi_configured = kagi.is_some_and(|c| c.is_configured());
             let kagi_language = kagi.and_then(|c| c.language.clone());
 
             Ok::<_, AppError>((
@@ -872,8 +866,7 @@ pub async fn feeds_page(
                         format_relative_time(f.feed_updated_at)
                     } else if f
                         .fetched_at
-                        .map(|ft| (chrono::Utc::now() - ft).num_days() <= 30)
-                        .unwrap_or(false)
+                        .is_some_and(|ft| (chrono::Utc::now() - ft).num_days() <= 30)
                     {
                         ("No date info".to_string(), String::new())
                     } else {
@@ -988,7 +981,7 @@ pub async fn feeds_page(
 /// Serves `/feeds/{id}/edit` rendered fully server-side. The form posts to
 /// `POST /feeds/{id}/edit` (T1 form-action endpoint). A second form on the
 /// page posts to `/feeds/{id}/fetch-metadata` to re-discover and persist
-/// title/description/site_url.
+/// `title/description/site_url`.
 pub async fn feed_edit_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -1668,7 +1661,7 @@ pub struct SearchQuery {
 /// Serves `/search` rendered fully server-side. With no `?q=`, shows an empty
 /// search form. With a non-empty `q`, runs `entry::list_by_user` filtered on
 /// the search term (LIKE `%q%` over title + content, case-insensitive),
-/// limited to 50 results sorted by published_at DESC. No pagination —
+/// limited to 50 results sorted by `published_at` DESC. No pagination —
 /// reading-pane integration arrives in PR-10's swap helper.
 pub async fn search_page(
     auth_user: PageAuthUser,
@@ -1814,7 +1807,7 @@ pub async fn feed_entries_page(
 
     let (feed_title, feed_url, feed_has_icon, cat_id, cat_name) = match lookup {
         Ok(v) => v,
-        Err(AppError::FeedNotFound) | Err(AppError::CategoryNotFound) => {
+        Err(AppError::FeedNotFound | AppError::CategoryNotFound) => {
             let page = render_not_found(
                 &state,
                 &auth_user,
@@ -2105,7 +2098,7 @@ impl IntoResponse for SettingsTemplate {
 }
 
 /// Per-route template for `/user-settings`. Renders the full page server-side
-/// (account info, GReader URLs, password / preferences / linkding / kagi
+/// (account info, `GReader` URLs, password / preferences / linkding / kagi
 /// forms, and a `<rdrs-passkeys>` mount). Form actions target the
 /// `/user-settings/*` form-action handlers added in PR-4 Task 1.
 #[derive(Template)]
@@ -2564,7 +2557,7 @@ pub struct SearchResultView {
     pub title_html: String,
     pub feed_title: String,
     pub published_relative: String,
-    /// RFC 3339 UTC string when published_at is known, otherwise empty.
+    /// RFC 3339 UTC string when `published_at` is known, otherwise empty.
     /// Emitted as the `datetime` attribute on the result row's `<time>`
     /// element so the client-side tooltip can format to browser TZ.
     pub published_at_iso: String,

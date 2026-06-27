@@ -71,7 +71,7 @@ fn strip_to_plain_text(raw: &str) -> String {
                 i += 1;
             }
             _ => {
-                let ch_len = raw[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                let ch_len = raw[i..].chars().next().map_or(1, |c| c.len_utf8());
                 out.push_str(&raw[i..i + ch_len]);
                 last_space = false;
                 i += ch_len;
@@ -127,7 +127,7 @@ pub fn build_snippet(html: Option<&str>, query: &str, max_chars: usize) -> Strin
     format!("{}…", truncated.trim_end())
 }
 
-/// Wrap case-insensitive (ASCII-only — matches the SQLite LIKE COLLATE NOCASE
+/// Wrap case-insensitive (ASCII-only — matches the `SQLite` LIKE COLLATE NOCASE
 /// behavior of the search query) matches of `query` in `<mark>` tags. Returns
 /// HTML with the non-match parts and the matched text both escaped, plus the
 /// `<mark>...</mark>` wrappers around hits. Use with `|safe` in templates.

@@ -1,4 +1,4 @@
-//! Integration tests for entry-related handlers using GReader API endpoints.
+//! Integration tests for entry-related handlers using `GReader` API endpoints.
 //!
 //! Tests cover:
 //! - Stream contents listing (GET /reader/api/0/stream/contents/*)

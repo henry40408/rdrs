@@ -17,7 +17,7 @@ use crate::models::user::{self, Role};
 use crate::models::{category, session};
 
 /// Path prefixes that must never trigger forward-auth auto-login: machine
-/// endpoints (GReader native clients, JSON/passkey APIs, SSE, static assets)
+/// endpoints (`GReader` native clients, JSON/passkey APIs, SSE, static assets)
 /// authenticate by their own means.
 const SKIP_PREFIXES: &[&str] = &[
     "/api",
@@ -101,9 +101,7 @@ pub async fn forward_auth(
             .db
             .read_user(move |conn| {
                 Ok::<bool, AppError>(
-                    session::find_by_token(conn, &token)?
-                        .map(|s| !s.is_expired())
-                        .unwrap_or(false),
+                    session::find_by_token(conn, &token)?.is_some_and(|s| !s.is_expired()),
                 )
             })
             .await
@@ -144,33 +142,30 @@ pub async fn forward_auth(
     let outcome = state
         .db
         .user(move |conn| {
-            let user = match user::find_by_username(conn, &username)? {
-                Some(u) => {
-                    if u.is_disabled() {
-                        return Ok::<Option<String>, AppError>(None);
-                    }
-                    if let Some(role) = desired_role
-                        && u.role != role
-                    {
-                        user::update_role(conn, u.id, role)?;
-                    }
-                    u
+            let user = if let Some(u) = user::find_by_username(conn, &username)? {
+                if u.is_disabled() {
+                    return Ok::<Option<String>, AppError>(None);
                 }
-                None => {
-                    if !allow_creation {
-                        return Ok(None);
-                    }
-                    let role = match desired_role {
-                        Some(r) => r,
-                        None if user::count(conn)? == 0 => Role::Admin,
-                        None => Role::User,
-                    };
-                    // Sentinel hash never verifies, so local password login is
-                    // impossible for forward-auth-provisioned accounts.
-                    let created = user::create_user(conn, &username, "!", role)?;
-                    category::create_category(conn, created.id, "Uncategorized")?;
-                    created
+                if let Some(role) = desired_role
+                    && u.role != role
+                {
+                    user::update_role(conn, u.id, role)?;
                 }
+                u
+            } else {
+                if !allow_creation {
+                    return Ok(None);
+                }
+                let role = match desired_role {
+                    Some(r) => r,
+                    None if user::count(conn)? == 0 => Role::Admin,
+                    None => Role::User,
+                };
+                // Sentinel hash never verifies, so local password login is
+                // impossible for forward-auth-provisioned accounts.
+                let created = user::create_user(conn, &username, "!", role)?;
+                category::create_category(conn, created.id, "Uncategorized")?;
+                created
             };
             let new_session = session::create_session(conn, user.id)?;
             Ok(Some(new_session.session_token))
@@ -201,8 +196,7 @@ pub async fn forward_auth(
     let location = req
         .uri()
         .path_and_query()
-        .map(|pq| pq.as_str().to_string())
-        .unwrap_or_else(|| "/".to_string());
+        .map_or_else(|| "/".to_string(), |pq| pq.as_str().to_string());
 
     (jar.add(cookie), Redirect::to(&location)).into_response()
 }

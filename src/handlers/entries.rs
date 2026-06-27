@@ -221,11 +221,7 @@ pub(crate) async fn load_pane_action_flags(
         .read_user(move |conn| {
             let cfg = crate::models::user_settings::get_save_services_config(conn, user_id)?;
             let has_save = cfg.has_any_service();
-            let has_kagi = cfg
-                .kagi
-                .as_ref()
-                .map(|c| c.is_configured())
-                .unwrap_or(false);
+            let has_kagi = cfg.kagi.as_ref().is_some_and(|c| c.is_configured());
             Ok::<_, AppError>((has_save, has_kagi))
         })
         .await?
@@ -280,12 +276,10 @@ pub(crate) async fn build_reading_pane_view(
     let published_at = ewf.entry.published_at;
     Ok(ReadingPaneView {
         id: entry_id,
-        title: ewf
-            .entry
-            .title
-            .as_deref()
-            .map(crate::services::decode_html_entities)
-            .unwrap_or_else(|| "(no title)".to_string()),
+        title: ewf.entry.title.as_deref().map_or_else(
+            || "(no title)".to_string(),
+            crate::services::decode_html_entities,
+        ),
         link: ewf.entry.link.clone(),
         feed_title: ewf.feed_title.clone().unwrap_or_default(),
         feed_id: ewf.entry.feed_id,
