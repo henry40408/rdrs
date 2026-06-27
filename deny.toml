@@ -1,0 +1,69 @@
+# cargo-deny configuration — supply-chain checks for the dependency graph.
+# Run locally with `cargo deny check`; CI runs the same on every push and PR.
+
+[graph]
+# Check the dependency graph for all targets, not just the host's, so a
+# platform-specific dependency can't smuggle in a bad license or advisory.
+all-features = true
+
+[advisories]
+version = 2
+# Deny crates with a known security advisory (RUSTSEC) or that have been yanked.
+# `ignore` holds advisory IDs we've reviewed and consciously accept (none yet).
+yanked = "deny"
+ignore = [
+    # core2 is unmaintained and all versions are yanked; pulled in transitively
+    # with no maintained drop-in replacement available yet. The crate spec
+    # silences the separate `yanked = "deny"` check for the same crate.
+    "RUSTSEC-2026-0105",
+    "core2@0.4.0",
+    # paste (proc-macro helper) is no longer maintained; still pulled in
+    # transitively, no maintained replacement wired up.
+    "RUSTSEC-2024-0436",
+    # memmap2 unchecked pointer offset (unsound). Fixed in 0.9.11, but that
+    # release is younger than our 7-day dependency cooldown — re-bump and drop
+    # this entry once it has aged out.
+    "RUSTSEC-2026-0186",
+]
+
+[licenses]
+version = 2
+# Permissive / public-domain-equivalent licenses only. Verify the active set
+# with `cargo deny list`; add a license here only after reviewing the crate.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    # Weak (file-level) copyleft, pulled in by webauthn-rs (passkey auth) and
+    # the scraper/cssparser/selectors HTML stack — both real runtime deps.
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+# libfuzzer-sys is only reachable via `all-features`; allow its NCSA arm just
+# for that crate rather than widening the global allowlist for a fuzz-only dep.
+[[licenses.exceptions]]
+crate = "libfuzzer-sys"
+allow = ["NCSA"]
+
+[bans]
+# Duplicate transitive versions are common; surface them as a warning, not a
+# hard failure.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+# Only crates.io is trusted; an unknown registry or any git source is rejected.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
