@@ -7,23 +7,16 @@ on:
     branches: [main]
 
 jobs:
-  build-and-test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        # Linux + macOS only. RDRS is deployed to Linux servers; macOS
-        # acts as a portability sanity check. Windows used to be in this
-        # matrix but added 5-9 min per PR for no deployment value, and
-        # Rust integration tests already run on Linux via the `coverage`
-        # job below — so the per-OS `cargo nextest run` step was also
-        # removed from this job.
-        os: [ubuntu-latest, macos-latest]
-
+  # Cheap fail-fast gate: fmt + clippy on Linux only. The expensive jobs
+  # (build, e2e-tests, coverage) all wait on this, so a lint failure doesn't
+  # burn their runners.
+  lint:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          fetch-depth: 0  # Fetch full history for git describe
+          fetch-depth: 0  # clippy compiles, and build.rs runs git describe
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@10c3493d811a9096cee4fdf287e41e852f6a51ba # 1.94.0
@@ -38,6 +31,29 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
+
+  # Cross-platform build / portability check. fmt + clippy live in the lint
+  # gate above, so this is build-only. macOS is a portability sanity check;
+  # RDRS deploys to Linux servers. (Windows was dropped earlier: 5-9 min per
+  # PR for no deployment value.)
+  build:
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0  # Fetch full history for git describe
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@10c3493d811a9096cee4fdf287e41e852f6a51ba # 1.94.0
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Build
         run: cargo build --verbose
@@ -54,7 +70,7 @@ jobs:
         run: cargo deny check
 
   e2e-tests:
-    needs: build-and-test
+    needs: lint
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -122,6 +138,7 @@ jobs:
           retention-days: 14
 
   coverage:
+    needs: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
