@@ -6,6 +6,9 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    groups:
+      cargo:
+        patterns: ["*"]
 
   - package-ecosystem: "docker"
     directory: "/"
@@ -13,6 +16,9 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    groups:
+      docker:
+        patterns: ["*"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -20,6 +26,9 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
 
   - package-ecosystem: "npm"
     directory: "/e2e"
@@ -27,3 +36,6 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    groups:
+      npm:
+        patterns: ["*"]
