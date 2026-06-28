@@ -1173,9 +1173,13 @@ function installSummaryActions() {
             const text = parts.join('\n\n');
             try {
                 await navigator.clipboard.writeText(text);
-                const original = copyBtn.textContent;
-                copyBtn.textContent = 'Copied!';
-                setTimeout(() => { copyBtn.textContent = original; }, 2000);
+                // Only swap the label span's text — writing to the button's
+                // textContent would clobber the icon span too, dropping the
+                // copy glyph until the container re-renders.
+                const label = copyBtn.querySelector('.action-label') || copyBtn;
+                const original = label.textContent;
+                label.textContent = 'Copied!';
+                setTimeout(() => { label.textContent = original; }, 2000);
             } catch {
                 window.flash?.error('Failed to copy to clipboard');
             }
