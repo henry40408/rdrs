@@ -1,5 +1,7 @@
 # RDRS - RSS Reader in Rust
 
+> A self-hosted RSS/Atom feed reader built with Rust.
+
 [![CI](https://github.com/henry40408/rdrs/actions/workflows/ci.yml/badge.svg)](https://github.com/henry40408/rdrs/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/henry40408/rdrs/graph/badge.svg)](https://codecov.io/gh/henry40408/rdrs)
 [![Release](https://img.shields.io/github/v/release/henry40408/rdrs)](https://github.com/henry40408/rdrs/releases/latest)
@@ -9,7 +11,7 @@
 [![Casual Maintenance Intended](https://casuallymaintained.tech/badge.svg)](https://casuallymaintained.tech/)
 [![Vibe Coded](https://img.shields.io/badge/vibe_coded-Claude-d97757?logo=anthropic&logoColor=white)](https://claude.com/claude-code)
 
-A self-hosted RSS/Atom feed reader built with Rust. Privacy-focused, lightweight, and designed for personal use.
+Privacy-focused, lightweight, and designed for personal use.
 
 | Light | Dark |
 |-------|------|
