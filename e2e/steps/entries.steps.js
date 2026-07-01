@@ -17,6 +17,17 @@ Given(
   }
 );
 
+Given("the {string} feed has a favicon", async ({ seed, currentUser }, feedTitle) => {
+  const userId = seed.getUserId(currentUser.username);
+  const feedId = seed.findFeedIdByTitle(userId, feedTitle);
+  // 1x1 transparent PNG — enough for feed_has_icon to render an <img> favicon.
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+    "base64",
+  );
+  seed.insertIcon(feedId, png, "image/png", "https://example.com/icon.png");
+});
+
 Given("the entry titled {string} is marked read", async ({ seed, currentUser }, title) => {
   const userId = seed.getUserId(currentUser.username);
   seed.markRead(seed.findEntryIdByTitle(userId, title));
@@ -308,6 +319,22 @@ Then("the reading pane shows the feed title {string}", async ({ page }, title) =
 
 Then("the reading pane shows a published time", async ({ page }) => {
   await expect(page.getByTestId("reading-pane-published-at")).toBeVisible();
+});
+
+Then("the reading pane shows an image favicon", async ({ page }) => {
+  const favicon = page.locator(".reading-pane-meta img.entry-favicon");
+  await expect(favicon).toBeVisible();
+  await expect(favicon).toHaveAttribute("src", /\/icon$/);
+});
+
+// Synchronous snapshot right after the (delayed) navigation click: the swap
+// handler has already run cancelPaneImages() on the still-visible outgoing
+// pane, so the favicon's src reveals whether it was wrongly blanked. Reads the
+// attribute once (no auto-retry) so it can't be masked by the next entry
+// eventually landing.
+Then("the reading pane favicon still has its image", async ({ page }) => {
+  const src = await page.locator(".reading-pane-meta img.entry-favicon").getAttribute("src");
+  expect(src, "reading-pane favicon must keep its src during navigation").toBeTruthy();
 });
 
 Then("the second entry is selected", async ({ page }) => {

@@ -216,6 +216,21 @@ Feature: Reading entries
     When I navigate to the "Next" entry in the reading pane
     Then the reading pane shows the title "Test Entry 4"
 
+  # Regression: cancelPaneImages() used to drop `src` on every pane image,
+  # including the meta-row favicon, blanking it on the still-visible outgoing
+  # pane for the whole fragment fetch — a visible favicon flash on each switch.
+  # It must now only cancel the slow .reading-pane-article content images.
+  Scenario: Switching entries does not blank the reading-pane favicon mid-load
+    Given the "Reading Feed" feed has a favicon
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    Then the reading pane shows an image favicon
+    When the fragment response for the entry titled "Test Entry 2" is delayed
+    And I click the entry titled "Test Entry 2" without waiting for the pane
+    Then the reading pane favicon still has its image
+    When the delayed fragment response has settled
+    Then the reading pane shows the title "Test Entry 2"
+
   Scenario: A stale slow fragment response never overwrites a newer click
     When I open the inbox
     And the fragment response for the entry titled "Test Entry 1" is delayed

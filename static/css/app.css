@@ -436,7 +436,9 @@ code {
 }
 
 .list-pane-header {
-    padding: var(--space-4) var(--space-5);
+    /* 16px horizontal matches the entry rows so the header aligns with the
+       favicon leading edge. */
+    padding: var(--space-4) var(--space-4);
     border-bottom: 1px solid var(--color-border-light);
     flex-shrink: 0;
 }
@@ -1151,9 +1153,13 @@ td input[type="text"] {
     border: 0;
 }
 
-/* ===== Entry Items (List) — head / meta / actions ===== */
+/* ===== Entry Items (List) — MD3 leading / content / trailing grid ===== */
 .entry-item {
-    padding: var(--space-4) var(--space-5);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;   /* MD3: leading | content | trailing */
+    column-gap: var(--space-4);                         /* 16px (MD3 list spacing) */
+    align-items: start;                                 /* three zones top-aligned */
+    padding: var(--space-3) var(--space-4);             /* 12px / 16px (MD3 list metrics) */
     border-bottom: 1px solid var(--color-border-light);
     cursor: pointer;
     transition: background 0.1s;
@@ -1170,7 +1176,7 @@ td input[type="text"] {
 .entry-item.entry-read:hover,
 .entry-item.entry-read.selected { opacity: 1; }
 
-/* Favicon inline in the meta row. */
+/* Feed favicon — the leading column of the entry grid. */
 .entry-favicon {
     width: 24px;
     height: 24px;
@@ -1199,36 +1205,46 @@ td input[type="text"] {
 .fav-c4 { background: #A6563E; }
 .fav-c5 { background: #6E8B3D; }
 
-/* Head row: title + right-pinned status cluster (star, summary sparkle, time). */
-.entry-head {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-2);
+/* Content column: title (clamped) + feed·category meta + action strip, stacked. */
+.entry-content { min-width: 0; }
+/* Leading favicon nudged to optically align with the title's first line. */
+.entry-item > .entry-favicon {
+    align-self: start;
+    margin-top: 2px;
 }
 .entry-item-title {
-    flex: 1;
     min-width: 0;
     font-family: var(--font-ui);
-    /* Title is the row's focal point: bumped to --font-base on desktop for
-       emphasis (was --font-sm); mobile goes one step further (see media block). */
+    /* Title is the row's focal point at --font-base, clamped to 3 lines with an
+       ellipsis (MD3 list headline). Full title stays in the title= tooltip and
+       the reading pane, so nothing is lost. */
     font-size: var(--font-base);
     font-weight: 600;
-    line-height: 1.32;
+    line-height: 1.4;
     color: var(--color-text);
     overflow-wrap: break-word;
     word-break: break-word;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
 }
 .entry-item-title:hover { color: var(--color-accent); }
 .entry-title-bold { font-weight: 600; }
 .entry-title-normal { font-weight: 400; }
+/* Trailing column: published time stacked over the star/summary status icons. */
 .entry-status {
-    flex: none;
-    align-self: flex-start;
-    height: 1.32em;
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;         /* right-align the trailing column */
+    gap: var(--space-1);           /* time ↔ icons, 4px */
+    font-size: var(--font-sm);
+}
+.entry-status-icons {
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    font-size: var(--font-sm);
 }
 .entry-status .ico { width: 1.15em; height: 1.15em; }
 .entry-status-star { color: var(--color-accent); display: inline-flex; }
@@ -1240,13 +1256,10 @@ td input[type="text"] {
     white-space: nowrap;
 }
 
-/* Meta row: inline favicon + feed · category. */
+/* Meta row: feed · category (the favicon now lives in the leading column). */
 .entry-item-meta {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-2);
-    /* Bigger gap below the title to let the emphasized headline breathe. */
-    margin-top: var(--space-2);
+    /* Tight-couple under the headline (MD3 groups headline + supporting text). */
+    margin-top: var(--space-1);
     font-family: var(--font-ui);
     font-size: var(--font-sm);
     line-height: 1.5;
@@ -1267,7 +1280,7 @@ td input[type="text"] {
 .entry-item-actions {
     display: flex;
     gap: var(--space-5);
-    margin-top: var(--space-2);
+    margin-top: var(--space-3);
     font-family: var(--font-ui);
     font-size: var(--font-sm);
     opacity: 0.72;
@@ -2032,22 +2045,37 @@ summary {
         padding-bottom: calc(3rem + 2 * var(--space-2) + var(--space-4));
     }
 
-    /* ===== Entry row (redesign) — mobile ===== */
-    .entry-item { padding: var(--space-4); }
+    /* ===== Entry row (redesign) — mobile =====
+       Keep the leading favicon + trailing time zones, but drop the action strip
+       to its own full-width row (thumb-reachable, WCAG tap targets). The content
+       wrapper goes display:contents so title/meta/actions become grid items and
+       can be placed via areas. */
+    .entry-item {
+        padding: var(--space-4);
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-areas:
+            "fav title trail"
+            "fav meta  trail"
+            "act act   act";
+    }
+    .entry-content { display: contents; }
+    .entry-item > .entry-favicon { grid-area: fav; }
+    .entry-content > .entry-item-title { grid-area: title; }
+    .entry-content > .entry-item-meta { grid-area: meta; }
+    .entry-content > .entry-item-actions { grid-area: act; }
+    .entry-item > .entry-status { grid-area: trail; }
 
     /* No sidebar visible on mobile, so the larger title reads fine here.
-       display:flex + min-height gives it a 44px tap target (WCAG 2.5.5). */
+       Keeps the 3-line clamp from the base rule; min-height gives it a 44px
+       tap target (WCAG 2.5.5) without breaking the -webkit-box clamp. */
     .entry-item-title {
         font-size: var(--font-lg);
-        display: flex;
-        align-items: center;
         min-height: var(--touch-min);
     }
     .entry-status { font-size: var(--font-base); }
 
-    /* Feed/category flex row with favicon. Vertical padding on the links
-       gives each one a ~28px hit box — inline links are exempt from the 44px
-       rule. No horizontal padding so they stay flush with the title. */
+    /* Feed/category links. Vertical padding gives each one a ~28px hit box —
+       inline links are exempt from the 44px rule. */
     .entry-item-meta {
         margin-top: var(--space-2);
         line-height: 1.7;
