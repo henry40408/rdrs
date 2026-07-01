@@ -157,9 +157,14 @@ function clearFormBusy(form) {
 // downloads keep occupying the ~6 per-origin connection slots, so the next
 // entry's fragment `fetch` stalls behind them (measured: hundreds of ms to
 // >1s of pure connection-queue wait). Dropping `src` cancels them up front.
+//
+// Scoped to `.reading-pane-article` — the slow image-proxied *content* images.
+// The meta-row favicon (`/api/feeds/{id}/icon`) is small, local and cached, so
+// cancelling it buys nothing but blanks a still-visible pane while the next
+// fragment loads (a visible favicon flash on every entry switch).
 function cancelPaneImages(pane) {
     if (!pane) return;
-    for (const img of pane.querySelectorAll('img[src]')) {
+    for (const img of pane.querySelectorAll('.reading-pane-article img[src]')) {
         img.removeAttribute('src');
     }
 }
