@@ -73,7 +73,7 @@
                             <tr id="row-feed-{{ feed.id }}" data-feed-id="{{ feed.id }}"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>
                                 <td data-label="Title"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>
                                     <div class="feed-title-cell">
-                                        <div>
+                                        <div class="feed-title-line">
                                             {% if feed.has_icon %}
                                                 <img src="/api/feeds/{{ feed.id }}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">
                                             {% endif %}

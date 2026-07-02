@@ -20,12 +20,12 @@
         <a href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" title="{{ r.title }}" class="entry-item-title {% if r.is_read %}entry-title-normal{% else %}entry-title-bold{% endif %}" data-testid="entry-title-link">{{ r.title }}</a>
 
         <div class="entry-item-meta">
+            {% if r.feed_has_icon %}
+            <img class="entry-favicon" src="/api/feeds/{{ r.feed_id }}/icon" alt="" loading="lazy" width="15" height="15">
+            {% else %}
+            <span class="entry-favicon entry-favicon-chip fav-c{{ r.feed_color_index() }}" aria-hidden="true">{{ r.feed_initial() }}</span>
+            {% endif %}
             <span class="entry-meta-text">
-                {% if r.feed_has_icon %}
-                <img class="entry-favicon" src="/api/feeds/{{ r.feed_id }}/icon" alt="" loading="lazy" width="15" height="15">
-                {% else %}
-                <span class="entry-favicon entry-favicon-chip fav-c{{ r.feed_color_index() }}" aria-hidden="true">{{ r.feed_initial() }}</span>
-                {% endif %}
                 <a class="entry-feed" href="/feeds/{{ r.feed_id }}/entries">{{ r.feed_title }}</a>
                 <span class="meta-sep">·</span>
                 <a href="/categories/{{ r.category_id }}/entries">{{ r.category_name }}</a>

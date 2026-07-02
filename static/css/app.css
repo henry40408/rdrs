@@ -531,6 +531,8 @@ code {
 }
 
 .list-pane-header h1 {
+    display: flex;
+    align-items: center;
     font-size: var(--font-lg);
     margin-bottom: var(--space-3);
 }
@@ -666,7 +668,7 @@ code {
     gap: 6px;
     color: var(--color-accent-text);
 }
-.dispatch-eyebrow .entry-favicon { margin-right: 0; vertical-align: baseline; }
+.dispatch-eyebrow .entry-favicon { margin-right: 0; }
 .dispatch-eyebrow time { color: inherit; }
 .dispatch-eyebrow::after {
     content: "";
@@ -1399,12 +1401,14 @@ td input[type="text"] {
 .entry-item.entry-read .entry-item-meta a { color: var(--color-text-muted); font-weight: 400; }
 .entry-item-meta .meta-sep { color: var(--color-text-muted); margin: 0 3px; }
 
-/* Inline favicon in the meta line — 15px, 3px radius, letter-tile fallback. */
+/* Favicon in the meta line — 15px, 3px radius, letter-tile fallback. Both the
+   <img> and the .entry-favicon-chip variant are flex items of the
+   align-items:center meta line, so they sit at an identical vertical position
+   (no baseline/vertical-align guesswork). */
 .entry-favicon {
     width: 15px;
     height: 15px;
     border-radius: 3px;
-    vertical-align: -3px;
     margin-right: 5px;
     flex: none;
     object-fit: cover;
@@ -1852,14 +1856,15 @@ mark {
     margin-bottom: var(--space-4);
 }
 
-/* Feed icon */
+/* Feed icon — sized here; vertical centring comes from the flex containers it
+   lives in (.list-pane-header h1, .feed-title-line), so no vertical-align. */
 .feed-icon {
     width: var(--icon-sm);
     height: var(--icon-sm);
-    vertical-align: middle;
     margin-right: var(--space-1);
     border-radius: var(--radius-sm);
     background: #ffffff;
+    flex: none;
 }
 
 /* Summary-status badges — one sparkle glyph, colour + fill carry meaning.
@@ -2818,6 +2823,11 @@ summary {
 
 /* Feed health */
 .feed-title-cell {
+    min-width: 0;
+}
+.feed-title-line {
+    display: flex;
+    align-items: center;
     min-width: 0;
 }
 .feed-health-info {
