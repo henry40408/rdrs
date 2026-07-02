@@ -72,6 +72,10 @@ function installSwap() {
 
 const formSwapAborts = new WeakMap();
 
+// Entry ids with a keyboard-driven read/unread toggle ('m') POST in flight.
+// Guards against rapid double-press double-POSTing stale state on the same row.
+const pendingRowToggles = new Set();
+
 function abortFormSwap(form) {
     const controller = formSwapAborts.get(form);
     if (!controller) return;
@@ -1001,12 +1005,23 @@ function installEntriesKeyboard() {
                 break;
             }
             case 'm': {
-                // Toggle read/unread on the active row (state-dependent
-                // action, same pattern as `f`).
+                // Toggle read/unread on the active row. The Wire Room redesign
+                // removed the row's read form, so drive the swap machinery
+                // directly with a POST (identical outcome to the old inline
+                // form: the row fragment is swapped in) — no throwaway <form>
+                // appended to the row. An in-flight guard keeps a rapid
+                // double-press from reading stale state and double-POSTing.
                 const current = activeRow();
                 if (!current) return;
-                const form = current.querySelector('form[action$="/read"], form[action$="/unread"]');
-                if (form) { e.preventDefault(); form.requestSubmit(); }
+                const id = current.getAttribute('data-entry-id');
+                if (!id) return;
+                e.preventDefault();
+                if (pendingRowToggles.has(id)) return;
+                const isRead = current.classList.contains('entry-read');
+                const url = `/entries/${id}/${isRead ? 'unread' : 'read'}`;
+                pendingRowToggles.add(id);
+                performSwap(url, { method: 'POST' }, `#entry-row-${id}`)
+                    .finally(() => pendingRowToggles.delete(id));
                 break;
             }
             case '1':
@@ -1038,14 +1053,24 @@ function installEntriesKeyboard() {
                 break;
             }
             case 'v': {
-                // Open Original — open the row's external link in a new
-                // tab. The row only renders the `<a target="_blank">`
-                // when `r.link` is Some, so absence = no-op.
+                // Open Original in a new tab. The visible row link was removed
+                // in the Wire Room redesign; the external URL now rides on the
+                // row's `data-entry-link` (absent when the entry has no link,
+                // so absence = no-op).
                 const current = activeRow();
-                const link = current?.querySelector('a[target="_blank"]');
-                if (!link) return;
+                const url = current?.getAttribute('data-entry-link');
+                if (!url) return;
                 e.preventDefault();
-                link.click();
+                // Open a real tab with full noopener+noreferrer, matching the
+                // removed row-link exactly. `window.open(url, '_blank', <features>)`
+                // drops noreferrer and the non-empty features string forces a
+                // popup window instead of a tab — a temporary anchor click avoids
+                // both regressions.
+                const a = document.createElement('a');
+                a.href = url;
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+                a.click();
                 break;
             }
             case 'd': {
@@ -1354,8 +1379,9 @@ function installRowClickToOpen() {
             event.shiftKey || event.altKey) return;
         const row = event.target.closest('[data-entry-row]');
         if (!row) return;
-        // Already-handled targets: action buttons + the title link itself.
-        if (event.target.closest('.entry-item-actions')) return;
+        // Already-handled targets: the star form (the row's only action) and
+        // the title link itself.
+        if (event.target.closest('.entry-star-form')) return;
         if (event.target.closest('a[data-swap="#reading-pane"]')) return;
         // Defer to any other link the user clicked (e.g. feed-title link
         // in the meta row, if/when one is added).

@@ -1,5 +1,9 @@
 {%- import "_icons.html" as icons -%}
 {% macro current_text(value) %}{% if value.is_empty() %}<span class="muted">Not set</span>{% else %}<code>{{ value }}</code>{% endif %}{% endmacro %}
+{# Reading-pane star button + its form. Shared by _reading_pane.html and the
+   swap-twin fragment in _entry_actions_multi.html so the two cannot drift
+   (starred `is-on` modifier + `<kbd>f</kbd>` hint stay in lockstep). #}
+{% macro pane_star_form(id, is_starred) %}<form id="reading-pane-star-form-{{ id }}" method="post" action="/entries/{{ id }}/{% if is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ id }}"><button type="submit" class="rp-action{% if is_starred %} is-on{% endif %}" aria-label="{% if is_starred %}Unstar{% else %}Star{% endif %}"><span class="action-icon" aria-hidden="true">{% call icons::star(is_starred) %}{% endcall %}</span><span class="action-label">{% if is_starred %}Starred{% else %}Star{% endif %}</span><kbd>f</kbd></button></form>{% endmacro %}
 {% macro flash(messages) %}
 {% if !messages.is_empty() %}
 <div class="banner-stack" role="region" aria-label="Notifications" tabindex="-1">

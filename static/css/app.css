@@ -1,3 +1,50 @@
+/* ===== Self-hosted webfonts (latin subset, SIL OFL — see static/fonts/OFL-*.txt) =====
+   Vendored to drop the Google Fonts CDN dependency (privacy for self-hosted
+   deployments). Newsreader ships as variable fonts (opsz + wght, roman +
+   italic); Archivo as a variable roman (wght); IBM Plex Mono as static 400/500/600. */
+@font-face {
+    font-family: 'Newsreader';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('/static/fonts/newsreader-latin.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Newsreader';
+    font-style: italic;
+    font-weight: 400 600;
+    font-display: swap;
+    src: url('/static/fonts/newsreader-italic-latin.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Archivo';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('/static/fonts/archivo-latin.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('/static/fonts/ibm-plex-mono-400-latin.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('/static/fonts/ibm-plex-mono-500-latin.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('/static/fonts/ibm-plex-mono-600-latin.woff2') format('woff2');
+}
+
 /* ===== Design Tokens ===== */
 :root {
     /* Spacing */
@@ -13,7 +60,7 @@
     --space-16: 4rem;
 
     /* Font sizes */
-    --font-xs: 0.8rem;
+    --font-xs: 0.8125rem;
     --font-sm: 0.875rem;
     --font-base: 1rem;
     --font-lg: 1.125rem;
@@ -21,11 +68,11 @@
     --font-2xl: 1.5rem;
     --font-3xl: 2rem;
 
-    /* Font families */
-    --font-display: 'Source Serif 4', Georgia, serif;
-    --font-body: 'Source Serif 4', Georgia, serif;
-    --font-ui: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+    /* Font families — "Wire Room" */
+    --font-display: 'Newsreader', Georgia, serif;   /* serif display + reading */
+    --font-body: 'Newsreader', Georgia, serif;
+    --font-ui: 'Archivo', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'SF Mono', ui-monospace, monospace;
 
     /* Border radius */
     --radius-sm: 3px;
@@ -36,13 +83,19 @@
 
     /* Shadows */
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-    --shadow-lg: 0 4px 16px rgba(0,0,0,0.12);
+    --shadow-lg: 0 24px 64px rgba(27,28,30,0.18);
 
     /* Layout */
-    --sidebar-width: 220px;
-    --list-pane-width: 340px;
-    --content-max-width: 820px;
-    --page-max-width: 1200px;
+    --sidebar-width: 232px;
+    --list-pane-width: 392px;
+    --content-max-width: 720px;
+    --page-max-width: 1080px;
+    /* Comfortable width for stacked form fields and 2-column info tables on
+       full pages — a field stretched to --page-max-width reads worse than the
+       whitespace it replaced. */
+    --form-max-width: 660px;
+    /* Prose / help-text measure (~68 characters) for readable line length. */
+    --prose-max-width: 68ch;
     --auth-max-width: 380px;
 
     /* Borders */
@@ -60,25 +113,36 @@
        the [data-theme] rules below pin it when the user picks a theme
        explicitly. One token list instead of three duplicated blocks. */
     color-scheme: light dark;
-    --color-bg: light-dark(#FAF8F5, #1C1917);
-    --color-bg-secondary: light-dark(#F3F0EC, #231F1C);
-    --color-bg-tertiary: light-dark(#EBE7E2, #2C2724);
-    --color-bg-sidebar: light-dark(#F5F2EE, #211E1B);
-    --color-text: light-dark(#1A1715, #F5F0EB);
-    --color-text-secondary: light-dark(#4A4540, #C8C0B8);
-    --color-text-muted: #8A847D;
-    --color-border: light-dark(#D4CFC8, #3D3731);
-    --color-border-light: light-dark(#E5E1DB, #332E29);
-    --color-accent: light-dark(#B8860B, #D4A853);
-    --color-accent-hover: light-dark(#9A7209, #E0BA6A);
-    --color-accent-subtle: light-dark(rgba(184, 134, 11, 0.1), rgba(212, 168, 83, 0.12));
+
+    /* "Wire Room" palette. paper = app chrome / sidebar; panel = list /
+       reading / page surfaces; panel-2 = hover / inset. The existing
+       --color-* names are repointed onto these so the whole stylesheet
+       re-themes from one place. */
+    --color-paper:        light-dark(#F2F1ED, #131416);   /* app chrome / sidebar */
+    --color-panel:        light-dark(#FBFAF7, #1B1C1F);   /* list / reading / pages */
+    --color-bg:           light-dark(#FBFAF7, #1B1C1F);   /* dominant surface = panel */
+    --color-bg-secondary: light-dark(#F6F5F1, #212226);   /* hover / inset = panel-2 */
+    --color-bg-tertiary:  light-dark(#ECEBE6, #26272B);   /* code / kbd surfaces */
+    --color-bg-sidebar:   light-dark(#F2F1ED, #131416);   /* = paper */
+    --color-text:           light-dark(#1B1C1E, #ECEBE6);  /* ink */
+    --color-text-secondary: light-dark(#55544F, #B3B2AC);  /* ink-2 */
+    --color-text-muted:     light-dark(#8B8A84, #7C7B76);  /* ink-3 */
+    --color-border:       light-dark(#CBCAC3, #3C3D42);   /* rule-2 (stronger) */
+    --color-border-light: light-dark(#E2E1DB, #2B2C30);   /* rule (hairline) */
+    --color-accent:       light-dark(#D9540D, #FF8A3C);   /* RSS heritage orange */
+    --color-accent-hover: light-dark(#B8430A, #FF9D5C);
+    --color-accent-text:  light-dark(#B8430A, #FF9D5C);   /* accent for small text */
+    --color-accent-subtle:  light-dark(rgba(217, 84, 13, 0.07), rgba(255, 138, 60, 0.09));
+    --color-accent-wash-2:  light-dark(rgba(217, 84, 13, 0.14), rgba(255, 138, 60, 0.18));
+    --color-chart:        light-dark(#D9540D, #E06719);   /* validated bar/progress mark */
+    --color-kbd-bg:       light-dark(#ECEBE6, #26272B);
     --color-success: light-dark(#2D7A3A, #4ADE80);
     --color-error: light-dark(#B91C1C, #F87171);
     --color-warning: light-dark(#92610E, #FBBF24);
-    --color-button-bg: light-dark(#1A1715, #F5F0EB);
-    --color-button-text: light-dark(#FAF8F5, #1C1917);
-    --color-overlay: light-dark(rgba(26, 23, 21, 0.4), rgba(0, 0, 0, 0.6));
-    --color-sidebar-active: light-dark(rgba(184, 134, 11, 0.08), rgba(212, 168, 83, 0.1));
+    --color-button-bg: light-dark(#1B1C1E, #ECEBE6);      /* ink */
+    --color-button-text: light-dark(#F2F1ED, #131416);    /* paper */
+    --color-overlay: light-dark(rgba(27, 28, 30, 0.45), rgba(0, 0, 0, 0.6));
+    --color-sidebar-active: light-dark(rgba(217, 84, 13, 0.07), rgba(255, 138, 60, 0.09));
 }
 
 [data-theme="light"] {
@@ -99,21 +163,44 @@
 /* ===== Base Typography ===== */
 body {
     font-family: var(--font-ui);
-    font-size: 18px;
+    font-size: 14px;
     line-height: 1.5;
-    background-color: var(--color-bg);
+    background-color: var(--color-paper);
     color: var(--color-text);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overflow-x: hidden;
 }
 
+::selection { background: var(--color-accent-wash-2); }
+
+/* Global focus ring — 2px accent, matches the prototype. */
+:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+/* Monospace <kbd> chips (reading-pane action hints, help overlay, inline). */
+kbd {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    background: var(--color-kbd-bg);
+    border: 1px solid var(--color-border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 5px;
+    vertical-align: 1px;
+}
+
 h1 {
     font-family: var(--font-display);
-    font-size: var(--font-2xl);
+    font-size: 25px;
     font-weight: 600;
-    line-height: 1.3;
-    letter-spacing: -0.01em;
+    line-height: 1.2;
+    letter-spacing: -0.015em;
     margin-bottom: var(--space-4);
 }
 
@@ -204,7 +291,7 @@ code {
 
 .sidebar-logo {
     font-family: var(--font-display);
-    font-size: var(--font-xl);
+    font-size: 22px;
     font-weight: 700;
     color: var(--color-text);
     text-decoration: none;
@@ -238,40 +325,40 @@ code {
 }
 
 .sidebar-section-title {
-    font-size: var(--font-xs);
-    font-weight: 600;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.16em;
     color: var(--color-text-muted);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-1) var(--space-3);
+    margin-bottom: 2px;
 }
 
 .sidebar-item {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
+    gap: 9px;
+    padding: 6px 10px;
     border-radius: var(--radius-md);
     color: var(--color-text-secondary);
     text-decoration: none;
-    font-size: var(--font-sm);
+    font-size: 14px;
     font-weight: 500;
-    transition: background 0.15s, color 0.15s;
-    border-left: var(--border-accent-width) solid transparent;
-    margin-left: calc(-1 * var(--border-accent-width));
+    transition: background 0.12s, color 0.12s;
 }
 
 .sidebar-item:hover {
-    background: var(--color-sidebar-active);
+    background: var(--color-bg-secondary);
     color: var(--color-text);
 }
 
 .sidebar-item.active {
     background: var(--color-sidebar-active);
-    color: var(--color-accent);
-    border-left-color: var(--color-accent);
-    font-weight: 600;
+    color: var(--color-text);
 }
+
+.sidebar-item.active .sidebar-item-icon { color: var(--color-accent); }
 
 /* Category names are user-supplied and can overrun the sidebar (a long
    unbroken word even spills past its right edge). Keep each to one line
@@ -288,25 +375,28 @@ code {
 }
 
 .sidebar-item-icon {
-    width: var(--icon-md);
-    height: var(--icon-md);
+    width: 15px;
+    height: 15px;
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    color: var(--color-text-muted);
 }
-.sidebar-item-icon .ico { width: var(--icon-md); height: var(--icon-md); }
+.sidebar-item-icon .ico { width: 15px; height: 15px; }
 
+/* Mono right-aligned unread count (no pill). Active row → accent-text. */
 .sidebar-badge {
     margin-left: auto;
-    font-size: var(--font-xs);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--color-text-muted);
+    text-align: right;
+}
+.sidebar-item.active .sidebar-badge {
+    color: var(--color-accent-text);
     font-weight: 600;
-    color: var(--color-accent);
-    background: var(--color-accent-subtle);
-    padding: 0.1em 0.5em;
-    border-radius: var(--radius-lg);
-    min-width: 1.4em;
-    text-align: center;
 }
 
 .sidebar-badge:empty {
@@ -403,6 +493,7 @@ code {
     flex-direction: column;
     height: 100vh;
     overflow-y: auto;
+    background: var(--color-panel);
 }
 
 /* When split-view is present, main-content must not scroll — each pane scrolls independently */
@@ -410,13 +501,31 @@ code {
     overflow: hidden;
 }
 
-/* Page content (non-split pages) */
+/* Page content (non-split pages) — centered column. The token is the single
+   source of truth for the width; data-dense surfaces (feeds/admin tables, the
+   statistics chart and card grids) get to use it, while forms and prose are
+   capped below via --form-max-width / --prose-max-width so they stay readable. */
 .page-content {
-    padding: var(--space-8) var(--space-10);
-    max-width: var(--page-max-width);
     width: 100%;
+    max-width: var(--page-max-width);
+    margin: 0 auto;
+    padding: 34px 40px 96px;
     overflow-wrap: break-word;
     word-break: break-word;
+}
+
+/* Stacked form blocks and 2-column info tables (account info / GReader on
+   /user-settings) cap at a comfortable field width. Horizontal control strips
+   (.filter-bar) and the wide config table (.mobile-cards-settings) opt out. */
+.page-content > form:not(.filter-bar),
+.page-content > table:not(.mobile-cards):not(.mobile-cards-settings) {
+    max-width: var(--form-max-width);
+}
+
+/* Prose / help paragraphs keep a readable measure instead of running the full
+   page width. */
+.page-content p {
+    max-width: var(--prose-max-width);
 }
 
 /* ===== Split View (Entry list + Reading pane) ===== */
@@ -433,6 +542,7 @@ code {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    background: var(--color-panel);
 }
 
 .list-pane-header {
@@ -444,6 +554,8 @@ code {
 }
 
 .list-pane-header h1 {
+    display: flex;
+    align-items: center;
     font-size: var(--font-lg);
     margin-bottom: var(--space-3);
 }
@@ -462,6 +574,7 @@ code {
     flex: 1;
     overflow-y: auto;
     min-width: 0;
+    background: var(--color-panel);
 }
 
 .reading-pane-empty {
@@ -475,20 +588,27 @@ code {
    (right-aligned) and, on mobile only, the Back-to-list affordance on the
    left. Visible on desktop too so the single nav element doesn't have to be
    duplicated across breakpoints. */
+/* ===== Reading pane — the "dispatch" ===== */
+/* Sticky pane bar (Back on mobile, Prev/Next right) with a backdrop blur. */
 .reading-pane-back {
+    position: sticky;
+    top: 0;
+    z-index: 5;
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: var(--space-3);
-    padding: var(--space-3) var(--space-6);
+    padding: 10px 28px;
+    background: color-mix(in srgb, var(--color-panel) 88%, transparent);
+    backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--color-border-light);
 }
 
-/* Back button — mobile-only (the desktop split view never leaves
-   the list). `margin-right: auto` pins it far left so the nav stays right.
-   Revealed in the ≤1024px block. */
+/* Back button — mobile-only (the desktop split view never leaves the list).
+   `margin-right: auto` pins it far left so the nav stays right. */
 .reading-pane-back-link {
     display: none;                       /* shown as inline-flex in the ≤1024px block */
+    align-items: center;
     margin-right: auto;
     gap: var(--space-2);
     min-height: var(--touch-min);
@@ -497,45 +617,44 @@ code {
     border-radius: var(--radius-md);
     background: none;
     font: inherit;
-    color: var(--color-accent);
+    color: var(--color-text-secondary);
     cursor: pointer;
 }
 .reading-pane-back-link .action-icon .ico { width: 18px; height: 18px; }
 
 .reading-pane-back-link:hover {
-    color: var(--color-accent-hover);
-    border-color: var(--color-accent);
+    color: var(--color-text);
+    border-color: var(--color-text-muted);
 }
 
-/* Prev/Next navigation. Buttons render disabled and app.js enables whichever
-   direction has an adjacent entry once `/api/entries/{id}/neighbors`
-   resolves; readers also navigate with the j/k keys while the pane is open. */
-.reading-pane-nav {
-    display: flex;
-    gap: var(--space-2);
-}
+/* Prev/Next navigation — quiet bordered buttons. app.js enables whichever
+   direction has an adjacent entry once `/api/entries/{id}/neighbors` resolves;
+   readers also navigate with the j/k keys while the pane is open. */
+.reading-pane-nav { display: flex; gap: 4px; }
 
 .reading-pane-nav-btn {
-    background: none;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    color: var(--color-accent);
-    cursor: pointer;
-    font-size: var(--font-sm);
-    line-height: 1;
-    padding: var(--space-2) var(--space-4);
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
+    padding: 4px 9px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    line-height: 1;
+    cursor: pointer;
 }
 
 .reading-pane-nav-btn:hover:not(:disabled) {
-    background: var(--color-bg-secondary);
-    color: var(--color-accent-hover);
+    background: none;
+    border-color: var(--color-text-muted);
+    color: var(--color-text);
 }
 
 .reading-pane-nav-btn:disabled {
-    opacity: 0.3;
+    opacity: 0.35;
     cursor: default;
 }
 
@@ -545,86 +664,125 @@ code {
 }
 
 .reading-pane-content {
-    padding: var(--space-8) var(--space-10);
     max-width: var(--content-max-width);
     margin: 0 auto;
+    padding: 44px 40px 96px;
     overflow-wrap: break-word;
     word-break: break-word;
 }
 
+/* Mono uppercase eyebrow: FEED · AGO, favicon leading, trailing hairline.
+   (Category / read-time are dropped — no server data for them in the pane.) */
+.dispatch-eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+.dispatch-eyebrow .src {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-accent-text);
+}
+.dispatch-eyebrow .entry-favicon { margin-right: 0; }
+.dispatch-eyebrow time { color: inherit; }
+.dispatch-eyebrow::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--color-border-light);
+}
+
 .reading-pane-title {
     font-family: var(--font-display);
-    font-size: var(--font-3xl);
-    font-weight: 700;
-    line-height: 1.25;
-    margin-bottom: var(--space-4);
+    font-optical-sizing: auto;
+    font-size: 33px;
+    font-weight: 500;
+    line-height: 1.14;
+    letter-spacing: -0.02em;
+    margin-bottom: 13px;
     color: var(--color-text);
+    text-wrap: pretty;
 }
+.reading-pane-title a { color: inherit; text-decoration: none; }
+.reading-pane-title a:hover { color: var(--color-accent); }
 
-.reading-pane-meta {
-    color: var(--color-text-muted);
-    font-size: var(--font-sm);
-    margin-bottom: var(--space-5);
+/* Byline: author (+ published) under the headline. */
+.reading-pane-meta,
+.byline {
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
     align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 22px;
+    font-size: 13.5px;
+    color: var(--color-text-muted);
 }
+.byline .author { color: var(--color-text-secondary); font-weight: 500; }
+.byline .sep { color: var(--color-border); }
 
-/* Mid-dot separators before author/time, only when an author span is present.
-   Anchored to the feed-title so the leading favicon (img or chip span) never
-   gets a dot. */
-.reading-pane-meta:has(> span:not([data-testid]):not(.entry-favicon)) [data-testid="reading-pane-feed-title"] ~ *::before {
-    content: "·";
-    margin-right: var(--space-2);
-}
-
-.reading-pane-meta .entry-favicon {
-    margin-top: 0;
-}
-
+/* Action row: quiet bordered buttons, each with a <kbd> hint. */
 .reading-pane-actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
-    margin-bottom: var(--space-8);
-    padding-bottom: var(--space-6);
+    margin-bottom: 30px;
+    padding-bottom: 26px;
     border-bottom: 1px solid var(--color-border-light);
 }
 
-/* Shared pane action control (also used by the summary-box Copy/Dismiss).
-   Icon + label, never wraps its label; desktop ~40px tall. */
+/* Shared pane action control (also used by the summary-box Copy/Dismiss). */
 .rp-action {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
-    min-height: 2.5rem;
-    padding: 0 var(--space-4);
+    gap: 7px;
+    padding: 6px 12px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background: var(--color-bg);
+    background: none;
     color: var(--color-text-secondary);
     font-family: var(--font-ui);
-    font-size: var(--font-sm);
+    font-size: 13px;
+    font-weight: 500;
     line-height: 1;
     white-space: nowrap;
     cursor: pointer;
     text-decoration: none;
+    transition: border-color 0.12s, color 0.12s, background 0.12s;
 }
 
 .rp-action:hover {
-    color: var(--color-accent);
-    border-color: var(--color-accent);
+    color: var(--color-text);
+    border-color: var(--color-text-muted);
 }
 
-.rp-action .action-icon {
-    color: var(--color-accent);
+.rp-action .action-icon { color: var(--color-text-secondary); display: inline-flex; }
+/* Restore the UA `[hidden]` semantics the `display: inline-flex` above defeats,
+   so the cancel-icon twin (data-cancel-swap busy toggle) stays hidden at rest. */
+.rp-action .action-icon[hidden] { display: none; }
+.rp-action .action-icon .ico { width: 13px; height: 13px; }
+.rp-action kbd { margin-left: 2px; }
+
+/* "On" affordance for active toggles (starred, etc.). */
+.rp-action.is-on {
+    color: var(--color-accent-text);
+    border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+    background: var(--color-accent-subtle);
 }
+.rp-action.is-on .action-icon { color: var(--color-accent-text); }
+.rp-action.is-on .action-icon .ico.is-filled { fill: currentColor; }
 
 .rp-action.is-cancel {
     color: var(--color-error);
     border-color: var(--color-error);
-    background: var(--color-bg);
+    background: none;
 }
 
 .rp-action.is-cancel .action-icon {
@@ -652,13 +810,15 @@ code {
 
 .reading-pane-article {
     font-family: var(--font-body);
-    font-size: var(--font-xl);
-    line-height: 1.8;
+    font-optical-sizing: auto;
+    font-size: 18.5px;
+    line-height: 1.68;
     color: var(--color-text);
 }
 
 .reading-pane-article p {
-    margin-bottom: var(--space-6);
+    margin-bottom: 1.25em;
+    max-width: 66ch;
     word-break: break-word;
 }
 
@@ -865,6 +1025,18 @@ label {
     color: var(--color-text-secondary);
 }
 
+/* Form-field labels: mono uppercase (prototype .field label). Scoped to
+   .form-group so inline checkbox / rename labels keep their own styling. */
+.form-group > label {
+    margin-bottom: 5px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
 input[type="text"],
 input[type="password"],
 input[type="url"],
@@ -949,14 +1121,15 @@ button:disabled {
     cursor: not-allowed;
 }
 
+/* Primary = solid ink (paper text), matching the prototype's btn-primary. */
 .btn-primary {
-    background: var(--color-accent);
-    color: #ffffff;
+    background: var(--color-button-bg);
+    color: var(--color-button-text);
 }
 
 .btn-primary:hover {
-    background: var(--color-accent-hover);
-    opacity: 1;
+    background: var(--color-button-bg);
+    opacity: 0.85;
 }
 
 .btn-secondary {
@@ -1153,13 +1326,19 @@ td input[type="text"] {
     border: 0;
 }
 
-/* ===== Entry Items (List) — MD3 leading / content / trailing grid ===== */
+/* ===== Entry list — the "wire log" =====
+   Row = mono time gutter (relative time over a 6px orange unread dot) | title +
+   meta line | hover-reveal star. The read/original row actions were removed;
+   the star is the only visible per-row control. Class hooks (.entry-item,
+   .selected, .entry-read, .entry-item-title, .entry-item-meta, .entry-favicon,
+   .entry-status) are preserved for app.js + e2e. */
 .entry-item {
+    position: relative;
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;   /* MD3: leading | content | trailing */
-    column-gap: var(--space-4);                         /* 16px (MD3 list spacing) */
-    align-items: start;                                 /* three zones top-aligned */
-    padding: var(--space-3) var(--space-4);             /* 12px / 16px (MD3 list metrics) */
+    grid-template-columns: 36px minmax(0, 1fr) auto;   /* time | content | star */
+    column-gap: var(--space-2);
+    align-items: start;
+    padding: 12px 14px 12px 16px;
     border-bottom: 1px solid var(--color-border-light);
     cursor: pointer;
     transition: background 0.1s;
@@ -1167,36 +1346,107 @@ td input[type="text"] {
 
 .entry-item:hover { background: var(--color-bg-secondary); }
 
-.entry-item.selected {
-    background: var(--color-accent-subtle);
-    box-shadow: inset var(--border-accent-width) 0 0 var(--color-accent);
+.entry-item.selected { background: var(--color-accent-subtle); }
+/* 2px orange left spine on the selected row (covers the row border seam). */
+.entry-item.selected::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: -1px;
+    width: 2px;
+    background: var(--color-accent);
 }
 
-.entry-item.entry-read { opacity: 0.62; }
-.entry-item.entry-read:hover,
-.entry-item.entry-read.selected { opacity: 1; }
+/* Leading gutter: mono relative time stacked over the unread dot. */
+.entry-time {
+    grid-column: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    padding-top: 2px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.3;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+.unread-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    margin-left: 1px;
+}
+.entry-item.entry-read .unread-dot { display: none; }
 
-/* Feed favicon — the leading column of the entry grid. */
+.entry-content { grid-column: 2; min-width: 0; }
+.entry-item-title {
+    min-width: 0;
+    font-family: var(--font-ui);
+    font-size: 14.5px;
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: -0.005em;
+    color: var(--color-text);
+    text-decoration: none;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+}
+.entry-item.entry-read .entry-item-title,
+.entry-title-normal { font-weight: 500; color: var(--color-text-secondary); }
+.entry-title-bold { font-weight: 600; }
+
+/* Meta line: inline favicon + feed · category, plus the summary-badge cluster. */
+.entry-item-meta {
+    display: flex;
+    align-items: center;
+    margin-top: 4px;
+    font-family: var(--font-ui);
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--color-text-muted);
+}
+.entry-meta-text {
+    min-width: 0;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.entry-item-meta a { color: var(--color-text-secondary); font-weight: 500; text-decoration: none; }
+.entry-item-meta a:hover { color: var(--color-accent); }
+.entry-item.entry-read .entry-item-meta a { color: var(--color-text-muted); font-weight: 400; }
+.entry-item-meta .meta-sep { color: var(--color-text-muted); margin: 0 3px; }
+
+/* Favicon in the meta line — 15px, 3px radius, letter-tile fallback. Both the
+   <img> and the .entry-favicon-chip variant are flex items of the
+   align-items:center meta line, so they sit at an identical vertical position
+   (no baseline/vertical-align guesswork). */
 .entry-favicon {
-    width: 24px;
-    height: 24px;
-    margin-top: 0;
-    border-radius: var(--radius-control);
+    width: 15px;
+    height: 15px;
+    border-radius: 3px;
+    margin-right: 5px;
     flex: none;
     object-fit: cover;
-    /* White tile so dark favicons (e.g. GitHub, Stack Overflow) stay visible
-       in dark mode instead of blending into the dark background. The colour
-       chip variant re-overrides this via .fav-c* below. */
     background: #ffffff;
+    box-shadow: inset 0 0 0 1px var(--color-border-light);
 }
 .entry-favicon-chip {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     color: #fff;
-    font-family: var(--font-ui);
-    font-size: var(--font-xs);
-    font-weight: 700;
+    font-family: var(--font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    box-shadow: none;
 }
 .fav-c0 { background: #7C6F9B; }
 .fav-c1 { background: #B05B3B; }
@@ -1205,103 +1455,44 @@ td input[type="text"] {
 .fav-c4 { background: #A6563E; }
 .fav-c5 { background: #6E8B3D; }
 
-/* Content column: title (clamped) + feed·category meta + action strip, stacked. */
-.entry-content { min-width: 0; }
-/* Leading favicon nudged to optically align with the title's first line. */
-.entry-item > .entry-favicon {
-    align-self: start;
-    margin-top: 2px;
-}
-.entry-item-title {
-    min-width: 0;
-    font-family: var(--font-ui);
-    /* Title is the row's focal point at --font-base, clamped to 3 lines with an
-       ellipsis (MD3 list headline). Full title stays in the title= tooltip and
-       the reading pane, so nothing is lost. */
-    font-size: var(--font-base);
-    font-weight: 600;
-    line-height: 1.4;
-    color: var(--color-text);
-    overflow-wrap: break-word;
-    word-break: break-word;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-    overflow: hidden;
-}
-.entry-item-title:hover { color: var(--color-accent); }
-.entry-title-bold { font-weight: 600; }
-.entry-title-normal { font-weight: 400; }
-/* Trailing column: published time stacked over the star/summary status icons. */
+/* Summary-status cluster — kept small, sits at the end of the meta line. */
 .entry-status {
-    align-self: start;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;         /* right-align the trailing column */
-    gap: var(--space-1);           /* time ↔ icons, 4px */
-    font-size: var(--font-sm);
-}
-.entry-status-icons {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-}
-.entry-status .ico { width: 1.15em; height: 1.15em; }
-.entry-status-star { color: var(--color-accent); display: inline-flex; }
-.entry-time {
     flex: none;
-    font-family: var(--font-ui);
-    font-size: var(--font-xs);
-    color: var(--color-text-muted);
-    white-space: nowrap;
-}
-
-/* Meta row: feed · category (the favicon now lives in the leading column). */
-.entry-item-meta {
-    /* Tight-couple under the headline (MD3 groups headline + supporting text). */
-    margin-top: var(--space-1);
-    font-family: var(--font-ui);
-    font-size: var(--font-sm);
-    line-height: 1.5;
-    color: var(--color-text-secondary);
-}
-/* feed · category as a single inline text run that wraps as a unit, rather
-   than two side-by-side flex blocks that get squeezed. */
-.entry-meta-text {
-    flex: 1;
-    min-width: 0;
-}
-.entry-item-meta a { color: var(--color-text-secondary); }
-.entry-item-meta a:hover { color: var(--color-accent); }
-.entry-item-meta .meta-sep { color: var(--color-text-muted); }
-
-/* Actions: full-width strip. Desktop = quiet text links that brighten on
-   row hover; mobile (below) = full-width icon buttons. */
-.entry-item-actions {
-    display: flex;
-    gap: var(--space-5);
-    margin-top: var(--space-3);
-    font-family: var(--font-ui);
-    font-size: var(--font-sm);
-    opacity: 0.72;
-    transition: opacity 0.1s;
-}
-.entry-item:hover .entry-item-actions,
-.entry-item.selected .entry-item-actions { opacity: 1; }
-.entry-action-btn,
-.entry-item-actions a {
     display: inline-flex;
     align-items: center;
-    gap: 0.35em;
-    padding: 0;
-    border: none;
-    background: none;
-    color: var(--color-text-secondary);
-    font: inherit;
-    cursor: pointer;
+    margin-left: 6px;
+    color: var(--color-text-muted);
 }
-.entry-action-btn:hover,
-.entry-item-actions a:hover { color: var(--color-accent); }
+.entry-status:empty { display: none; }
+.entry-status .ico { width: 13px; height: 13px; }
+
+/* Star — hover-reveal on pointer devices, always visible on touch (below). */
+.entry-star-form { grid-column: 3; margin: 0; padding: 0; display: flex; }
+.entry-star {
+    align-self: start;
+    width: 26px;
+    height: 26px;
+    margin: -3px -4px 0 0;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-md);
+    background: none;
+    border: none;
+    color: transparent;
+    cursor: pointer;
+    transition: color 0.1s, background 0.1s;
+}
+.entry-item:hover .entry-star { color: var(--color-text-muted); }
+/* Keyboard focus reveals the star to the same visible (muted) state as row-hover. */
+.entry-star:focus-visible { color: var(--color-text-muted); }
+/* Hovering the star itself turns it accent. Needs to out-specify
+   `.entry-item:hover .entry-star` (0,3,0), which is always active while the
+   star is hovered — so scope this to the item-hover context too (0,4,0). */
+.entry-item:hover .entry-star:hover { color: var(--color-accent); background: var(--color-accent-subtle); }
+.entry-star.starred,
+.entry-item:hover .entry-star.starred { color: var(--color-accent); }
+.entry-star .ico { width: 14px; height: 14px; }
+.entry-star.starred .ico { fill: currentColor; stroke: currentColor; }
 
 .breadcrumb a { color: var(--color-text-muted); }
 .breadcrumb a:hover { color: var(--color-accent); }
@@ -1683,25 +1874,20 @@ mark {
     width: 100%;
 }
 
-.auth-divider {
-    text-align: center;
-    margin-bottom: var(--space-4);
-    font-size: var(--font-sm);
-}
-
 .auth-passkey-btn {
     width: 100%;
     margin-bottom: var(--space-4);
 }
 
-/* Feed icon */
+/* Feed icon — sized here; vertical centring comes from the flex containers it
+   lives in (.list-pane-header h1, .feed-title-line), so no vertical-align. */
 .feed-icon {
     width: var(--icon-sm);
     height: var(--icon-sm);
-    vertical-align: middle;
     margin-right: var(--space-1);
     border-radius: var(--radius-sm);
     background: #ffffff;
+    flex: none;
 }
 
 /* Summary-status badges — one sparkle glyph, colour + fill carry meaning.
@@ -1772,69 +1958,117 @@ summary {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: var(--space-8);
-    background: var(--color-bg);
+    padding: var(--space-6);
+    background: var(--color-paper);
 }
 
 .auth-card {
     width: 100%;
     max-width: var(--auth-max-width);
+    background: var(--color-panel);
+    border: 1px solid var(--color-border-light);
+    border-radius: 12px;
+    padding: 36px 32px 30px;
 }
 
 .auth-card h1 {
     font-family: var(--font-display);
-    font-size: var(--font-3xl);
+    font-size: 34px;
     font-weight: 700;
     text-align: center;
-    margin-bottom: var(--space-8);
+    letter-spacing: -0.02em;
+    margin-bottom: 26px;
 }
 
 .auth-card .link {
-    margin-top: var(--space-6);
+    margin-top: var(--space-5);
     text-align: center;
     font-size: var(--font-sm);
+    color: var(--color-text-muted);
 }
 
-/* Summary box */
+/* "or use password" divider on the auth screens. */
+.auth-divider {
+    text-align: center;
+    margin-bottom: var(--space-4);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
+/* ===== Kagi summary block ===== */
+/* 2px orange left rule, accent wash, mono uppercase "KAGI SUMMARY" label
+   (via ::before), serif body — mirrors the prototype's summary-block. */
 .summary-box {
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-light);
-    border-radius: var(--radius-md);
-    padding: var(--space-5);
-    margin-bottom: var(--space-5);
+    position: relative;
+    background: var(--color-accent-subtle);
+    border-left: 2px solid var(--color-accent);
+    border-radius: 0 var(--radius-card) var(--radius-card) 0;
+    padding: 16px 20px 16px 22px;
+    margin-bottom: 30px;
+}
+.summary-box::before {
+    content: "Kagi summary";
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-accent-text);
+    margin-bottom: 8px;
 }
 
-/* In-flight status line ("Summarizing… (refresh to see the result)") —
-   only direct <p> child of the box, smaller than the eventual summary
-   body so the transient state doesn't dominate the pane. */
+/* In-flight status line ("Summarizing… (refresh to see the result)"). */
 .summary-box > p {
     margin: 0;
-    font-size: var(--font-sm);
+    font-family: var(--font-body);
+    font-size: var(--font-base);
+    font-style: italic;
+    color: var(--color-text-muted);
 }
 
+/* Copy / Dismiss / Cancel — quiet mono links pinned to the label row (right). */
 .summary-actions {
+    position: absolute;
+    top: 14px;
+    right: 16px;
     display: flex;
-    gap: var(--space-2);
-    margin-bottom: var(--space-3);
+    gap: var(--space-3);
+    margin: 0;
 }
+.summary-actions .rp-action {
+    min-height: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+.summary-actions .rp-action:hover { color: var(--color-text); border: none; background: none; }
+.summary-actions .rp-action .action-icon { display: none; }
 
-/* Caption-style title + link, mirrors what the Copy button writes. */
+/* Caption-style title + link above the body. */
 .summary-header {
-    margin-bottom: var(--space-3);
-    padding-bottom: var(--space-3);
-    border-bottom: 1px dashed var(--color-border-light);
+    margin-bottom: var(--space-2);
 }
 .summary-title {
+    font-family: var(--font-ui);
     font-weight: 600;
     color: var(--color-text);
-    font-size: var(--font-base);
+    font-size: 13px;
     line-height: 1.4;
-    margin-bottom: var(--space-1);
+    margin-bottom: 2px;
 }
 .summary-link {
     display: inline-block;
-    color: var(--color-accent);
-    font-size: var(--font-sm);
+    color: var(--color-accent-text);
+    font-size: 11px;
     font-family: var(--font-mono);
     word-break: break-all;
     text-decoration: none;
@@ -1842,14 +2076,14 @@ summary {
 .summary-link:hover { text-decoration: underline; }
 
 .summary-box blockquote {
-    border-left: var(--border-accent-width) solid var(--color-accent);
+    border-left: none;
     margin: 0;
-    padding: var(--space-2) 0 var(--space-2) var(--space-4);
-    color: var(--color-text);
+    padding: 0;
+    color: var(--color-text-secondary);
     font-style: normal;
     background: transparent;
     font-family: var(--font-body);
-    font-size: var(--font-base);
+    font-size: 16px;
     line-height: 1.6;
     white-space: pre-wrap;
 }
@@ -1980,6 +2214,9 @@ summary {
         position: sticky;
         top: 0;
         z-index: 1;
+        /* The mobile background is fully opaque, so the desktop backdrop blur
+           has no visual effect here — drop it to avoid the compositing cost. */
+        backdrop-filter: none;
     }
 
     .reading-pane-back-link {
@@ -2040,72 +2277,46 @@ summary {
         font-size: var(--font-xl);
     }
 
+    /* kbd hints are keyboard-only; the mobile action bar is icon+label. */
+    .reading-pane-actions kbd { display: none; }
+
     /* Clear the fixed bar so the last paragraph isn't hidden behind it. */
     .reading-pane-content {
         padding-bottom: calc(3rem + 2 * var(--space-2) + var(--space-4));
     }
 
-    /* ===== Entry row (redesign) — mobile =====
-       Keep the leading favicon + trailing time zones, but drop the action strip
-       to its own full-width row (thumb-reachable, WCAG tap targets). The content
-       wrapper goes display:contents so title/meta/actions become grid items and
-       can be placed via areas. */
+    /* ===== Entry row — mobile (wire log) =====
+       Same time-gutter | content | star layout, sized up for touch. */
     .entry-item {
-        padding: var(--space-4);
-        grid-template-columns: auto minmax(0, 1fr) auto;
-        grid-template-areas:
-            "fav title trail"
-            "fav meta  trail"
-            "act act   act";
+        grid-template-columns: 36px minmax(0, 1fr) auto;
+        padding: 14px 12px 14px 14px;
     }
-    .entry-content { display: contents; }
-    .entry-item > .entry-favicon { grid-area: fav; }
-    .entry-content > .entry-item-title { grid-area: title; }
-    .entry-content > .entry-item-meta { grid-area: meta; }
-    .entry-content > .entry-item-actions { grid-area: act; }
-    .entry-item > .entry-status { grid-area: trail; }
-
-    /* No sidebar visible on mobile, so the larger title reads fine here.
-       Keeps the 3-line clamp from the base rule; min-height gives it a 44px
-       tap target (WCAG 2.5.5) without breaking the -webkit-box clamp. */
+    /* No sidebar on mobile, so a slightly larger title reads well. Keeps the
+       3-line clamp from the base rule; min-height gives it a 44px tap target
+       (WCAG 2.5.5) without breaking the -webkit-box clamp. */
     .entry-item-title {
-        font-size: var(--font-lg);
+        font-size: var(--font-base);
         min-height: var(--touch-min);
     }
-    .entry-status { font-size: var(--font-base); }
+    .entry-item-meta { font-size: 13px; margin-top: 4px; }
 
-    /* Feed/category links. Vertical padding gives each one a ~28px hit box —
-       inline links are exempt from the 44px rule. */
-    .entry-item-meta {
-        margin-top: var(--space-2);
-        line-height: 1.7;
-    }
+    /* Feed/category links get a taller hit box (inline links exempt from 44px).
+       inline-block so the vertical padding counts toward the tap target. */
     .entry-item-meta a {
-        padding: 0.375rem 0;
+        display: inline-block;
+        vertical-align: middle;
+        padding: 0.35rem 0;
     }
 
-    /* Actions: full-width equal thirds, 44px tall, big icon, small padding,
-       always visible, icon-only (labels hidden). */
-    .entry-item-actions {
-        gap: var(--space-2);
-        margin-top: var(--space-3);
-        opacity: 1;
+    /* Star stays the single row action. On narrow/mobile layouts there is no
+       hover to reveal it, so make it always visible and a 44px tap target. */
+    .entry-star {
+        width: 44px;
+        height: 44px;
+        margin: -10px -10px 0 0;
+        color: var(--color-text-muted);
     }
-    .entry-item-actions .action-label { display: none; }
-    /* The read/star buttons are form-wrapped; the form is the flex child, so
-       it carries the equal-thirds sizing and its button stretches to fill. */
-    .entry-item-actions form { flex: 1; }
-    .entry-action-btn,
-    .entry-item-actions a {
-        flex: 1;
-        justify-content: center;
-        gap: 0;
-        min-height: var(--touch-min);
-        padding: var(--space-2);
-        border: 1px solid var(--color-border-light);
-        border-radius: var(--radius-md);
-        font-size: var(--font-xl);
-    }
+    .entry-star.starred { color: var(--color-accent); }
 
     /* Banner stack: tighter padding on narrow viewports. The 44px dismiss
        button makes the grid row taller than the text, so center every cell
@@ -2421,9 +2632,10 @@ summary {
 .feed-filter-link:hover { border-color: var(--color-accent); color: var(--color-accent); }
 .stats-period-btn.active,
 .feed-filter-link.active {
-    background: var(--color-accent);
-    color: var(--color-bg);
-    border-color: var(--color-accent);
+    background: var(--color-accent-subtle);
+    color: var(--color-accent-text);
+    border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+    font-weight: 600;
 }
 .stats-period-divider { color: var(--color-text-muted); }
 .stats-period-dash { color: var(--color-text-muted); }
@@ -2446,48 +2658,78 @@ summary {
     gap: var(--space-3);
     margin-bottom: var(--space-6);
 }
+/* Stat tiles + admin cards share the number/label typography but NOT the
+   divider logic — only the top `--tiles` row draws hairline dividers, so the
+   admin sections' first card keeps its own full border box (regression fixed:
+   the old `:first-child` reset out-specified `.stats-card-admin` and stripped
+   the first admin card's left border + padding). */
 .stats-card {
-    background: var(--color-bg-secondary);
-    border-radius: var(--radius-card);
-    padding: var(--space-4);
-    text-align: center;
+    background: transparent;
+    border-radius: 0;
+    text-align: left;
+}
+/* Top stat row: hairline divider between tiles, no card fill. The divider is a
+   `border-left` on EVERY tile, pulled left by its own left padding
+   (margin-left: -19px = 1px border + 18px padding) so each tile's content sits
+   flush on its grid track; `overflow: hidden` then clips the border that pokes
+   past the row's left edge — the first tile AND the leading tile of any wrapped
+   row — so tiles reflowing to a second row never show a stray row-start
+   divider. */
+.stats-cards--tiles { overflow: hidden; }
+.stats-cards--tiles > .stats-card {
+    border-left: 1px solid var(--color-border-light);
+    padding: 2px 18px;
+    margin-left: -19px;
 }
 .stats-card-value {
-    font-family: var(--font-display);
-    font-size: var(--font-2xl);
-    font-weight: 700;
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
     color: var(--color-text);
 }
 .stats-card-success { color: var(--color-success); }
 .stats-card-warning { color: var(--color-warning); }
 .stats-card-label {
-    font-family: var(--font-ui);
-    font-size: var(--font-xs);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
     color: var(--color-text-muted);
-    margin-top: var(--space-1);
+    margin-top: 3px;
 }
+/* Admin tiles keep a full accent hairline box to set them apart. */
 .stats-card-admin {
-    border: 1px solid var(--color-accent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+    border-radius: var(--radius-card);
+    padding: var(--space-3) var(--space-4);
 }
-.stats-cards--db { grid-template-columns: repeat(3, 1fr); }
-@media (max-width: 768px) { .stats-cards--db { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 480px) { .stats-cards--db { grid-template-columns: 1fr; } }
+/* Database card grid reflows with auto-fit so the six tiles distribute evenly
+   across the available width (no dangling orphan row) and collapse gracefully
+   on narrow screens without needing fixed column-count breakpoints. */
+.stats-cards--db { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 
 .stats-section {
     margin-bottom: var(--space-6);
 }
-.stats-section h2 {
-    font-size: var(--font-lg);
-    margin-bottom: var(--space-3);
+.stats-section h2,
+.stats-admin-section h2 {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-accent-text);
+    margin-bottom: 14px;
 }
 
 .stats-chart {
     display: flex;
     align-items: flex-end;
-    gap: 2px;
-    height: 160px;
-    padding-top: var(--space-6);
-    padding-bottom: var(--space-6);
+    gap: 3px;
+    height: 180px;
+    padding-top: var(--space-6);   /* headroom for the max-value direct label */
+    padding-bottom: 22px;          /* room for date labels below the baseline */
     position: relative;
     /* Edge-bar tooltips extend past the chart; clip horizontally so they
        never add a page-wide horizontal scrollbar on narrow viewports
@@ -2496,8 +2738,23 @@ summary {
     overflow-x: clip;
     overflow-y: visible;
 }
+/* Baseline hairline at y=0 spanning the full width; bars are anchored ON it and
+   zero-read days simply leave the slot above it empty (honest, no dash). */
+.stats-chart::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 22px;                  /* = padding-bottom → aligns with the bar feet */
+    height: 1px;
+    background: var(--color-border);
+    pointer-events: none;
+}
 .stats-bar-col {
-    flex: 1;
+    /* Columns share the full row evenly — sparse ranges (7d) spread across
+       the width like dense ones; the bar itself stays a capped, centered
+       mark so the chart never reads as fat blocks. */
+    flex: 1 1 0;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -2507,17 +2764,38 @@ summary {
     position: relative;
 }
 .stats-bar {
+    position: relative;
     width: 100%;
-    background: var(--color-accent);
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    min-height: 2px;
-    transition: height 0.2s;
+    max-width: 34px;
+    background: var(--color-chart);
+    /* Rounded top only — the flat bottom seats the bar on the baseline. */
+    border-radius: 3px 3px 0 0;
+    transition: height 0.2s, opacity 0.2s;
+    /* Zero-read days come through as height:0% and render nothing. */
+}
+.stats-bar-col:focus-visible .stats-bar,
+.stats-bar-col:hover .stats-bar {
+    opacity: 0.78;
+}
+/* The single busiest day prints its count above the bar (max only — no number
+   spam). Anchored to the bar top so it rides with the bar height. */
+.stats-bar-value {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 4px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1;
+    color: var(--color-text-muted);
+    white-space: nowrap;
 }
 .stats-bar-label {
-    font-family: var(--font-ui);
+    font-family: var(--font-mono);
     font-size: 10px;
     color: var(--color-text-muted);
-    margin-top: var(--space-1);
+    margin-top: 6px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2530,24 +2808,20 @@ summary {
 .stats-bar-col:focus {
     outline: none;
 }
-.stats-bar-col:focus-visible .stats-bar,
-.stats-bar-col:hover .stats-bar {
-    background: var(--color-accent-hover);
-}
+/* Tooltip in the app's toast/kbd voice: ink surface, paper text, mono. */
 .stats-bar-tip {
     position: absolute;
     bottom: 100%;
     left: 50%;
     transform: translateX(-50%);
-    margin-bottom: var(--space-1);
-    padding: 2px var(--space-2);
-    font-family: var(--font-ui);
-    font-size: 11px;
+    margin-bottom: var(--space-2);
+    padding: 3px var(--space-2);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
     line-height: 1.4;
     white-space: nowrap;
-    color: var(--color-text);
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
+    color: var(--color-button-text);
+    background: var(--color-button-bg);
     border-radius: var(--radius-sm);
     opacity: 0;
     visibility: hidden;
@@ -2565,24 +2839,27 @@ summary {
    overflow-x: clip above keeps the page from scrolling; outermost tooltips
    simply clip at the edge and the value remains in each bar's aria-label. */
 
+/* Dense ranges (30d/90d, >10 columns) can't legibly label every column, so
+   show every other label (plus the last) at all widths — prevents collisions
+   without dropping the axis entirely. */
+.stats-chart--dense .stats-bar-col:nth-child(even):not(:last-child) .stats-bar-label {
+    display: none;
+}
+
 .stats-columns {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: var(--space-6);
+    gap: var(--space-8);
 }
 @media (max-width: 768px) {
     .stats-columns { grid-template-columns: 1fr; }
     .stats-period-divider { display: none; }
-    /* Dense charts (bucketed 30d/90d) pack too many bars to label every one on
-       a narrow screen, so each MM/DD label truncates to "03/…". Show every
-       other label (plus the last) and let the shown ones overflow into the
-       now-empty neighbouring columns instead of clipping. */
+    /* On a narrow screen each shown MM/DD label would still truncate ("03/…");
+       let the surviving (odd) labels overflow into the now-empty neighbouring
+       columns instead of clipping. */
     .stats-chart--dense .stats-bar-label {
         overflow: visible;
         text-overflow: clip;
-    }
-    .stats-chart--dense .stats-bar-col:nth-child(even):not(:last-child) .stats-bar-label {
-        display: none;
     }
 }
 
@@ -2601,7 +2878,7 @@ summary {
     overflow: hidden;
 }
 .stats-progress-fill {
-    background: var(--color-accent);
+    background: var(--color-chart);
     height: 100%;
     border-radius: var(--radius-control);
     min-width: 4px;
@@ -2619,6 +2896,11 @@ summary {
 .feed-title-cell {
     min-width: 0;
 }
+.feed-title-line {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
 .feed-health-info {
     font-family: var(--font-ui);
     font-size: var(--font-xs);
@@ -2633,6 +2915,36 @@ summary {
     display: flex;
     gap: var(--space-2);
     align-items: center;
+}
+
+/* Data-table column sizing (desktop only — below 600px these tables flip to
+   the .mobile-cards card layout where per-column widths don't apply). The
+   text-heavy column absorbs the freed page width; the rest shrink to their
+   content so the action links stay anchored beside each row instead of
+   drifting to a far edge. */
+@media (min-width: 601px) {
+    /* Feeds: Title grows; Category / Unread / Actions are content-sized. */
+    .feeds-table th:not(:first-child),
+    .feeds-table td:not(:first-child) {
+        width: 1%;
+        white-space: nowrap;
+    }
+
+    /* Admin users: Username (2) and Created (5) share the slack; ID, Role,
+       Status and Actions are content-sized. */
+    .admin-users-table th:not(:nth-child(2)):not(:nth-child(5)),
+    .admin-users-table td:not(:nth-child(2)):not(:nth-child(5)) {
+        width: 1%;
+        white-space: nowrap;
+    }
+
+    /* The actions cell is a flex row (.actions); once its column is squeezed
+       to content width the default flex-wrap:wrap would stack each link on its
+       own line, so pin it to a single horizontal row on desktop. */
+    .feeds-table td.actions,
+    .admin-users-table td.actions {
+        flex-wrap: nowrap;
+    }
 }
 
 /* ===== Categories: inline rename form ===== */
@@ -2716,18 +3028,6 @@ summary {
     padding: var(--space-2) var(--space-4);
 }
 
-/* SSR form-button actions inside `.entry-item-actions`. The read/star
-   buttons are form-wrapped (to carry their POST target), so the form is the
-   flex child of `.entry-item-actions`; it must `display: contents`-style
-   forward layout to its button. We instead make the form a transparent flex
-   box that stretches its button, matching `.entry-action-btn`/`a` styling
-   from the editorial-grid block above. */
-.entry-item-actions form {
-    display: flex;
-    margin: 0;
-    padding: 0;
-}
-
 /* Mobile: align load-more / mark-above wrappers with .entry-item (which drops
    from space-5 to space-4 horizontal padding at this width). Placed here so it
    follows the base .load-more-form rule in source order. */
@@ -2793,4 +3093,54 @@ summary {
     align-items: center;
     gap: 5px;
     white-space: nowrap;
+}
+
+/* ===== Touch devices — no hover, no hardware keyboard =====
+   Placed AFTER the width-based media blocks on purpose: same specificity, so
+   source order decides and the touch sizing wins (this ordering bug was found
+   and fixed in the prototype). WCAG 2.5.5: every control ≥ 44px. */
+@media (hover: none) {
+    /* Star is always visible on touch (there's no hover to reveal it). */
+    .entry-star {
+        color: var(--color-text-muted);
+        width: 44px;
+        height: 44px;
+        margin: -10px -12px 0 0;
+    }
+    .entry-star.starred { color: var(--color-accent); }
+
+    /* kbd hints and the keyboard-shortcut affordances are keyboard-only. */
+    .rp-action kbd,
+    .reading-pane-nav-btn kbd { display: none; }
+
+    .entry-item { padding-top: 15px; padding-bottom: 15px; }
+
+    /* 44px minimum interactive controls. */
+    button,
+    .btn,
+    .rp-action,
+    .reading-pane-nav-btn,
+    .reading-pane-back-link,
+    .action-link,
+    .feed-filter-link,
+    .stats-period-btn,
+    .tab-bar a,
+    .load-more-form button,
+    .mark-above-form button { min-height: var(--touch-min); }
+
+    .sidebar-item { min-height: var(--touch-min); }
+
+    /* Summary-box mono links stay inline; expand their hit area via padding. */
+    .summary-actions .rp-action {
+        min-height: 0;
+        padding: 10px;
+        margin: -10px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        transition: none !important;
+        animation: none !important;
+    }
 }

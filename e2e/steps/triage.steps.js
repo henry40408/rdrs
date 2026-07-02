@@ -31,12 +31,17 @@ When("I star the entry titled {string}", async ({ page }, title) => {
 });
 
 When("I mark the entry titled {string} read", async ({ page }, title) => {
+  // The Wire Room redesign removed the per-row read action; the star is the
+  // only visible row control. Marking-read now happens through the reading
+  // pane: opening an entry auto-marks it read and returns the row in its read
+  // state plus the decremented sidebar count (same observable behaviour).
   await page
     .getByTestId("entry-item")
     .filter({ hasText: title })
-    .getByTestId("entry-read-action") // data-testid="entry-read-action" on the read button
+    .getByTestId("entry-title-link")
     .first()
     .click();
+  await expect(page.getByTestId("reading-pane-title")).toBeVisible();
 });
 
 Then("the entry titled {string} is marked starred", async ({ page }, title) => {

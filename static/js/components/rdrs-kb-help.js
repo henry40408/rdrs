@@ -23,48 +23,46 @@ class RdrsKbHelp extends HTMLElement {
                     display: flex;
                 }
                 .modal {
-                    background: var(--color-bg, #FAF8F5);
-                    border: 1px solid var(--color-border, #D4CFC8);
-                    border-radius: var(--radius-lg, 10px);
-                    padding: var(--space-6, 1.5rem) var(--space-8, 2rem);
+                    background: var(--color-panel, #FBFAF7);
+                    border: 1px solid var(--color-border-light, #E2E1DB);
+                    border-radius: 12px;
+                    padding: 28px 32px 32px;
                     width: 100%;
-                    max-width: 640px;
-                    max-height: 80vh;
+                    max-width: 720px;
+                    max-height: 85vh;
                     overflow-y: auto;
                     font-size: 0.9375rem;
-                    color: var(--color-text, #1A1715);
-                    font-family: var(--font-ui, 'DM Sans', sans-serif);
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+                    color: var(--color-text, #1B1C1E);
+                    font-family: var(--font-ui, 'Archivo', sans-serif);
+                    box-shadow: var(--shadow-lg, 0 24px 64px rgba(27,28,30,0.18));
                 }
                 .header {
                     display: flex;
-                    align-items: center;
+                    align-items: baseline;
                     justify-content: space-between;
-                    margin-bottom: var(--space-4, 1rem);
-                    padding-bottom: var(--space-3, 0.75rem);
-                    border-bottom: 1px solid var(--color-border-light, #E5E1DB);
+                    margin-bottom: 22px;
                 }
                 h2 {
-                    font-family: var(--font-display, 'Source Serif 4', serif);
-                    font-size: 1.25rem;
+                    font-family: var(--font-display, 'Newsreader', serif);
+                    font-size: 22px;
                     font-weight: 600;
                     margin: 0;
                 }
                 .close-btn {
                     appearance: none;
-                    background: none;
-                    border: 1px solid var(--color-border, #D4CFC8);
-                    border-radius: var(--radius-sm, 3px);
-                    color: var(--color-text-muted, #8A847D);
-                    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+                    background: var(--color-kbd-bg, #ECEBE6);
+                    border: 1px solid var(--color-border, #CBCAC3);
+                    border-bottom-width: 2px;
+                    border-radius: 4px;
+                    color: var(--color-text-secondary, #55544F);
+                    font-family: var(--font-mono, 'IBM Plex Mono', monospace);
                     font-size: 0.75rem;
-                    padding: 0.2rem 0.5rem;
+                    padding: 0.15rem 0.5rem;
                     cursor: pointer;
                     line-height: 1;
                 }
                 .close-btn:hover {
-                    background: var(--color-bg-tertiary, #EBE7E2);
-                    color: var(--color-text, #1A1715);
+                    color: var(--color-text, #1B1C1E);
                 }
                 #content {
                     columns: 2;
@@ -75,19 +73,21 @@ class RdrsKbHelp extends HTMLElement {
                     margin-bottom: var(--space-4, 1rem);
                 }
                 .shortcut-group h3 {
-                    font-family: var(--font-ui, 'DM Sans', sans-serif);
-                    font-size: 0.6875rem;
+                    font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+                    font-size: 11px;
                     font-weight: 600;
                     text-transform: uppercase;
-                    letter-spacing: 0.08em;
-                    color: var(--color-text-muted, #8A847D);
-                    margin: 0 0 var(--space-2, 0.5rem);
+                    letter-spacing: 0.16em;
+                    color: var(--color-accent-text, #B8430A);
+                    border-bottom: 1px solid var(--color-border-light, #E2E1DB);
+                    padding-bottom: 6px;
+                    margin: 0 0 8px;
                 }
                 .shortcut-row {
                     display: flex;
                     align-items: baseline;
                     gap: var(--space-3, 0.75rem);
-                    padding: 0.2rem 0;
+                    padding: 3.5px 0;
                 }
                 .shortcut-key {
                     flex-shrink: 0;
@@ -96,19 +96,19 @@ class RdrsKbHelp extends HTMLElement {
                 }
                 .shortcut-key kbd {
                     display: inline-block;
-                    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+                    font-family: var(--font-mono, 'IBM Plex Mono', monospace);
                     font-size: 0.75rem;
                     line-height: 1;
                     padding: 0.2rem 0.4rem;
-                    background: var(--color-bg-secondary, #F3F0EC);
-                    border: 1px solid var(--color-border, #D4CFC8);
+                    background: var(--color-kbd-bg, #ECEBE6);
+                    border: 1px solid var(--color-border, #CBCAC3);
                     border-bottom-width: 2px;
-                    border-radius: var(--radius-sm, 3px);
-                    color: var(--color-text-secondary, #4A4540);
+                    border-radius: 4px;
+                    color: var(--color-text-secondary, #55544F);
                     white-space: nowrap;
                 }
                 .shortcut-desc {
-                    color: var(--color-text-secondary, #4A4540);
+                    color: var(--color-text-secondary, #55544F);
                     font-size: 0.875rem;
                     line-height: 1.4;
                 }

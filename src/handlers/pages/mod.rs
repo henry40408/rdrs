@@ -2173,6 +2173,10 @@ pub struct DailyReadView {
     pub count: i64,
     pub height_percent: f64,
     pub short_label: String,
+    /// True for the single busiest bucket only (first one reaching
+    /// `daily_max`), so its count is direct-labeled above the bar without
+    /// spamming a number on every column.
+    pub is_max: bool,
 }
 
 /// One row in the "Entries by Category" list, with pre-computed bar width.
@@ -2680,9 +2684,17 @@ pub async fn statistics_page(
     let cat_max = cats.iter().map(|c| c.count).max().unwrap_or(0);
     let feed_max = feeds.iter().map(|f| f.count).max().unwrap_or(0);
 
+    // Direct-label only the first bucket that reaches the peak, so ties don't
+    // print the same number on several columns.
+    let max_idx = if daily_max > 0 {
+        buckets.iter().position(|b| b.count == daily_max)
+    } else {
+        None
+    };
     let daily_read_counts = buckets
         .into_iter()
-        .map(|b| {
+        .enumerate()
+        .map(|(i, b)| {
             let short_label = b.start.format("%m/%d").to_string();
             let date_label = if b.start == b.end {
                 b.start.format("%Y-%m-%d").to_string()
@@ -2700,6 +2712,7 @@ pub async fn statistics_page(
                 count: b.count,
                 height_percent,
                 short_label,
+                is_max: Some(i) == max_idx,
             }
         })
         .collect();

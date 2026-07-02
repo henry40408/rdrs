@@ -134,7 +134,7 @@ Feature: Responsive layout
     When I open the inbox
     Then the ".sidebar-toggle" control is at least 44px wide
     And the ".sidebar-toggle" control is at least 44px tall
-    And the ".entry-action-btn" control is at least 44px tall
+    And the ".entry-star" control is at least 44px tall
     And the ".filter-bar select" control is at least 44px tall
     And the "[data-testid=entry-title-link]" control is at least 44px tall
     When I tap the hamburger
@@ -162,15 +162,14 @@ Feature: Responsive layout
     Then the ".tab-bar a" control is at least 44px tall
 
   @mobile
-  Scenario: Entry row redesign — favicon, full-width actions, sized meta on mobile
+  Scenario: Entry row (wire log) — time gutter, star action, sized meta on mobile
     Given I am viewing on a mobile screen
     And I have a feed with 5 test entries
     When I open the inbox
-    Then the ".entry-favicon" control is at least 24px wide
-    And the ".entry-favicon" control is at least 24px tall
+    Then the ".entry-time" element is visible
+    And the ".entry-star" control is at least 44px wide
+    And the ".entry-star" control is at least 44px tall
     And the ".entry-item-meta a" control is at least 24px tall
-    And the ".entry-item-actions .entry-action-btn" controls each span at least 25% of the row
-    And the ".entry-action-btn" control is at least 44px tall
 
   @mobile
   Scenario: Sidebar chrome links meet the 44px touch minimum on mobile

@@ -327,6 +327,34 @@ async fn test_statistics_page_renders_overview_counts() {
     assert!(body.contains(">1</div>"));
 }
 
+#[tokio::test]
+async fn test_statistics_page_direct_labels_single_max_day() {
+    let app = create_test_app("test_stats_is_max");
+    let (admin_id, _user_id) = setup_users(&app.db).await;
+    // seed_entries marks entries 1..=3 read at 2026-03-15, so the daily-read
+    // chart has a single busiest bucket within a custom window covering that
+    // date. Only that bucket reaches `daily_max`, so exactly one column gets
+    // the direct-labeled `stats-bar-value` (ties must not spam a number on
+    // every column).
+    seed_entries(&app.db, admin_id).await;
+    login(&app.server, "admin").await;
+
+    let response = app
+        .server
+        .get("/statistics?period=custom&from=2026-03-01&to=2026-03-31")
+        .await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    let value_labels = body.matches("stats-bar-value").count();
+    assert_eq!(
+        value_labels, 1,
+        "exactly one busiest column should be direct-labeled"
+    );
+    // The direct label shows the peak count (3 entries read that day).
+    assert!(body.contains("<span class=\"stats-bar-value\">3</span>"));
+}
+
 // ----- /api/me + /api/sidebar -----
 
 #[tokio::test]
