@@ -284,6 +284,14 @@ async fn test_unread_page_entry_query_populates_reading_pane() {
         body.contains("Body for deep-link-ok"),
         "reading pane must contain the seeded entry body; body was: {body}"
     );
+    // The seeded entry has no summary, so its list-row status cluster must
+    // render as a truly empty span (no whitespace text nodes) — otherwise the
+    // `.entry-status:empty { display: none }` rule never matches. Regression
+    // guard for the Askama whitespace-trim fix in _entry_row.html.
+    assert!(
+        body.contains(r#"<span class="entry-status"></span>"#),
+        "unsummarized entry row must render an empty .entry-status span; body was: {body}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

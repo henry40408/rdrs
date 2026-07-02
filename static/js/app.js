@@ -72,6 +72,10 @@ function installSwap() {
 
 const formSwapAborts = new WeakMap();
 
+// Entry ids with a keyboard-driven read/unread toggle ('m') POST in flight.
+// Guards against rapid double-press double-POSTing stale state on the same row.
+const pendingRowToggles = new Set();
+
 function abortFormSwap(form) {
     const controller = formSwapAborts.get(form);
     if (!controller) return;
@@ -1002,21 +1006,22 @@ function installEntriesKeyboard() {
             }
             case 'm': {
                 // Toggle read/unread on the active row. The Wire Room redesign
-                // removed the row's read form, so synthesize the POST from the
-                // row's current read state and let the swap interceptor replace
-                // the row (identical outcome to the old inline form).
+                // removed the row's read form, so drive the swap machinery
+                // directly with a POST (identical outcome to the old inline
+                // form: the row fragment is swapped in) — no throwaway <form>
+                // appended to the row. An in-flight guard keeps a rapid
+                // double-press from reading stale state and double-POSTing.
                 const current = activeRow();
                 if (!current) return;
                 const id = current.getAttribute('data-entry-id');
                 if (!id) return;
                 e.preventDefault();
+                if (pendingRowToggles.has(id)) return;
                 const isRead = current.classList.contains('entry-read');
-                const form = document.createElement('form');
-                form.method = 'post';
-                form.action = `/entries/${id}/${isRead ? 'unread' : 'read'}`;
-                form.setAttribute('data-swap', `#entry-row-${id}`);
-                current.appendChild(form);
-                form.requestSubmit();
+                const url = `/entries/${id}/${isRead ? 'unread' : 'read'}`;
+                pendingRowToggles.add(id);
+                performSwap(url, { method: 'POST' }, `#entry-row-${id}`)
+                    .finally(() => pendingRowToggles.delete(id));
                 break;
             }
             case '1':
@@ -1056,7 +1061,16 @@ function installEntriesKeyboard() {
                 const url = current?.getAttribute('data-entry-link');
                 if (!url) return;
                 e.preventDefault();
-                window.open(url, '_blank', 'noopener');
+                // Open a real tab with full noopener+noreferrer, matching the
+                // removed row-link exactly. `window.open(url, '_blank', <features>)`
+                // drops noreferrer and the non-empty features string forces a
+                // popup window instead of a tab — a temporary anchor click avoids
+                // both regressions.
+                const a = document.createElement('a');
+                a.href = url;
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+                a.click();
                 break;
             }
             case 'd': {

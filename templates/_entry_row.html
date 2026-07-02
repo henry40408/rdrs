@@ -33,14 +33,23 @@
             {# Summary-status cluster. Kept (styled small) so the SSE
                live-update path (renderSummaryBadge → .entry-status) and the
                sse-live-updates e2e keep working. #}
+            {# Whitespace trims (`{%- -%}`) keep the span truly empty when no
+               badge is rendered — Askama preserves whitespace (no askama.toml),
+               so without them the span holds text nodes and `.entry-status:empty`
+               never matches. The SSE path (app.js renderSummaryBadge) removes the
+               badge node on clear, leaving the same empty span. #}
             <span class="entry-status">
-                {% match r.summary_status_str() %}
-                {% when Some("completed") %}<span title="Has Summary" class="summary-badge" aria-hidden="true">{% call icons::summary(true) %}{% endcall %}</span>
-                {% when Some("pending") %}<span title="Pending" class="summary-badge-pending" aria-hidden="true">{% call icons::summary(false) %}{% endcall %}</span>
-                {% when Some("processing") %}<span title="Processing" class="summary-badge-processing" aria-hidden="true">{% call icons::summary(false) %}{% endcall %}</span>
-                {% when Some("failed") %}<span title="Failed" class="summary-badge-failed" aria-hidden="true">{% call icons::summary(true) %}{% endcall %}</span>
-                {% when _ %}
-                {% endmatch %}
+                {%- match r.summary_status_str() -%}
+                {%- when Some("completed") -%}
+                <span title="Has Summary" class="summary-badge" aria-hidden="true">{% call icons::summary(true) %}{% endcall %}</span>
+                {%- when Some("pending") -%}
+                <span title="Pending" class="summary-badge-pending" aria-hidden="true">{% call icons::summary(false) %}{% endcall %}</span>
+                {%- when Some("processing") -%}
+                <span title="Processing" class="summary-badge-processing" aria-hidden="true">{% call icons::summary(false) %}{% endcall %}</span>
+                {%- when Some("failed") -%}
+                <span title="Failed" class="summary-badge-failed" aria-hidden="true">{% call icons::summary(true) %}{% endcall %}</span>
+                {%- when _ -%}
+                {%- endmatch -%}
             </span>
         </div>
     </div>

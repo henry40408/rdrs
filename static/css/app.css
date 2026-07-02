@@ -36,7 +36,7 @@
 
     /* Shadows */
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-    --shadow-lg: 0 4px 16px rgba(0,0,0,0.12);
+    --shadow-lg: 0 24px 64px rgba(27,28,30,0.18);
 
     /* Layout */
     --sidebar-width: 232px;
@@ -692,6 +692,9 @@ code {
 }
 
 .rp-action .action-icon { color: var(--color-text-secondary); display: inline-flex; }
+/* Restore the UA `[hidden]` semantics the `display: inline-flex` above defeats,
+   so the cancel-icon twin (data-cancel-swap busy toggle) stays hidden at rest. */
+.rp-action .action-icon[hidden] { display: none; }
 .rp-action .action-icon .ico { width: 13px; height: 13px; }
 .rp-action kbd { margin-left: 2px; }
 
@@ -1406,7 +1409,12 @@ td input[type="text"] {
     transition: color 0.1s, background 0.1s;
 }
 .entry-item:hover .entry-star { color: var(--color-text-muted); }
-.entry-star:hover { color: var(--color-accent); background: var(--color-accent-subtle); }
+/* Keyboard focus reveals the star to the same visible (muted) state as row-hover. */
+.entry-star:focus-visible { color: var(--color-text-muted); }
+/* Hovering the star itself turns it accent. Needs to out-specify
+   `.entry-item:hover .entry-star` (0,3,0), which is always active while the
+   star is hovered — so scope this to the item-hover context too (0,4,0). */
+.entry-item:hover .entry-star:hover { color: var(--color-accent); background: var(--color-accent-subtle); }
 .entry-star.starred,
 .entry-item:hover .entry-star.starred { color: var(--color-accent); }
 .entry-star .ico { width: 14px; height: 14px; }
@@ -2131,6 +2139,9 @@ summary {
         position: sticky;
         top: 0;
         z-index: 1;
+        /* The mobile background is fully opaque, so the desktop backdrop blur
+           has no visual effect here — drop it to avoid the compositing cost. */
+        backdrop-filter: none;
     }
 
     .reading-pane-back-link {
