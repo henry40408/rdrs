@@ -74,7 +74,7 @@ class RdrsKbHelp extends HTMLElement {
                 }
                 .shortcut-group h3 {
                     font-family: var(--font-mono, 'IBM Plex Mono', monospace);
-                    font-size: 10px;
+                    font-size: 11px;
                     font-weight: 600;
                     text-transform: uppercase;
                     letter-spacing: 0.16em;
