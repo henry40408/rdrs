@@ -89,7 +89,13 @@
     --sidebar-width: 232px;
     --list-pane-width: 392px;
     --content-max-width: 720px;
-    --page-max-width: 1200px;
+    --page-max-width: 1080px;
+    /* Comfortable width for stacked form fields and 2-column info tables on
+       full pages — a field stretched to --page-max-width reads worse than the
+       whitespace it replaced. */
+    --form-max-width: 660px;
+    /* Prose / help-text measure (~68 characters) for readable line length. */
+    --prose-max-width: 68ch;
     --auth-max-width: 380px;
 
     /* Borders */
@@ -495,14 +501,31 @@ code {
     overflow: hidden;
 }
 
-/* Page content (non-split pages) — centered editorial column. */
+/* Page content (non-split pages) — centered column. The token is the single
+   source of truth for the width; data-dense surfaces (feeds/admin tables, the
+   statistics chart and card grids) get to use it, while forms and prose are
+   capped below via --form-max-width / --prose-max-width so they stay readable. */
 .page-content {
     width: 100%;
-    max-width: 860px;
+    max-width: var(--page-max-width);
     margin: 0 auto;
     padding: 34px 40px 96px;
     overflow-wrap: break-word;
     word-break: break-word;
+}
+
+/* Stacked form blocks and 2-column info tables (account info / GReader on
+   /user-settings) cap at a comfortable field width. Horizontal control strips
+   (.filter-bar) and the wide config table (.mobile-cards-settings) opt out. */
+.page-content > form:not(.filter-bar),
+.page-content > table:not(.mobile-cards):not(.mobile-cards-settings) {
+    max-width: var(--form-max-width);
+}
+
+/* Prose / help paragraphs keep a readable measure instead of running the full
+   page width. */
+.page-content p {
+    max-width: var(--prose-max-width);
 }
 
 /* ===== Split View (Entry list + Reading pane) ===== */
@@ -2667,9 +2690,10 @@ summary {
     border-radius: var(--radius-card);
     padding: var(--space-3) var(--space-4);
 }
-.stats-cards--db { grid-template-columns: repeat(3, 1fr); }
-@media (max-width: 768px) { .stats-cards--db { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 480px) { .stats-cards--db { grid-template-columns: 1fr; } }
+/* Database card grid reflows with auto-fit so the six tiles distribute evenly
+   across the available width (no dangling orphan row) and collapse gracefully
+   on narrow screens without needing fixed column-count breakpoints. */
+.stats-cards--db { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 
 .stats-section {
     margin-bottom: var(--space-6);
@@ -2774,7 +2798,7 @@ summary {
 .stats-columns {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: var(--space-6);
+    gap: var(--space-8);
 }
 @media (max-width: 768px) {
     .stats-columns { grid-template-columns: 1fr; }
@@ -2844,6 +2868,36 @@ summary {
     display: flex;
     gap: var(--space-2);
     align-items: center;
+}
+
+/* Data-table column sizing (desktop only — below 600px these tables flip to
+   the .mobile-cards card layout where per-column widths don't apply). The
+   text-heavy column absorbs the freed page width; the rest shrink to their
+   content so the action links stay anchored beside each row instead of
+   drifting to a far edge. */
+@media (min-width: 601px) {
+    /* Feeds: Title grows; Category / Unread / Actions are content-sized. */
+    .feeds-table th:not(:first-child),
+    .feeds-table td:not(:first-child) {
+        width: 1%;
+        white-space: nowrap;
+    }
+
+    /* Admin users: Username (2) and Created (5) share the slack; ID, Role,
+       Status and Actions are content-sized. */
+    .admin-users-table th:not(:nth-child(2)):not(:nth-child(5)),
+    .admin-users-table td:not(:nth-child(2)):not(:nth-child(5)) {
+        width: 1%;
+        white-space: nowrap;
+    }
+
+    /* The actions cell is a flex row (.actions); once its column is squeezed
+       to content width the default flex-wrap:wrap would stack each link on its
+       own line, so pin it to a single horizontal row on desktop. */
+    .feeds-table td.actions,
+    .admin-users-table td.actions {
+        flex-wrap: nowrap;
+    }
 }
 
 /* ===== Categories: inline rename form ===== */
