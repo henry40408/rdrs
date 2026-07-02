@@ -144,10 +144,10 @@ kbd {
 
 h1 {
     font-family: var(--font-display);
-    font-size: var(--font-2xl);
+    font-size: 28px;
     font-weight: 600;
-    line-height: 1.3;
-    letter-spacing: -0.01em;
+    line-height: 1.2;
+    letter-spacing: -0.015em;
     margin-bottom: var(--space-4);
 }
 
@@ -448,11 +448,12 @@ code {
     overflow: hidden;
 }
 
-/* Page content (non-split pages) */
+/* Page content (non-split pages) — centered editorial column. */
 .page-content {
-    padding: var(--space-8) var(--space-10);
-    max-width: var(--page-max-width);
     width: 100%;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 34px 40px 96px;
     overflow-wrap: break-word;
     word-break: break-word;
 }
@@ -949,6 +950,18 @@ label {
     color: var(--color-text-secondary);
 }
 
+/* Form-field labels: mono uppercase (prototype .field label). Scoped to
+   .form-group so inline checkbox / rename labels keep their own styling. */
+.form-group > label {
+    margin-bottom: 5px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
 input[type="text"],
 input[type="password"],
 input[type="url"],
@@ -1033,14 +1046,15 @@ button:disabled {
     cursor: not-allowed;
 }
 
+/* Primary = solid ink (paper text), matching the prototype's btn-primary. */
 .btn-primary {
-    background: var(--color-accent);
-    color: #ffffff;
+    background: var(--color-button-bg);
+    color: var(--color-button-text);
 }
 
 .btn-primary:hover {
-    background: var(--color-accent-hover);
-    opacity: 1;
+    background: var(--color-button-bg);
+    opacity: 0.85;
 }
 
 .btn-secondary {
@@ -1778,12 +1792,6 @@ mark {
     width: 100%;
 }
 
-.auth-divider {
-    text-align: center;
-    margin-bottom: var(--space-4);
-    font-size: var(--font-sm);
-}
-
 .auth-passkey-btn {
     width: 100%;
     margin-bottom: var(--space-4);
@@ -1867,27 +1875,44 @@ summary {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: var(--space-8);
-    background: var(--color-bg);
+    padding: var(--space-6);
+    background: var(--color-paper);
 }
 
 .auth-card {
     width: 100%;
     max-width: var(--auth-max-width);
+    background: var(--color-panel);
+    border: 1px solid var(--color-border-light);
+    border-radius: 12px;
+    padding: 36px 32px 30px;
 }
 
 .auth-card h1 {
     font-family: var(--font-display);
-    font-size: var(--font-3xl);
+    font-size: 34px;
     font-weight: 700;
     text-align: center;
-    margin-bottom: var(--space-8);
+    letter-spacing: -0.02em;
+    margin-bottom: 26px;
 }
 
 .auth-card .link {
-    margin-top: var(--space-6);
+    margin-top: var(--space-5);
     text-align: center;
     font-size: var(--font-sm);
+    color: var(--color-text-muted);
+}
+
+/* "or use password" divider on the auth screens. */
+.auth-divider {
+    text-align: center;
+    margin-bottom: var(--space-4);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
 }
 
 /* ===== Kagi summary block ===== */
@@ -2509,9 +2534,10 @@ summary {
 .feed-filter-link:hover { border-color: var(--color-accent); color: var(--color-accent); }
 .stats-period-btn.active,
 .feed-filter-link.active {
-    background: var(--color-accent);
-    color: var(--color-bg);
-    border-color: var(--color-accent);
+    background: var(--color-accent-subtle);
+    color: var(--color-accent-text);
+    border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+    font-weight: 600;
 }
 .stats-period-divider { color: var(--color-text-muted); }
 .stats-period-dash { color: var(--color-text-muted); }
@@ -2534,28 +2560,37 @@ summary {
     gap: var(--space-3);
     margin-bottom: var(--space-6);
 }
+/* Stat tiles: mono numbers, hairline separators, no card fill. */
 .stats-card {
-    background: var(--color-bg-secondary);
-    border-radius: var(--radius-card);
-    padding: var(--space-4);
-    text-align: center;
+    background: transparent;
+    border-left: 1px solid var(--color-border-light);
+    border-radius: 0;
+    padding: 2px 18px;
+    text-align: left;
 }
+.stats-cards > .stats-card:first-child { border-left: none; padding-left: 0; }
 .stats-card-value {
-    font-family: var(--font-display);
-    font-size: var(--font-2xl);
-    font-weight: 700;
+    font-family: var(--font-mono);
+    font-size: 25px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
     color: var(--color-text);
 }
 .stats-card-success { color: var(--color-success); }
 .stats-card-warning { color: var(--color-warning); }
 .stats-card-label {
-    font-family: var(--font-ui);
-    font-size: var(--font-xs);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
     color: var(--color-text-muted);
-    margin-top: var(--space-1);
+    margin-top: 3px;
 }
+/* Admin tiles keep a full accent hairline box to set them apart. */
 .stats-card-admin {
-    border: 1px solid var(--color-accent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+    border-radius: var(--radius-card);
+    padding: var(--space-3) var(--space-4);
 }
 .stats-cards--db { grid-template-columns: repeat(3, 1fr); }
 @media (max-width: 768px) { .stats-cards--db { grid-template-columns: repeat(2, 1fr); } }
@@ -2564,9 +2599,15 @@ summary {
 .stats-section {
     margin-bottom: var(--space-6);
 }
-.stats-section h2 {
-    font-size: var(--font-lg);
-    margin-bottom: var(--space-3);
+.stats-section h2,
+.stats-admin-section h2 {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-accent-text);
+    margin-bottom: 14px;
 }
 
 .stats-chart {
@@ -2596,7 +2637,8 @@ summary {
 }
 .stats-bar {
     width: 100%;
-    background: var(--color-accent);
+    max-width: 40px;
+    background: var(--color-chart);
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     min-height: 2px;
     transition: height 0.2s;
@@ -2620,7 +2662,8 @@ summary {
 }
 .stats-bar-col:focus-visible .stats-bar,
 .stats-bar-col:hover .stats-bar {
-    background: var(--color-accent-hover);
+    background: var(--color-chart);
+    opacity: 0.75;
 }
 .stats-bar-tip {
     position: absolute;
@@ -2689,7 +2732,7 @@ summary {
     overflow: hidden;
 }
 .stats-progress-fill {
-    background: var(--color-accent);
+    background: var(--color-chart);
     height: 100%;
     border-radius: var(--radius-control);
     min-width: 4px;
