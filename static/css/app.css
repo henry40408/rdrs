@@ -709,7 +709,7 @@ code {
     letter-spacing: -0.02em;
     margin-bottom: 13px;
     color: var(--color-text);
-    text-wrap: balance;
+    text-wrap: pretty;
 }
 .reading-pane-title a { color: inherit; text-decoration: none; }
 .reading-pane-title a:hover { color: var(--color-accent); }
