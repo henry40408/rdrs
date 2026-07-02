@@ -2214,11 +2214,23 @@ summary {
     }
     .entry-item-meta { font-size: 12px; margin-top: 4px; }
 
-    /* Feed/category links get a taller hit box (inline links exempt from 44px). */
-    .entry-item-meta a { padding: 0.25rem 0; }
+    /* Feed/category links get a taller hit box (inline links exempt from 44px).
+       inline-block so the vertical padding counts toward the tap target. */
+    .entry-item-meta a {
+        display: inline-block;
+        vertical-align: middle;
+        padding: 0.35rem 0;
+    }
 
-    /* Star stays the single row action; larger tap target on touch layouts. */
-    .entry-star { width: 34px; height: 34px; margin: -6px -6px 0 0; }
+    /* Star stays the single row action. On narrow/mobile layouts there is no
+       hover to reveal it, so make it always visible and a 44px tap target. */
+    .entry-star {
+        width: 44px;
+        height: 44px;
+        margin: -10px -10px 0 0;
+        color: var(--color-text-muted);
+    }
+    .entry-star.starred { color: var(--color-accent); }
 
     /* Banner stack: tighter padding on narrow viewports. The 44px dismiss
        button makes the grid row taller than the text, so center every cell

@@ -1365,8 +1365,9 @@ function installRowClickToOpen() {
             event.shiftKey || event.altKey) return;
         const row = event.target.closest('[data-entry-row]');
         if (!row) return;
-        // Already-handled targets: action buttons + the title link itself.
-        if (event.target.closest('.entry-item-actions')) return;
+        // Already-handled targets: the star form (the row's only action) and
+        // the title link itself.
+        if (event.target.closest('.entry-star-form')) return;
         if (event.target.closest('a[data-swap="#reading-pane"]')) return;
         // Defer to any other link the user clicked (e.g. feed-title link
         // in the meta row, if/when one is added).

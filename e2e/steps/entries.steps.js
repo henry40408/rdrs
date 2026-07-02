@@ -322,7 +322,8 @@ Then("the reading pane shows a published time", async ({ page }) => {
 });
 
 Then("the reading pane shows an image favicon", async ({ page }) => {
-  const favicon = page.locator(".reading-pane-meta img.entry-favicon");
+  // Wire Room: the favicon leads the mono dispatch eyebrow (was .reading-pane-meta).
+  const favicon = page.locator(".dispatch-eyebrow img.entry-favicon");
   await expect(favicon).toBeVisible();
   await expect(favicon).toHaveAttribute("src", /\/icon$/);
 });
@@ -333,7 +334,7 @@ Then("the reading pane shows an image favicon", async ({ page }) => {
 // attribute once (no auto-retry) so it can't be masked by the next entry
 // eventually landing.
 Then("the reading pane favicon still has its image", async ({ page }) => {
-  const src = await page.locator(".reading-pane-meta img.entry-favicon").getAttribute("src");
+  const src = await page.locator(".dispatch-eyebrow img.entry-favicon").getAttribute("src");
   expect(src, "reading-pane favicon must keep its src during navigation").toBeTruthy();
 });
 
