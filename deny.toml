@@ -24,6 +24,14 @@ ignore = [
     # release is younger than our 7-day dependency cooldown — re-bump and drop
     # this entry once it has aged out.
     "RUSTSEC-2026-0186",
+    # quick-xml DoS advisories (quadratic duplicate-attribute check; unbounded
+    # namespace allocation in NsReader), exploitable only via malicious feed
+    # XML. Sole fix is 0.41.0 (published 2026-06-29, inside the 7-day
+    # cooldown). Two copies in the tree: our direct 0.40 dep — bump to 0.41
+    # after 2026-07-06 — and feed-rs 2.3.1's pinned 0.37, which stays until
+    # upstream releases against 0.41. Drop these once both paths are clean.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
     # The three entries below are tracked in issue #346 and MUST be removed as
     # part of resolving it (once the 7-day cooldown on the fixes has elapsed,
     # from 2026-07-07). They were accepted temporarily to unblock unrelated work.
