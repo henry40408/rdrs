@@ -1310,8 +1310,8 @@ td input[type="text"] {
 .entry-item {
     position: relative;
     display: grid;
-    grid-template-columns: 44px minmax(0, 1fr) auto;   /* time | content | star */
-    column-gap: var(--space-3);
+    grid-template-columns: 34px minmax(0, 1fr) auto;   /* time | content | star */
+    column-gap: var(--space-2);
     align-items: start;
     padding: 11px 14px 11px 16px;
     border-bottom: 1px solid var(--color-border-light);
@@ -2260,7 +2260,7 @@ summary {
     /* ===== Entry row — mobile (wire log) =====
        Same time-gutter | content | star layout, sized up for touch. */
     .entry-item {
-        grid-template-columns: 38px minmax(0, 1fr) auto;
+        grid-template-columns: 34px minmax(0, 1fr) auto;
         padding: 14px 12px 14px 14px;
     }
     /* No sidebar on mobile, so a slightly larger title reads well. Keeps the
