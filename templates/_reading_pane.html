@@ -1,4 +1,5 @@
 {%- import "_icons.html" as icons -%}
+{%- import "macros.html" as macros -%}
 {# Reading pane content. Matches the pre-SSR `.reading-pane-content` +
    `.reading-pane-article` + `.reading-pane-actions` DOM the existing
    CSS rules target. `id="reading-pane"` is the swap target.
@@ -44,9 +45,7 @@
         <div class="byline"><span class="author">{{ author }}</span></div>
         {% endif %}
         <div class="reading-pane-actions">
-            <form id="reading-pane-star-form-{{ pane.id }}" method="post" action="/entries/{{ pane.id }}/{% if pane.is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ pane.id }}">
-                <button type="submit" class="rp-action{% if pane.is_starred %} is-on{% endif %}" aria-label="{% if pane.is_starred %}Unstar{% else %}Star{% endif %}"><span class="action-icon" aria-hidden="true">{% if pane.is_starred %}{% call icons::star(true) %}{% endcall %}{% else %}{% call icons::star(false) %}{% endcall %}{% endif %}</span><span class="action-label">{% if pane.is_starred %}Starred{% else %}Star{% endif %}</span><kbd>f</kbd></button>
-            </form>
+            {% call macros::pane_star_form(pane.id, pane.is_starred) %}{% endcall %}
             {# Pane action is a fixed Mark-Unread: idempotent on /unread, no
                "Mark Read" toggle. Reading an entry already auto-marks it as
                read on open, so the only manual operation worth a button is
