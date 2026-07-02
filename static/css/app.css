@@ -2726,10 +2726,6 @@ summary {
 .stats-chart {
     display: flex;
     align-items: flex-end;
-    /* Left-anchored so a 7-day range reads as a compact intentional group
-       (capped columns, see below) instead of scattering across the width;
-       30d/90d fill the row naturally. */
-    justify-content: flex-start;
     gap: 3px;
     height: 180px;
     padding-top: var(--space-6);   /* headroom for the max-value direct label */
@@ -2755,9 +2751,10 @@ summary {
     pointer-events: none;
 }
 .stats-bar-col {
-    /* Grow to fill, but cap each column so few bars stay a tight group. */
+    /* Columns share the full row evenly — sparse ranges (7d) spread across
+       the width like dense ones; the bar itself stays a capped, centered
+       mark so the chart never reads as fat blocks. */
     flex: 1 1 0;
-    max-width: 64px;
     display: flex;
     flex-direction: column;
     align-items: center;
