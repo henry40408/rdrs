@@ -2209,6 +2209,45 @@ async fn test_static_css_serves_app_css() {
     );
 }
 
+#[tokio::test]
+async fn test_static_font_serves_woff2() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/static/fonts/newsreader-latin.woff2").await;
+    response.assert_status_ok();
+
+    // Self-hosted webfonts are served with the `font/woff2` content type from
+    // the binary-embedded FONTS table (ahead of the text FILES table).
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(content_type, "font/woff2");
+
+    let cache_control = response
+        .headers()
+        .get("cache-control")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(cache_control, expected_static_cache_control());
+
+    let body = response.into_bytes();
+    assert!(!body.is_empty(), "font file should not be empty");
+    // woff2 files begin with the `wOF2` magic signature.
+    assert_eq!(&body[0..4], b"wOF2", "font must be a valid woff2 payload");
+}
+
+#[tokio::test]
+async fn test_static_font_not_found() {
+    let server = create_test_server(default_test_config());
+
+    let response = server.get("/static/fonts/nonexistent.woff2").await;
+    response.assert_status_not_found();
+}
+
 // ============================================================================
 // Health Check Tests
 // ============================================================================
