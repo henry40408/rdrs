@@ -2658,15 +2658,29 @@ summary {
     gap: var(--space-3);
     margin-bottom: var(--space-6);
 }
-/* Stat tiles: mono numbers, hairline separators, no card fill. */
+/* Stat tiles + admin cards share the number/label typography but NOT the
+   divider logic — only the top `--tiles` row draws hairline dividers, so the
+   admin sections' first card keeps its own full border box (regression fixed:
+   the old `:first-child` reset out-specified `.stats-card-admin` and stripped
+   the first admin card's left border + padding). */
 .stats-card {
     background: transparent;
-    border-left: 1px solid var(--color-border-light);
     border-radius: 0;
-    padding: 2px 18px;
     text-align: left;
 }
-.stats-cards > .stats-card:first-child { border-left: none; padding-left: 0; }
+/* Top stat row: hairline divider between tiles, no card fill. The divider is a
+   `border-left` on EVERY tile, pulled left by its own left padding
+   (margin-left: -19px = 1px border + 18px padding) so each tile's content sits
+   flush on its grid track; `overflow: hidden` then clips the border that pokes
+   past the row's left edge — the first tile AND the leading tile of any wrapped
+   row — so tiles reflowing to a second row never show a stray row-start
+   divider. */
+.stats-cards--tiles { overflow: hidden; }
+.stats-cards--tiles > .stats-card {
+    border-left: 1px solid var(--color-border-light);
+    padding: 2px 18px;
+    margin-left: -19px;
+}
 .stats-card-value {
     font-family: var(--font-mono);
     font-size: 22px;
@@ -2712,10 +2726,14 @@ summary {
 .stats-chart {
     display: flex;
     align-items: flex-end;
-    gap: 2px;
-    height: 160px;
-    padding-top: var(--space-6);
-    padding-bottom: var(--space-6);
+    /* Left-anchored so a 7-day range reads as a compact intentional group
+       (capped columns, see below) instead of scattering across the width;
+       30d/90d fill the row naturally. */
+    justify-content: flex-start;
+    gap: 3px;
+    height: 180px;
+    padding-top: var(--space-6);   /* headroom for the max-value direct label */
+    padding-bottom: 22px;          /* room for date labels below the baseline */
     position: relative;
     /* Edge-bar tooltips extend past the chart; clip horizontally so they
        never add a page-wide horizontal scrollbar on narrow viewports
@@ -2724,8 +2742,22 @@ summary {
     overflow-x: clip;
     overflow-y: visible;
 }
+/* Baseline hairline at y=0 spanning the full width; bars are anchored ON it and
+   zero-read days simply leave the slot above it empty (honest, no dash). */
+.stats-chart::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 22px;                  /* = padding-bottom → aligns with the bar feet */
+    height: 1px;
+    background: var(--color-border);
+    pointer-events: none;
+}
 .stats-bar-col {
-    flex: 1;
+    /* Grow to fill, but cap each column so few bars stay a tight group. */
+    flex: 1 1 0;
+    max-width: 64px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -2735,18 +2767,38 @@ summary {
     position: relative;
 }
 .stats-bar {
+    position: relative;
     width: 100%;
-    max-width: 40px;
+    max-width: 34px;
     background: var(--color-chart);
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    min-height: 2px;
-    transition: height 0.2s;
+    /* Rounded top only — the flat bottom seats the bar on the baseline. */
+    border-radius: 3px 3px 0 0;
+    transition: height 0.2s, opacity 0.2s;
+    /* Zero-read days come through as height:0% and render nothing. */
+}
+.stats-bar-col:focus-visible .stats-bar,
+.stats-bar-col:hover .stats-bar {
+    opacity: 0.78;
+}
+/* The single busiest day prints its count above the bar (max only — no number
+   spam). Anchored to the bar top so it rides with the bar height. */
+.stats-bar-value {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 4px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1;
+    color: var(--color-text-muted);
+    white-space: nowrap;
 }
 .stats-bar-label {
-    font-family: var(--font-ui);
+    font-family: var(--font-mono);
     font-size: 10px;
     color: var(--color-text-muted);
-    margin-top: var(--space-1);
+    margin-top: 6px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2759,25 +2811,20 @@ summary {
 .stats-bar-col:focus {
     outline: none;
 }
-.stats-bar-col:focus-visible .stats-bar,
-.stats-bar-col:hover .stats-bar {
-    background: var(--color-chart);
-    opacity: 0.75;
-}
+/* Tooltip in the app's toast/kbd voice: ink surface, paper text, mono. */
 .stats-bar-tip {
     position: absolute;
     bottom: 100%;
     left: 50%;
     transform: translateX(-50%);
-    margin-bottom: var(--space-1);
-    padding: 2px var(--space-2);
-    font-family: var(--font-ui);
-    font-size: 11px;
+    margin-bottom: var(--space-2);
+    padding: 3px var(--space-2);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
     line-height: 1.4;
     white-space: nowrap;
-    color: var(--color-text);
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
+    color: var(--color-button-text);
+    background: var(--color-button-bg);
     border-radius: var(--radius-sm);
     opacity: 0;
     visibility: hidden;
@@ -2795,6 +2842,13 @@ summary {
    overflow-x: clip above keeps the page from scrolling; outermost tooltips
    simply clip at the edge and the value remains in each bar's aria-label. */
 
+/* Dense ranges (30d/90d, >10 columns) can't legibly label every column, so
+   show every other label (plus the last) at all widths — prevents collisions
+   without dropping the axis entirely. */
+.stats-chart--dense .stats-bar-col:nth-child(even):not(:last-child) .stats-bar-label {
+    display: none;
+}
+
 .stats-columns {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -2803,16 +2857,12 @@ summary {
 @media (max-width: 768px) {
     .stats-columns { grid-template-columns: 1fr; }
     .stats-period-divider { display: none; }
-    /* Dense charts (bucketed 30d/90d) pack too many bars to label every one on
-       a narrow screen, so each MM/DD label truncates to "03/…". Show every
-       other label (plus the last) and let the shown ones overflow into the
-       now-empty neighbouring columns instead of clipping. */
+    /* On a narrow screen each shown MM/DD label would still truncate ("03/…");
+       let the surviving (odd) labels overflow into the now-empty neighbouring
+       columns instead of clipping. */
     .stats-chart--dense .stats-bar-label {
         overflow: visible;
         text-overflow: clip;
-    }
-    .stats-chart--dense .stats-bar-col:nth-child(even):not(:last-child) .stats-bar-label {
-        display: none;
     }
 }
 

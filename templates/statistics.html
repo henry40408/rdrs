@@ -26,7 +26,7 @@
                     </form>
                 </div>
 
-                <div class="stats-cards">
+                <div class="stats-cards stats-cards--tiles">
                     <div class="stats-card">
                         <div class="stats-card-value">{{ total_entries }}</div>
                         <div class="stats-card-label">Total Entries</div>
@@ -62,7 +62,9 @@
                             {% for d in daily_read_counts %}
                                 <div class="stats-bar-col" tabindex="0" aria-label="{{ d.date_label }}: {{ d.count }} read">
                                     <div class="stats-bar-tip" role="tooltip">{{ d.date_label }}: <strong>{{ d.count }}</strong></div>
-                                    <div class="stats-bar" style="height: {{ d.height_percent }}%"></div>
+                                    <div class="stats-bar" style="height: {{ d.height_percent }}%">
+                                        {% if d.is_max %}<span class="stats-bar-value">{{ d.count }}</span>{% endif %}
+                                    </div>
                                     <div class="stats-bar-label">{{ d.short_label }}</div>
                                 </div>
                             {% endfor %}
