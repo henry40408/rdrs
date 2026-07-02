@@ -7,13 +7,10 @@
     <link rel="icon" href="/favicon.ico" sizes="32x32">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    {# "Wire Room" type system. Newsreader is a variable optical-size serif
-       (display + reading); it needs the `opsz` axis, which bunny.net doesn't
-       serve — hence Google Fonts here. Archivo = UI sans; IBM Plex Mono =
-       data / mono (times, labels, kbd hints). #}
-    <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..600&family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    {# "Wire Room" type system, self-hosted (see @font-face in app.css and the
+       vendored woff2 under static/fonts/). Newsreader = variable optical-size
+       serif (display + reading); Archivo = UI sans; IBM Plex Mono = data / mono
+       (times, labels, kbd hints). #}
     <link rel="stylesheet" href="/static/css/app.css?v={{ git_version }}">
     <link rel="modulepreload" href="/static/js/components/rdrs-flash.js?v={{ git_version }}">
     <script type="module" src="/static/js/components/rdrs-flash.js?v={{ git_version }}"></script>
