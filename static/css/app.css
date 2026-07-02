@@ -238,7 +238,7 @@ code {
 
 .sidebar-logo {
     font-family: var(--font-display);
-    font-size: var(--font-xl);
+    font-size: 22px;
     font-weight: 700;
     color: var(--color-text);
     text-decoration: none;
@@ -272,40 +272,40 @@ code {
 }
 
 .sidebar-section-title {
-    font-size: var(--font-xs);
-    font-weight: 600;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.16em;
     color: var(--color-text-muted);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-1) var(--space-3);
+    margin-bottom: 2px;
 }
 
 .sidebar-item {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
+    gap: 9px;
+    padding: 6px 10px;
     border-radius: var(--radius-md);
     color: var(--color-text-secondary);
     text-decoration: none;
-    font-size: var(--font-sm);
+    font-size: 13.5px;
     font-weight: 500;
-    transition: background 0.15s, color 0.15s;
-    border-left: var(--border-accent-width) solid transparent;
-    margin-left: calc(-1 * var(--border-accent-width));
+    transition: background 0.12s, color 0.12s;
 }
 
 .sidebar-item:hover {
-    background: var(--color-sidebar-active);
+    background: var(--color-bg-secondary);
     color: var(--color-text);
 }
 
 .sidebar-item.active {
     background: var(--color-sidebar-active);
-    color: var(--color-accent);
-    border-left-color: var(--color-accent);
-    font-weight: 600;
+    color: var(--color-text);
 }
+
+.sidebar-item.active .sidebar-item-icon { color: var(--color-accent); }
 
 /* Category names are user-supplied and can overrun the sidebar (a long
    unbroken word even spills past its right edge). Keep each to one line
@@ -322,25 +322,28 @@ code {
 }
 
 .sidebar-item-icon {
-    width: var(--icon-md);
-    height: var(--icon-md);
+    width: 15px;
+    height: 15px;
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    color: var(--color-text-muted);
 }
-.sidebar-item-icon .ico { width: var(--icon-md); height: var(--icon-md); }
+.sidebar-item-icon .ico { width: 15px; height: 15px; }
 
+/* Mono right-aligned unread count (no pill). Active row → accent-text. */
 .sidebar-badge {
     margin-left: auto;
-    font-size: var(--font-xs);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--color-text-muted);
+    text-align: right;
+}
+.sidebar-item.active .sidebar-badge {
+    color: var(--color-accent-text);
     font-weight: 600;
-    color: var(--color-accent);
-    background: var(--color-accent-subtle);
-    padding: 0.1em 0.5em;
-    border-radius: var(--radius-lg);
-    min-width: 1.4em;
-    text-align: center;
 }
 
 .sidebar-badge:empty {
