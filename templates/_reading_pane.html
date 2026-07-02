@@ -25,29 +25,34 @@
         </nav>
     </div>
     <div class="reading-pane-content">
+        {# Mono uppercase eyebrow: favicon + feed name (accent) · published. #}
+        <div class="dispatch-eyebrow">
+            <span class="src">
+                {% if pane.feed_has_icon %}
+                <img class="entry-favicon" src="/api/feeds/{{ pane.feed_id }}/icon" alt="" width="15" height="15">
+                {% else %}
+                <span class="entry-favicon entry-favicon-chip fav-c{{ pane.feed_color_index() }}" aria-hidden="true">{{ pane.feed_initial() }}</span>
+                {% endif %}
+                <span data-testid="reading-pane-feed-title">{{ pane.feed_title }}</span>
+            </span>
+            {% if let Some(ts) = pane.published_at_iso.as_ref() %}<time datetime="{{ ts }}" data-testid="reading-pane-published-at">{{ pane.published_relative }}</time>{% endif %}
+        </div>
         <h1 class="reading-pane-title" data-testid="reading-pane-title">
             {% if let Some(link) = pane.link.as_ref() %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer">{{ pane.title }}</a>{% else %}{{ pane.title }}{% endif %}
         </h1>
-        <div class="reading-pane-meta">
-            {% if pane.feed_has_icon %}
-            <img class="entry-favicon" src="/api/feeds/{{ pane.feed_id }}/icon" alt="" width="24" height="24">
-            {% else %}
-            <span class="entry-favicon entry-favicon-chip fav-c{{ pane.feed_color_index() }}" aria-hidden="true">{{ pane.feed_initial() }}</span>
-            {% endif %}
-            <span data-testid="reading-pane-feed-title">{{ pane.feed_title }}</span>
-            {% if let Some(author) = pane.author.as_ref() %}<span>{{ author }}</span>{% endif %}
-            {% if let Some(ts) = pane.published_at_iso.as_ref() %}<time datetime="{{ ts }}" data-testid="reading-pane-published-at">{{ pane.published_relative }}</time>{% endif %}
-        </div>
+        {% if let Some(author) = pane.author.as_ref() %}
+        <div class="byline"><span class="author">{{ author }}</span></div>
+        {% endif %}
         <div class="reading-pane-actions">
             <form id="reading-pane-star-form-{{ pane.id }}" method="post" action="/entries/{{ pane.id }}/{% if pane.is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ pane.id }}">
-                <button type="submit" class="rp-action" aria-label="{% if pane.is_starred %}Unstar{% else %}Star{% endif %}"><span class="action-icon" aria-hidden="true">{% if pane.is_starred %}{% call icons::star(true) %}{% endcall %}{% else %}{% call icons::star(false) %}{% endcall %}{% endif %}</span><span class="action-label">{% if pane.is_starred %}Starred{% else %}Star{% endif %}</span></button>
+                <button type="submit" class="rp-action{% if pane.is_starred %} is-on{% endif %}" aria-label="{% if pane.is_starred %}Unstar{% else %}Star{% endif %}"><span class="action-icon" aria-hidden="true">{% if pane.is_starred %}{% call icons::star(true) %}{% endcall %}{% else %}{% call icons::star(false) %}{% endcall %}{% endif %}</span><span class="action-label">{% if pane.is_starred %}Starred{% else %}Star{% endif %}</span><kbd>f</kbd></button>
             </form>
             {# Pane action is a fixed Mark-Unread: idempotent on /unread, no
                "Mark Read" toggle. Reading an entry already auto-marks it as
                read on open, so the only manual operation worth a button is
                the override-back-to-unread. #}
             <form method="post" action="/entries/{{ pane.id }}/unread" data-swap="#entry-row-{{ pane.id }}">
-                <button type="submit" class="rp-action" aria-label="Mark Unread"><span class="action-icon" aria-hidden="true">{% call icons::unread() %}{% endcall %}</span><span class="action-label">Unread</span></button>
+                <button type="submit" class="rp-action" aria-label="Mark Unread"><span class="action-icon" aria-hidden="true">{% call icons::unread() %}{% endcall %}</span><span class="action-label">Unread</span><kbd>m</kbd></button>
             </form>
             {% if let Some(link) = pane.link.as_ref() %}
             {% if pane.is_full_content %}
@@ -55,20 +60,20 @@
                reading pane (plus row + sidebar-unread, which are already in
                their post-open state, so the swap is effectively a no-op for
                them). Lets the user revert from a Fetch-Full-Content view. #}
-            <a href="/entries/{{ pane.id }}/fragment" data-swap="#reading-pane" class="rp-action" aria-label="Show Original"><span class="action-icon" aria-hidden="true">{% call icons::revert() %}{% endcall %}</span><span class="action-label">Original</span></a>
+            <a href="/entries/{{ pane.id }}/fragment" data-swap="#reading-pane" class="rp-action is-on" aria-label="Show Original"><span class="action-icon" aria-hidden="true">{% call icons::revert() %}{% endcall %}</span><span class="action-label">Original</span><kbd>d</kbd></a>
             {% else %}
             <form method="post" action="/entries/{{ pane.id }}/fetch-full-content" data-swap="#reading-pane" data-cancel-swap>
-                <button type="submit" class="rp-action" aria-label="Fetch Full Content" data-cancel-label="Cancel" data-cancel-aria-label="Cancel"><span class="action-icon action-icon-default" aria-hidden="true">{% call icons::document() %}{% endcall %}</span><span class="action-icon action-icon-cancel" aria-hidden="true" hidden>{% call icons::close() %}{% endcall %}</span><span class="action-label">Full content</span></button>
+                <button type="submit" class="rp-action" aria-label="Fetch Full Content" data-cancel-label="Cancel" data-cancel-aria-label="Cancel"><span class="action-icon action-icon-default" aria-hidden="true">{% call icons::document() %}{% endcall %}</span><span class="action-icon action-icon-cancel" aria-hidden="true" hidden>{% call icons::close() %}{% endcall %}</span><span class="action-label">Full content</span><kbd>d</kbd></button>
             </form>
             {% endif %}
             {% if pane.has_kagi || pane.summary_in_flight %}
             <form method="post" action="/entries/{{ pane.id }}/summarize" data-swap="#rp-summary-container">
-                <button type="submit" class="rp-action" aria-label="Summarize"{% if pane.summary_in_flight %} disabled{% endif %}><span class="action-icon" aria-hidden="true">{% call icons::sparkle() %}{% endcall %}</span><span class="action-label">Summarize</span></button>
+                <button type="submit" class="rp-action" aria-label="Summarize"{% if pane.summary_in_flight %} disabled{% endif %}><span class="action-icon" aria-hidden="true">{% call icons::sparkle() %}{% endcall %}</span><span class="action-label">Summarize</span><kbd>a</kbd></button>
             </form>
             {% endif %}
             {% if pane.has_save %}
             <form method="post" action="/entries/{{ pane.id }}/save" data-swap="#reading-pane">
-                <button type="submit" class="rp-action" aria-label="Save"><span class="action-icon" aria-hidden="true">{% call icons::bookmark() %}{% endcall %}</span><span class="action-label">Save</span></button>
+                <button type="submit" class="rp-action" aria-label="Save"><span class="action-icon" aria-hidden="true">{% call icons::bookmark() %}{% endcall %}</span><span class="action-label">Save</span><kbd>s</kbd></button>
             </form>
             {% endif %}
             {% endif %}

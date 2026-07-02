@@ -1001,12 +1001,22 @@ function installEntriesKeyboard() {
                 break;
             }
             case 'm': {
-                // Toggle read/unread on the active row (state-dependent
-                // action, same pattern as `f`).
+                // Toggle read/unread on the active row. The Wire Room redesign
+                // removed the row's read form, so synthesize the POST from the
+                // row's current read state and let the swap interceptor replace
+                // the row (identical outcome to the old inline form).
                 const current = activeRow();
                 if (!current) return;
-                const form = current.querySelector('form[action$="/read"], form[action$="/unread"]');
-                if (form) { e.preventDefault(); form.requestSubmit(); }
+                const id = current.getAttribute('data-entry-id');
+                if (!id) return;
+                e.preventDefault();
+                const isRead = current.classList.contains('entry-read');
+                const form = document.createElement('form');
+                form.method = 'post';
+                form.action = `/entries/${id}/${isRead ? 'unread' : 'read'}`;
+                form.setAttribute('data-swap', `#entry-row-${id}`);
+                current.appendChild(form);
+                form.requestSubmit();
                 break;
             }
             case '1':
@@ -1038,14 +1048,15 @@ function installEntriesKeyboard() {
                 break;
             }
             case 'v': {
-                // Open Original — open the row's external link in a new
-                // tab. The row only renders the `<a target="_blank">`
-                // when `r.link` is Some, so absence = no-op.
+                // Open Original in a new tab. The visible row link was removed
+                // in the Wire Room redesign; the external URL now rides on the
+                // row's `data-entry-link` (absent when the entry has no link,
+                // so absence = no-op).
                 const current = activeRow();
-                const link = current?.querySelector('a[target="_blank"]');
-                if (!link) return;
+                const url = current?.getAttribute('data-entry-link');
+                if (!url) return;
                 e.preventDefault();
-                link.click();
+                window.open(url, '_blank', 'noopener');
                 break;
             }
             case 'd': {
