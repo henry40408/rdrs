@@ -528,6 +528,12 @@ code {
     max-width: var(--prose-max-width);
 }
 
+/* Full-width page variant (/search): content spans the main column instead
+   of centering at --page-max-width. */
+.page-content-full {
+    max-width: none;
+}
+
 /* ===== Split View (Entry list + Reading pane) ===== */
 .split-view {
     display: flex;
@@ -1786,11 +1792,11 @@ td input[type="text"] {
     to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Results stream as pure typography blocks — no rules between them; the
-   vertical rhythm of margin + line-height carries separation. Each result is
-   a self-contained citation: title, byline, excerpt. */
+/* Results stream as blocks — no rules between them; the vertical rhythm of
+   margin + line-height carries separation. Each result is a self-contained
+   citation: title, byline, excerpt. The /search page runs full-width, so
+   results span the main column rather than a capped measure. */
 .search-result {
-    max-width: 64ch;
     margin-bottom: var(--space-5);
     animation: searchResultIn 0.45s ease backwards;
 }
@@ -1838,6 +1844,12 @@ td input[type="text"] {
     line-height: 1.65;
     color: var(--color-text-secondary);
     margin: 0;
+}
+/* Scoped under .page-content-full so the max-width:none reset out-specifies the
+   generic `.page-content p` prose cap (which would otherwise pin snippets to
+   --prose-max-width instead of the full column). */
+.page-content-full .search-result-snippet {
+    max-width: none;
 }
 
 /* Search-term highlight — manuscript marker stroke. Tinted gold wash
