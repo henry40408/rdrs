@@ -136,7 +136,7 @@ Feature: Responsive layout
     And the ".sidebar-toggle" control is at least 44px tall
     And the ".entry-star" control is at least 44px tall
     And the ".filter-bar select" control is at least 44px tall
-    And the "[data-testid=entry-title-link]" control is at least 44px tall
+    And the "[data-testid=entry-item]" control is at least 44px tall
     When I tap the hamburger
     Then the ".sidebar-close" control is at least 44px wide
     And the ".sidebar-close" control is at least 44px tall

@@ -2305,11 +2305,12 @@ summary {
         padding: 14px 12px 14px 14px;
     }
     /* No sidebar on mobile, so a slightly larger title reads well. Keeps the
-       3-line clamp from the base rule; min-height gives it a 44px tap target
-       (WCAG 2.5.5) without breaking the -webkit-box clamp. */
+       3-line clamp from the base rule. No min-height: it padded 1-line titles
+       with a blank line; the 44px tap target (WCAG 2.5.5) is the whole row,
+       which is click-delegated to the title link (installRowClickToOpen in
+       app.js) and is always >= 86px tall. */
     .entry-item-title {
         font-size: var(--font-base);
-        min-height: var(--touch-min);
     }
     .entry-item-meta { margin-top: 4px; }
 
