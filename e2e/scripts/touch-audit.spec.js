@@ -80,9 +80,11 @@ test("touch-target audit @ 375px", async ({ page, api, seed, serverUrl, currentU
             label,
             w: Math.round(r.width),
             h: Math.round(r.height),
-            // inline text links are an accepted exemption
+            // inline text links are an accepted exemption; .entry-item-title is
+            // the title link, whose >= 44px target is the whole row (the row is
+            // click-delegated to the title link via installRowClickToOpen)
             inlineText:
-              !!el.closest("p, .entry-item-meta, .reading-pane-article, .breadcrumb") ||
+              !!el.closest("p, .entry-item-title, .entry-item-meta, .reading-pane-article, .breadcrumb") ||
               labelWrapped,
           });
         }
