@@ -1422,9 +1422,8 @@ td input[type="text"] {
 .entry-meta-text {
     min-width: 0;
     flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: break-word;
+    word-break: break-word;
 }
 .entry-item-meta a { color: var(--color-text-secondary); font-weight: 500; text-decoration: none; }
 .entry-item-meta a:hover { color: var(--color-accent); }
