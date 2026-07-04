@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 use crate::utils::datetime::parse_datetime;
+use crate::utils::text::strip_to_search_text;
 
 mod filters;
 use filters::{
@@ -502,6 +503,7 @@ pub fn upsert_entry_id(
     published_at: Option<DateTime<Utc>>,
 ) -> AppResult<UpsertOutcome> {
     let published_at_str = published_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
+    let content_text = content.map(strip_to_search_text);
 
     // Look up only the id of any existing row (not the full record).
     let existing: Option<i64> = conn
@@ -518,11 +520,19 @@ pub fn upsert_entry_id(
             r#"
             UPDATE entry
             SET title = ?1, link = ?2, content = ?3, summary = ?4, author = ?5,
-                updated_at = datetime('now')
+                content_text = ?7, updated_at = datetime('now')
             WHERE id = ?6
             "#,
         )?
-        .execute(params![title, link, content, summary, author, id])?;
+        .execute(params![
+            title,
+            link,
+            content,
+            summary,
+            author,
+            id,
+            content_text
+        ])?;
 
         return Ok(UpsertOutcome::Updated(id));
     }
@@ -534,8 +544,8 @@ pub fn upsert_entry_id(
     let inserted = conn
         .prepare_cached(
             r#"
-            INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at)
-            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+            INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at, content_text)
+            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
             WHERE NOT EXISTS (
                 SELECT 1 FROM entry_tombstone WHERE feed_id = ?1 AND guid = ?2
             )
@@ -549,7 +559,8 @@ pub fn upsert_entry_id(
             content,
             summary,
             author,
-            published_at_str
+            published_at_str,
+            content_text
         ])?;
 
     if inserted == 0 {
@@ -1880,6 +1891,37 @@ mod tests {
         assert!(matches!(second, UpsertOutcome::Updated(id) if id == id1));
         let row = find_by_id(&conn, id1).unwrap().unwrap();
         assert_eq!(row.title.as_deref(), Some("Title 2"));
+    }
+
+    #[test]
+    fn upsert_populates_content_text_stripped() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        let out = upsert_entry_id(
+            &conn,
+            feed_id,
+            "g1",
+            Some("t"),
+            None,
+            Some("超<b>少女</b>與機器人"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let id = match out {
+            UpsertOutcome::Inserted(id) => id,
+            o => panic!("expected Inserted, got {o:?}"),
+        };
+        let ct: Option<String> = conn
+            .query_row("SELECT content_text FROM entry WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(ct.as_deref(), Some("超少女與機器人"));
     }
 
     #[test]
