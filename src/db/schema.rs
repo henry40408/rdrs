@@ -2,6 +2,7 @@ use rusqlite::Connection;
 
 use crate::error::AppResult;
 use crate::models::feed::url_to_bucket;
+use crate::utils::text::strip_to_search_text;
 
 pub fn init_db(conn: &Connection) -> AppResult<()> {
     conn.execute_batch(
@@ -280,7 +281,38 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         // on the index endpoint optimization being available.
     }
 
-    const LATEST_VERSION: i64 = 9;
+    if version < 10 {
+        conn.execute("ALTER TABLE entry ADD COLUMN content_text TEXT", [])?;
+        // Backfill plain-text search content in batches so a large entry
+        // table doesn't build one giant transaction. Rows with NULL content
+        // stay NULL (nothing to search). strip_to_search_text joins across
+        // tags so terms split by inline markup remain matchable.
+        loop {
+            let batch: Vec<(i64, String)> = {
+                let mut stmt = conn.prepare(
+                    "SELECT id, content FROM entry \
+                     WHERE content_text IS NULL AND content IS NOT NULL LIMIT 500",
+                )?;
+                stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .filter_map(Result::ok)
+                    .collect()
+            };
+            if batch.is_empty() {
+                break;
+            }
+            let tx = conn.unchecked_transaction()?;
+            {
+                let mut upd =
+                    tx.prepare_cached("UPDATE entry SET content_text = ?1 WHERE id = ?2")?;
+                for (id, content) in &batch {
+                    upd.execute(rusqlite::params![strip_to_search_text(content), id])?;
+                }
+            }
+            tx.commit()?;
+        }
+    }
+
+    const LATEST_VERSION: i64 = 10;
     if version < LATEST_VERSION {
         conn.pragma_update(None, "user_version", LATEST_VERSION)?;
     }
@@ -323,7 +355,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     #[test]
@@ -334,7 +366,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     #[test]
@@ -525,5 +557,47 @@ mod tests {
             )
             .unwrap();
         assert_eq!(exists, 1);
+    }
+
+    #[test]
+    fn test_entry_has_content_text_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        let cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('entry')")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert!(cols.contains(&"content_text".to_string()));
+    }
+
+    #[test]
+    fn test_v10_backfills_content_text() {
+        // Simulate a pre-v10 DB: create schema, force user_version back to 9,
+        // drop content_text, insert a row with HTML content, re-run init_db.
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO user (id, username, password_hash) VALUES (1, 'u', 'x');
+             INSERT INTO category (id, user_id, name) VALUES (1, 1, 'c');
+             INSERT INTO feed (id, category_id, url) VALUES (1, 1, 'http://x');
+             INSERT INTO entry (id, feed_id, guid, content) VALUES (1, 1, 'g', '超<b>少女</b>');",
+        )
+        .unwrap();
+        // content_text already exists from the init_db call above (a fresh
+        // in-memory DB runs the v10 block immediately); drop it so the
+        // re-run below genuinely simulates a pre-v10 database.
+        conn.execute("ALTER TABLE entry DROP COLUMN content_text", [])
+            .unwrap();
+        conn.pragma_update(None, "user_version", 9i64).unwrap();
+        init_db(&conn).unwrap();
+        let text: Option<String> = conn
+            .query_row("SELECT content_text FROM entry WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(text.as_deref(), Some("超少女"));
     }
 }
