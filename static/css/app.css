@@ -2349,10 +2349,22 @@ summary {
     }
 
     /* ===== Entry row — mobile (wire log) =====
-       Columns come from the base rule (--mk); touch sizing is input-based
-       (@media any-pointer:coarse), not width-based. */
+       Narrow viewports get the comfortable 36px controls too (this breakpoint,
+       ≤1024px, is the phone/tablet range); wide touch hybrids are covered
+       separately by @media (any-pointer: coarse). Columns come from --mk. */
     .entry-item {
+        --sz: 36px;
+        --mk: 36px;
+        --dot-shift: -7px;
+        --meta-pad: 80px;
+        --act-bottom: 4.5px;
         padding: 14px 12px 14px 12px;
+    }
+    .unread-toggle,
+    .entry-star,
+    .entry-open-ext {
+        min-width: 36px;
+        min-height: 36px;
     }
     /* No sidebar on mobile, so a slightly larger title reads well. Keeps the
        3-line clamp from the base rule. */
