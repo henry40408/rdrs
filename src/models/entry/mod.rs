@@ -1074,6 +1074,37 @@ pub fn mark_all_read_by_user(
     Ok(rows as i64)
 }
 
+/// Mark every entry matching `filter` (and owned by `user_id`, and currently
+/// unread) as read. Reuses the shared filter builder so scoped search + status
+/// combine exactly as they do in the list query. Returns rows affected.
+pub fn mark_read_by_filter(
+    conn: &Connection,
+    user_id: i64,
+    filter: &EntryFilter,
+) -> AppResult<i64> {
+    let mut conditions = vec!["c.user_id = ?1".to_string()];
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+    apply_filter_conditions(&mut conditions, &mut params_vec, filter);
+    let where_clause = conditions.join(" AND ");
+
+    let sql = format!(
+        r#"
+        UPDATE entry
+        SET read_at = datetime('now'), updated_at = datetime('now')
+        WHERE read_at IS NULL AND id IN (
+            SELECT e.id FROM entry e
+            INNER JOIN feed f ON e.feed_id = f.id
+            INNER JOIN category c ON f.category_id = c.id
+            WHERE {where_clause}
+        )
+        "#
+    );
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+    let rows = conn.execute(&sql, params_refs.as_slice())?;
+    Ok(rows as i64)
+}
+
 /// Result of finding neighboring entries
 #[derive(Debug, Clone, Serialize)]
 pub struct EntryNeighbors {
@@ -1454,6 +1485,145 @@ mod tests {
 
         let unread = mark_as_unread(&conn, entry.id).unwrap();
         assert!(unread.read_at.is_none());
+    }
+
+    #[test]
+    fn mark_read_by_filter_marks_only_matching_unread_owned() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        let m = upsert_entry_id(
+            &conn,
+            feed_id,
+            "m",
+            Some("超少女登場"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let n = upsert_entry_id(
+            &conn,
+            feed_id,
+            "n",
+            Some("其他新聞"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let m_id = match m {
+            UpsertOutcome::Inserted(id) => id,
+            _ => panic!(),
+        };
+        let n_id = match n {
+            UpsertOutcome::Inserted(id) => id,
+            _ => panic!(),
+        };
+
+        let filter = EntryFilter {
+            feed_id: Some(feed_id),
+            search: Some("超少女".to_string()),
+            ..Default::default()
+        };
+        let affected = mark_read_by_filter(&conn, user_id, &filter).unwrap();
+        assert_eq!(affected, 1);
+
+        let m_read: Option<String> = conn
+            .query_row("SELECT read_at FROM entry WHERE id=?1", [m_id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let n_read: Option<String> = conn
+            .query_row("SELECT read_at FROM entry WHERE id=?1", [n_id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(m_read.is_some(), "matching entry marked read");
+        assert!(n_read.is_none(), "non-matching entry untouched");
+
+        // Idempotent: already-read matching row isn't recounted.
+        assert_eq!(mark_read_by_filter(&conn, user_id, &filter).unwrap(), 0);
+    }
+
+    #[test]
+    fn mark_read_by_filter_does_not_cross_user_boundary() {
+        let conn = setup_db();
+        let user1 = create_test_user(&conn, "user1");
+        let user2 = create_test_user(&conn, "user2");
+        let category1 = create_test_category(&conn, user1, "Tech1");
+        let category2 = create_test_category(&conn, user2, "Tech2");
+        let feed1 = create_test_feed(&conn, category1, "https://example.com/feed1.xml");
+        let feed2 = create_test_feed(&conn, category2, "https://example.com/feed2.xml");
+
+        // Same matching title in both users' feeds; filter has no feed_id/
+        // category_id scoping, only a search term, so ownership must come
+        // entirely from the c.user_id = ?1 seed condition.
+        let e1 = upsert_entry_id(
+            &conn,
+            feed1,
+            "e1",
+            Some("超少女登場"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let e2 = upsert_entry_id(
+            &conn,
+            feed2,
+            "e2",
+            Some("超少女登場"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let e1_id = match e1 {
+            UpsertOutcome::Inserted(id) => id,
+            _ => panic!(),
+        };
+        let e2_id = match e2 {
+            UpsertOutcome::Inserted(id) => id,
+            _ => panic!(),
+        };
+
+        let filter = EntryFilter {
+            search: Some("超少女".to_string()),
+            ..Default::default()
+        };
+
+        let affected = mark_read_by_filter(&conn, user1, &filter).unwrap();
+        assert_eq!(affected, 1);
+
+        let e1_read: Option<String> = conn
+            .query_row("SELECT read_at FROM entry WHERE id=?1", [e1_id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let e2_read: Option<String> = conn
+            .query_row("SELECT read_at FROM entry WHERE id=?1", [e2_id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(
+            e1_read.is_some(),
+            "owning user's matching entry marked read"
+        );
+        assert!(
+            e2_read.is_none(),
+            "matching entry belonging to a different user must not be marked read"
+        );
     }
 
     #[test]
