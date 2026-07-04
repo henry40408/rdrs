@@ -45,15 +45,53 @@ When(
 );
 
 Then(
-  "the entry titled {string} has an open-original link",
+  "every entry row exposes the read toggle, star, open-original, time, and feed controls",
+  async ({ page }) => {
+    // Regression guard against silently dropping a per-row control (as the
+    // 0.55.0 redesign did with mark-read + open-original). Every row must
+    // carry the full control set.
+    const rows = page.getByTestId("entry-item");
+    const count = await rows.count();
+    expect(count).toBeGreaterThan(0);
+    for (let i = 0; i < count; i++) {
+      const row = rows.nth(i);
+      await expect(row.getByTestId("entry-read-toggle")).toBeVisible();
+      await expect(row.getByTestId("entry-star-action")).toBeVisible();
+      await expect(row.getByTestId("entry-open-original")).toBeVisible();
+      await expect(row.locator(".entry-time")).toBeVisible();
+      await expect(row.locator(".entry-feed")).toBeVisible();
+    }
+  },
+);
+
+Then(
+  "every open-original link points at the entry's source URL",
+  async ({ page }) => {
+    const links = page.getByTestId("entry-open-original");
+    const count = await links.count();
+    expect(count).toBeGreaterThan(0);
+    for (let i = 0; i < count; i++) {
+      await expect(links.nth(i)).toHaveAttribute("href", /^https?:\/\/.+/);
+    }
+  },
+);
+
+Then(
+  "the entry title for {string} highlights on hover",
   async ({ page }, title) => {
+    // Guards the restored title hover affordance (also lost in 0.55.0).
+    // Theme-independent: assert the colour changes rather than a fixed value.
     const link = page
       .getByTestId("entry-item")
       .filter({ hasText: title })
-      .getByTestId("entry-open-original")
+      .getByTestId("entry-title-link")
       .first();
-    await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute("href", /.+/);
+    await page.mouse.move(0, 0);
+    const base = await link.evaluate((el) => getComputedStyle(el).color);
+    await link.hover();
+    await expect
+      .poll(() => link.evaluate((el) => getComputedStyle(el).color))
+      .not.toBe(base);
   },
 );
 

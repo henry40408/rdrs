@@ -24,9 +24,17 @@ Feature: Triage entries (star, mark-read, summarize)
     When I click the read toggle for the entry titled "Test Entry 1"
     Then the entry row for "Test Entry 1" shows as unread
 
-  Scenario: Each row exposes an open-original link to the source URL
+  # Regression guard: the 0.55.0 redesign silently dropped the per-row
+  # mark-read control and the open-original link. These assertions fail loudly
+  # if a future UI change removes any per-row control again.
+  Scenario: Every entry row keeps its full set of per-row controls
     When I open the inbox
-    Then the entry titled "Test Entry 1" has an open-original link
+    Then every entry row exposes the read toggle, star, open-original, time, and feed controls
+    And every open-original link points at the entry's source URL
+
+  Scenario: The entry title highlights on hover to signal it is clickable
+    When I open the inbox
+    Then the entry title for "Test Entry 1" highlights on hover
 
   Scenario: Marking all entries read empties the unread list
     When I open the inbox
