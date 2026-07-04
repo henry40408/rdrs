@@ -4,6 +4,8 @@
 // theme controller, entries-family keyboard shortcuts, Mark-as-Read
 // dropdown, Mark Above as Read, row-click-to-open delegation.
 
+import { debounce } from './utils.js';
+
 /**
  * Intercept form / link interactions tagged with `data-swap="<selector>"`
  * and replace the matching element with HTML returned by the request.
@@ -1323,6 +1325,26 @@ function installStatusFilterSelect() {
     });
 }
 installStatusFilterSelect();
+
+// Debounced auto-submit for the scoped-search box. The `<form
+// data-entries-search>` lives in `.list-pane-header`, outside the swapped
+// `[data-entries-list]` container, so it survives every swap and keeps
+// input focus/caret while typing — only the installer's binding needs to
+// be re-applied when the list is swapped out from under it for other
+// reasons (e.g. status-filter changes re-render the whole layout).
+// `installSwap()`'s submit handler does the actual GET → query-string →
+// swap; this only triggers the debounced `requestSubmit()`.
+function installEntriesSearch() {
+    const form = document.querySelector('form[data-entries-search]');
+    if (!form || form.dataset.searchBound) return;
+    form.dataset.searchBound = '1';
+    const input = form.querySelector('input[name="q"]');
+    if (!input) return;
+    const submit = debounce(() => form.requestSubmit(), 250);
+    input.addEventListener('input', submit);
+}
+installEntriesSearch();
+document.addEventListener('rdrs:swap-complete', installEntriesSearch);
 
 // "Mark Above as Read" button on feed + category pages. Sits at the
 // bottom of the list (below Load More) and marks every entry currently

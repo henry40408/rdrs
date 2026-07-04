@@ -11,3 +11,18 @@ export function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
+
+/**
+ * Return a debounced wrapper around `fn` that delays invocation until `ms`
+ * milliseconds have elapsed since the last call.
+ * @param {Function} fn
+ * @param {number} ms
+ * @returns {Function}
+ */
+export function debounce(fn, ms) {
+    let t;
+    return function (...args) {
+        clearTimeout(t);
+        t = setTimeout(() => fn.apply(this, args), ms);
+    };
+}
