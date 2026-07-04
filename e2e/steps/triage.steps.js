@@ -30,6 +30,71 @@ When("I star the entry titled {string}", async ({ page }, title) => {
     .click();
 });
 
+When(
+  "I click the read toggle for the entry titled {string}",
+  async ({ page }, title) => {
+    // The leading dot is a form submit button (data-testid="entry-read-toggle")
+    // that POSTs /read or /unread and swaps the row in-place.
+    await page
+      .getByTestId("entry-item")
+      .filter({ hasText: title })
+      .getByTestId("entry-read-toggle")
+      .first()
+      .click();
+  },
+);
+
+Then(
+  "every entry row exposes the read toggle, star, open-original, time, and feed controls",
+  async ({ page }) => {
+    // Regression guard against silently dropping a per-row control (as the
+    // 0.55.0 redesign did with mark-read + open-original). Every row must
+    // carry the full control set.
+    const rows = page.getByTestId("entry-item");
+    const count = await rows.count();
+    expect(count).toBeGreaterThan(0);
+    for (let i = 0; i < count; i++) {
+      const row = rows.nth(i);
+      await expect(row.getByTestId("entry-read-toggle")).toBeVisible();
+      await expect(row.getByTestId("entry-star-action")).toBeVisible();
+      await expect(row.getByTestId("entry-open-original")).toBeVisible();
+      await expect(row.locator(".entry-time")).toBeVisible();
+      await expect(row.locator(".entry-feed")).toBeVisible();
+    }
+  },
+);
+
+Then(
+  "every open-original link points at the entry's source URL",
+  async ({ page }) => {
+    const links = page.getByTestId("entry-open-original");
+    const count = await links.count();
+    expect(count).toBeGreaterThan(0);
+    for (let i = 0; i < count; i++) {
+      await expect(links.nth(i)).toHaveAttribute("href", /^https?:\/\/.+/);
+    }
+  },
+);
+
+Then(
+  "the entry title for {string} highlights on hover",
+  async ({ page }, title) => {
+    // Guards the restored title hover affordance (also lost in 0.55.0).
+    // Theme-independent: assert the colour changes rather than a fixed value.
+    const link = page
+      .getByTestId("entry-item")
+      .filter({ hasText: title })
+      .getByTestId("entry-title-link")
+      .first();
+    await page.mouse.move(0, 0);
+    const base = await link.evaluate((el) => getComputedStyle(el).color);
+    await link.hover();
+    await expect
+      .poll(() => link.evaluate((el) => getComputedStyle(el).color))
+      .not.toBe(base);
+  },
+);
+
 When("I mark the entry titled {string} read", async ({ page }, title) => {
   // The Wire Room redesign removed the per-row read action; the star is the
   // only visible row control. Marking-read now happens through the reading
