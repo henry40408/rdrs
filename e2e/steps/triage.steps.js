@@ -30,6 +30,33 @@ When("I star the entry titled {string}", async ({ page }, title) => {
     .click();
 });
 
+When(
+  "I click the read toggle for the entry titled {string}",
+  async ({ page }, title) => {
+    // The leading dot is a form submit button (data-testid="entry-read-toggle")
+    // that POSTs /read or /unread and swaps the row in-place.
+    await page
+      .getByTestId("entry-item")
+      .filter({ hasText: title })
+      .getByTestId("entry-read-toggle")
+      .first()
+      .click();
+  },
+);
+
+Then(
+  "the entry titled {string} has an open-original link",
+  async ({ page }, title) => {
+    const link = page
+      .getByTestId("entry-item")
+      .filter({ hasText: title })
+      .getByTestId("entry-open-original")
+      .first();
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("href", /.+/);
+  },
+);
+
 When("I mark the entry titled {string} read", async ({ page }, title) => {
   // The Wire Room redesign removed the per-row read action; the star is the
   // only visible row control. Marking-read now happens through the reading

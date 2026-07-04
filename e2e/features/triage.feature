@@ -17,6 +17,17 @@ Feature: Triage entries (star, mark-read, summarize)
     Then the entry row for "Test Entry 1" shows as read
     And the sidebar unread count decreases by 1
 
+  Scenario: The row read-dot toggles the entry between read and unread
+    When I open the inbox
+    And I click the read toggle for the entry titled "Test Entry 1"
+    Then the entry row for "Test Entry 1" shows as read
+    When I click the read toggle for the entry titled "Test Entry 1"
+    Then the entry row for "Test Entry 1" shows as unread
+
+  Scenario: Each row exposes an open-original link to the source URL
+    When I open the inbox
+    Then the entry titled "Test Entry 1" has an open-original link
+
   Scenario: Marking all entries read empties the unread list
     When I open the inbox
     And I mark all entries as read
