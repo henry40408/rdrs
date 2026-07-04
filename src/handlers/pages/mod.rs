@@ -212,6 +212,15 @@ pub struct EntriesLayoutContext {
     pub onboarding: bool,
     /// UTC instant captured when the page was rendered; see `snapshot_now()`.
     pub snapshot_at: String,
+    /// Current scoped-search keyword (prefills the box + hidden inputs). `None`
+    /// on pages without scoped search.
+    pub search: Option<String>,
+    /// Form action for the scoped-search box. `Some` ⇒ render the box (category/
+    /// feed pages only). `None` ⇒ no search box.
+    pub search_action: Option<String>,
+    /// Count of entries matching the active search, for the "Mark N matching as
+    /// Read" button label. `None` when not searching.
+    pub matching_count: Option<i64>,
 }
 
 /// Map an `EntryWithFeed` (+ optional summary status) to an `EntryRowView`.
@@ -318,6 +327,8 @@ pub struct EntriesQuery {
     /// (use POST /entries/{id}/read for that). Silently ignored when the
     /// entry doesn't exist or belongs to another user.
     pub entry: Option<i64>,
+    /// Scoped-search keyword (category/feed pages only). Empty/whitespace ⇒ no filter.
+    pub q: Option<String>,
 }
 
 /// Best-effort builder for the `?entry={id}` deep-link reading pane.
@@ -365,6 +376,8 @@ pub(crate) struct EntriesFragmentTemplate {
     /// Load-More fetches keep the current `?status=` filter. `None` for
     /// the 5 PR-10 routes (their filters are path-based, not query).
     pub status_filter: Option<String>,
+    /// Forwarded into the Load-More form so paged fetches keep the search filter.
+    pub q: Option<String>,
 }
 
 impl IntoResponse for EntriesFragmentTemplate {
@@ -583,6 +596,7 @@ pub async fn unread_page(
                 next_cursor,
                 path: "/",
                 status_filter: None,
+                q: None,
             },
         )
             .into_response();
@@ -636,6 +650,9 @@ pub async fn unread_page(
                 show_mark_above: true,
                 onboarding: no_feeds,
                 snapshot_at: snapshot_now(),
+                search: None,
+                search_action: None,
+                matching_count: None,
             },
         },
     )
@@ -1105,6 +1122,7 @@ pub async fn entries_page(
                 next_cursor,
                 path: "/entries",
                 status_filter: None,
+                q: None,
             },
         )
             .into_response();
@@ -1147,6 +1165,9 @@ pub async fn entries_page(
                 show_mark_above: false,
                 onboarding: false,
                 snapshot_at: snapshot_now(),
+                search: None,
+                search_action: None,
+                matching_count: None,
             },
         },
     )
@@ -1286,6 +1307,7 @@ pub async fn read_entries_page(
                 next_cursor,
                 path: "/entries/read",
                 status_filter: None,
+                q: None,
             },
         )
             .into_response();
@@ -1328,6 +1350,9 @@ pub async fn read_entries_page(
                 show_mark_above: false,
                 onboarding: false,
                 snapshot_at: snapshot_now(),
+                search: None,
+                search_action: None,
+                matching_count: None,
             },
         },
     )
@@ -1373,6 +1398,7 @@ pub async fn starred_entries_page(
                 next_cursor,
                 path: "/entries/starred",
                 status_filter: None,
+                q: None,
             },
         )
             .into_response();
@@ -1415,6 +1441,9 @@ pub async fn starred_entries_page(
                 show_mark_above: false,
                 onboarding: false,
                 snapshot_at: snapshot_now(),
+                search: None,
+                search_action: None,
+                matching_count: None,
             },
         },
     )
@@ -1460,6 +1489,7 @@ pub async fn summarized_entries_page(
                 next_cursor,
                 path: "/entries/summarized",
                 status_filter: None,
+                q: None,
             },
         )
             .into_response();
@@ -1502,6 +1532,9 @@ pub async fn summarized_entries_page(
                 show_mark_above: false,
                 onboarding: false,
                 snapshot_at: snapshot_now(),
+                search: None,
+                search_action: None,
+                matching_count: None,
             },
         },
     )
@@ -1557,10 +1590,24 @@ pub async fn category_entries_page(
         "starred" => filter.starred_only = true,
         _ => filter.unread_only = true,
     }
+    let search = query.q.clone().filter(|s| !s.trim().is_empty());
+    filter.search = search.clone();
     let cursor = query
         .after
         .as_deref()
         .and_then(entry::ContinuationCursor::parse);
+
+    let matching_count = if search.is_some() {
+        let cf = filter.clone();
+        state
+            .db
+            .read_user(move |conn| entry::count_by_user(conn, user_id, &cf))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+    } else {
+        None
+    };
 
     let (entries, next_cursor) = build_entries_page(
         &state,
@@ -1581,6 +1628,7 @@ pub async fn category_entries_page(
             next_cursor,
             path: Box::leak(path.into_boxed_str()),
             status_filter,
+            q: search.clone(),
         };
         return Ok((flash, fragment).into_response());
     }
@@ -1647,6 +1695,9 @@ pub async fn category_entries_page(
             show_mark_above: true,
             onboarding: false,
             snapshot_at: snapshot_now(),
+            search: search.clone(),
+            search_action: Some(format!("/categories/{}/entries", id)),
+            matching_count,
         },
     };
 
@@ -1805,10 +1856,24 @@ pub async fn feed_entries_page(
         "starred" => filter.starred_only = true,
         _ => filter.unread_only = true,
     }
+    let search = query.q.clone().filter(|s| !s.trim().is_empty());
+    filter.search = search.clone();
     let cursor = query
         .after
         .as_deref()
         .and_then(entry::ContinuationCursor::parse);
+
+    let matching_count = if search.is_some() {
+        let cf = filter.clone();
+        state
+            .db
+            .read_user(move |conn| entry::count_by_user(conn, user_id, &cf))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+    } else {
+        None
+    };
 
     let (entries, next_cursor) = build_entries_page(
         &state,
@@ -1829,6 +1894,7 @@ pub async fn feed_entries_page(
             next_cursor,
             path: Box::leak(path.into_boxed_str()),
             status_filter,
+            q: search.clone(),
         };
         return Ok((flash, fragment).into_response());
     }
@@ -1899,6 +1965,9 @@ pub async fn feed_entries_page(
             show_mark_above: true,
             onboarding: false,
             snapshot_at: snapshot_now(),
+            search: search.clone(),
+            search_action: Some(format!("/feeds/{}/entries", id)),
+            matching_count,
         },
     };
 
