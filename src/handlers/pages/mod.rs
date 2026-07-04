@@ -1619,18 +1619,6 @@ pub async fn category_entries_page(
         .as_deref()
         .and_then(entry::ContinuationCursor::parse);
 
-    let matching_count = if search.is_some() {
-        let cf = filter.clone();
-        state
-            .db
-            .read_user(move |conn| entry::count_by_user(conn, user_id, &cf))
-            .await
-            .ok()
-            .and_then(|r| r.ok())
-    } else {
-        None
-    };
-
     let (entries, next_cursor) = build_entries_page(
         &state,
         user_id,
@@ -1654,6 +1642,28 @@ pub async fn category_entries_page(
         };
         return Ok((flash, fragment).into_response());
     }
+
+    // Computed from a dedicated filter (scope + search + unread_only), not the
+    // tab-influenced `filter` above: `mark_read_by_filter` only ever touches
+    // `read_at IS NULL` rows regardless of the active status tab, so the count
+    // shown next to the "Mark N matching" button must match that, not the
+    // active tab's rows. See mark_read_scoped's fresh EntryFilter below.
+    let matching_count = if let Some(ref s) = search {
+        let mark_filter = entry::EntryFilter {
+            category_id: Some(id),
+            search: Some(s.clone()),
+            unread_only: true,
+            ..Default::default()
+        };
+        state
+            .db
+            .read_user(move |conn| entry::count_by_user(conn, user_id, &mark_filter))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+    } else {
+        None
+    };
 
     let mark_as_read_scope = Some(format!("user/-/label/{}", category_name));
     let base = format!("/categories/{}/entries", id);
@@ -1899,18 +1909,6 @@ pub async fn feed_entries_page(
         .as_deref()
         .and_then(entry::ContinuationCursor::parse);
 
-    let matching_count = if search.is_some() {
-        let cf = filter.clone();
-        state
-            .db
-            .read_user(move |conn| entry::count_by_user(conn, user_id, &cf))
-            .await
-            .ok()
-            .and_then(|r| r.ok())
-    } else {
-        None
-    };
-
     let (entries, next_cursor) = build_entries_page(
         &state,
         user_id,
@@ -1934,6 +1932,28 @@ pub async fn feed_entries_page(
         };
         return Ok((flash, fragment).into_response());
     }
+
+    // Computed from a dedicated filter (scope + search + unread_only), not the
+    // tab-influenced `filter` above: `mark_read_by_filter` only ever touches
+    // `read_at IS NULL` rows regardless of the active status tab, so the count
+    // shown next to the "Mark N matching" button must match that, not the
+    // active tab's rows. See mark_read_scoped's fresh EntryFilter below.
+    let matching_count = if let Some(ref s) = search {
+        let mark_filter = entry::EntryFilter {
+            feed_id: Some(id),
+            search: Some(s.clone()),
+            unread_only: true,
+            ..Default::default()
+        };
+        state
+            .db
+            .read_user(move |conn| entry::count_by_user(conn, user_id, &mark_filter))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+    } else {
+        None
+    };
 
     let mark_as_read_scope = Some(format!("feed/{}", feed_url));
     let base = format!("/feeds/{}/entries", id);

@@ -282,7 +282,22 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
     }
 
     if version < 10 {
-        conn.execute("ALTER TABLE entry ADD COLUMN content_text TEXT", [])?;
+        // Guard the ALTER with a column-existence check instead of just
+        // running it: the backfill below can take minutes on a large entry
+        // table, and if the process is killed mid-backfill (SIGINT/OOM/host
+        // restart), `user_version` is still 9, so this block re-enters on
+        // next boot. Without the guard, re-running the bare ALTER would fail
+        // with "duplicate column name: content_text" and panic at init_db's
+        // `.expect(...)`, leaving the app unable to boot. The backfill loop
+        // itself is already re-entrant (`WHERE content_text IS NULL`).
+        let has_content_text: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('entry') WHERE name = 'content_text')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_content_text {
+            conn.execute("ALTER TABLE entry ADD COLUMN content_text TEXT", [])?;
+        }
         // Backfill plain-text search content in batches so a large entry
         // table doesn't build one giant transaction. Rows with NULL content
         // stay NULL (nothing to search). strip_to_search_text joins across
@@ -599,5 +614,48 @@ mod tests {
             })
             .unwrap();
         assert_eq!(text.as_deref(), Some("超少女"));
+    }
+
+    #[test]
+    fn test_v10_migration_is_crash_re_entrant() {
+        // Simulate a process killed mid-backfill: user_version never got
+        // bumped past 9, but content_text (and its ALTER) already landed on
+        // disk from the interrupted attempt. Re-running init_db must not
+        // panic/error on "duplicate column name: content_text", and the
+        // already-backfilled data must survive untouched.
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO user (id, username, password_hash) VALUES (1, 'u', 'x');
+             INSERT INTO category (id, user_id, name) VALUES (1, 1, 'c');
+             INSERT INTO feed (id, category_id, url) VALUES (1, 1, 'http://x');
+             INSERT INTO entry (id, feed_id, guid, content, content_text) \
+                VALUES (1, 1, 'g', '<b>hello</b>', 'hello');",
+        )
+        .unwrap();
+        // Force user_version back to 9 WITHOUT dropping content_text — this
+        // is the exact re-entry state after an interrupted v10 migration
+        // (ALTER succeeded, backfill may have partially run, but the crash
+        // happened before the version bump at the end of init_db).
+        conn.pragma_update(None, "user_version", 9i64).unwrap();
+
+        // Must not panic or return an error (e.g. duplicate column name).
+        init_db(&conn).unwrap();
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 10);
+
+        let text: Option<String> = conn
+            .query_row("SELECT content_text FROM entry WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            text.as_deref(),
+            Some("hello"),
+            "pre-existing content_text must survive a re-entered migration"
+        );
     }
 }
