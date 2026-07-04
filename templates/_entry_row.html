@@ -1,60 +1,57 @@
 {%- import "_icons.html" as icons -%}
-{# Single entry row — the "wire log". Leading mono time gutter (relative
-   time over a 6px orange unread dot) | title + meta line (inline favicon,
-   feed · category, summary badge) | hover-reveal star. The read/unread and
-   original-link actions were removed from the row in the Wire Room redesign;
-   those behaviours now live in the reading pane and keyboard shortcuts (m / v).
-   Preserved for app.js + e2e: #entry-row-{id}, data-entry-row, data-entry-id,
-   data-testid="entry-item", the title link (data-swap="#reading-pane",
-   data-testid="entry-title-link"), the feed/category meta links, the star form
-   + data-testid="entry-star-action", the .entry-status summary-badge cluster,
-   and .entry-read / .selected class hooks. data-entry-link carries the external
-   URL for the `v` shortcut now that the visible original link is gone. #}
+{# Single entry row — "wire log" v2. Grid: marker(dot=read toggle) | content
+   (title + feed meta) | timerow(summary + relative time). The star + open-
+   original actions are an absolute overlay (bottom-right, centred on the meta
+   line) so they don't reserve column width — keeps the title wide on touch.
+   Restored vs 0.55: mark-read (dot form) and open-original (↗). Category link
+   removed from meta. Preserved for app.js + e2e: #entry-row-{id}, data-entry-row,
+   data-entry-id, data-entry-link, data-testid="entry-item", title link
+   (data-swap="#reading-pane", data-testid="entry-title-link"), the feed meta
+   link, the star form (data-testid="entry-star-action"), the .entry-status
+   summary cluster (SSE renderSummaryBadge), and .entry-read/.selected hooks. #}
 <div id="entry-row-{{ r.id }}" class="entry-item{% if r.is_read %} entry-read{% endif %}" data-entry-row data-entry-id="{{ r.id }}"{% if let Some(link) = r.link.as_ref() %} data-entry-link="{{ link }}"{% endif %} data-testid="entry-item">
-    <div class="entry-time">
-        <time datetime="{{ r.published_at_iso }}">{{ r.published_relative }}</time>
-        <span class="unread-dot" aria-hidden="true"></span>
-    </div>
-
-    <div class="entry-content">
-        <a href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" title="{{ r.title }}" class="entry-item-title {% if r.is_read %}entry-title-normal{% else %}entry-title-bold{% endif %}" data-testid="entry-title-link">{{ r.title }}</a>
-
-        <div class="entry-item-meta">
-            {% if r.feed_has_icon %}
-            <img class="entry-favicon" src="/api/feeds/{{ r.feed_id }}/icon" alt="" loading="lazy" width="15" height="15">
-            {% else %}
-            <span class="entry-favicon entry-favicon-chip fav-c{{ r.feed_color_index() }}" aria-hidden="true">{{ r.feed_initial() }}</span>
-            {% endif %}
-            <span class="entry-meta-text">
-                <a class="entry-feed" href="/feeds/{{ r.feed_id }}/entries">{{ r.feed_title }}</a>
-                <span class="meta-sep">·</span>
-                <a href="/categories/{{ r.category_id }}/entries">{{ r.category_name }}</a>
-            </span>
-            {# Summary-status cluster. Kept (styled small) so the SSE
-               live-update path (renderSummaryBadge → .entry-status) and the
-               sse-live-updates e2e keep working. #}
-            {# Whitespace trims (`{%- -%}`) keep the span truly empty when no
-               badge is rendered — Askama preserves whitespace (no askama.toml),
-               so without them the span holds text nodes and `.entry-status:empty`
-               never matches. The SSE path (app.js renderSummaryBadge) removes the
-               badge node on clear, leaving the same empty span. #}
-            <span class="entry-status">
-                {%- match r.summary_status_str() -%}
-                {%- when Some("completed") -%}
-                <span title="Has Summary" class="summary-badge" aria-hidden="true">{% call icons::summary(true) %}{% endcall %}</span>
-                {%- when Some("pending") -%}
-                <span title="Pending" class="summary-badge-pending" aria-hidden="true">{% call icons::summary(false) %}{% endcall %}</span>
-                {%- when Some("processing") -%}
-                <span title="Processing" class="summary-badge-processing" aria-hidden="true">{% call icons::summary(false) %}{% endcall %}</span>
-                {%- when Some("failed") -%}
-                <span title="Failed" class="summary-badge-failed" aria-hidden="true">{% call icons::summary(true) %}{% endcall %}</span>
-                {%- when _ -%}
-                {%- endmatch -%}
-            </span>
-        </div>
-    </div>
-
-    <form class="entry-star-form" method="post" action="/entries/{{ r.id }}/{% if r.is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ r.id }}">
-        <button type="submit" class="entry-star{% if r.is_starred %} starred{% endif %}" data-testid="entry-star-action" aria-label="{% if r.is_starred %}Unstar{% else %}Star{% endif %}" title="{% if r.is_starred %}Unstar{% else %}Star{% endif %} (f)">{% call icons::star(r.is_starred) %}{% endcall %}</button>
+    {# Marker: dot = idempotent read/unread toggle (mirrors the star form). #}
+    <form class="entry-marker" method="post" action="/entries/{{ r.id }}/{% if r.is_read %}unread{% else %}read{% endif %}" data-swap="#entry-row-{{ r.id }}">
+        <button type="submit" class="unread-toggle" data-testid="entry-read-toggle" aria-label="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %}" title="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %} (m)"></button>
     </form>
+
+    <a href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" title="{{ r.title }}" class="entry-item-title {% if r.is_read %}entry-title-normal{% else %}entry-title-bold{% endif %}" data-testid="entry-title-link">{{ r.title }}</a>
+
+    <span class="entry-timerow">
+        {# Summary-status cluster relocated here (was the meta tail). Empty span
+           when no summary so .entry-status:empty hides it; SSE swaps this node.
+           Whitespace trims keep the span truly empty when no badge renders. #}
+        <span class="entry-status">
+            {%- match r.summary_status_str() -%}
+            {%- when Some("completed") -%}
+            <span title="Has Summary" class="summary-badge" aria-hidden="true">{% call icons::summary(true) %}{% endcall %}</span>
+            {%- when Some("pending") -%}
+            <span title="Pending" class="summary-badge-pending" aria-hidden="true">{% call icons::summary(false) %}{% endcall %}</span>
+            {%- when Some("processing") -%}
+            <span title="Processing" class="summary-badge-processing" aria-hidden="true">{% call icons::summary(false) %}{% endcall %}</span>
+            {%- when Some("failed") -%}
+            <span title="Failed" class="summary-badge-failed" aria-hidden="true">{% call icons::summary(true) %}{% endcall %}</span>
+            {%- when _ -%}
+            {%- endmatch -%}
+        </span>
+        <time class="entry-time" datetime="{{ r.published_at_iso }}">{{ r.published_relative }}</time>
+    </span>
+
+    <div class="entry-item-meta">
+        {% if r.feed_has_icon %}
+        <img class="entry-favicon" src="/api/feeds/{{ r.feed_id }}/icon" alt="" loading="lazy" width="15" height="15">
+        {% else %}
+        <span class="entry-favicon entry-favicon-chip fav-c{{ r.feed_color_index() }}" aria-hidden="true">{{ r.feed_initial() }}</span>
+        {% endif %}
+        <span class="entry-meta-text"><a class="entry-feed" href="/feeds/{{ r.feed_id }}/entries">{{ r.feed_title }}</a></span>
+    </div>
+
+    <div class="rail-actions">
+        <form class="entry-star-form" method="post" action="/entries/{{ r.id }}/{% if r.is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ r.id }}">
+            <button type="submit" class="entry-star{% if r.is_starred %} starred{% endif %}" data-testid="entry-star-action" aria-label="{% if r.is_starred %}Unstar{% else %}Star{% endif %}" title="{% if r.is_starred %}Unstar{% else %}Star{% endif %} (f)">{% call icons::star(r.is_starred) %}{% endcall %}</button>
+        </form>
+        {% if let Some(link) = r.link.as_ref() %}
+        <a class="entry-open-ext" href="{{ link }}" target="_blank" rel="noopener noreferrer" data-testid="entry-open-original" aria-label="Open original" title="Open original (v)">{% call icons::external() %}{% endcall %}</a>
+        {% endif %}
+    </div>
 </div>
