@@ -46,65 +46,16 @@
                             {% if let Some(action) = entries_layout.search_action.as_ref() %}
                             <form class="form-group form-group-inline entries-search" method="get" action="{{ action }}" data-swap="[data-entries-list]" data-entries-search>
                                 {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
+                                <input type="hidden" name="fragment" value="1">
                                 <input type="search" name="q" class="search-input" placeholder="Search in this view…" autocomplete="off" data-testid="scoped-search-input"{% if let Some(qq) = entries_layout.search.as_ref() %} value="{{ qq }}"{% endif %}>
                             </form>
-                            {% if let Some(n) = entries_layout.matching_count %}
-                            <form class="form-group form-group-inline" method="post" action="{{ action }}/mark-read" data-testid="mark-matching-form">
-                                {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
-                                {% if let Some(qq) = entries_layout.search.as_ref() %}<input type="hidden" name="q" value="{{ qq }}">{% endif %}
-                                <button type="submit" class="btn-secondary btn-sm" data-testid="mark-matching-btn">Mark {{ n }} matching as Read</button>
-                            </form>
-                            {% endif %}
+                            <span class="mark-matching-slot" data-mark-matching-slot>{% include "_mark_matching_button.html" %}</span>
                             {% endif %}
                         </div>
                         {% endif %}
                     </div>
                     <div class="list-pane-body" data-entries-list data-snapshot-at="{{ entries_layout.snapshot_at }}">
-                        {% if entries.is_empty() %}
-                            {% if entries_layout.onboarding %}
-                                <div class="empty-state-quiet onboarding-guide" data-testid="onboarding-guide">
-                                    <p class="empty-state-quiet-title">Welcome to rdrs</p>
-                                    <p class="empty-state-quiet-text">Three steps to your first read:</p>
-                                    <ol class="onboarding-steps">
-                                        <li>Add a feed, or import an OPML file</li>
-                                        <li>Wait for the first sync to fetch entries</li>
-                                        <li>Read</li>
-                                    </ol>
-                                    <div class="onboarding-cta">
-                                        <a href="/feeds" class="btn" data-testid="onboarding-add-feed">Add your first feed →</a>
-                                        <a href="/feeds/import" class="btn btn-secondary" data-testid="onboarding-import-opml">Import OPML</a>
-                                    </div>
-                                </div>
-                            {% else %}
-                                <div class="empty-state-quiet">
-                                    <p class="empty-state-quiet-title">{{ entries_layout.empty_title }}</p>
-                                    <p class="empty-state-quiet-text">{{ entries_layout.empty_detail }}</p>
-                                </div>
-                            {% endif %}
-                        {% else %}
-                            {% for r in entries %}{% include "_entry_row.html" %}{% endfor %}
-                            {% if let Some(after) = next_cursor %}
-                                <form id="load-more" method="get" action="{{ entries_layout.path }}" data-swap="#load-more" class="load-more-form">
-                                    <input type="hidden" name="after" value="{{ after }}">
-                                    <input type="hidden" name="fragment" value="1">
-                                    {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
-                                    {% if let Some(qq) = entries_layout.search.as_ref() %}<input type="hidden" name="q" value="{{ qq }}">{% endif %}
-                                    <button type="submit" data-testid="load-more-btn">Load More</button>
-                                </form>
-                            {% endif %}
-                            {# Mark Above as Read — sits BELOW Load More so it stays put
-                               after the swap helper appends more rows + a fresh
-                               Load-More form (those land *before* the `#load-more`
-                               anchor, never below this button). Marks every
-                               currently-rendered row as read on click. Same
-                               wrapper class as the Load-More form so the two
-                               buttons align consistently. #}
-                            {% if entries_layout.show_mark_above %}
-                            <div class="mark-above-form">
-                                <button id="mark-above-read" type="button" class="btn-secondary btn-sm" data-testid="mark-above-btn">Mark Above as Read</button>
-                            </div>
-                            {% endif %}
-                        {% endif %}
+                        {% include "_entries_list_body.html" %}
                     </div>
                 </div>
                 {% if let Some(pane) = reading_pane.as_ref() %}

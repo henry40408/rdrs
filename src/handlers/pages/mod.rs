@@ -389,6 +389,28 @@ impl IntoResponse for EntriesFragmentTemplate {
     }
 }
 
+/// Search-refresh fragment for the scoped-search box: multi-target templates that
+/// replace `[data-entries-list]` and the `[data-mark-matching-slot]` button in place.
+/// Distinct from `EntriesFragmentTemplate` (Load-More append). Reuses
+/// `EntriesLayoutContext` so `_entries_list_body.html` / `_mark_matching_button.html`
+/// render exactly as on the full page.
+#[derive(Template)]
+#[template(path = "_entries_refresh_fragment.html")]
+pub(crate) struct EntriesRefreshFragmentTemplate {
+    pub entries: Vec<EntryRowView>,
+    pub next_cursor: Option<String>,
+    pub entries_layout: EntriesLayoutContext,
+}
+
+impl IntoResponse for EntriesRefreshFragmentTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
 /// Compact relative-time formatter for the entry list. Returns short
 /// forms like `now` / `46m` / `3h` / `2d` / `5mo` / `1y`. Long form
 /// (`format_relative_time`) is kept for places with more breathing
@@ -1622,7 +1644,7 @@ pub async fn category_entries_page(
     let path = format!("/categories/{}/entries", id);
     let status_filter = query.status.clone();
 
-    if query.fragment == Some(1) {
+    if query.fragment == Some(1) && query.after.is_some() {
         let fragment = EntriesFragmentTemplate {
             entries,
             next_cursor,
@@ -1632,8 +1654,6 @@ pub async fn category_entries_page(
         };
         return Ok((flash, fragment).into_response());
     }
-
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     let mark_as_read_scope = Some(format!("user/-/label/{}", category_name));
     let base = format!("/categories/{}/entries", id);
@@ -1670,6 +1690,41 @@ pub async fn category_entries_page(
         },
     ];
 
+    let entries_layout = EntriesLayoutContext {
+        active: "",
+        description: None,
+        empty_title: "Nothing in this category",
+        empty_detail: "The feeds in this category haven't brought in any entries yet.",
+        path,
+        show_tab_bar: false,
+        mark_as_read_scope,
+        breadcrumb_items,
+        header_feed_icon_id: None,
+        active_category_id: Some(id),
+        filter_tabs,
+        status_filter,
+        show_mark_above: true,
+        onboarding: false,
+        snapshot_at: snapshot_now(),
+        search: search.clone(),
+        search_action: Some(format!("/categories/{}/entries", id)),
+        matching_count,
+    };
+
+    // Search-refresh fragment (fragment=1, no cursor): replace list + button slot.
+    if query.fragment == Some(1) {
+        return Ok((
+            flash,
+            EntriesRefreshFragmentTemplate {
+                entries,
+                next_cursor,
+                entries_layout,
+            },
+        )
+            .into_response());
+    }
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
     let template = CategoryEntriesTemplate {
@@ -1679,26 +1734,7 @@ pub async fn category_entries_page(
         entries,
         reading_pane,
         next_cursor,
-        entries_layout: EntriesLayoutContext {
-            active: "",
-            description: None,
-            empty_title: "Nothing in this category",
-            empty_detail: "The feeds in this category haven't brought in any entries yet.",
-            path,
-            show_tab_bar: false,
-            mark_as_read_scope,
-            breadcrumb_items,
-            header_feed_icon_id: None,
-            active_category_id: Some(id),
-            filter_tabs,
-            status_filter,
-            show_mark_above: true,
-            onboarding: false,
-            snapshot_at: snapshot_now(),
-            search: search.clone(),
-            search_action: Some(format!("/categories/{}/entries", id)),
-            matching_count,
-        },
+        entries_layout,
     };
 
     Ok((flash, template).into_response())
@@ -1888,7 +1924,7 @@ pub async fn feed_entries_page(
     let path = format!("/feeds/{}/entries", id);
     let status_filter = query.status.clone();
 
-    if query.fragment == Some(1) {
+    if query.fragment == Some(1) && query.after.is_some() {
         let fragment = EntriesFragmentTemplate {
             entries,
             next_cursor,
@@ -1898,8 +1934,6 @@ pub async fn feed_entries_page(
         };
         return Ok((flash, fragment).into_response());
     }
-
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
 
     let mark_as_read_scope = Some(format!("feed/{}", feed_url));
     let base = format!("/feeds/{}/entries", id);
@@ -1940,6 +1974,41 @@ pub async fn feed_entries_page(
         },
     ];
 
+    let entries_layout = EntriesLayoutContext {
+        active: "",
+        description: None,
+        empty_title: "Nothing in this feed",
+        empty_detail: "This feed hasn't published anything yet, or it's still syncing.",
+        path,
+        show_tab_bar: false,
+        mark_as_read_scope,
+        breadcrumb_items,
+        header_feed_icon_id: if feed_has_icon { Some(id) } else { None },
+        active_category_id: Some(cat_id),
+        filter_tabs,
+        status_filter,
+        show_mark_above: true,
+        onboarding: false,
+        snapshot_at: snapshot_now(),
+        search: search.clone(),
+        search_action: Some(format!("/feeds/{}/entries", id)),
+        matching_count,
+    };
+
+    // Search-refresh fragment (fragment=1, no cursor): replace list + button slot.
+    if query.fragment == Some(1) {
+        return Ok((
+            flash,
+            EntriesRefreshFragmentTemplate {
+                entries,
+                next_cursor,
+                entries_layout,
+            },
+        )
+            .into_response());
+    }
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
     let template = FeedEntriesTemplate {
@@ -1949,26 +2018,7 @@ pub async fn feed_entries_page(
         entries,
         reading_pane,
         next_cursor,
-        entries_layout: EntriesLayoutContext {
-            active: "",
-            description: None,
-            empty_title: "Nothing in this feed",
-            empty_detail: "This feed hasn't published anything yet, or it's still syncing.",
-            path,
-            show_tab_bar: false,
-            mark_as_read_scope,
-            breadcrumb_items,
-            header_feed_icon_id: if feed_has_icon { Some(id) } else { None },
-            active_category_id: Some(cat_id),
-            filter_tabs,
-            status_filter,
-            show_mark_above: true,
-            onboarding: false,
-            snapshot_at: snapshot_now(),
-            search: search.clone(),
-            search_action: Some(format!("/feeds/{}/entries", id)),
-            matching_count,
-        },
+        entries_layout,
     };
 
     Ok((flash, template).into_response())
