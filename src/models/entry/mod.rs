@@ -1753,6 +1753,57 @@ mod tests {
     }
 
     #[test]
+    fn search_matches_plain_text_across_tags_not_attributes() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        // (a) term split across inline tags — must match via content_text.
+        upsert_entry(
+            &conn,
+            feed_id,
+            "a",
+            Some("x"),
+            None,
+            Some("超<b>少女</b>登場"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        // (b) term only inside an href attribute — must NOT match.
+        upsert_entry(
+            &conn,
+            feed_id,
+            "b",
+            Some("y"),
+            None,
+            Some(r#"<a href="/超少女">z</a>"#),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let filter = EntryFilter {
+            search: Some("超少女".to_string()),
+            ..Default::default()
+        };
+        let results =
+            list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 50, 0).unwrap();
+        let guids: Vec<_> = results.iter().map(|r| r.entry.guid.clone()).collect();
+        assert!(
+            guids.contains(&"a".to_string()),
+            "tag-split term should match"
+        );
+        assert!(
+            !guids.contains(&"b".to_string()),
+            "attribute-only term should not match"
+        );
+    }
+
+    #[test]
     fn test_mark_read_by_ids() {
         let conn = setup_db();
         let user_id = create_test_user(&conn, "testuser");

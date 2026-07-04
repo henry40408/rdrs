@@ -82,7 +82,7 @@ pub(super) fn apply_filter_conditions(
         let search_pattern = format!("%{}%", search);
         let param_idx = params_vec.len() + 1;
         conditions.push(format!(
-            "(e.title LIKE ?{} COLLATE NOCASE OR e.content LIKE ?{} COLLATE NOCASE)",
+            "(e.title LIKE ?{} COLLATE NOCASE OR e.content_text LIKE ?{} COLLATE NOCASE)",
             param_idx, param_idx
         ));
         params_vec.push(Box::new(search_pattern));
