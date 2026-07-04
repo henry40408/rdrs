@@ -1343,24 +1343,32 @@ td input[type="text"] {
     border: 0;
 }
 
-/* ===== Entry list — the "wire log" =====
-   Row = mono time gutter (relative time over a 6px orange unread dot) | title +
-   meta line | hover-reveal star. The read/original row actions were removed;
-   the star is the only visible per-row control. Class hooks (.entry-item,
+/* ===== Entry list — the "wire log" v2 =====
+   Grid rows: [marker | title | timerow] / [ (marker) | meta | (timerow) ].
+   marker = dot(read toggle); timerow = summary + relative time; star + open-
+   original are an absolute overlay centred on the meta row (they do not reserve
+   column width, so the title stays wide — esp. on touch). Sizes via --sz/--mk;
+   touch bumps them under @media (any-pointer: coarse). Hooks (.entry-item,
    .selected, .entry-read, .entry-item-title, .entry-item-meta, .entry-favicon,
-   .entry-status) are preserved for app.js + e2e. */
+   .entry-status, .entry-star-form) preserved for app.js + e2e. */
 .entry-item {
+    --sz: 24px;                 /* pointer control hit box (== WCAG AA floor) */
+    --mk: 24px;                 /* marker column width */
+    --dot-shift: -1px;          /* dot vs title first-line centre nudge */
+    --meta-pad: 48px;           /* clear the absolute actions overlay */
+    --act-bottom: 10.5px;       /* centre 24px actions on the meta line */
     position: relative;
     display: grid;
-    grid-template-columns: 36px minmax(0, 1fr) auto;   /* time | content | star */
+    grid-template-columns: var(--mk) minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
     column-gap: var(--space-2);
+    row-gap: 4px;
     align-items: start;
-    padding: 12px 14px 12px 16px;
+    padding: 12px 14px 12px 12px;
     border-bottom: 1px solid var(--color-border-light);
     cursor: pointer;
     transition: background 0.1s;
 }
-
 .entry-item:hover { background: var(--color-bg-secondary); }
 
 .entry-item.selected { background: var(--color-accent-subtle); }
@@ -1375,31 +1383,40 @@ td input[type="text"] {
     background: var(--color-accent);
 }
 
-/* Leading gutter: mono relative time stacked over the unread dot. */
-.entry-time {
-    grid-column: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 5px;
-    padding-top: 2px;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    line-height: 1.3;
-    color: var(--color-text-muted);
-    white-space: nowrap;
+/* Marker: dot = read/unread toggle, aligned to the title's first-line centre. */
+.entry-marker { grid-column: 1; grid-row: 1; justify-self: center; align-self: start; margin: 0; padding: 0; display: flex; }
+.unread-toggle {
+    width: var(--sz);
+    height: var(--sz);
+    margin-top: var(--dot-shift);
+    display: grid;
+    place-items: center;
+    border: none;
+    background: none;
+    padding: 0;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: background 0.1s;
 }
-.unread-dot {
-    width: 6px;
-    height: 6px;
+.unread-toggle::before {
+    content: "";
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
     background: var(--color-accent);
-    margin-left: 1px;
+    transition: background 0.1s, box-shadow 0.1s;
 }
-.entry-item.entry-read .unread-dot { display: none; }
+.entry-item.entry-read .unread-toggle::before {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--color-text-muted);
+}
+.unread-toggle:hover { background: var(--color-accent-subtle); }
+.entry-item.entry-read .unread-toggle:hover::before { box-shadow: inset 0 0 0 1.5px var(--color-accent); }
 
-.entry-content { grid-column: 2; min-width: 0; }
+/* Title (col2 row1) — 3-line clamp; hover affordance restored. */
 .entry-item-title {
+    grid-column: 2;
+    grid-row: 1;
     min-width: 0;
     font-family: var(--font-ui);
     font-size: 16px;
@@ -1414,26 +1431,46 @@ td input[type="text"] {
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 3;
     overflow: hidden;
+    transition: color 0.1s;
 }
 .entry-item.entry-read .entry-item-title,
 .entry-title-normal { font-weight: 500; color: var(--color-text-secondary); }
 .entry-title-bold { font-weight: 600; }
+.entry-item:hover .entry-item-title { color: var(--color-accent); }
 
-/* Meta line: inline favicon + feed · category, plus the summary-badge cluster. */
+/* Timerow (col3 row1) — summary badge + relative time, on the title's first line. */
+.entry-timerow {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+    align-self: start;
+    padding-top: 2px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+}
+.entry-time {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.3;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+
+/* Meta (col2 row2) — favicon + feed only, single-line ellipsis, centred on row2. */
 .entry-item-meta {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: center;
     display: flex;
     align-items: center;
-    margin-top: 4px;
+    padding-right: var(--meta-pad);
     font-family: var(--font-ui);
     font-size: 14px;
     line-height: 1.5;
     color: var(--color-text-muted);
-}
-.entry-meta-text {
     min-width: 0;
-    flex: 1;
-    overflow-wrap: break-word;
-    word-break: break-word;
 }
 .entry-item-meta a { color: var(--color-text-secondary); font-weight: 500; text-decoration: none; }
 .entry-item-meta a:hover { color: var(--color-accent); }
@@ -1442,12 +1479,10 @@ td input[type="text"] {
    so read rows lost their meta-link hover feedback. Restore it with a matching
    read-scoped hover (0,4,1). */
 .entry-item.entry-read .entry-item-meta a:hover { color: var(--color-accent); }
-.entry-item-meta .meta-sep { color: var(--color-text-muted); margin: 0 3px; }
+.entry-meta-text { min-width: 0; flex: 1; overflow: hidden; }
+.entry-feed { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
-/* Favicon in the meta line — 15px, 3px radius, letter-tile fallback. Both the
-   <img> and the .entry-favicon-chip variant are flex items of the
-   align-items:center meta line, so they sit at an identical vertical position
-   (no baseline/vertical-align guesswork). */
+/* Favicon in the meta line — 15px, 3px radius, letter-tile fallback. */
 .entry-favicon {
     width: 15px;
     height: 15px;
@@ -1475,43 +1510,45 @@ td input[type="text"] {
 .fav-c4 { background: #A6563E; }
 .fav-c5 { background: #6E8B3D; }
 
-/* Summary-status cluster — kept small, sits at the end of the meta line. */
-.entry-status {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    margin-left: 6px;
-    color: var(--color-text-muted);
-}
+/* Summary-status cluster (relocated to the timerow). completed/failed filled;
+   pending/processing hollow muted (colours set in the summary-badge* rules).
+   Kept small; SSE renderSummaryBadge target. */
+.entry-status { flex: none; display: inline-flex; align-items: center; }
 .entry-status:empty { display: none; }
 .entry-status .ico { width: 13px; height: 13px; }
 
-/* Star — hover-reveal on pointer devices, always visible on touch (below). */
-.entry-star-form { grid-column: 3; margin: 0; padding: 0; display: flex; }
-.entry-star {
-    align-self: start;
-    width: 26px;
-    height: 26px;
-    margin: -3px -4px 0 0;
+/* Actions overlay — star + open-original, bottom-right, centred on the meta row.
+   Absolute so they don't reserve column width. Always visible (no hover-reveal). */
+.rail-actions {
+    position: absolute;
+    right: 14px;
+    bottom: var(--act-bottom);
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+.entry-star-form { margin: 0; padding: 0; display: flex; }
+.entry-star,
+.entry-open-ext {
+    width: var(--sz);
+    height: var(--sz);
     display: grid;
     place-items: center;
-    border-radius: var(--radius-md);
-    background: none;
     border: none;
-    color: transparent;
+    background: none;
+    padding: 0;
+    margin: 0;
+    border-radius: var(--radius-md);
+    color: var(--color-text-muted);
+    text-decoration: none;
     cursor: pointer;
     transition: color 0.1s, background 0.1s;
 }
-.entry-item:hover .entry-star { color: var(--color-text-muted); }
-/* Keyboard focus reveals the star to the same visible (muted) state as row-hover. */
-.entry-star:focus-visible { color: var(--color-text-muted); }
-/* Hovering the star itself turns it accent. Needs to out-specify
-   `.entry-item:hover .entry-star` (0,3,0), which is always active while the
-   star is hovered — so scope this to the item-hover context too (0,4,0). */
-.entry-item:hover .entry-star:hover { color: var(--color-accent); background: var(--color-accent-subtle); }
-.entry-star.starred,
-.entry-item:hover .entry-star.starred { color: var(--color-accent); }
+.entry-star:hover,
+.entry-open-ext:hover { color: var(--color-accent); background: var(--color-accent-subtle); }
+.entry-star.starred { color: var(--color-accent); }
 .entry-star .ico { width: 14px; height: 14px; }
+.entry-open-ext .ico { width: 13px; height: 13px; }
 .entry-star.starred .ico { fill: currentColor; stroke: currentColor; }
 
 .breadcrumb a { color: var(--color-text-muted); }
@@ -2312,38 +2349,24 @@ summary {
     }
 
     /* ===== Entry row — mobile (wire log) =====
-       Same time-gutter | content | star layout, sized up for touch. */
+       Columns come from the base rule (--mk); touch sizing is input-based
+       (@media any-pointer:coarse), not width-based. */
     .entry-item {
-        grid-template-columns: 36px minmax(0, 1fr) auto;
-        padding: 14px 12px 14px 14px;
+        padding: 14px 12px 14px 12px;
     }
     /* No sidebar on mobile, so a slightly larger title reads well. Keeps the
-       3-line clamp from the base rule. No min-height: it padded 1-line titles
-       with a blank line; the 44px tap target (WCAG 2.5.5) is the whole row,
-       which is click-delegated to the title link (installRowClickToOpen in
-       app.js) and is always >= 86px tall. */
+       3-line clamp from the base rule. */
     .entry-item-title {
         font-size: var(--font-base);
     }
-    .entry-item-meta { margin-top: 4px; }
 
-    /* Feed/category links get a taller hit box (inline links exempt from 44px).
+    /* Feed link gets a taller hit box (inline link exempt from the 44px rule).
        inline-block so the vertical padding counts toward the tap target. */
     .entry-item-meta a {
         display: inline-block;
         vertical-align: middle;
         padding: 0.35rem 0;
     }
-
-    /* Star stays the single row action. On narrow/mobile layouts there is no
-       hover to reveal it, so make it always visible and a 44px tap target. */
-    .entry-star {
-        width: 44px;
-        height: 44px;
-        margin: -10px -10px 0 0;
-        color: var(--color-text-muted);
-    }
-    .entry-star.starred { color: var(--color-accent); }
 
     /* Banner stack: tighter padding on narrow viewports. The 44px dismiss
        button makes the grid row taller than the text, so center every cell
@@ -3127,14 +3150,8 @@ summary {
    source order decides and the touch sizing wins (this ordering bug was found
    and fixed in the prototype). WCAG 2.5.5: every control ≥ 44px. */
 @media (hover: none) {
-    /* Star is always visible on touch (there's no hover to reveal it). */
-    .entry-star {
-        color: var(--color-text-muted);
-        width: 44px;
-        height: 44px;
-        margin: -10px -12px 0 0;
-    }
-    .entry-star.starred { color: var(--color-accent); }
+    /* Entry-row control sizing lives in the @media (any-pointer: coarse) block
+       below (input-based, covers hybrids); nothing row-specific here now. */
 
     /* kbd hints and the keyboard-shortcut affordances are keyboard-only. */
     .rp-action kbd,
@@ -3162,6 +3179,29 @@ summary {
         min-height: 0;
         padding: 10px;
         margin: -10px;
+    }
+}
+
+/* ===== Entry-row touch targets =====
+   Any device with a coarse pointer (phones, tablets, and hybrids like touch
+   laptops / iPad+trackpad) gets 36px row controls — comfortably above WCAG AA
+   (24px) without the density cost of 44px. Pure-mouse desktops keep the compact
+   24px base. Explicit min-width/height out-specifies the generic touch
+   `button { min-height: 44px }` (element selector) that also matches on pure-
+   touch devices. --touch-min (44px) is intentionally NOT reused here. */
+@media (any-pointer: coarse) {
+    .entry-item {
+        --sz: 36px;
+        --mk: 36px;
+        --dot-shift: -7px;
+        --meta-pad: 80px;
+        --act-bottom: 4.5px;
+    }
+    .unread-toggle,
+    .entry-star,
+    .entry-open-ext {
+        min-width: 36px;
+        min-height: 36px;
     }
 }
 
