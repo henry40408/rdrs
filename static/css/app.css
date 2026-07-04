@@ -85,9 +85,10 @@
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
     --shadow-lg: 0 24px 64px rgba(27,28,30,0.18);
 
-    /* Layout */
-    --sidebar-width: 232px;
-    --list-pane-width: 392px;
+    /* Layout — fluid on mid-width screens (1024–1440) so the reading pane
+       isn't cramped on ~1180px tablets; both cap at their prior fixed value. */
+    --sidebar-width: clamp(200px, 16vw, 232px);
+    --list-pane-width: clamp(320px, 28vw, 392px);
     --content-max-width: 720px;
     --page-max-width: 1080px;
     /* Comfortable width for stacked form fields and 2-column info tables on
@@ -278,8 +279,10 @@ code {
     left: 0;
     bottom: 0;
     z-index: 100;
-    overflow-y: auto;
-    overflow-x: hidden;
+    /* The sidebar itself no longer scrolls; the nav scrolls internally so the
+       header and footer stay pinned to the top and bottom (mirrors .list-pane's
+       header + scrolling body). */
+    overflow: hidden;
 }
 
 .sidebar-header {
@@ -287,6 +290,7 @@ code {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-shrink: 0;
 }
 
 .sidebar-logo {
@@ -315,6 +319,10 @@ code {
 
 .sidebar-nav {
     flex: 1;
+    /* min-height:0 lets this flex child shrink below its content height so
+       overflow-y can actually scroll instead of pushing the footer off-screen. */
+    min-height: 0;
+    overflow-y: auto;
     padding: 0 var(--space-3);
     display: flex;
     flex-direction: column;
@@ -411,6 +419,8 @@ code {
     justify-content: space-between;
     gap: var(--space-2);
     font-size: var(--font-sm);
+    /* Stays pinned to the bottom while .sidebar-nav scrolls. */
+    flex-shrink: 0;
 }
 
 .sidebar-user {
@@ -1428,6 +1438,10 @@ td input[type="text"] {
 .entry-item-meta a { color: var(--color-text-secondary); font-weight: 500; text-decoration: none; }
 .entry-item-meta a:hover { color: var(--color-accent); }
 .entry-item.entry-read .entry-item-meta a { color: var(--color-text-muted); font-weight: 400; }
+/* The read-state rule above (0,3,1) out-specifies the generic `a:hover` (0,2,1),
+   so read rows lost their meta-link hover feedback. Restore it with a matching
+   read-scoped hover (0,4,1). */
+.entry-item.entry-read .entry-item-meta a:hover { color: var(--color-accent); }
 .entry-item-meta .meta-sep { color: var(--color-text-muted); margin: 0 3px; }
 
 /* Favicon in the meta line — 15px, 3px radius, letter-tile fallback. Both the
