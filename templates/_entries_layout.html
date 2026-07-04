@@ -43,6 +43,18 @@
                                 </select>
                             </div>
                             {% endif %}
+                            {% if let Some(action) = entries_layout.search_action.as_ref() %}
+                            <form class="form-group form-group-inline entries-search" method="get" action="{{ action }}" data-swap="[data-entries-list]" data-entries-search>
+                                {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
+                                <input type="search" name="q" class="search-input" placeholder="Search in this view…" autocomplete="off" data-testid="scoped-search-input"{% if let Some(qq) = entries_layout.search.as_ref() %} value="{{ qq }}"{% endif %}>
+                            </form>
+                            {% if let Some(n) = entries_layout.matching_count %}
+                            <form class="form-group form-group-inline" method="post" action="{{ action }}/mark-read" data-testid="mark-matching-form">
+                                {% if let Some(qq) = entries_layout.search.as_ref() %}<input type="hidden" name="q" value="{{ qq }}">{% endif %}
+                                <button type="submit" class="btn-secondary btn-sm" data-testid="mark-matching-btn">Mark {{ n }} matching as Read</button>
+                            </form>
+                            {% endif %}
+                            {% endif %}
                         </div>
                         {% endif %}
                     </div>
@@ -75,6 +87,7 @@
                                     <input type="hidden" name="after" value="{{ after }}">
                                     <input type="hidden" name="fragment" value="1">
                                     {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
+                                    {% if let Some(qq) = entries_layout.search.as_ref() %}<input type="hidden" name="q" value="{{ qq }}">{% endif %}
                                     <button type="submit" data-testid="load-more-btn">Load More</button>
                                 </form>
                             {% endif %}
