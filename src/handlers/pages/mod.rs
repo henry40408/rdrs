@@ -1684,38 +1684,20 @@ pub async fn search_page(
                     search: Some(q_for_filter.clone()),
                     ..Default::default()
                 };
-                // SQL search hits inside HTML attributes (`<a href="…bitcoin…">`),
-                // so a fraction of rows are "phantom matches" with no visible
-                // <mark>. Walk the result set in OFFSET-paged batches and keep
-                // only rows where the query appears in the visible title or
-                // stripped snippet, until we hit the display cap, exhaust the
-                // upstream result set, or trip a safety bound.
-                const TARGET: usize = 50;
-                const BATCH: i64 = 100;
-                const MAX_ITERATIONS: usize = 5;
-                const MAX_SCANNED: usize = 1000;
-                let q_lower = q_for_filter.to_ascii_lowercase();
-                let mut visible: Vec<SearchResultView> = Vec::with_capacity(TARGET);
-                let mut offset: i64 = 0;
-                let mut scanned: usize = 0;
-
-                for _ in 0..MAX_ITERATIONS {
-                    if visible.len() >= TARGET || scanned >= MAX_SCANNED {
-                        break;
-                    }
-                    let batch = entry::list_by_user(
-                        conn,
-                        user_id,
-                        &filter,
-                        entry::EntrySortOrder::PublishedAt,
-                        BATCH,
-                        offset,
-                    )?;
-                    let batch_len = batch.len();
-                    scanned += batch_len;
-                    offset += batch_len as i64;
-
-                    for e in batch {
+                // SQL now matches stored plain text (content_text), so every
+                // returned row is a real visible match — no phantom re-filter.
+                const LIMIT: i64 = 50;
+                let rows = entry::list_by_user(
+                    conn,
+                    user_id,
+                    &filter,
+                    entry::EntrySortOrder::PublishedAt,
+                    LIMIT,
+                    0,
+                )?;
+                let out: Vec<SearchResultView> = rows
+                    .into_iter()
+                    .map(|e| {
                         let title = e
                             .entry
                             .title
@@ -1726,32 +1708,19 @@ pub async fn search_page(
                             &q_for_filter,
                             200,
                         );
-                        let visible_hit = title.to_ascii_lowercase().contains(&q_lower)
-                            || snippet.to_ascii_lowercase().contains(&q_lower);
-                        if !visible_hit {
-                            continue;
-                        }
                         let (published_relative, published_at_iso) =
                             format_relative_time(e.entry.published_at);
-                        visible.push(SearchResultView {
+                        SearchResultView {
                             entry_id: e.entry.id,
                             title_html: highlight_html(&title, &q_for_filter),
                             feed_title: e.feed_title.clone().unwrap_or_else(|| e.feed_url.clone()),
                             published_relative,
                             published_at_iso,
                             snippet_html: highlight_html(&snippet, &q_for_filter),
-                        });
-                        if visible.len() >= TARGET {
-                            break;
                         }
-                    }
-
-                    if batch_len < BATCH as usize {
-                        break; // upstream exhausted
-                    }
-                }
-
-                Ok::<_, AppError>(visible)
+                    })
+                    .collect();
+                Ok::<_, AppError>(out)
             })
             .await
             .ok()
