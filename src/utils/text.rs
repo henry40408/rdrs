@@ -2,8 +2,7 @@
 //! Strips tags (including `<script>`/`<style>` bodies and comments) and
 //! collapses whitespace to single spaces.
 
-/// Strip HTML tags and collapse whitespace into a single line of plain text.
-pub fn strip_to_plain_text(raw: &str) -> String {
+fn strip_impl(raw: &str, tag_gap: bool) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut in_tag = false;
     let mut skip_until: Option<&'static str> = None;
@@ -16,7 +15,7 @@ pub fn strip_to_plain_text(raw: &str) -> String {
                 i += pos + end_tag.len();
                 skip_until = None;
                 in_tag = false;
-                if !last_space {
+                if tag_gap && !last_space {
                     out.push(' ');
                     last_space = true;
                 }
@@ -42,7 +41,7 @@ pub fn strip_to_plain_text(raw: &str) -> String {
                 if lower.starts_with("<!--") {
                     if let Some(pos) = raw[i + 4..].find("-->") {
                         i += 4 + pos + 3;
-                        if !last_space {
+                        if tag_gap && !last_space {
                             out.push(' ');
                             last_space = true;
                         }
@@ -56,7 +55,7 @@ pub fn strip_to_plain_text(raw: &str) -> String {
             }
             '>' if in_tag => {
                 in_tag = false;
-                if !last_space {
+                if tag_gap && !last_space {
                     out.push(' ');
                     last_space = true;
                 }
@@ -83,6 +82,19 @@ pub fn strip_to_plain_text(raw: &str) -> String {
     out.trim().to_string()
 }
 
+/// Strip HTML to plain text, inserting a space at tag boundaries (readable
+/// for display snippets).
+pub fn strip_to_plain_text(raw: &str) -> String {
+    strip_impl(raw, true)
+}
+
+/// Like [`strip_to_plain_text`] but inserts **no** separator at tag
+/// boundaries, so a term split across inline tags (`超<b>少女</b>`) stays
+/// contiguous. Used to build the searchable `entry.content_text`.
+pub fn strip_to_search_text(raw: &str) -> String {
+    strip_impl(raw, false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +115,16 @@ mod tests {
                 r#"<a href="https://x/超少女">hi</a><script>var superheroine=1</script>"#
             ),
             "hi",
+        );
+    }
+
+    #[test]
+    fn search_text_joins_across_tags() {
+        // No separator at tag boundaries, so a term split by inline markup
+        // stays contiguous and matchable by LIKE.
+        assert_eq!(
+            strip_to_search_text("超<b>少女</b>與機器人"),
+            "超少女與機器人"
         );
     }
 }
