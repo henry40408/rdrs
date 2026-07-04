@@ -854,11 +854,12 @@ function goToEntryRelative(key) {
         if (link) window.location.href = link.getAttribute('href');
         return;
     }
-    // key === 'c' — prefer the selected entry's own category; fall back
-    // to the page-parent category on /feeds/{id}/entries (the sidebar
-    // exposes it as `active-category-id`).
-    const fromRow = row?.querySelector('.entry-item-meta a[href^="/categories/"]');
-    if (fromRow) { window.location.href = fromRow.getAttribute('href'); return; }
+    // key === 'c' — prefer the selected entry's own category (carried as
+    // data-category-id since the visible category link was removed from the
+    // row); fall back to the page-parent category on /feeds/{id}/entries (the
+    // sidebar exposes it as `active-category-id`).
+    const rowCatId = row?.dataset.categoryId;
+    if (rowCatId) { window.location.href = `/categories/${rowCatId}/entries`; return; }
     if (!window.location.pathname.startsWith('/feeds/')) return;
     const sb = document.querySelector('rdrs-sidebar');
     const catId = sb && sb.getAttribute('active-category-id');

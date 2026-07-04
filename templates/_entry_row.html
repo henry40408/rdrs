@@ -9,7 +9,7 @@
    (data-swap="#reading-pane", data-testid="entry-title-link"), the feed meta
    link, the star form (data-testid="entry-star-action"), the .entry-status
    summary cluster (SSE renderSummaryBadge), and .entry-read/.selected hooks. #}
-<div id="entry-row-{{ r.id }}" class="entry-item{% if r.is_read %} entry-read{% endif %}" data-entry-row data-entry-id="{{ r.id }}"{% if let Some(link) = r.link.as_ref() %} data-entry-link="{{ link }}"{% endif %} data-testid="entry-item">
+<div id="entry-row-{{ r.id }}" class="entry-item{% if r.is_read %} entry-read{% endif %}" data-entry-row data-entry-id="{{ r.id }}" data-category-id="{{ r.category_id }}"{% if let Some(link) = r.link.as_ref() %} data-entry-link="{{ link }}"{% endif %} data-testid="entry-item">
     {# Marker: dot = idempotent read/unread toggle (mirrors the star form). #}
     <form class="entry-marker" method="post" action="/entries/{{ r.id }}/{% if r.is_read %}unread{% else %}read{% endif %}" data-swap="#entry-row-{{ r.id }}">
         <button type="submit" class="unread-toggle" data-testid="entry-read-toggle" aria-label="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %}" title="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %} (m)"></button>
