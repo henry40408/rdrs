@@ -1429,6 +1429,10 @@ td input[type="text"] {
 .entry-item-meta a { color: var(--color-text-secondary); font-weight: 500; text-decoration: none; }
 .entry-item-meta a:hover { color: var(--color-accent); }
 .entry-item.entry-read .entry-item-meta a { color: var(--color-text-muted); font-weight: 400; }
+/* The read-state rule above (0,3,1) out-specifies the generic `a:hover` (0,2,1),
+   so read rows lost their meta-link hover feedback. Restore it with a matching
+   read-scoped hover (0,4,1). */
+.entry-item.entry-read .entry-item-meta a:hover { color: var(--color-accent); }
 .entry-item-meta .meta-sep { color: var(--color-text-muted); margin: 0 3px; }
 
 /* Favicon in the meta line — 15px, 3px radius, letter-tile fallback. Both the
