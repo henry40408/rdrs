@@ -1977,11 +1977,15 @@ pub async fn feed_entries_page(
 #[derive(serde::Deserialize)]
 pub struct MarkReadForm {
     pub q: Option<String>,
+    /// Current `?status=` tab (unread/read/starred/all), threaded through so
+    /// the redirect back to the list preserves it instead of reverting to
+    /// the default "unread" tab. Mirrors the GET search form's hidden input.
+    pub status: Option<String>,
 }
 
 /// `POST /categories/{id}/entries/mark-read` — mark all entries in the category
 /// matching the scoped-search `q` as read, then redirect back to the list
-/// (keeping `?q=`).
+/// (keeping `?q=` and `?status=`).
 pub async fn category_mark_read_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -1994,6 +1998,7 @@ pub async fn category_mark_read_form(
         Some(id),
         None,
         form.q,
+        form.status,
         &format!("/categories/{}/entries", id),
     )
     .await
@@ -2012,9 +2017,34 @@ pub async fn feed_mark_read_form(
         None,
         Some(id),
         form.q,
+        form.status,
         &format!("/feeds/{}/entries", id),
     )
     .await
+}
+
+/// Re-encode `q`/`status` for the redirect querystring using the `url` crate
+/// already in the dependency tree (see `services/sanitize.rs`). Omits either
+/// param when absent; returns the bare `base_path` when both are absent.
+fn build_scoped_redirect(base_path: &str, search: Option<&str>, status: Option<&str>) -> String {
+    let mut params = Vec::new();
+    if let Some(s) = search {
+        params.push(format!(
+            "q={}",
+            url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
+        ));
+    }
+    if let Some(s) = status {
+        params.push(format!(
+            "status={}",
+            url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
+        ));
+    }
+    if params.is_empty() {
+        base_path.to_string()
+    } else {
+        format!("{}?{}", base_path, params.join("&"))
+    }
 }
 
 async fn mark_read_scoped(
@@ -2023,6 +2053,7 @@ async fn mark_read_scoped(
     category_id: Option<i64>,
     feed_id: Option<i64>,
     q: Option<String>,
+    status: Option<String>,
     base_path: &str,
 ) -> Response {
     let search = q.as_ref().and_then(|s| {
@@ -2033,13 +2064,24 @@ async fn mark_read_scoped(
             Some(t.to_string())
         }
     });
+
+    // Guard against a blank/whitespace `q`: without this, an empty search
+    // would build an `EntryFilter` with `search: None`, which matches every
+    // entry in the category/feed — mass-marking the whole scope as read.
+    // This POST endpoint is reachable directly (curl/replay) regardless of
+    // the template only rendering the button when a search is active, so
+    // the guard has to live here, not just in the UI.
+    let Some(search) = search else {
+        let redirect = build_scoped_redirect(base_path, None, status.as_deref());
+        return FlashRedirect::info(&redirect, "No search term — nothing marked.").into_response();
+    };
+
     let filter = entry::EntryFilter {
         category_id,
         feed_id,
-        search: search.clone(),
+        search: Some(search.clone()),
         ..Default::default()
     };
-    let f = filter.clone();
     // `db.user` runs on the priority (write) connection and returns the
     // closure's value wrapped in `Result<_, DbError>`; the closure itself
     // returns `AppResult<i64>`, hence the double unwrap. Mirrors the GReader
@@ -2047,31 +2089,42 @@ async fn mark_read_scoped(
     // count for the flash instead of `?`-propagating.
     let affected = match state
         .db
-        .user(move |conn| entry::mark_read_by_filter(conn, user_id, &f))
+        .user(move |conn| entry::mark_read_by_filter(conn, user_id, &filter))
         .await
     {
-        Ok(Ok(n)) => n,
-        Ok(Err(_)) | Err(_) => 0,
+        Ok(Ok(n)) => Some(n),
+        Ok(Err(e)) => {
+            tracing::warn!(
+                "mark_read_scoped: mark_read_by_filter failed for user {user_id} \
+                 (category_id={category_id:?}, feed_id={feed_id:?}): {e}"
+            );
+            None
+        }
+        Err(e) => {
+            tracing::warn!(
+                "mark_read_scoped: write-connection error for user {user_id} \
+                 (category_id={category_id:?}, feed_id={feed_id:?}): {e}"
+            );
+            None
+        }
     };
-    if affected > 0 {
-        state.sidebar_cache.bust(user_id);
-        state.events.emit_sidebar(user_id);
+
+    let redirect = build_scoped_redirect(base_path, Some(&search), status.as_deref());
+    match affected {
+        Some(n) => {
+            if n > 0 {
+                state.sidebar_cache.bust(user_id);
+                state.events.emit_sidebar(user_id);
+            }
+            FlashRedirect::success(&redirect, format!("Marked {} matching entries as read.", n))
+                .into_response()
+        }
+        None => FlashRedirect::error(
+            &redirect,
+            "Failed to mark matching entries as read. Please try again.",
+        )
+        .into_response(),
     }
-    // Re-encode the keyword for the redirect querystring using the `url` crate
-    // already in the dependency tree (see services/sanitize.rs).
-    let redirect = match search.as_ref() {
-        Some(s) => format!(
-            "{}?q={}",
-            base_path,
-            url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
-        ),
-        None => base_path.to_string(),
-    };
-    FlashRedirect::success(
-        &redirect,
-        format!("Marked {} matching entries as read.", affected),
-    )
-    .into_response()
 }
 
 /// Shared HTML error page rendered for logged-in routes when a requested
