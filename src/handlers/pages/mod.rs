@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use crate::AppState;
 use crate::error::AppError;
 use crate::middleware::auth::{LoginRedirect, PageAdminUser, PageAuthUser};
-use crate::middleware::flash::{Flash, FlashMessage};
+use crate::middleware::flash::{Flash, FlashMessage, FlashRedirect};
 use crate::models::SummaryStatus;
 use crate::models::user_settings;
 use crate::models::{category, entry, entry_summary, feed};
@@ -1972,6 +1972,106 @@ pub async fn feed_entries_page(
     };
 
     Ok((flash, template).into_response())
+}
+
+#[derive(serde::Deserialize)]
+pub struct MarkReadForm {
+    pub q: Option<String>,
+}
+
+/// `POST /categories/{id}/entries/mark-read` — mark all entries in the category
+/// matching the scoped-search `q` as read, then redirect back to the list
+/// (keeping `?q=`).
+pub async fn category_mark_read_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    axum::Form(form): axum::Form<MarkReadForm>,
+) -> Response {
+    mark_read_scoped(
+        &state,
+        auth_user.user.id,
+        Some(id),
+        None,
+        form.q,
+        &format!("/categories/{}/entries", id),
+    )
+    .await
+}
+
+/// `POST /feeds/{id}/entries/mark-read` — same, scoped to a feed.
+pub async fn feed_mark_read_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    axum::Form(form): axum::Form<MarkReadForm>,
+) -> Response {
+    mark_read_scoped(
+        &state,
+        auth_user.user.id,
+        None,
+        Some(id),
+        form.q,
+        &format!("/feeds/{}/entries", id),
+    )
+    .await
+}
+
+async fn mark_read_scoped(
+    state: &AppState,
+    user_id: i64,
+    category_id: Option<i64>,
+    feed_id: Option<i64>,
+    q: Option<String>,
+    base_path: &str,
+) -> Response {
+    let search = q.as_ref().and_then(|s| {
+        let t = s.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
+    });
+    let filter = entry::EntryFilter {
+        category_id,
+        feed_id,
+        search: search.clone(),
+        ..Default::default()
+    };
+    let f = filter.clone();
+    // `db.user` runs on the priority (write) connection and returns the
+    // closure's value wrapped in `Result<_, DbError>`; the closure itself
+    // returns `AppResult<i64>`, hence the double unwrap. Mirrors the GReader
+    // mark-all handler (`state.db.user(...).await??`), but here we keep the
+    // count for the flash instead of `?`-propagating.
+    let affected = match state
+        .db
+        .user(move |conn| entry::mark_read_by_filter(conn, user_id, &f))
+        .await
+    {
+        Ok(Ok(n)) => n,
+        Ok(Err(_)) | Err(_) => 0,
+    };
+    if affected > 0 {
+        state.sidebar_cache.bust(user_id);
+        state.events.emit_sidebar(user_id);
+    }
+    // Re-encode the keyword for the redirect querystring using the `url` crate
+    // already in the dependency tree (see services/sanitize.rs).
+    let redirect = match search.as_ref() {
+        Some(s) => format!(
+            "{}?q={}",
+            base_path,
+            url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
+        ),
+        None => base_path.to_string(),
+    };
+    FlashRedirect::success(
+        &redirect,
+        format!("Marked {} matching entries as read.", affected),
+    )
+    .into_response()
 }
 
 /// Shared HTML error page rendered for logged-in routes when a requested

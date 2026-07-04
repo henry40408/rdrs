@@ -10,7 +10,7 @@ use common::default_test_config;
 
 use std::sync::Arc;
 
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum_test::TestServer;
 use chrono::TimeZone;
 use rdrs::{AppState, Config, DbPool, Role, auth, create_router, db, services};
@@ -1249,6 +1249,119 @@ async fn test_category_entries_page_load_more_fragment() {
     assert!(
         !html.contains("<h1>LMCat</h1>"),
         "fragment must NOT include the page title"
+    );
+}
+
+/// `POST /categories/{id}/entries/mark-read` marks only the entries matching
+/// the scoped-search `q` as read, leaving non-matching entries untouched, and
+/// redirects back to the category page preserving `?q=`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_category_mark_read_scoped_search() {
+    let app = create_test_app_named(default_test_config(), "test_category_mark_read_scoped");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_mr", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_mr", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let (cat_id, matching_id, other_id) = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, user_id, "MarkReadCat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/mr-feed",
+                    title: Some("MR Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (matching, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-mr-match",
+                Some("Widget Roundup"),
+                Some("https://x/mr/match"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (other, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-mr-other",
+                Some("Something Else"),
+                Some("https://x/mr/other"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            (cat.id, matching.id, other.id)
+        })
+        .await
+        .unwrap();
+
+    let response = app
+        .server
+        .post(&format!("/categories/{}/entries/mark-read", cat_id))
+        .form(&[("q", "Widget")])
+        .await;
+
+    response.assert_status_see_other();
+    let location = response.header(header::LOCATION);
+    assert_eq!(
+        location,
+        format!("/categories/{}/entries?q=Widget", cat_id),
+        "redirect must preserve the ?q= scoped-search keyword"
+    );
+
+    let (matching_read_at, other_read_at): (Option<String>, Option<String>) = app
+        .db
+        .user(move |conn| {
+            let matching_read_at: Option<String> = conn
+                .query_row(
+                    "SELECT read_at FROM entry WHERE id = ?1",
+                    [matching_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let other_read_at: Option<String> = conn
+                .query_row("SELECT read_at FROM entry WHERE id = ?1", [other_id], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            (matching_read_at, other_read_at)
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matching_read_at.is_some(),
+        "entry matching the scoped search must be marked read"
+    );
+    assert!(
+        other_read_at.is_none(),
+        "entry not matching the scoped search must remain unread"
     );
 }
 
