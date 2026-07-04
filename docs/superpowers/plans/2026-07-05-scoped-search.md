@@ -143,9 +143,13 @@ mod tests {
 }
 ```
 
-Note: the stripper inserts a space where a tag was, so `超<b>少女</b>` becomes `超 少女` (not `超少女`). This is acceptable for `LIKE %超少女%`? **No** — a space would break the substring match. See Step 4 for the fix decision.
+The two tests above document **current** behavior and PASS: `strip_to_plain_text`
+inserts a space at every tag boundary, so `超<b>少女</b>與機器人` becomes
+`超 少女 與機器人`. That space is fine for display snippets but would break a
+`LIKE %超少女%` search — Steps 3–7 add a no-space `strip_to_search_text` variant
+for the searchable column while leaving `strip_to_plain_text` unchanged.
 
-- [ ] **Step 2: Register the module and switch the handler to the shared fn**
+- [ ] **Step 2: Register the module, switch the handler, build + commit the move (green)**
 
 In `src/utils/mod.rs` add:
 
@@ -159,31 +163,38 @@ In `src/handlers/pages/search_text.rs`, delete the local `strip_to_plain_text` f
 use crate::utils::text::strip_to_plain_text;
 ```
 
-- [ ] **Step 3: Run tests — expect the tag-space test to FAIL**
+Run: `cargo build && cargo nextest run -p rdrs text strips_tags drops_script`
+Expected: PASS (mechanical move; existing snippet/search tests still green). Then `cargo fmt`; commit the move:
 
-Run: `cargo nextest run -p rdrs strips_tags_and_keeps_text_across_tags drops_script`
-Expected: `strips_tags_and_keeps_text_across_tags` FAILS (asserts `"超 少女 與機器人"` — confirming the current behavior inserts a space; the second test PASSES).
-
-- [ ] **Step 4: Decide tag-boundary joining for search correctness**
-
-For search we need `超<b>少女</b>` to match `超少女`. Add a second, no-space variant used by search/indexing only, so display snippets keep readable spacing:
-
-Add to `src/utils/text.rs`:
-
-```rust
-/// Like [`strip_to_plain_text`] but inserts **no** separator at tag
-/// boundaries, so a term split across inline tags (`超<b>少女</b>`) stays
-/// contiguous. Used to build the searchable `entry.content_text`.
-pub fn strip_to_search_text(raw: &str) -> String {
-    strip_impl(raw, false)
-}
+```bash
+git add src/utils/text.rs src/utils/mod.rs src/handlers/pages/search_text.rs
+git commit -S -m "refactor: extract strip_to_plain_text into utils::text"
 ```
 
-Refactor the existing fn to delegate: rename the body to
-`fn strip_impl(raw: &str, tag_gap: bool) -> String` and replace each
-`out.push(' '); last_space = true;` **that fires on a tag close/open boundary**
-(the `'>' if in_tag`, the `skip_until` close, and the comment-close arms — NOT
-the whitespace arm) with:
+- [ ] **Step 3: Write the failing test for the search variant**
+
+Add to the `tests` module in `src/utils/text.rs`:
+
+```rust
+    #[test]
+    fn search_text_joins_across_tags() {
+        // No separator at tag boundaries, so a term split by inline markup
+        // stays contiguous and matchable by LIKE.
+        assert_eq!(strip_to_search_text("超<b>少女</b>與機器人"), "超少女與機器人");
+    }
+```
+
+- [ ] **Step 4: Run to verify it fails**
+
+Run: `cargo nextest run -p rdrs search_text_joins_across_tags`
+Expected: FAIL — `strip_to_search_text` is not defined.
+
+- [ ] **Step 5: Implement the variant via a shared `strip_impl`**
+
+Rename the existing fn body to `fn strip_impl(raw: &str, tag_gap: bool) -> String`.
+In `strip_impl`, replace each `out.push(' '); last_space = true;` **that fires on a
+tag boundary** (the `'>' if in_tag` arm, the `skip_until` close, and the
+comment-close arm — NOT the plain-whitespace arm) with:
 
 ```rust
 if tag_gap && !last_space {
@@ -192,26 +203,33 @@ if tag_gap && !last_space {
 }
 ```
 
-Keep `pub fn strip_to_plain_text(raw) -> String { strip_impl(raw, true) }`.
-Add a test:
+Then add the two public wrappers:
 
 ```rust
-#[test]
-fn search_text_joins_across_tags() {
-    assert_eq!(strip_to_search_text("超<b>少女</b>與機器人"), "超少女與機器人");
+/// Strip HTML to plain text, inserting a space at tag boundaries (readable
+/// for display snippets).
+pub fn strip_to_plain_text(raw: &str) -> String {
+    strip_impl(raw, true)
+}
+
+/// Like [`strip_to_plain_text`] but inserts **no** separator at tag
+/// boundaries, so a term split across inline tags (`超<b>少女</b>`) stays
+/// contiguous. Used to build the searchable `entry.content_text`.
+pub fn strip_to_search_text(raw: &str) -> String {
+    strip_impl(raw, false)
 }
 ```
 
-- [ ] **Step 5: Run tests — expect PASS**
+- [ ] **Step 6: Run tests — expect PASS**
 
-Run: `cargo nextest run -p rdrs search_text_joins_across_tags drops_script`
-Expected: PASS. Then `cargo fmt` and `cargo clippy --all-targets -- -D warnings`.
+Run: `cargo nextest run -p rdrs text`
+Expected: PASS (both `strip_to_plain_text` display tests and `search_text_joins_across_tags`). Then `cargo fmt`; `cargo clippy --all-targets -- -D warnings`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/utils/text.rs src/utils/mod.rs src/handlers/pages/search_text.rs
-git commit -S -m "refactor: extract strip_to_plain_text to utils::text, add search variant"
+git add src/utils/text.rs
+git commit -S -m "feat(utils): add strip_to_search_text (no tag-boundary spaces)"
 ```
 
 ---
@@ -596,13 +614,19 @@ git commit -S -m "refactor(search): drop phantom-match scan, query content_text 
 
 ---
 
-### Task 6: Thread `q` into the category/feed entries handlers
+### Task 6: Thread `q` + layout fields through the category/feed handlers (Rust)
+
+All Rust changes for scoped search. No template references the new layout fields
+yet, so this task builds green on its own. The fragment template's hidden `q`
+input is added here too (its `EntriesFragmentTemplate.q` field is added in this
+same task).
 
 **Files:**
-- Modify: `src/handlers/pages/mod.rs` — `EntriesQuery` (305), `EntriesFragmentTemplate` (360), `category_entries_page` (1513), `feed_entries_page` (1779)
+- Modify: `src/handlers/pages/mod.rs` — `EntriesQuery` (305), `EntriesFragmentTemplate` (360), `EntriesLayoutContext` (162–215), `category_entries_page` (1513), `feed_entries_page` (1779), and every other `EntriesLayoutContext { … }` construction site
+- Modify: `templates/_entries_fragment.html` (Load-More hidden `q`)
 
 **Interfaces:**
-- Produces: `EntriesQuery.q: Option<String>`; `EntriesFragmentTemplate.q: Option<String>`; both handlers set `filter.search` and compute a `matching_count` when `q` is present.
+- Produces: `EntriesQuery.q: Option<String>`; `EntriesFragmentTemplate.q: Option<String>`; `EntriesLayoutContext.{search: Option<String>, search_action: Option<String>, matching_count: Option<i64>}`. Category/feed handlers set `filter.search` and compute `matching_count` when `q` is present.
 
 - [ ] **Step 1: Add the query field**
 
@@ -628,63 +652,7 @@ In `templates/_entries_fragment.html`, inside the `#load-more` form (after the `
     {% if let Some(qq) = q.as_ref() %}<input type="hidden" name="q" value="{{ qq }}">{% endif %}
 ```
 
-- [ ] **Step 3: Set the filter + fragment field in `category_entries_page`**
-
-In `category_entries_page`, after building `filter` (line 1554) add:
-
-```rust
-    let search = query.q.clone().filter(|s| !s.trim().is_empty());
-    filter.search = search.clone();
-```
-
-In the fragment branch (lines 1584–1591) add `q: search.clone(),` to the `EntriesFragmentTemplate { … }` literal.
-
-Compute the matching count for the button (only when searching), just before the `template` is built:
-
-```rust
-    let matching_count = if search.is_some() {
-        let cf = filter.clone();
-        state
-            .db
-            .read_user(move |conn| entry::count_by_user(conn, user_id, &cf))
-            .await
-            .ok()
-            .and_then(|r| r.ok())
-    } else {
-        None
-    };
-```
-
-(`EntryFilter` derives `Clone` — confirm; it's a plain struct of `Option`/`bool`. If not, add `#[derive(Clone)]`.)
-
-- [ ] **Step 4: Same wiring in `feed_entries_page`**
-
-Apply the identical three edits in `feed_entries_page` (filter build ~1829, fragment branch, and `matching_count`).
-
-- [ ] **Step 5: Build**
-
-Run: `cargo build`
-Expected: compile error — `EntriesLayoutContext` has no `search`/`search_action`/`matching_count` fields yet, and the two template literals for `EntriesLayoutContext` are incomplete. That's fixed in Task 7; if you prefer a green checkpoint, do Task 7 before building. Otherwise proceed to Task 7 and build once at its end.
-
-- [ ] **Step 6: Commit (fold with Task 7 if not independently green)**
-
-```bash
-git add src/handlers/pages/mod.rs templates/_entries_fragment.html
-git commit -S -m "feat(entries): accept ?q= scoped-search filter on category/feed pages"
-```
-
----
-
-### Task 7: Render the scoped-search box + mark-matching button
-
-**Files:**
-- Modify: `src/handlers/pages/mod.rs` — `EntriesLayoutContext` (162–215) + the two handlers' `EntriesLayoutContext { … }` literals
-- Modify: `templates/_entries_layout.html` (filter-bar)
-
-**Interfaces:**
-- Consumes: handler-provided `search: Option<String>`, `search_action: Option<String>`, `matching_count: Option<i64>`.
-
-- [ ] **Step 1: Add fields to `EntriesLayoutContext`**
+- [ ] **Step 3: Add the three fields to `EntriesLayoutContext`**
 
 In the struct (lines 162–215) add:
 
@@ -700,9 +668,34 @@ In the struct (lines 162–215) add:
     pub matching_count: Option<i64>,
 ```
 
-- [ ] **Step 2: Populate them in both handlers**
+- [ ] **Step 4: Wire `category_entries_page`**
 
-In `category_entries_page`'s `EntriesLayoutContext { … }` (around 1636–1650) add:
+After building `filter` (line 1554) add:
+
+```rust
+    let search = query.q.clone().filter(|s| !s.trim().is_empty());
+    filter.search = search.clone();
+```
+
+In the fragment branch (lines 1584–1591) add `q: search.clone(),` to the `EntriesFragmentTemplate { … }` literal.
+
+Compute the matching count just before the `template` is built (`EntryFilter` already derives `Clone`, mod.rs:58):
+
+```rust
+    let matching_count = if search.is_some() {
+        let cf = filter.clone();
+        state
+            .db
+            .read_user(move |conn| entry::count_by_user(conn, user_id, &cf))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+    } else {
+        None
+    };
+```
+
+In `category_entries_page`'s `EntriesLayoutContext { … }` literal (around 1636–1650) add:
 
 ```rust
             search: search.clone(),
@@ -710,9 +703,13 @@ In `category_entries_page`'s `EntriesLayoutContext { … }` (around 1636–1650)
             matching_count,
 ```
 
-In `feed_entries_page`'s literal add the same, with `search_action: Some(format!("/feeds/{}/entries", id)),`.
+- [ ] **Step 5: Wire `feed_entries_page`**
 
-Every OTHER `EntriesLayoutContext { … }` literal in the file (unread/all/read/starred/summarized pages) must add the three fields set to `None`:
+Apply the identical four edits in `feed_entries_page` (filter build ~1829, fragment branch `q`, `matching_count`, and the `EntriesLayoutContext` literal), using `search_action: Some(format!("/feeds/{}/entries", id)),`.
+
+- [ ] **Step 6: Backfill the three fields in every other `EntriesLayoutContext` site**
+
+Grep `EntriesLayoutContext {` to find all construction sites (unread/all/read/starred/summarized — ~5 others). Add to each:
 
 ```rust
             search: None,
@@ -720,9 +717,31 @@ Every OTHER `EntriesLayoutContext { … }` literal in the file (unread/all/read/
             matching_count: None,
 ```
 
-(Grep `EntriesLayoutContext {` to find all construction sites — there are ~7.)
+- [ ] **Step 7: Build — expect green**
 
-- [ ] **Step 3: Render the search box + mark-matching button in the template**
+Run: `cargo build`
+Expected: PASS (no template references the new layout fields yet; the fragment template's `q` matches the new field). Then `cargo fmt`; `cargo clippy --all-targets -- -D warnings`.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/handlers/pages/mod.rs templates/_entries_fragment.html
+git commit -S -m "feat(entries): thread ?q= scoped-search filter + layout fields on category/feed pages"
+```
+
+---
+
+### Task 7: Render the scoped-search box + mark-matching button (template)
+
+Pure template change using fields added in Task 6, so it builds green on its own.
+
+**Files:**
+- Modify: `templates/_entries_layout.html` (filter-bar + Load-More form)
+
+**Interfaces:**
+- Consumes: `EntriesLayoutContext.{search, search_action, matching_count}` (Task 6).
+
+- [ ] **Step 1: Render the search box + mark-matching button**
 
 In `templates/_entries_layout.html`, inside the `filter-bar` div (after the `mark_as_read_scope` block, before the closing `</div>` at line 46) add:
 
@@ -741,7 +760,7 @@ In `templates/_entries_layout.html`, inside the `filter-bar` div (after the `mar
                             {% endif %}
 ```
 
-- [ ] **Step 4: Add the hidden `q` to the main Load-More form**
+- [ ] **Step 2: Add the hidden `q` to the main Load-More form**
 
 In `templates/_entries_layout.html`, inside the `#load-more` form (lines 74–79), after the `status` hidden-input line add:
 
@@ -749,15 +768,15 @@ In `templates/_entries_layout.html`, inside the `#load-more` form (lines 74–79
                                     {% if let Some(qq) = entries_layout.search.as_ref() %}<input type="hidden" name="q" value="{{ qq }}">{% endif %}
 ```
 
-- [ ] **Step 5: Build**
+- [ ] **Step 3: Build — expect green**
 
 Run: `cargo build`
 Expected: PASS. Then `cargo fmt`; `cargo clippy --all-targets -- -D warnings`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add src/handlers/pages/mod.rs templates/_entries_layout.html
+git add templates/_entries_layout.html
 git commit -S -m "feat(entries): render scoped-search box and mark-matching button"
 ```
 
