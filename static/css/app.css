@@ -1058,6 +1058,7 @@ input[type="text"],
 input[type="password"],
 input[type="url"],
 input[type="number"],
+input[type="search"],
 select {
     width: 100%;
     padding: var(--space-2) var(--space-3);
@@ -1068,6 +1069,20 @@ select {
     background: var(--color-bg);
     color: var(--color-text);
     transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+/* Strip WebKit's native searchfield chrome (inset rounding, magnifier, and
+   the inner clear button) so type="search" boxes — the scoped-search input —
+   render identically to the other text inputs above. */
+input[type="search"] {
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    appearance: none;
 }
 
 select {
