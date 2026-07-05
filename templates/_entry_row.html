@@ -15,7 +15,7 @@
         <button type="submit" class="unread-toggle" data-testid="entry-read-toggle" aria-label="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %}" title="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %} (m)"></button>
     </form>
 
-    <a href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" title="{{ r.title }}" class="entry-item-title {% if r.is_read %}entry-title-normal{% else %}entry-title-bold{% endif %}" data-testid="entry-title-link">{{ r.title }}</a>
+    <a href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" title="{{ r.title }}" class="entry-item-title" data-testid="entry-title-link">{{ r.title }}</a>
 
     <span class="entry-timerow">
         {# Summary-status cluster relocated here (was the meta tail). Empty span
