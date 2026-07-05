@@ -76,5 +76,5 @@ Feature: Triage entries (star, mark-read, summarize)
     And I type "Superheroine" into the scoped search box
     Then the entry list shows "Superheroine Rises"
     And the entry list does not show "Other News"
-    When I click "Mark 1 matching as Read"
+    When I mark matching entries as read
     Then "Superheroine Rises" is no longer in the unread list
