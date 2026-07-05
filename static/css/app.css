@@ -1473,7 +1473,11 @@ td input[type="text"] {
    read-scoped hover (0,4,1). */
 .entry-item.entry-read .entry-item-meta a:hover { color: var(--color-accent); }
 .entry-meta-text { min-width: 0; flex: 1; overflow: hidden; }
-.entry-feed { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* Shrink-wrap the link to its text so the empty space after a short feed name
+   isn't part of the anchor — a full-width block link made those blank clicks
+   navigate to the feed instead of falling through to the row's open-entry
+   handler. max-width keeps long names truncating with an ellipsis. */
+.entry-feed { display: inline-block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; vertical-align: bottom; }
 
 /* Favicon in the meta line — 15px, 3px radius, letter-tile fallback. */
 .entry-favicon {
