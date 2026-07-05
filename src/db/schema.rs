@@ -2,7 +2,6 @@ use rusqlite::Connection;
 
 use crate::error::AppResult;
 use crate::models::feed::url_to_bucket;
-use crate::utils::text::strip_to_search_text;
 
 pub fn init_db(conn: &Connection) -> AppResult<()> {
     conn.execute_batch(
@@ -282,14 +281,18 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
     }
 
     if version < 10 {
-        // Guard the ALTER with a column-existence check instead of just
-        // running it: the backfill below can take minutes on a large entry
-        // table, and if the process is killed mid-backfill (SIGINT/OOM/host
-        // restart), `user_version` is still 9, so this block re-enters on
-        // next boot. Without the guard, re-running the bare ALTER would fail
-        // with "duplicate column name: content_text" and panic at init_db's
-        // `.expect(...)`, leaving the app unable to boot. The backfill loop
-        // itself is already re-entrant (`WHERE content_text IS NULL`).
+        // Add the (nullable) plain-text search column only. This is a fast,
+        // metadata-only ALTER, so startup is not blocked. Backfilling the
+        // column for legacy rows can take minutes on a large entry table, so
+        // it is done asynchronously after boot by the background worker
+        // `services::content_text_backfill` (idempotent via the
+        // `content_text IS NULL` predicate), NOT here.
+        //
+        // Guard the ALTER with a column-existence check: an older build backfilled
+        // inside init_db and could be killed mid-run with `user_version` still 9
+        // and the column already added; without the guard, re-running the bare
+        // ALTER would fail with "duplicate column name: content_text" and panic
+        // at init_db's `.expect(...)`, leaving the app unable to boot.
         let has_content_text: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('entry') WHERE name = 'content_text')",
             [],
@@ -297,65 +300,6 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         )?;
         if !has_content_text {
             conn.execute("ALTER TABLE entry ADD COLUMN content_text TEXT", [])?;
-        }
-        // Count the rows that still need backfilling up front so the progress
-        // logs below can show "N/TOTAL". On a large entry table this backfill
-        // takes minutes and blocks startup; without visible progress an
-        // operator sees only a silent, slow boot and cannot tell the process
-        // from a hang. The count reflects rows remaining, so a re-entered
-        // migration (see the guard above) reports what is actually left.
-        let total_to_backfill: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM entry WHERE content_text IS NULL AND content IS NOT NULL",
-            [],
-            |row| row.get(0),
-        )?;
-        if total_to_backfill > 0 {
-            tracing::info!(
-                "Migration v10: backfilling content_text for {} entries. \
-                 Startup is blocked until this completes; this can take several \
-                 minutes on a large database.",
-                total_to_backfill
-            );
-        }
-        // Backfill plain-text search content in batches so a large entry
-        // table doesn't build one giant transaction. Rows with NULL content
-        // stay NULL (nothing to search). strip_to_search_text joins across
-        // tags so terms split by inline markup remain matchable.
-        let mut backfilled: i64 = 0;
-        loop {
-            let batch: Vec<(i64, String)> = {
-                let mut stmt = conn.prepare(
-                    "SELECT id, content FROM entry \
-                     WHERE content_text IS NULL AND content IS NOT NULL LIMIT 500",
-                )?;
-                stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-                    .filter_map(Result::ok)
-                    .collect()
-            };
-            if batch.is_empty() {
-                break;
-            }
-            let tx = conn.unchecked_transaction()?;
-            {
-                let mut upd =
-                    tx.prepare_cached("UPDATE entry SET content_text = ?1 WHERE id = ?2")?;
-                for (id, content) in &batch {
-                    upd.execute(rusqlite::params![strip_to_search_text(content), id])?;
-                }
-            }
-            tx.commit()?;
-            backfilled += batch.len() as i64;
-            tracing::info!(
-                "Migration v10: content_text backfill progress {}/{} entries",
-                backfilled,
-                total_to_backfill
-            );
-        }
-        if total_to_backfill > 0 {
-            tracing::info!(
-                "Migration v10: content_text backfill complete ({} entries)",
-                backfilled
-            );
         }
     }
 
@@ -621,9 +565,12 @@ mod tests {
     }
 
     #[test]
-    fn test_v10_backfills_content_text() {
-        // Simulate a pre-v10 DB: create schema, force user_version back to 9,
-        // drop content_text, insert a row with HTML content, re-run init_db.
+    fn test_v10_adds_column_without_backfilling() {
+        // v10 only adds the (nullable) content_text column so startup is not
+        // blocked; the actual backfill of legacy rows runs in the background
+        // (services::content_text_backfill), NOT inside init_db. Simulate a
+        // pre-v10 DB and assert init_db adds the column and bumps the version
+        // but leaves the legacy row's content_text NULL.
         let conn = Connection::open_in_memory().unwrap();
         init_db(&conn).unwrap();
         conn.execute_batch(
@@ -640,12 +587,22 @@ mod tests {
             .unwrap();
         conn.pragma_update(None, "user_version", 9i64).unwrap();
         init_db(&conn).unwrap();
+
+        // Column re-added and version bumped...
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 10);
+        // ...but the legacy row is left for the background worker: still NULL.
         let text: Option<String> = conn
             .query_row("SELECT content_text FROM entry WHERE id = 1", [], |r| {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(text.as_deref(), Some("超少女"));
+        assert_eq!(
+            text, None,
+            "init_db must not backfill; that is the worker's job"
+        );
     }
 
     #[test]

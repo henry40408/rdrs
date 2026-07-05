@@ -1,4 +1,5 @@
 pub mod background;
+pub mod content_text_backfill;
 pub mod entry_retention;
 pub mod events;
 pub mod feed_discovery;
@@ -19,6 +20,7 @@ pub mod summary_cleanup;
 pub mod summary_worker;
 
 pub use background::start_background_sync;
+pub use content_text_backfill::start_content_text_backfill;
 pub use entry_retention::start_retention_worker;
 pub use events::{EventBus, EventKind, SummaryEventData, UserEvent};
 pub use feed_discovery::{DiscoveredFeed, discover_feed};
