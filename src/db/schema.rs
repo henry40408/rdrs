@@ -298,10 +298,30 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         if !has_content_text {
             conn.execute("ALTER TABLE entry ADD COLUMN content_text TEXT", [])?;
         }
+        // Count the rows that still need backfilling up front so the progress
+        // logs below can show "N/TOTAL". On a large entry table this backfill
+        // takes minutes and blocks startup; without visible progress an
+        // operator sees only a silent, slow boot and cannot tell the process
+        // from a hang. The count reflects rows remaining, so a re-entered
+        // migration (see the guard above) reports what is actually left.
+        let total_to_backfill: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM entry WHERE content_text IS NULL AND content IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        if total_to_backfill > 0 {
+            tracing::info!(
+                "Migration v10: backfilling content_text for {} entries. \
+                 Startup is blocked until this completes; this can take several \
+                 minutes on a large database.",
+                total_to_backfill
+            );
+        }
         // Backfill plain-text search content in batches so a large entry
         // table doesn't build one giant transaction. Rows with NULL content
         // stay NULL (nothing to search). strip_to_search_text joins across
         // tags so terms split by inline markup remain matchable.
+        let mut backfilled: i64 = 0;
         loop {
             let batch: Vec<(i64, String)> = {
                 let mut stmt = conn.prepare(
@@ -324,6 +344,18 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
                 }
             }
             tx.commit()?;
+            backfilled += batch.len() as i64;
+            tracing::info!(
+                "Migration v10: content_text backfill progress {}/{} entries",
+                backfilled,
+                total_to_backfill
+            );
+        }
+        if total_to_backfill > 0 {
+            tracing::info!(
+                "Migration v10: content_text backfill complete ({} entries)",
+                backfilled
+            );
         }
     }
 
