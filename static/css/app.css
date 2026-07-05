@@ -1175,9 +1175,7 @@ button:disabled {
     opacity: 1;
 }
 
-/* Compact size — shared by .btn-sm and any button/.btn inside an
-   .actions row. */
-.btn-sm,
+/* Compact size — any button/.btn inside an .actions row. */
 .actions button,
 .actions .btn {
     padding: var(--space-1) var(--space-2);
@@ -3096,13 +3094,6 @@ summary {
     margin-top: var(--space-4);
     margin-bottom: var(--space-4);
     padding: 0 var(--space-5);
-}
-
-/* "Mark Above as Read" reads cramped at btn-sm on desktop; give it a
-   comfortable size. Mobile still gets 44px from the touch baseline. */
-#mark-above-read {
-    font-size: var(--font-sm);
-    padding: var(--space-2) var(--space-4);
 }
 
 /* Mobile: align load-more / mark-above wrappers with .entry-item (which drops

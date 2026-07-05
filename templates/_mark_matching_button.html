@@ -1,7 +1,7 @@
 {% if let Some(n) = entries_layout.matching_count %}{% if *n > 0 %}{% if let Some(action) = entries_layout.search_action.as_ref() %}
-<form class="form-group form-group-inline" method="post" action="{{ action }}/mark-read" data-testid="mark-matching-form">
+<form class="form-group form-group-inline" method="post" action="{{ action }}/mark-read" data-testid="mark-matching-form" onsubmit="return confirm('Mark {{ n }} matching entries as read?')">
     {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
     {% if let Some(qq) = entries_layout.search.as_ref() %}<input type="hidden" name="q" value="{{ qq }}">{% endif %}
-    <button type="submit" class="btn-secondary btn-sm" data-testid="mark-matching-btn">Mark {{ n }} matching as Read</button>
+    <button type="submit" class="btn btn-secondary" data-testid="mark-matching-btn">Mark {{ n }} matching as Read</button>
 </form>
 {% endif %}{% endif %}{% endif %}
