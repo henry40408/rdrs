@@ -280,7 +280,30 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         // on the index endpoint optimization being available.
     }
 
-    const LATEST_VERSION: i64 = 9;
+    if version < 10 {
+        // Add the (nullable) plain-text search column only. This is a fast,
+        // metadata-only ALTER, so startup is not blocked. Backfilling the
+        // column for legacy rows can take minutes on a large entry table, so
+        // it is done asynchronously after boot by the background worker
+        // `services::content_text_backfill` (idempotent via the
+        // `content_text IS NULL` predicate), NOT here.
+        //
+        // Guard the ALTER with a column-existence check: an older build backfilled
+        // inside init_db and could be killed mid-run with `user_version` still 9
+        // and the column already added; without the guard, re-running the bare
+        // ALTER would fail with "duplicate column name: content_text" and panic
+        // at init_db's `.expect(...)`, leaving the app unable to boot.
+        let has_content_text: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('entry') WHERE name = 'content_text')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_content_text {
+            conn.execute("ALTER TABLE entry ADD COLUMN content_text TEXT", [])?;
+        }
+    }
+
+    const LATEST_VERSION: i64 = 10;
     if version < LATEST_VERSION {
         conn.pragma_update(None, "user_version", LATEST_VERSION)?;
     }
@@ -323,7 +346,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     #[test]
@@ -334,7 +357,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     #[test]
@@ -525,5 +548,103 @@ mod tests {
             )
             .unwrap();
         assert_eq!(exists, 1);
+    }
+
+    #[test]
+    fn test_entry_has_content_text_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        let cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('entry')")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert!(cols.contains(&"content_text".to_string()));
+    }
+
+    #[test]
+    fn test_v10_adds_column_without_backfilling() {
+        // v10 only adds the (nullable) content_text column so startup is not
+        // blocked; the actual backfill of legacy rows runs in the background
+        // (services::content_text_backfill), NOT inside init_db. Simulate a
+        // pre-v10 DB and assert init_db adds the column and bumps the version
+        // but leaves the legacy row's content_text NULL.
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO user (id, username, password_hash) VALUES (1, 'u', 'x');
+             INSERT INTO category (id, user_id, name) VALUES (1, 1, 'c');
+             INSERT INTO feed (id, category_id, url) VALUES (1, 1, 'http://x');
+             INSERT INTO entry (id, feed_id, guid, content) VALUES (1, 1, 'g', '超<b>少女</b>');",
+        )
+        .unwrap();
+        // content_text already exists from the init_db call above (a fresh
+        // in-memory DB runs the v10 block immediately); drop it so the
+        // re-run below genuinely simulates a pre-v10 database.
+        conn.execute("ALTER TABLE entry DROP COLUMN content_text", [])
+            .unwrap();
+        conn.pragma_update(None, "user_version", 9i64).unwrap();
+        init_db(&conn).unwrap();
+
+        // Column re-added and version bumped...
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 10);
+        // ...but the legacy row is left for the background worker: still NULL.
+        let text: Option<String> = conn
+            .query_row("SELECT content_text FROM entry WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            text, None,
+            "init_db must not backfill; that is the worker's job"
+        );
+    }
+
+    #[test]
+    fn test_v10_migration_is_crash_re_entrant() {
+        // Simulate a process killed mid-backfill: user_version never got
+        // bumped past 9, but content_text (and its ALTER) already landed on
+        // disk from the interrupted attempt. Re-running init_db must not
+        // panic/error on "duplicate column name: content_text", and the
+        // already-backfilled data must survive untouched.
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO user (id, username, password_hash) VALUES (1, 'u', 'x');
+             INSERT INTO category (id, user_id, name) VALUES (1, 1, 'c');
+             INSERT INTO feed (id, category_id, url) VALUES (1, 1, 'http://x');
+             INSERT INTO entry (id, feed_id, guid, content, content_text) \
+                VALUES (1, 1, 'g', '<b>hello</b>', 'hello');",
+        )
+        .unwrap();
+        // Force user_version back to 9 WITHOUT dropping content_text — this
+        // is the exact re-entry state after an interrupted v10 migration
+        // (ALTER succeeded, backfill may have partially run, but the crash
+        // happened before the version bump at the end of init_db).
+        conn.pragma_update(None, "user_version", 9i64).unwrap();
+
+        // Must not panic or return an error (e.g. duplicate column name).
+        init_db(&conn).unwrap();
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 10);
+
+        let text: Option<String> = conn
+            .query_row("SELECT content_text FROM entry WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            text.as_deref(),
+            Some("hello"),
+            "pre-existing content_text must survive a re-entered migration"
+        );
     }
 }

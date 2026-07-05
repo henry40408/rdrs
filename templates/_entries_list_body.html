@@ -1,0 +1,38 @@
+{% if entries.is_empty() %}
+    {% if entries_layout.onboarding %}
+        <div class="empty-state-quiet onboarding-guide" data-testid="onboarding-guide">
+            <p class="empty-state-quiet-title">Welcome to rdrs</p>
+            <p class="empty-state-quiet-text">Three steps to your first read:</p>
+            <ol class="onboarding-steps">
+                <li>Add a feed, or import an OPML file</li>
+                <li>Wait for the first sync to fetch entries</li>
+                <li>Read</li>
+            </ol>
+            <div class="onboarding-cta">
+                <a href="/feeds" class="btn" data-testid="onboarding-add-feed">Add your first feed →</a>
+                <a href="/feeds/import" class="btn btn-secondary" data-testid="onboarding-import-opml">Import OPML</a>
+            </div>
+        </div>
+    {% else %}
+        <div class="empty-state-quiet">
+            <p class="empty-state-quiet-title">{{ entries_layout.empty_title }}</p>
+            <p class="empty-state-quiet-text">{{ entries_layout.empty_detail }}</p>
+        </div>
+    {% endif %}
+{% else %}
+    {% for r in entries %}{% include "_entry_row.html" %}{% endfor %}
+    {% if let Some(after) = next_cursor %}
+        <form id="load-more" method="get" action="{{ entries_layout.path }}" data-swap="#load-more" class="load-more-form">
+            <input type="hidden" name="after" value="{{ after }}">
+            <input type="hidden" name="fragment" value="1">
+            {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
+            {% if let Some(qq) = entries_layout.search.as_ref() %}<input type="hidden" name="q" value="{{ qq }}">{% endif %}
+            <button type="submit" data-testid="load-more-btn">Load More</button>
+        </form>
+    {% endif %}
+    {% if entries_layout.show_mark_above %}
+    <div class="mark-above-form">
+        <button id="mark-above-read" type="button" class="btn-secondary btn-sm" data-testid="mark-above-btn">Mark Above as Read</button>
+    </div>
+    {% endif %}
+{% endif %}

@@ -69,3 +69,12 @@ Feature: Triage entries (star, mark-read, summarize)
     And I click the entry titled "Test Entry 1"
     And I press the "a" key
     Then the reading pane summary is dismissed
+
+  Scenario: Scoped search within a category, then mark matching as read
+    Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
+    When I open the entries page for category "Anime"
+    And I type "Superheroine" into the scoped search box
+    Then the entry list shows "Superheroine Rises"
+    And the entry list does not show "Other News"
+    When I click "Mark 1 matching as Read"
+    Then "Superheroine Rises" is no longer in the unread list

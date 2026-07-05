@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 use crate::utils::datetime::parse_datetime;
+use crate::utils::text::strip_to_search_text;
 
 mod filters;
 use filters::{
@@ -502,6 +503,7 @@ pub fn upsert_entry_id(
     published_at: Option<DateTime<Utc>>,
 ) -> AppResult<UpsertOutcome> {
     let published_at_str = published_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
+    let content_text = content.map(strip_to_search_text);
 
     // Look up only the id of any existing row (not the full record).
     let existing: Option<i64> = conn
@@ -518,11 +520,19 @@ pub fn upsert_entry_id(
             r#"
             UPDATE entry
             SET title = ?1, link = ?2, content = ?3, summary = ?4, author = ?5,
-                updated_at = datetime('now')
+                content_text = ?7, updated_at = datetime('now')
             WHERE id = ?6
             "#,
         )?
-        .execute(params![title, link, content, summary, author, id])?;
+        .execute(params![
+            title,
+            link,
+            content,
+            summary,
+            author,
+            id,
+            content_text
+        ])?;
 
         return Ok(UpsertOutcome::Updated(id));
     }
@@ -534,8 +544,8 @@ pub fn upsert_entry_id(
     let inserted = conn
         .prepare_cached(
             r#"
-            INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at)
-            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+            INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at, content_text)
+            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
             WHERE NOT EXISTS (
                 SELECT 1 FROM entry_tombstone WHERE feed_id = ?1 AND guid = ?2
             )
@@ -549,7 +559,8 @@ pub fn upsert_entry_id(
             content,
             summary,
             author,
-            published_at_str
+            published_at_str,
+            content_text
         ])?;
 
     if inserted == 0 {
@@ -1063,6 +1074,37 @@ pub fn mark_all_read_by_user(
     Ok(rows as i64)
 }
 
+/// Mark every entry matching `filter` (and owned by `user_id`, and currently
+/// unread) as read. Reuses the shared filter builder so scoped search + status
+/// combine exactly as they do in the list query. Returns rows affected.
+pub fn mark_read_by_filter(
+    conn: &Connection,
+    user_id: i64,
+    filter: &EntryFilter,
+) -> AppResult<i64> {
+    let mut conditions = vec!["c.user_id = ?1".to_string()];
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+    apply_filter_conditions(&mut conditions, &mut params_vec, filter);
+    let where_clause = conditions.join(" AND ");
+
+    let sql = format!(
+        r#"
+        UPDATE entry
+        SET read_at = datetime('now'), updated_at = datetime('now')
+        WHERE read_at IS NULL AND id IN (
+            SELECT e.id FROM entry e
+            INNER JOIN feed f ON e.feed_id = f.id
+            INNER JOIN category c ON f.category_id = c.id
+            WHERE {where_clause}
+        )
+        "#
+    );
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+    let rows = conn.execute(&sql, params_refs.as_slice())?;
+    Ok(rows as i64)
+}
+
 /// Result of finding neighboring entries
 #[derive(Debug, Clone, Serialize)]
 pub struct EntryNeighbors {
@@ -1446,6 +1488,145 @@ mod tests {
     }
 
     #[test]
+    fn mark_read_by_filter_marks_only_matching_unread_owned() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        let m = upsert_entry_id(
+            &conn,
+            feed_id,
+            "m",
+            Some("超少女登場"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let n = upsert_entry_id(
+            &conn,
+            feed_id,
+            "n",
+            Some("其他新聞"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let m_id = match m {
+            UpsertOutcome::Inserted(id) => id,
+            _ => panic!(),
+        };
+        let n_id = match n {
+            UpsertOutcome::Inserted(id) => id,
+            _ => panic!(),
+        };
+
+        let filter = EntryFilter {
+            feed_id: Some(feed_id),
+            search: Some("超少女".to_string()),
+            ..Default::default()
+        };
+        let affected = mark_read_by_filter(&conn, user_id, &filter).unwrap();
+        assert_eq!(affected, 1);
+
+        let m_read: Option<String> = conn
+            .query_row("SELECT read_at FROM entry WHERE id=?1", [m_id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let n_read: Option<String> = conn
+            .query_row("SELECT read_at FROM entry WHERE id=?1", [n_id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(m_read.is_some(), "matching entry marked read");
+        assert!(n_read.is_none(), "non-matching entry untouched");
+
+        // Idempotent: already-read matching row isn't recounted.
+        assert_eq!(mark_read_by_filter(&conn, user_id, &filter).unwrap(), 0);
+    }
+
+    #[test]
+    fn mark_read_by_filter_does_not_cross_user_boundary() {
+        let conn = setup_db();
+        let user1 = create_test_user(&conn, "user1");
+        let user2 = create_test_user(&conn, "user2");
+        let category1 = create_test_category(&conn, user1, "Tech1");
+        let category2 = create_test_category(&conn, user2, "Tech2");
+        let feed1 = create_test_feed(&conn, category1, "https://example.com/feed1.xml");
+        let feed2 = create_test_feed(&conn, category2, "https://example.com/feed2.xml");
+
+        // Same matching title in both users' feeds; filter has no feed_id/
+        // category_id scoping, only a search term, so ownership must come
+        // entirely from the c.user_id = ?1 seed condition.
+        let e1 = upsert_entry_id(
+            &conn,
+            feed1,
+            "e1",
+            Some("超少女登場"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let e2 = upsert_entry_id(
+            &conn,
+            feed2,
+            "e2",
+            Some("超少女登場"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let e1_id = match e1 {
+            UpsertOutcome::Inserted(id) => id,
+            _ => panic!(),
+        };
+        let e2_id = match e2 {
+            UpsertOutcome::Inserted(id) => id,
+            _ => panic!(),
+        };
+
+        let filter = EntryFilter {
+            search: Some("超少女".to_string()),
+            ..Default::default()
+        };
+
+        let affected = mark_read_by_filter(&conn, user1, &filter).unwrap();
+        assert_eq!(affected, 1);
+
+        let e1_read: Option<String> = conn
+            .query_row("SELECT read_at FROM entry WHERE id=?1", [e1_id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let e2_read: Option<String> = conn
+            .query_row("SELECT read_at FROM entry WHERE id=?1", [e2_id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(
+            e1_read.is_some(),
+            "owning user's matching entry marked read"
+        );
+        assert!(
+            e2_read.is_none(),
+            "matching entry belonging to a different user must not be marked read"
+        );
+    }
+
+    #[test]
     fn test_toggle_star() {
         let conn = setup_db();
         let user_id = create_test_user(&conn, "testuser");
@@ -1742,6 +1923,57 @@ mod tests {
     }
 
     #[test]
+    fn search_matches_plain_text_across_tags_not_attributes() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        // (a) term split across inline tags — must match via content_text.
+        upsert_entry(
+            &conn,
+            feed_id,
+            "a",
+            Some("x"),
+            None,
+            Some("超<b>少女</b>登場"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        // (b) term only inside an href attribute — must NOT match.
+        upsert_entry(
+            &conn,
+            feed_id,
+            "b",
+            Some("y"),
+            None,
+            Some(r#"<a href="/超少女">z</a>"#),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let filter = EntryFilter {
+            search: Some("超少女".to_string()),
+            ..Default::default()
+        };
+        let results =
+            list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 50, 0).unwrap();
+        let guids: Vec<_> = results.iter().map(|r| r.entry.guid.clone()).collect();
+        assert!(
+            guids.contains(&"a".to_string()),
+            "tag-split term should match"
+        );
+        assert!(
+            !guids.contains(&"b".to_string()),
+            "attribute-only term should not match"
+        );
+    }
+
+    #[test]
     fn test_mark_read_by_ids() {
         let conn = setup_db();
         let user_id = create_test_user(&conn, "testuser");
@@ -1880,6 +2112,37 @@ mod tests {
         assert!(matches!(second, UpsertOutcome::Updated(id) if id == id1));
         let row = find_by_id(&conn, id1).unwrap().unwrap();
         assert_eq!(row.title.as_deref(), Some("Title 2"));
+    }
+
+    #[test]
+    fn upsert_populates_content_text_stripped() {
+        let conn = setup_db();
+        let user_id = create_test_user(&conn, "testuser");
+        let category_id = create_test_category(&conn, user_id, "Tech");
+        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+
+        let out = upsert_entry_id(
+            &conn,
+            feed_id,
+            "g1",
+            Some("t"),
+            None,
+            Some("超<b>少女</b>與機器人"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let id = match out {
+            UpsertOutcome::Inserted(id) => id,
+            o => panic!("expected Inserted, got {o:?}"),
+        };
+        let ct: Option<String> = conn
+            .query_row("SELECT content_text FROM entry WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(ct.as_deref(), Some("超少女與機器人"));
     }
 
     #[test]

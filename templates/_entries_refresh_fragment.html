@@ -1,0 +1,13 @@
+{# Search-refresh response for the scoped-search box. Replaces the whole entries
+   list (page 1 of the filtered query) AND the mark-matching button slot via
+   multi-target swap templates — performSwap() re-queries each data-swap-target
+   selector and replaces the matched element in place, leaving the header (and the
+   focused search input) untouched. #}
+<template data-swap-target="[data-entries-list]">
+<div class="list-pane-body" data-entries-list data-snapshot-at="{{ entries_layout.snapshot_at }}">
+{% include "_entries_list_body.html" %}
+</div>
+</template>
+<template data-swap-target="[data-mark-matching-slot]">
+<span class="mark-matching-slot" data-mark-matching-slot>{% include "_mark_matching_button.html" %}</span>
+</template>

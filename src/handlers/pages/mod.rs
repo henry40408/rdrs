@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use crate::AppState;
 use crate::error::AppError;
 use crate::middleware::auth::{LoginRedirect, PageAdminUser, PageAuthUser};
-use crate::middleware::flash::{Flash, FlashMessage};
+use crate::middleware::flash::{Flash, FlashMessage, FlashRedirect};
 use crate::models::SummaryStatus;
 use crate::models::user_settings;
 use crate::models::{category, entry, entry_summary, feed};
@@ -212,6 +212,15 @@ pub struct EntriesLayoutContext {
     pub onboarding: bool,
     /// UTC instant captured when the page was rendered; see `snapshot_now()`.
     pub snapshot_at: String,
+    /// Current scoped-search keyword (prefills the box + hidden inputs). `None`
+    /// on pages without scoped search.
+    pub search: Option<String>,
+    /// Form action for the scoped-search box. `Some` ⇒ render the box (category/
+    /// feed pages only). `None` ⇒ no search box.
+    pub search_action: Option<String>,
+    /// Count of entries matching the active search, for the "Mark N matching as
+    /// Read" button label. `None` when not searching.
+    pub matching_count: Option<i64>,
 }
 
 /// Map an `EntryWithFeed` (+ optional summary status) to an `EntryRowView`.
@@ -318,6 +327,8 @@ pub struct EntriesQuery {
     /// (use POST /entries/{id}/read for that). Silently ignored when the
     /// entry doesn't exist or belongs to another user.
     pub entry: Option<i64>,
+    /// Scoped-search keyword (category/feed pages only). Empty/whitespace ⇒ no filter.
+    pub q: Option<String>,
 }
 
 /// Best-effort builder for the `?entry={id}` deep-link reading pane.
@@ -365,9 +376,33 @@ pub(crate) struct EntriesFragmentTemplate {
     /// Load-More fetches keep the current `?status=` filter. `None` for
     /// the 5 PR-10 routes (their filters are path-based, not query).
     pub status_filter: Option<String>,
+    /// Forwarded into the Load-More form so paged fetches keep the search filter.
+    pub q: Option<String>,
 }
 
 impl IntoResponse for EntriesFragmentTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Search-refresh fragment for the scoped-search box: multi-target templates that
+/// replace `[data-entries-list]` and the `[data-mark-matching-slot]` button in place.
+/// Distinct from `EntriesFragmentTemplate` (Load-More append). Reuses
+/// `EntriesLayoutContext` so `_entries_list_body.html` / `_mark_matching_button.html`
+/// render exactly as on the full page.
+#[derive(Template)]
+#[template(path = "_entries_refresh_fragment.html")]
+pub(crate) struct EntriesRefreshFragmentTemplate {
+    pub entries: Vec<EntryRowView>,
+    pub next_cursor: Option<String>,
+    pub entries_layout: EntriesLayoutContext,
+}
+
+impl IntoResponse for EntriesRefreshFragmentTemplate {
     fn into_response(self) -> Response {
         match self.render() {
             Ok(html) => Html(html).into_response(),
@@ -583,6 +618,7 @@ pub async fn unread_page(
                 next_cursor,
                 path: "/",
                 status_filter: None,
+                q: None,
             },
         )
             .into_response();
@@ -636,6 +672,9 @@ pub async fn unread_page(
                 show_mark_above: true,
                 onboarding: no_feeds,
                 snapshot_at: snapshot_now(),
+                search: None,
+                search_action: None,
+                matching_count: None,
             },
         },
     )
@@ -1105,6 +1144,7 @@ pub async fn entries_page(
                 next_cursor,
                 path: "/entries",
                 status_filter: None,
+                q: None,
             },
         )
             .into_response();
@@ -1147,6 +1187,9 @@ pub async fn entries_page(
                 show_mark_above: false,
                 onboarding: false,
                 snapshot_at: snapshot_now(),
+                search: None,
+                search_action: None,
+                matching_count: None,
             },
         },
     )
@@ -1286,6 +1329,7 @@ pub async fn read_entries_page(
                 next_cursor,
                 path: "/entries/read",
                 status_filter: None,
+                q: None,
             },
         )
             .into_response();
@@ -1328,6 +1372,9 @@ pub async fn read_entries_page(
                 show_mark_above: false,
                 onboarding: false,
                 snapshot_at: snapshot_now(),
+                search: None,
+                search_action: None,
+                matching_count: None,
             },
         },
     )
@@ -1373,6 +1420,7 @@ pub async fn starred_entries_page(
                 next_cursor,
                 path: "/entries/starred",
                 status_filter: None,
+                q: None,
             },
         )
             .into_response();
@@ -1415,6 +1463,9 @@ pub async fn starred_entries_page(
                 show_mark_above: false,
                 onboarding: false,
                 snapshot_at: snapshot_now(),
+                search: None,
+                search_action: None,
+                matching_count: None,
             },
         },
     )
@@ -1460,6 +1511,7 @@ pub async fn summarized_entries_page(
                 next_cursor,
                 path: "/entries/summarized",
                 status_filter: None,
+                q: None,
             },
         )
             .into_response();
@@ -1502,6 +1554,9 @@ pub async fn summarized_entries_page(
                 show_mark_above: false,
                 onboarding: false,
                 snapshot_at: snapshot_now(),
+                search: None,
+                search_action: None,
+                matching_count: None,
             },
         },
     )
@@ -1557,6 +1612,8 @@ pub async fn category_entries_page(
         "starred" => filter.starred_only = true,
         _ => filter.unread_only = true,
     }
+    let search = query.q.clone().filter(|s| !s.trim().is_empty());
+    filter.search = search.clone();
     let cursor = query
         .after
         .as_deref()
@@ -1575,17 +1632,38 @@ pub async fn category_entries_page(
     let path = format!("/categories/{}/entries", id);
     let status_filter = query.status.clone();
 
-    if query.fragment == Some(1) {
+    if query.fragment == Some(1) && query.after.is_some() {
         let fragment = EntriesFragmentTemplate {
             entries,
             next_cursor,
             path: Box::leak(path.into_boxed_str()),
             status_filter,
+            q: search.clone(),
         };
         return Ok((flash, fragment).into_response());
     }
 
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    // Computed from a dedicated filter (scope + search + unread_only), not the
+    // tab-influenced `filter` above: `mark_read_by_filter` only ever touches
+    // `read_at IS NULL` rows regardless of the active status tab, so the count
+    // shown next to the "Mark N matching" button must match that, not the
+    // active tab's rows. See mark_read_scoped's fresh EntryFilter below.
+    let matching_count = if let Some(ref s) = search {
+        let mark_filter = entry::EntryFilter {
+            category_id: Some(id),
+            search: Some(s.clone()),
+            unread_only: true,
+            ..Default::default()
+        };
+        state
+            .db
+            .read_user(move |conn| entry::count_by_user(conn, user_id, &mark_filter))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+    } else {
+        None
+    };
 
     let mark_as_read_scope = Some(format!("user/-/label/{}", category_name));
     let base = format!("/categories/{}/entries", id);
@@ -1622,6 +1700,41 @@ pub async fn category_entries_page(
         },
     ];
 
+    let entries_layout = EntriesLayoutContext {
+        active: "",
+        description: None,
+        empty_title: "Nothing in this category",
+        empty_detail: "The feeds in this category haven't brought in any entries yet.",
+        path,
+        show_tab_bar: false,
+        mark_as_read_scope,
+        breadcrumb_items,
+        header_feed_icon_id: None,
+        active_category_id: Some(id),
+        filter_tabs,
+        status_filter,
+        show_mark_above: true,
+        onboarding: false,
+        snapshot_at: snapshot_now(),
+        search: search.clone(),
+        search_action: Some(format!("/categories/{}/entries", id)),
+        matching_count,
+    };
+
+    // Search-refresh fragment (fragment=1, no cursor): replace list + button slot.
+    if query.fragment == Some(1) {
+        return Ok((
+            flash,
+            EntriesRefreshFragmentTemplate {
+                entries,
+                next_cursor,
+                entries_layout,
+            },
+        )
+            .into_response());
+    }
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
     let template = CategoryEntriesTemplate {
@@ -1631,23 +1744,7 @@ pub async fn category_entries_page(
         entries,
         reading_pane,
         next_cursor,
-        entries_layout: EntriesLayoutContext {
-            active: "",
-            description: None,
-            empty_title: "Nothing in this category",
-            empty_detail: "The feeds in this category haven't brought in any entries yet.",
-            path,
-            show_tab_bar: false,
-            mark_as_read_scope,
-            breadcrumb_items,
-            header_feed_icon_id: None,
-            active_category_id: Some(id),
-            filter_tabs,
-            status_filter,
-            show_mark_above: true,
-            onboarding: false,
-            snapshot_at: snapshot_now(),
-        },
+        entries_layout,
     };
 
     Ok((flash, template).into_response())
@@ -1684,38 +1781,20 @@ pub async fn search_page(
                     search: Some(q_for_filter.clone()),
                     ..Default::default()
                 };
-                // SQL search hits inside HTML attributes (`<a href="…bitcoin…">`),
-                // so a fraction of rows are "phantom matches" with no visible
-                // <mark>. Walk the result set in OFFSET-paged batches and keep
-                // only rows where the query appears in the visible title or
-                // stripped snippet, until we hit the display cap, exhaust the
-                // upstream result set, or trip a safety bound.
-                const TARGET: usize = 50;
-                const BATCH: i64 = 100;
-                const MAX_ITERATIONS: usize = 5;
-                const MAX_SCANNED: usize = 1000;
-                let q_lower = q_for_filter.to_ascii_lowercase();
-                let mut visible: Vec<SearchResultView> = Vec::with_capacity(TARGET);
-                let mut offset: i64 = 0;
-                let mut scanned: usize = 0;
-
-                for _ in 0..MAX_ITERATIONS {
-                    if visible.len() >= TARGET || scanned >= MAX_SCANNED {
-                        break;
-                    }
-                    let batch = entry::list_by_user(
-                        conn,
-                        user_id,
-                        &filter,
-                        entry::EntrySortOrder::PublishedAt,
-                        BATCH,
-                        offset,
-                    )?;
-                    let batch_len = batch.len();
-                    scanned += batch_len;
-                    offset += batch_len as i64;
-
-                    for e in batch {
+                // SQL now matches stored plain text (content_text), so every
+                // returned row is a real visible match — no phantom re-filter.
+                const LIMIT: i64 = 50;
+                let rows = entry::list_by_user(
+                    conn,
+                    user_id,
+                    &filter,
+                    entry::EntrySortOrder::PublishedAt,
+                    LIMIT,
+                    0,
+                )?;
+                let out: Vec<SearchResultView> = rows
+                    .into_iter()
+                    .map(|e| {
                         let title = e
                             .entry
                             .title
@@ -1726,32 +1805,19 @@ pub async fn search_page(
                             &q_for_filter,
                             200,
                         );
-                        let visible_hit = title.to_ascii_lowercase().contains(&q_lower)
-                            || snippet.to_ascii_lowercase().contains(&q_lower);
-                        if !visible_hit {
-                            continue;
-                        }
                         let (published_relative, published_at_iso) =
                             format_relative_time(e.entry.published_at);
-                        visible.push(SearchResultView {
+                        SearchResultView {
                             entry_id: e.entry.id,
                             title_html: highlight_html(&title, &q_for_filter),
                             feed_title: e.feed_title.clone().unwrap_or_else(|| e.feed_url.clone()),
                             published_relative,
                             published_at_iso,
                             snippet_html: highlight_html(&snippet, &q_for_filter),
-                        });
-                        if visible.len() >= TARGET {
-                            break;
                         }
-                    }
-
-                    if batch_len < BATCH as usize {
-                        break; // upstream exhausted
-                    }
-                }
-
-                Ok::<_, AppError>(visible)
+                    })
+                    .collect();
+                Ok::<_, AppError>(out)
             })
             .await
             .ok()
@@ -1836,6 +1902,8 @@ pub async fn feed_entries_page(
         "starred" => filter.starred_only = true,
         _ => filter.unread_only = true,
     }
+    let search = query.q.clone().filter(|s| !s.trim().is_empty());
+    filter.search = search.clone();
     let cursor = query
         .after
         .as_deref()
@@ -1854,17 +1922,38 @@ pub async fn feed_entries_page(
     let path = format!("/feeds/{}/entries", id);
     let status_filter = query.status.clone();
 
-    if query.fragment == Some(1) {
+    if query.fragment == Some(1) && query.after.is_some() {
         let fragment = EntriesFragmentTemplate {
             entries,
             next_cursor,
             path: Box::leak(path.into_boxed_str()),
             status_filter,
+            q: search.clone(),
         };
         return Ok((flash, fragment).into_response());
     }
 
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    // Computed from a dedicated filter (scope + search + unread_only), not the
+    // tab-influenced `filter` above: `mark_read_by_filter` only ever touches
+    // `read_at IS NULL` rows regardless of the active status tab, so the count
+    // shown next to the "Mark N matching" button must match that, not the
+    // active tab's rows. See mark_read_scoped's fresh EntryFilter below.
+    let matching_count = if let Some(ref s) = search {
+        let mark_filter = entry::EntryFilter {
+            feed_id: Some(id),
+            search: Some(s.clone()),
+            unread_only: true,
+            ..Default::default()
+        };
+        state
+            .db
+            .read_user(move |conn| entry::count_by_user(conn, user_id, &mark_filter))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+    } else {
+        None
+    };
 
     let mark_as_read_scope = Some(format!("feed/{}", feed_url));
     let base = format!("/feeds/{}/entries", id);
@@ -1905,6 +1994,41 @@ pub async fn feed_entries_page(
         },
     ];
 
+    let entries_layout = EntriesLayoutContext {
+        active: "",
+        description: None,
+        empty_title: "Nothing in this feed",
+        empty_detail: "This feed hasn't published anything yet, or it's still syncing.",
+        path,
+        show_tab_bar: false,
+        mark_as_read_scope,
+        breadcrumb_items,
+        header_feed_icon_id: if feed_has_icon { Some(id) } else { None },
+        active_category_id: Some(cat_id),
+        filter_tabs,
+        status_filter,
+        show_mark_above: true,
+        onboarding: false,
+        snapshot_at: snapshot_now(),
+        search: search.clone(),
+        search_action: Some(format!("/feeds/{}/entries", id)),
+        matching_count,
+    };
+
+    // Search-refresh fragment (fragment=1, no cursor): replace list + button slot.
+    if query.fragment == Some(1) {
+        return Ok((
+            flash,
+            EntriesRefreshFragmentTemplate {
+                entries,
+                next_cursor,
+                entries_layout,
+            },
+        )
+            .into_response());
+    }
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
     let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
     let template = FeedEntriesTemplate {
@@ -1914,26 +2038,163 @@ pub async fn feed_entries_page(
         entries,
         reading_pane,
         next_cursor,
-        entries_layout: EntriesLayoutContext {
-            active: "",
-            description: None,
-            empty_title: "Nothing in this feed",
-            empty_detail: "This feed hasn't published anything yet, or it's still syncing.",
-            path,
-            show_tab_bar: false,
-            mark_as_read_scope,
-            breadcrumb_items,
-            header_feed_icon_id: if feed_has_icon { Some(id) } else { None },
-            active_category_id: Some(cat_id),
-            filter_tabs,
-            status_filter,
-            show_mark_above: true,
-            onboarding: false,
-            snapshot_at: snapshot_now(),
-        },
+        entries_layout,
     };
 
     Ok((flash, template).into_response())
+}
+
+#[derive(serde::Deserialize)]
+pub struct MarkReadForm {
+    pub q: Option<String>,
+    /// Current `?status=` tab (unread/read/starred/all), threaded through so
+    /// the redirect back to the list preserves it instead of reverting to
+    /// the default "unread" tab. Mirrors the GET search form's hidden input.
+    pub status: Option<String>,
+}
+
+/// `POST /categories/{id}/entries/mark-read` — mark all entries in the category
+/// matching the scoped-search `q` as read, then redirect back to the list
+/// (keeping `?q=` and `?status=`).
+pub async fn category_mark_read_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    axum::Form(form): axum::Form<MarkReadForm>,
+) -> Response {
+    mark_read_scoped(
+        &state,
+        auth_user.user.id,
+        Some(id),
+        None,
+        form.q,
+        form.status,
+        &format!("/categories/{}/entries", id),
+    )
+    .await
+}
+
+/// `POST /feeds/{id}/entries/mark-read` — same, scoped to a feed.
+pub async fn feed_mark_read_form(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    axum::Form(form): axum::Form<MarkReadForm>,
+) -> Response {
+    mark_read_scoped(
+        &state,
+        auth_user.user.id,
+        None,
+        Some(id),
+        form.q,
+        form.status,
+        &format!("/feeds/{}/entries", id),
+    )
+    .await
+}
+
+/// Re-encode `q`/`status` for the redirect querystring using the `url` crate
+/// already in the dependency tree (see `services/sanitize.rs`). Omits either
+/// param when absent; returns the bare `base_path` when both are absent.
+fn build_scoped_redirect(base_path: &str, search: Option<&str>, status: Option<&str>) -> String {
+    let mut params = Vec::new();
+    if let Some(s) = search {
+        params.push(format!(
+            "q={}",
+            url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
+        ));
+    }
+    if let Some(s) = status {
+        params.push(format!(
+            "status={}",
+            url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
+        ));
+    }
+    if params.is_empty() {
+        base_path.to_string()
+    } else {
+        format!("{}?{}", base_path, params.join("&"))
+    }
+}
+
+async fn mark_read_scoped(
+    state: &AppState,
+    user_id: i64,
+    category_id: Option<i64>,
+    feed_id: Option<i64>,
+    q: Option<String>,
+    status: Option<String>,
+    base_path: &str,
+) -> Response {
+    let search = q.as_ref().and_then(|s| {
+        let t = s.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
+    });
+
+    // Guard against a blank/whitespace `q`: without this, an empty search
+    // would build an `EntryFilter` with `search: None`, which matches every
+    // entry in the category/feed — mass-marking the whole scope as read.
+    // This POST endpoint is reachable directly (curl/replay) regardless of
+    // the template only rendering the button when a search is active, so
+    // the guard has to live here, not just in the UI.
+    let Some(search) = search else {
+        let redirect = build_scoped_redirect(base_path, None, status.as_deref());
+        return FlashRedirect::info(&redirect, "No search term — nothing marked.").into_response();
+    };
+
+    let filter = entry::EntryFilter {
+        category_id,
+        feed_id,
+        search: Some(search.clone()),
+        ..Default::default()
+    };
+    // `db.user` runs on the priority (write) connection and returns the
+    // closure's value wrapped in `Result<_, DbError>`; the closure itself
+    // returns `AppResult<i64>`, hence the double unwrap. Mirrors the GReader
+    // mark-all handler (`state.db.user(...).await??`), but here we keep the
+    // count for the flash instead of `?`-propagating.
+    let affected = match state
+        .db
+        .user(move |conn| entry::mark_read_by_filter(conn, user_id, &filter))
+        .await
+    {
+        Ok(Ok(n)) => Some(n),
+        Ok(Err(e)) => {
+            tracing::warn!(
+                "mark_read_scoped: mark_read_by_filter failed for user {user_id} \
+                 (category_id={category_id:?}, feed_id={feed_id:?}): {e}"
+            );
+            None
+        }
+        Err(e) => {
+            tracing::warn!(
+                "mark_read_scoped: write-connection error for user {user_id} \
+                 (category_id={category_id:?}, feed_id={feed_id:?}): {e}"
+            );
+            None
+        }
+    };
+
+    let redirect = build_scoped_redirect(base_path, Some(&search), status.as_deref());
+    match affected {
+        Some(n) => {
+            if n > 0 {
+                state.sidebar_cache.bust(user_id);
+                state.events.emit_sidebar(user_id);
+            }
+            FlashRedirect::success(&redirect, format!("Marked {} matching entries as read.", n))
+                .into_response()
+        }
+        None => FlashRedirect::error(
+            &redirect,
+            "Failed to mark matching entries as read. Please try again.",
+        )
+        .into_response(),
+    }
 }
 
 /// Shared HTML error page rendered for logged-in routes when a requested

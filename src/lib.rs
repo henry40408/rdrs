@@ -238,8 +238,16 @@ pub fn create_router(state: AppState) -> Router {
             get(handlers::pages::category_entries_page),
         )
         .route(
+            "/categories/{id}/entries/mark-read",
+            post(handlers::pages::category_mark_read_form),
+        )
+        .route(
             "/feeds/{id}/entries",
             get(handlers::pages::feed_entries_page),
+        )
+        .route(
+            "/feeds/{id}/entries/mark-read",
+            post(handlers::pages::feed_mark_read_form),
         )
         // RDRS-specific feed endpoints (not replaced by GReader API).
         // Icon URL is referenced from `<img src="…">` in the SSR /feeds page;

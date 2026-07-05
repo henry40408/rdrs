@@ -140,6 +140,13 @@ async fn main() {
     let retention_worker_handle =
         services::start_retention_worker(db.clone(), 24, cancel_token.clone());
 
+    // Backfill entry.content_text for rows predating migration v10 in the
+    // background so startup is not blocked. Idempotent and one-shot: a
+    // fully-backfilled DB costs a single COUNT and the task exits. Body search
+    // over not-yet-filled rows is degraded until it completes.
+    let content_text_backfill_handle =
+        services::start_content_text_backfill(db.clone(), cancel_token.clone());
+
     let state = AppState {
         db: db.clone(),
         config: Arc::new(config.clone()),
@@ -198,6 +205,7 @@ async fn main() {
             summary_worker_handle,
             cleanup_worker_handle,
             retention_worker_handle,
+            content_text_backfill_handle,
         );
     });
 

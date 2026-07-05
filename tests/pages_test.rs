@@ -10,7 +10,7 @@ use common::default_test_config;
 
 use std::sync::Arc;
 
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum_test::TestServer;
 use chrono::TimeZone;
 use rdrs::{AppState, Config, DbPool, Role, auth, create_router, db, services};
@@ -1249,6 +1249,364 @@ async fn test_category_entries_page_load_more_fragment() {
     assert!(
         !html.contains("<h1>LMCat</h1>"),
         "fragment must NOT include the page title"
+    );
+}
+
+/// `POST /categories/{id}/entries/mark-read` marks only the entries matching
+/// the scoped-search `q` as read, leaving non-matching entries untouched, and
+/// redirects back to the category page preserving `?q=`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_category_mark_read_scoped_search() {
+    let app = create_test_app_named(default_test_config(), "test_category_mark_read_scoped");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_mr", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_mr", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let (cat_id, matching_id, other_id) = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, user_id, "MarkReadCat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/mr-feed",
+                    title: Some("MR Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (matching, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-mr-match",
+                Some("Widget Roundup"),
+                Some("https://x/mr/match"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (other, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-mr-other",
+                Some("Something Else"),
+                Some("https://x/mr/other"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            (cat.id, matching.id, other.id)
+        })
+        .await
+        .unwrap();
+
+    let response = app
+        .server
+        .post(&format!("/categories/{}/entries/mark-read", cat_id))
+        .form(&[("q", "Widget")])
+        .await;
+
+    response.assert_status_see_other();
+    let location = response.header(header::LOCATION);
+    assert_eq!(
+        location,
+        format!("/categories/{}/entries?q=Widget", cat_id),
+        "redirect must preserve the ?q= scoped-search keyword"
+    );
+
+    let (matching_read_at, other_read_at): (Option<String>, Option<String>) = app
+        .db
+        .user(move |conn| {
+            let matching_read_at: Option<String> = conn
+                .query_row(
+                    "SELECT read_at FROM entry WHERE id = ?1",
+                    [matching_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let other_read_at: Option<String> = conn
+                .query_row("SELECT read_at FROM entry WHERE id = ?1", [other_id], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            (matching_read_at, other_read_at)
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matching_read_at.is_some(),
+        "entry matching the scoped search must be marked read"
+    );
+    assert!(
+        other_read_at.is_none(),
+        "entry not matching the scoped search must remain unread"
+    );
+}
+
+/// `POST /feeds/{id}/entries/mark-read` — same as
+/// `test_category_mark_read_scoped_search` but scoped to a feed, guarding
+/// against a copy-paste argument-order bug in `feed_mark_read_form` /
+/// `category_mark_read_form` (they must pass `Some(id)/None` vs
+/// `None/Some(id)` correctly into the shared `mark_read_scoped` helper).
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_feed_mark_read_scoped_search() {
+    let app = create_test_app_named(default_test_config(), "test_feed_mark_read_scoped");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_fmr", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_fmr", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let (feed_id, matching_id, other_id) = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, user_id, "FeedMarkReadCat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/fmr-feed",
+                    title: Some("FMR Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (matching, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-fmr-match",
+                Some("Widget Roundup"),
+                Some("https://x/fmr/match"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (other, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-fmr-other",
+                Some("Something Else"),
+                Some("https://x/fmr/other"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            (feed.id, matching.id, other.id)
+        })
+        .await
+        .unwrap();
+
+    let response = app
+        .server
+        .post(&format!("/feeds/{}/entries/mark-read", feed_id))
+        .form(&[("q", "Widget")])
+        .await;
+
+    response.assert_status_see_other();
+    let location = response.header(header::LOCATION);
+    assert_eq!(
+        location,
+        format!("/feeds/{}/entries?q=Widget", feed_id),
+        "redirect must preserve the ?q= scoped-search keyword"
+    );
+
+    let (matching_read_at, other_read_at): (Option<String>, Option<String>) = app
+        .db
+        .user(move |conn| {
+            let matching_read_at: Option<String> = conn
+                .query_row(
+                    "SELECT read_at FROM entry WHERE id = ?1",
+                    [matching_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let other_read_at: Option<String> = conn
+                .query_row("SELECT read_at FROM entry WHERE id = ?1", [other_id], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            (matching_read_at, other_read_at)
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matching_read_at.is_some(),
+        "entry matching the scoped search must be marked read"
+    );
+    assert!(
+        other_read_at.is_none(),
+        "entry not matching the scoped search must remain unread"
+    );
+}
+
+/// On the `?status=all` tab, `matching_count` must equal the number of
+/// entries `mark_read_by_filter` will actually mark (unread + matching
+/// search), not the number of entries matching the active tab's filter.
+/// With one matching-read and one matching-unread entry, the rendered
+/// "Mark N matching" count must be 1, and posting the mark-read action must
+/// mark exactly that one entry (leaving the already-read match untouched).
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
+    let app = create_test_app_named(
+        default_test_config(),
+        "test_category_matching_count_all_tab",
+    );
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "alice_mc", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_mc", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let (cat_id, matching_unread_id, matching_read_id) = app
+        .db
+        .user(|conn| {
+            let user_id: i64 = conn
+                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
+                .unwrap();
+            let cat =
+                rdrs::models::category::create_category(conn, user_id, "MatchCountCat").unwrap();
+            let feed = rdrs::models::feed::create_feed(
+                conn,
+                &rdrs::models::feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: "https://x/mc-feed",
+                    title: Some("MC Feed"),
+                    description: None,
+                    site_url: None,
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .unwrap();
+            let (matching_unread, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-mc-unread",
+                Some("Widget Roundup Unread"),
+                Some("https://x/mc/unread"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (matching_read, _) = rdrs::models::entry::upsert_entry(
+                conn,
+                feed.id,
+                "guid-mc-read",
+                Some("Widget Roundup Read"),
+                Some("https://x/mc/read"),
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            rdrs::models::entry::mark_as_read(conn, matching_read.id).unwrap();
+            (cat.id, matching_unread.id, matching_read.id)
+        })
+        .await
+        .unwrap();
+
+    let resp = app
+        .server
+        .get(&format!(
+            "/categories/{}/entries?status=all&q=Widget",
+            cat_id
+        ))
+        .await;
+    resp.assert_status_ok();
+    let html = resp.text();
+    assert!(
+        html.contains("Mark 1 matching as Read"),
+        "count must reflect only the unread match (mark_read_by_filter only \
+         touches read_at IS NULL rows), not both matches on the All tab: {html}"
+    );
+
+    let response = app
+        .server
+        .post(&format!("/categories/{}/entries/mark-read", cat_id))
+        .form(&[("q", "Widget"), ("status", "all")])
+        .await;
+    response.assert_status_see_other();
+
+    let (unread_now, read_now): (Option<String>, Option<String>) = app
+        .db
+        .user(move |conn| {
+            let unread_now: Option<String> = conn
+                .query_row(
+                    "SELECT read_at FROM entry WHERE id = ?1",
+                    [matching_unread_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let read_now: Option<String> = conn
+                .query_row(
+                    "SELECT read_at FROM entry WHERE id = ?1",
+                    [matching_read_id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            (unread_now, read_now)
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        unread_now.is_some(),
+        "the previously-unread match must now be marked read"
+    );
+    assert!(
+        read_now.is_some(),
+        "the already-read match must remain marked read (untouched, not un-marked)"
     );
 }
 
