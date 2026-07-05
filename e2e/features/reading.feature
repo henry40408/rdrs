@@ -22,6 +22,10 @@ Feature: Reading entries
     Then the reading pane shows the feed title "Reading Feed"
     And the reading pane shows a published time
 
+  Scenario: Feed meta link only covers its text, not the blank row space
+    When I open the inbox
+    Then the feed link does not span the full meta row
+
   Scenario: Read filter shows only read entries
     Given the entry titled "Test Entry 1" is marked read
     When I open the read entries page

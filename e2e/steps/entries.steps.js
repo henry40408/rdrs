@@ -555,3 +555,17 @@ When("I click the {string} summary action", async ({ page }, label) => {
   // networkidle (flaky with the app's background sidebar polling).
   await page.locator("[data-summary-error]").waitFor({ state: "detached" });
 });
+
+Then("the feed link does not span the full meta row", async ({ page }) => {
+  // The feed-title <a> must shrink-wrap its text. A full-width block link made
+  // clicks on the blank space after a short feed name navigate to the feed
+  // (installRowClickToOpen defers to any anchor under the pointer) instead of
+  // falling through to the row's open-entry handler. With a short feed name the
+  // anchor box must be narrower than its flex:1 text container.
+  const row = page.getByTestId("entry-item").first();
+  const link = await row.locator(".entry-feed").boundingBox();
+  const container = await row.locator(".entry-meta-text").boundingBox();
+  expect(link).not.toBeNull();
+  expect(container).not.toBeNull();
+  expect(link.width).toBeLessThan(container.width);
+});

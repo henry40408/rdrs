@@ -638,11 +638,6 @@ code {
 }
 .reading-pane-back-link .action-icon .ico { width: 18px; height: 18px; }
 
-.reading-pane-back-link:hover {
-    color: var(--color-text);
-    border-color: var(--color-text-muted);
-}
-
 /* Prev/Next navigation — quiet bordered buttons. app.js enables whichever
    direction has an adjacent entry once `/api/entries/{id}/neighbors` resolves;
    readers also navigate with the j/k keys while the pane is open. */
@@ -664,7 +659,6 @@ code {
 }
 
 .reading-pane-nav-btn:hover:not(:disabled) {
-    background: none;
     border-color: var(--color-text-muted);
     color: var(--color-text);
 }
@@ -731,7 +725,6 @@ code {
 .reading-pane-title a:hover { color: var(--color-accent); }
 
 /* Byline: author (+ published) under the headline. */
-.reading-pane-meta,
 .byline {
     display: flex;
     align-items: center;
@@ -742,7 +735,6 @@ code {
     color: var(--color-text-muted);
 }
 .byline .author { color: var(--color-text-secondary); font-weight: 500; }
-.byline .sep { color: var(--color-border); }
 
 /* Action row: quiet bordered buttons, each with a <kbd> hint. */
 .reading-pane-actions {
@@ -754,7 +746,8 @@ code {
     border-bottom: 1px solid var(--color-border-light);
 }
 
-/* Shared pane action control (also used by the summary-box Copy/Dismiss). */
+/* Shared pane action control (also used by the summary-box Copy/Dismiss, and
+   the mobile Back-to-list link shares its hover). */
 .rp-action {
     display: inline-flex;
     align-items: center;
@@ -775,6 +768,7 @@ code {
     transition: border-color 0.12s, color 0.12s, background 0.12s;
 }
 
+.reading-pane-back-link:hover,
 .rp-action:hover {
     color: var(--color-text);
     border-color: var(--color-text-muted);
@@ -799,7 +793,6 @@ code {
 .rp-action.is-cancel {
     color: var(--color-error);
     border-color: var(--color-error);
-    background: none;
 }
 
 .rp-action.is-cancel .action-icon {
@@ -1153,17 +1146,6 @@ button:disabled {
     cursor: not-allowed;
 }
 
-/* Primary = solid ink (paper text), matching the prototype's btn-primary. */
-.btn-primary {
-    background: var(--color-button-bg);
-    color: var(--color-button-text);
-}
-
-.btn-primary:hover {
-    background: var(--color-button-bg);
-    opacity: 0.85;
-}
-
 .btn-secondary {
     background: transparent;
     color: var(--color-text-secondary);
@@ -1446,9 +1428,7 @@ td input[type="text"] {
     overflow: hidden;
     transition: color 0.1s;
 }
-.entry-item.entry-read .entry-item-title,
-.entry-title-normal { font-weight: 500; color: var(--color-text-secondary); }
-.entry-title-bold { font-weight: 600; }
+.entry-item.entry-read .entry-item-title { font-weight: 500; color: var(--color-text-secondary); }
 .entry-item:hover .entry-item-title { color: var(--color-accent); }
 
 /* Timerow (col3 row1) — summary badge + relative time, on the title's first line. */
@@ -1493,7 +1473,11 @@ td input[type="text"] {
    read-scoped hover (0,4,1). */
 .entry-item.entry-read .entry-item-meta a:hover { color: var(--color-accent); }
 .entry-meta-text { min-width: 0; flex: 1; overflow: hidden; }
-.entry-feed { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* Shrink-wrap the link to its text so the empty space after a short feed name
+   isn't part of the anchor — a full-width block link made those blank clicks
+   navigate to the feed instead of falling through to the row's open-entry
+   handler. max-width keeps long names truncating with an ellipsis. */
+.entry-feed { display: inline-block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; vertical-align: bottom; }
 
 /* Favicon in the meta line — 15px, 3px radius, letter-tile fallback. */
 .entry-favicon {
@@ -1719,10 +1703,6 @@ td input[type="text"] {
 }
 
 /* ===== Badges & Utilities ===== */
-.badge {
-    font-size: var(--font-xs);
-}
-
 .muted {
     color: var(--color-text-muted);
 }
@@ -1924,7 +1904,6 @@ mark {
     color: inherit;
     padding: 0 0.1em;
     box-shadow: inset 0 -2px 0 var(--color-accent);
-    border-radius: 0;
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
 }
@@ -1937,7 +1916,9 @@ mark {
     color: var(--color-error);
 }
 
-.btn-block {
+.btn-block,
+.textarea-full,
+.auth-passkey-btn {
     width: 100%;
 }
 
@@ -1946,12 +1927,7 @@ mark {
     max-width: 100%;
 }
 
-.textarea-full {
-    width: 100%;
-}
-
 .auth-passkey-btn {
-    width: 100%;
     margin-bottom: var(--space-4);
 }
 
@@ -2126,7 +2102,7 @@ summary {
     text-transform: uppercase;
     color: var(--color-text-muted);
 }
-.summary-actions .rp-action:hover { color: var(--color-text); border: none; background: none; }
+.summary-actions .rp-action:hover { color: var(--color-text); }
 .summary-actions .rp-action .action-icon { display: none; }
 
 /* Caption-style title + link above the body. */
@@ -2287,8 +2263,8 @@ summary {
         padding: var(--space-3) var(--space-4);
         font-size: var(--font-sm);
         background: var(--color-bg);
-        position: sticky;
-        top: 0;
+        /* position: sticky / top: 0 inherited from the base rule; only the
+           stacking context differs on mobile. */
         z-index: 1;
         /* The mobile background is fully opaque, so the desktop backdrop blur
            has no visual effect here — drop it to avoid the compositing cost. */
@@ -2712,7 +2688,7 @@ summary {
     border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
     font-weight: 600;
 }
-.stats-period-divider { color: var(--color-text-muted); }
+.stats-period-divider,
 .stats-period-dash { color: var(--color-text-muted); }
 .stats-date-input {
     /* Match the 44px sibling chips/Apply button so the period row stays level
@@ -2737,12 +2713,9 @@ summary {
    divider logic — only the top `--tiles` row draws hairline dividers, so the
    admin sections' first card keeps its own full border box (regression fixed:
    the old `:first-child` reset out-specified `.stats-card-admin` and stripped
-   the first admin card's left border + padding). */
-.stats-card {
-    background: transparent;
-    border-radius: 0;
-    text-align: left;
-}
+   the first admin card's left border + padding). The base `.stats-card`
+   carried only browser-default values (transparent bg, no radius, left
+   text), so it's dropped — the variants below provide all real styling. */
 /* Top stat row: hairline divider between tiles, no card fill. The divider is a
    `border-left` on EVERY tile, pulled left by its own left padding
    (margin-left: -19px = 1px border + 18px padding) so each tile's content sits
