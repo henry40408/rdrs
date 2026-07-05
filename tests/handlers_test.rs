@@ -3813,6 +3813,49 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
     );
 }
 
+/// A top-level navigation to `/entries/{id}/fragment` carrying a `Referer` from
+/// a scoped list page must redirect back into that scope (preserving its
+/// filters) with the pane pre-opened — not dump the user into All Entries. The
+/// redirect short-circuits before the entry is looked up, so the id need not
+/// exist. Regression for "clicking an Unread/category/feed entry jumps to All
+/// Entries" when `app.js` is stale-cached and clicks fall through to navigation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_entry_fragment_document_nav_preserves_referer_scope() {
+    let app = create_test_app_named(default_test_config(), "test_entry_fragment_referer_scope");
+
+    app.server
+        .post("/api/register")
+        .json(&json!({ "username": "ref_scope", "password": "pw123456" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "ref_scope", "password": "pw123456" }))
+        .await
+        .assert_status_ok();
+
+    let response = app
+        .server
+        .get("/entries/123/fragment")
+        .add_header(
+            HeaderName::from_static("sec-fetch-dest"),
+            HeaderValue::from_static("document"),
+        )
+        .add_header(
+            header::REFERER,
+            HeaderValue::from_static("https://testserver/categories/4/entries?q=rust"),
+        )
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(location, "/categories/4/entries?q=rust&entry=123");
+}
+
 /// The media proxy serves a stable `ETag` (the per-URL request signature). A
 /// conditional request that already holds it gets a 304 with no origin fetch,
 /// mirroring miniflux's media proxy.

@@ -7,7 +7,9 @@
 // /api/passkey* and /api/passkeys/* JSON endpoints remain in place
 // (WebAuthn requires JS, this is the planned exception).
 
-import { escapeHtml } from '/static/js/utils.js';
+// `?v=` is substituted at serve time (see handlers/static_assets.rs) so this
+// nested import is cache-busted like the top-level <script> tags.
+import { escapeHtml } from '/static/js/utils.js?v=__RDRS_ASSET_VERSION__';
 
 function base64urlToBuffer(base64url) {
     const padding = '='.repeat((4 - base64url.length % 4) % 4);

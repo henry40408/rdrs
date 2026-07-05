@@ -4,7 +4,11 @@
 // theme controller, entries-family keyboard shortcuts, Mark-as-Read
 // dropdown, Mark Above as Read, row-click-to-open delegation.
 
-import { debounce } from './utils.js';
+// The `?v=` cache-buster is substituted at serve time (see
+// handlers/static_assets.rs). Without it this nested import resolves to a bare,
+// unversioned URL that goes stale forever under the `immutable` cache header —
+// an old cached utils.js missing an export silently breaks this whole module.
+import { debounce } from './utils.js?v=__RDRS_ASSET_VERSION__';
 
 /**
  * Intercept form / link interactions tagged with `data-swap="<selector>"`

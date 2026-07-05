@@ -59,6 +59,16 @@ const FONTS: &[(&str, &[u8])] = &[
     ),
 ];
 
+/// Token embedded in the source of any static module that imports another
+/// static module (e.g. `import … from './utils.js?v=__RDRS_ASSET_VERSION__'`).
+/// It is substituted at serve time with the current build version so the nested
+/// import resolves to a `?v=`-stamped URL, exactly like the top-level `<script>`
+/// tags in the templates. Without it, ES-module imports request bare,
+/// unversioned URLs that never change and so are cached forever under the
+/// `immutable` header — a stale `utils.js` then silently breaks every module
+/// that imports it (the `debounce` regression).
+const ASSET_VERSION_PLACEHOLDER: &str = "__RDRS_ASSET_VERSION__";
+
 fn content_type_for(path: &str) -> &'static str {
     if path.ends_with(".css") {
         "text/css; charset=utf-8"
@@ -101,9 +111,53 @@ pub async fn serve(Path(path): Path<String>) -> Response {
                 (header::CONTENT_TYPE, content_type_for(name)),
                 (header::CACHE_CONTROL, cache_control_for()),
             ],
-            *content,
+            // Stamp nested-import URLs with the build version so they cache-bust
+            // across deploys. No-op for assets without the placeholder.
+            content.replace(ASSET_VERSION_PLACEHOLDER, crate::GIT_VERSION),
         )
             .into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn body_of(path: &str) -> String {
+        let resp = serve(Path(path.to_string())).await;
+        let bytes = axum::body::to_bytes(resp.into_response().into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    /// Nested ES-module imports resolve to bare URLs (`/static/js/utils.js`)
+    /// that carry no `?v=` cache-buster, so under the 1-year `immutable` header
+    /// a browser keeps a stale copy across deploys — the exact trap that broke
+    /// `app.js`'s `debounce` import. Every importer of `utils.js` must request a
+    /// version-stamped URL so a new release invalidates the cache.
+    #[tokio::test]
+    async fn js_nested_imports_are_version_busted() {
+        let expected = format!("utils.js?v={}", crate::GIT_VERSION);
+        for path in [
+            "js/app.js",
+            "js/components/rdrs-sidebar.js",
+            "js/passkey.js",
+        ] {
+            let body = body_of(path).await;
+            assert!(
+                !body.contains(ASSET_VERSION_PLACEHOLDER),
+                "{path}: placeholder was not substituted"
+            );
+            assert!(
+                body.contains(&expected),
+                "{path}: expected a version-stamped utils.js import ({expected})"
+            );
+            assert!(
+                !body.contains("utils.js'") && !body.contains("utils.js\""),
+                "{path}: still imports utils.js without a ?v= cache-buster"
+            );
+        }
     }
 }
