@@ -17,7 +17,9 @@
 // `document.querySelector('rdrs-sidebar')?.refresh()` so the bootstrap, the
 // sessionStorage mirror, and the visible badges all advance together.
 
-import { escapeHtml } from '/static/js/utils.js';
+// `?v=` is substituted at serve time (see handlers/static_assets.rs) so this
+// nested import is cache-busted like the top-level <script> tags.
+import { escapeHtml } from '/static/js/utils.js?v=__RDRS_ASSET_VERSION__';
 
 const ICON = {
   inbox: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.4 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.4-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.8 1.1z"/></svg>',

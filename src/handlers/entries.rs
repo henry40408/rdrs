@@ -1,7 +1,7 @@
 use askama::Template;
 use axum::{
     extract::{Path as AxumPath, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
 };
 
@@ -114,6 +114,73 @@ impl IntoResponse for SummaryFragment {
     }
 }
 
+/// `/{kind}/{id}/entries` with a purely numeric `{id}` — the scoped feed /
+/// category list routes.
+fn is_scoped_entries_path(path: &str, kind: &str) -> bool {
+    path.strip_prefix('/')
+        .and_then(|p| p.strip_prefix(kind))
+        .and_then(|p| p.strip_prefix('/'))
+        .and_then(|p| p.strip_suffix("/entries"))
+        .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// List routes that render entry rows and honour `?entry={id}` to pre-open the
+/// reading pane (see `EntriesQuery`). `/search` is intentionally excluded: it
+/// uses `SearchQuery` and does not deep-link an entry, so a fragment navigation
+/// from search still falls back to All Entries.
+fn is_entry_list_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/" | "/entries" | "/entries/read" | "/entries/starred" | "/entries/summarized"
+    ) || is_scoped_entries_path(path, "categories")
+        || is_scoped_entries_path(path, "feeds")
+}
+
+/// Build the redirect target for a real top-level navigation to the
+/// partial-only `/entries/{id}/fragment` route. The fragment renders bare
+/// `<template>` blocks (blank as a document), so a browser navigation must land
+/// on a full list page with the reading pane pre-opened via `?entry={id}`.
+///
+/// The originating scope (unread / a category / a feed / read / starred /
+/// summarized) is recovered from the same-origin `Referer` and preserved, along
+/// with its filters (`status`, scoped-search `q`); only the referrer's path +
+/// query is reused, so the redirect is always same-origin (no open redirect).
+/// Falls back to All Entries when the referrer is absent, unparseable, or not an
+/// entry-list page (a fresh tab, a refreshed `/fragment` URL, or `/search`).
+fn fragment_document_redirect(headers: &HeaderMap, entry_id: i64) -> String {
+    let fallback = || format!("/entries?entry={entry_id}");
+
+    let Some(referer) = headers.get(header::REFERER).and_then(|v| v.to_str().ok()) else {
+        return fallback();
+    };
+    let Ok(mut url) = url::Url::parse(referer) else {
+        return fallback();
+    };
+    if !is_entry_list_path(url.path()) {
+        return fallback();
+    }
+
+    // Preserve the originating filters, swapping any stale `entry` for this one.
+    let preserved: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(k, _)| k != "entry")
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    {
+        let mut qp = url.query_pairs_mut();
+        qp.clear();
+        for (k, v) in &preserved {
+            qp.append_pair(k, v);
+        }
+        qp.append_pair("entry", &entry_id.to_string());
+    }
+
+    match url.query() {
+        Some(q) => format!("{}?{}", url.path(), q),
+        None => url.path().to_string(),
+    }
+}
+
 /// `GET /entries/{id}/fragment` — returns the reading-pane HTML fragment for
 /// the given entry. The entry must belong to the authenticated user; otherwise
 /// a 404 is returned (same semantics as the JSON `/api/entries/{id}` endpoint
@@ -133,10 +200,11 @@ pub async fn entry_fragment(
     // lands before `app.js` wires up the interceptor, open-in-new-tab, or a
     // refresh of the URL) must NOT show that blank page. Browsers tag
     // top-level navigations with `Sec-Fetch-Dest: document` (a `fetch()` sends
-    // `empty`), so redirect those to the full entries page with the pane
-    // pre-opened via `?entry=`.
+    // `empty`), so redirect those to the originating list page (recovered from
+    // the `Referer`) with the pane pre-opened via `?entry=` — keeping the user
+    // in their current scope instead of always dumping them into All Entries.
     if headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) == Some("document") {
-        return Ok(Redirect::to(&format!("/entries?entry={entry_id}")).into_response());
+        return Ok(Redirect::to(&fragment_document_redirect(&headers, entry_id)).into_response());
     }
 
     // Read current state on the READ connection (not blocked by a background
@@ -831,4 +899,72 @@ pub async fn save_entry_form(
         pane,
         flash: Some(flash),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    fn with_referer(url: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(header::REFERER, HeaderValue::from_str(url).unwrap());
+        h
+    }
+
+    #[test]
+    fn document_redirect_preserves_unread_scope() {
+        let h = with_referer("https://rdrs.example/");
+        assert_eq!(fragment_document_redirect(&h, 42), "/?entry=42");
+    }
+
+    #[test]
+    fn document_redirect_preserves_feed_scope_and_filters() {
+        let h = with_referer("https://rdrs.example/feeds/7/entries?status=unread");
+        assert_eq!(
+            fragment_document_redirect(&h, 42),
+            "/feeds/7/entries?status=unread&entry=42"
+        );
+    }
+
+    #[test]
+    fn document_redirect_preserves_category_scoped_search() {
+        let h = with_referer("https://rdrs.example/categories/3/entries?q=rust");
+        assert_eq!(
+            fragment_document_redirect(&h, 9),
+            "/categories/3/entries?q=rust&entry=9"
+        );
+    }
+
+    #[test]
+    fn document_redirect_replaces_stale_entry_param() {
+        let h = with_referer("https://rdrs.example/entries/starred?entry=1");
+        assert_eq!(
+            fragment_document_redirect(&h, 2),
+            "/entries/starred?entry=2"
+        );
+    }
+
+    #[test]
+    fn document_redirect_falls_back_without_referer() {
+        assert_eq!(
+            fragment_document_redirect(&HeaderMap::new(), 5),
+            "/entries?entry=5"
+        );
+    }
+
+    #[test]
+    fn document_redirect_rejects_non_list_referer() {
+        // `/search`, arbitrary pages, and the mark-read action are not entry-list
+        // routes; each must fall back to All Entries rather than redirect there.
+        for path in [
+            "https://rdrs.example/search?q=x",
+            "https://rdrs.example/settings",
+            "https://rdrs.example/feeds/7/entries/mark-read",
+            "https://rdrs.example/feeds/abc/entries",
+        ] {
+            let h = with_referer(path);
+            assert_eq!(fragment_document_redirect(&h, 5), "/entries?entry=5");
+        }
+    }
 }
