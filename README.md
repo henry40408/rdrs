@@ -88,7 +88,8 @@ All configuration is done via environment variables:
 | `WEBAUTHN_RP_ID` | `localhost` | WebAuthn Relying Party ID for passkey authentication |
 | `WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin URL |
 | `WEBAUTHN_RP_NAME` | `rdrs` | WebAuthn Relying Party display name |
-| `RUST_LOG` | - | Log level filter (e.g., `info`, `debug`, `rdrs=debug`) |
+| `RUST_LOG` | - | Log level filter (e.g., `info`, `debug`, `rdrs=debug`). When unset, defaults to `error,rdrs=info` (rdrs' own INFO logs are visible; other crates stay at ERROR). |
+| `LOG_FORMAT` | `full` | Log output format: `full`, `compact`, `pretty`, or `json`. Can also be set via `--log-format`. |
 | `AUTH_PROXY_HEADER` | - | Header carrying the username from a forward-auth proxy (e.g. `Remote-User`, `X-Forwarded-User`). Empty disables the feature. |
 | `TRUSTED_PROXY_NETWORKS` | - | Comma-separated CIDRs or bare IPs (e.g. `10.0.0.0/8, 192.168.1.5`). The TCP peer IP must fall within one of these for the identity header to be trusted. Required when `AUTH_PROXY_HEADER` is set. |
 | `AUTH_PROXY_USER_CREATION` | `false` | When `true`, JIT-create a local account for an unknown proxy-provided username instead of redirecting to `/login`. |
