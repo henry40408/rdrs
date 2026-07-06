@@ -42,6 +42,22 @@ When("I type {string} into the scoped search box", async ({ page }, term) => {
   await page.getByTestId("scoped-search-input").fill(term);
 });
 
+When("I clear the scoped search box", async ({ page }) => {
+  // Same debounced auto-submit path as typing — clearing fires an `input`
+  // event, swaps the (now-unfiltered) list, and syncScopedSearchParam removes
+  // `?q=` from the address bar.
+  await page.getByTestId("scoped-search-input").fill("");
+});
+
+Then("the URL has the {string} query parameter set to {string}", async ({ page }, key, value) => {
+  // Poll: the URL is replaceState'd only after the debounced swap resolves.
+  await expect.poll(() => new URL(page.url()).searchParams.get(key)).toBe(value);
+});
+
+Then("the URL has no {string} query parameter", async ({ page }, key) => {
+  await expect.poll(() => new URL(page.url()).searchParams.get(key)).toBeNull();
+});
+
 Then("the entry list shows {string}", async ({ page }, title) => {
   await expect(page.getByTestId("entry-item").filter({ hasText: title })).toBeVisible();
 });

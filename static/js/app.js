@@ -65,6 +65,15 @@ function installSwap() {
         setFormBusy(form, { cancellable: !!controller });
         try {
             await performSwap(url, init, target);
+            // Mirror the scoped-search box into the address bar so a
+            // refresh / share reproduces the filtered list — and, crucially,
+            // clearing the box removes the stale `?q=` instead of leaving it
+            // behind. The form lives outside the swapped list container, so
+            // it's still mounted here. `fragment=1` and other hidden inputs
+            // stay out of the visible URL.
+            if (form.matches('[data-entries-search]')) {
+                syncScopedSearchParam(form);
+            }
         } finally {
             // On success the form has been replaced by the swap so the
             // call below is a no-op on the detached node. On failure
@@ -391,6 +400,20 @@ function setEntryParam(entryId, options) {
     else u.searchParams.set('entry', String(entryId));
     if (options?.push) window.history.pushState({}, '', u);
     else window.history.replaceState({}, '', u);
+}
+
+// Mirror the scoped-search box's `q` into the address bar. Sets it when the
+// box has text, deletes it when the box is empty so clearing the search truly
+// resets the URL. replaceState (never push) — typing is a filter refinement,
+// not a distinct history entry.
+function syncScopedSearchParam(form) {
+    const input = form.querySelector('input[name="q"]');
+    if (!input) return;
+    const u = new URL(window.location.href);
+    const q = input.value.trim();
+    if (q) u.searchParams.set('q', q);
+    else u.searchParams.delete('q');
+    window.history.replaceState({}, '', u);
 }
 
 // Resolve the entry id currently mounted in the reading pane. The pane's
