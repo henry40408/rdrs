@@ -37,6 +37,13 @@ Feature: Responsive layout
     Then the entry list pane is at least 370px wide
 
   @mobile
+  Scenario: Entry-row actions align with the meta line on mobile
+    Given I am viewing on a mobile screen
+    And I have a feed with 5 test entries
+    When I open the inbox
+    Then the entry-row actions are vertically centered on the meta line
+
+  @mobile
   Scenario: Opening an entry on mobile reveals the reading pane as a full-screen overlay
     Given I am viewing on a mobile screen
     And I have a feed with 5 test entries
