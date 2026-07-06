@@ -23,6 +23,23 @@ Given("I have a feed with {int} test entries", async ({ seed, currentUser }, cou
   seed.seedTestEntries(feedId, count);
 });
 
+Then("the entry-row actions are vertically centered on the meta line", async ({ page }) => {
+  // The star + open-original cluster (.rail-actions) and the feed meta line
+  // (.entry-item-meta) share grid row 2; their vertical centers must coincide.
+  // The old absolute-overlay positioning used a hand-tuned `bottom` offset that
+  // drifted on mobile (meta grew via the feed-link tap padding), leaving the
+  // actions several px low. align-self:center makes them coincide at any size.
+  const row = page.getByTestId("entry-item").first();
+  const delta = await row.evaluate((n) => {
+    const c = (sel) => {
+      const r = n.querySelector(sel).getBoundingClientRect();
+      return r.y + r.height / 2;
+    };
+    return Math.abs(c(".rail-actions") - c(".entry-item-meta"));
+  });
+  expect(delta).toBeLessThanOrEqual(1.5);
+});
+
 Given("I have read entries across several days", async ({ seed, currentUser }) => {
   const userId = seed.getUserId(currentUser.username);
   const categoryId = seed.createCategory(userId, `Cat-${currentUser.username}`);

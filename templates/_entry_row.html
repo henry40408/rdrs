@@ -1,8 +1,8 @@
 {%- import "_icons.html" as icons -%}
 {# Single entry row — "wire log" v2. Grid: marker(dot=read toggle) | content
    (title + feed meta) | timerow(summary + relative time). The star + open-
-   original actions are an absolute overlay (bottom-right, centred on the meta
-   line) so they don't reserve column width — keeps the title wide on touch.
+   original actions sit in col3/row2, vertically centred against the meta line
+   via align-self (see .rail-actions) — they share col3 with the timerow above.
    Restored vs 0.55: mark-read (dot form) and open-original (↗). Category link
    removed from meta. Preserved for app.js + e2e: #entry-row-{id}, data-entry-row,
    data-entry-id, data-entry-link, data-testid="entry-item", title link

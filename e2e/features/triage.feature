@@ -78,3 +78,14 @@ Feature: Triage entries (star, mark-read, summarize)
     And the entry list does not show "Other News"
     When I mark matching entries as read
     Then "Superheroine Rises" is no longer in the unread list
+
+  Scenario: Clearing the scoped search box resets the q query parameter
+    Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
+    When I open the entries page for category "Anime"
+    And I type "Superheroine" into the scoped search box
+    Then the entry list shows "Superheroine Rises"
+    And the entry list does not show "Other News"
+    And the URL has the "q" query parameter set to "Superheroine"
+    When I clear the scoped search box
+    Then the entry list shows "Other News"
+    And the URL has no "q" query parameter
