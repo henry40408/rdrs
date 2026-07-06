@@ -1866,6 +1866,13 @@ td input[type="text"] {
     margin-bottom: var(--space-1);
     text-decoration: none;
     transition: color 0.2s;
+    /* Override .page-content's `word-break: break-word`, which (== overflow-wrap:
+       anywhere) lets a Latin word break mid-word on narrow screens — splitting a
+       highlighted term like `Grok` into `Gro` / `k` across a line so the <mark>
+       renders in fragments. Keep normal word breaking; overflow-wrap still wraps
+       genuinely unbreakable long tokens whole. */
+    word-break: normal;
+    overflow-wrap: break-word;
 }
 .search-result-title:hover {
     color: var(--color-accent-hover);
@@ -2426,16 +2433,20 @@ summary {
     .feed-filter-link,
     .reading-pane-back-link,
     .breadcrumb a,
-    .search-result-title,
     .link a {
         display: inline-flex;
         align-items: center;
         min-height: var(--touch-min);
     }
 
-    /* Keep the full-row tap target for block-level title links. */
+    /* Full-row tap target WITHOUT flex. A flex/inline-flex title turns each
+       text run and the search-highlight <mark> into separate flex items, which
+       wrap into a broken multi-column layout on narrow screens (text appears to
+       flow around the highlighted word). Block keeps the <mark> in normal
+       inline flow; min-height still guarantees the 44px touch target. */
     .search-result-title {
-        display: flex;
+        display: block;
+        min-height: var(--touch-min);
     }
 
     /* Square icon-only controls: width AND height must reach the minimum. */
