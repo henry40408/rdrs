@@ -173,6 +173,24 @@ body {
     overflow-x: hidden;
 }
 
+/* Light mode: use the OS default (heavier) smoothing instead of `antialiased`.
+   On macOS `antialiased` renders dark ink on light paper spindly — most visible
+   in the serif reading text, whose CJK falls back to the system serif (Songti).
+   Dark mode keeps `antialiased` (light-on-dark blooms, so it stays crisp). This
+   inherits from `body` to all text. Covers both an explicit light pick and the
+   no-`data-theme` default when the OS is light; `[data-theme="dark"]` is
+   excluded so it keeps antialiased. */
+[data-theme="light"] body {
+    -webkit-font-smoothing: auto;
+    -moz-osx-font-smoothing: auto;
+}
+@media (prefers-color-scheme: light) {
+    html:not([data-theme]) body {
+        -webkit-font-smoothing: auto;
+        -moz-osx-font-smoothing: auto;
+    }
+}
+
 ::selection { background: var(--color-accent-wash-2); }
 
 /* Global focus ring — 2px accent, matches the prototype. */

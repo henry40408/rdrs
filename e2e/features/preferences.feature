@@ -8,10 +8,12 @@ Feature: Preferences
   Scenario: Switching to dark theme sets data-theme to dark
     When I switch the theme to "dark"
     Then the html element has data-theme "dark"
+    And the body uses "antialiased" font smoothing
 
   Scenario: Switching to light theme sets data-theme to light
     When I switch the theme to "light"
     Then the html element has data-theme "light"
+    And the body uses "auto" font smoothing
 
   Scenario: Switching to system theme removes the data-theme attribute
     When I switch the theme to "dark"
