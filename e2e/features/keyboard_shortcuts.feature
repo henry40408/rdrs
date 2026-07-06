@@ -29,6 +29,14 @@ Feature: Keyboard shortcuts
     And I press the "A" key
     Then I see 0 entries in the entry list
 
+  Scenario: A still marks loaded entries as read after a scoped search
+    When I open the entries page for feed "Shortcut Feed"
+    And I type "Entry" into the scoped search box
+    And the URL has the "q" query parameter set to "Entry"
+    And I confirm the next dialog
+    And I press the "A" key
+    Then I see 0 entries in the entry list
+
   Scenario: Enter opens the selected entry into the reading pane
     When I open the inbox
     And I press the "j" key
