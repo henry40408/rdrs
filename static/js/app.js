@@ -1381,7 +1381,13 @@ document.addEventListener('rdrs:swap-complete', installEntriesSearch);
 // `a=user/-/state/com.google/read`.
 function installMarkAboveButton() {
     const btn = document.getElementById('mark-above-read');
-    if (!btn) return;
+    if (!btn || btn.dataset.markAboveBound) return;
+    // The button lives *inside* the swapped `[data-entries-list]` container,
+    // so a scoped-search swap discards the listener-bearing element and drops
+    // in a fresh one — re-run on `rdrs:swap-complete` to re-bind. The
+    // per-element guard keeps unrelated swaps (which leave this same button in
+    // place) from stacking a second listener and double-POSTing.
+    btn.dataset.markAboveBound = '1';
     btn.addEventListener('click', async () => {
         const rows = Array.from(document.querySelectorAll('[data-entry-row]'));
         const ids = rows.map(r => r.dataset.entryId).filter(Boolean);
@@ -1418,6 +1424,7 @@ function installMarkAboveButton() {
     });
 }
 installMarkAboveButton();
+document.addEventListener('rdrs:swap-complete', installMarkAboveButton);
 
 // Entry-row click delegation. Clicking anywhere on a row (not just the
 // title link) opens the entry. Delegates to the title's
