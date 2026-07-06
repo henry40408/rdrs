@@ -22,6 +22,21 @@ Then("the html element has no data-theme attribute", async ({ page }) => {
   await expect(page.locator("html")).not.toHaveAttribute("data-theme");
 });
 
+Then("the body uses {string} font smoothing", async ({ page }, value) => {
+  // Light mode drops the global `-webkit-font-smoothing: antialiased` (which
+  // renders dark ink on light paper thin on macOS) back to the heavier `auto`;
+  // dark mode keeps `antialiased`. The computed value is deterministic across
+  // platforms even though the visual effect is macOS-only, so this guards the
+  // per-theme rule without depending on screenshot rendering.
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        getComputedStyle(document.body).getPropertyValue("-webkit-font-smoothing")
+      )
+    )
+    .toBe(value);
+});
+
 When("I change my password to {string}", async ({ page, currentUser, serverUrl }, newPassword) => {
   await page.locator('form[action="/user-settings/password"] [data-testid="current-password"]').fill(currentUser.password);
   await page.locator('form[action="/user-settings/password"] [data-testid="new-password"]').fill(newPassword);
