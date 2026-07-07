@@ -32,18 +32,10 @@ ignore = [
     # upstream releases against 0.41. Drop these once both paths are clean.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
-    # The three entries below are tracked in issue #346 and MUST be removed as
-    # part of resolving it (once the 7-day cooldown on the fixes has elapsed,
-    # from 2026-07-07). They were accepted temporarily to unblock unrelated work.
-    #
-    # ammonia mXSS via MathML `annotation-xml` (our HTML sanitizer). Fixed in
-    # 4.1.3, published 2026-06-30 — younger than the 7-day cooldown.
-    "RUSTSEC-2026-0193",
-    # anyhow `Error::downcast_mut()` unsoundness (transitive via rav1e). Clear
-    # with `cargo update -p anyhow` to a patched release after the cooldown.
-    "RUSTSEC-2026-0190",
     # ttf-parser unmaintained (transitive via resvg/usvg/fontdb, favicon render).
-    # No maintained fix; revisit when the resvg chain drops or replaces it.
+    # No maintained fix — 0.25.1 is the latest release — so this can't be cleared
+    # by a version bump; revisit when the resvg chain drops or replaces it.
+    # Tracked in issue #346 (the ammonia/anyhow entries there are now resolved).
     "RUSTSEC-2026-0192",
     # crossbeam-epoch invalid pointer deref in the `fmt::Display`/`fmt::Pointer`
     # impls for `Atomic`/`Shared` on a null pointer (transitive via image and
