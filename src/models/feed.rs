@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::db::{Db, Tx, is_unique_violation};
+use crate::db::{Db, DbInner, Tx, is_unique_violation};
 use crate::error::{AppError, AppResult};
 use crate::models::image;
 use crate::{db_execute, db_execute_tx, query_all, query_one, query_opt, query_scalar};
@@ -314,8 +314,8 @@ pub async fn owner_user_ids_for_feeds(db: &Db, feed_ids: &[i64]) -> AppResult<Ve
     const PREFIX: &str = "SELECT DISTINCT c.user_id \
          FROM feed f JOIN category c ON c.id = f.category_id WHERE f.id IN (";
     // Dynamic IN-list: one bound placeholder per id, built per backend.
-    let rows = match db {
-        Db::Sqlite(pool) => {
+    let rows = match db.inner() {
+        DbInner::Sqlite(pool) => {
             let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(PREFIX);
             let mut sep = qb.separated(", ");
             for id in feed_ids {
@@ -324,7 +324,7 @@ pub async fn owner_user_ids_for_feeds(db: &Db, feed_ids: &[i64]) -> AppResult<Ve
             qb.push(")");
             qb.build_query_scalar::<i64>().fetch_all(pool).await
         }
-        Db::Postgres(pool) => {
+        DbInner::Postgres(pool) => {
             let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(PREFIX);
             let mut sep = qb.separated(", ");
             for id in feed_ids {

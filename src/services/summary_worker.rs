@@ -74,6 +74,8 @@ pub fn start_summary_worker(
     events: EventBus,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        // Background priority: DB operations yield to interactive work on SQLite.
+        let db = db.background();
         tracing::info!("Summary worker started");
 
         loop {
@@ -271,6 +273,8 @@ pub async fn recover_incomplete_jobs(
     tx: mpsc::Sender<SummaryJob>,
     cache: Arc<SummaryCache>,
 ) -> usize {
+    // Startup recovery is background work; yield to interactive requests.
+    let db = db.background();
     let incomplete = match entry_summary::find_incomplete(&db).await {
         Ok(jobs) => jobs,
         Err(e) => {

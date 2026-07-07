@@ -26,6 +26,8 @@ pub fn start_retention_worker(
     cancel_token: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        // Background priority: DB operations yield to interactive work on SQLite.
+        let db = db.background();
         tracing::info!("Retention worker started: interval={}h", interval_hours);
         let mut interval = tokio::time::interval(Duration::from_secs(interval_hours * 3600));
 

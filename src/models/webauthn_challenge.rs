@@ -104,8 +104,8 @@ pub async fn find_and_delete_challenge(
 ) -> AppResult<WebauthnChallenge> {
     let now = Utc::now();
 
-    let row = match user_id {
-        Some(uid) => query_opt!(
+    let row = if let Some(uid) = user_id {
+        query_opt!(
             db,
             WebauthnChallengeRow,
             "SELECT id, challenge, user_id, challenge_type, state_data, created_at, expires_at \
@@ -115,8 +115,9 @@ pub async fn find_and_delete_challenge(
             uid,
             challenge_type.as_str(),
             now
-        ),
-        None => query_opt!(
+        )
+    } else {
+        query_opt!(
             db,
             WebauthnChallengeRow,
             "SELECT id, challenge, user_id, challenge_type, state_data, created_at, expires_at \
@@ -125,7 +126,7 @@ pub async fn find_and_delete_challenge(
              ORDER BY created_at DESC LIMIT 1",
             challenge_type.as_str(),
             now
-        ),
+        )
     }
     .map_err(AppError::Database)?
     .ok_or(AppError::ChallengeNotFound)?;

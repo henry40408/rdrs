@@ -20,6 +20,8 @@ pub fn start_background_sync(
     events: EventBus,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        // Background priority: DB operations yield to interactive work on SQLite.
+        let db = db.background();
         info!("Background sync task started");
 
         let mut ticker = interval(Duration::from_secs(60));

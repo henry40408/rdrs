@@ -1,7 +1,7 @@
 use chrono::{DateTime, SubsecRound, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{Db, Tx};
+use crate::db::{Db, DbInner, Tx};
 use crate::error::{AppError, AppResult};
 use crate::utils::text::strip_to_search_text;
 use crate::{db_execute, db_execute_tx, query_all, query_opt, query_opt_tx, query_scalar};
@@ -206,8 +206,8 @@ async fn fetch_entries_with_feed(
     sql: String,
     binds: Vec<Bind>,
 ) -> Result<Vec<EntryWithFeed>, sqlx::Error> {
-    let rows = match db {
-        Db::Sqlite(pool) => {
+    let rows = match db.inner() {
+        DbInner::Sqlite(pool) => {
             let mut q = sqlx::query_as::<sqlx::Sqlite, EntryWithFeedRow>(sqlx::AssertSqlSafe(sql));
             for b in &binds {
                 q = match b {
@@ -218,7 +218,7 @@ async fn fetch_entries_with_feed(
             }
             q.fetch_all(pool).await?
         }
-        Db::Postgres(pool) => {
+        DbInner::Postgres(pool) => {
             let mut q =
                 sqlx::query_as::<sqlx::Postgres, EntryWithFeedRow>(sqlx::AssertSqlSafe(sql));
             for b in &binds {
@@ -235,8 +235,8 @@ async fn fetch_entries_with_feed(
 }
 
 async fn fetch_scalar_i64(db: &Db, sql: String, binds: Vec<Bind>) -> Result<i64, sqlx::Error> {
-    match db {
-        Db::Sqlite(pool) => {
+    match db.inner() {
+        DbInner::Sqlite(pool) => {
             let mut q = sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql));
             for b in &binds {
                 q = match b {
@@ -247,7 +247,7 @@ async fn fetch_scalar_i64(db: &Db, sql: String, binds: Vec<Bind>) -> Result<i64,
             }
             q.fetch_one(pool).await
         }
-        Db::Postgres(pool) => {
+        DbInner::Postgres(pool) => {
             let mut q = sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql));
             for b in &binds {
                 q = match b {
@@ -267,8 +267,8 @@ async fn fetch_id_ts_rows(
     sql: String,
     binds: Vec<Bind>,
 ) -> Result<Vec<(i64, i64)>, sqlx::Error> {
-    match db {
-        Db::Sqlite(pool) => {
+    match db.inner() {
+        DbInner::Sqlite(pool) => {
             let mut q = sqlx::query_as::<sqlx::Sqlite, (i64, i64)>(sqlx::AssertSqlSafe(sql));
             for b in &binds {
                 q = match b {
@@ -279,7 +279,7 @@ async fn fetch_id_ts_rows(
             }
             q.fetch_all(pool).await
         }
-        Db::Postgres(pool) => {
+        DbInner::Postgres(pool) => {
             let mut q = sqlx::query_as::<sqlx::Postgres, (i64, i64)>(sqlx::AssertSqlSafe(sql));
             for b in &binds {
                 q = match b {
@@ -293,10 +293,12 @@ async fn fetch_id_ts_rows(
     }
 }
 
-/// Execute a runtime-built statement, returning rows affected.
+/// Execute a runtime-built statement, returning rows affected. A write path
+/// (mark-all-read), so it takes the write-priority admission for its duration.
 async fn exec_dynamic(db: &Db, sql: String, binds: Vec<Bind>) -> Result<u64, sqlx::Error> {
-    match db {
-        Db::Sqlite(pool) => {
+    let _guard = db.admit().await;
+    match db.inner() {
+        DbInner::Sqlite(pool) => {
             let mut q = sqlx::query::<sqlx::Sqlite>(sqlx::AssertSqlSafe(sql));
             for b in &binds {
                 q = match b {
@@ -307,7 +309,7 @@ async fn exec_dynamic(db: &Db, sql: String, binds: Vec<Bind>) -> Result<u64, sql
             }
             q.execute(pool).await.map(|r| r.rows_affected())
         }
-        Db::Postgres(pool) => {
+        DbInner::Postgres(pool) => {
             let mut q =
                 sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(crate::db::pg_rewrite(&sql)));
             for b in &binds {
@@ -329,7 +331,7 @@ async fn exec_dynamic_tx(
     binds: Vec<Bind>,
 ) -> Result<u64, sqlx::Error> {
     match tx {
-        Tx::Sqlite(t) => {
+        Tx::Sqlite { tx: t, .. } => {
             let mut q = sqlx::query::<sqlx::Sqlite>(sqlx::AssertSqlSafe(sql));
             for b in &binds {
                 q = match b {
@@ -421,14 +423,14 @@ pub async fn fetch_sort_ts(
     // `Dialect::cursor_ts`.
     let ts_expr = Dialect::from_db(db).cursor_ts(column_expr);
     let sql = format!("SELECT {ts_expr} FROM entry WHERE id = $1");
-    let r = match db {
-        Db::Sqlite(pool) => {
+    let r = match db.inner() {
+        DbInner::Sqlite(pool) => {
             sqlx::query_scalar::<sqlx::Sqlite, Option<String>>(sqlx::AssertSqlSafe(sql))
                 .bind(entry_id)
                 .fetch_optional(pool)
                 .await
         }
-        Db::Postgres(pool) => {
+        DbInner::Postgres(pool) => {
             sqlx::query_scalar::<sqlx::Postgres, Option<String>>(sqlx::AssertSqlSafe(sql))
                 .bind(entry_id)
                 .fetch_optional(pool)
@@ -794,7 +796,7 @@ pub async fn prune_read_retention_batch(db: &Db, batch_size: usize) -> AppResult
     // `query_all_tx!` macro, so dispatch the fetch on the transaction's backend
     // directly.
     let victims: Vec<(i64, i64, String)> = match &mut tx {
-        Tx::Sqlite(t) => {
+        Tx::Sqlite { tx: t, .. } => {
             sqlx::query_as::<sqlx::Sqlite, (i64, i64, String)>(sqlx::AssertSqlSafe(sql))
                 .bind(batch_size as i64)
                 .fetch_all(&mut **t)
@@ -1324,8 +1326,8 @@ pub async fn find_neighbors(
          INNER JOIN category c ON f.category_id = c.id \
          WHERE e.id = $1 AND c.user_id = $2"
     );
-    let sort_time: Option<String> = match db {
-        Db::Sqlite(pool) => {
+    let sort_time: Option<String> = match db.inner() {
+        DbInner::Sqlite(pool) => {
             sqlx::query_scalar::<sqlx::Sqlite, Option<String>>(sqlx::AssertSqlSafe(sort_time_sql))
                 .bind(entry_id)
                 .bind(user_id)
@@ -1333,7 +1335,7 @@ pub async fn find_neighbors(
                 .await
                 .map(Option::flatten)
         }
-        Db::Postgres(pool) => {
+        DbInner::Postgres(pool) => {
             sqlx::query_scalar::<sqlx::Postgres, Option<String>>(sqlx::AssertSqlSafe(sort_time_sql))
                 .bind(entry_id)
                 .bind(user_id)
@@ -1449,8 +1451,8 @@ pub async fn find_neighbors(
     );
 
     async fn one(db: &Db, sql: String, binds: Vec<Bind>) -> Result<Option<i64>, sqlx::Error> {
-        match db {
-            Db::Sqlite(pool) => {
+        match db.inner() {
+            DbInner::Sqlite(pool) => {
                 let mut q = sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql));
                 for b in &binds {
                     q = match b {
@@ -1461,7 +1463,7 @@ pub async fn find_neighbors(
                 }
                 q.fetch_optional(pool).await
             }
-            Db::Postgres(pool) => {
+            DbInner::Postgres(pool) => {
                 let mut q = sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql));
                 for b in &binds {
                     q = match b {
@@ -3245,8 +3247,8 @@ mod tests {
     /// are bound (one per `$N` placeholder).
     async fn explain_plan_for(db: &Db, sql: &str, n_params: usize) -> String {
         let explain_sql = format!("EXPLAIN QUERY PLAN {}", sql);
-        let rows: Vec<(i64, i64, i64, String)> = match db {
-            Db::Sqlite(pool) => {
+        let rows: Vec<(i64, i64, i64, String)> = match db.inner() {
+            DbInner::Sqlite(pool) => {
                 let mut q = sqlx::query_as::<sqlx::Sqlite, (i64, i64, i64, String)>(
                     sqlx::AssertSqlSafe(explain_sql),
                 );
@@ -3255,7 +3257,7 @@ mod tests {
                 }
                 q.fetch_all(pool).await.unwrap()
             }
-            Db::Postgres(_) => unreachable!("tests run against sqlite"),
+            DbInner::Postgres(_) => unreachable!("tests run against sqlite"),
         };
         rows.into_iter()
             .map(|r| r.3)
