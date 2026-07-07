@@ -61,6 +61,27 @@ pub fn parse_trusted_networks(raw: &str) -> Result<Vec<IpNet>, String> {
     Ok(nets)
 }
 
+/// Which database engine `database_url` selects. Determined once at startup —
+/// rdrs runs against exactly one backend for the life of the process (no
+/// mid-flight switching). See the migration spec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    Sqlite,
+    Postgres,
+}
+
+/// Classify a `database_url` into a [`Backend`] by scheme. A `postgres://` or
+/// `postgresql://` URL selects `Postgres`; anything else — a `sqlite://` URL or
+/// a bare file path like `rdrs.sqlite3` — selects `SQLite`.
+pub fn classify_backend(database_url: &str) -> Backend {
+    let lower = database_url.trim_start().to_ascii_lowercase();
+    if lower.starts_with("postgres://") || lower.starts_with("postgresql://") {
+        Backend::Postgres
+    } else {
+        Backend::Sqlite
+    }
+}
+
 impl Config {
     pub fn from_env() -> Result<Self, String> {
         let (image_proxy_secret, image_proxy_secret_generated) = Self::load_image_proxy_secret();
@@ -138,8 +159,26 @@ impl Config {
             .any(|net| net.contains(&ip))
     }
 
+    /// The database engine selected by `database_url`.
+    pub fn backend(&self) -> Backend {
+        classify_backend(&self.database_url)
+    }
+
     /// Validate cross-field invariants at startup. Returns the first problem.
     pub fn validate(&self) -> Result<(), String> {
+        // PostgreSQL is a recognized backend in the config contract but its
+        // driver isn't wired up yet (arrives in the sqlx cutover — Phase B of
+        // docs/superpowers/specs/2026-07-07-multi-db-sqlx-migration.md). Fail
+        // fast with a clear message instead of letting the SQLite driver try to
+        // open a `postgres://` URL as a file path.
+        if self.backend() == Backend::Postgres {
+            return Err(
+                "DATABASE_URL selects PostgreSQL, which is not supported yet. \
+                 Use a SQLite file path or a sqlite:// URL. PostgreSQL support \
+                 is in progress."
+                    .to_string(),
+            );
+        }
         if self.auth_proxy_enabled() && self.trusted_proxy_networks.is_empty() {
             return Err(
                 "AUTH_PROXY_HEADER is set but TRUSTED_PROXY_NETWORKS is empty. \
@@ -217,6 +256,35 @@ mod tests {
             auth_proxy_admin_group: String::new(),
             auth_proxy_logout_url: None,
         }
+    }
+
+    #[test]
+    fn test_classify_backend() {
+        assert_eq!(classify_backend("rdrs.sqlite3"), Backend::Sqlite);
+        assert_eq!(classify_backend("/var/lib/rdrs/data.db"), Backend::Sqlite);
+        assert_eq!(classify_backend("sqlite://rdrs.sqlite3"), Backend::Sqlite);
+        assert_eq!(
+            classify_backend("postgres://user:pw@localhost/rdrs"),
+            Backend::Postgres
+        );
+        assert_eq!(
+            classify_backend("postgresql://user@db:5432/rdrs"),
+            Backend::Postgres
+        );
+        // scheme match is case-insensitive and tolerant of leading whitespace
+        assert_eq!(classify_backend("  POSTGRES://x"), Backend::Postgres);
+    }
+
+    #[test]
+    fn test_validate_rejects_postgres_for_now() {
+        let mut config = test_config();
+        config.database_url = "postgres://user@localhost/rdrs".to_string();
+        let err = config.validate().expect_err("postgres must be rejected");
+        assert!(err.contains("PostgreSQL"), "message was: {err}");
+
+        // SQLite path still validates fine.
+        config.database_url = "rdrs.sqlite3".to_string();
+        assert!(config.validate().is_ok());
     }
 
     #[test]
