@@ -608,16 +608,16 @@ pub enum UpsertOutcome {
 ///
 /// This is the lean variant used by the feed-sync hot loop, which only needs
 /// the outcome flag. It avoids the full-row `find_by_id` re-read that
-/// [`upsert_entry`] performs, looks the existing row up by `id` only, and uses
-/// `prepare_cached` so the three hot statements are compiled once per
-/// connection rather than once per entry. Wrap a sync loop in a single
-/// transaction (see `feed_sync`) to collapse the per-entry commits.
+/// [`upsert_entry`] performs and looks the existing row up by `id` only. Wrap a
+/// sync loop in a single transaction (see `feed_sync`) to collapse the per-entry
+/// commits (`upsert_entry_id_tx`).
 // Shared upsert statements. `datetime('now')` is kept (not a bound `Utc::now()`)
 // so `updated_at` matches the TEXT format of the `datetime('now')` column
 // DEFAULTs — the composite pagination cursor compares timestamps as strings, so
-// all entry timestamps must share one format. `published_at` is likewise bound
-// as a `%Y-%m-%d %H:%M:%S` string, not a `DateTime<Utc>` (which sqlx would
-// encode as RFC3339). TODO(phase-c): PG needs `now()` here.
+// all entry timestamps must share one format. On PG the dispatch-macro
+// `pg_rewrite` shim rewrites it to `now()`. `published_at` is bound as a
+// seconds-truncated `NaiveDateTime` (see the upsert fns), which sqlx encodes as
+// the same `%Y-%m-%d %H:%M:%S` TEXT on SQLite and as a `timestamp` on PG.
 const UPSERT_SELECT_SQL: &str = "SELECT id FROM entry WHERE guid = $1 AND feed_id = $2";
 const UPSERT_UPDATE_SQL: &str = "UPDATE entry SET title = $1, link = $2, content = $3, summary = $4, author = $5, content_text = $6, updated_at = datetime('now') WHERE id = $7";
 const UPSERT_INSERT_SQL: &str = "INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at, content_text) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9 WHERE NOT EXISTS (SELECT 1 FROM entry_tombstone WHERE feed_id = $1 AND guid = $2) RETURNING id";
@@ -1218,9 +1218,9 @@ pub async fn mark_all_read_by_feed(
     feed_id: i64,
     older_than_days: Option<i64>,
 ) -> AppResult<i64> {
-    // `days` is an `i64` interpolated into the SQL (not injectable). The
-    // `datetime('now', ...)` math keeps timestamps in the cursor-comparable
-    // TEXT format. TODO(phase-c): PG needs `now() - make_interval(days => ...)`.
+    // `days` is an `i64` interpolated into the SQL (not injectable). The age
+    // cutoff dialect-forks via `Dialect::days_ago` (SQLite `datetime('now', …)`
+    // vs PG `now() - make_interval(…)`).
     let age_condition = older_than_days
         .map(|days| {
             let cutoff = Dialect::from_db(db).days_ago(&days.to_string());
@@ -3348,8 +3348,8 @@ mod tests {
 
         // Plan check: a hand-built copy of the same query (same shape as the
         // builder produces with the no-predicate hint) must scan via
-        // `idx_entry_sort_ts`. We test the shape, not the runtime statement
-        // (rusqlite caches prepared SQL outside of test reach).
+        // `idx_entry_sort_ts`. We test the shape, not the exact runtime
+        // statement the dynamic builder assembles.
         let sql = r#"
             SELECT e.id FROM entry e INDEXED BY idx_entry_sort_ts
             INNER JOIN feed f ON e.feed_id = f.id
