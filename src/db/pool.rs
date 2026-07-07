@@ -2,8 +2,9 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use sqlx::migrate::Migrator;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use sqlx::{PgPool, Postgres, Sqlite, SqlitePool};
+use sqlx::{Executor, PgPool, Postgres, Sqlite, SqlitePool};
 use tracing::info;
 
 use crate::config::Backend;
@@ -65,7 +66,24 @@ impl Db {
                 Db::Sqlite(pool)
             }
             Backend::Postgres => {
-                let pool = PgPool::connect(url).await?;
+                // Pin every pooled connection to UTC. Entry timestamps are
+                // written with `now()` / naive `%Y-%m-%d %H:%M:%S` string binds
+                // and the composite pagination cursor compares them as strings
+                // via `to_char(col, 'YYYY-MM-DD HH24:MI:SS')`. All three are
+                // interpreted in the session `TimeZone`, so pinning it to UTC
+                // makes the PG cursor strings byte-identical to SQLite's
+                // `datetime('now')` TEXT — a divergent server default would
+                // otherwise shift the cursor and corrupt pagination order.
+                let opts = PgConnectOptions::from_str(url)?;
+                let pool = PgPoolOptions::new()
+                    .after_connect(|conn, _meta| {
+                        Box::pin(async move {
+                            conn.execute("SET TIME ZONE 'UTC'").await?;
+                            Ok(())
+                        })
+                    })
+                    .connect_with(opts)
+                    .await?;
                 Db::Postgres(pool)
             }
         };
@@ -161,6 +179,24 @@ pub fn is_unique_violation(e: &sqlx::Error) -> bool {
     matches!(e, sqlx::Error::Database(db) if db.kind() == sqlx::error::ErrorKind::UniqueViolation)
 }
 
+/// Rewrite the SQLite-dialect fragments in a macro `$sql` literal to their
+/// PostgreSQL equivalents at dispatch time. Applied *only* in the Postgres arm
+/// of the `query_*!` / `db_execute!` macros so a model writes one SQL literal
+/// that runs correctly on both backends.
+///
+/// Currently rewrites the SQLite scalar `datetime('now')` — which yields the
+/// `%Y-%m-%d %H:%M:%S` TEXT that the composite pagination cursor and the
+/// timestamp-column DEFAULTs depend on — to PostgreSQL `now()` (a `timestamptz`
+/// that, under the connection's pinned `TimeZone=UTC`, encodes to the same
+/// instant). The exact literal token is matched, so the comma-modifier forms
+/// (`datetime('now', '-25 hours')`, `datetime('now', $2)`) are deliberately
+/// left untouched — those need interval arithmetic and are handled with
+/// explicit `Dialect` forks at their call sites.
+#[doc(hidden)]
+pub fn pg_rewrite(sql: &str) -> String {
+    sql.replace("datetime('now')", "now()")
+}
+
 // --- dispatch macros -------------------------------------------------------
 //
 // These collapse the two-arm `match db { Sqlite(..) => .., Postgres(..) => .. }`
@@ -169,6 +205,10 @@ pub fn is_unique_violation(e: &sqlx::Error) -> bool {
 // (a SQLite superset PostgreSQL requires) and `RETURNING` is used in place of
 // `last_insert_rowid()`. Bind arguments are evaluated in *both* arms, so pass
 // `Copy` values or references (`&str`, `i64`, `DateTime<Utc>`, `&[u8]`).
+//
+// The Postgres arm runs `$sql` through `pg_rewrite` (see above) so SQLite-only
+// scalars like `datetime('now')` become their PG equivalents; the SQLite arm
+// uses the literal verbatim to keep its prepared-statement cache keyed on it.
 //
 // `$ty` must derive `sqlx::FromRow` (its generated impl is row-generic, so one
 // derive serves both `SqliteRow` and `PgRow`). Each macro has a `_tx` sibling
@@ -187,7 +227,9 @@ macro_rules! query_one {
             }
             $crate::db::Db::Postgres(pool) => {
                 #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>($sql);
+                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
+                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
+                );
                 $( q = q.bind($bind); )*
                 q.fetch_one(pool).await
             }
@@ -208,7 +250,9 @@ macro_rules! query_opt {
             }
             $crate::db::Db::Postgres(pool) => {
                 #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>($sql);
+                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
+                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
+                );
                 $( q = q.bind($bind); )*
                 q.fetch_optional(pool).await
             }
@@ -229,7 +273,9 @@ macro_rules! query_all {
             }
             $crate::db::Db::Postgres(pool) => {
                 #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>($sql);
+                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
+                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
+                );
                 $( q = q.bind($bind); )*
                 q.fetch_all(pool).await
             }
@@ -250,7 +296,9 @@ macro_rules! query_scalar {
             }
             $crate::db::Db::Postgres(pool) => {
                 #[allow(unused_mut)]
-                let mut q = ::sqlx::query_scalar::<::sqlx::Postgres, $ty>($sql);
+                let mut q = ::sqlx::query_scalar::<::sqlx::Postgres, $ty>(
+                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
+                );
                 $( q = q.bind($bind); )*
                 q.fetch_one(pool).await
             }
@@ -271,7 +319,9 @@ macro_rules! db_execute {
             }
             $crate::db::Db::Postgres(pool) => {
                 #[allow(unused_mut)]
-                let mut q = ::sqlx::query::<::sqlx::Postgres>($sql);
+                let mut q = ::sqlx::query::<::sqlx::Postgres>(
+                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
+                );
                 $( q = q.bind($bind); )*
                 q.execute(pool).await.map(|r| r.rows_affected())
             }
@@ -292,7 +342,9 @@ macro_rules! query_one_tx {
             }
             $crate::db::Tx::Postgres(t) => {
                 #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>($sql);
+                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
+                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
+                );
                 $( q = q.bind($bind); )*
                 q.fetch_one(&mut **t).await
             }
@@ -313,7 +365,9 @@ macro_rules! query_opt_tx {
             }
             $crate::db::Tx::Postgres(t) => {
                 #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>($sql);
+                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
+                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
+                );
                 $( q = q.bind($bind); )*
                 q.fetch_optional(&mut **t).await
             }
@@ -334,7 +388,9 @@ macro_rules! query_all_tx {
             }
             $crate::db::Tx::Postgres(t) => {
                 #[allow(unused_mut)]
-                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>($sql);
+                let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
+                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
+                );
                 $( q = q.bind($bind); )*
                 q.fetch_all(&mut **t).await
             }
@@ -355,7 +411,9 @@ macro_rules! query_scalar_tx {
             }
             $crate::db::Tx::Postgres(t) => {
                 #[allow(unused_mut)]
-                let mut q = ::sqlx::query_scalar::<::sqlx::Postgres, $ty>($sql);
+                let mut q = ::sqlx::query_scalar::<::sqlx::Postgres, $ty>(
+                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
+                );
                 $( q = q.bind($bind); )*
                 q.fetch_one(&mut **t).await
             }
@@ -376,7 +434,9 @@ macro_rules! db_execute_tx {
             }
             $crate::db::Tx::Postgres(t) => {
                 #[allow(unused_mut)]
-                let mut q = ::sqlx::query::<::sqlx::Postgres>($sql);
+                let mut q = ::sqlx::query::<::sqlx::Postgres>(
+                    ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
+                );
                 $( q = q.bind($bind); )*
                 q.execute(&mut **t).await.map(|r| r.rows_affected())
             }

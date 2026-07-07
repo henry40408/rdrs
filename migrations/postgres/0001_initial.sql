@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS feed (
     custom_user_agent TEXT,
     http2_disabled BOOLEAN NOT NULL DEFAULT FALSE,
     custom_referrer TEXT,
-    bucket INTEGER,
+    bucket BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE(category_id, url)
@@ -130,10 +130,10 @@ CREATE INDEX IF NOT EXISTS idx_image_entity ON image(entity_type, entity_id);
 CREATE TABLE IF NOT EXISTS user_settings (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     user_id BIGINT NOT NULL UNIQUE REFERENCES "user"(id) ON DELETE CASCADE,
-    entries_per_page INTEGER NOT NULL DEFAULT 30,
+    entries_per_page BIGINT NOT NULL DEFAULT 30,
     save_services TEXT,
     theme TEXT,
-    retention_read_days INTEGER NOT NULL DEFAULT 0,
+    retention_read_days BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

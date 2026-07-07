@@ -124,7 +124,7 @@ mod tests {
     async fn setup_db() -> Db {
         let db = Db::connect_in_memory().await.unwrap();
         for stmt in [
-            "INSERT INTO user (id, username, password_hash) VALUES (1, 'u', 'x')",
+            "INSERT INTO \"user\" (id, username, password_hash) VALUES (1, 'u', 'x')",
             "INSERT INTO category (id, user_id, name) VALUES (1, 1, 'c')",
             "INSERT INTO feed (id, category_id, url) VALUES (1, 1, 'http://x')",
         ] {

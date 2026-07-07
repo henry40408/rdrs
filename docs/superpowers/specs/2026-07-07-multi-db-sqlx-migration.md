@@ -2,7 +2,10 @@
 
 **Date:** 2026-07-07
 **Branches:** `chore/sqlx-multi-db-spike` (feasibility spike, pushed), `refactor/db-repo-seam` (Phase A)
-**Status:** Feasibility proven by spike; phased migration approved, Phase A in progress
+**Status:** Phases A & B merged. **Phase C landed** (2026-07-07): PostgreSQL is
+runtime-enabled and validated against live PG 17 by `tests/postgres_test.rs`
+(env-gated on `TEST_DATABASE_URL`) plus a CI Postgres service lane. SQLite remains
+the zero-config default.
 
 ## Goal
 
@@ -151,15 +154,30 @@ This is where the model functions **and** the ~146 call-site closures flip from 
 
 **Gate:** SQLite suite green (== today); binary boots; E2E green. (PG not yet in CI.)
 
-### Phase C — Postgres enablement & hardening
-- **C1** CI PG lane (testcontainers-rs or a service container); local SQLite lane needs
-  no Docker (PG tests `#[ignore]` + env-gated, as in the spike).
-- **C2** *(optional)* run SSR E2E against both backends for near-free double coverage.
-- **C3** docs: `README.md`, `ARCHITECTURE.md`, `CLAUDE.md` (PG opt-in; SQLite stays the
-  zero-config single-binary default).
-- **C4** `deny.toml`: review sqlx's transitive licenses/advisories (sqlx 0.9.0, published
-  2026-05-21, already past the 7-day cooldown).
+### Phase C — Postgres enablement & hardening (landed 2026-07-07)
+- **C1** ✅ CI PG lane: a `postgres:17-alpine` service container runs the env-gated
+  `tests/postgres_test.rs` (skips locally without `TEST_DATABASE_URL`; no Docker needed
+  for the default SQLite lane).
+- **C2** *(deferred)* running the SSR E2E against both backends — left as future work.
+- **C3** docs: this spec + `CLAUDE.md` note that PG is opt-in via a `postgres://`
+  `DATABASE_URL`; SQLite stays the zero-config single-binary default.
+- **C4** ✅ `deny.toml`: `cargo deny check` clean with the sqlx stack.
 - **C5** ops: SQLite deploy unchanged; PG via `DATABASE_URL`; Docker image unchanged.
+
+**What Phase C actually forked** (all isolated behind `Dialect` / `match db`, SQLite
+path unchanged): connections pin `TimeZone=UTC`; `datetime('now')`→`now()` via a
+central `pg_rewrite` shim in the dispatch macros + dynamic-exec helpers; the composite
+cursor and snapshot/`read_at` comparisons wrap the column in `to_char(...,'YYYY-MM-DD
+HH24:MI:SS')` on PG (`Dialect::cursor_ts`) so the string-ordered cursor stays
+byte-identical; interval arithmetic forks to `make_interval` (`Dialect::days_ago`);
+date-range bounds bind as `NaiveDate` (PG implicitly casts `date`→`timestamptz`);
+timestamp columns read into `String` wrap in `to_char`; `DATE()`→`to_char`,
+`PRAGMA`→`pg_database_size()`, `EXTRACT(EPOCH …)`; the `"user"` reserved word is quoted
+uniformly; non-id `INTEGER` columns are `BIGINT` and the `has_icon` 0/1 flag is
+`CAST(... AS BIGINT)` to match the `i64` reads under sqlx-PG's strict int widths.
+
+**Deferred (TODO(phase-d)):** the PG cursor `to_char` predicate is not sargable — bind
+the cursor as `timestamptz` to restore index range scans.
 
 ## Risks to watch (Phase B)
 1. **`INDEXED BY` removal** — SQLite perf crutches; build equivalent (incl. partial)

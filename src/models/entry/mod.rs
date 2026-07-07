@@ -1,12 +1,10 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::db::{Db, Tx};
 use crate::error::{AppError, AppResult};
 use crate::utils::text::strip_to_search_text;
-use crate::{
-    db_execute, db_execute_tx, query_all, query_all_tx, query_opt, query_opt_tx, query_scalar,
-};
+use crate::{db_execute, db_execute_tx, query_all, query_opt, query_opt_tx, query_scalar};
 
 mod filters;
 use filters::{
@@ -193,7 +191,7 @@ const ENTRY_WITH_FEED_COLUMNS_COUNT: &str = "e.id AS id, e.feed_id AS feed_id, e
 
 /// Same columns as [`ENTRY_WITH_FEED_COLUMNS_COUNT`] but computes `has_icon`
 /// from a `LEFT JOIN image i` already present in the query.
-const ENTRY_WITH_FEED_COLUMNS_JOIN: &str = "e.id AS id, e.feed_id AS feed_id, e.guid AS guid, e.title AS title, e.link AS link, e.content AS content, e.summary AS summary, e.author AS author, e.published_at AS published_at, e.read_at AS read_at, e.starred_at AS starred_at, e.created_at AS created_at, e.updated_at AS updated_at, f.title AS feed_title, f.url AS feed_url, f.site_url AS site_url, c.id AS category_id, c.name AS category_name, CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END AS has_icon, f.custom_referrer AS custom_referrer";
+const ENTRY_WITH_FEED_COLUMNS_JOIN: &str = "e.id AS id, e.feed_id AS feed_id, e.guid AS guid, e.title AS title, e.link AS link, e.content AS content, e.summary AS summary, e.author AS author, e.published_at AS published_at, e.read_at AS read_at, e.starred_at AS starred_at, e.created_at AS created_at, e.updated_at AS updated_at, f.title AS feed_title, f.url AS feed_url, f.site_url AS site_url, c.id AS category_id, c.name AS category_name, CAST(CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END AS BIGINT) AS has_icon, f.custom_referrer AS custom_referrer";
 
 // --- dynamic-query execution helpers ---------------------------------------
 //
@@ -303,7 +301,8 @@ async fn exec_dynamic(db: &Db, sql: String, binds: Vec<Bind>) -> Result<u64, sql
             q.execute(pool).await.map(|r| r.rows_affected())
         }
         Db::Postgres(pool) => {
-            let mut q = sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(sql));
+            let mut q =
+                sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(crate::db::pg_rewrite(&sql)));
             for b in &binds {
                 q = match b {
                     Bind::Int(i) => q.bind(*i),
@@ -333,7 +332,8 @@ async fn exec_dynamic_tx(
             q.execute(&mut **t).await.map(|r| r.rows_affected())
         }
         Tx::Postgres(t) => {
-            let mut q = sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(sql));
+            let mut q =
+                sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(crate::db::pg_rewrite(&sql)));
             for b in &binds {
                 q = match b {
                     Bind::Int(i) => q.bind(*i),
@@ -405,9 +405,12 @@ pub async fn fetch_sort_ts(
         EntrySortOrder::StarredAt => "starred_at",
         EntrySortOrder::PublishedAt => "COALESCE(published_at, created_at)",
     };
-    // TODO(phase-c): reads the raw stored timestamp TEXT; on PG these columns are
-    // TIMESTAMPTZ and would need `to_char`/cast to reproduce the cursor string.
-    let sql = format!("SELECT {column_expr} FROM entry WHERE id = $1");
+    // Emit the cursor string in the exact form the WHERE predicate compares
+    // against: the raw TEXT column on SQLite, `to_char(..., 'YYYY-MM-DD
+    // HH24:MI:SS')` on PG (columns are TIMESTAMPTZ there). See
+    // `Dialect::cursor_ts`.
+    let ts_expr = Dialect::from_db(db).cursor_ts(column_expr);
+    let sql = format!("SELECT {ts_expr} FROM entry WHERE id = $1");
     let r = match db {
         Db::Sqlite(pool) => {
             sqlx::query_scalar::<sqlx::Sqlite, Option<String>>(sqlx::AssertSqlSafe(sql))
@@ -622,7 +625,12 @@ pub async fn upsert_entry_id(
     author: Option<&str>,
     published_at: Option<DateTime<Utc>>,
 ) -> AppResult<UpsertOutcome> {
-    let published_at_str = published_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
+    // Bind published_at as a seconds-truncated NaiveDateTime: sqlx encodes it as
+    // the `%Y-%m-%d %H:%M:%S` TEXT the SQLite composite cursor compares against,
+    // and as a `timestamp` that assignment-casts into the column's `timestamptz`
+    // (UTC session) on PG. A raw `%Y-%m-%d %H:%M:%S` *string* bind is rejected by
+    // PG here — text does not coerce into a timestamptz column.
+    let published_at_ts = published_at.map(|dt| dt.naive_utc().trunc_subsecs(0));
     let content_text = content.map(strip_to_search_text);
 
     let existing =
@@ -655,7 +663,7 @@ pub async fn upsert_entry_id(
         content,
         summary,
         author,
-        published_at_str.as_deref(),
+        published_at_ts,
         content_text.as_deref()
     )
     .map_err(AppError::Database)?;
@@ -680,7 +688,12 @@ pub async fn upsert_entry_id_tx(
     author: Option<&str>,
     published_at: Option<DateTime<Utc>>,
 ) -> AppResult<UpsertOutcome> {
-    let published_at_str = published_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
+    // Bind published_at as a seconds-truncated NaiveDateTime: sqlx encodes it as
+    // the `%Y-%m-%d %H:%M:%S` TEXT the SQLite composite cursor compares against,
+    // and as a `timestamp` that assignment-casts into the column's `timestamptz`
+    // (UTC session) on PG. A raw `%Y-%m-%d %H:%M:%S` *string* bind is rejected by
+    // PG here — text does not coerce into a timestamptz column.
+    let published_at_ts = published_at.map(|dt| dt.naive_utc().trunc_subsecs(0));
     let content_text = content.map(strip_to_search_text);
 
     let existing =
@@ -713,7 +726,7 @@ pub async fn upsert_entry_id_tx(
         content,
         summary,
         author,
-        published_at_str.as_deref(),
+        published_at_ts,
         content_text.as_deref()
     )
     .map_err(AppError::Database)?;
@@ -735,19 +748,25 @@ pub async fn insert_tombstone(db: &Db, feed_id: i64, guid: &str) -> AppResult<()
     Ok(())
 }
 
-/// Victim-selection query for retention pruning. TODO(phase-c): the per-row
-/// `datetime('now', '-' || us.retention_read_days || ' days')` interval is
-/// SQLite-only; PG needs `now() - make_interval(days => us.retention_read_days)`.
-const RETENTION_VICTIMS_SQL: &str = "SELECT e.id, e.feed_id, e.guid \
-     FROM entry e \
-     JOIN feed f           ON f.id = e.feed_id \
-     JOIN category c       ON c.id = f.category_id \
-     JOIN user_settings us ON us.user_id = c.user_id \
-     WHERE us.retention_read_days > 0 \
-       AND e.read_at    IS NOT NULL \
-       AND e.starred_at IS NULL \
-       AND e.read_at < datetime('now', '-' || us.retention_read_days || ' days') \
-     LIMIT $1";
+/// Build the victim-selection query for retention pruning. The per-user age
+/// cutoff `read_at < now - retention_read_days` dialect-forks its interval
+/// expression (see [`Dialect::days_ago`]), so the SQL is assembled at call time
+/// rather than being a `const` literal.
+fn retention_victims_sql(dialect: Dialect) -> String {
+    let cutoff = dialect.days_ago("us.retention_read_days");
+    format!(
+        "SELECT e.id, e.feed_id, e.guid \
+         FROM entry e \
+         JOIN feed f           ON f.id = e.feed_id \
+         JOIN category c       ON c.id = f.category_id \
+         JOIN user_settings us ON us.user_id = c.user_id \
+         WHERE us.retention_read_days > 0 \
+           AND e.read_at    IS NOT NULL \
+           AND e.starred_at IS NULL \
+           AND e.read_at < {cutoff} \
+         LIMIT $1"
+    )
+}
 
 /// Delete up to `batch_size` read, aged, non-starred entries belonging to users
 /// who have opted into retention (`user_settings.retention_read_days > 0`),
@@ -758,14 +777,26 @@ const RETENTION_VICTIMS_SQL: &str = "SELECT e.id, e.feed_id, e.guid \
 /// side) so the delete targets exact ids rather than re-running a `LIMIT`
 /// without `ORDER BY`. Each user's own threshold is applied via the join.
 pub async fn prune_read_retention_batch(db: &Db, batch_size: usize) -> AppResult<u64> {
+    let sql = retention_victims_sql(Dialect::from_db(db));
     let mut tx = db.begin().await?;
 
-    let victims: Vec<(i64, i64, String)> = query_all_tx!(
-        &mut tx,
-        (i64, i64, String),
-        RETENTION_VICTIMS_SQL,
-        batch_size as i64
-    )
+    // Dynamic SQL (dialect-forked interval) can't go through the static-SQL
+    // `query_all_tx!` macro, so dispatch the fetch on the transaction's backend
+    // directly.
+    let victims: Vec<(i64, i64, String)> = match &mut tx {
+        Tx::Sqlite(t) => {
+            sqlx::query_as::<sqlx::Sqlite, (i64, i64, String)>(sqlx::AssertSqlSafe(sql))
+                .bind(batch_size as i64)
+                .fetch_all(&mut **t)
+                .await
+        }
+        Tx::Postgres(t) => {
+            sqlx::query_as::<sqlx::Postgres, (i64, i64, String)>(sqlx::AssertSqlSafe(sql))
+                .bind(batch_size as i64)
+                .fetch_all(&mut **t)
+                .await
+        }
+    }
     .map_err(AppError::Database)?;
 
     if victims.is_empty() {
@@ -1062,6 +1093,7 @@ pub async fn list_ids_by_user(
         pagination.continuation.as_ref(),
         pagination.sort_order,
         pagination.oldest_first,
+        dialect,
     );
 
     let where_clause = conditions.join(" AND ");
@@ -1075,10 +1107,11 @@ pub async fn list_ids_by_user(
     };
 
     let limit_idx = binds.len() + 1;
-    // TODO(phase-c): `strftime('%s', ...)` epoch extraction is SQLite-only; PG
-    // needs `EXTRACT(EPOCH FROM ...)::bigint`.
+    // Epoch-microseconds sentinel for the "no more pages" boundary; the epoch
+    // extraction dialect-forks (SQLite `strftime` vs PG `EXTRACT(EPOCH …)`).
+    let epoch_us = dialect.epoch("COALESCE(e.published_at, e.created_at)");
     let sql = format!(
-        "SELECT e.id, CAST(strftime('%s', COALESCE(e.published_at, e.created_at)) AS INTEGER) * 1000000 \
+        "SELECT e.id, {epoch_us} * 1000000 \
          FROM entry e \
          INNER JOIN feed f ON e.feed_id = f.id \
          INNER JOIN category c ON f.category_id = c.id \
@@ -1118,6 +1151,7 @@ pub async fn list_by_user_with_continuation(
         pagination.continuation.as_ref(),
         pagination.sort_order,
         pagination.oldest_first,
+        dialect,
     );
 
     let where_clause = conditions.join(" AND ");
@@ -1177,7 +1211,8 @@ pub async fn mark_all_read_by_feed(
     // TEXT format. TODO(phase-c): PG needs `now() - make_interval(days => ...)`.
     let age_condition = older_than_days
         .map(|days| {
-            format!(" AND COALESCE(published_at, created_at) < datetime('now', '-{days} days')")
+            let cutoff = Dialect::from_db(db).days_ago(&days.to_string());
+            format!(" AND COALESCE(published_at, created_at) < {cutoff}")
         })
         .unwrap_or_default();
 
@@ -1199,7 +1234,8 @@ pub async fn mark_all_read_by_user(
 ) -> AppResult<i64> {
     let age_condition = older_than_days
         .map(|days| {
-            format!(" AND COALESCE(published_at, created_at) < datetime('now', '-{days} days')")
+            let cutoff = Dialect::from_db(db).days_ago(&days.to_string());
+            format!(" AND COALESCE(published_at, created_at) < {cutoff}")
         })
         .unwrap_or_default();
 
@@ -1267,28 +1303,42 @@ pub async fn find_neighbors(
 ) -> AppResult<EntryNeighbors> {
     let dialect = Dialect::from_db(db);
 
-    // Get the current entry's sort timestamp (raw stored TEXT).
-    let sort_time = query_opt!(
-        db,
-        (String,),
-        "SELECT COALESCE(e.published_at, e.created_at) \
+    // Get the current entry's sort timestamp as the `%Y-%m-%d %H:%M:%S` cursor
+    // TEXT (to_char on PG — see `Dialect::cursor_ts`), so it compares against the
+    // neighbour predicates below in the same form on both backends.
+    let sort_ts_select = dialect.cursor_ts("COALESCE(e.published_at, e.created_at)");
+    let sort_time_sql = format!(
+        "SELECT {sort_ts_select} \
          FROM entry e \
          INNER JOIN feed f ON e.feed_id = f.id \
          INNER JOIN category c ON f.category_id = c.id \
-         WHERE e.id = $1 AND c.user_id = $2",
-        entry_id,
-        user_id
-    )
+         WHERE e.id = $1 AND c.user_id = $2"
+    );
+    let sort_time: Option<String> = match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_scalar::<sqlx::Sqlite, Option<String>>(sqlx::AssertSqlSafe(sort_time_sql))
+                .bind(entry_id)
+                .bind(user_id)
+                .fetch_optional(pool)
+                .await
+                .map(Option::flatten)
+        }
+        Db::Postgres(pool) => {
+            sqlx::query_scalar::<sqlx::Postgres, Option<String>>(sqlx::AssertSqlSafe(sort_time_sql))
+                .bind(entry_id)
+                .bind(user_id)
+                .fetch_optional(pool)
+                .await
+                .map(Option::flatten)
+        }
+    }
     .map_err(AppError::Database)?;
 
-    let sort_time = match sort_time {
-        Some((t,)) => t,
-        None => {
-            return Ok(EntryNeighbors {
-                prev_id: None,
-                next_id: None,
-            });
-        }
+    let Some(sort_time) = sort_time else {
+        return Ok(EntryNeighbors {
+            prev_id: None,
+            next_id: None,
+        });
     };
 
     // Build filter conditions using apply_filter_conditions.
@@ -1342,6 +1392,11 @@ pub async fn find_neighbors(
     };
     let entry_hint = dialect.index_hint(raw_hint);
 
+    // Compare the bound `sort_time` cursor TEXT against the same form of the
+    // sort expression (raw on SQLite; to_char on PG). ORDER BY stays on the raw
+    // expression so the native sort index is unaffected.
+    let cmp_ts = dialect.cursor_ts("COALESCE(e.published_at, e.created_at)");
+
     // Find previous entry (newer, comes before in DESC order)
     let prev_sql = format!(
         "SELECT e.id \
@@ -1349,7 +1404,7 @@ pub async fn find_neighbors(
          {join_kw} feed f ON e.feed_id = f.id \
          {join_kw} category c ON f.category_id = c.id \
          WHERE c.user_id = $1 \
-           AND COALESCE(e.published_at, e.created_at) > $2{prev_extra} \
+           AND {cmp_ts} > $2{prev_extra} \
          ORDER BY COALESCE(e.published_at, e.created_at) ASC \
          LIMIT 1"
     );
@@ -1361,8 +1416,8 @@ pub async fn find_neighbors(
          {join_kw} feed f ON e.feed_id = f.id \
          {join_kw} category c ON f.category_id = c.id \
          WHERE c.user_id = $1 \
-           AND (COALESCE(e.published_at, e.created_at) < $2 \
-                OR (COALESCE(e.published_at, e.created_at) = $2 AND e.id < $3)){next_extra} \
+           AND ({cmp_ts} < $2 \
+                OR ({cmp_ts} = $2 AND e.id < $3)){next_extra} \
          ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC \
          LIMIT 1"
     );
@@ -1409,7 +1464,8 @@ pub async fn mark_all_read_by_category(
 ) -> AppResult<i64> {
     let age_condition = older_than_days
         .map(|days| {
-            format!(" AND COALESCE(published_at, created_at) < datetime('now', '-{days} days')")
+            let cutoff = Dialect::from_db(db).days_ago(&days.to_string());
+            format!(" AND COALESCE(published_at, created_at) < {cutoff}")
         })
         .unwrap_or_default();
 

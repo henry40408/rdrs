@@ -4,6 +4,29 @@ use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::{query_all, query_scalar};
 
+/// Render a timestamp column/expression as the `%Y-%m-%d %H:%M:%S` TEXT this
+/// module reads into `String`. `SQLite` stores exactly that TEXT (pass-through);
+/// PG columns are `TIMESTAMPTZ`, so wrap in `to_char(..., 'YYYY-MM-DD
+/// HH24:MI:SS')` (UTC session) — a bare read would fail to decode a timestamptz
+/// into `String`. Mirrors `entry::filters::Dialect::cursor_ts`.
+fn ts_text(db: &Db, expr: &str) -> String {
+    match db {
+        Db::Sqlite(_) => expr.to_string(),
+        Db::Postgres(_) => format!("to_char({expr}, 'YYYY-MM-DD HH24:MI:SS')"),
+    }
+}
+
+/// Parse a `YYYY-MM-DD` date-range bound for binding. As a `NaiveDate` it
+/// compares correctly against the timestamp columns on both backends: `SQLite`
+/// compares the `YYYY-MM-DD` TEXT lexicographically against the stored
+/// `%Y-%m-%d %H:%M:%S`, and `PostgreSQL` implicitly casts `date` to
+/// `timestamptz` — a raw `%Y-%m-%d` *string* bind would not coerce against a
+/// timestamptz column. Falls back to today on an unparseable input (matching the
+/// range-fill fallback used when charting).
+fn parse_ymd(s: &str) -> NaiveDate {
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap_or_else(|_| chrono::Utc::now().date_naive())
+}
+
 /// Overview metrics for a user within a date range.
 #[derive(Default)]
 pub struct PersonalOverview {
@@ -134,6 +157,9 @@ pub async fn get_personal_overview(
     from: &str,
     to: &str,
 ) -> AppResult<PersonalOverview> {
+    // Bind the range bounds as dates (see `parse_ymd`) so the `>= $2 / < $3`
+    // comparisons against the timestamp columns work on both backends.
+    let (from, to) = (parse_ymd(from), parse_ymd(to));
     let total_entries: i64 = query_scalar!(
         db,
         i64,
@@ -230,26 +256,44 @@ pub async fn get_daily_read_counts(
     to: &str,
 ) -> AppResult<Vec<DailyReadCount>> {
     // Ad-hoc `(date_string, count)` rows → fetch as a tuple and post-process in
-    // Rust (fill zero-count days below).
-    // TODO(phase-c): PG dialect — `DATE(e.read_at)` should be `(e.read_at)::date`.
-    let rows = query_all!(
-        db,
-        (String, i64),
-        r#"
-        SELECT DATE(e.read_at) AS read_date, COUNT(e.id) AS cnt
-        FROM entry e
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
-        WHERE c.user_id = $1
-          AND e.read_at >= $2
-          AND e.read_at < $3
-        GROUP BY read_date
-        ORDER BY read_date
-        "#,
-        user_id,
-        from,
-        to,
-    )
+    // Rust (fill zero-count days below). Only the day bucket dialect-forks:
+    // SQLite's `DATE()` vs PG's `to_char(...)`. The range bounds are bound as
+    // dates (see `parse_ymd`) so the raw `read_at >= $2 / < $3` comparison works
+    // on both backends without wrapping the column.
+    let day_bucket = match db {
+        Db::Sqlite(_) => "DATE(e.read_at)".to_string(),
+        Db::Postgres(_) => "to_char(e.read_at, 'YYYY-MM-DD')".to_string(),
+    };
+    let (from_d, to_d) = (parse_ymd(from), parse_ymd(to));
+    let sql = format!(
+        "SELECT {day_bucket} AS read_date, COUNT(e.id) AS cnt \
+         FROM entry e \
+         INNER JOIN feed f ON e.feed_id = f.id \
+         INNER JOIN category c ON f.category_id = c.id \
+         WHERE c.user_id = $1 \
+           AND e.read_at >= $2 \
+           AND e.read_at < $3 \
+         GROUP BY read_date \
+         ORDER BY read_date"
+    );
+    let rows: Vec<(String, i64)> = match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_as::<sqlx::Sqlite, (String, i64)>(sqlx::AssertSqlSafe(sql))
+                .bind(user_id)
+                .bind(from_d)
+                .bind(to_d)
+                .fetch_all(pool)
+                .await
+        }
+        Db::Postgres(pool) => {
+            sqlx::query_as::<sqlx::Postgres, (String, i64)>(sqlx::AssertSqlSafe(sql))
+                .bind(user_id)
+                .bind(from_d)
+                .bind(to_d)
+                .fetch_all(pool)
+                .await
+        }
+    }
     .map_err(AppError::Database)?;
 
     let mut counts_map = std::collections::HashMap::new();
@@ -289,6 +333,7 @@ pub async fn get_entries_by_category(
 ) -> AppResult<Vec<CategoryCount>> {
     // `AS count` so `FromRow` (column-name match) populates `CategoryCount.count`;
     // HAVING/ORDER BY reference the aggregate directly (portable, alias-free).
+    let (from, to) = (parse_ymd(from), parse_ymd(to));
     query_all!(
         db,
         CategoryCount,
@@ -324,6 +369,7 @@ pub async fn get_top_feeds(
 ) -> AppResult<Vec<FeedCount>> {
     // `AS count` so `FromRow` (column-name match) populates `FeedCount.count`;
     // HAVING/ORDER BY reference the aggregate directly (portable, alias-free).
+    let (from, to) = (parse_ymd(from), parse_ymd(to));
     query_all!(
         db,
         FeedCount,
@@ -351,7 +397,7 @@ pub async fn get_top_feeds(
 /// Get site-wide admin counts (period-independent).
 pub async fn get_admin_counts(db: &Db) -> AppResult<AdminCounts> {
     let total_users: i64 =
-        query_scalar!(db, i64, "SELECT COUNT(*) FROM user").map_err(AppError::Database)?;
+        query_scalar!(db, i64, "SELECT COUNT(*) FROM \"user\"").map_err(AppError::Database)?;
 
     let total_feeds: i64 =
         query_scalar!(db, i64, "SELECT COUNT(*) FROM feed").map_err(AppError::Database)?;
@@ -364,6 +410,7 @@ pub async fn get_admin_counts(db: &Db) -> AppResult<AdminCounts> {
 
 /// Get site-wide admin entry stats within a date range.
 pub async fn get_admin_entry_stats(db: &Db, from: &str, to: &str) -> AppResult<AdminEntryStats> {
+    let (from, to) = (parse_ymd(from), parse_ymd(to));
     let total_entries: i64 = query_scalar!(
         db,
         i64,
@@ -403,9 +450,12 @@ pub async fn get_admin_entry_stats(db: &Db, from: &str, to: &str) -> AppResult<A
 
 /// Get site-wide database storage + record stats (period-independent).
 pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> {
-    // Page-level storage stats come from SQLite PRAGMAs, which have no direct
-    // sqlx/portable equivalent, so dispatch per-backend explicitly.
-    let (page_count, page_size, freelist): (i64, i64, i64) = match db {
+    // Storage stats dialect-fork. SQLite exposes page-level accounting via
+    // PRAGMAs (total size = page_count * page_size; reclaimable = freelist *
+    // page_size). PostgreSQL reports the on-disk database size via
+    // `pg_database_size()`; it has no directly comparable freelist/reclaimable
+    // figure (bloat is a VACUUM concern), so reclaimable is reported as 0.
+    let (db_size_bytes, reclaimable_bytes) = match db {
         Db::Sqlite(pool) => {
             let page_count = sqlx::query_scalar::<_, i64>("PRAGMA page_count")
                 .fetch_one(pool)
@@ -419,15 +469,17 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
                 .fetch_one(pool)
                 .await
                 .map_err(AppError::Database)?;
-            (page_count, page_size, freelist)
+            (page_count * page_size, freelist * page_size)
         }
-        // TODO(phase-c): PG size via pg_database_size() (and there is no
-        // freelist concept — VACUUM/bloat stats differ). Zeroes for now.
-        Db::Postgres(_pool) => (0, 0, 0),
+        Db::Postgres(pool) => {
+            let size = sqlx::query_scalar::<_, i64>("SELECT pg_database_size(current_database())")
+                .fetch_one(pool)
+                .await
+                .map_err(AppError::Database)?;
+            (size, 0)
+        }
     };
 
-    let db_size_bytes = page_count * page_size;
-    let reclaimable_bytes = freelist * page_size;
     let fragmentation_ratio = if db_size_bytes > 0 {
         reclaimable_bytes as f64 / db_size_bytes as f64
     } else {
@@ -436,13 +488,37 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
 
     let total_entries: i64 =
         query_scalar!(db, i64, "SELECT COUNT(*) FROM entry").map_err(AppError::Database)?;
-    // Bare MIN/MAX so SQLite uses the idx_entry_created_at endpoint optimization.
-    let min_created: Option<String> =
-        query_scalar!(db, Option<String>, "SELECT MIN(created_at) FROM entry")
-            .map_err(AppError::Database)?;
-    let max_created: Option<String> =
-        query_scalar!(db, Option<String>, "SELECT MAX(created_at) FROM entry")
-            .map_err(AppError::Database)?;
+    // Bare MIN/MAX so SQLite uses the idx_entry_created_at endpoint
+    // optimization; the timestamp is read back as the `%Y-%m-%d %H:%M:%S` TEXT
+    // `try_parse_datetime` expects (to_char on PG — see `ts_text`).
+    let min_sql = format!("SELECT {} FROM entry", ts_text(db, "MIN(created_at)"));
+    let max_sql = format!("SELECT {} FROM entry", ts_text(db, "MAX(created_at)"));
+    let min_created: Option<String> = match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_scalar::<_, Option<String>>(sqlx::AssertSqlSafe(min_sql))
+                .fetch_one(pool)
+                .await
+        }
+        Db::Postgres(pool) => {
+            sqlx::query_scalar::<_, Option<String>>(sqlx::AssertSqlSafe(min_sql))
+                .fetch_one(pool)
+                .await
+        }
+    }
+    .map_err(AppError::Database)?;
+    let max_created: Option<String> = match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_scalar::<_, Option<String>>(sqlx::AssertSqlSafe(max_sql))
+                .fetch_one(pool)
+                .await
+        }
+        Db::Postgres(pool) => {
+            sqlx::query_scalar::<_, Option<String>>(sqlx::AssertSqlSafe(max_sql))
+                .fetch_one(pool)
+                .await
+        }
+    }
+    .map_err(AppError::Database)?;
     let tombstone_count: i64 = query_scalar!(db, i64, "SELECT COUNT(*) FROM entry_tombstone")
         .map_err(AppError::Database)?;
 
