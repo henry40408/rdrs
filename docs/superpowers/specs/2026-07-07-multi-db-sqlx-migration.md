@@ -173,6 +173,49 @@ This is where the model functions **and** the ~146 call-site closures flip from 
 5. **Search semantics** — `COLLATE NOCASE` (ASCII) vs `ILIKE` (locale-aware) on non-ASCII.
 
 ## Effort
-Phase A ≈ 1–2 days (A4 done; A2 + inventory remain) · Phase B ≈ 2–3 weeks (absorbs the
+Phase A ≈ 1–2 days (A4 + A5 done; A2 folds into B) · Phase B ≈ 2–3 weeks (absorbs the
 model + closure flip) · Phase C ≈ 3–5 days. ≈ 3–4 weeks total.
 Endpoint: one code path, two backends, SQLite deploy experience unchanged.
+
+## Appendix — A5 closure inventory (Phase B work-list)
+
+Per-file count of `db.<accessor>(|conn| …)` call sites (the units that flip to async
+sqlx in Phase B). `pool.rs` is excluded (that's the actor definition/tests). `TX` marks
+files with an explicit `unchecked_transaction()` — those closures become sqlx
+`transaction()` blocks; the rest are mechanical single-round-trip conversions.
+
+| File | user | read_user | bg | read_bg | detach | TX |
+|---|---|---|---|---|---|---|
+| handlers/pages/mod.rs | 2 | 16 | | | | |
+| handlers/entries.rs | 2 | 12 | | | 3 | |
+| services/feed_sync.rs | 7 | | 10 | | | 2 |
+| services/summary_worker.rs | 5 | 1 | 6 | 1 | | |
+| handlers/passkey.rs | 9 | 3 | | | | |
+| handlers/user.rs | 6 | 5 | | | | |
+| handlers/feeds.rs | 5 | 3 | | | | |
+| handlers/greader/subscription.rs | 5 | 3 | | | | |
+| handlers/admin.rs | 5 | | | | | |
+| handlers/greader/tag.rs | 4 | 1 | | | | 1 |
+| handlers/entry.rs | 2 | 4 | | | | |
+| handlers/greader/item.rs | | 4 | | | | |
+| services/summary_cleanup.rs | 3 | | 2 | | | |
+| handlers/categories.rs | 3 | | | | | |
+| handlers/auth.rs | 3 | | | | | |
+| services/content_text_backfill.rs | 2 | | 2 | | | 1 |
+| middleware/auth.rs | 2 | 3 | | | | |
+| handlers/greader/auth.rs | 2 | 1 | | | | |
+| services/entry_retention.rs | 1 | | 3 | | | |
+| middleware/forward_auth.rs | 1 | 1 | | | | |
+| handlers/feed.rs | | 1 | | | | |
+| handlers/greader/user.rs | | 1 | | | | |
+| services/background.rs | | | | 1 | | |
+
+**Transaction / multi-model closures (need sqlx `transaction()`):**
+`feed_sync.rs` (×2), `content_text_backfill.rs`, `greader/tag.rs` (tag rename), plus the
+in-model `entry/mod.rs` `unchecked_transaction()`. Also atomicity-sensitive even without
+an explicit BEGIN: the OPML importers in `feeds.rs` and `greader/subscription.rs`
+(find-or-create category → create feeds in one closure).
+
+**Hotspots (largest single-file surface):** `pages/mod.rs` (18), `entries.rs` (17),
+`feed_sync.rs` (17), `summary_worker.rs` (13). Sequence Phase B model-by-model but expect
+these four files to carry most of the closure-conversion churn.
