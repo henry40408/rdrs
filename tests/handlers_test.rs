@@ -3520,15 +3520,24 @@ async fn test_entry_fragment_renders_reading_pane() {
         html.contains(r##"data-swap-target="#sidebar-unread""##),
         "response must include a multi-target sidebar block"
     );
-    // The mark-as-read write is now async (user_detached); a user() read-back
-    // is FIFO-ordered behind it, so it observes the applied write.
-    let read_at: Option<String> = rdrs::query_scalar!(
-        &app.db,
-        Option<String>,
-        "SELECT read_at FROM entry WHERE id = $1",
-        entry_id
-    )
-    .unwrap();
+    // The mark-as-read write is dispatched off the critical path via a detached
+    // `tokio::spawn` (fire-and-forget), so it may not have committed by the time
+    // the response returns — there is no ordering guarantee between it and this
+    // read-back. Poll until the write lands rather than assuming it already has.
+    let mut read_at: Option<String> = None;
+    for _ in 0..100 {
+        read_at = rdrs::query_scalar!(
+            &app.db,
+            Option<String>,
+            "SELECT read_at FROM entry WHERE id = $1",
+            entry_id
+        )
+        .unwrap();
+        if read_at.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
     assert!(read_at.is_some(), "entry must be marked read after open");
 }
 
