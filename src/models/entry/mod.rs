@@ -213,6 +213,7 @@ async fn fetch_entries_with_feed(
                 q = match b {
                     Bind::Int(i) => q.bind(*i),
                     Bind::Text(s) => q.bind(s.as_str()),
+                    Bind::Ts(t) => q.bind(*t),
                 };
             }
             q.fetch_all(pool).await?
@@ -224,6 +225,7 @@ async fn fetch_entries_with_feed(
                 q = match b {
                     Bind::Int(i) => q.bind(*i),
                     Bind::Text(s) => q.bind(s.as_str()),
+                    Bind::Ts(t) => q.bind(*t),
                 };
             }
             q.fetch_all(pool).await?
@@ -240,6 +242,7 @@ async fn fetch_scalar_i64(db: &Db, sql: String, binds: Vec<Bind>) -> Result<i64,
                 q = match b {
                     Bind::Int(i) => q.bind(*i),
                     Bind::Text(s) => q.bind(s.as_str()),
+                    Bind::Ts(t) => q.bind(*t),
                 };
             }
             q.fetch_one(pool).await
@@ -250,6 +253,7 @@ async fn fetch_scalar_i64(db: &Db, sql: String, binds: Vec<Bind>) -> Result<i64,
                 q = match b {
                     Bind::Int(i) => q.bind(*i),
                     Bind::Text(s) => q.bind(s.as_str()),
+                    Bind::Ts(t) => q.bind(*t),
                 };
             }
             q.fetch_one(pool).await
@@ -270,6 +274,7 @@ async fn fetch_id_ts_rows(
                 q = match b {
                     Bind::Int(i) => q.bind(*i),
                     Bind::Text(s) => q.bind(s.as_str()),
+                    Bind::Ts(t) => q.bind(*t),
                 };
             }
             q.fetch_all(pool).await
@@ -280,6 +285,7 @@ async fn fetch_id_ts_rows(
                 q = match b {
                     Bind::Int(i) => q.bind(*i),
                     Bind::Text(s) => q.bind(s.as_str()),
+                    Bind::Ts(t) => q.bind(*t),
                 };
             }
             q.fetch_all(pool).await
@@ -296,6 +302,7 @@ async fn exec_dynamic(db: &Db, sql: String, binds: Vec<Bind>) -> Result<u64, sql
                 q = match b {
                     Bind::Int(i) => q.bind(*i),
                     Bind::Text(s) => q.bind(s.as_str()),
+                    Bind::Ts(t) => q.bind(*t),
                 };
             }
             q.execute(pool).await.map(|r| r.rows_affected())
@@ -307,6 +314,7 @@ async fn exec_dynamic(db: &Db, sql: String, binds: Vec<Bind>) -> Result<u64, sql
                 q = match b {
                     Bind::Int(i) => q.bind(*i),
                     Bind::Text(s) => q.bind(s.as_str()),
+                    Bind::Ts(t) => q.bind(*t),
                 };
             }
             q.execute(pool).await.map(|r| r.rows_affected())
@@ -327,6 +335,7 @@ async fn exec_dynamic_tx(
                 q = match b {
                     Bind::Int(i) => q.bind(*i),
                     Bind::Text(s) => q.bind(s.as_str()),
+                    Bind::Ts(t) => q.bind(*t),
                 };
             }
             q.execute(&mut **t).await.map(|r| r.rows_affected())
@@ -338,6 +347,7 @@ async fn exec_dynamic_tx(
                 q = match b {
                     Bind::Int(i) => q.bind(*i),
                     Bind::Text(s) => q.bind(s.as_str()),
+                    Bind::Ts(t) => q.bind(*t),
                 };
             }
             q.execute(&mut **t).await.map(|r| r.rows_affected())
@@ -1341,17 +1351,29 @@ pub async fn find_neighbors(
         });
     };
 
+    // On PG, bind the cursor as a `timestamptz` and compare the raw column so
+    // the neighbour lookups hit the timestamp index as a range scan (see
+    // `filters::parse_cursor_ts`); fall back to the `to_char` string comparison
+    // if the stored value can't be parsed. SQLite compares raw TEXT.
+    let pg_ts = (dialect == Dialect::Postgres)
+        .then(|| filters::parse_cursor_ts(&sort_time))
+        .flatten();
+    let cursor_bind = |ts: Option<chrono::DateTime<chrono::Utc>>, s: &str| match ts {
+        Some(ts) => Bind::Ts(ts),
+        None => Bind::Text(s.to_string()),
+    };
+
     // Build filter conditions using apply_filter_conditions.
     // Prev query base binds: $1=user_id, $2=sort_time
     let mut prev_conditions = Vec::new();
-    let mut prev_binds: Vec<Bind> = vec![Bind::Int(user_id), Bind::Text(sort_time.clone())];
+    let mut prev_binds: Vec<Bind> = vec![Bind::Int(user_id), cursor_bind(pg_ts, &sort_time)];
     apply_filter_conditions(&mut prev_conditions, &mut prev_binds, filter, dialect);
 
     // Next query base binds: $1=user_id, $2=sort_time, $3=entry_id
     let mut next_conditions = Vec::new();
     let mut next_binds: Vec<Bind> = vec![
         Bind::Int(user_id),
-        Bind::Text(sort_time),
+        cursor_bind(pg_ts, &sort_time),
         Bind::Int(entry_id),
     ];
     apply_filter_conditions(&mut next_conditions, &mut next_binds, filter, dialect);
@@ -1392,10 +1414,14 @@ pub async fn find_neighbors(
     };
     let entry_hint = dialect.index_hint(raw_hint);
 
-    // Compare the bound `sort_time` cursor TEXT against the same form of the
-    // sort expression (raw on SQLite; to_char on PG). ORDER BY stays on the raw
-    // expression so the native sort index is unaffected.
-    let cmp_ts = dialect.cursor_ts("COALESCE(e.published_at, e.created_at)");
+    // Compare against the sort expression in the form matching the `$2` bind:
+    // the raw column when the cursor was bound as a `timestamptz` (sargable on
+    // PG; also the SQLite raw-TEXT path), or `to_char(...)` on the PG string
+    // fallback. ORDER BY stays on the raw expression regardless.
+    let cmp_ts = match pg_ts {
+        Some(_) => "COALESCE(e.published_at, e.created_at)".to_string(),
+        None => dialect.cursor_ts("COALESCE(e.published_at, e.created_at)"),
+    };
 
     // Find previous entry (newer, comes before in DESC order)
     let prev_sql = format!(
@@ -1430,6 +1456,7 @@ pub async fn find_neighbors(
                     q = match b {
                         Bind::Int(i) => q.bind(*i),
                         Bind::Text(s) => q.bind(s.as_str()),
+                        Bind::Ts(t) => q.bind(*t),
                     };
                 }
                 q.fetch_optional(pool).await
@@ -1440,6 +1467,7 @@ pub async fn find_neighbors(
                     q = match b {
                         Bind::Int(i) => q.bind(*i),
                         Bind::Text(s) => q.bind(s.as_str()),
+                        Bind::Ts(t) => q.bind(*t),
                     };
                 }
                 q.fetch_optional(pool).await
