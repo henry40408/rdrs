@@ -1,11 +1,13 @@
 # Multi-Database Support (SQLite + PostgreSQL) via sqlx — Migration Design
 
 **Date:** 2026-07-07
-**Branches:** `chore/sqlx-multi-db-spike` (feasibility spike, pushed), `refactor/db-repo-seam` (Phase A)
-**Status:** Phases A & B merged. **Phase C landed** (2026-07-07): PostgreSQL is
-runtime-enabled and validated against live PG 17 by `tests/postgres_test.rs`
-(env-gated on `TEST_DATABASE_URL`) plus a CI Postgres service lane. SQLite remains
-the zero-config default.
+**Status:** **Complete — all phases merged to `main` (2026-07-07).** PostgreSQL is
+runtime-enabled and validated against live PG 17 by `tests/postgres_test.rs` (env-gated
+on `TEST_DATABASE_URL`) plus a CI Postgres service lane; SQLite remains the zero-config
+default. Landed as: Phase A (#366) → Phase B rusqlite→sqlx cutover (#367) → Phase C PG
+enablement (#368) → Phase D PG cursor sargability (#369) → SQLite write-priority scheduler
+restored (#370). The `chore/sqlx-multi-db-spike` feasibility branch and `spike/` crate have
+been removed now that their findings are folded into the shipped code.
 
 ## Goal
 
@@ -188,6 +190,17 @@ column, so the same query becomes an index range scan (*Index Cond*, 4 buffers, 
 that won't parse falls back to the correct `to_char` comparison; SQLite is unchanged (raw
 TEXT comparison). Guarded by DB-free unit tests in `entry/filters.rs` and validated against
 live PG (the full join query plan shows `Index Cond`).
+
+### SQLite write-priority scheduler (#370, landed 2026-07-07)
+
+Phase B's cutover dropped the rusqlite-era write-priority scheduling; #370 restores it in
+the sqlx world, scoped to what actually needs it. Unlike the spike sketch above (which
+imagined per-backend pools), the shipped design gates **only SQLite writes**: `Db` carries
+a `Priority` (`User` by default; workers call `db.background()`) and a shared `SqliteSched`
+whose `admit()` holds a background write until no `User` write is in flight. Reads are never
+gated — WAL readers don't block the single writer. On PostgreSQL it is a no-op (MVCC has
+real writer concurrency). Covered by deterministic, sleep-free async ordering unit tests in
+`db/pool.rs`.
 
 ## Risks to watch (Phase B)
 1. **`INDEXED BY` removal** — SQLite perf crutches; build equivalent (incl. partial)

@@ -78,7 +78,7 @@ All configuration is done via environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATABASE_URL` | `rdrs.sqlite3` | SQLite database file path |
+| `DATABASE_URL` | `rdrs.sqlite3` | Database location. A file path or `sqlite://` URL selects SQLite (zero-config default); a `postgres://` URL selects PostgreSQL. The backend is chosen once at startup. |
 | `SERVER_PORT` | `3000` | HTTP server port |
 | `SIGNUP_ENABLED` | `false` | Allow new user registration |
 | `MULTI_USER_ENABLED` | `false` | Allow multiple users (requires signup enabled) |
