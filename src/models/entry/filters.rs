@@ -48,10 +48,40 @@ impl Dialect {
     /// Unix-epoch-seconds expression for a timestamp column/expression:
     /// `CAST(strftime('%s', expr) AS INTEGER)` on `SQLite`,
     /// `EXTRACT(EPOCH FROM expr)::bigint` on `PostgreSQL`.
-    fn epoch(self, expr: &str) -> String {
+    pub(super) fn epoch(self, expr: &str) -> String {
         match self {
             Dialect::Sqlite => format!("CAST(strftime('%s', {expr}) AS INTEGER)"),
             Dialect::Postgres => format!("EXTRACT(EPOCH FROM {expr})::bigint"),
+        }
+    }
+
+    /// Render a timestamp column/expression as the `%Y-%m-%d %H:%M:%S` TEXT the
+    /// composite pagination cursor compares against. On `SQLite` the columns
+    /// already store exactly that TEXT, so the expression passes through. On
+    /// `PostgreSQL` the columns are `TIMESTAMPTZ`, so wrap in
+    /// `to_char(expr, 'YYYY-MM-DD HH24:MI:SS')`; under the connection's pinned
+    /// `TimeZone=UTC` this reproduces the same string `SQLite` stores, keeping the
+    /// string-ordered cursor byte-identical across backends. (The `ORDER BY`
+    /// still sorts on the raw expression, so the native index is unaffected;
+    /// only the cursor's WHERE predicate uses this form. TODO(phase-d): bind the
+    /// cursor as `timestamptz` on PG to make that predicate sargable too.)
+    pub(super) fn cursor_ts(self, expr: &str) -> String {
+        match self {
+            Dialect::Sqlite => expr.to_string(),
+            Dialect::Postgres => format!("to_char({expr}, 'YYYY-MM-DD HH24:MI:SS')"),
+        }
+    }
+
+    /// A timestamp `N` days in the past, where `N` is given by the SQL
+    /// expression `days_expr` (an integer literal like `30`, or an integer
+    /// column like `us.retention_read_days`). Used by the read-retention and
+    /// snapshot-window predicates, which compare a stored timestamp against this
+    /// cutoff. `SQLite` builds it with `datetime('now', '-N days')` (concatenating
+    /// the count in); `PostgreSQL` uses `now() - make_interval(days => N)`.
+    pub(super) fn days_ago(self, days_expr: &str) -> String {
+        match self {
+            Dialect::Sqlite => format!("datetime('now', '-' || ({days_expr}) || ' days')"),
+            Dialect::Postgres => format!("now() - make_interval(days => ({days_expr})::int)"),
         }
     }
 
@@ -125,9 +155,12 @@ pub(super) fn apply_filter_conditions(
             // Snapshot semantics: entries read during the current page view
             // (read_at at-or-after the page's render instant) stay in the
             // unread navigation set. `>=` (not `>`) so a same-second
-            // open-after-load still counts as in-snapshot.
+            // open-after-load still counts as in-snapshot. `read_after` is the
+            // `%Y-%m-%d %H:%M:%S` snapshot string, so compare it against the
+            // same TEXT form of `read_at` on both backends (to_char on PG).
             let idx = binds.len() + 1;
-            conditions.push(format!("(e.read_at IS NULL OR e.read_at >= ${idx})"));
+            let read_at = dialect.cursor_ts("e.read_at");
+            conditions.push(format!("(e.read_at IS NULL OR {read_at} >= ${idx})"));
             binds.push(Bind::Text(read_after.clone()));
         } else {
             conditions.push("e.read_at IS NULL".to_string());
@@ -199,6 +232,7 @@ pub(super) fn apply_continuation_condition(
     continuation: Option<&ContinuationCursor>,
     sort_order: EntrySortOrder,
     oldest_first: bool,
+    dialect: Dialect,
 ) {
     let Some(cursor) = continuation else {
         return;
@@ -211,6 +245,11 @@ pub(super) fn apply_continuation_condition(
                 EntrySortOrder::StarredAt => "e.starred_at",
                 EntrySortOrder::PublishedAt => "COALESCE(e.published_at, e.created_at)",
             };
+            // Compare the cursor string against the same TEXT form on both
+            // backends (a no-op on SQLite; `to_char(...)` on PG). The bound
+            // cursor value is the `%Y-%m-%d %H:%M:%S` string emitted by
+            // `fetch_sort_ts`.
+            let expr = dialect.cursor_ts(sort_ts_expr);
             let (cmp_outer, cmp_inner) = if oldest_first {
                 (">=", ">")
             } else {
@@ -221,7 +260,6 @@ pub(super) fn apply_continuation_condition(
             let id_idx = binds.len() + 3;
             conditions.push(format!(
                 "{expr} {cmp_outer} ${ts1} AND ({expr} {cmp_inner} ${ts2} OR e.id {cmp_inner} ${id_idx})",
-                expr = sort_ts_expr,
             ));
             binds.push(Bind::Text(sort_ts.clone()));
             binds.push(Bind::Text(sort_ts.clone()));

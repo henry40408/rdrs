@@ -60,12 +60,20 @@ the cross-cutting facts that span multiple files.
   into the single binary. This is why a rebuild is mandatory before E2E sees UI
   edits (see above) and why deployment is a single static binary.
 
-- **Dual-connection DB pool** (`db/pool.rs`). One write connection and one
-  read-only connection (`PRAGMA query_only=ON`) under WAL, with priority
-  scheduling so interactive user requests preempt background work. Models expose
-  CRUD as associated functions and take `*Params` structs instead of long
-  positional argument lists. Schema migrations are versioned via
-  `PRAGMA user_version` in `db/schema.rs`.
+- **Dual-backend `sqlx` data layer** (`db/pool.rs`). The backend is chosen once
+  at startup from `DATABASE_URL`: a bare path or `sqlite://` URL selects SQLite
+  (WAL, the zero-config single-binary default); a `postgres://` URL selects
+  PostgreSQL. `enum Db { Sqlite(SqlitePool), Postgres(PgPool) }` (and a
+  backend-tagged `enum Tx`) dispatch every query through the `query_*!` /
+  `db_execute!` macros so SQL + binds are written once. The few genuine dialect
+  differences are isolated behind `entry::filters::Dialect` and a `pg_rewrite`
+  shim (`datetime('now')`→`now()`, `to_char` cursor comparisons, `make_interval`,
+  quoted `"user"`, etc. — see the multi-db spec). PG connections pin
+  `TimeZone=UTC` so timestamp-string cursors stay byte-identical to SQLite.
+  Migrations are embedded per backend under `migrations/{sqlite,postgres}/` and
+  run via `sqlx::migrate!`. Models expose CRUD as free functions taking `&Db` /
+  `&mut Tx` and `*Params` structs. The env-gated `tests/postgres_test.rs`
+  validates the PG paths against a live server (CI Postgres service lane).
 
 - **Background feed sync** (`services/background.rs`, `feed_sync.rs`). Feeds are
   distributed across 60 one-minute buckets by URL hash (`feed.bucket` column);

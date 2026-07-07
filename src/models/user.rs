@@ -105,7 +105,7 @@ pub async fn create_user(
     query_one!(
         db,
         User,
-        "INSERT INTO user (username, password_hash, role) VALUES ($1, $2, $3) \
+        "INSERT INTO \"user\" (username, password_hash, role) VALUES ($1, $2, $3) \
          RETURNING id, username, password_hash, role, disabled_at, created_at",
         username,
         password_hash,
@@ -125,7 +125,7 @@ pub async fn find_by_username(db: &Db, username: &str) -> AppResult<Option<User>
         db,
         User,
         "SELECT id, username, password_hash, role, disabled_at, created_at \
-         FROM user WHERE username = $1",
+         FROM \"user\" WHERE username = $1",
         username
     )
     .map_err(AppError::Database)
@@ -136,7 +136,7 @@ pub async fn find_by_id(db: &Db, id: i64) -> AppResult<Option<User>> {
         db,
         User,
         "SELECT id, username, password_hash, role, disabled_at, created_at \
-         FROM user WHERE id = $1",
+         FROM \"user\" WHERE id = $1",
         id
     )
     .map_err(AppError::Database)
@@ -147,7 +147,7 @@ pub async fn list_all(db: &Db) -> AppResult<Vec<User>> {
         db,
         User,
         "SELECT id, username, password_hash, role, disabled_at, created_at \
-         FROM user ORDER BY id"
+         FROM \"user\" ORDER BY id"
     )
     .map_err(AppError::Database)
 }
@@ -155,7 +155,7 @@ pub async fn list_all(db: &Db) -> AppResult<Vec<User>> {
 pub async fn update_password(db: &Db, user_id: i64, new_password_hash: &str) -> AppResult<()> {
     let rows = db_execute!(
         db,
-        "UPDATE user SET password_hash = $1 WHERE id = $2",
+        "UPDATE \"user\" SET password_hash = $1 WHERE id = $2",
         new_password_hash,
         user_id
     )
@@ -170,7 +170,7 @@ pub async fn update_password(db: &Db, user_id: i64, new_password_hash: &str) -> 
 pub async fn update_role(db: &Db, user_id: i64, role: Role) -> AppResult<()> {
     let rows = db_execute!(
         db,
-        "UPDATE user SET role = $1 WHERE id = $2",
+        "UPDATE \"user\" SET role = $1 WHERE id = $2",
         role.as_str(),
         user_id
     )
@@ -185,7 +185,7 @@ pub async fn update_role(db: &Db, user_id: i64, role: Role) -> AppResult<()> {
 pub async fn disable_user(db: &Db, user_id: i64) -> AppResult<()> {
     let rows = db_execute!(
         db,
-        "UPDATE user SET disabled_at = $1 WHERE id = $2",
+        "UPDATE \"user\" SET disabled_at = $1 WHERE id = $2",
         Utc::now(),
         user_id
     )
@@ -200,7 +200,7 @@ pub async fn disable_user(db: &Db, user_id: i64) -> AppResult<()> {
 pub async fn enable_user(db: &Db, user_id: i64) -> AppResult<()> {
     let rows = db_execute!(
         db,
-        "UPDATE user SET disabled_at = NULL WHERE id = $1",
+        "UPDATE \"user\" SET disabled_at = NULL WHERE id = $1",
         user_id
     )
     .map_err(AppError::Database)?;
@@ -222,7 +222,7 @@ pub async fn delete_user(db: &Db, user_id: i64) -> AppResult<()> {
 }
 
 pub async fn count(db: &Db) -> AppResult<i64> {
-    query_scalar!(db, i64, "SELECT COUNT(*) FROM user").map_err(AppError::Database)
+    query_scalar!(db, i64, "SELECT COUNT(*) FROM \"user\"").map_err(AppError::Database)
 }
 
 #[cfg(test)]

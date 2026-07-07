@@ -166,19 +166,6 @@ impl Config {
 
     /// Validate cross-field invariants at startup. Returns the first problem.
     pub fn validate(&self) -> Result<(), String> {
-        // PostgreSQL is a recognized backend in the config contract but its
-        // driver isn't wired up yet (arrives in the sqlx cutover — Phase B of
-        // docs/superpowers/specs/2026-07-07-multi-db-sqlx-migration.md). Fail
-        // fast with a clear message instead of letting the SQLite driver try to
-        // open a `postgres://` URL as a file path.
-        if self.backend() == Backend::Postgres {
-            return Err(
-                "DATABASE_URL selects PostgreSQL, which is not supported yet. \
-                 Use a SQLite file path or a sqlite:// URL. PostgreSQL support \
-                 is in progress."
-                    .to_string(),
-            );
-        }
         if self.auth_proxy_enabled() && self.trusted_proxy_networks.is_empty() {
             return Err(
                 "AUTH_PROXY_HEADER is set but TRUSTED_PROXY_NETWORKS is empty. \
@@ -276,13 +263,13 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_rejects_postgres_for_now() {
+    fn test_validate_accepts_both_backends() {
+        // Both a PostgreSQL URL and a SQLite path pass validation now that the
+        // sqlx data layer supports both backends (Phase C).
         let mut config = test_config();
         config.database_url = "postgres://user@localhost/rdrs".to_string();
-        let err = config.validate().expect_err("postgres must be rejected");
-        assert!(err.contains("PostgreSQL"), "message was: {err}");
+        assert!(config.validate().is_ok());
 
-        // SQLite path still validates fine.
         config.database_url = "rdrs.sqlite3".to_string();
         assert!(config.validate().is_ok());
     }

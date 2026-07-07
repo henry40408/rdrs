@@ -71,6 +71,48 @@ jobs:
       - name: cargo deny check
         run: cargo deny check
 
+  # PostgreSQL backend integration test. The default nextest run (lint/coverage)
+  # only exercises the SQLite backend; this job stands up a throwaway Postgres
+  # and runs the dual-backend dialect-fork test (`tests/postgres_test.rs`)
+  # against it. Gated by TEST_DATABASE_URL — without it the test skips.
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: rdrs
+          POSTGRES_PASSWORD: rdrs
+          POSTGRES_DB: rdrs
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rdrs -d rdrs"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@10c3493d811a9096cee4fdf287e41e852f6a51ba # 1.94.0
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - uses: taiki-e/install-action@b8cecb83565409bcc297b2df6e77f030b2a468d5 # v2
+        with:
+          tool: nextest
+
+      - name: Run Postgres integration test
+        env:
+          RDRS_FAST_HASH: "1"
+          TEST_DATABASE_URL: postgres://rdrs:rdrs@localhost:5432/rdrs
+        run: cargo nextest run --test postgres_test
+
   e2e-tests:
     runs-on: ubuntu-latest
     strategy:
