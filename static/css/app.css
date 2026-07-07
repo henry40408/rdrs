@@ -370,7 +370,7 @@ code {
     color: var(--color-text-secondary);
     text-decoration: none;
     font-size: 15.5px;
-    font-weight: 500;
+    font-weight: 400;
     transition: background 0.12s, color 0.12s;
 }
 
@@ -379,9 +379,12 @@ code {
     color: var(--color-text);
 }
 
+/* The active row is the one place weight steps up: 400 baseline → 600 so the
+   current location reads at a glance instead of relying on background alone. */
 .sidebar-item.active {
     background: var(--color-sidebar-active);
     color: var(--color-text);
+    font-weight: 600;
 }
 
 .sidebar-item.active .sidebar-item-icon { color: var(--color-accent); }
@@ -416,7 +419,7 @@ code {
     margin-left: auto;
     font-family: var(--font-mono);
     font-size: 12.5px;
-    font-weight: 500;
+    font-weight: 400;
     color: var(--color-text-muted);
     text-align: right;
 }
@@ -1444,7 +1447,7 @@ td input[type="text"] {
     overflow: hidden;
     transition: color 0.1s;
 }
-.entry-item.entry-read .entry-item-title { font-weight: 500; color: var(--color-text-secondary); }
+.entry-item.entry-read .entry-item-title { font-weight: 400; color: var(--color-text-secondary); }
 .entry-item:hover .entry-item-title { color: var(--color-accent); }
 
 /* Timerow (col3 row1) — summary badge + relative time, on the title's first line. */
@@ -1480,7 +1483,7 @@ td input[type="text"] {
     color: var(--color-text-muted);
     min-width: 0;
 }
-.entry-item-meta a { color: var(--color-text-secondary); font-weight: 500; text-decoration: none; }
+.entry-item-meta a { color: var(--color-text-secondary); font-weight: 400; text-decoration: none; }
 .entry-item-meta a:hover { color: var(--color-accent); }
 .entry-item.entry-read .entry-item-meta a { color: var(--color-text-muted); font-weight: 400; }
 /* The read-state rule above (0,3,1) out-specifies the generic `a:hover` (0,2,1),
