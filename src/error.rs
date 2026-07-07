@@ -9,7 +9,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum AppError {
     #[error("Database error: {0}")]
-    Database(#[from] rusqlite::Error),
+    Database(#[from] sqlx::Error),
 
     #[error("Invalid credentials")]
     InvalidCredentials,
@@ -106,9 +106,6 @@ pub enum AppError {
 
     #[error("Internal server error")]
     Internal(String),
-
-    #[error("Database pool error: {0}")]
-    DbPool(#[from] crate::db::DbError),
 }
 
 impl IntoResponse for AppError {
@@ -156,15 +153,6 @@ impl IntoResponse for AppError {
                 return (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response();
             }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
-            AppError::DbPool(e) => match e {
-                crate::db::DbError::Timeout => (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Database busy, please retry",
-                ),
-                crate::db::DbError::ActorStopped => {
-                    (StatusCode::INTERNAL_SERVER_ERROR, "Database error")
-                }
-            },
         };
 
         (status, Json(json!({ "error": message }))).into_response()
@@ -186,7 +174,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_database_error_response() {
-        let err = AppError::Database(rusqlite::Error::QueryReturnedNoRows);
+        let err = AppError::Database(sqlx::Error::RowNotFound);
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         let body = get_response_body(response).await;
@@ -481,24 +469,6 @@ mod tests {
         assert!(body.contains("Challenge not found"));
     }
 
-    #[tokio::test]
-    async fn test_dbpool_timeout_response() {
-        let err = AppError::DbPool(crate::db::DbError::Timeout);
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = get_response_body(response).await;
-        assert!(body.contains("Database busy"));
-    }
-
-    #[tokio::test]
-    async fn test_dbpool_actor_stopped_response() {
-        let err = AppError::DbPool(crate::db::DbError::ActorStopped);
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let body = get_response_body(response).await;
-        assert!(body.contains("Database error"));
-    }
-
     #[test]
     fn test_error_display() {
         assert_eq!(
@@ -516,9 +486,9 @@ mod tests {
     }
 
     #[test]
-    fn test_error_from_rusqlite() {
-        let sqlite_err = rusqlite::Error::QueryReturnedNoRows;
-        let app_err: AppError = sqlite_err.into();
+    fn test_error_from_sqlx() {
+        let sqlx_err = sqlx::Error::RowNotFound;
+        let app_err: AppError = sqlx_err.into();
         assert!(matches!(app_err, AppError::Database(_)));
     }
 }

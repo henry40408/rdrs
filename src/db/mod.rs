@@ -1,5 +1,3 @@
 pub mod pool;
-pub mod schema;
 
-pub use pool::{DbError, DbPool};
-pub use schema::init_db;
+pub use pool::{Db, Tx, is_unique_violation};
