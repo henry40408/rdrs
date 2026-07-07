@@ -176,8 +176,18 @@ timestamp columns read into `String` wrap in `to_char`; `DATE()`→`to_char`,
 uniformly; non-id `INTEGER` columns are `BIGINT` and the `has_icon` 0/1 flag is
 `CAST(... AS BIGINT)` to match the `i64` reads under sqlx-PG's strict int widths.
 
-**Deferred (TODO(phase-d)):** the PG cursor `to_char` predicate is not sargable — bind
-the cursor as `timestamptz` to restore index range scans.
+### Phase D — PG cursor sargability (landed 2026-07-07)
+
+The Phase C PG cursor/`read_after`/neighbour predicates wrapped the timestamp column in
+`to_char(...)` to compare against the string cursor — correct, but **not sargable**: at a
+mid-table cursor over 50k rows the planner filtered ~25k rows (Index Scan with a `to_char`
+*Filter*, 516 buffers, 7.3 ms). Phase D binds the cursor as a `timestamptz` (`Bind::Ts`,
+parsed from the `%Y-%m-%d %H:%M:%S` string via `parse_cursor_ts`) and compares the **raw**
+column, so the same query becomes an index range scan (*Index Cond*, 4 buffers, 0.019 ms —
+~380× faster, and flat with cursor depth instead of linear). A malformed/tampered cursor
+that won't parse falls back to the correct `to_char` comparison; SQLite is unchanged (raw
+TEXT comparison). Guarded by DB-free unit tests in `entry/filters.rs` and validated against
+live PG (the full join query plan shows `Index Cond`).
 
 ## Risks to watch (Phase B)
 1. **`INDEXED BY` removal** — SQLite perf crutches; build equivalent (incl. partial)

@@ -8,6 +8,8 @@
 //! backend `Dialect` selects the few divergent fragments (case-insensitive
 //! `LIKE`, epoch extraction, the SQLite-only `INDEXED BY` hint).
 
+use chrono::{DateTime, Utc};
+
 use crate::db::Db;
 
 use super::{ContinuationCursor, EntryFilter, EntrySortOrder};
@@ -17,6 +19,21 @@ use super::{ContinuationCursor, EntryFilter, EntrySortOrder};
 pub(super) enum Bind {
     Int(i64),
     Text(String),
+    /// A timestamp bound as the backend's native type (`timestamptz` on PG,
+    /// `%Y-%m-%d %H:%M:%S` TEXT on `SQLite`). Used for the cursor / `read_after`
+    /// comparisons so they hit the timestamp index as a range scan instead of
+    /// being filtered through a non-sargable `to_char(...)` expression.
+    Ts(DateTime<Utc>),
+}
+
+/// Parse the `%Y-%m-%d %H:%M:%S` cursor TEXT (as emitted by
+/// [`super::fetch_sort_ts`], UTC) into a `timestamptz`-bindable value. Returns
+/// `None` for a malformed cursor (e.g. a tampered wire value), letting callers
+/// fall back to the string comparison.
+pub(super) fn parse_cursor_ts(s: &str) -> Option<DateTime<Utc>> {
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|ndt| ndt.and_utc())
 }
 
 /// Backend SQL-dialect selector for the entry queries. Derived once from the
@@ -55,16 +72,18 @@ impl Dialect {
         }
     }
 
-    /// Render a timestamp column/expression as the `%Y-%m-%d %H:%M:%S` TEXT the
-    /// composite pagination cursor compares against. On `SQLite` the columns
-    /// already store exactly that TEXT, so the expression passes through. On
-    /// `PostgreSQL` the columns are `TIMESTAMPTZ`, so wrap in
-    /// `to_char(expr, 'YYYY-MM-DD HH24:MI:SS')`; under the connection's pinned
-    /// `TimeZone=UTC` this reproduces the same string `SQLite` stores, keeping the
-    /// string-ordered cursor byte-identical across backends. (The `ORDER BY`
-    /// still sorts on the raw expression, so the native index is unaffected;
-    /// only the cursor's WHERE predicate uses this form. TODO(phase-d): bind the
-    /// cursor as `timestamptz` on PG to make that predicate sargable too.)
+    /// Render a timestamp column/expression as the `%Y-%m-%d %H:%M:%S` TEXT.
+    /// On `SQLite` the columns already store exactly that TEXT, so the
+    /// expression passes through. On `PostgreSQL` the columns are `TIMESTAMPTZ`,
+    /// so wrap in `to_char(expr, 'YYYY-MM-DD HH24:MI:SS')`; under the pinned
+    /// `TimeZone=UTC` this reproduces the string `SQLite` stores.
+    ///
+    /// Used for reading a timestamp column back *as* the cursor string
+    /// (`fetch_sort_ts`, neighbour lookup) and as the non-sargable **fallback**
+    /// for the cursor/`read_after` WHERE comparison when the bound value can't be
+    /// parsed to a `timestamptz`. The fast path binds the value as a `timestamptz`
+    /// (`Bind::Ts`) and compares the raw column so the timestamp index drives a
+    /// range scan — see `parse_cursor_ts` and `apply_continuation_condition`.
     pub(super) fn cursor_ts(self, expr: &str) -> String {
         match self {
             Dialect::Sqlite => expr.to_string(),
@@ -156,12 +175,21 @@ pub(super) fn apply_filter_conditions(
             // (read_at at-or-after the page's render instant) stay in the
             // unread navigation set. `>=` (not `>`) so a same-second
             // open-after-load still counts as in-snapshot. `read_after` is the
-            // `%Y-%m-%d %H:%M:%S` snapshot string, so compare it against the
-            // same TEXT form of `read_at` on both backends (to_char on PG).
+            // `%Y-%m-%d %H:%M:%S` snapshot string; on PG bind it as a
+            // `timestamptz` and compare the raw column (sargable), falling back
+            // to `to_char` if unparseable. SQLite compares raw TEXT directly.
             let idx = binds.len() + 1;
-            let read_at = dialect.cursor_ts("e.read_at");
-            conditions.push(format!("(e.read_at IS NULL OR {read_at} >= ${idx})"));
-            binds.push(Bind::Text(read_after.clone()));
+            let pg_ts = (dialect == Dialect::Postgres)
+                .then(|| parse_cursor_ts(read_after))
+                .flatten();
+            if let Some(ts) = pg_ts {
+                conditions.push(format!("(e.read_at IS NULL OR e.read_at >= ${idx})"));
+                binds.push(Bind::Ts(ts));
+            } else {
+                let read_at = dialect.cursor_ts("e.read_at");
+                conditions.push(format!("(e.read_at IS NULL OR {read_at} >= ${idx})"));
+                binds.push(Bind::Text(read_after.clone()));
+            }
         } else {
             conditions.push("e.read_at IS NULL".to_string());
         }
@@ -245,15 +273,24 @@ pub(super) fn apply_continuation_condition(
                 EntrySortOrder::StarredAt => "e.starred_at",
                 EntrySortOrder::PublishedAt => "COALESCE(e.published_at, e.created_at)",
             };
-            // Compare the cursor string against the same TEXT form on both
-            // backends (a no-op on SQLite; `to_char(...)` on PG). The bound
-            // cursor value is the `%Y-%m-%d %H:%M:%S` string emitted by
-            // `fetch_sort_ts`.
-            let expr = dialect.cursor_ts(sort_ts_expr);
+            // Prefer a sargable comparison: on PG bind the cursor as a
+            // `timestamptz` and compare the RAW timestamp column so the planner
+            // uses the timestamp index as a range scan (a `to_char(col)`
+            // predicate is not sargable — it filters half the table at depth).
+            // Fall back to the correct-but-slower `to_char` string comparison if
+            // the cursor can't be parsed. SQLite compares the raw TEXT column
+            // against the cursor string directly (`cursor_ts` is a no-op there).
+            let pg_ts = (dialect == Dialect::Postgres)
+                .then(|| parse_cursor_ts(sort_ts))
+                .flatten();
             let (cmp_outer, cmp_inner) = if oldest_first {
                 (">=", ">")
             } else {
                 ("<=", "<")
+            };
+            let expr = match pg_ts {
+                Some(_) => sort_ts_expr.to_string(),
+                None => dialect.cursor_ts(sort_ts_expr),
             };
             let ts1 = binds.len() + 1;
             let ts2 = binds.len() + 2;
@@ -261,8 +298,13 @@ pub(super) fn apply_continuation_condition(
             conditions.push(format!(
                 "{expr} {cmp_outer} ${ts1} AND ({expr} {cmp_inner} ${ts2} OR e.id {cmp_inner} ${id_idx})",
             ));
-            binds.push(Bind::Text(sort_ts.clone()));
-            binds.push(Bind::Text(sort_ts.clone()));
+            if let Some(ts) = pg_ts {
+                binds.push(Bind::Ts(ts));
+                binds.push(Bind::Ts(ts));
+            } else {
+                binds.push(Bind::Text(sort_ts.clone()));
+                binds.push(Bind::Text(sort_ts.clone()));
+            }
             binds.push(Bind::Int(*id));
         }
         ContinuationCursor::LegacyId(id) => {
@@ -314,5 +356,65 @@ mod tests {
             Dialect::Sqlite.index_hint(" INDEXED BY idx_entry_sort_ts"),
             " INDEXED BY idx_entry_sort_ts"
         );
+    }
+
+    fn composite(sort_ts: &str, id: i64) -> ContinuationCursor {
+        ContinuationCursor::Composite {
+            sort_ts: sort_ts.to_string(),
+            id,
+        }
+    }
+
+    fn build_continuation(cursor: &ContinuationCursor, dialect: Dialect) -> (String, Vec<Bind>) {
+        let mut conditions = Vec::new();
+        let mut binds = Vec::new();
+        apply_continuation_condition(
+            &mut conditions,
+            &mut binds,
+            Some(cursor),
+            EntrySortOrder::PublishedAt,
+            false,
+            dialect,
+        );
+        (conditions.join(" "), binds)
+    }
+
+    // Phase D sargability contract: a valid cursor on PG must compare the RAW
+    // timestamp column (index range scan) and bind a `timestamptz`, never wrap
+    // the column in a non-sargable `to_char(...)`.
+    #[test]
+    fn pg_cursor_is_sargable_raw_timestamptz() {
+        let (cond, binds) =
+            build_continuation(&composite("2026-07-07 12:00:00", 42), Dialect::Postgres);
+        assert!(
+            !cond.contains("to_char"),
+            "PG cursor must be sargable: {cond}"
+        );
+        assert!(cond.contains("COALESCE(e.published_at, e.created_at)"));
+        assert!(matches!(binds[0], Bind::Ts(_)));
+        assert!(matches!(binds[1], Bind::Ts(_)));
+        assert!(matches!(binds[2], Bind::Int(42)));
+    }
+
+    // A malformed/tampered cursor can't parse → fall back to the correct (but
+    // non-sargable) to_char string comparison rather than erroring.
+    #[test]
+    fn pg_cursor_falls_back_to_to_char_when_unparseable() {
+        let (cond, binds) = build_continuation(&composite("not-a-timestamp", 1), Dialect::Postgres);
+        assert!(
+            cond.contains("to_char"),
+            "unparseable cursor uses to_char: {cond}"
+        );
+        assert!(matches!(binds[0], Bind::Text(_)));
+    }
+
+    // SQLite stores timestamps as TEXT, so it compares the raw column against
+    // the cursor string directly — no to_char, no Ts bind.
+    #[test]
+    fn sqlite_cursor_uses_raw_text() {
+        let (cond, binds) =
+            build_continuation(&composite("2026-07-07 12:00:00", 1), Dialect::Sqlite);
+        assert!(!cond.contains("to_char"));
+        assert!(matches!(binds[0], Bind::Text(_)));
     }
 }
