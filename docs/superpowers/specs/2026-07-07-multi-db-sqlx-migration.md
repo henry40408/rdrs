@@ -84,54 +84,58 @@ a single contained change rather than a long-lived broken branch.
   actor closure API (`db/pool.rs`) is the seam; it disappears entirely under async sqlx.
 - Domain errors do **not** leak rusqlite to callers (handlers see `AppError::CategoryExists`,
   not the driver error); the ~26 constraint matches are contained inside model bodies.
+- **The `db.user(|conn| …)` closure IS the unit-of-work / transaction boundary.** Many
+  closures compose *several* model functions on one `conn` (e.g. OPML import loops
+  find-or-create category → create feed in a single closure), and several use explicit
+  `conn.unchecked_transaction()` (`entry/mod.rs`, `greader/tag.rs`,
+  `content_text_backfill.rs`, `feed_sync.rs`). A single model fn like `create_category`
+  is called from ~24 sites, mostly *inside* such composed closures — it is a building
+  block, not a standalone call.
 - Timestamps are stored as **TEXT via `datetime('now')` DEFAULT** and parsed back to
   `DateTime<Utc>` in Rust (`parse_datetime`). Migrations are versioned by
   `PRAGMA user_version` in `db/schema.rs`; partial/sort indexes added in v4/v5.
 - 17 test files build fixtures with `Connection::open_in_memory()`.
 
-## The permanent seam: an async `Db` facade
+## Seam decision: why NOT a per-model-function facade
 
-Phase A introduces the API that survives into the sqlx world, so Phase B only swaps its
-internals. Callers move off `db.user(|conn| model::fn(conn, …))` onto async facade
-methods:
+A first design idea was a per-model-function async facade
+(`db.create_category(…).await`) whose body delegates to the rusqlite actor in Phase A
+and swaps to sqlx in Phase B. **Rejected** after the audit above: turning each model fn
+into its own `db.user(|conn| …)` round-trip **breaks the composed closures' atomicity** —
+the OPML importer's find-or-create-category-then-create-feed would split into separate
+connections/turns, so a category could commit while its feed insert fails. The
+unit-of-work is the *closure*, not the function.
 
-```rust
-// call site after Phase A (unchanged through Phase B):
-let cat = state.db.create_category(user_id, &name).await?;
-```
+The only atomicity-preserving facade would be **coarse, use-case-grained** (one method
+per closure, ~146 of them). But those method bodies get rewritten *again* in Phase B —
+close to double the work, bought only "incremental releasability." Not worth it.
 
-Phase A implements each facade method by delegating to the *existing* rusqlite actor:
-
-```rust
-// Phase A body (rusqlite): keeps main releasable
-pub async fn create_category(&self, user_id: i64, name: &str) -> AppResult<Category> {
-    self.pool.user(move |conn| category::create_category(conn, user_id, name)).await?
-}
-// Phase B body (sqlx): same signature, new guts — callers untouched
-```
-
-Facade shape: methods on the `Db` type (thin, one per model fn), grouped by model in
-submodules/impl blocks. Not a `dyn Repo` trait — the boot-time enum makes static
-dispatch sufficient and avoids trait-object churn.
+**Decision:** the model layer and the closures that compose it are one tightly-coupled
+unit (shared `&Connection`, sync→async boundary, transaction boundaries) and **flip
+together in Phase B**. Phase A does not attempt to pre-decouple call sites; it invests in
+the safe, non-throwaway prep that genuinely shrinks Phase B risk.
 
 ## Phased plan
 
-### Phase A — decouple (stays on rusqlite; every PR releasable to main)
-1. **A4 (first, self-contained):** classify `DATABASE_URL` into a `Backend` (SQLite vs
-   Postgres) in `config.rs`; SQLite behaves exactly as today, `postgres://` returns a
-   clear "not yet supported" error. Establishes the user-facing URL contract, zero
-   behavior change. *(Started on `refactor/db-repo-seam`.)*
-2. **A1:** introduce the async `Db` facade; migrate the ~146 call sites off the
-   `db.<accessor>(|conn| …)` closures onto facade methods, one model per PR
-   (start with `category`, the smallest vertical slice).
-3. **A2:** switch timestamp writes from `datetime('now')` DEFAULT to app-bound
+### Phase A — safe prep (stays on rusqlite; every PR releasable to main)
+Scope deliberately narrow — no call-site decoupling (see the seam decision above).
+1. **A4 (done):** classify `DATABASE_URL` into a `Backend` (SQLite vs Postgres) in
+   `config.rs`; SQLite behaves exactly as today, `postgres://` returns a clear "not yet
+   supported" error. Zero behavior change. *(Committed on `refactor/db-repo-seam`.)*
+2. **A2:** switch timestamp writes from `datetime('now')` DEFAULT to app-bound
    `Utc::now()` (doable under rusqlite; removes the biggest Phase-B datetime divergence).
-4. **A3:** confirm no rusqlite type escapes the model layer after A1 (audit gate).
+3. **A5 (inventory):** classify the ~146 `db.<accessor>(|conn| …)` closures — single-model
+   vs multi-model, and which hold an explicit `unchecked_transaction()`. The multi-model
+   / transactional ones become sqlx `transaction()` blocks in Phase B; this inventory is
+   the Phase B work-list, not code.
 
 **Gate:** `cargo nextest run` green, `cargo clippy -D warnings`, E2E green, no behavior
 change.
 
 ### Phase B — cutover (one PR: rusqlite → sqlx)
+This is where the model functions **and** the ~146 call-site closures flip from sync
+`&Connection` to async sqlx together (guided by the A5 inventory); multi-model /
+`unchecked_transaction()` closures become sqlx `transaction()` blocks.
 - **B1** `Cargo.toml`: drop rusqlite, add sqlx; re-run `cargo deny`.
 - **B2** `db/pool.rs`: `enum Db` over `SqlitePool`/`PgPool`; WAL/tuning via
   `SqliteConnectOptions`; SQLite biased gate; PG dual pool sizing (user 8 / bg 2).
@@ -169,5 +173,6 @@ change.
 5. **Search semantics** — `COLLATE NOCASE` (ASCII) vs `ILIKE` (locale-aware) on non-ASCII.
 
 ## Effort
-Phase A ≈ 2–4 days · Phase B ≈ 1.5–2.5 weeks · Phase C ≈ 3–5 days. ≈ 3–4 weeks total.
+Phase A ≈ 1–2 days (A4 done; A2 + inventory remain) · Phase B ≈ 2–3 weeks (absorbs the
+model + closure flip) · Phase C ≈ 3–5 days. ≈ 3–4 weeks total.
 Endpoint: one code path, two backends, SQLite deploy experience unchanged.
