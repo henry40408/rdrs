@@ -1,11 +1,12 @@
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::{db_execute, query_all, query_opt, query_scalar};
 
 pub const ENTITY_FEED: &str = "feed";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Image {
     pub id: i64,
     pub entity_type: String,
@@ -17,71 +18,56 @@ pub struct Image {
     pub created_at: DateTime<Utc>,
 }
 
-fn parse_datetime(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .map(|dt| dt.with_timezone(&Utc))
-        .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
-        })
-        .unwrap_or_else(|_| Utc::now())
-}
-
-fn row_to_image(row: &rusqlite::Row) -> rusqlite::Result<Image> {
-    let fetched_at: String = row.get(6)?;
-    let created_at: String = row.get(7)?;
-
-    Ok(Image {
-        id: row.get(0)?,
-        entity_type: row.get(1)?,
-        entity_id: row.get(2)?,
-        data: row.get(3)?,
-        content_type: row.get(4)?,
-        source_url: row.get(5)?,
-        fetched_at: parse_datetime(&fetched_at),
-        created_at: parse_datetime(&created_at),
-    })
-}
-
-pub fn find(conn: &Connection, entity_type: &str, entity_id: i64) -> AppResult<Option<Image>> {
-    conn.query_row(
-        "SELECT id, entity_type, entity_id, data, content_type, source_url, fetched_at, created_at
-         FROM image WHERE entity_type = ?1 AND entity_id = ?2",
-        params![entity_type, entity_id],
-        row_to_image,
+pub async fn find(db: &Db, entity_type: &str, entity_id: i64) -> AppResult<Option<Image>> {
+    query_opt!(
+        db,
+        Image,
+        "SELECT id, entity_type, entity_id, data, content_type, source_url, fetched_at, created_at \
+         FROM image WHERE entity_type = $1 AND entity_id = $2",
+        entity_type,
+        entity_id
     )
-    .optional()
     .map_err(AppError::Database)
 }
 
-pub fn upsert(
-    conn: &Connection,
+pub async fn upsert(
+    db: &Db,
     entity_type: &str,
     entity_id: i64,
     data: &[u8],
     content_type: &str,
     source_url: Option<&str>,
 ) -> AppResult<()> {
-    conn.execute(
-        r#"
-        INSERT INTO image (entity_type, entity_id, data, content_type, source_url, fetched_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))
-        ON CONFLICT(entity_type, entity_id) DO UPDATE SET
-            data = excluded.data,
-            content_type = excluded.content_type,
-            source_url = excluded.source_url,
-            fetched_at = datetime('now')
-        "#,
-        params![entity_type, entity_id, data, content_type, source_url],
-    )?;
+    let now = Utc::now();
+    db_execute!(
+        db,
+        "INSERT INTO image (entity_type, entity_id, data, content_type, source_url, fetched_at) \
+         VALUES ($1, $2, $3, $4, $5, $6) \
+         ON CONFLICT(entity_type, entity_id) DO UPDATE SET \
+             data = excluded.data, \
+             content_type = excluded.content_type, \
+             source_url = excluded.source_url, \
+             fetched_at = $6",
+        entity_type,
+        entity_id,
+        data,
+        content_type,
+        source_url,
+        now
+    )
+    .map_err(AppError::Database)?;
     Ok(())
 }
 
-pub fn exists(conn: &Connection, entity_type: &str, entity_id: i64) -> AppResult<bool> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM image WHERE entity_type = ?1 AND entity_id = ?2",
-        params![entity_type, entity_id],
-        |row| row.get(0),
-    )?;
+pub async fn exists(db: &Db, entity_type: &str, entity_id: i64) -> AppResult<bool> {
+    let count: i64 = query_scalar!(
+        db,
+        i64,
+        "SELECT COUNT(*) FROM image WHERE entity_type = $1 AND entity_id = $2",
+        entity_type,
+        entity_id
+    )
+    .map_err(AppError::Database)?;
     Ok(count > 0)
 }
 
@@ -89,8 +75,8 @@ pub fn exists(conn: &Connection, entity_type: &str, entity_id: i64) -> AppResult
 /// set, in a single query. Replaces per-entity `exists` calls in list views
 /// (e.g. the Feeds page / `GReader` subscription list) that would otherwise issue
 /// one query per row. Empty input is a no-op returning an empty set.
-pub fn existing_ids(
-    conn: &Connection,
+pub async fn existing_ids(
+    db: &Db,
     entity_type: &str,
     entity_ids: &[i64],
 ) -> AppResult<std::collections::HashSet<i64>> {
@@ -98,86 +84,85 @@ pub fn existing_ids(
         return Ok(std::collections::HashSet::new());
     }
 
-    // Placeholders ?2, ?3, ... ; ?1 is entity_type.
-    let placeholders: Vec<String> = entity_ids
+    // A dynamic `IN (...)` placeholder list can't be a `&'static str` literal
+    // (the dispatch macros require one), so fetch the entity_ids that have an
+    // image of this type and intersect with the requested set in Rust.
+    let rows: Vec<(i64,)> = query_all!(
+        db,
+        (i64,),
+        "SELECT entity_id FROM image WHERE entity_type = $1",
+        entity_type
+    )
+    .map_err(AppError::Database)?;
+
+    let existing: std::collections::HashSet<i64> = rows.into_iter().map(|(id,)| id).collect();
+    Ok(entity_ids
         .iter()
-        .enumerate()
-        .map(|(i, _)| format!("?{}", i + 2))
-        .collect();
-    let sql = format!(
-        "SELECT entity_id FROM image WHERE entity_type = ?1 AND entity_id IN ({})",
-        placeholders.join(", ")
-    );
-
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(entity_type.to_string())];
-    for id in entity_ids {
-        params_vec.push(Box::new(*id));
-    }
-    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-
-    let mut stmt = conn.prepare(&sql)?;
-    let ids = stmt
-        .query_map(params_refs.as_slice(), |row| row.get::<_, i64>(0))?
-        .collect::<Result<std::collections::HashSet<i64>, _>>()?;
-    Ok(ids)
+        .copied()
+        .filter(|id| existing.contains(id))
+        .collect())
 }
 
-pub fn needs_refresh(
-    conn: &Connection,
+pub async fn needs_refresh(
+    db: &Db,
     entity_type: &str,
     entity_id: i64,
     max_age_days: i64,
 ) -> AppResult<bool> {
-    let result: Option<i64> = conn
-        .query_row(
-            r#"
-            SELECT 1 FROM image
-            WHERE entity_type = ?1 AND entity_id = ?2
-            AND datetime(fetched_at) > datetime('now', ?3)
-            "#,
-            params![entity_type, entity_id, format!("-{} days", max_age_days)],
-            |row| row.get(0),
-        )
-        .optional()?;
+    // Freshness cutoff computed in Rust instead of SQL interval arithmetic:
+    // an image is fresh iff `fetched_at > now - max_age_days`.
+    let cutoff = Utc::now() - chrono::Duration::days(max_age_days);
+    let count: i64 = query_scalar!(
+        db,
+        i64,
+        "SELECT COUNT(*) FROM image \
+         WHERE entity_type = $1 AND entity_id = $2 AND fetched_at > $3",
+        entity_type,
+        entity_id,
+        cutoff
+    )
+    .map_err(AppError::Database)?;
 
-    Ok(result.is_none())
+    // No fresh row → needs refresh.
+    Ok(count == 0)
 }
 
-pub fn delete_by_entity(conn: &Connection, entity_type: &str, entity_id: i64) -> AppResult<()> {
-    conn.execute(
-        "DELETE FROM image WHERE entity_type = ?1 AND entity_id = ?2",
-        params![entity_type, entity_id],
-    )?;
+pub async fn delete_by_entity(db: &Db, entity_type: &str, entity_id: i64) -> AppResult<()> {
+    db_execute!(
+        db,
+        "DELETE FROM image WHERE entity_type = $1 AND entity_id = $2",
+        entity_type,
+        entity_id
+    )
+    .map_err(AppError::Database)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
 
-    fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
-        conn
+    async fn setup_db() -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
-    #[test]
-    fn test_upsert_and_find() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_upsert_and_find() {
+        let db = setup_db().await;
 
         let data = vec![0x89, 0x50, 0x4E, 0x47]; // PNG header
         upsert(
-            &conn,
+            &db,
             ENTITY_FEED,
             1,
             &data,
             "image/png",
             Some("https://example.com/icon.png"),
         )
+        .await
         .unwrap();
 
-        let img = find(&conn, ENTITY_FEED, 1).unwrap().unwrap();
+        let img = find(&db, ENTITY_FEED, 1).await.unwrap().unwrap();
         assert_eq!(img.entity_type, ENTITY_FEED);
         assert_eq!(img.entity_id, 1);
         assert_eq!(img.data, data);
@@ -188,80 +173,103 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_upsert_updates_existing() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_upsert_updates_existing() {
+        let db = setup_db().await;
 
         let data1 = vec![0x89, 0x50, 0x4E, 0x47];
-        upsert(&conn, ENTITY_FEED, 1, &data1, "image/png", None).unwrap();
+        upsert(&db, ENTITY_FEED, 1, &data1, "image/png", None)
+            .await
+            .unwrap();
 
         let data2 = vec![0x00, 0x00, 0x01, 0x00]; // ICO header
         upsert(
-            &conn,
+            &db,
             ENTITY_FEED,
             1,
             &data2,
             "image/x-icon",
             Some("https://example.com/favicon.ico"),
         )
+        .await
         .unwrap();
 
-        let img = find(&conn, ENTITY_FEED, 1).unwrap().unwrap();
+        let img = find(&db, ENTITY_FEED, 1).await.unwrap().unwrap();
         assert_eq!(img.data, data2);
         assert_eq!(img.content_type, "image/x-icon");
     }
 
-    #[test]
-    fn test_exists() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_exists() {
+        let db = setup_db().await;
 
-        assert!(!exists(&conn, ENTITY_FEED, 1).unwrap());
+        assert!(!exists(&db, ENTITY_FEED, 1).await.unwrap());
 
-        upsert(&conn, ENTITY_FEED, 1, &[1, 2, 3], "image/png", None).unwrap();
+        upsert(&db, ENTITY_FEED, 1, &[1, 2, 3], "image/png", None)
+            .await
+            .unwrap();
 
-        assert!(exists(&conn, ENTITY_FEED, 1).unwrap());
+        assert!(exists(&db, ENTITY_FEED, 1).await.unwrap());
     }
 
-    #[test]
-    fn test_existing_ids() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_existing_ids() {
+        let db = setup_db().await;
 
         // Empty input is a no-op.
-        assert!(existing_ids(&conn, ENTITY_FEED, &[]).unwrap().is_empty());
+        assert!(
+            existing_ids(&db, ENTITY_FEED, &[])
+                .await
+                .unwrap()
+                .is_empty()
+        );
 
-        upsert(&conn, ENTITY_FEED, 1, &[1], "image/png", None).unwrap();
-        upsert(&conn, ENTITY_FEED, 3, &[3], "image/png", None).unwrap();
+        upsert(&db, ENTITY_FEED, 1, &[1], "image/png", None)
+            .await
+            .unwrap();
+        upsert(&db, ENTITY_FEED, 3, &[3], "image/png", None)
+            .await
+            .unwrap();
 
-        let set = existing_ids(&conn, ENTITY_FEED, &[1, 2, 3, 4]).unwrap();
+        let set = existing_ids(&db, ENTITY_FEED, &[1, 2, 3, 4]).await.unwrap();
         assert_eq!(set.len(), 2);
         assert!(set.contains(&1));
         assert!(set.contains(&3));
         assert!(!set.contains(&2));
 
         // entity_type is scoped — a different type returns nothing.
-        assert!(existing_ids(&conn, "entry", &[1, 3]).unwrap().is_empty());
+        assert!(
+            existing_ids(&db, "entry", &[1, 3])
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
-    #[test]
-    fn test_delete_by_entity() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_delete_by_entity() {
+        let db = setup_db().await;
 
-        upsert(&conn, ENTITY_FEED, 1, &[1, 2, 3], "image/png", None).unwrap();
-        assert!(exists(&conn, ENTITY_FEED, 1).unwrap());
+        upsert(&db, ENTITY_FEED, 1, &[1, 2, 3], "image/png", None)
+            .await
+            .unwrap();
+        assert!(exists(&db, ENTITY_FEED, 1).await.unwrap());
 
-        delete_by_entity(&conn, ENTITY_FEED, 1).unwrap();
-        assert!(!exists(&conn, ENTITY_FEED, 1).unwrap());
+        delete_by_entity(&db, ENTITY_FEED, 1).await.unwrap();
+        assert!(!exists(&db, ENTITY_FEED, 1).await.unwrap());
     }
 
-    #[test]
-    fn test_needs_refresh() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_needs_refresh() {
+        let db = setup_db().await;
 
         // No image exists - needs refresh
-        assert!(needs_refresh(&conn, ENTITY_FEED, 1, 7).unwrap());
+        assert!(needs_refresh(&db, ENTITY_FEED, 1, 7).await.unwrap());
 
         // Insert fresh image - doesn't need refresh
-        upsert(&conn, ENTITY_FEED, 1, &[1, 2, 3], "image/png", None).unwrap();
-        assert!(!needs_refresh(&conn, ENTITY_FEED, 1, 7).unwrap());
+        upsert(&db, ENTITY_FEED, 1, &[1, 2, 3], "image/png", None)
+            .await
+            .unwrap();
+        assert!(!needs_refresh(&db, ENTITY_FEED, 1, 7).await.unwrap());
     }
 }

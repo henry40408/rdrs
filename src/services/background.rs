@@ -8,12 +8,12 @@ use tracing::{debug, error, info};
 
 use super::feed_sync;
 use super::sidebar_cache::SidebarCache;
-use crate::db::DbPool;
+use crate::db::Db;
 use crate::models::feed;
 use crate::services::EventBus;
 
 pub fn start_background_sync(
-    db: DbPool,
+    db: Db,
     user_agent: String,
     cancel_token: CancellationToken,
     sidebar_cache: Arc<SidebarCache>,
@@ -62,20 +62,14 @@ pub fn start_background_sync(
                         .map(|(id, _)| *id)
                         .collect();
                     if !changed_feed_ids.is_empty() {
-                        match db
-                            .read_background(move |conn| {
-                                feed::owner_user_ids_for_feeds(conn, &changed_feed_ids)
-                            })
-                            .await
-                        {
-                            Ok(Ok(user_ids)) => {
+                        match feed::owner_user_ids_for_feeds(&db, &changed_feed_ids).await {
+                            Ok(user_ids) => {
                                 for uid in user_ids {
                                     sidebar_cache.bust(uid);
                                     events.emit_sidebar(uid);
                                 }
                             }
-                            Ok(Err(e)) => error!("sidebar owner lookup failed: {e}"),
-                            Err(e) => error!("sidebar owner lookup DB error: {e}"),
+                            Err(e) => error!("sidebar owner lookup failed: {e}"),
                         }
                     }
                 }
@@ -89,21 +83,15 @@ pub fn start_background_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
     use crate::services::EventBus;
-    use rusqlite::Connection;
 
-    fn setup_db_pool() -> DbPool {
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
-        let read_conn = Connection::open_in_memory().unwrap();
-        let (pool, _handle) = DbPool::new(conn, read_conn);
-        pool
+    async fn setup_db_pool() -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
     #[tokio::test]
     async fn test_background_sync_stops_on_cancellation() {
-        let db = setup_db_pool();
+        let db = setup_db_pool().await;
         let cancel_token = CancellationToken::new();
 
         let handle = start_background_sync(
@@ -127,7 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_background_sync_with_empty_bucket() {
-        let db = setup_db_pool();
+        let db = setup_db_pool().await;
         let cancel_token = CancellationToken::new();
 
         let handle = start_background_sync(

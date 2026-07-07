@@ -18,34 +18,18 @@ use std::sync::Arc;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum_test::TestServer;
 use rdrs::models::{category, entry, feed};
-use rdrs::{AppState, Config, DbPool, auth, create_router, db, services};
-use rusqlite::Connection;
+use rdrs::{AppState, Config, Db, auth, create_router, services};
 use serde_json::json;
 use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 struct TestApp {
     server: TestServer,
-    db: DbPool,
+    db: Db,
 }
 
-fn open_shared_memory(name: &str) -> Connection {
-    let uri = format!("file:{}?mode=memory&cache=shared", name);
-    Connection::open_with_flags(
-        uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    )
-    .unwrap()
-}
-
-fn create_test_app(config: Config) -> TestApp {
-    let write_conn = open_shared_memory("test_greader");
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory("test_greader");
-
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
+async fn create_test_app(config: Config) -> TestApp {
+    let db = Db::connect_in_memory().await.unwrap();
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -89,69 +73,57 @@ async fn setup_authenticated_user(app: &TestApp) -> i64 {
         .assert_status_ok();
 
     // Get user_id from DB
-    app.db
-        .user(|conn| {
-            rdrs::models::user::find_by_username(conn, "testuser")
-                .unwrap()
-                .unwrap()
-                .id
-        })
+    rdrs::models::user::find_by_username(&app.db, "testuser")
         .await
         .unwrap()
+        .unwrap()
+        .id
 }
 
 /// Create a category and feed directly in DB. Returns (`category_id`, `feed_id`).
-async fn create_test_feed(db: &DbPool, user_id: i64, cat_name: &str, feed_url: &str) -> (i64, i64) {
-    let cat_name = cat_name.to_string();
-    let feed_url = feed_url.to_string();
-    db.user(move |conn| {
-        let cat = category::create_category(conn, user_id, &cat_name).unwrap();
-        let f = feed::create_feed(
-            conn,
-            &feed::CreateFeedParams {
-                category_id: cat.id,
-                url: &feed_url,
-                title: Some("Test Feed"),
-                description: None,
-                site_url: Some("https://example.com"),
-                custom_user_agent: None,
-                http2_disabled: None,
-                custom_referrer: None,
-            },
-        )
+async fn create_test_feed(db: &Db, user_id: i64, cat_name: &str, feed_url: &str) -> (i64, i64) {
+    let cat = category::create_category(db, user_id, cat_name)
+        .await
         .unwrap();
-        (cat.id, f.id)
-    })
+    let f = feed::create_feed(
+        db,
+        &feed::CreateFeedParams {
+            category_id: cat.id,
+            url: feed_url,
+            title: Some("Test Feed"),
+            description: None,
+            site_url: Some("https://example.com"),
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
     .await
-    .unwrap()
+    .unwrap();
+    (cat.id, f.id)
 }
 
 /// Create entries directly via DB for testing. Returns entry IDs.
-async fn create_test_entries(db: &DbPool, feed_id: i64, count: usize) -> Vec<i64> {
+async fn create_test_entries(db: &Db, feed_id: i64, count: usize) -> Vec<i64> {
     let mut ids = Vec::new();
     for i in 0..count {
         let guid = format!("guid-{}", i);
         let title = format!("Entry {}", i);
         let link = format!("https://example.com/entry/{}", i);
-        let id = db
-            .user(move |conn| {
-                let (e, _) = entry::upsert_entry(
-                    conn,
-                    feed_id,
-                    &guid,
-                    Some(&title),
-                    Some(&link),
-                    Some("Content"),
-                    None,
-                    None,
-                    None,
-                )
-                .unwrap();
-                e.id
-            })
-            .await
-            .unwrap();
-        ids.push(id);
+        let (e, _) = entry::upsert_entry(
+            db,
+            feed_id,
+            &guid,
+            Some(&title),
+            Some(&link),
+            Some("Content"),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        ids.push(e.id);
     }
     ids
 }
@@ -162,7 +134,7 @@ async fn create_test_entries(db: &DbPool, feed_id: i64, count: usize) -> Vec<i64
 
 #[tokio::test]
 async fn test_client_login_success() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app).await;
 
     let form = vec![
@@ -180,7 +152,7 @@ async fn test_client_login_success() {
 
 #[tokio::test]
 async fn test_client_login_invalid_password() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app).await;
 
     let form = vec![
@@ -193,7 +165,7 @@ async fn test_client_login_invalid_password() {
 
 #[tokio::test]
 async fn test_client_login_nonexistent_user() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
 
     let form = vec![
         ("Email", "nonexistent".to_string()),
@@ -205,7 +177,7 @@ async fn test_client_login_nonexistent_user() {
 
 #[tokio::test]
 async fn test_client_login_token_used_for_api() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app).await;
 
     // Get auth token via ClientLogin
@@ -238,7 +210,7 @@ async fn test_client_login_token_used_for_api() {
 
 #[tokio::test]
 async fn test_subscription_list_empty() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app).await;
 
     let response = app.server.get("/reader/api/0/subscription/list").await;
@@ -250,7 +222,7 @@ async fn test_subscription_list_empty() {
 
 #[tokio::test]
 async fn test_subscription_list_with_feeds() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -275,7 +247,7 @@ async fn test_subscription_list_with_feeds() {
 
 #[tokio::test]
 async fn test_subscription_edit_unsubscribe() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let feed_url = "https://example.com/tech.xml";
@@ -306,7 +278,7 @@ async fn test_subscription_edit_unsubscribe() {
 
 #[tokio::test]
 async fn test_subscription_edit_rename() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let feed_url = "https://example.com/feed.xml";
@@ -338,7 +310,7 @@ async fn test_subscription_edit_rename() {
 
 #[tokio::test]
 async fn test_stream_contents_reading_list() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let (_cat_id, feed_id) =
@@ -363,7 +335,7 @@ async fn test_stream_contents_reading_list() {
 
 #[tokio::test]
 async fn test_stream_contents_with_limit() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let (_cat_id, feed_id) =
@@ -389,42 +361,35 @@ async fn test_stream_contents_with_limit() {
 async fn test_stream_contents_composite_cursor_no_skip_on_backdated() {
     // Regression for #164: legacy `e.id < c` cursor skipped entries with
     // high ids and old timestamps. Composite cursor must visit them.
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
 
-    app.db
-        .user(move |conn| {
-            // 5 monotonic entries
-            for i in 1..=5 {
-                conn.execute(
-                    "INSERT INTO entry (feed_id, guid, title, published_at) VALUES (?1, ?2, ?3, datetime('now', ?4))",
-                    rusqlite::params![
-                        feed_id,
-                        format!("mono-{}", i),
-                        format!("M{}", i),
-                        format!("-{} hours", 5 - i)
-                    ],
-                )
-                .unwrap();
-            }
-            // 2 back-dated (new ids, old timestamps)
-            for i in 1..=2 {
-                conn.execute(
-                    "INSERT INTO entry (feed_id, guid, title, published_at) VALUES (?1, ?2, ?3, datetime('now', ?4))",
-                    rusqlite::params![
-                        feed_id,
-                        format!("bd-{}", i),
-                        format!("BD{}", i),
-                        format!("-{} days", 30 + i)
-                    ],
-                )
-                .unwrap();
-            }
-        })
-        .await
+    // 5 monotonic entries
+    for i in 1..=5 {
+        rdrs::db_execute!(
+            &app.db,
+            "INSERT INTO entry (feed_id, guid, title, published_at) VALUES ($1, $2, $3, datetime('now', $4))",
+            feed_id,
+            format!("mono-{}", i),
+            format!("M{}", i),
+            format!("-{} hours", 5 - i)
+        )
         .unwrap();
+    }
+    // 2 back-dated (new ids, old timestamps)
+    for i in 1..=2 {
+        rdrs::db_execute!(
+            &app.db,
+            "INSERT INTO entry (feed_id, guid, title, published_at) VALUES ($1, $2, $3, datetime('now', $4))",
+            feed_id,
+            format!("bd-{}", i),
+            format!("BD{}", i),
+            format!("-{} days", 30 + i)
+        )
+        .unwrap();
+    }
 
     // Page 1: n=5
     let response = app
@@ -462,7 +427,7 @@ async fn test_stream_contents_composite_cursor_no_skip_on_backdated() {
 
 #[tokio::test]
 async fn test_stream_contents_starred_empty() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app).await;
 
     let response = app
@@ -482,7 +447,7 @@ async fn test_stream_contents_starred_empty() {
 
 #[tokio::test]
 async fn test_stream_items_ids() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let (_cat_id, feed_id) =
@@ -507,7 +472,7 @@ async fn test_stream_items_ids() {
 
 #[tokio::test]
 async fn test_edit_tag_mark_read() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let (_cat_id, feed_id) =
@@ -537,7 +502,7 @@ async fn test_edit_tag_mark_read() {
 
 #[tokio::test]
 async fn test_edit_tag_mark_read_multiple() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let (_cat_id, feed_id) =
@@ -574,7 +539,7 @@ async fn test_edit_tag_mark_read_multiple() {
 
 #[tokio::test]
 async fn test_edit_tag_mark_read_rejects_unknown_entry() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let (_cat_id, feed_id) =
@@ -615,7 +580,7 @@ async fn test_edit_tag_mark_read_rejects_unknown_entry() {
 
 #[tokio::test]
 async fn test_edit_tag_star_and_unstar() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let (_cat_id, feed_id) =
@@ -668,7 +633,7 @@ async fn test_edit_tag_star_and_unstar() {
 
 #[tokio::test]
 async fn test_mark_all_as_read() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let (_cat_id, feed_id) =
@@ -714,7 +679,7 @@ async fn test_mark_all_as_read() {
 
 #[tokio::test]
 async fn test_unread_count_empty() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app).await;
 
     let response = app.server.get("/reader/api/0/unread-count").await;
@@ -726,7 +691,7 @@ async fn test_unread_count_empty() {
 
 #[tokio::test]
 async fn test_unread_count_with_entries() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let (_cat_id, feed_id) =
@@ -756,11 +721,7 @@ async fn test_unread_count_with_entries() {
 #[tokio::test]
 async fn test_unauthenticated_access_denied() {
     let config = default_test_config();
-    let write_conn = open_shared_memory("test_unauth");
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory("test_unauth");
-
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
+    let db = Db::connect_in_memory().await.unwrap();
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -808,7 +769,7 @@ const RSS_FIXTURE: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel>
 
 #[tokio::test]
 async fn test_subscription_subscribe_missing_stream_id() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app).await;
 
     // POST ac=subscribe without `s` → 400 Bad Request
@@ -823,7 +784,7 @@ async fn test_subscription_subscribe_missing_stream_id() {
 
 #[tokio::test]
 async fn test_subscription_subscribe_bad_prefix() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app).await;
 
     // Stream ID must start with "feed/"; bare URL should be rejected with 400
@@ -841,7 +802,7 @@ async fn test_subscription_subscribe_bad_prefix() {
 
 #[tokio::test]
 async fn test_subscription_subscribe_empty_url() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app).await;
 
     // "feed/" with nothing after the slash → empty URL → 400
@@ -856,7 +817,7 @@ async fn test_subscription_subscribe_empty_url() {
 
 #[tokio::test]
 async fn test_subscription_edit_feed_not_found() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app).await;
 
     // ac=edit with a URL that doesn't exist in the DB → 404
@@ -877,7 +838,7 @@ async fn test_subscription_edit_feed_not_found() {
 
 #[tokio::test]
 async fn test_subscription_edit_add_label_moves_category() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let feed_url = "https://example.com/feed-to-move.xml";
@@ -897,22 +858,16 @@ async fn test_subscription_edit_add_label_moves_category() {
     response.assert_status_ok();
 
     // DB: feed's category should now be "NewCat"
-    let found_url = feed_url.to_string();
-    let (cat_name, _feed_title) = app
-        .db
-        .user(move |conn| {
-            let f = feed::find_by_url_for_user(conn, &found_url, user_id)?
-                .ok_or(rdrs::error::AppError::FeedNotFound)?;
-            let cats = category::list_by_user(conn, user_id)?;
-            let cat = cats
-                .into_iter()
-                .find(|c| c.id == f.category_id)
-                .ok_or(rdrs::error::AppError::CategoryNotFound)?;
-            Ok::<_, rdrs::error::AppError>((cat.name, f.title))
-        })
+    let f = feed::find_by_url_for_user(&app.db, feed_url, user_id)
         .await
         .unwrap()
-        .unwrap();
+        .expect("feed should exist");
+    let cats = category::list_by_user(&app.db, user_id).await.unwrap();
+    let cat = cats
+        .into_iter()
+        .find(|c| c.id == f.category_id)
+        .expect("category should exist");
+    let cat_name = cat.name;
     assert_eq!(cat_name, "NewCat");
 }
 
@@ -933,7 +888,7 @@ async fn test_subscription_subscribe_success() {
         .mount(&mock_server)
         .await;
 
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let feed_url = mock_server.uri();
@@ -949,17 +904,10 @@ async fn test_subscription_subscribe_success() {
     response.assert_status_ok();
 
     // Verify feed row exists in the DB for this user
-    let url_clone = feed_url.clone();
-    let feed_exists = app
-        .db
-        .user(move |conn| {
-            Ok::<_, rdrs::error::AppError>(
-                feed::find_by_url_for_user(conn, &url_clone, user_id)?.is_some(),
-            )
-        })
+    let feed_exists = feed::find_by_url_for_user(&app.db, &feed_url, user_id)
         .await
         .unwrap()
-        .unwrap();
+        .is_some();
     assert!(feed_exists, "feed row should exist after subscribe");
 }
 
@@ -976,7 +924,7 @@ async fn test_subscription_subscribe_with_label() {
         .mount(&mock_server)
         .await;
 
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     let feed_url = mock_server.uri();
@@ -993,22 +941,16 @@ async fn test_subscription_subscribe_with_label() {
     response.assert_status_ok();
 
     // Verify feed is under the "Tech" category
-    let url_clone = feed_url.clone();
-    let cat_name = app
-        .db
-        .user(move |conn| {
-            let f = feed::find_by_url_for_user(conn, &url_clone, user_id)?
-                .ok_or(rdrs::error::AppError::FeedNotFound)?;
-            let cats = category::list_by_user(conn, user_id)?;
-            let cat = cats
-                .into_iter()
-                .find(|c| c.id == f.category_id)
-                .ok_or(rdrs::error::AppError::CategoryNotFound)?;
-            Ok::<_, rdrs::error::AppError>(cat.name)
-        })
+    let f = feed::find_by_url_for_user(&app.db, &feed_url, user_id)
         .await
         .unwrap()
-        .unwrap();
+        .expect("feed should exist");
+    let cats = category::list_by_user(&app.db, user_id).await.unwrap();
+    let cat = cats
+        .into_iter()
+        .find(|c| c.id == f.category_id)
+        .expect("category should exist");
+    let cat_name = cat.name;
     assert_eq!(cat_name, "Tech");
 }
 
@@ -1025,7 +967,7 @@ async fn test_subscription_subscribe_duplicate() {
         .mount(&mock_server)
         .await;
 
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let user_id = setup_authenticated_user(&app).await;
 
     // Pre-create the feed in the DB (same URL the mock server serves)
@@ -1058,7 +1000,7 @@ async fn test_quickadd_success() {
         .mount(&mock_server)
         .await;
 
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app).await;
 
     let feed_url = mock_server.uri();

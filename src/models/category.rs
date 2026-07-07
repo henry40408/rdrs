@@ -41,11 +41,7 @@ pub async fn find_by_id(db: &Db, id: i64) -> AppResult<Option<Category>> {
     .map_err(AppError::Database)
 }
 
-pub async fn find_by_id_and_user(
-    db: &Db,
-    id: i64,
-    user_id: i64,
-) -> AppResult<Option<Category>> {
+pub async fn find_by_id_and_user(db: &Db, id: i64, user_id: i64) -> AppResult<Option<Category>> {
     query_opt!(
         db,
         Category,
@@ -82,12 +78,7 @@ pub async fn list_by_user(db: &Db, user_id: i64) -> AppResult<Vec<Category>> {
     .map_err(AppError::Database)
 }
 
-pub async fn update_name(
-    db: &Db,
-    id: i64,
-    user_id: i64,
-    new_name: &str,
-) -> AppResult<Category> {
+pub async fn update_name(db: &Db, id: i64, user_id: i64, new_name: &str) -> AppResult<Category> {
     // `RETURNING` with `fetch_optional` folds the "0 rows matched" case into a
     // `None`, so no separate re-select is needed.
     match query_opt!(

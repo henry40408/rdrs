@@ -1,9 +1,11 @@
-use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::{db_execute, query_all, query_opt, query_scalar};
 
 /// Summary processing status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,12 +38,23 @@ impl SummaryStatus {
     }
 }
 
+/// Decodes the DB `status` TEXT column into `SummaryStatus`. Unknown values map
+/// to `Failed`, matching the old `row_to_entry_summary` behaviour. Used by
+/// `#[sqlx(try_from = "String")]` on `EntrySummary::status` (the blanket
+/// `TryFrom` supplied by this `From` impl is infallible).
+impl From<String> for SummaryStatus {
+    fn from(s: String) -> Self {
+        SummaryStatus::parse(&s).unwrap_or(SummaryStatus::Failed)
+    }
+}
+
 /// An entry summary stored in the database
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct EntrySummary {
     pub id: i64,
     pub user_id: i64,
     pub entry_id: i64,
+    #[sqlx(try_from = "String")]
     pub status: SummaryStatus,
     pub summary_text: Option<String>,
     pub error_message: Option<String>,
@@ -49,82 +62,57 @@ pub struct EntrySummary {
     pub updated_at: DateTime<Utc>,
 }
 
-fn parse_datetime(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .map(|dt| dt.with_timezone(&Utc))
-        .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
-        })
-        .unwrap_or_else(|_| Utc::now())
-}
-
-fn row_to_entry_summary(row: &rusqlite::Row) -> rusqlite::Result<EntrySummary> {
-    let status_str: String = row.get(3)?;
-    let created_at: String = row.get(6)?;
-    let updated_at: String = row.get(7)?;
-
-    Ok(EntrySummary {
-        id: row.get(0)?,
-        user_id: row.get(1)?,
-        entry_id: row.get(2)?,
-        status: SummaryStatus::parse(&status_str).unwrap_or(SummaryStatus::Failed),
-        summary_text: row.get(4)?,
-        error_message: row.get(5)?,
-        created_at: parse_datetime(&created_at),
-        updated_at: parse_datetime(&updated_at),
-    })
-}
-
-const SELECT_COLUMNS: &str =
-    "id, user_id, entry_id, status, summary_text, error_message, created_at, updated_at";
-
 /// Find a summary by user and entry
-pub fn find_by_user_and_entry(
-    conn: &Connection,
+pub async fn find_by_user_and_entry(
+    db: &Db,
     user_id: i64,
     entry_id: i64,
 ) -> AppResult<Option<EntrySummary>> {
-    conn.query_row(
-        &format!(
-            "SELECT {} FROM entry_summary WHERE user_id = ?1 AND entry_id = ?2",
-            SELECT_COLUMNS
-        ),
-        params![user_id, entry_id],
-        row_to_entry_summary,
+    query_opt!(
+        db,
+        EntrySummary,
+        "SELECT id, user_id, entry_id, status, summary_text, error_message, created_at, updated_at \
+         FROM entry_summary WHERE user_id = $1 AND entry_id = $2",
+        user_id,
+        entry_id
     )
-    .optional()
     .map_err(AppError::Database)
 }
 
 /// Create or update a summary with pending status
-pub fn upsert_pending(conn: &Connection, user_id: i64, entry_id: i64) -> AppResult<EntrySummary> {
-    conn.execute(
-        r#"
-        INSERT INTO entry_summary (user_id, entry_id, status)
-        VALUES (?1, ?2, 'pending')
-        ON CONFLICT(user_id, entry_id) DO UPDATE SET
-            status = 'pending',
-            summary_text = NULL,
-            error_message = NULL,
-            updated_at = datetime('now')
-        "#,
-        params![user_id, entry_id],
-    )?;
+pub async fn upsert_pending(db: &Db, user_id: i64, entry_id: i64) -> AppResult<EntrySummary> {
+    db_execute!(
+        db,
+        "INSERT INTO entry_summary (user_id, entry_id, status) \
+         VALUES ($1, $2, 'pending') \
+         ON CONFLICT(user_id, entry_id) DO UPDATE SET \
+             status = 'pending', \
+             summary_text = NULL, \
+             error_message = NULL, \
+             updated_at = $3",
+        user_id,
+        entry_id,
+        Utc::now()
+    )
+    .map_err(AppError::Database)?;
 
-    find_by_user_and_entry(conn, user_id, entry_id)?
+    find_by_user_and_entry(db, user_id, entry_id)
+        .await?
         .ok_or(AppError::NotFound("Entry summary not found".to_string()))
 }
 
 /// Update status to processing
-pub fn set_processing(conn: &Connection, user_id: i64, entry_id: i64) -> AppResult<()> {
-    let rows = conn.execute(
-        r#"
-        UPDATE entry_summary
-        SET status = 'processing', updated_at = datetime('now')
-        WHERE user_id = ?1 AND entry_id = ?2
-        "#,
-        params![user_id, entry_id],
-    )?;
+pub async fn set_processing(db: &Db, user_id: i64, entry_id: i64) -> AppResult<()> {
+    let rows = db_execute!(
+        db,
+        "UPDATE entry_summary \
+         SET status = 'processing', updated_at = $3 \
+         WHERE user_id = $1 AND entry_id = $2",
+        user_id,
+        entry_id,
+        Utc::now()
+    )
+    .map_err(AppError::Database)?;
 
     if rows == 0 {
         return Err(AppError::NotFound("Entry summary not found".to_string()));
@@ -134,66 +122,77 @@ pub fn set_processing(conn: &Connection, user_id: i64, entry_id: i64) -> AppResu
 }
 
 /// Set summary as completed with the summary text
-pub fn set_completed(
-    conn: &Connection,
+pub async fn set_completed(
+    db: &Db,
     user_id: i64,
     entry_id: i64,
     summary_text: &str,
 ) -> AppResult<EntrySummary> {
-    let rows = conn.execute(
-        r#"
-        UPDATE entry_summary
-        SET status = 'completed', summary_text = ?3, error_message = NULL, updated_at = datetime('now')
-        WHERE user_id = ?1 AND entry_id = ?2
-        "#,
-        params![user_id, entry_id, summary_text],
-    )?;
+    let rows = db_execute!(
+        db,
+        "UPDATE entry_summary \
+         SET status = 'completed', summary_text = $3, error_message = NULL, updated_at = $4 \
+         WHERE user_id = $1 AND entry_id = $2",
+        user_id,
+        entry_id,
+        summary_text,
+        Utc::now()
+    )
+    .map_err(AppError::Database)?;
 
     if rows == 0 {
         return Err(AppError::NotFound("Entry summary not found".to_string()));
     }
 
-    find_by_user_and_entry(conn, user_id, entry_id)?
+    find_by_user_and_entry(db, user_id, entry_id)
+        .await?
         .ok_or(AppError::NotFound("Entry summary not found".to_string()))
 }
 
 /// Set summary as failed with error message
-pub fn set_failed(
-    conn: &Connection,
+pub async fn set_failed(
+    db: &Db,
     user_id: i64,
     entry_id: i64,
     error_message: &str,
 ) -> AppResult<EntrySummary> {
-    let rows = conn.execute(
-        r#"
-        UPDATE entry_summary
-        SET status = 'failed', error_message = ?3, updated_at = datetime('now')
-        WHERE user_id = ?1 AND entry_id = ?2
-        "#,
-        params![user_id, entry_id, error_message],
-    )?;
+    let rows = db_execute!(
+        db,
+        "UPDATE entry_summary \
+         SET status = 'failed', error_message = $3, updated_at = $4 \
+         WHERE user_id = $1 AND entry_id = $2",
+        user_id,
+        entry_id,
+        error_message,
+        Utc::now()
+    )
+    .map_err(AppError::Database)?;
 
     if rows == 0 {
         return Err(AppError::NotFound("Entry summary not found".to_string()));
     }
 
-    find_by_user_and_entry(conn, user_id, entry_id)?
+    find_by_user_and_entry(db, user_id, entry_id)
+        .await?
         .ok_or(AppError::NotFound("Entry summary not found".to_string()))
 }
 
 /// Delete a summary
-pub fn delete(conn: &Connection, user_id: i64, entry_id: i64) -> AppResult<bool> {
-    let rows = conn.execute(
-        "DELETE FROM entry_summary WHERE user_id = ?1 AND entry_id = ?2",
-        params![user_id, entry_id],
-    )?;
+pub async fn delete(db: &Db, user_id: i64, entry_id: i64) -> AppResult<bool> {
+    let rows = db_execute!(
+        db,
+        "DELETE FROM entry_summary WHERE user_id = $1 AND entry_id = $2",
+        user_id,
+        entry_id
+    )
+    .map_err(AppError::Database)?;
 
     Ok(rows > 0)
 }
 
 /// Get summary statuses for multiple entries (batch query for list display)
-pub fn get_statuses_for_entries(
-    conn: &Connection,
+pub async fn get_statuses_for_entries(
+    db: &Db,
     user_id: i64,
     entry_ids: &[i64],
 ) -> AppResult<HashMap<i64, SummaryStatus>> {
@@ -201,37 +200,21 @@ pub fn get_statuses_for_entries(
         return Ok(HashMap::new());
     }
 
-    // Build placeholders for IN clause
-    let placeholders: Vec<String> = entry_ids
-        .iter()
-        .enumerate()
-        .map(|(i, _)| format!("?{}", i + 2))
-        .collect();
-    let in_clause = placeholders.join(", ");
-
-    let sql = format!(
-        "SELECT entry_id, status FROM entry_summary WHERE user_id = ?1 AND entry_id IN ({})",
-        in_clause
-    );
-
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
-    for id in entry_ids {
-        params_vec.push(Box::new(*id));
-    }
-
-    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_refs.as_slice(), |row| {
-        let entry_id: i64 = row.get(0)?;
-        let status_str: String = row.get(1)?;
-        Ok((entry_id, status_str))
-    })?;
-
+    // The original used a runtime-built `IN (?, ?, ...)` clause. A variable-length
+    // `IN` list can't be a static literal / single portable bind, so it is
+    // rewritten as one index-covered point query per entry (identical result).
     let mut map = HashMap::new();
-    for row in rows {
-        let (entry_id, status_str) = row?;
-        if let Some(status) = SummaryStatus::parse(&status_str) {
+    for &entry_id in entry_ids {
+        if let Some((_entry_id, status_str)) = query_opt!(
+            db,
+            (i64, String),
+            "SELECT entry_id, status FROM entry_summary WHERE user_id = $1 AND entry_id = $2",
+            user_id,
+            entry_id
+        )
+        .map_err(AppError::Database)?
+            && let Some(status) = SummaryStatus::parse(&status_str)
+        {
             map.insert(entry_id, status);
         }
     }
@@ -241,60 +224,53 @@ pub fn get_statuses_for_entries(
 
 /// Find incomplete summaries (pending or processing) for recovery on startup
 /// Returns (`user_id`, `entry_id`, `entry_link`) tuples
-pub fn find_incomplete(conn: &Connection) -> AppResult<Vec<(i64, i64, String)>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT es.user_id, es.entry_id, e.link
-        FROM entry_summary es
-        INNER JOIN entry e ON es.entry_id = e.id
-        WHERE es.status IN ('pending', 'processing') AND e.link IS NOT NULL
-        "#,
-    )?;
-
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(rows)
+pub async fn find_incomplete(db: &Db) -> AppResult<Vec<(i64, i64, String)>> {
+    query_all!(
+        db,
+        (i64, i64, String),
+        "SELECT es.user_id, es.entry_id, e.link \
+         FROM entry_summary es \
+         INNER JOIN entry e ON es.entry_id = e.id \
+         WHERE es.status IN ('pending', 'processing') AND e.link IS NOT NULL"
+    )
+    .map_err(AppError::Database)
 }
 
 /// Delete expired summaries (older than specified hours)
-pub fn delete_expired(conn: &Connection, hours: i64) -> AppResult<usize> {
-    let rows = conn.execute(
-        &format!(
-            "DELETE FROM entry_summary WHERE created_at < datetime('now', '-{} hours')",
-            hours
-        ),
-        [],
-    )?;
+pub async fn delete_expired(db: &Db, hours: i64) -> AppResult<usize> {
+    let cutoff = Utc::now() - chrono::Duration::hours(hours);
+    let rows = db_execute!(
+        db,
+        "DELETE FROM entry_summary WHERE created_at < $1",
+        cutoff
+    )
+    .map_err(AppError::Database)?;
 
-    Ok(rows)
+    Ok(rows as usize)
 }
 
 /// Count the user's entries that have a COMPLETED summary. Index-covered by
 /// `idx_entry_summary_user_status`. Used for the sidebar "Summarized" badge.
-pub fn count_completed(conn: &Connection, user_id: i64) -> AppResult<i64> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM entry_summary WHERE user_id = ?1 AND status = 'completed'",
-        params![user_id],
-        |row| row.get(0),
-    )?;
-    Ok(count)
+pub async fn count_completed(db: &Db, user_id: i64) -> AppResult<i64> {
+    query_scalar!(
+        db,
+        i64,
+        "SELECT COUNT(*) FROM entry_summary WHERE user_id = $1 AND status = 'completed'",
+        user_id
+    )
+    .map_err(AppError::Database)
 }
 
 /// Check if a summary record exists (any status)
-pub fn exists(conn: &Connection, user_id: i64, entry_id: i64) -> AppResult<bool> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM entry_summary WHERE user_id = ?1 AND entry_id = ?2",
-        params![user_id, entry_id],
-        |row| row.get(0),
-    )?;
+pub async fn exists(db: &Db, user_id: i64, entry_id: i64) -> AppResult<bool> {
+    let count = query_scalar!(
+        db,
+        i64,
+        "SELECT COUNT(*) FROM entry_summary WHERE user_id = $1 AND entry_id = $2",
+        user_id,
+        entry_id
+    )
+    .map_err(AppError::Database)?;
 
     Ok(count > 0)
 }
@@ -302,26 +278,27 @@ pub fn exists(conn: &Connection, user_id: i64, entry_id: i64) -> AppResult<bool>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
     use crate::models::user::Role;
     use crate::models::{category, entry, feed, user};
 
-    fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
-        conn
+    async fn setup_db() -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
-    fn create_test_user(conn: &Connection, username: &str) -> i64 {
-        user::create_user(conn, username, "hash123", Role::User)
+    async fn create_test_user(db: &Db, username: &str) -> i64 {
+        user::create_user(db, username, "hash123", Role::User)
+            .await
             .unwrap()
             .id
     }
 
-    fn create_test_entry(conn: &Connection, user_id: i64) -> i64 {
-        let category_id = category::create_category(conn, user_id, "Tech").unwrap().id;
+    async fn create_test_entry(db: &Db, user_id: i64) -> i64 {
+        let category_id = category::create_category(db, user_id, "Tech")
+            .await
+            .unwrap()
+            .id;
         let feed_id = feed::create_feed(
-            conn,
+            db,
             &feed::CreateFeedParams {
                 category_id,
                 url: "https://example.com/feed.xml",
@@ -333,11 +310,12 @@ mod tests {
                 custom_referrer: None,
             },
         )
+        .await
         .unwrap()
         .id;
 
         let (entry, _) = entry::upsert_entry(
-            conn,
+            db,
             feed_id,
             "guid-123",
             Some("Test Entry"),
@@ -347,89 +325,98 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         entry.id
     }
 
-    #[test]
-    fn test_upsert_pending() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let entry_id = create_test_entry(&conn, user_id);
+    #[tokio::test]
+    async fn test_upsert_pending() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let entry_id = create_test_entry(&db, user_id).await;
 
-        let summary = upsert_pending(&conn, user_id, entry_id).unwrap();
+        let summary = upsert_pending(&db, user_id, entry_id).await.unwrap();
         assert_eq!(summary.status, SummaryStatus::Pending);
         assert!(summary.summary_text.is_none());
         assert!(summary.error_message.is_none());
     }
 
-    #[test]
-    fn test_status_transitions() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let entry_id = create_test_entry(&conn, user_id);
+    #[tokio::test]
+    async fn test_status_transitions() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let entry_id = create_test_entry(&db, user_id).await;
 
         // Create pending
-        upsert_pending(&conn, user_id, entry_id).unwrap();
+        upsert_pending(&db, user_id, entry_id).await.unwrap();
 
         // Set processing
-        set_processing(&conn, user_id, entry_id).unwrap();
-        let summary = find_by_user_and_entry(&conn, user_id, entry_id)
+        set_processing(&db, user_id, entry_id).await.unwrap();
+        let summary = find_by_user_and_entry(&db, user_id, entry_id)
+            .await
             .unwrap()
             .unwrap();
         assert_eq!(summary.status, SummaryStatus::Processing);
 
         // Set completed
-        set_completed(&conn, user_id, entry_id, "This is the summary").unwrap();
-        let summary = find_by_user_and_entry(&conn, user_id, entry_id)
+        set_completed(&db, user_id, entry_id, "This is the summary")
+            .await
+            .unwrap();
+        let summary = find_by_user_and_entry(&db, user_id, entry_id)
+            .await
             .unwrap()
             .unwrap();
         assert_eq!(summary.status, SummaryStatus::Completed);
         assert_eq!(summary.summary_text.as_deref(), Some("This is the summary"));
     }
 
-    #[test]
-    fn test_set_failed() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let entry_id = create_test_entry(&conn, user_id);
+    #[tokio::test]
+    async fn test_set_failed() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let entry_id = create_test_entry(&db, user_id).await;
 
-        upsert_pending(&conn, user_id, entry_id).unwrap();
-        set_failed(&conn, user_id, entry_id, "API error").unwrap();
+        upsert_pending(&db, user_id, entry_id).await.unwrap();
+        set_failed(&db, user_id, entry_id, "API error")
+            .await
+            .unwrap();
 
-        let summary = find_by_user_and_entry(&conn, user_id, entry_id)
+        let summary = find_by_user_and_entry(&db, user_id, entry_id)
+            .await
             .unwrap()
             .unwrap();
         assert_eq!(summary.status, SummaryStatus::Failed);
         assert_eq!(summary.error_message.as_deref(), Some("API error"));
     }
 
-    #[test]
-    fn test_delete() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let entry_id = create_test_entry(&conn, user_id);
+    #[tokio::test]
+    async fn test_delete() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let entry_id = create_test_entry(&db, user_id).await;
 
-        upsert_pending(&conn, user_id, entry_id).unwrap();
-        assert!(exists(&conn, user_id, entry_id).unwrap());
+        upsert_pending(&db, user_id, entry_id).await.unwrap();
+        assert!(exists(&db, user_id, entry_id).await.unwrap());
 
-        let deleted = delete(&conn, user_id, entry_id).unwrap();
+        let deleted = delete(&db, user_id, entry_id).await.unwrap();
         assert!(deleted);
-        assert!(!exists(&conn, user_id, entry_id).unwrap());
+        assert!(!exists(&db, user_id, entry_id).await.unwrap());
     }
 
-    #[test]
-    fn test_get_statuses_for_entries() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
+    #[tokio::test]
+    async fn test_get_statuses_for_entries() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
 
         // Create multiple entries
-        let category_id = category::create_category(&conn, user_id, "Tech")
+        let category_id = category::create_category(&db, user_id, "Tech")
+            .await
             .unwrap()
             .id;
         let feed_id = feed::create_feed(
-            &conn,
+            &db,
             &feed::CreateFeedParams {
                 category_id,
                 url: "https://example.com/feed.xml",
@@ -441,13 +428,14 @@ mod tests {
                 custom_referrer: None,
             },
         )
+        .await
         .unwrap()
         .id;
 
         let mut entry_ids = Vec::new();
         for i in 0..3 {
             let (e, _) = entry::upsert_entry(
-                &conn,
+                &db,
                 feed_id,
                 &format!("guid-{}", i),
                 Some(&format!("Entry {}", i)),
@@ -457,55 +445,62 @@ mod tests {
                 None,
                 None,
             )
+            .await
             .unwrap();
             entry_ids.push(e.id);
         }
 
         // Set different statuses
-        upsert_pending(&conn, user_id, entry_ids[0]).unwrap();
-        upsert_pending(&conn, user_id, entry_ids[1]).unwrap();
-        set_completed(&conn, user_id, entry_ids[1], "Summary").unwrap();
+        upsert_pending(&db, user_id, entry_ids[0]).await.unwrap();
+        upsert_pending(&db, user_id, entry_ids[1]).await.unwrap();
+        set_completed(&db, user_id, entry_ids[1], "Summary")
+            .await
+            .unwrap();
         // entry_ids[2] has no summary
 
-        let statuses = get_statuses_for_entries(&conn, user_id, &entry_ids).unwrap();
+        let statuses = get_statuses_for_entries(&db, user_id, &entry_ids)
+            .await
+            .unwrap();
         assert_eq!(statuses.len(), 2);
         assert_eq!(statuses.get(&entry_ids[0]), Some(&SummaryStatus::Pending));
         assert_eq!(statuses.get(&entry_ids[1]), Some(&SummaryStatus::Completed));
         assert_eq!(statuses.get(&entry_ids[2]), None);
     }
 
-    #[test]
-    fn test_find_incomplete() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let entry_id = create_test_entry(&conn, user_id);
+    #[tokio::test]
+    async fn test_find_incomplete() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let entry_id = create_test_entry(&db, user_id).await;
 
-        upsert_pending(&conn, user_id, entry_id).unwrap();
+        upsert_pending(&db, user_id, entry_id).await.unwrap();
 
-        let incomplete = find_incomplete(&conn).unwrap();
+        let incomplete = find_incomplete(&db).await.unwrap();
         assert_eq!(incomplete.len(), 1);
         assert_eq!(incomplete[0].0, user_id);
         assert_eq!(incomplete[0].1, entry_id);
     }
 
-    #[test]
-    fn test_upsert_resets_to_pending() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let entry_id = create_test_entry(&conn, user_id);
+    #[tokio::test]
+    async fn test_upsert_resets_to_pending() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let entry_id = create_test_entry(&db, user_id).await;
 
         // Create and complete
-        upsert_pending(&conn, user_id, entry_id).unwrap();
-        set_completed(&conn, user_id, entry_id, "Summary").unwrap();
+        upsert_pending(&db, user_id, entry_id).await.unwrap();
+        set_completed(&db, user_id, entry_id, "Summary")
+            .await
+            .unwrap();
 
         // Upsert should reset to pending
-        let summary = upsert_pending(&conn, user_id, entry_id).unwrap();
+        let summary = upsert_pending(&db, user_id, entry_id).await.unwrap();
         assert_eq!(summary.status, SummaryStatus::Pending);
         assert!(summary.summary_text.is_none());
     }
 
-    #[test]
-    fn test_status_string_conversion() {
+    #[tokio::test]
+    async fn test_status_string_conversion() {
         assert_eq!(SummaryStatus::Pending.as_str(), "pending");
         assert_eq!(SummaryStatus::Processing.as_str(), "processing");
         assert_eq!(SummaryStatus::Completed.as_str(), "completed");
@@ -527,17 +522,20 @@ mod tests {
         assert_eq!(SummaryStatus::parse("invalid"), None);
     }
 
-    #[test]
-    fn count_completed_counts_only_completed_for_user() {
-        let conn = setup_db();
-        let u1 = create_test_user(&conn, "u1");
-        let u2 = create_test_user(&conn, "u2");
+    #[tokio::test]
+    async fn count_completed_counts_only_completed_for_user() {
+        let db = setup_db().await;
+        let u1 = create_test_user(&db, "u1").await;
+        let u2 = create_test_user(&db, "u2").await;
 
         // create_test_entry reuses the same category name per user, so build
         // entries manually with unique GUIDs for the multi-entry u1 scenario.
-        let cat1 = category::create_category(&conn, u1, "Tech1").unwrap().id;
+        let cat1 = category::create_category(&db, u1, "Tech1")
+            .await
+            .unwrap()
+            .id;
         let feed1 = feed::create_feed(
-            &conn,
+            &db,
             &feed::CreateFeedParams {
                 category_id: cat1,
                 url: "https://example.com/feed1.xml",
@@ -549,12 +547,14 @@ mod tests {
                 custom_referrer: None,
             },
         )
+        .await
         .unwrap()
         .id;
 
-        let make_entry = |guid: &str| -> i64 {
+        let db_ref = &db;
+        let make_entry = |guid: &'static str| async move {
             entry::upsert_entry(
-                &conn,
+                db_ref,
                 feed1,
                 guid,
                 Some("Test Entry"),
@@ -564,30 +564,31 @@ mod tests {
                 None,
                 None,
             )
+            .await
             .unwrap()
             .0
             .id
         };
 
-        let e1 = make_entry("g1");
-        let e2 = make_entry("g2");
-        let e3 = make_entry("g3");
-        let e4 = make_entry("g4");
+        let e1 = make_entry("g1").await;
+        let e2 = make_entry("g2").await;
+        let e3 = make_entry("g3").await;
+        let e4 = make_entry("g4").await;
         // u2 gets its own entry via the helper (first call, no conflict)
-        let e5 = create_test_entry(&conn, u2);
+        let e5 = create_test_entry(&db, u2).await;
 
-        upsert_pending(&conn, u1, e1).unwrap();
-        set_completed(&conn, u1, e1, "s").unwrap();
-        upsert_pending(&conn, u1, e2).unwrap();
-        set_completed(&conn, u1, e2, "s").unwrap();
-        upsert_pending(&conn, u1, e3).unwrap();
-        upsert_pending(&conn, u1, e4).unwrap();
-        set_failed(&conn, u1, e4, "err").unwrap();
-        upsert_pending(&conn, u2, e5).unwrap();
-        set_completed(&conn, u2, e5, "s").unwrap();
+        upsert_pending(&db, u1, e1).await.unwrap();
+        set_completed(&db, u1, e1, "s").await.unwrap();
+        upsert_pending(&db, u1, e2).await.unwrap();
+        set_completed(&db, u1, e2, "s").await.unwrap();
+        upsert_pending(&db, u1, e3).await.unwrap();
+        upsert_pending(&db, u1, e4).await.unwrap();
+        set_failed(&db, u1, e4, "err").await.unwrap();
+        upsert_pending(&db, u2, e5).await.unwrap();
+        set_completed(&db, u2, e5, "s").await.unwrap();
 
-        assert_eq!(count_completed(&conn, u1).unwrap(), 2);
-        assert_eq!(count_completed(&conn, u2).unwrap(), 1);
-        assert_eq!(count_completed(&conn, 99999).unwrap(), 0);
+        assert_eq!(count_completed(&db, u1).await.unwrap(), 2);
+        assert_eq!(count_completed(&db, u2).await.unwrap(), 1);
+        assert_eq!(count_completed(&db, 99999).await.unwrap(), 0);
     }
 }

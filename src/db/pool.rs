@@ -28,7 +28,7 @@ pub enum Db {
 }
 
 /// A backend-tagged transaction, the unit-of-work boundary for operations that
-/// compose several model calls atomically (OPML import, entry upserts, GReader
+/// compose several model calls atomically (OPML import, entry upserts, `GReader`
 /// tag edits). Inner model calls execute against `&mut Tx` via the `*_tx!`
 /// macros. Obtained from [`Db::begin`]; finished with [`Tx::commit`] or
 /// [`Tx::rollback`] (a dropped `Tx` rolls back).
@@ -39,8 +39,8 @@ pub enum Tx<'c> {
 
 impl Db {
     /// Open the pool for `url` under the given `backend` and run that backend's
-    /// migrations. For SQLite, `url` is a filesystem path (WAL mode, tuning
-    /// pragmas, create-if-missing); for PostgreSQL it is a `postgres://` URL.
+    /// migrations. For `SQLite`, `url` is a filesystem path (WAL mode, tuning
+    /// pragmas, create-if-missing); for `PostgreSQL` it is a `postgres://` URL.
     pub async fn connect(url: &str, backend: Backend) -> Result<Self, sqlx::Error> {
         let db = match backend {
             Backend::Sqlite => {
@@ -73,8 +73,10 @@ impl Db {
         Ok(db)
     }
 
-    /// Build an in-memory SQLite `Db` (single shared connection) for tests.
-    #[cfg(test)]
+    /// Build an in-memory `SQLite` `Db` backed by a single shared connection and
+    /// run migrations. Used by the test suites (and available for ephemeral
+    /// embedded use): a one-connection pool keeps every query on the same
+    /// `:memory:` database instead of spawning a fresh empty one per connection.
     pub async fn connect_in_memory() -> Result<Self, sqlx::Error> {
         let opts = SqliteConnectOptions::from_str("sqlite::memory:")?;
         let pool = SqlitePoolOptions::new()
@@ -87,7 +89,7 @@ impl Db {
     }
 
     /// Run the backend's embedded migrations. Migrations use `IF NOT EXISTS`,
-    /// so an existing (pre-sqlx) SQLite database is baselined harmlessly: the
+    /// so an existing (pre-sqlx) `SQLite` database is baselined harmlessly: the
     /// consolidated `0001` no-ops against already-present tables and is recorded
     /// in `_sqlx_migrations`.
     async fn migrate(&self) -> Result<(), sqlx::Error> {
@@ -106,7 +108,7 @@ impl Db {
         })
     }
 
-    /// Flush and close the pool. For SQLite this truncates the WAL first so no
+    /// Flush and close the pool. For `SQLite` this truncates the WAL first so no
     /// `-wal`/`-shm` sidecars linger after shutdown.
     pub async fn shutdown(&self) {
         if let Db::Sqlite(pool) = self {

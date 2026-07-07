@@ -1,10 +1,11 @@
 use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use crate::db::{Db, is_unique_violation};
 use crate::error::{AppError, AppResult};
+use crate::{db_execute, query_all, query_one, query_opt, query_scalar};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -34,7 +35,47 @@ impl FromStr for Role {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+// `role` is stored as a TEXT column on both backends. We keep the public struct
+// field as `Role` (so callers are unaffected) by teaching sqlx to treat it as a
+// string: `Type`/`Decode` delegate to `String`, mapping the stored text back to
+// the enum. Binds always pass `role.as_str()`, so no `Encode` impl is needed.
+impl sqlx::Type<sqlx::Sqlite> for Role {
+    fn type_info() -> <sqlx::Sqlite as sqlx::Database>::TypeInfo {
+        <String as sqlx::Type<sqlx::Sqlite>>::type_info()
+    }
+    fn compatible(ty: &<sqlx::Sqlite as sqlx::Database>::TypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Sqlite>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for Role {
+    fn decode(
+        value: <sqlx::Sqlite as sqlx::Database>::ValueRef<'r>,
+    ) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <String as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
+        Ok(Role::from_str(&s).unwrap_or(Role::User))
+    }
+}
+
+impl sqlx::Type<sqlx::Postgres> for Role {
+    fn type_info() -> <sqlx::Postgres as sqlx::Database>::TypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+    fn compatible(ty: &<sqlx::Postgres as sqlx::Database>::TypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for Role {
+    fn decode(
+        value: <sqlx::Postgres as sqlx::Database>::ValueRef<'r>,
+    ) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        Ok(Role::from_str(&s).unwrap_or(Role::User))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct User {
     pub id: i64,
     pub username: String,
@@ -55,93 +96,70 @@ impl User {
     }
 }
 
-fn parse_datetime(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .map(|dt| dt.with_timezone(&Utc))
-        .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
-        })
-        .or_else(|_| dateparser::parse(s).map(|dt| dt.with_timezone(&Utc)))
-        .unwrap_or_else(|_| Utc::now())
-}
-
-fn row_to_user(row: &rusqlite::Row) -> rusqlite::Result<User> {
-    let role_str: String = row.get(3)?;
-    let disabled_at: Option<String> = row.get(4)?;
-    let created_at: String = row.get(5)?;
-
-    Ok(User {
-        id: row.get(0)?,
-        username: row.get(1)?,
-        password_hash: row.get(2)?,
-        role: Role::from_str(&role_str).unwrap_or(Role::User),
-        disabled_at: disabled_at.map(|s| parse_datetime(&s)),
-        created_at: parse_datetime(&created_at),
-    })
-}
-
-pub fn create_user(
-    conn: &Connection,
+pub async fn create_user(
+    db: &Db,
     username: &str,
     password_hash: &str,
     role: Role,
 ) -> AppResult<User> {
-    let result = conn.execute(
-        "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-        params![username, password_hash, role.as_str()],
-    );
-
-    match result {
-        Ok(_) => {
-            let id = conn.last_insert_rowid();
-            find_by_id(conn, id)?.ok_or(AppError::UserNotFound)
+    query_one!(
+        db,
+        User,
+        "INSERT INTO user (username, password_hash, role) VALUES ($1, $2, $3) \
+         RETURNING id, username, password_hash, role, disabled_at, created_at",
+        username,
+        password_hash,
+        role.as_str()
+    )
+    .map_err(|e| {
+        if is_unique_violation(&e) {
+            AppError::UsernameExists
+        } else {
+            AppError::Database(e)
         }
-        Err(rusqlite::Error::SqliteFailure(err, _))
-            if err.code == rusqlite::ErrorCode::ConstraintViolation =>
-        {
-            Err(AppError::UsernameExists)
-        }
-        Err(e) => Err(AppError::Database(e)),
-    }
+    })
 }
 
-pub fn find_by_username(conn: &Connection, username: &str) -> AppResult<Option<User>> {
-    conn.query_row(
-        "SELECT id, username, password_hash, role, disabled_at, created_at FROM user WHERE username = ?1",
-        params![username],
-        row_to_user,
+pub async fn find_by_username(db: &Db, username: &str) -> AppResult<Option<User>> {
+    query_opt!(
+        db,
+        User,
+        "SELECT id, username, password_hash, role, disabled_at, created_at \
+         FROM user WHERE username = $1",
+        username
     )
-    .optional()
     .map_err(AppError::Database)
 }
 
-pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<User>> {
-    conn.query_row(
-        "SELECT id, username, password_hash, role, disabled_at, created_at FROM user WHERE id = ?1",
-        params![id],
-        row_to_user,
+pub async fn find_by_id(db: &Db, id: i64) -> AppResult<Option<User>> {
+    query_opt!(
+        db,
+        User,
+        "SELECT id, username, password_hash, role, disabled_at, created_at \
+         FROM user WHERE id = $1",
+        id
     )
-    .optional()
     .map_err(AppError::Database)
 }
 
-pub fn list_all(conn: &Connection) -> AppResult<Vec<User>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, username, password_hash, role, disabled_at, created_at FROM user ORDER BY id",
-    )?;
-
-    let users = stmt
-        .query_map([], row_to_user)?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(users)
+pub async fn list_all(db: &Db) -> AppResult<Vec<User>> {
+    query_all!(
+        db,
+        User,
+        "SELECT id, username, password_hash, role, disabled_at, created_at \
+         FROM user ORDER BY id"
+    )
+    .map_err(AppError::Database)
 }
 
-pub fn update_password(conn: &Connection, user_id: i64, new_password_hash: &str) -> AppResult<()> {
-    let rows = conn.execute(
-        "UPDATE user SET password_hash = ?1 WHERE id = ?2",
-        params![new_password_hash, user_id],
-    )?;
+pub async fn update_password(db: &Db, user_id: i64, new_password_hash: &str) -> AppResult<()> {
+    let rows = db_execute!(
+        db,
+        "UPDATE user SET password_hash = $1 WHERE id = $2",
+        new_password_hash,
+        user_id
+    )
+    .map_err(AppError::Database)?;
 
     if rows == 0 {
         return Err(AppError::UserNotFound);
@@ -149,11 +167,14 @@ pub fn update_password(conn: &Connection, user_id: i64, new_password_hash: &str)
     Ok(())
 }
 
-pub fn update_role(conn: &Connection, user_id: i64, role: Role) -> AppResult<()> {
-    let rows = conn.execute(
-        "UPDATE user SET role = ?1 WHERE id = ?2",
-        params![role.as_str(), user_id],
-    )?;
+pub async fn update_role(db: &Db, user_id: i64, role: Role) -> AppResult<()> {
+    let rows = db_execute!(
+        db,
+        "UPDATE user SET role = $1 WHERE id = $2",
+        role.as_str(),
+        user_id
+    )
+    .map_err(AppError::Database)?;
 
     if rows == 0 {
         return Err(AppError::UserNotFound);
@@ -161,11 +182,14 @@ pub fn update_role(conn: &Connection, user_id: i64, role: Role) -> AppResult<()>
     Ok(())
 }
 
-pub fn disable_user(conn: &Connection, user_id: i64) -> AppResult<()> {
-    let rows = conn.execute(
-        "UPDATE user SET disabled_at = datetime('now') WHERE id = ?1",
-        params![user_id],
-    )?;
+pub async fn disable_user(db: &Db, user_id: i64) -> AppResult<()> {
+    let rows = db_execute!(
+        db,
+        "UPDATE user SET disabled_at = $1 WHERE id = $2",
+        Utc::now(),
+        user_id
+    )
+    .map_err(AppError::Database)?;
 
     if rows == 0 {
         return Err(AppError::UserNotFound);
@@ -173,11 +197,13 @@ pub fn disable_user(conn: &Connection, user_id: i64) -> AppResult<()> {
     Ok(())
 }
 
-pub fn enable_user(conn: &Connection, user_id: i64) -> AppResult<()> {
-    let rows = conn.execute(
-        "UPDATE user SET disabled_at = NULL WHERE id = ?1",
-        params![user_id],
-    )?;
+pub async fn enable_user(db: &Db, user_id: i64) -> AppResult<()> {
+    let rows = db_execute!(
+        db,
+        "UPDATE user SET disabled_at = NULL WHERE id = $1",
+        user_id
+    )
+    .map_err(AppError::Database)?;
 
     if rows == 0 {
         return Err(AppError::UserNotFound);
@@ -185,8 +211,9 @@ pub fn enable_user(conn: &Connection, user_id: i64) -> AppResult<()> {
     Ok(())
 }
 
-pub fn delete_user(conn: &Connection, user_id: i64) -> AppResult<()> {
-    let rows = conn.execute("DELETE FROM user WHERE id = ?1", params![user_id])?;
+pub async fn delete_user(db: &Db, user_id: i64) -> AppResult<()> {
+    let rows =
+        db_execute!(db, "DELETE FROM user WHERE id = $1", user_id).map_err(AppError::Database)?;
 
     if rows == 0 {
         return Err(AppError::UserNotFound);
@@ -194,110 +221,124 @@ pub fn delete_user(conn: &Connection, user_id: i64) -> AppResult<()> {
     Ok(())
 }
 
-pub fn count(conn: &Connection) -> AppResult<i64> {
-    conn.query_row("SELECT COUNT(*) FROM user", [], |row| row.get(0))
-        .map_err(AppError::Database)
+pub async fn count(db: &Db) -> AppResult<i64> {
+    query_scalar!(db, i64, "SELECT COUNT(*) FROM user").map_err(AppError::Database)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
 
-    fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
-        conn
+    async fn setup_db() -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
-    #[test]
-    fn test_create_and_find_user() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_create_and_find_user() {
+        let db = setup_db().await;
 
-        let user = create_user(&conn, "testuser", "hash123", Role::User).unwrap();
+        let user = create_user(&db, "testuser", "hash123", Role::User)
+            .await
+            .unwrap();
         assert_eq!(user.username, "testuser");
         assert_eq!(user.role, Role::User);
         assert!(!user.is_disabled());
 
-        let found = find_by_username(&conn, "testuser").unwrap().unwrap();
+        let found = find_by_username(&db, "testuser").await.unwrap().unwrap();
         assert_eq!(found.id, user.id);
 
-        let found_by_id = find_by_id(&conn, user.id).unwrap().unwrap();
+        let found_by_id = find_by_id(&db, user.id).await.unwrap().unwrap();
         assert_eq!(found_by_id.username, "testuser");
     }
 
-    #[test]
-    fn test_duplicate_username() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_duplicate_username() {
+        let db = setup_db().await;
 
-        create_user(&conn, "testuser", "hash123", Role::User).unwrap();
-        let result = create_user(&conn, "testuser", "hash456", Role::User);
+        create_user(&db, "testuser", "hash123", Role::User)
+            .await
+            .unwrap();
+        let result = create_user(&db, "testuser", "hash456", Role::User).await;
         assert!(matches!(result, Err(AppError::UsernameExists)));
     }
 
-    #[test]
-    fn test_disable_enable_user() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_disable_enable_user() {
+        let db = setup_db().await;
 
-        let user = create_user(&conn, "testuser", "hash123", Role::User).unwrap();
+        let user = create_user(&db, "testuser", "hash123", Role::User)
+            .await
+            .unwrap();
         assert!(!user.is_disabled());
 
-        disable_user(&conn, user.id).unwrap();
-        let disabled = find_by_id(&conn, user.id).unwrap().unwrap();
+        disable_user(&db, user.id).await.unwrap();
+        let disabled = find_by_id(&db, user.id).await.unwrap().unwrap();
         assert!(disabled.is_disabled());
 
-        enable_user(&conn, user.id).unwrap();
-        let enabled = find_by_id(&conn, user.id).unwrap().unwrap();
+        enable_user(&db, user.id).await.unwrap();
+        let enabled = find_by_id(&db, user.id).await.unwrap().unwrap();
         assert!(!enabled.is_disabled());
     }
 
-    #[test]
-    fn test_update_role() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_update_role() {
+        let db = setup_db().await;
 
-        let user = create_user(&conn, "testuser", "hash123", Role::User).unwrap();
+        let user = create_user(&db, "testuser", "hash123", Role::User)
+            .await
+            .unwrap();
         assert_eq!(user.role, Role::User);
 
-        update_role(&conn, user.id, Role::Admin).unwrap();
-        let admin = find_by_id(&conn, user.id).unwrap().unwrap();
+        update_role(&db, user.id, Role::Admin).await.unwrap();
+        let admin = find_by_id(&db, user.id).await.unwrap().unwrap();
         assert_eq!(admin.role, Role::Admin);
     }
 
-    #[test]
-    fn test_delete_user() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_delete_user() {
+        let db = setup_db().await;
 
-        let user = create_user(&conn, "testuser", "hash123", Role::User).unwrap();
-        assert_eq!(count(&conn).unwrap(), 1);
+        let user = create_user(&db, "testuser", "hash123", Role::User)
+            .await
+            .unwrap();
+        assert_eq!(count(&db).await.unwrap(), 1);
 
-        delete_user(&conn, user.id).unwrap();
-        assert_eq!(count(&conn).unwrap(), 0);
-        assert!(find_by_id(&conn, user.id).unwrap().is_none());
+        delete_user(&db, user.id).await.unwrap();
+        assert_eq!(count(&db).await.unwrap(), 0);
+        assert!(find_by_id(&db, user.id).await.unwrap().is_none());
     }
 
-    #[test]
-    fn test_list_all() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_list_all() {
+        let db = setup_db().await;
 
-        create_user(&conn, "user1", "hash1", Role::Admin).unwrap();
-        create_user(&conn, "user2", "hash2", Role::User).unwrap();
+        create_user(&db, "user1", "hash1", Role::Admin)
+            .await
+            .unwrap();
+        create_user(&db, "user2", "hash2", Role::User)
+            .await
+            .unwrap();
 
-        let users = list_all(&conn).unwrap();
+        let users = list_all(&db).await.unwrap();
         assert_eq!(users.len(), 2);
         assert_eq!(users[0].username, "user1");
         assert_eq!(users[1].username, "user2");
     }
 
-    #[test]
-    fn test_count() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_count() {
+        let db = setup_db().await;
 
-        assert_eq!(count(&conn).unwrap(), 0);
+        assert_eq!(count(&db).await.unwrap(), 0);
 
-        create_user(&conn, "user1", "hash1", Role::User).unwrap();
-        assert_eq!(count(&conn).unwrap(), 1);
+        create_user(&db, "user1", "hash1", Role::User)
+            .await
+            .unwrap();
+        assert_eq!(count(&db).await.unwrap(), 1);
 
-        create_user(&conn, "user2", "hash2", Role::User).unwrap();
-        assert_eq!(count(&conn).unwrap(), 2);
+        create_user(&db, "user2", "hash2", Role::User)
+            .await
+            .unwrap();
+        assert_eq!(count(&db).await.unwrap(), 2);
     }
 }

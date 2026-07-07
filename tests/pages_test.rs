@@ -13,32 +13,16 @@ use std::sync::Arc;
 use axum::http::{StatusCode, header};
 use axum_test::TestServer;
 use chrono::TimeZone;
-use rdrs::{AppState, Config, DbPool, Role, auth, create_router, db, services};
-use rusqlite::Connection;
+use rdrs::{AppState, Config, Db, Role, auth, create_router, services};
 use serde_json::json;
 
 struct TestApp {
     server: TestServer,
-    db: DbPool,
+    db: Db,
 }
 
-fn open_shared_memory(name: &str) -> Connection {
-    let uri = format!("file:{}?mode=memory&cache=shared", name);
-    Connection::open_with_flags(
-        uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    )
-    .unwrap()
-}
-
-fn create_test_app_named(config: Config, name: &str) -> TestApp {
-    let write_conn = open_shared_memory(name);
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory(name);
-
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
+async fn create_test_app_named(config: Config, _name: &str) -> TestApp {
+    let db = Db::connect_in_memory().await.unwrap();
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -61,35 +45,23 @@ fn create_test_app_named(config: Config, name: &str) -> TestApp {
     TestApp { server, db }
 }
 
-fn create_test_app(config: Config) -> TestApp {
-    create_test_app_named(config, "test_pages")
+async fn create_test_app(config: Config) -> TestApp {
+    create_test_app_named(config, "test_pages").await
 }
 
 /// Setup admin and regular user
-async fn setup_users(db: &DbPool) -> (i64, i64) {
-    db.user(move |conn| {
-        // Create admin user
-        let password_hash = rdrs::auth::hash_password("password123").unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            rusqlite::params!["admin", password_hash, Role::Admin.as_str()],
-        )
+async fn setup_users(db: &Db) -> (i64, i64) {
+    let password_hash = rdrs::auth::hash_password("password123").unwrap();
+    let admin = rdrs::models::user::create_user(db, "admin", &password_hash, Role::Admin)
+        .await
         .unwrap();
-        let admin_id = conn.last_insert_rowid();
 
-        // Create regular user
-        let password_hash = rdrs::auth::hash_password("password123").unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            rusqlite::params!["user", password_hash, Role::User.as_str()],
-        )
+    let password_hash = rdrs::auth::hash_password("password123").unwrap();
+    let user = rdrs::models::user::create_user(db, "user", &password_hash, Role::User)
+        .await
         .unwrap();
-        let user_id = conn.last_insert_rowid();
 
-        (admin_id, user_id)
-    })
-    .await
-    .unwrap()
+    (admin.id, user.id)
 }
 
 async fn login(server: &TestServer, username: &str) {
@@ -109,31 +81,29 @@ async fn login(server: &TestServer, username: &str) {
 
 #[tokio::test]
 async fn test_unread_page_renders_ssr_layout() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (admin_id, _) = setup_users(&app.db).await;
 
     // Give admin a feed (no entries) so the empty unread list is the genuine
     // "all caught up" case rather than the no-feeds onboarding case.
-    app.db
-        .user(move |conn| {
-            let cat = rdrs::models::category::create_category(conn, admin_id, "Tech").unwrap();
-            rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://example.com/feed.xml",
-                    title: Some("Test Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-        })
+    let cat = rdrs::models::category::create_category(&app.db, admin_id, "Tech")
         .await
         .unwrap();
+    rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://example.com/feed.xml",
+            title: Some("Test Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
 
     login(&app.server, "admin").await;
 
@@ -159,7 +129,7 @@ async fn test_unread_page_renders_ssr_layout() {
 async fn test_unread_page_shows_onboarding_when_no_feeds() {
     // A brand-new account with no feeds gets the getting-started guide, not the
     // misleading "All caught up" empty state.
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
     login(&app.server, "admin").await;
@@ -176,7 +146,7 @@ async fn test_unread_page_shows_onboarding_when_no_feeds() {
 
 #[tokio::test]
 async fn test_unread_page_while_masquerading() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (admin_id, user_id) = setup_users(&app.db).await;
 
     login(&app.server, "admin").await;
@@ -212,53 +182,48 @@ async fn test_unread_page_while_masquerading() {
 /// Seed a single category + feed + entry owned by `username`. Returns the
 /// entry id. Uses a unique category/feed name per call so tests that share
 /// the in-memory DB don't trip on each other.
-async fn seed_one_entry(db: &DbPool, username: &str, slug: &str) -> i64 {
-    let username = username.to_string();
-    let slug = slug.to_string();
-    db.user(move |conn| {
-        let user_id: i64 = conn
-            .query_row(
-                "SELECT id FROM user WHERE username = ?1",
-                rusqlite::params![username],
-                |row| row.get(0),
-            )
-            .unwrap();
-        conn.execute(
-            "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-            rusqlite::params![user_id, format!("cat-{}", slug)],
-        )
+async fn seed_one_entry(db: &Db, username: &str, slug: &str) -> i64 {
+    let user = rdrs::models::user::find_by_username(db, username)
+        .await
+        .unwrap()
         .unwrap();
-        let cat_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-            rusqlite::params![
-                cat_id,
-                format!("https://example.com/{}.xml", slug),
-                format!("Feed {}", slug)
-            ],
-        )
+    let cat = rdrs::models::category::create_category(db, user.id, &format!("cat-{}", slug))
+        .await
         .unwrap();
-        let feed_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO entry (feed_id, guid, title, link, content) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![
-                feed_id,
-                format!("guid-{}", slug),
-                format!("Title for {}", slug),
-                format!("https://example.com/{}", slug),
-                format!("<p>Body for {}.</p>", slug)
-            ],
-        )
-        .unwrap();
-        conn.last_insert_rowid()
-    })
+    let feed = rdrs::models::feed::create_feed(
+        db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: &format!("https://example.com/{}.xml", slug),
+            title: Some(&format!("Feed {}", slug)),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
     .await
-    .unwrap()
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        db,
+        feed.id,
+        &format!("guid-{}", slug),
+        Some(&format!("Title for {}", slug)),
+        Some(&format!("https://example.com/{}", slug)),
+        Some(&format!("<p>Body for {}.</p>", slug)),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    entry.id
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unread_page_entry_query_populates_reading_pane() {
-    let app = create_test_app_named(default_test_config(), "test_unread_entry_query_ok");
+    let app = create_test_app_named(default_test_config(), "test_unread_entry_query_ok").await;
     setup_users(&app.db).await;
     let entry_id = seed_one_entry(&app.db, "admin", "deep-link-ok").await;
     login(&app.server, "admin").await;
@@ -296,7 +261,7 @@ async fn test_unread_page_entry_query_populates_reading_pane() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unread_page_entry_query_invalid_id_falls_back_to_empty_pane() {
-    let app = create_test_app_named(default_test_config(), "test_unread_entry_query_invalid");
+    let app = create_test_app_named(default_test_config(), "test_unread_entry_query_invalid").await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -319,7 +284,8 @@ async fn test_unread_page_entry_query_invalid_id_falls_back_to_empty_pane() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unread_page_entry_query_other_user_falls_back_to_empty_pane() {
-    let app = create_test_app_named(default_test_config(), "test_unread_entry_query_other_user");
+    let app =
+        create_test_app_named(default_test_config(), "test_unread_entry_query_other_user").await;
     setup_users(&app.db).await; // creates `admin` and `user`
     // Entry belongs to `user`; we log in as `admin`.
     let entry_id = seed_one_entry(&app.db, "user", "cross-user").await;
@@ -344,7 +310,7 @@ async fn test_unread_page_entry_query_other_user_falls_back_to_empty_pane() {
 async fn test_starred_entries_page_entry_query_populates_reading_pane() {
     // The helper is shared, but exercise one of the non-unread routes too
     // so the wiring on a second handler is covered.
-    let app = create_test_app_named(default_test_config(), "test_starred_entry_query_ok");
+    let app = create_test_app_named(default_test_config(), "test_starred_entry_query_ok").await;
     setup_users(&app.db).await;
     let entry_id = seed_one_entry(&app.db, "admin", "starred-deep-link").await;
     login(&app.server, "admin").await;
@@ -368,7 +334,7 @@ async fn test_starred_entries_page_entry_query_populates_reading_pane() {
 
 #[tokio::test]
 async fn test_admin_page_while_masquerading() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_admin_id, user_id) = setup_users(&app.db).await;
 
     login(&app.server, "admin").await;
@@ -388,7 +354,7 @@ async fn test_admin_page_while_masquerading() {
 
 #[tokio::test]
 async fn test_user_settings_page_renders_ssr_content() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -413,7 +379,7 @@ async fn test_user_settings_page_renders_ssr_content() {
 
 #[tokio::test]
 async fn test_settings_page_renders_ssr_content() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -451,7 +417,7 @@ async fn test_settings_page_reflects_custom_config() {
         image_proxy_secret_generated: false,
         ..default_test_config()
     };
-    let app = create_test_app(config);
+    let app = create_test_app(config).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -480,7 +446,7 @@ async fn test_settings_page_reflects_auto_generated_image_proxy_secret() {
         image_proxy_secret_generated: true,
         ..default_test_config()
     };
-    let app = create_test_app(config);
+    let app = create_test_app(config).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -499,7 +465,7 @@ async fn test_login_page_hides_signup_when_disabled() {
         signup_enabled: false,
         ..default_test_config()
     };
-    let app = create_test_app(config);
+    let app = create_test_app(config).await;
 
     let response = app.server.get("/login").await;
     response.assert_status_ok();
@@ -516,7 +482,7 @@ async fn test_register_page_shows_disabled_message() {
         signup_enabled: false,
         ..default_test_config()
     };
-    let app = create_test_app(config);
+    let app = create_test_app(config).await;
 
     let response = app.server.get("/register").await;
     response.assert_status_ok();
@@ -533,7 +499,7 @@ async fn test_register_page_shows_disabled_after_first_user_in_single_mode() {
         multi_user_enabled: false,
         ..default_test_config()
     };
-    let app = create_test_app(config);
+    let app = create_test_app(config).await;
 
     // Register first user
     app.server
@@ -560,7 +526,7 @@ async fn test_register_page_shows_disabled_after_first_user_in_single_mode() {
 
 #[tokio::test]
 async fn test_categories_page_with_flash() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -583,7 +549,7 @@ async fn test_categories_page_with_flash() {
 
 #[tokio::test]
 async fn test_feeds_page_with_flash() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -605,7 +571,7 @@ async fn test_feeds_page_with_flash() {
 
 #[tokio::test]
 async fn test_entries_page_with_flash() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -628,7 +594,7 @@ async fn test_entries_page_with_flash() {
 
 #[tokio::test]
 async fn test_entries_page_renders_ssr_layout() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -643,7 +609,7 @@ async fn test_entries_page_renders_ssr_layout() {
 
 #[tokio::test]
 async fn test_summarized_entries_page_renders_ssr_layout() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -658,7 +624,7 @@ async fn test_summarized_entries_page_renders_ssr_layout() {
 
 #[tokio::test]
 async fn test_user_settings_page_with_flash() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -692,7 +658,7 @@ async fn test_user_settings_page_with_flash() {
 
 #[tokio::test]
 async fn test_regular_user_unread_page_no_admin_link() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
     login(&app.server, "user").await;
@@ -709,7 +675,7 @@ async fn test_regular_user_unread_page_no_admin_link() {
 
 #[tokio::test]
 async fn test_regular_user_cannot_access_admin_page() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
     login(&app.server, "user").await;
@@ -731,25 +697,22 @@ async fn test_regular_user_cannot_access_admin_page() {
 
 #[tokio::test]
 async fn test_api_user_settings_returns_linkding_configured() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
-    app.db
-        .user(move |conn| {
-            let config = serde_json::json!({
-                "linkding": {
-                    "api_url": "https://linkding.example.com",
-                    "api_token": "secret"
-                }
-            });
-            conn.execute(
-                "INSERT INTO user_settings (user_id, save_services) VALUES (?1, ?2)",
-                rusqlite::params![1, config.to_string()],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
+    let config = serde_json::json!({
+        "linkding": {
+            "api_url": "https://linkding.example.com",
+            "api_token": "secret"
+        }
+    });
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO user_settings (user_id, save_services) VALUES ($1, $2)",
+        1_i64,
+        config.to_string()
+    )
+    .unwrap();
 
     login(&app.server, "admin").await;
 
@@ -762,19 +725,16 @@ async fn test_api_user_settings_returns_linkding_configured() {
 
 #[tokio::test]
 async fn test_api_user_settings_returns_custom_entries_per_page() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)",
-                rusqlite::params![1, 100],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2)",
+        1_i64,
+        100_i64
+    )
+    .unwrap();
 
     login(&app.server, "admin").await;
 
@@ -790,7 +750,7 @@ async fn test_api_user_settings_returns_custom_entries_per_page() {
 
 #[tokio::test]
 async fn test_read_entries_page() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -804,7 +764,7 @@ async fn test_read_entries_page() {
 
 #[tokio::test]
 async fn test_starred_entries_page() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -818,7 +778,7 @@ async fn test_starred_entries_page() {
 
 #[tokio::test]
 async fn test_summarized_entries_page() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -832,7 +792,7 @@ async fn test_summarized_entries_page() {
 
 #[tokio::test]
 async fn test_search_page() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -853,46 +813,44 @@ async fn test_search_page() {
 
 #[tokio::test]
 async fn test_search_page_with_results() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Search Cat"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/search-feed.xml", "Search Feed"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title, link, content) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![
-                    1,
-                    "search-guid-1",
-                    "Quokka Discovery in Western Australia",
-                    "https://example.com/quokka",
-                    "<p>The quokka is a small marsupial.</p>"
-                ],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title, link, content) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![
-                    1,
-                    "search-guid-2",
-                    "Other Topic",
-                    "https://example.com/other",
-                    "<p>Unrelated article.</p>"
-                ],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO category (user_id, name) VALUES ($1, $2)",
+        1_i64,
+        "Search Cat"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+        1_i64,
+        "https://example.com/search-feed.xml",
+        "Search Feed"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO entry (feed_id, guid, title, link, content) VALUES ($1, $2, $3, $4, $5)",
+        1_i64,
+        "search-guid-1",
+        "Quokka Discovery in Western Australia",
+        "https://example.com/quokka",
+        "<p>The quokka is a small marsupial.</p>"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO entry (feed_id, guid, title, link, content) VALUES ($1, $2, $3, $4, $5)",
+        1_i64,
+        "search-guid-2",
+        "Other Topic",
+        "https://example.com/other",
+        "<p>Unrelated article.</p>"
+    )
+    .unwrap();
 
     login(&app.server, "admin").await;
 
@@ -918,7 +876,7 @@ async fn test_search_page_with_results() {
 
 #[tokio::test]
 async fn test_search_page_no_results() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -938,7 +896,7 @@ async fn test_search_page_no_results() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page() {
-    let app = create_test_app_named(default_test_config(), "test_category_entries_page");
+    let app = create_test_app_named(default_test_config(), "test_category_entries_page").await;
 
     app.server
         .post("/api/register")
@@ -951,70 +909,67 @@ async fn test_category_entries_page() {
         .await
         .assert_status_ok();
 
-    let (cat_id, entry_a_id, entry_b_id) = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat =
-                rdrs::models::category::create_category(conn, user_id, "Engineering").unwrap();
-            let feed1 = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/ce-feed-1",
-                    title: Some("Feed 1"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let feed2 = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/ce-feed-2",
-                    title: Some("Feed 2"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (a, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed1.id,
-                "guid-ce-a",
-                Some("Entry A"),
-                Some("https://x/ce/a"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (b, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed2.id,
-                "guid-ce-b",
-                Some("Entry B"),
-                Some("https://x/ce/b"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            (cat.id, a.id, b.id)
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "Engineering")
         .await
         .unwrap();
+    let feed1 = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/ce-feed-1",
+            title: Some("Feed 1"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let feed2 = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/ce-feed-2",
+            title: Some("Feed 2"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (a, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed1.id,
+        "guid-ce-a",
+        Some("Entry A"),
+        Some("https://x/ce/a"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (b, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed2.id,
+        "guid-ce-b",
+        Some("Entry B"),
+        Some("https://x/ce/b"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (cat_id, entry_a_id, entry_b_id) = (cat.id, a.id, b.id);
 
     let resp = app
         .server
@@ -1094,7 +1049,8 @@ async fn test_category_entries_page_not_found() {
     let app = create_test_app_named(
         default_test_config(),
         "test_category_entries_page_not_found",
-    );
+    )
+    .await;
 
     app.server
         .post("/api/register")
@@ -1125,7 +1081,8 @@ async fn test_category_entries_page_other_user() {
     let app = create_test_app_named(
         default_test_config(),
         "test_category_entries_page_other_user",
-    );
+    )
+    .await;
 
     // Register alice (owner of the category)
     app.server
@@ -1142,21 +1099,16 @@ async fn test_category_entries_page_other_user() {
         .assert_status(StatusCode::CREATED);
 
     // Get alice's user_id and create her category
-    let cat_id: i64 = app
-        .db
-        .user(|conn| {
-            let alice_id: i64 = conn
-                .query_row(
-                    "SELECT id FROM user WHERE username = 'alice_cou'",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, alice_id, "Alice Cat").unwrap();
-            cat.id
-        })
+    let alice_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT id FROM user WHERE username = 'alice_cou'"
+    )
+    .unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, alice_id, "Alice Cat")
         .await
         .unwrap();
+    let cat_id: i64 = cat.id;
 
     // Log in as bob
     app.server
@@ -1179,7 +1131,7 @@ async fn test_category_entries_page_other_user() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page_load_more_fragment() {
-    let app = create_test_app_named(default_test_config(), "test_category_entries_page_lm");
+    let app = create_test_app_named(default_test_config(), "test_category_entries_page_lm").await;
 
     app.server
         .post("/api/register")
@@ -1192,45 +1144,41 @@ async fn test_category_entries_page_load_more_fragment() {
         .await
         .assert_status_ok();
 
-    let cat_id: i64 = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "LMCat").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/clm-feed",
-                    title: Some("CLM Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            for i in 0..3 {
-                rdrs::models::entry::upsert_entry(
-                    conn,
-                    feed.id,
-                    &format!("guid-clm-{}", i),
-                    Some(&format!("Entry {}", i)),
-                    Some(&format!("https://x/clm/{}", i)),
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .unwrap();
-            }
-            cat.id
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "LMCat")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/clm-feed",
+            title: Some("CLM Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    for i in 0..3 {
+        rdrs::models::entry::upsert_entry(
+            &app.db,
+            feed.id,
+            &format!("guid-clm-{}", i),
+            Some(&format!("Entry {}", i)),
+            Some(&format!("https://x/clm/{}", i)),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    let cat_id: i64 = cat.id;
 
     let resp = app
         .server
@@ -1257,7 +1205,7 @@ async fn test_category_entries_page_load_more_fragment() {
 /// redirects back to the category page preserving `?q=`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_mark_read_scoped_search() {
-    let app = create_test_app_named(default_test_config(), "test_category_mark_read_scoped");
+    let app = create_test_app_named(default_test_config(), "test_category_mark_read_scoped").await;
 
     app.server
         .post("/api/register")
@@ -1270,56 +1218,52 @@ async fn test_category_mark_read_scoped_search() {
         .await
         .assert_status_ok();
 
-    let (cat_id, matching_id, other_id) = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat =
-                rdrs::models::category::create_category(conn, user_id, "MarkReadCat").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/mr-feed",
-                    title: Some("MR Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (matching, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-mr-match",
-                Some("Widget Roundup"),
-                Some("https://x/mr/match"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (other, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-mr-other",
-                Some("Something Else"),
-                Some("https://x/mr/other"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            (cat.id, matching.id, other.id)
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "MarkReadCat")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/mr-feed",
+            title: Some("MR Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (matching, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-mr-match",
+        Some("Widget Roundup"),
+        Some("https://x/mr/match"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (other, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-mr-other",
+        Some("Something Else"),
+        Some("https://x/mr/other"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (cat_id, matching_id, other_id) = (cat.id, matching.id, other.id);
 
     let response = app
         .server
@@ -1335,25 +1279,20 @@ async fn test_category_mark_read_scoped_search() {
         "redirect must preserve the ?q= scoped-search keyword"
     );
 
-    let (matching_read_at, other_read_at): (Option<String>, Option<String>) = app
-        .db
-        .user(move |conn| {
-            let matching_read_at: Option<String> = conn
-                .query_row(
-                    "SELECT read_at FROM entry WHERE id = ?1",
-                    [matching_id],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            let other_read_at: Option<String> = conn
-                .query_row("SELECT read_at FROM entry WHERE id = ?1", [other_id], |r| {
-                    r.get(0)
-                })
-                .unwrap();
-            (matching_read_at, other_read_at)
-        })
-        .await
-        .unwrap();
+    let matching_read_at: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT read_at FROM entry WHERE id = $1",
+        matching_id
+    )
+    .unwrap();
+    let other_read_at: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT read_at FROM entry WHERE id = $1",
+        other_id
+    )
+    .unwrap();
 
     assert!(
         matching_read_at.is_some(),
@@ -1372,7 +1311,7 @@ async fn test_category_mark_read_scoped_search() {
 /// `None/Some(id)` correctly into the shared `mark_read_scoped` helper).
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_mark_read_scoped_search() {
-    let app = create_test_app_named(default_test_config(), "test_feed_mark_read_scoped");
+    let app = create_test_app_named(default_test_config(), "test_feed_mark_read_scoped").await;
 
     app.server
         .post("/api/register")
@@ -1385,56 +1324,52 @@ async fn test_feed_mark_read_scoped_search() {
         .await
         .assert_status_ok();
 
-    let (feed_id, matching_id, other_id) = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat =
-                rdrs::models::category::create_category(conn, user_id, "FeedMarkReadCat").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/fmr-feed",
-                    title: Some("FMR Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (matching, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-fmr-match",
-                Some("Widget Roundup"),
-                Some("https://x/fmr/match"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (other, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-fmr-other",
-                Some("Something Else"),
-                Some("https://x/fmr/other"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            (feed.id, matching.id, other.id)
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "FeedMarkReadCat")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/fmr-feed",
+            title: Some("FMR Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (matching, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-fmr-match",
+        Some("Widget Roundup"),
+        Some("https://x/fmr/match"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (other, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-fmr-other",
+        Some("Something Else"),
+        Some("https://x/fmr/other"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (feed_id, matching_id, other_id) = (feed.id, matching.id, other.id);
 
     let response = app
         .server
@@ -1450,25 +1385,20 @@ async fn test_feed_mark_read_scoped_search() {
         "redirect must preserve the ?q= scoped-search keyword"
     );
 
-    let (matching_read_at, other_read_at): (Option<String>, Option<String>) = app
-        .db
-        .user(move |conn| {
-            let matching_read_at: Option<String> = conn
-                .query_row(
-                    "SELECT read_at FROM entry WHERE id = ?1",
-                    [matching_id],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            let other_read_at: Option<String> = conn
-                .query_row("SELECT read_at FROM entry WHERE id = ?1", [other_id], |r| {
-                    r.get(0)
-                })
-                .unwrap();
-            (matching_read_at, other_read_at)
-        })
-        .await
-        .unwrap();
+    let matching_read_at: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT read_at FROM entry WHERE id = $1",
+        matching_id
+    )
+    .unwrap();
+    let other_read_at: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT read_at FROM entry WHERE id = $1",
+        other_id
+    )
+    .unwrap();
 
     assert!(
         matching_read_at.is_some(),
@@ -1491,7 +1421,8 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
     let app = create_test_app_named(
         default_test_config(),
         "test_category_matching_count_all_tab",
-    );
+    )
+    .await;
 
     app.server
         .post("/api/register")
@@ -1504,57 +1435,56 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
         .await
         .assert_status_ok();
 
-    let (cat_id, matching_unread_id, matching_read_id) = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat =
-                rdrs::models::category::create_category(conn, user_id, "MatchCountCat").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/mc-feed",
-                    title: Some("MC Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (matching_unread, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-mc-unread",
-                Some("Widget Roundup Unread"),
-                Some("https://x/mc/unread"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (matching_read, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-mc-read",
-                Some("Widget Roundup Read"),
-                Some("https://x/mc/read"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            rdrs::models::entry::mark_as_read(conn, matching_read.id).unwrap();
-            (cat.id, matching_unread.id, matching_read.id)
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "MatchCountCat")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/mc-feed",
+            title: Some("MC Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (matching_unread, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-mc-unread",
+        Some("Widget Roundup Unread"),
+        Some("https://x/mc/unread"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (matching_read, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-mc-read",
+        Some("Widget Roundup Read"),
+        Some("https://x/mc/read"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    rdrs::models::entry::mark_as_read(&app.db, matching_read.id)
+        .await
+        .unwrap();
+    let (cat_id, matching_unread_id, matching_read_id) =
+        (cat.id, matching_unread.id, matching_read.id);
 
     let resp = app
         .server
@@ -1578,27 +1508,20 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
         .await;
     response.assert_status_see_other();
 
-    let (unread_now, read_now): (Option<String>, Option<String>) = app
-        .db
-        .user(move |conn| {
-            let unread_now: Option<String> = conn
-                .query_row(
-                    "SELECT read_at FROM entry WHERE id = ?1",
-                    [matching_unread_id],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            let read_now: Option<String> = conn
-                .query_row(
-                    "SELECT read_at FROM entry WHERE id = ?1",
-                    [matching_read_id],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            (unread_now, read_now)
-        })
-        .await
-        .unwrap();
+    let unread_now: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT read_at FROM entry WHERE id = $1",
+        matching_unread_id
+    )
+    .unwrap();
+    let read_now: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT read_at FROM entry WHERE id = $1",
+        matching_read_id
+    )
+    .unwrap();
 
     assert!(
         unread_now.is_some(),
@@ -1616,7 +1539,7 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page() {
-    let app = create_test_app_named(default_test_config(), "test_feed_entries_page");
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page").await;
 
     app.server
         .post("/api/register")
@@ -1629,55 +1552,52 @@ async fn test_feed_entries_page() {
         .await
         .assert_status_ok();
 
-    let (cat_id, feed_id, entry_a_id, entry_b_id) = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/fe-feed",
-                    title: Some("FE Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (a, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-fe-a",
-                Some("First Entry"),
-                Some("https://x/a"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (b, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-fe-b",
-                Some("Second Entry"),
-                Some("https://x/b"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            (cat.id, feed.id, a.id, b.id)
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "Tech")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/fe-feed",
+            title: Some("FE Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (a, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-fe-a",
+        Some("First Entry"),
+        Some("https://x/a"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (b, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-fe-b",
+        Some("Second Entry"),
+        Some("https://x/b"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (cat_id, feed_id, entry_a_id, entry_b_id) = (cat.id, feed.id, a.id, b.id);
 
     let resp = app.server.get(&format!("/feeds/{}/entries", feed_id)).await;
     assert_eq!(resp.status_code(), StatusCode::OK);
@@ -1769,7 +1689,7 @@ async fn test_feed_entries_page() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_status_filter() {
-    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_status");
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_status").await;
 
     app.server
         .post("/api/register")
@@ -1782,69 +1702,71 @@ async fn test_feed_entries_page_status_filter() {
         .await
         .assert_status_ok();
 
-    let (feed_id, unread_id, read_id, starred_id) = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "FST").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/fst-feed",
-                    title: Some("FST"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (u, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-fst-u",
-                Some("Unread Entry"),
-                Some("https://x/fst/u"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (r, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-fst-r",
-                Some("Read Entry"),
-                Some("https://x/fst/r"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (s, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-fst-s",
-                Some("Starred Entry"),
-                Some("https://x/fst/s"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            rdrs::models::entry::mark_as_read(conn, r.id).unwrap();
-            rdrs::models::entry::star_entry(conn, s.id).unwrap();
-            (feed.id, u.id, r.id, s.id)
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "FST")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/fst-feed",
+            title: Some("FST"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (u, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-fst-u",
+        Some("Unread Entry"),
+        Some("https://x/fst/u"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (r, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-fst-r",
+        Some("Read Entry"),
+        Some("https://x/fst/r"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (s, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-fst-s",
+        Some("Starred Entry"),
+        Some("https://x/fst/s"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    rdrs::models::entry::mark_as_read(&app.db, r.id)
+        .await
+        .unwrap();
+    rdrs::models::entry::star_entry(&app.db, s.id)
+        .await
+        .unwrap();
+    let (feed_id, unread_id, read_id, starred_id) = (feed.id, u.id, r.id, s.id);
 
     // Default URL (no ?status=) → unread is the default; read entry hidden,
     // unread + starred (which is still unread) both visible.
@@ -1949,7 +1871,8 @@ async fn test_feed_entries_page_status_filter() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_not_found() {
-    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_not_found");
+    let app =
+        create_test_app_named(default_test_config(), "test_feed_entries_page_not_found").await;
 
     app.server
         .post("/api/register")
@@ -1977,7 +1900,8 @@ async fn test_feed_entries_page_not_found() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_other_user() {
-    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_other_user");
+    let app =
+        create_test_app_named(default_test_config(), "test_feed_entries_page_other_user").await;
 
     // Register alice (owner of the feed)
     app.server
@@ -1994,35 +1918,31 @@ async fn test_feed_entries_page_other_user() {
         .assert_status(StatusCode::CREATED);
 
     // Get alice's user_id and create her feed
-    let feed_id: i64 = app
-        .db
-        .user(|conn| {
-            let alice_id: i64 = conn
-                .query_row(
-                    "SELECT id FROM user WHERE username = 'alice_fou'",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, alice_id, "Alice Cat").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/alice-feed",
-                    title: Some("Alice Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            feed.id
-        })
+    let alice_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT id FROM user WHERE username = 'alice_fou'"
+    )
+    .unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, alice_id, "Alice Cat")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/alice-feed",
+            title: Some("Alice Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let feed_id: i64 = feed.id;
 
     // Log in as bob
     app.server
@@ -2042,7 +1962,7 @@ async fn test_feed_entries_page_other_user() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_load_more_fragment() {
-    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_lm");
+    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_lm").await;
 
     app.server
         .post("/api/register")
@@ -2055,45 +1975,41 @@ async fn test_feed_entries_page_load_more_fragment() {
         .await
         .assert_status_ok();
 
-    let feed_id: i64 = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/lm-feed",
-                    title: Some("LM Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            for i in 0..3 {
-                rdrs::models::entry::upsert_entry(
-                    conn,
-                    feed.id,
-                    &format!("guid-lm-{}", i),
-                    Some(&format!("Entry {}", i)),
-                    Some(&format!("https://x/lm/{}", i)),
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .unwrap();
-            }
-            feed.id
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/lm-feed",
+            title: Some("LM Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    for i in 0..3 {
+        rdrs::models::entry::upsert_entry(
+            &app.db,
+            feed.id,
+            &format!("guid-lm-{}", i),
+            Some(&format!("Entry {}", i)),
+            Some(&format!("https://x/lm/{}", i)),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    let feed_id: i64 = feed.id;
 
     let resp = app
         .server
@@ -2127,24 +2043,24 @@ async fn test_feed_entries_page_load_more_fragment() {
 
 #[tokio::test]
 async fn test_feeds_page_renders_ssr_rows() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Feeds SSR Cat"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/feeds-ssr.xml", "Feeds SSR Title"],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO category (user_id, name) VALUES ($1, $2)",
+        1_i64,
+        "Feeds SSR Cat"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+        1_i64,
+        "https://example.com/feeds-ssr.xml",
+        "Feeds SSR Title"
+    )
+    .unwrap();
 
     login(&app.server, "admin").await;
 
@@ -2168,29 +2084,25 @@ async fn test_feeds_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_feed_edit_page_renders() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Edit Cat"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title, description) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![
-                    1,
-                    "https://example.com/edit.xml",
-                    "Editable Feed",
-                    "Some desc"
-                ],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO category (user_id, name) VALUES ($1, $2)",
+        1_i64,
+        "Edit Cat"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO feed (category_id, url, title, description) VALUES ($1, $2, $3, $4)",
+        1_i64,
+        "https://example.com/edit.xml",
+        "Editable Feed",
+        "Some desc"
+    )
+    .unwrap();
 
     login(&app.server, "admin").await;
 
@@ -2211,7 +2123,7 @@ async fn test_feed_edit_page_renders() {
 
 #[tokio::test]
 async fn test_feed_edit_page_not_found_renders_error_page() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -2230,7 +2142,7 @@ async fn test_feed_edit_page_not_found_renders_error_page() {
 
 #[tokio::test]
 async fn test_unknown_route_logged_in_renders_chrome_404() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -2249,7 +2161,7 @@ async fn test_unknown_route_logged_in_renders_chrome_404() {
 
 #[tokio::test]
 async fn test_unknown_route_logged_out_redirects_to_login() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
     let response = app.server.get("/this-page-does-not-exist").await;
@@ -2259,7 +2171,7 @@ async fn test_unknown_route_logged_out_redirects_to_login() {
 
 #[tokio::test]
 async fn test_feeds_import_page_renders() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -2275,24 +2187,24 @@ async fn test_feeds_import_page_renders() {
 
 #[tokio::test]
 async fn test_categories_page_renders_ssr_content() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Cats SSR"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://example.com/cats-ssr.xml", "A Feed"],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO category (user_id, name) VALUES ($1, $2)",
+        1_i64,
+        "Cats SSR"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+        1_i64,
+        "https://example.com/cats-ssr.xml",
+        "A Feed"
+    )
+    .unwrap();
 
     login(&app.server, "admin").await;
 
@@ -2319,7 +2231,7 @@ async fn test_categories_page_renders_ssr_content() {
 
 #[tokio::test]
 async fn test_categories_page_renders_empty_state() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -2336,7 +2248,7 @@ async fn test_categories_page_renders_empty_state() {
 
 #[tokio::test]
 async fn test_admin_page_renders_ssr_content() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -2361,34 +2273,33 @@ async fn test_admin_page_renders_ssr_content() {
 
 #[tokio::test]
 async fn test_feeds_page_filter_errors_only_renders_error_rows() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Filter Test"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title, fetch_error) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![
-                    1,
-                    "https://bad.com/feed.xml",
-                    "Bad Feed",
-                    "Connection refused"
-                ],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://good.com/feed.xml", "Good Feed"],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO category (user_id, name) VALUES ($1, $2)",
+        1_i64,
+        "Filter Test"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO feed (category_id, url, title, fetch_error) VALUES ($1, $2, $3, $4)",
+        1_i64,
+        "https://bad.com/feed.xml",
+        "Bad Feed",
+        "Connection refused"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+        1_i64,
+        "https://good.com/feed.xml",
+        "Good Feed"
+    )
+    .unwrap();
 
     login(&app.server, "admin").await;
 
@@ -2403,34 +2314,39 @@ async fn test_feeds_page_filter_errors_only_renders_error_rows() {
 
 #[tokio::test]
 async fn test_feeds_page_filter_by_category_excludes_other_rows() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Cat A"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![1, "Cat B"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![1, "https://a.com/feed.xml", "Feed In A"],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![2, "https://b.com/feed.xml", "Feed In B"],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO category (user_id, name) VALUES ($1, $2)",
+        1_i64,
+        "Cat A"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO category (user_id, name) VALUES ($1, $2)",
+        1_i64,
+        "Cat B"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+        1_i64,
+        "https://a.com/feed.xml",
+        "Feed In A"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+        2_i64,
+        "https://b.com/feed.xml",
+        "Feed In B"
+    )
+    .unwrap();
 
     login(&app.server, "admin").await;
 
@@ -2477,7 +2393,7 @@ async fn test_feeds_page_filter_by_category_excludes_other_rows() {
 
 #[tokio::test]
 async fn test_login_page_does_not_load_logged_in_chrome() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let response = app.server.get("/login").await;
     response.assert_status_ok();
     let body = response.text();
@@ -2494,7 +2410,7 @@ async fn test_login_page_does_not_load_logged_in_chrome() {
 
 #[tokio::test]
 async fn test_register_page_does_not_load_logged_in_chrome() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let response = app.server.get("/register").await;
     response.assert_status_ok();
     let body = response.text();
@@ -2509,7 +2425,7 @@ async fn test_register_page_does_not_load_logged_in_chrome() {
 
 #[tokio::test]
 async fn test_logged_in_page_loads_full_chrome() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -2540,7 +2456,7 @@ async fn test_logged_in_page_loads_full_chrome() {
 
 #[tokio::test]
 async fn test_unread_page_renders_entry_rows() {
-    let app = create_test_app_named(default_test_config(), "test_pages_unread_ssr");
+    let app = create_test_app_named(default_test_config(), "test_pages_unread_ssr").await;
 
     // Register and login as alice
     app.server
@@ -2555,84 +2471,76 @@ async fn test_unread_page_renders_entry_rows() {
         .assert_status_ok();
 
     // Get user id
-    let user_id: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row(
-                "SELECT id FROM user WHERE username = 'alice_unread'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-        })
-        .await
-        .unwrap()
-        .unwrap();
+    let user_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT id FROM user WHERE username = 'alice_unread'"
+    )
+    .unwrap();
 
     // Seed: category + feed + 3 entries (2 unread, 1 read)
-    let (_, entry_three_id) = app
-        .db
-        .user(move |conn| {
-            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://blog.example/feed",
-                    title: Some("Example Blog"),
-                    description: None,
-                    site_url: Some("https://blog.example"),
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-
-            let (e1, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-entry-one",
-                Some("Entry One"),
-                Some("https://blog.example/one"),
-                Some("<p>Content one</p>"),
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (_, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-entry-two",
-                Some("Entry Two"),
-                Some("https://blog.example/two"),
-                Some("<p>Content two</p>"),
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (e3, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-entry-three",
-                Some("Read Already"),
-                Some("https://blog.example/three"),
-                Some("<p>Content three</p>"),
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            (e1.id, e3.id)
-        })
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "Tech")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://blog.example/feed",
+            title: Some("Example Blog"),
+            description: None,
+            site_url: Some("https://blog.example"),
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let (_e1, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-entry-one",
+        Some("Entry One"),
+        Some("https://blog.example/one"),
+        Some("<p>Content one</p>"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-entry-two",
+        Some("Entry Two"),
+        Some("https://blog.example/two"),
+        Some("<p>Content two</p>"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (e3, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-entry-three",
+        Some("Read Already"),
+        Some("https://blog.example/three"),
+        Some("<p>Content three</p>"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let entry_three_id = e3.id;
 
     // Mark entry three as read
-    let _ = app
-        .db
-        .user(move |conn| rdrs::models::entry::mark_as_read(conn, entry_three_id))
+    rdrs::models::entry::mark_as_read(&app.db, entry_three_id)
         .await
         .unwrap();
 
@@ -2671,7 +2579,7 @@ async fn test_unread_page_renders_entry_rows() {
 
 #[tokio::test]
 async fn test_entries_page_renders_ssr_rows() {
-    let app = create_test_app_named(default_test_config(), "test_pages_entries_ssr");
+    let app = create_test_app_named(default_test_config(), "test_pages_entries_ssr").await;
 
     app.server
         .post("/api/register")
@@ -2684,76 +2592,71 @@ async fn test_entries_page_renders_ssr_rows() {
         .await
         .assert_status_ok();
 
-    let user_id: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row(
-                "SELECT id FROM user WHERE username = 'alice_entries'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-        })
-        .await
-        .unwrap()
-        .unwrap();
+    let user_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT id FROM user WHERE username = 'alice_entries'"
+    )
+    .unwrap();
 
     // Seed: 3 entries — all visible on /entries (no filter exclusions).
-    app.db
-        .user(move |conn| {
-            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://entries.example/feed",
-                    title: Some("Entries Blog"),
-                    description: None,
-                    site_url: Some("https://entries.example"),
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-e1",
-                Some("Entries Alpha"),
-                Some("https://entries.example/alpha"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-e2",
-                Some("Entries Beta"),
-                Some("https://entries.example/beta"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-e3",
-                Some("Entries Gamma"),
-                Some("https://entries.example/gamma"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-        })
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "Tech")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://entries.example/feed",
+            title: Some("Entries Blog"),
+            description: None,
+            site_url: Some("https://entries.example"),
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-e1",
+        Some("Entries Alpha"),
+        Some("https://entries.example/alpha"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-e2",
+        Some("Entries Beta"),
+        Some("https://entries.example/beta"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-e3",
+        Some("Entries Gamma"),
+        Some("https://entries.example/gamma"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     let response = app.server.get("/entries").await;
     assert_eq!(response.status_code(), StatusCode::OK);
@@ -2773,7 +2676,7 @@ async fn test_entries_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_read_entries_page_renders_ssr_rows() {
-    let app = create_test_app_named(default_test_config(), "test_pages_read_ssr");
+    let app = create_test_app_named(default_test_config(), "test_pages_read_ssr").await;
 
     app.server
         .post("/api/register")
@@ -2786,87 +2689,77 @@ async fn test_read_entries_page_renders_ssr_rows() {
         .await
         .assert_status_ok();
 
-    let user_id: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row(
-                "SELECT id FROM user WHERE username = 'alice_read'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-        })
-        .await
-        .unwrap()
-        .unwrap();
+    let user_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT id FROM user WHERE username = 'alice_read'"
+    )
+    .unwrap();
 
-    let (read_one_id, read_two_id, unread_id) = app
-        .db
-        .user(move |conn| {
-            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://read.example/feed",
-                    title: Some("Read Blog"),
-                    description: None,
-                    site_url: Some("https://read.example"),
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (e1, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-r1",
-                Some("Read Alpha"),
-                Some("https://read.example/alpha"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (e2, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-r2",
-                Some("Read Beta"),
-                Some("https://read.example/beta"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (e3, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-r3",
-                Some("Unread One"),
-                Some("https://read.example/unread"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            (e1.id, e2.id, e3.id)
-        })
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "Tech")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://read.example/feed",
+            title: Some("Read Blog"),
+            description: None,
+            site_url: Some("https://read.example"),
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (e1, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-r1",
+        Some("Read Alpha"),
+        Some("https://read.example/alpha"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (e2, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-r2",
+        Some("Read Beta"),
+        Some("https://read.example/beta"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (e3, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-r3",
+        Some("Unread One"),
+        Some("https://read.example/unread"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (read_one_id, read_two_id, unread_id) = (e1.id, e2.id, e3.id);
 
     // Mark two entries as read; leave one unread.
-    let _ = app
-        .db
-        .user(move |conn| rdrs::models::entry::mark_as_read(conn, read_one_id))
+    rdrs::models::entry::mark_as_read(&app.db, read_one_id)
         .await
         .unwrap();
-    let _ = app
-        .db
-        .user(move |conn| rdrs::models::entry::mark_as_read(conn, read_two_id))
+    rdrs::models::entry::mark_as_read(&app.db, read_two_id)
         .await
         .unwrap();
     let _ = unread_id; // suppress warning
@@ -2892,7 +2785,7 @@ async fn test_read_entries_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_starred_entries_page_renders_ssr_rows() {
-    let app = create_test_app_named(default_test_config(), "test_pages_starred_ssr");
+    let app = create_test_app_named(default_test_config(), "test_pages_starred_ssr").await;
 
     app.server
         .post("/api/register")
@@ -2905,87 +2798,77 @@ async fn test_starred_entries_page_renders_ssr_rows() {
         .await
         .assert_status_ok();
 
-    let user_id: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row(
-                "SELECT id FROM user WHERE username = 'alice_starred'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-        })
-        .await
-        .unwrap()
-        .unwrap();
+    let user_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT id FROM user WHERE username = 'alice_starred'"
+    )
+    .unwrap();
 
-    let (starred_one_id, starred_two_id) = app
-        .db
-        .user(move |conn| {
-            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://starred.example/feed",
-                    title: Some("Starred Blog"),
-                    description: None,
-                    site_url: Some("https://starred.example"),
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (e1, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-s1",
-                Some("Starred Alpha"),
-                Some("https://starred.example/alpha"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (e2, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-s2",
-                Some("Starred Beta"),
-                Some("https://starred.example/beta"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-s3",
-                Some("Unstarred One"),
-                Some("https://starred.example/unstarred"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            (e1.id, e2.id)
-        })
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "Tech")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://starred.example/feed",
+            title: Some("Starred Blog"),
+            description: None,
+            site_url: Some("https://starred.example"),
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (e1, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-s1",
+        Some("Starred Alpha"),
+        Some("https://starred.example/alpha"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (e2, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-s2",
+        Some("Starred Beta"),
+        Some("https://starred.example/beta"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-s3",
+        Some("Unstarred One"),
+        Some("https://starred.example/unstarred"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (starred_one_id, starred_two_id) = (e1.id, e2.id);
 
     // Star the two matching entries.
-    let _ = app
-        .db
-        .user(move |conn| rdrs::models::entry::star_entry(conn, starred_one_id))
+    rdrs::models::entry::star_entry(&app.db, starred_one_id)
         .await
         .unwrap();
-    let _ = app
-        .db
-        .user(move |conn| rdrs::models::entry::star_entry(conn, starred_two_id))
+    rdrs::models::entry::star_entry(&app.db, starred_two_id)
         .await
         .unwrap();
 
@@ -3013,7 +2896,7 @@ async fn test_starred_entries_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_summarized_entries_page_renders_ssr_rows() {
-    let app = create_test_app_named(default_test_config(), "test_pages_summarized_ssr");
+    let app = create_test_app_named(default_test_config(), "test_pages_summarized_ssr").await;
 
     app.server
         .post("/api/register")
@@ -3026,96 +2909,89 @@ async fn test_summarized_entries_page_renders_ssr_rows() {
         .await
         .assert_status_ok();
 
-    let user_id: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row(
-                "SELECT id FROM user WHERE username = 'alice_summarized'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-        })
-        .await
-        .unwrap()
-        .unwrap();
+    let user_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT id FROM user WHERE username = 'alice_summarized'"
+    )
+    .unwrap();
 
-    let (sum_one_id, sum_two_id) = app
-        .db
-        .user(move |conn| {
-            let cat = rdrs::models::category::create_category(conn, user_id, "Tech").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://sum.example/feed",
-                    title: Some("Summary Blog"),
-                    description: None,
-                    site_url: Some("https://sum.example"),
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (e1, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-sum1",
-                Some("Summarized Alpha"),
-                Some("https://sum.example/alpha"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            let (e2, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-sum2",
-                Some("Summarized Beta"),
-                Some("https://sum.example/beta"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-sum3",
-                Some("No Summary One"),
-                Some("https://sum.example/nosummary"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            (e1.id, e2.id)
-        })
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "Tech")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://sum.example/feed",
+            title: Some("Summary Blog"),
+            description: None,
+            site_url: Some("https://sum.example"),
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (e1, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-sum1",
+        Some("Summarized Alpha"),
+        Some("https://sum.example/alpha"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (e2, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-sum2",
+        Some("Summarized Beta"),
+        Some("https://sum.example/beta"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-sum3",
+        Some("No Summary One"),
+        Some("https://sum.example/nosummary"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (sum_one_id, sum_two_id) = (e1.id, e2.id);
 
     // Insert entry_summary rows for the two matching entries.
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO entry_summary (user_id, entry_id, status, summary_text) \
-                 VALUES (?1, ?2, 'completed', 'Summary text alpha')",
-                rusqlite::params![user_id, sum_one_id],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO entry_summary (user_id, entry_id, status, summary_text) \
-                 VALUES (?1, ?2, 'completed', 'Summary text beta')",
-                rusqlite::params![user_id, sum_two_id],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO entry_summary (user_id, entry_id, status, summary_text) \
+         VALUES ($1, $2, 'completed', 'Summary text alpha')",
+        user_id,
+        sum_one_id
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO entry_summary (user_id, entry_id, status, summary_text) \
+         VALUES ($1, $2, 'completed', 'Summary text beta')",
+        user_id,
+        sum_two_id
+    )
+    .unwrap();
 
     let response = app.server.get("/entries/summarized").await;
     assert_eq!(response.status_code(), StatusCode::OK);
@@ -3144,7 +3020,7 @@ async fn test_summarized_entries_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_unread_load_more_uses_keyset_cursor() {
-    let app = create_test_app_named(default_test_config(), "test_unread_keyset");
+    let app = create_test_app_named(default_test_config(), "test_unread_keyset").await;
 
     app.server
         .post("/api/register")
@@ -3157,47 +3033,44 @@ async fn test_unread_load_more_uses_keyset_cursor() {
         .await
         .assert_status_ok();
 
-    app.db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |r| r.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "K").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/keyset-feed",
-                    title: Some("K Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            for i in 0..60u32 {
-                rdrs::models::entry::upsert_entry(
-                    conn,
-                    feed.id,
-                    &format!("kg-{i}"),
-                    Some(&format!("K {i}")),
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(
-                        chrono::Utc
-                            .with_ymd_and_hms(2024, 1, 1, 0, i / 60, i % 60)
-                            .unwrap(),
-                    ),
-                )
-                .unwrap();
-            }
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "K")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/keyset-feed",
+            title: Some("K Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    for i in 0..60u32 {
+        rdrs::models::entry::upsert_entry(
+            &app.db,
+            feed.id,
+            &format!("kg-{i}"),
+            Some(&format!("K {i}")),
+            None,
+            None,
+            None,
+            None,
+            Some(
+                chrono::Utc
+                    .with_ymd_and_hms(2024, 1, 1, 0, i / 60, i % 60)
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap();
+    }
 
     // Page 1 (full render): first 50 rows + a Load-More form with a cursor.
     let html = app.server.get("/").await.text();
@@ -3256,7 +3129,7 @@ async fn test_settings_page_groups_and_forward_auth() {
     config.auth_proxy_header = "Remote-User".to_string();
     config.trusted_proxy_networks = rdrs::config::parse_trusted_networks("10.0.0.0/8").unwrap();
     config.auth_proxy_admin_group = "admins".to_string();
-    let app = create_test_app_named(config, "test_settings_groups_fa");
+    let app = create_test_app_named(config, "test_settings_groups_fa").await;
 
     app.server
         .post("/api/register")

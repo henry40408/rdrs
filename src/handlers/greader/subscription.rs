@@ -20,55 +20,48 @@ pub async fn subscription_list(
     State(state): State<AppState>,
 ) -> AppResult<Json<SubscriptionListResponse>> {
     let user_id = auth.user.id;
-    let subscriptions = state
-        .db
-        .read_user(move |conn| {
-            let feeds = feed::list_by_user(conn, user_id)?;
-            let categories = category::list_by_user(conn, user_id)?;
+    let feeds = feed::list_by_user(&state.db, user_id).await?;
+    let categories = category::list_by_user(&state.db, user_id).await?;
 
-            // Resolve which feeds have an icon in one query instead of one per feed.
-            let feed_ids: Vec<i64> = feeds.iter().map(|f| f.id).collect();
-            let feeds_with_icon = image::existing_ids(conn, image::ENTITY_FEED, &feed_ids)?;
+    // Resolve which feeds have an icon in one query instead of one per feed.
+    let feed_ids: Vec<i64> = feeds.iter().map(|f| f.id).collect();
+    let feeds_with_icon = image::existing_ids(&state.db, image::ENTITY_FEED, &feed_ids).await?;
 
-            let subs: Vec<Subscription> = feeds
-                .into_iter()
-                .map(|f| {
-                    let cat = categories.iter().find(|c| c.id == f.category_id);
-                    let cat_name = cat.map_or("Uncategorized", |c| c.name.as_str());
-                    let cat_id = cat.map_or(0, |c| c.id);
+    let subscriptions: Vec<Subscription> = feeds
+        .into_iter()
+        .map(|f| {
+            let cat = categories.iter().find(|c| c.id == f.category_id);
+            let cat_name = cat.map_or("Uncategorized", |c| c.name.as_str());
+            let cat_id = cat.map_or(0, |c| c.id);
 
-                    let has_icon = feeds_with_icon.contains(&f.id);
-                    let icon_url = if has_icon {
-                        format!("/api/feeds/{}/icon", f.id)
-                    } else {
-                        String::new()
-                    };
+            let has_icon = feeds_with_icon.contains(&f.id);
+            let icon_url = if has_icon {
+                format!("/api/feeds/{}/icon", f.id)
+            } else {
+                String::new()
+            };
 
-                    Subscription {
-                        id: format!("feed/{}", f.url),
-                        title: f.title.unwrap_or_else(|| f.url.clone()),
-                        categories: vec![SubscriptionCategory {
-                            id: format!("user/-/label/{}", cat_name),
-                            label: cat_name.to_string(),
-                        }],
-                        sort_id: format!("{:08x}", cat_id),
-                        html_url: f.site_url.clone().unwrap_or_default(),
-                        url: f.url,
-                        icon_url,
-                        // RDRS extensions
-                        feed_id: f.id,
-                        fetch_error: f.fetch_error,
-                        description: f.description,
-                        custom_user_agent: f.custom_user_agent,
-                        http2_disabled: f.http2_disabled,
-                        custom_referrer: f.custom_referrer,
-                    }
-                })
-                .collect();
-
-            Ok::<_, AppError>(subs)
+            Subscription {
+                id: format!("feed/{}", f.url),
+                title: f.title.unwrap_or_else(|| f.url.clone()),
+                categories: vec![SubscriptionCategory {
+                    id: format!("user/-/label/{}", cat_name),
+                    label: cat_name.to_string(),
+                }],
+                sort_id: format!("{:08x}", cat_id),
+                html_url: f.site_url.clone().unwrap_or_default(),
+                url: f.url,
+                icon_url,
+                // RDRS extensions
+                feed_id: f.id,
+                fetch_error: f.fetch_error,
+                description: f.description,
+                custom_user_agent: f.custom_user_agent,
+                http2_disabled: f.http2_disabled,
+                custom_referrer: f.custom_referrer,
+            }
         })
-        .await??;
+        .collect();
 
     Ok(Json(SubscriptionListResponse { subscriptions }))
 }
@@ -130,49 +123,49 @@ pub async fn subscription_edit(
             // Discover feed metadata
             let discovered = feed_discovery::discover_feed(&feed_url, &user_agent).await?;
 
-            state
-                .db
-                .user(move |conn| {
-                    // Find or create category
-                    let category_id = if let Some(label_name) = label {
-                        match category::find_by_name_and_user(conn, &label_name, user_id)? {
-                            Some(cat) => cat.id,
-                            None => category::create_category(conn, user_id, &label_name)?.id,
-                        }
-                    } else {
-                        // Use first category or create "Uncategorized"
-                        let cats = category::list_by_user(conn, user_id)?;
-                        if let Some(first) = cats.first() {
-                            first.id
-                        } else {
-                            category::create_category(conn, user_id, "Uncategorized")?.id
-                        }
-                    };
-
-                    // Check if feed already exists for this user (across all categories)
-                    if let Some(_existing) =
-                        feed::find_by_url_for_user(conn, &discovered.feed_url, user_id)?
-                    {
-                        return Err(AppError::FeedExists);
+            // Find or create category
+            let category_id = if let Some(label_name) = label {
+                match category::find_by_name_and_user(&state.db, &label_name, user_id).await? {
+                    Some(cat) => cat.id,
+                    None => {
+                        category::create_category(&state.db, user_id, &label_name)
+                            .await?
+                            .id
                     }
+                }
+            } else {
+                // Use first category or create "Uncategorized"
+                let cats = category::list_by_user(&state.db, user_id).await?;
+                if let Some(first) = cats.first() {
+                    first.id
+                } else {
+                    category::create_category(&state.db, user_id, "Uncategorized")
+                        .await?
+                        .id
+                }
+            };
 
-                    feed::create_feed(
-                        conn,
-                        &feed::CreateFeedParams {
-                            category_id,
-                            url: &discovered.feed_url,
-                            title: title.as_deref().or(discovered.title.as_deref()),
-                            description: discovered.description.as_deref(),
-                            site_url: discovered.site_url.as_deref(),
-                            custom_user_agent: None,
-                            http2_disabled: None,
-                            custom_referrer: None,
-                        },
-                    )?;
+            // Check if feed already exists for this user (across all categories)
+            if let Some(_existing) =
+                feed::find_by_url_for_user(&state.db, &discovered.feed_url, user_id).await?
+            {
+                return Err(AppError::FeedExists);
+            }
 
-                    Ok::<_, AppError>(())
-                })
-                .await??;
+            feed::create_feed(
+                &state.db,
+                &feed::CreateFeedParams {
+                    category_id,
+                    url: &discovered.feed_url,
+                    title: title.as_deref().or(discovered.title.as_deref()),
+                    description: discovered.description.as_deref(),
+                    site_url: discovered.site_url.as_deref(),
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .await?;
 
             Ok("OK".to_string())
         }
@@ -200,54 +193,53 @@ pub async fn subscription_edit(
                 .filter(|s| !s.is_empty())
                 .map(String::from);
 
-            state
-                .db
-                .user(move |conn| {
-                    let f = feed::find_by_url_for_user(conn, &feed_url, user_id)?
-                        .ok_or(AppError::FeedNotFound)?;
+            let f = feed::find_by_url_for_user(&state.db, &feed_url, user_id)
+                .await?
+                .ok_or(AppError::FeedNotFound)?;
 
-                    // Determine new category if label is being changed
-                    let new_category_id = if let Some(label_name) = add_label {
-                        match category::find_by_name_and_user(conn, &label_name, user_id)? {
-                            Some(cat) => cat.id,
-                            None => category::create_category(conn, user_id, &label_name)?.id,
-                        }
-                    } else {
-                        f.category_id
-                    };
+            // Determine new category if label is being changed
+            let new_category_id = if let Some(label_name) = add_label {
+                match category::find_by_name_and_user(&state.db, &label_name, user_id).await? {
+                    Some(cat) => cat.id,
+                    None => {
+                        category::create_category(&state.db, user_id, &label_name)
+                            .await?
+                            .id
+                    }
+                }
+            } else {
+                f.category_id
+            };
 
-                    // Use new values if provided, otherwise keep existing
-                    let effective_description = description.as_deref().or(f.description.as_deref());
-                    let effective_site_url = site_url.as_deref().or(f.site_url.as_deref());
-                    let effective_user_agent = custom_user_agent
-                        .as_deref()
-                        .or(f.custom_user_agent.as_deref());
-                    let effective_http2_disabled = http2_disabled.unwrap_or(f.http2_disabled);
-                    let effective_referrer = if custom_referrer_provided {
-                        custom_referrer.as_deref()
-                    } else {
-                        f.custom_referrer.as_deref()
-                    };
+            // Use new values if provided, otherwise keep existing
+            let effective_description = description.as_deref().or(f.description.as_deref());
+            let effective_site_url = site_url.as_deref().or(f.site_url.as_deref());
+            let effective_user_agent = custom_user_agent
+                .as_deref()
+                .or(f.custom_user_agent.as_deref());
+            let effective_http2_disabled = http2_disabled.unwrap_or(f.http2_disabled);
+            let effective_referrer = if custom_referrer_provided {
+                custom_referrer.as_deref()
+            } else {
+                f.custom_referrer.as_deref()
+            };
 
-                    feed::update_feed(
-                        conn,
-                        &feed::UpdateFeedParams {
-                            id: f.id,
-                            category_id: f.category_id,
-                            new_category_id,
-                            url: &f.url,
-                            title: title.as_deref().or(f.title.as_deref()),
-                            description: effective_description,
-                            site_url: effective_site_url,
-                            custom_user_agent: effective_user_agent,
-                            http2_disabled: effective_http2_disabled,
-                            custom_referrer: effective_referrer,
-                        },
-                    )?;
-
-                    Ok::<_, AppError>(())
-                })
-                .await??;
+            feed::update_feed(
+                &state.db,
+                &feed::UpdateFeedParams {
+                    id: f.id,
+                    category_id: f.category_id,
+                    new_category_id,
+                    url: &f.url,
+                    title: title.as_deref().or(f.title.as_deref()),
+                    description: effective_description,
+                    site_url: effective_site_url,
+                    custom_user_agent: effective_user_agent,
+                    http2_disabled: effective_http2_disabled,
+                    custom_referrer: effective_referrer,
+                },
+            )
+            .await?;
 
             Ok("OK".to_string())
         }
@@ -261,15 +253,10 @@ pub async fn subscription_edit(
                 .ok_or_else(|| AppError::Validation("Stream ID must start with feed/".into()))?
                 .to_string();
 
-            state
-                .db
-                .user(move |conn| {
-                    let f = feed::find_by_url_for_user(conn, &feed_url, user_id)?
-                        .ok_or(AppError::FeedNotFound)?;
-                    feed::delete_feed(conn, f.id, f.category_id)?;
-                    Ok::<_, AppError>(())
-                })
-                .await??;
+            let f = feed::find_by_url_for_user(&state.db, &feed_url, user_id)
+                .await?
+                .ok_or(AppError::FeedNotFound)?;
+            feed::delete_feed(&state.db, f.id, f.category_id).await?;
 
             Ok("OK".to_string())
         }
@@ -318,39 +305,38 @@ pub async fn quickadd(
     let discovered = feed_discovery::discover_feed(&url, &user_agent).await?;
     let feed_url = discovered.feed_url.clone();
 
-    state
-        .db
-        .user(move |conn| {
-            // Check if already subscribed
-            if feed::find_by_url_for_user(conn, &discovered.feed_url, user_id)?.is_some() {
-                return Err(AppError::FeedExists);
-            }
+    // Check if already subscribed
+    if feed::find_by_url_for_user(&state.db, &discovered.feed_url, user_id)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::FeedExists);
+    }
 
-            // Use first category or create "Uncategorized"
-            let cats = category::list_by_user(conn, user_id)?;
-            let category_id = if let Some(first) = cats.first() {
-                first.id
-            } else {
-                category::create_category(conn, user_id, "Uncategorized")?.id
-            };
+    // Use first category or create "Uncategorized"
+    let cats = category::list_by_user(&state.db, user_id).await?;
+    let category_id = if let Some(first) = cats.first() {
+        first.id
+    } else {
+        category::create_category(&state.db, user_id, "Uncategorized")
+            .await?
+            .id
+    };
 
-            feed::create_feed(
-                conn,
-                &feed::CreateFeedParams {
-                    category_id,
-                    url: &discovered.feed_url,
-                    title: discovered.title.as_deref(),
-                    description: discovered.description.as_deref(),
-                    site_url: discovered.site_url.as_deref(),
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )?;
-
-            Ok::<_, AppError>(())
-        })
-        .await??;
+    feed::create_feed(
+        &state.db,
+        &feed::CreateFeedParams {
+            category_id,
+            url: &discovered.feed_url,
+            title: discovered.title.as_deref(),
+            description: discovered.description.as_deref(),
+            site_url: discovered.site_url.as_deref(),
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await?;
 
     Ok(Json(QuickAddResponse {
         num_results: 1,
@@ -367,14 +353,9 @@ pub async fn export(
     State(state): State<AppState>,
 ) -> AppResult<impl IntoResponse> {
     let user_id = auth.user.id;
-    let opml_content = state
-        .db
-        .read_user(move |conn| {
-            let categories = category::list_by_user(conn, user_id)?;
-            let feeds = feed::list_by_user(conn, user_id)?;
-            Ok::<_, AppError>(opml::export_opml(&categories, &feeds))
-        })
-        .await??;
+    let categories = category::list_by_user(&state.db, user_id).await?;
+    let feeds = feed::list_by_user(&state.db, user_id).await?;
+    let opml_content = opml::export_opml(&categories, &feeds);
 
     Ok((
         StatusCode::OK,
@@ -402,39 +383,38 @@ pub async fn import(
     let outlines = opml::parse_opml(&body)?;
 
     let user_id = auth.user.id;
-    state
-        .db
-        .user(move |conn| {
-            for outline in outlines {
-                let cat =
-                    match category::find_by_name_and_user(conn, &outline.category_name, user_id)? {
-                        Some(cat) => cat,
-                        None => category::create_category(conn, user_id, &outline.category_name)?,
-                    };
+    for outline in outlines {
+        let cat = match category::find_by_name_and_user(&state.db, &outline.category_name, user_id)
+            .await?
+        {
+            Some(cat) => cat,
+            None => category::create_category(&state.db, user_id, &outline.category_name).await?,
+        };
 
-                for opml_feed in outline.feeds {
-                    if feed::find_by_url_and_category(conn, &opml_feed.xml_url, cat.id)?.is_some() {
-                        continue;
-                    }
-
-                    let _ = feed::create_feed(
-                        conn,
-                        &feed::CreateFeedParams {
-                            category_id: cat.id,
-                            url: &opml_feed.xml_url,
-                            title: opml_feed.title.as_deref(),
-                            description: None,
-                            site_url: opml_feed.html_url.as_deref(),
-                            custom_user_agent: None,
-                            http2_disabled: None,
-                            custom_referrer: None,
-                        },
-                    );
-                }
+        for opml_feed in outline.feeds {
+            if feed::find_by_url_and_category(&state.db, &opml_feed.xml_url, cat.id)
+                .await?
+                .is_some()
+            {
+                continue;
             }
-            Ok::<_, AppError>(())
-        })
-        .await??;
+
+            let _ = feed::create_feed(
+                &state.db,
+                &feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: &opml_feed.xml_url,
+                    title: opml_feed.title.as_deref(),
+                    description: None,
+                    site_url: opml_feed.html_url.as_deref(),
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .await;
+        }
+    }
 
     Ok("OK".to_string())
 }
@@ -459,12 +439,9 @@ pub async fn subscribed(
         .to_string();
 
     let user_id = auth.user.id;
-    let is_subscribed = state
-        .db
-        .read_user(move |conn| {
-            Ok::<_, AppError>(feed::find_by_url_for_user(conn, &feed_url, user_id)?.is_some())
-        })
-        .await??;
+    let is_subscribed = feed::find_by_url_for_user(&state.db, &feed_url, user_id)
+        .await?
+        .is_some();
 
     Ok(if is_subscribed {
         "true".to_string()

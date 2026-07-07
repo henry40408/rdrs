@@ -38,10 +38,7 @@ pub async fn get_me(
     let is_admin = if is_masquerading {
         match auth_user.session.original_user_id {
             Some(original_id) => {
-                let original = state
-                    .db
-                    .read_user(move |conn| user::find_by_id(conn, original_id))
-                    .await??;
+                let original = user::find_by_id(&state.db, original_id).await?;
                 original.is_some_and(|u| u.is_admin())
             }
             None => false,
@@ -89,33 +86,32 @@ pub async fn get_user_settings(
 ) -> AppResult<Json<UserSettingsResponse>> {
     let user_id = auth_user.user.id;
 
-    let response = state
-        .db
-        .read_user(move |conn| {
-            let entries_per_page = user_settings::get_entries_per_page(conn, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let theme = user_settings::get_theme(conn, user_id).unwrap_or(None);
-            let save_config =
-                user_settings::get_save_services_config(conn, user_id).unwrap_or_default();
+    let entries_per_page = user_settings::get_entries_per_page(&state.db, user_id)
+        .await
+        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+    let theme = user_settings::get_theme(&state.db, user_id)
+        .await
+        .unwrap_or(None);
+    let save_config = user_settings::get_save_services_config(&state.db, user_id)
+        .await
+        .unwrap_or_default();
 
-            let linkding = save_config.linkding.as_ref();
-            let linkding_configured = linkding.is_some_and(|c| c.is_configured());
-            let linkding_api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
+    let linkding = save_config.linkding.as_ref();
+    let linkding_configured = linkding.is_some_and(|c| c.is_configured());
+    let linkding_api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
 
-            let kagi = save_config.kagi.as_ref();
-            let kagi_configured = kagi.is_some_and(|c| c.is_configured());
-            let kagi_language = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
+    let kagi = save_config.kagi.as_ref();
+    let kagi_configured = kagi.is_some_and(|c| c.is_configured());
+    let kagi_language = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
 
-            Ok::<_, AppError>(UserSettingsResponse {
-                entries_per_page,
-                theme,
-                linkding_configured,
-                linkding_api_url,
-                kagi_configured,
-                kagi_language,
-            })
-        })
-        .await??;
+    let response = UserSettingsResponse {
+        entries_per_page,
+        theme,
+        linkding_configured,
+        linkding_api_url,
+        kagi_configured,
+        kagi_language,
+    };
 
     Ok(Json(response))
 }
@@ -169,16 +165,10 @@ pub async fn read_chrome_data(
     original_user_id: Option<i64>,
 ) -> ChromeData {
     let original_user_is_admin = match original_user_id {
-        Some(id) => state
-            .db
-            .read_user(move |conn| {
-                user::find_by_id(conn, id)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|u| u.is_admin())
-            })
+        Some(id) => user::find_by_id(&state.db, id)
             .await
-            .ok(),
+            .ok()
+            .map(|u| u.is_some_and(|u| u.is_admin())),
         None => None,
     };
 
@@ -192,38 +182,39 @@ pub async fn read_chrome_data(
         };
     }
 
-    let (fresh, has_feeds) = state
-        .db
-        .read_user(move |conn| {
-            let theme = user_settings::get_theme(conn, user_id).unwrap_or(None);
-            let cats = category::list_by_user(conn, user_id).unwrap_or_default();
-            let unread_by_cat = entry::count_unread_by_category(conn, user_id).unwrap_or_default();
-            // Total unread is the sum of the per-category map already fetched —
-            // avoids a second full scan via count_unread_by_user.
-            let total_unread: i64 = unread_by_cat.values().sum();
-            let total_summarized =
-                crate::models::entry_summary::count_completed(conn, user_id).unwrap_or(0);
-            let has_feeds = crate::models::feed::count_by_user(conn, user_id).unwrap_or(0) > 0;
-            let categories: Vec<SidebarCategoryDto> = cats
-                .into_iter()
-                .map(|c| SidebarCategoryDto {
-                    id: c.id,
-                    name: c.name,
-                    unread_count: *unread_by_cat.get(&c.id).unwrap_or(&0),
-                })
-                .collect();
-            (
-                crate::services::CachedChrome {
-                    theme,
-                    categories,
-                    total_unread,
-                    total_summarized,
-                },
-                has_feeds,
-            )
-        })
+    let theme = user_settings::get_theme(&state.db, user_id)
+        .await
+        .unwrap_or(None);
+    let cats = category::list_by_user(&state.db, user_id)
         .await
         .unwrap_or_default();
+    let unread_by_cat = entry::count_unread_by_category(&state.db, user_id)
+        .await
+        .unwrap_or_default();
+    // Total unread is the sum of the per-category map already fetched —
+    // avoids a second full scan via count_unread_by_user.
+    let total_unread: i64 = unread_by_cat.values().sum();
+    let total_summarized = crate::models::entry_summary::count_completed(&state.db, user_id)
+        .await
+        .unwrap_or(0);
+    let has_feeds = crate::models::feed::count_by_user(&state.db, user_id)
+        .await
+        .unwrap_or(0)
+        > 0;
+    let categories: Vec<SidebarCategoryDto> = cats
+        .into_iter()
+        .map(|c| SidebarCategoryDto {
+            id: c.id,
+            name: c.name,
+            unread_count: *unread_by_cat.get(&c.id).unwrap_or(&0),
+        })
+        .collect();
+    let fresh = crate::services::CachedChrome {
+        theme,
+        categories,
+        total_unread,
+        total_summarized,
+    };
 
     // Skip caching the "no content yet" state — an account with no feeds and no
     // unread (e.g. a brand-new account whose only category is the auto-seeded
@@ -331,10 +322,7 @@ pub async fn get_theme(
 ) -> AppResult<Json<GetThemeResponse>> {
     let user_id = auth_user.user.id;
 
-    let theme = state
-        .db
-        .read_user(move |conn| user_settings::get_theme(conn, user_id))
-        .await??;
+    let theme = user_settings::get_theme(&state.db, user_id).await?;
 
     Ok(Json(GetThemeResponse { theme }))
 }
@@ -356,10 +344,7 @@ pub async fn update_theme(
         ));
     }
 
-    state
-        .db
-        .user(move |conn| user_settings::update_theme(conn, user_id, req.theme))
-        .await??;
+    user_settings::update_theme(&state.db, user_id, req.theme).await?;
 
     state.sidebar_cache.bust(user_id);
     Ok(StatusCode::OK)
@@ -408,18 +393,16 @@ pub async fn change_password_form(
     };
     let user_id = auth_user.user.id;
 
-    let result = state
-        .db
-        .user(move |conn| {
-            user::update_password(conn, user_id, &new_hash)?;
-            // Delete all sessions for the user to force re-login
-            session::delete_user_sessions(conn, user_id)?;
-            Ok::<_, AppError>(())
-        })
-        .await;
+    let result: AppResult<()> = async {
+        user::update_password(&state.db, user_id, &new_hash).await?;
+        // Delete all sessions for the user to force re-login
+        session::delete_user_sessions(&state.db, user_id).await?;
+        Ok(())
+    }
+    .await;
 
     match result {
-        Ok(Ok(())) => FlashRedirect::success(
+        Ok(()) => FlashRedirect::success(
             "/login",
             "Password changed successfully. Please login with your new password.",
         ),
@@ -449,22 +432,20 @@ pub async fn update_preferences_form(
     let epp = req.entries_per_page;
     let retention_read_days = req.retention_read_days;
 
-    let result = state
-        .db
-        .user(move |conn| {
-            user_settings::upsert(conn, user_id, epp)?;
-            user_settings::update_theme(conn, user_id, theme)?;
-            user_settings::update_retention_read_days(conn, user_id, retention_read_days)?;
-            Ok::<_, AppError>(())
-        })
-        .await;
+    let result: AppResult<()> = async {
+        user_settings::upsert(&state.db, user_id, epp).await?;
+        user_settings::update_theme(&state.db, user_id, theme).await?;
+        user_settings::update_retention_read_days(&state.db, user_id, retention_read_days).await?;
+        Ok(())
+    }
+    .await;
 
     match result {
-        Ok(Ok(())) => {
+        Ok(()) => {
             state.sidebar_cache.bust(user_id);
             FlashRedirect::success("/user-settings", "Preferences updated.")
         }
-        Ok(Err(AppError::Validation(msg))) => FlashRedirect::error("/user-settings", msg),
+        Err(AppError::Validation(msg)) => FlashRedirect::error("/user-settings", msg),
         _ => FlashRedirect::error("/user-settings", "Failed to update preferences."),
     }
 }
@@ -485,39 +466,37 @@ pub async fn update_linkding_form(
     let user_id = auth_user.user.id;
     let clear = req.clear.is_some();
 
-    let result = state
-        .db
-        .user(move |conn| {
-            let mut config = user_settings::get_save_services_config(conn, user_id)?;
+    let result: AppResult<()> = async {
+        let mut config = user_settings::get_save_services_config(&state.db, user_id).await?;
 
-            if clear {
-                config.linkding = None;
+        if clear {
+            config.linkding = None;
+        } else {
+            let api_url = req.api_url.filter(|s| !s.is_empty());
+            let api_token = req.api_token.filter(|s| !s.is_empty());
+
+            if api_url.is_some() || api_token.is_some() {
+                let current = config.linkding.unwrap_or(LinkdingConfig {
+                    api_url: String::new(),
+                    api_token: String::new(),
+                });
+
+                config.linkding = Some(LinkdingConfig {
+                    api_url: api_url.unwrap_or(current.api_url),
+                    api_token: api_token.unwrap_or(current.api_token),
+                });
             } else {
-                let api_url = req.api_url.filter(|s| !s.is_empty());
-                let api_token = req.api_token.filter(|s| !s.is_empty());
-
-                if api_url.is_some() || api_token.is_some() {
-                    let current = config.linkding.unwrap_or(LinkdingConfig {
-                        api_url: String::new(),
-                        api_token: String::new(),
-                    });
-
-                    config.linkding = Some(LinkdingConfig {
-                        api_url: api_url.unwrap_or(current.api_url),
-                        api_token: api_token.unwrap_or(current.api_token),
-                    });
-                } else {
-                    config.linkding = None;
-                }
+                config.linkding = None;
             }
+        }
 
-            user_settings::update_save_services(conn, user_id, &config)?;
-            Ok::<_, AppError>(())
-        })
-        .await;
+        user_settings::update_save_services(&state.db, user_id, &config).await?;
+        Ok(())
+    }
+    .await;
 
     match result {
-        Ok(Ok(())) => {
+        Ok(()) => {
             let msg = if clear {
                 "Linkding configuration cleared."
             } else {
@@ -525,7 +504,7 @@ pub async fn update_linkding_form(
             };
             FlashRedirect::success("/user-settings", msg)
         }
-        Ok(Err(AppError::Validation(msg))) => FlashRedirect::error("/user-settings", msg),
+        Err(AppError::Validation(msg)) => FlashRedirect::error("/user-settings", msg),
         _ => FlashRedirect::error("/user-settings", "Failed to update Linkding configuration."),
     }
 }
@@ -547,18 +526,16 @@ pub async fn update_kagi_form(
     let clear = req.clear.is_some();
 
     if clear {
-        let result = state
-            .db
-            .user(move |conn| {
-                let mut config = user_settings::get_save_services_config(conn, user_id)?;
-                config.kagi = None;
-                user_settings::update_save_services(conn, user_id, &config)?;
-                Ok::<_, AppError>(())
-            })
-            .await;
+        let result: AppResult<()> = async {
+            let mut config = user_settings::get_save_services_config(&state.db, user_id).await?;
+            config.kagi = None;
+            user_settings::update_save_services(&state.db, user_id, &config).await?;
+            Ok(())
+        }
+        .await;
 
         return match result {
-            Ok(Ok(())) => FlashRedirect::success("/user-settings", "Kagi configuration cleared."),
+            Ok(()) => FlashRedirect::success("/user-settings", "Kagi configuration cleared."),
             _ => FlashRedirect::error("/user-settings", "Failed to clear Kagi configuration."),
         };
     }
@@ -578,37 +555,35 @@ pub async fn update_kagi_form(
     };
     let language = req.language.filter(|s| !s.is_empty());
 
-    let result = state
-        .db
-        .user(move |conn| {
-            let mut config = user_settings::get_save_services_config(conn, user_id)?;
+    let result: AppResult<()> = async {
+        let mut config = user_settings::get_save_services_config(&state.db, user_id).await?;
 
-            if session_token.is_some() || has_language_field {
-                let current = config.kagi.unwrap_or(KagiConfig {
-                    session_token: String::new(),
-                    language: None,
-                });
+        if session_token.is_some() || has_language_field {
+            let current = config.kagi.unwrap_or(KagiConfig {
+                session_token: String::new(),
+                language: None,
+            });
 
-                config.kagi = Some(KagiConfig {
-                    session_token: session_token.unwrap_or(current.session_token),
-                    language: if has_language_field {
-                        language
-                    } else {
-                        current.language
-                    },
-                });
-            } else if session_token.is_none() && !has_language_field {
-                config.kagi = None;
-            }
+            config.kagi = Some(KagiConfig {
+                session_token: session_token.unwrap_or(current.session_token),
+                language: if has_language_field {
+                    language
+                } else {
+                    current.language
+                },
+            });
+        } else if session_token.is_none() && !has_language_field {
+            config.kagi = None;
+        }
 
-            user_settings::update_save_services(conn, user_id, &config)?;
-            Ok::<_, AppError>(())
-        })
-        .await;
+        user_settings::update_save_services(&state.db, user_id, &config).await?;
+        Ok(())
+    }
+    .await;
 
     match result {
-        Ok(Ok(())) => FlashRedirect::success("/user-settings", "Kagi configuration updated."),
-        Ok(Err(AppError::Validation(msg))) => FlashRedirect::error("/user-settings", msg),
+        Ok(()) => FlashRedirect::success("/user-settings", "Kagi configuration updated."),
+        Err(AppError::Validation(msg)) => FlashRedirect::error("/user-settings", msg),
         _ => FlashRedirect::error("/user-settings", "Failed to update Kagi configuration."),
     }
 }

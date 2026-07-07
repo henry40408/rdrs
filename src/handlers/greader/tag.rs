@@ -15,44 +15,37 @@ pub async fn tag_list(
 ) -> AppResult<Json<TagListResponse>> {
     let user_id = auth.user.id;
 
-    let tags = state
-        .db
-        .read_user(move |conn| {
-            let mut tags = vec![
-                Tag {
-                    id: "user/-/state/com.google/reading-list".to_string(),
-                    tag_type: Some("state".to_string()),
-                    sort_id: None,
-                },
-                Tag {
-                    id: "user/-/state/com.google/read".to_string(),
-                    tag_type: Some("state".to_string()),
-                    sort_id: None,
-                },
-                Tag {
-                    id: "user/-/state/com.google/starred".to_string(),
-                    tag_type: Some("state".to_string()),
-                    sort_id: None,
-                },
-                Tag {
-                    id: "user/-/state/com.google/kept-unread".to_string(),
-                    tag_type: Some("state".to_string()),
-                    sort_id: None,
-                },
-            ];
+    let mut tags = vec![
+        Tag {
+            id: "user/-/state/com.google/reading-list".to_string(),
+            tag_type: Some("state".to_string()),
+            sort_id: None,
+        },
+        Tag {
+            id: "user/-/state/com.google/read".to_string(),
+            tag_type: Some("state".to_string()),
+            sort_id: None,
+        },
+        Tag {
+            id: "user/-/state/com.google/starred".to_string(),
+            tag_type: Some("state".to_string()),
+            sort_id: None,
+        },
+        Tag {
+            id: "user/-/state/com.google/kept-unread".to_string(),
+            tag_type: Some("state".to_string()),
+            sort_id: None,
+        },
+    ];
 
-            let categories = category::list_by_user(conn, user_id)?;
-            for cat in categories {
-                tags.push(Tag {
-                    id: format!("user/-/label/{}", cat.name),
-                    tag_type: Some("folder".to_string()),
-                    sort_id: Some(format!("{:08x}", cat.id)),
-                });
-            }
-
-            Ok::<_, AppError>(tags)
-        })
-        .await??;
+    let categories = category::list_by_user(&state.db, user_id).await?;
+    for cat in categories {
+        tags.push(Tag {
+            id: format!("user/-/label/{}", cat.name),
+            tag_type: Some("folder".to_string()),
+            sort_id: Some(format!("{:08x}", cat.id)),
+        });
+    }
 
     Ok(Json(TagListResponse { tags }))
 }
@@ -111,60 +104,53 @@ pub async fn edit_tag(
     let add_stream = add_tag.as_deref().map(StreamId::parse).transpose()?;
     let remove_stream = remove_tag.as_deref().map(StreamId::parse).transpose()?;
 
-    state
-        .db
-        .user(move |conn| {
-            // Batch mark-as-read: verify ownership, then use efficient bulk operation
-            if matches!(add_stream, Some(StreamId::Read)) {
-                // Verify all entries belong to the user
-                let found = entry::find_by_ids_with_feed(conn, user_id, &entry_ids)?;
-                if found.len() != entry_ids.len() {
-                    return Err(AppError::EntryNotFound);
+    // Batch mark-as-read: verify ownership, then use efficient bulk operation
+    if matches!(add_stream, Some(StreamId::Read)) {
+        // Verify all entries belong to the user
+        let found = entry::find_by_ids_with_feed(&state.db, user_id, &entry_ids).await?;
+        if found.len() != entry_ids.len() {
+            return Err(AppError::EntryNotFound);
+        }
+        entry::mark_read_by_ids(&state.db, user_id, &entry_ids).await?;
+    } else {
+        // Other operations: verify ownership for all ids once, then apply the
+        // tag changes as bulk UPDATEs inside a single transaction (instead of
+        // a per-entry read + UPDATE + re-read loop, untransacted).
+        let found = entry::find_by_ids_with_feed(&state.db, user_id, &entry_ids).await?;
+        if found.len() != entry_ids.len() {
+            return Err(AppError::EntryNotFound);
+        }
+
+        let mut tx = state.db.begin().await?;
+
+        // Apply add tag
+        if let Some(ref stream) = add_stream {
+            match stream {
+                StreamId::Starred => {
+                    entry::star_by_ids_tx(&mut tx, user_id, &entry_ids).await?;
                 }
-                entry::mark_read_by_ids(conn, user_id, &entry_ids)?;
-                return Ok(());
-            }
-
-            // Other operations: verify ownership for all ids once, then apply the
-            // tag changes as bulk UPDATEs inside a single transaction (instead of
-            // a per-entry read + UPDATE + re-read loop, untransacted).
-            let found = entry::find_by_ids_with_feed(conn, user_id, &entry_ids)?;
-            if found.len() != entry_ids.len() {
-                return Err(AppError::EntryNotFound);
-            }
-
-            let tx = conn.unchecked_transaction()?;
-
-            // Apply add tag
-            if let Some(ref stream) = add_stream {
-                match stream {
-                    StreamId::Starred => {
-                        entry::star_by_ids(&tx, user_id, &entry_ids)?;
-                    }
-                    StreamId::KeptUnread => {
-                        entry::mark_unread_by_ids(&tx, user_id, &entry_ids)?;
-                    }
-                    _ => {}
+                StreamId::KeptUnread => {
+                    entry::mark_unread_by_ids_tx(&mut tx, user_id, &entry_ids).await?;
                 }
+                _ => {}
             }
+        }
 
-            // Apply remove tag
-            if let Some(ref stream) = remove_stream {
-                match stream {
-                    StreamId::Read => {
-                        entry::mark_unread_by_ids(&tx, user_id, &entry_ids)?;
-                    }
-                    StreamId::Starred => {
-                        entry::unstar_by_ids(&tx, user_id, &entry_ids)?;
-                    }
-                    _ => {}
+        // Apply remove tag
+        if let Some(ref stream) = remove_stream {
+            match stream {
+                StreamId::Read => {
+                    entry::mark_unread_by_ids_tx(&mut tx, user_id, &entry_ids).await?;
                 }
+                StreamId::Starred => {
+                    entry::unstar_by_ids_tx(&mut tx, user_id, &entry_ids).await?;
+                }
+                _ => {}
             }
+        }
 
-            tx.commit()?;
-            Ok::<_, AppError>(())
-        })
-        .await??;
+        tx.commit().await?;
+    }
 
     state.sidebar_cache.bust(user_id);
     Ok("OK".to_string())
@@ -205,33 +191,28 @@ pub async fn mark_all_as_read(
         }
     });
 
-    state
-        .db
-        .user(move |conn| {
-            match stream_id {
-                StreamId::ReadingList => {
-                    entry::mark_all_read_by_user(conn, user_id, older_than_days)?;
-                }
-                StreamId::Feed(url) => {
-                    let f = feed::find_by_url_for_user(conn, &url, user_id)?
-                        .ok_or(AppError::FeedNotFound)?;
-                    entry::mark_all_read_by_feed(conn, f.id, older_than_days)?;
-                }
-                StreamId::Label(name) => {
-                    let cat = category::find_by_name_and_user(conn, &name, user_id)?
-                        .ok_or(AppError::CategoryNotFound)?;
-                    entry::mark_all_read_by_category(conn, cat.id, older_than_days)?;
-                }
-                _ => {
-                    return Err(AppError::Validation(
-                        "Invalid stream for mark-all-as-read".into(),
-                    ));
-                }
-            }
-
-            Ok::<_, AppError>(())
-        })
-        .await??;
+    match stream_id {
+        StreamId::ReadingList => {
+            entry::mark_all_read_by_user(&state.db, user_id, older_than_days).await?;
+        }
+        StreamId::Feed(url) => {
+            let f = feed::find_by_url_for_user(&state.db, &url, user_id)
+                .await?
+                .ok_or(AppError::FeedNotFound)?;
+            entry::mark_all_read_by_feed(&state.db, f.id, older_than_days).await?;
+        }
+        StreamId::Label(name) => {
+            let cat = category::find_by_name_and_user(&state.db, &name, user_id)
+                .await?
+                .ok_or(AppError::CategoryNotFound)?;
+            entry::mark_all_read_by_category(&state.db, cat.id, older_than_days).await?;
+        }
+        _ => {
+            return Err(AppError::Validation(
+                "Invalid stream for mark-all-as-read".into(),
+            ));
+        }
+    }
 
     state.sidebar_cache.bust(user_id);
     Ok("OK".to_string())
@@ -268,15 +249,10 @@ pub async fn disable_tag(
 
     let user_id = auth.user.id;
 
-    state
-        .db
-        .user(move |conn| {
-            let cat = category::find_by_name_and_user(conn, &label_name, user_id)?
-                .ok_or(AppError::CategoryNotFound)?;
-            category::delete_category(conn, cat.id, user_id)?;
-            Ok::<_, AppError>(())
-        })
-        .await??;
+    let cat = category::find_by_name_and_user(&state.db, &label_name, user_id)
+        .await?
+        .ok_or(AppError::CategoryNotFound)?;
+    category::delete_category(&state.db, cat.id, user_id).await?;
 
     state.sidebar_cache.bust(user_id);
     Ok("OK".to_string())
@@ -329,22 +305,20 @@ pub async fn rename_tag(
 
     let user_id = auth.user.id;
 
-    state
-        .db
-        .user(move |conn| {
-            if old_name == new_name {
-                // Same name: create the category if it doesn't exist (idempotent)
-                if category::find_by_name_and_user(conn, &old_name, user_id)?.is_none() {
-                    category::create_category(conn, user_id, &new_name)?;
-                }
-            } else {
-                let cat = category::find_by_name_and_user(conn, &old_name, user_id)?
-                    .ok_or(AppError::CategoryNotFound)?;
-                category::update_name(conn, cat.id, user_id, &new_name)?;
-            }
-            Ok::<_, AppError>(())
-        })
-        .await??;
+    if old_name == new_name {
+        // Same name: create the category if it doesn't exist (idempotent)
+        if category::find_by_name_and_user(&state.db, &old_name, user_id)
+            .await?
+            .is_none()
+        {
+            category::create_category(&state.db, user_id, &new_name).await?;
+        }
+    } else {
+        let cat = category::find_by_name_and_user(&state.db, &old_name, user_id)
+            .await?
+            .ok_or(AppError::CategoryNotFound)?;
+        category::update_name(&state.db, cat.id, user_id, &new_name).await?;
+    }
 
     state.sidebar_cache.bust(user_id);
     Ok("OK".to_string())

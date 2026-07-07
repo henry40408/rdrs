@@ -209,21 +209,13 @@ pub async fn entry_fragment(
 
     // Read current state on the READ connection (not blocked by a background
     // sync's write transaction under WAL).
-    let mut ewf = state
-        .db
-        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
-        .await??
+    let mut ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+        .await?
         .ok_or(AppError::EntryNotFound)?;
-    let status = state
-        .db
-        .read_user(move |conn| {
-            Ok::<_, AppError>(
-                entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])?
-                    .get(&entry_id)
-                    .copied(),
-            )
-        })
-        .await??;
+    let status = entry_summary::get_statuses_for_entries(&state.db, user_id, &[entry_id])
+        .await?
+        .get(&entry_id)
+        .copied();
 
     let was_unread = ewf.entry.read_at.is_none();
     let feed_id = ewf.entry.feed_id;
@@ -242,8 +234,9 @@ pub async fn entry_fragment(
 
     // Enqueue the real write off the critical path (only when it changes state).
     if was_unread {
-        state.db.user_detached(move |conn| {
-            if let Err(e) = entry::mark_as_read(conn, entry_id) {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = entry::mark_as_read(&db, entry_id).await {
                 tracing::warn!("async mark_as_read failed for entry {entry_id}: {e}");
             }
         });
@@ -268,10 +261,8 @@ pub async fn summary_fragment(
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<SummaryFragment> {
     let user_id = auth_user.user.id;
-    let ewf = state
-        .db
-        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
-        .await??
+    let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+        .await?
         .ok_or(AppError::EntryNotFound)?;
     // has_save/has_kagi are irrelevant to the summary container; pass false.
     let pane = build_reading_pane_view(&state, user_id, &ewf, false, false).await?;
@@ -284,15 +275,10 @@ pub(crate) async fn load_pane_action_flags(
     state: &AppState,
     user_id: i64,
 ) -> AppResult<(bool, bool)> {
-    state
-        .db
-        .read_user(move |conn| {
-            let cfg = crate::models::user_settings::get_save_services_config(conn, user_id)?;
-            let has_save = cfg.has_any_service();
-            let has_kagi = cfg.kagi.as_ref().is_some_and(|c| c.is_configured());
-            Ok::<_, AppError>((has_save, has_kagi))
-        })
-        .await?
+    let cfg = crate::models::user_settings::get_save_services_config(&state.db, user_id).await?;
+    let has_save = cfg.has_any_service();
+    let has_kagi = cfg.kagi.as_ref().is_some_and(|c| c.is_configured());
+    Ok((has_save, has_kagi))
 }
 
 /// Build a `ReadingPaneView` from an already-loaded `EntryWithFeed`. The
@@ -390,10 +376,7 @@ async fn resolve_summary(
             }
         }
     }
-    let db_entry = state
-        .db
-        .read_user(move |conn| entry_summary::find_by_user_and_entry(conn, user_id, entry_id))
-        .await??;
+    let db_entry = entry_summary::find_by_user_and_entry(&state.db, user_id, entry_id).await?;
     match db_entry {
         Some(s) => match s.status {
             SummaryStatus::Completed => Ok((s.summary_text, false, None)),
@@ -470,10 +453,7 @@ pub(crate) async fn build_sidebar_unread_with_delta(
     feed_id: i64,
     delta: i64,
 ) -> AppResult<String> {
-    let mut counts = state
-        .db
-        .read_user(move |conn| entry::unread_counts_per_feed(conn, user_id))
-        .await??;
+    let mut counts = entry::unread_counts_per_feed(&state.db, user_id).await?;
     if delta != 0 {
         match counts.iter_mut().find(|c| c.feed_id == feed_id) {
             Some(c) => c.unread = (c.unread + delta).max(0),
@@ -519,21 +499,13 @@ async fn set_starred_state(
     entry_id: i64,
     desired_starred: bool,
 ) -> AppResult<EntryActionMulti> {
-    let mut ewf = state
-        .db
-        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
-        .await??
+    let mut ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+        .await?
         .ok_or(AppError::EntryNotFound)?;
-    let status = state
-        .db
-        .read_user(move |conn| {
-            Ok::<_, AppError>(
-                entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])?
-                    .get(&entry_id)
-                    .copied(),
-            )
-        })
-        .await??;
+    let status = entry_summary::get_statuses_for_entries(&state.db, user_id, &[entry_id])
+        .await?
+        .get(&entry_id)
+        .copied();
 
     let changed = ewf.entry.starred_at.is_some() != desired_starred;
 
@@ -553,8 +525,11 @@ async fn set_starred_state(
     });
 
     if changed {
-        state.db.user_detached(move |conn| {
-            if let Err(e) = entry::set_starred_for_user(conn, user_id, entry_id, desired_starred) {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) =
+                entry::set_starred_for_user(&db, user_id, entry_id, desired_starred).await
+            {
                 tracing::warn!("async set_starred failed for entry {entry_id}: {e}");
             }
         });
@@ -600,21 +575,13 @@ async fn set_read_state(
     entry_id: i64,
     desired_read: bool,
 ) -> AppResult<EntryActionMulti> {
-    let mut ewf = state
-        .db
-        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
-        .await??
+    let mut ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+        .await?
         .ok_or(AppError::EntryNotFound)?;
-    let status = state
-        .db
-        .read_user(move |conn| {
-            Ok::<_, AppError>(
-                entry_summary::get_statuses_for_entries(conn, user_id, &[entry_id])?
-                    .get(&entry_id)
-                    .copied(),
-            )
-        })
-        .await??;
+    let status = entry_summary::get_statuses_for_entries(&state.db, user_id, &[entry_id])
+        .await?
+        .get(&entry_id)
+        .copied();
 
     let changed = ewf.entry.read_at.is_some() != desired_read;
     let feed_id = ewf.entry.feed_id;
@@ -644,8 +611,9 @@ async fn set_read_state(
     };
 
     if changed {
-        state.db.user_detached(move |conn| {
-            if let Err(e) = entry::set_read_for_user(conn, user_id, entry_id, desired_read) {
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            if let Err(e) = entry::set_read_for_user(&db, user_id, entry_id, desired_read).await {
                 tracing::warn!("async set_read failed for entry {entry_id}: {e}");
             }
         });
@@ -678,22 +646,18 @@ pub async fn summarize_entry_form(
 
     // Fetch the entry and extract the link needed by SummaryJob. Ownership is
     // enforced by find_by_id_for_user's `c.user_id = ?2` join constraint.
-    let entry_link = state
-        .db
-        .user(move |conn| {
-            let ewf = entry::find_by_id_for_user(conn, user_id, entry_id)?
-                .ok_or(AppError::EntryNotFound)?;
+    let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+        .await?
+        .ok_or(AppError::EntryNotFound)?;
 
-            // Create / reset the pending record in the DB before setting the
-            // in-memory cache so the state is always consistent.
-            entry_summary::upsert_pending(conn, user_id, entry_id)?;
+    // Create / reset the pending record in the DB before setting the
+    // in-memory cache so the state is always consistent.
+    entry_summary::upsert_pending(&state.db, user_id, entry_id).await?;
 
-            // The link may be absent; the background worker will surface an error
-            // if so. We use an empty string as a sentinel to let the queue accept
-            // the job and fail gracefully rather than returning 400 here.
-            Ok::<_, crate::error::AppError>(ewf.entry.link.clone().unwrap_or_default())
-        })
-        .await??;
+    // The link may be absent; the background worker will surface an error
+    // if so. We use an empty string as a sentinel to let the queue accept
+    // the job and fail gracefully rather than returning 400 here.
+    let entry_link = ewf.entry.link.clone().unwrap_or_default();
 
     // Mark pending in the in-memory cache BEFORE enqueuing so the background
     // worker cannot complete before the cache entry exists.
@@ -733,14 +697,10 @@ pub async fn summarize_cancel_form(
     let user_id = auth_user.user.id;
 
     // Validate ownership and delete the record in one write txn.
-    state
-        .db
-        .user(move |conn| {
-            entry::find_by_id_for_user(conn, user_id, entry_id)?.ok_or(AppError::EntryNotFound)?;
-            entry_summary::delete(conn, user_id, entry_id)?;
-            Ok::<_, crate::error::AppError>(())
-        })
-        .await??;
+    entry::find_by_id_for_user(&state.db, user_id, entry_id)
+        .await?
+        .ok_or(AppError::EntryNotFound)?;
+    entry_summary::delete(&state.db, user_id, entry_id).await?;
 
     // Cancel + drop any in-flight / queued token for this entry.
     let token = {
@@ -772,10 +732,8 @@ pub async fn fetch_full_content_form(
 ) -> AppResult<ReadingPaneWithFlash> {
     let user_id = auth_user.user.id;
 
-    let ewf = state
-        .db
-        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
-        .await??
+    let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+        .await?
         .ok_or(AppError::EntryNotFound)?;
     let link = ewf
         .entry
@@ -830,15 +788,10 @@ pub async fn save_entry_form(
 ) -> AppResult<ReadingPaneWithFlash> {
     let user_id = auth_user.user.id;
 
-    let (ewf, save_config) = state
-        .db
-        .read_user(move |conn| {
-            let ewf = entry::find_by_id_for_user(conn, user_id, entry_id)?
-                .ok_or(AppError::EntryNotFound)?;
-            let cfg = user_settings::get_save_services_config(conn, user_id)?;
-            Ok::<_, AppError>((ewf, cfg))
-        })
-        .await??;
+    let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+        .await?
+        .ok_or(AppError::EntryNotFound)?;
+    let save_config = user_settings::get_save_services_config(&state.db, user_id).await?;
 
     let link = ewf
         .entry

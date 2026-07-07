@@ -5,32 +5,17 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
-use rdrs::{AppState, Config, DbPool, Role, auth, create_router, db, services};
-use rusqlite::Connection;
+use rdrs::models::{category, entry, feed, user};
+use rdrs::{AppState, Config, Db, Role, auth, create_router, services};
 use serde_json::{Value, json};
 
 struct TestApp {
     server: TestServer,
-    db: DbPool,
+    db: Db,
 }
 
-fn open_shared_memory(name: &str) -> Connection {
-    let uri = format!("file:{}?mode=memory&cache=shared", name);
-    Connection::open_with_flags(
-        uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    )
-    .unwrap()
-}
-
-fn create_test_app(name: &str) -> TestApp {
-    let write_conn = open_shared_memory(name);
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory(name);
-
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
+async fn create_test_app(_name: &str) -> TestApp {
+    let db = Db::connect_in_memory().await.unwrap();
     let config = Config {
         database_url: ":memory:".to_string(),
         server_port: 3000,
@@ -72,28 +57,18 @@ fn create_test_app(name: &str) -> TestApp {
     TestApp { server, db }
 }
 
-async fn setup_users(db: &DbPool) -> (i64, i64) {
-    db.user(move |conn| {
-        let password_hash = rdrs::auth::hash_password("password123").unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            rusqlite::params!["admin", password_hash, Role::Admin.as_str()],
-        )
+async fn setup_users(db: &Db) -> (i64, i64) {
+    let password_hash = rdrs::auth::hash_password("password123").unwrap();
+    let admin = user::create_user(db, "admin", &password_hash, Role::Admin)
+        .await
         .unwrap();
-        let admin_id = conn.last_insert_rowid();
 
-        let password_hash = rdrs::auth::hash_password("password123").unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            rusqlite::params!["user", password_hash, Role::User.as_str()],
-        )
+    let password_hash = rdrs::auth::hash_password("password123").unwrap();
+    let user = user::create_user(db, "user", &password_hash, Role::User)
+        .await
         .unwrap();
-        let user_id = conn.last_insert_rowid();
 
-        (admin_id, user_id)
-    })
-    .await
-    .unwrap()
+    (admin.id, user.id)
 }
 
 async fn login(server: &TestServer, username: &str) {
@@ -107,39 +82,59 @@ async fn login(server: &TestServer, username: &str) {
         .assert_status_ok();
 }
 
-async fn seed_entries(db: &DbPool, admin_id: i64) {
-    db.user(move |conn| {
-        conn.execute(
-            "INSERT INTO category (user_id, name) VALUES (?1, 'Tech')",
-            rusqlite::params![admin_id],
-        )
+async fn seed_entries(db: &Db, admin_id: i64) {
+    let cat = category::create_category(db, admin_id, "Tech")
+        .await
         .unwrap();
-        conn.execute(
-            "INSERT INTO feed (category_id, url, title) VALUES (1, 'https://example.com/feed', 'Test Feed')",
-            [],
-        )
-        .unwrap();
-        for i in 1..=5 {
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title, published_at) VALUES (1, ?1, ?2, '2026-03-15T10:00:00Z')",
-                rusqlite::params![format!("guid-{}", i), format!("Entry {}", i)],
-            )
-            .unwrap();
-        }
-        // Mark 3 as read
-        conn.execute(
-            "UPDATE entry SET read_at = '2026-03-15T12:00:00Z' WHERE id IN (1, 2, 3)",
-            [],
-        )
-        .unwrap();
-        // Star 1
-        conn.execute(
-            "UPDATE entry SET starred_at = '2026-03-15T14:00:00Z' WHERE id = 1",
-            [],
-        )
-        .unwrap();
-    })
+    let feed = feed::create_feed(
+        db,
+        &feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://example.com/feed",
+            title: Some("Test Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
     .await
+    .unwrap();
+
+    let published: chrono::DateTime<chrono::Utc> = "2026-03-15T10:00:00Z".parse().unwrap();
+    let mut entry_ids = Vec::new();
+    for i in 1..=5 {
+        let (e, _) = entry::upsert_entry(
+            db,
+            feed.id,
+            &format!("guid-{}", i),
+            Some(&format!("Entry {}", i)),
+            None,
+            None,
+            None,
+            None,
+            Some(published),
+        )
+        .await
+        .unwrap();
+        entry_ids.push(e.id);
+    }
+    // Mark 3 as read
+    for id in &entry_ids[..3] {
+        rdrs::db_execute!(
+            db,
+            "UPDATE entry SET read_at = '2026-03-15T12:00:00Z' WHERE id = $1",
+            *id
+        )
+        .unwrap();
+    }
+    // Star 1
+    rdrs::db_execute!(
+        db,
+        "UPDATE entry SET starred_at = '2026-03-15T14:00:00Z' WHERE id = $1",
+        entry_ids[0]
+    )
     .unwrap();
 }
 
@@ -147,14 +142,14 @@ async fn seed_entries(db: &DbPool, admin_id: i64) {
 
 #[tokio::test]
 async fn test_statistics_page_requires_login() {
-    let app = create_test_app("test_stats_auth");
+    let app = create_test_app("test_stats_auth").await;
     let response = app.server.get("/statistics").await;
     assert_eq!(response.status_code(), StatusCode::SEE_OTHER);
 }
 
 #[tokio::test]
 async fn test_statistics_page_renders_ssr_content() {
-    let app = create_test_app("test_stats_ssr");
+    let app = create_test_app("test_stats_ssr").await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
     login(&app.server, "admin").await;
@@ -179,7 +174,7 @@ async fn test_statistics_page_renders_ssr_content() {
 
 #[tokio::test]
 async fn test_statistics_page_default_period_is_7d() {
-    let app = create_test_app("test_stats_default_period");
+    let app = create_test_app("test_stats_default_period").await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -192,7 +187,7 @@ async fn test_statistics_page_default_period_is_7d() {
 
 #[tokio::test]
 async fn test_statistics_page_period_30d() {
-    let app = create_test_app("test_stats_period_30d");
+    let app = create_test_app("test_stats_period_30d").await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -204,7 +199,7 @@ async fn test_statistics_page_period_30d() {
 
 #[tokio::test]
 async fn test_statistics_page_invalid_period_falls_back_to_7d() {
-    let app = create_test_app("test_stats_invalid_period");
+    let app = create_test_app("test_stats_invalid_period").await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -216,7 +211,7 @@ async fn test_statistics_page_invalid_period_falls_back_to_7d() {
 
 #[tokio::test]
 async fn test_statistics_page_admin_sees_sitewide() {
-    let app = create_test_app("test_stats_admin");
+    let app = create_test_app("test_stats_admin").await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -230,7 +225,7 @@ async fn test_statistics_page_admin_sees_sitewide() {
 
 #[tokio::test]
 async fn test_statistics_page_user_no_sitewide() {
-    let app = create_test_app("test_stats_user_no_sitewide");
+    let app = create_test_app("test_stats_user_no_sitewide").await;
     setup_users(&app.db).await;
     login(&app.server, "user").await;
 
@@ -242,7 +237,7 @@ async fn test_statistics_page_user_no_sitewide() {
 
 #[tokio::test]
 async fn test_statistics_page_custom_period() {
-    let app = create_test_app("test_stats_custom");
+    let app = create_test_app("test_stats_custom").await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -259,7 +254,7 @@ async fn test_statistics_page_custom_period() {
 
 #[tokio::test]
 async fn test_statistics_page_invalid_custom_range_falls_back() {
-    let app = create_test_app("test_stats_bad_custom");
+    let app = create_test_app("test_stats_bad_custom").await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -275,7 +270,7 @@ async fn test_statistics_page_invalid_custom_range_falls_back() {
 
 #[tokio::test]
 async fn test_statistics_page_masquerade_hides_admin_section() {
-    let app = create_test_app("test_stats_masq");
+    let app = create_test_app("test_stats_masq").await;
     let (_admin_id, user_id) = setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -292,7 +287,7 @@ async fn test_statistics_page_masquerade_hides_admin_section() {
 
 #[tokio::test]
 async fn test_statistics_page_embeds_sidebar_bootstrap() {
-    let app = create_test_app("test_stats_sidebar_bootstrap");
+    let app = create_test_app("test_stats_sidebar_bootstrap").await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
     login(&app.server, "admin").await;
@@ -311,7 +306,7 @@ async fn test_statistics_page_embeds_sidebar_bootstrap() {
 
 #[tokio::test]
 async fn test_statistics_page_renders_overview_counts() {
-    let app = create_test_app("test_stats_overview");
+    let app = create_test_app("test_stats_overview").await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
     login(&app.server, "admin").await;
@@ -329,7 +324,7 @@ async fn test_statistics_page_renders_overview_counts() {
 
 #[tokio::test]
 async fn test_statistics_page_direct_labels_single_max_day() {
-    let app = create_test_app("test_stats_is_max");
+    let app = create_test_app("test_stats_is_max").await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     // seed_entries marks entries 1..=3 read at 2026-03-15, so the daily-read
     // chart has a single busiest bucket within a custom window covering that
@@ -359,7 +354,7 @@ async fn test_statistics_page_direct_labels_single_max_day() {
 
 #[tokio::test]
 async fn test_api_me_returns_role_and_flags() {
-    let app = create_test_app("test_api_me");
+    let app = create_test_app("test_api_me").await;
     setup_users(&app.db).await;
     login(&app.server, "admin").await;
 
@@ -374,7 +369,7 @@ async fn test_api_me_returns_role_and_flags() {
 
 #[tokio::test]
 async fn test_api_me_masquerade_flag_set() {
-    let app = create_test_app("test_api_me_masq");
+    let app = create_test_app("test_api_me_masq").await;
     let (_admin_id, user_id) = setup_users(&app.db).await;
     login(&app.server, "admin").await;
     app.server
@@ -393,7 +388,7 @@ async fn test_api_me_masquerade_flag_set() {
 
 #[tokio::test]
 async fn test_api_sidebar_returns_categories_with_unread() {
-    let app = create_test_app("test_api_sidebar");
+    let app = create_test_app("test_api_sidebar").await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
     login(&app.server, "admin").await;
@@ -412,22 +407,20 @@ async fn test_api_sidebar_returns_categories_with_unread() {
 
 #[tokio::test]
 async fn test_api_sidebar_total_summarized() {
-    let app = create_test_app("test_api_sidebar_total_summarized");
+    let app = create_test_app("test_api_sidebar_total_summarized").await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
 
     // Seed a completed summary for the first entry (belongs to admin_id).
     // upsert_pending first — set_completed is a no-op without an existing row.
     // Do this BEFORE hitting /api/sidebar so the cache is cold when we read.
-    app.db
-        .user(move |conn| {
-            let entry_id: i64 =
-                conn.query_row("SELECT id FROM entry ORDER BY id LIMIT 1", [], |r| r.get(0))?;
-            rdrs::models::entry_summary::upsert_pending(conn, admin_id, entry_id)?;
-            rdrs::models::entry_summary::set_completed(conn, admin_id, entry_id, "summary text")
-        })
+    let entry_id: i64 =
+        rdrs::query_scalar!(&app.db, i64, "SELECT id FROM entry ORDER BY id LIMIT 1").unwrap();
+    rdrs::models::entry_summary::upsert_pending(&app.db, admin_id, entry_id)
         .await
-        .unwrap()
+        .unwrap();
+    rdrs::models::entry_summary::set_completed(&app.db, admin_id, entry_id, "summary text")
+        .await
         .unwrap();
 
     login(&app.server, "admin").await;

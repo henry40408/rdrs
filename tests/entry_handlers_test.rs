@@ -20,32 +20,17 @@ use common::default_test_config;
 use std::sync::Arc;
 
 use axum_test::TestServer;
-use rdrs::{AppState, Config, DbPool, Role, auth, create_router, db, services};
-use rusqlite::Connection;
+use rdrs::models::{category, entry, feed, user};
+use rdrs::{AppState, Config, Db, Role, auth, create_router, services};
 use serde_json::json;
 
 struct TestApp {
     server: TestServer,
-    db: DbPool,
+    db: Db,
 }
 
-fn open_shared_memory(name: &str) -> Connection {
-    let uri = format!("file:{}?mode=memory&cache=shared", name);
-    Connection::open_with_flags(
-        uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    )
-    .unwrap()
-}
-
-fn create_test_app(config: Config) -> TestApp {
-    let write_conn = open_shared_memory("test_entry_handlers");
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory("test_entry_handlers");
-
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
+async fn create_test_app(config: Config) -> TestApp {
+    let db = Db::connect_in_memory().await.unwrap();
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -69,57 +54,56 @@ fn create_test_app(config: Config) -> TestApp {
 }
 
 /// Setup user, category, feed, and entries directly in database
-async fn setup_test_data(db: &DbPool) -> (i64, i64, i64, Vec<i64>) {
-    db.user(move |conn| {
-        // Create user
-        let password_hash = rdrs::auth::hash_password("password123").unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            rusqlite::params!["testuser", password_hash, Role::Admin.as_str()],
-        )
+async fn setup_test_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
+    // Create user
+    let password_hash = rdrs::auth::hash_password("password123").unwrap();
+    let user = user::create_user(db, "testuser", &password_hash, Role::Admin)
+        .await
         .unwrap();
-        let user_id = conn.last_insert_rowid();
 
-        // Create category
-        conn.execute(
-            "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-            rusqlite::params![user_id, "Test Category"],
-        )
+    // Create category
+    let cat = category::create_category(db, user.id, "Test Category")
+        .await
         .unwrap();
-        let category_id = conn.last_insert_rowid();
 
-        // Create feed
-        conn.execute(
-            "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-            rusqlite::params![category_id, "https://example.com/feed.xml", "Test Feed"],
-        )
-        .unwrap();
-        let feed_id = conn.last_insert_rowid();
-
-        // Create entries
-        let mut entry_ids = Vec::new();
-        for i in 1..=5 {
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title, link, content, summary, published_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now', ?7))",
-                rusqlite::params![
-                    feed_id,
-                    format!("guid-{}", i),
-                    format!("Entry Title {}", i),
-                    format!("https://example.com/entry/{}", i),
-                    format!("<p>Entry content {}</p>", i),
-                    format!("Summary for entry {}", i),
-                    format!("-{} hours", i)
-                ],
-            )
-            .unwrap();
-            entry_ids.push(conn.last_insert_rowid());
-        }
-
-        (user_id, category_id, feed_id, entry_ids)
-    })
+    // Create feed
+    let feed = feed::create_feed(
+        db,
+        &feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://example.com/feed.xml",
+            title: Some("Test Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
     .await
-    .unwrap()
+    .unwrap();
+
+    // Create entries (entry i published i hours ago: entry 1 newest, entry 5 oldest)
+    let mut entry_ids = Vec::new();
+    for i in 1..=5i64 {
+        let published = chrono::Utc::now() - chrono::Duration::hours(i);
+        let (e, _) = entry::upsert_entry(
+            db,
+            feed.id,
+            &format!("guid-{}", i),
+            Some(&format!("Entry Title {}", i)),
+            Some(&format!("https://example.com/entry/{}", i)),
+            Some(&format!("<p>Entry content {}</p>", i)),
+            Some(&format!("Summary for entry {}", i)),
+            None,
+            Some(published),
+        )
+        .await
+        .unwrap();
+        entry_ids.push(e.id);
+    }
+
+    (user.id, cat.id, feed.id, entry_ids)
 }
 
 async fn login(server: &TestServer) {
@@ -134,74 +118,72 @@ async fn login(server: &TestServer) {
 }
 
 /// Setup a second user's data in the database
-async fn setup_second_user_data(db: &DbPool) -> (i64, i64, i64, Vec<i64>) {
-    db.user(move |conn| {
-        // Create second user
-        let password_hash = rdrs::auth::hash_password("password456").unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            rusqlite::params!["otheruser", password_hash, "user"],
-        )
+async fn setup_second_user_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
+    // Create second user
+    let password_hash = rdrs::auth::hash_password("password456").unwrap();
+    let user = user::create_user(db, "otheruser", &password_hash, Role::User)
+        .await
         .unwrap();
-        let user_id = conn.last_insert_rowid();
 
-        // Create category for second user
-        conn.execute(
-            "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-            rusqlite::params![user_id, "Other User Category"],
-        )
+    // Create category for second user
+    let cat = category::create_category(db, user.id, "Other User Category")
+        .await
         .unwrap();
-        let category_id = conn.last_insert_rowid();
 
-        // Create feed for second user
-        conn.execute(
-            "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-            rusqlite::params![category_id, "https://other.com/feed.xml", "Other Feed"],
-        )
-        .unwrap();
-        let feed_id = conn.last_insert_rowid();
-
-        // Create entries for second user
-        let mut entry_ids = Vec::new();
-        for i in 1..=3 {
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, title, link, content, published_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
-                rusqlite::params![
-                    feed_id,
-                    format!("other-guid-{}", i),
-                    format!("Other Entry {}", i),
-                    format!("https://other.com/entry/{}", i),
-                    format!("<p>Other content {}</p>", i)
-                ],
-            )
-            .unwrap();
-            entry_ids.push(conn.last_insert_rowid());
-        }
-
-        (user_id, category_id, feed_id, entry_ids)
-    })
+    // Create feed for second user
+    let feed = feed::create_feed(
+        db,
+        &feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://other.com/feed.xml",
+            title: Some("Other Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
     .await
-    .unwrap()
+    .unwrap();
+
+    // Create entries for second user
+    let mut entry_ids = Vec::new();
+    for i in 1..=3 {
+        let (e, _) = entry::upsert_entry(
+            db,
+            feed.id,
+            &format!("other-guid-{}", i),
+            Some(&format!("Other Entry {}", i)),
+            Some(&format!("https://other.com/entry/{}", i)),
+            Some(&format!("<p>Other content {}</p>", i)),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        entry_ids.push(e.id);
+    }
+
+    (user.id, cat.id, feed.id, entry_ids)
 }
 
-async fn setup_entry_without_link(db: &DbPool, feed_id: i64) -> i64 {
-    db.user(move |conn| {
-        conn.execute(
-            "INSERT INTO entry (feed_id, guid, title, content, published_at)
-             VALUES (?1, ?2, ?3, ?4, datetime('now'))",
-            rusqlite::params![
-                feed_id,
-                "no-link-guid",
-                "Entry Without Link",
-                "<p>Content without link</p>"
-            ],
-        )
-        .unwrap();
-        conn.last_insert_rowid()
-    })
+async fn setup_entry_without_link(db: &Db, feed_id: i64) -> i64 {
+    let (e, _) = entry::upsert_entry(
+        db,
+        feed_id,
+        "no-link-guid",
+        Some("Entry Without Link"),
+        None,
+        Some("<p>Content without link</p>"),
+        None,
+        None,
+        None,
+    )
     .await
-    .unwrap()
+    .unwrap();
+    e.id
 }
 
 // --- GReader helper functions ---
@@ -252,7 +234,7 @@ async fn unstar_entry(server: &TestServer, entry_ids: &[i64]) {
 
 #[tokio::test]
 async fn test_list_entries_with_data() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -269,7 +251,7 @@ async fn test_list_entries_with_data() {
 
 #[tokio::test]
 async fn test_list_entries_with_limit() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -288,57 +270,51 @@ async fn test_list_entries_with_limit() {
 
 #[tokio::test]
 async fn test_list_entries_with_continuation() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     // Create entries where IDs correlate with published_at in ascending order.
     // This is needed because continuation pagination uses `e.id < c` (newest-first)
     // or `e.id > c` (oldest-first), so ID order must match timestamp order.
-    let (_user_id, _cat_id, _feed_id) = app
-        .db
-        .user(move |conn| {
-            let password_hash = rdrs::auth::hash_password("password123").unwrap();
-            conn.execute(
-                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-                rusqlite::params!["testuser", password_hash, Role::Admin.as_str()],
-            )
-            .unwrap();
-            let user_id = conn.last_insert_rowid();
-
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![user_id, "Test Category"],
-            )
-            .unwrap();
-            let category_id = conn.last_insert_rowid();
-
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![category_id, "https://example.com/feed.xml", "Test Feed"],
-            )
-            .unwrap();
-            let feed_id = conn.last_insert_rowid();
-
-            // Insert entries so that lower IDs have older published_at
-            // (entry 1 = 5h ago, entry 5 = 1h ago)
-            for i in 1..=5 {
-                conn.execute(
-                    "INSERT INTO entry (feed_id, guid, title, link, content, published_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, datetime('now', ?6))",
-                    rusqlite::params![
-                        feed_id,
-                        format!("guid-{}", i),
-                        format!("Entry Title {}", i),
-                        format!("https://example.com/entry/{}", i),
-                        format!("<p>Entry content {}</p>", i),
-                        format!("-{} hours", 6 - i) // entry 1=-5h, entry 5=-1h
-                    ],
-                )
-                .unwrap();
-            }
-
-            (user_id, category_id, feed_id)
-        })
+    let password_hash = rdrs::auth::hash_password("password123").unwrap();
+    let user = user::create_user(&app.db, "testuser", &password_hash, Role::Admin)
         .await
         .unwrap();
+    let cat = category::create_category(&app.db, user.id, "Test Category")
+        .await
+        .unwrap();
+    let feed = feed::create_feed(
+        &app.db,
+        &feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://example.com/feed.xml",
+            title: Some("Test Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Insert entries so that lower IDs have older published_at
+    // (entry 1 = 5h ago, entry 5 = 1h ago)
+    for i in 1..=5i64 {
+        let published = chrono::Utc::now() - chrono::Duration::hours(6 - i);
+        entry::upsert_entry(
+            &app.db,
+            feed.id,
+            &format!("guid-{}", i),
+            Some(&format!("Entry Title {}", i)),
+            Some(&format!("https://example.com/entry/{}", i)),
+            Some(&format!("<p>Entry content {}</p>", i)),
+            None,
+            None,
+            Some(published),
+        )
+        .await
+        .unwrap();
+    }
 
     login(&app.server).await;
 
@@ -387,7 +363,7 @@ async fn test_list_entries_with_continuation() {
 
 #[tokio::test]
 async fn test_list_entries_by_category() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -404,7 +380,7 @@ async fn test_list_entries_by_category() {
 
 #[tokio::test]
 async fn test_list_entries_by_feed() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -421,7 +397,7 @@ async fn test_list_entries_by_feed() {
 
 #[tokio::test]
 async fn test_get_entry_by_id() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -445,7 +421,7 @@ async fn test_get_entry_by_id() {
 
 #[tokio::test]
 async fn test_get_multiple_entries_by_id() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -465,7 +441,7 @@ async fn test_get_multiple_entries_by_id() {
 
 #[tokio::test]
 async fn test_get_entries_by_id_post() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -493,7 +469,7 @@ async fn test_get_entries_by_id_post() {
 
 #[tokio::test]
 async fn test_mark_entry_read() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -525,7 +501,7 @@ async fn test_mark_entry_read() {
 
 #[tokio::test]
 async fn test_mark_entry_unread() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -559,7 +535,7 @@ async fn test_mark_entry_unread() {
 
 #[tokio::test]
 async fn test_list_entries_unread_only() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -584,7 +560,7 @@ async fn test_list_entries_unread_only() {
 
 #[tokio::test]
 async fn test_star_entry() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -614,7 +590,7 @@ async fn test_star_entry() {
 
 #[tokio::test]
 async fn test_unstar_entry() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -648,7 +624,7 @@ async fn test_unstar_entry() {
 
 #[tokio::test]
 async fn test_list_entries_starred_only() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -670,7 +646,7 @@ async fn test_list_entries_starred_only() {
 
 #[tokio::test]
 async fn test_list_entries_read_only() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -695,7 +671,7 @@ async fn test_list_entries_read_only() {
 
 #[tokio::test]
 async fn test_mark_all_read() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -721,7 +697,7 @@ async fn test_mark_all_read() {
 
 #[tokio::test]
 async fn test_mark_all_read_by_category() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -747,7 +723,7 @@ async fn test_mark_all_read_by_category() {
 
 #[tokio::test]
 async fn test_mark_all_read_by_feed() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -773,7 +749,7 @@ async fn test_mark_all_read_by_feed() {
 
 #[tokio::test]
 async fn test_mark_read_batch_by_ids() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -793,7 +769,7 @@ async fn test_mark_read_batch_by_ids() {
 
 #[tokio::test]
 async fn test_edit_tag_no_items_returns_error() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -809,7 +785,7 @@ async fn test_edit_tag_no_items_returns_error() {
 
 #[tokio::test]
 async fn test_mark_read_already_read() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -838,7 +814,7 @@ async fn test_mark_read_already_read() {
 
 #[tokio::test]
 async fn test_cannot_mark_read_by_ids_other_user() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_user2_id, _cat2_id, _feed2_id, entry2_ids) = setup_second_user_data(&app.db).await;
     login(&app.server).await;
@@ -864,7 +840,7 @@ async fn test_cannot_mark_read_by_ids_other_user() {
 
 #[tokio::test]
 async fn test_get_unread_count_with_data() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -898,7 +874,7 @@ async fn test_get_unread_count_with_data() {
 
 #[tokio::test]
 async fn test_get_unread_count_after_marking_read() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -930,7 +906,7 @@ async fn test_get_unread_count_after_marking_read() {
 
 #[tokio::test]
 async fn test_get_entry_neighbors() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -949,7 +925,7 @@ async fn test_get_entry_neighbors() {
 
 #[tokio::test]
 async fn test_get_entry_neighbors_first_entry() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -966,7 +942,7 @@ async fn test_get_entry_neighbors_first_entry() {
 
 #[tokio::test]
 async fn test_get_entry_neighbors_unread_only() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -995,7 +971,7 @@ async fn test_get_entry_neighbors_unread_only() {
 
 #[tokio::test]
 async fn test_subscription_list() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1016,7 +992,7 @@ async fn test_subscription_list() {
 
 #[tokio::test]
 async fn test_subscription_edit_update_title() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1043,7 +1019,7 @@ async fn test_subscription_edit_update_title() {
 
 #[tokio::test]
 async fn test_subscription_unsubscribe() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1073,7 +1049,7 @@ async fn test_subscription_unsubscribe() {
 
 #[tokio::test]
 async fn test_tag_list() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1093,7 +1069,7 @@ async fn test_tag_list() {
 
 #[tokio::test]
 async fn test_rename_tag() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1122,7 +1098,7 @@ async fn test_rename_tag() {
 
 #[tokio::test]
 async fn test_disable_tag() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1151,7 +1127,7 @@ async fn test_disable_tag() {
 
 #[tokio::test]
 async fn test_list_entries_combined_filters() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1186,7 +1162,7 @@ async fn test_list_entries_combined_filters() {
 
 #[tokio::test]
 async fn test_list_entries_oldest_first() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1220,7 +1196,7 @@ async fn test_list_entries_oldest_first() {
 
 #[tokio::test]
 async fn test_mark_all_read_with_timestamp() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1252,7 +1228,7 @@ async fn test_mark_all_read_with_timestamp() {
 
 #[tokio::test]
 async fn test_stream_contents_item_format() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1307,7 +1283,7 @@ async fn test_stream_contents_item_format() {
 
 #[tokio::test]
 async fn test_cannot_access_other_user_category_entries() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1323,7 +1299,7 @@ async fn test_cannot_access_other_user_category_entries() {
 
 #[tokio::test]
 async fn test_cannot_access_other_user_feed_entries() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1339,7 +1315,7 @@ async fn test_cannot_access_other_user_feed_entries() {
 
 #[tokio::test]
 async fn test_cannot_get_other_user_entry() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1362,7 +1338,7 @@ async fn test_cannot_get_other_user_entry() {
 
 #[tokio::test]
 async fn test_cannot_mark_other_user_entry_read() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1381,7 +1357,7 @@ async fn test_cannot_mark_other_user_entry_read() {
 
 #[tokio::test]
 async fn test_cannot_mark_other_user_entry_unread() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1400,7 +1376,7 @@ async fn test_cannot_mark_other_user_entry_unread() {
 
 #[tokio::test]
 async fn test_cannot_star_other_user_entry() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1419,7 +1395,7 @@ async fn test_cannot_star_other_user_entry() {
 
 #[tokio::test]
 async fn test_cannot_mark_all_read_other_user_feed() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1437,7 +1413,7 @@ async fn test_cannot_mark_all_read_other_user_feed() {
 
 #[tokio::test]
 async fn test_cannot_mark_all_read_other_user_category() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1455,7 +1431,7 @@ async fn test_cannot_mark_all_read_other_user_category() {
 
 #[tokio::test]
 async fn test_cannot_get_other_user_entry_neighbors() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1471,7 +1447,7 @@ async fn test_cannot_get_other_user_entry_neighbors() {
 
 #[tokio::test]
 async fn test_cannot_unsubscribe_other_user_feed() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1492,7 +1468,7 @@ async fn test_cannot_unsubscribe_other_user_feed() {
 
 #[tokio::test]
 async fn test_cannot_edit_other_user_feed() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1514,7 +1490,7 @@ async fn test_cannot_edit_other_user_feed() {
 
 #[tokio::test]
 async fn test_cannot_disable_other_user_category() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1532,7 +1508,7 @@ async fn test_cannot_disable_other_user_category() {
 
 #[tokio::test]
 async fn test_cannot_rename_other_user_category() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, _other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1553,7 +1529,7 @@ async fn test_cannot_rename_other_user_category() {
 
 #[tokio::test]
 async fn test_cannot_fetch_full_content_other_user_entry() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1572,7 +1548,7 @@ async fn test_cannot_fetch_full_content_other_user_entry() {
 
 #[tokio::test]
 async fn test_cannot_summarize_other_user_entry() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1588,7 +1564,7 @@ async fn test_cannot_summarize_other_user_entry() {
 
 #[tokio::test]
 async fn test_cannot_save_other_user_entry() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1604,7 +1580,7 @@ async fn test_cannot_save_other_user_entry() {
 
 #[tokio::test]
 async fn test_cannot_get_other_user_entry_summary() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1620,7 +1596,7 @@ async fn test_cannot_get_other_user_entry_summary() {
 
 #[tokio::test]
 async fn test_cannot_delete_other_user_entry_summary() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
         setup_second_user_data(&app.db).await;
@@ -1640,7 +1616,7 @@ async fn test_cannot_delete_other_user_entry_summary() {
 
 #[tokio::test]
 async fn test_fetch_full_content_entry_no_link() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let no_link_entry_id = setup_entry_without_link(&app.db, feed_id).await;
     login(&app.server).await;
@@ -1661,7 +1637,7 @@ async fn test_fetch_full_content_entry_no_link() {
 
 #[tokio::test]
 async fn test_summarize_entry_no_link() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let no_link_entry_id = setup_entry_without_link(&app.db, feed_id).await;
     login(&app.server).await;
@@ -1679,7 +1655,7 @@ async fn test_summarize_entry_no_link() {
 
 #[tokio::test]
 async fn test_save_entry_no_link() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let no_link_entry_id = setup_entry_without_link(&app.db, feed_id).await;
     login(&app.server).await;
@@ -1701,7 +1677,7 @@ async fn test_save_entry_no_link() {
 
 #[tokio::test]
 async fn test_summarize_entry_no_kagi_config() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1718,7 +1694,7 @@ async fn test_summarize_entry_no_kagi_config() {
 
 #[tokio::test]
 async fn test_save_entry_no_services_config() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1739,7 +1715,7 @@ async fn test_save_entry_no_services_config() {
 
 #[tokio::test]
 async fn test_stream_item_ids() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1761,7 +1737,7 @@ async fn test_stream_item_ids() {
 
 #[tokio::test]
 async fn test_stream_item_ids_with_count() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1780,7 +1756,7 @@ async fn test_stream_item_ids_with_count() {
 
 #[tokio::test]
 async fn test_stream_item_count() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1793,7 +1769,7 @@ async fn test_stream_item_count() {
 
 #[tokio::test]
 async fn test_stream_item_count_by_feed() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1809,7 +1785,7 @@ async fn test_stream_item_count_by_feed() {
 
 #[tokio::test]
 async fn test_stream_item_count_starred() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1825,7 +1801,7 @@ async fn test_stream_item_count_starred() {
 
 #[tokio::test]
 async fn test_stream_contents_oldest_first() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1852,7 +1828,7 @@ async fn test_stream_contents_oldest_first() {
 
 #[tokio::test]
 async fn test_stream_contents_with_count() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1874,54 +1850,48 @@ async fn test_stream_contents_with_count() {
 
 #[tokio::test]
 async fn test_stream_contents_with_continuation() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     // Use custom setup to ensure IDs correlate with timestamps (needed for continuation)
-    let (_user_id, _cat_id, _feed_id) = app
-        .db
-        .user(move |conn| {
-            let password_hash = rdrs::auth::hash_password("password123").unwrap();
-            conn.execute(
-                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-                rusqlite::params!["testuser", password_hash, Role::Admin.as_str()],
-            )
-            .unwrap();
-            let user_id = conn.last_insert_rowid();
-
-            conn.execute(
-                "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-                rusqlite::params![user_id, "Test Category"],
-            )
-            .unwrap();
-            let category_id = conn.last_insert_rowid();
-
-            conn.execute(
-                "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-                rusqlite::params![category_id, "https://example.com/feed.xml", "Test Feed"],
-            )
-            .unwrap();
-            let feed_id = conn.last_insert_rowid();
-
-            // Insert entries so that lower IDs have older published_at
-            for i in 1..=5 {
-                conn.execute(
-                    "INSERT INTO entry (feed_id, guid, title, link, content, published_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, datetime('now', ?6))",
-                    rusqlite::params![
-                        feed_id,
-                        format!("guid-{}", i),
-                        format!("Entry Title {}", i),
-                        format!("https://example.com/entry/{}", i),
-                        format!("<p>Entry content {}</p>", i),
-                        format!("-{} hours", 6 - i) // entry 1=-5h, entry 5=-1h
-                    ],
-                )
-                .unwrap();
-            }
-
-            (user_id, category_id, feed_id)
-        })
+    let password_hash = rdrs::auth::hash_password("password123").unwrap();
+    let user = user::create_user(&app.db, "testuser", &password_hash, Role::Admin)
         .await
         .unwrap();
+    let cat = category::create_category(&app.db, user.id, "Test Category")
+        .await
+        .unwrap();
+    let feed = feed::create_feed(
+        &app.db,
+        &feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://example.com/feed.xml",
+            title: Some("Test Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Insert entries so that lower IDs have older published_at
+    for i in 1..=5i64 {
+        let published = chrono::Utc::now() - chrono::Duration::hours(6 - i);
+        entry::upsert_entry(
+            &app.db,
+            feed.id,
+            &format!("guid-{}", i),
+            Some(&format!("Entry Title {}", i)),
+            Some(&format!("https://example.com/entry/{}", i)),
+            Some(&format!("<p>Entry content {}</p>", i)),
+            None,
+            None,
+            Some(published),
+        )
+        .await
+        .unwrap();
+    }
 
     login(&app.server).await;
 
@@ -1968,7 +1938,7 @@ async fn test_stream_contents_with_continuation() {
 
 #[tokio::test]
 async fn test_stream_items_contents_post() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -1990,7 +1960,7 @@ async fn test_stream_items_contents_post() {
 
 #[tokio::test]
 async fn test_stream_items_contents_empty() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -2005,7 +1975,7 @@ async fn test_stream_items_contents_empty() {
 
 #[tokio::test]
 async fn test_stream_contents_exclude_read() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -2036,7 +2006,7 @@ async fn test_stream_contents_exclude_read() {
 
 #[tokio::test]
 async fn test_stream_contents_include_starred() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -2058,7 +2028,7 @@ async fn test_stream_contents_include_starred() {
 
 #[tokio::test]
 async fn test_stream_item_ids_default_stream() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -2077,7 +2047,7 @@ async fn test_stream_item_ids_default_stream() {
 
 #[tokio::test]
 async fn test_user_info() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -2095,7 +2065,7 @@ async fn test_user_info() {
 
 #[tokio::test]
 async fn test_unread_count_with_data() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -2130,7 +2100,7 @@ async fn test_unread_count_with_data() {
 
 #[tokio::test]
 async fn test_unread_count_after_read() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -2162,7 +2132,7 @@ async fn test_unread_count_after_read() {
 
 #[tokio::test]
 async fn test_star_and_unstar_entry() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -2198,7 +2168,7 @@ async fn test_star_and_unstar_entry() {
 
 #[tokio::test]
 async fn test_find_by_ids_with_feed_empty() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -2216,7 +2186,7 @@ async fn test_find_by_ids_with_feed_empty() {
 
 #[tokio::test]
 async fn test_stream_contents_time_filter() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -2261,7 +2231,7 @@ async fn test_stream_contents_time_filter() {
 
 #[tokio::test]
 async fn test_get_entry_summary_not_found() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -2278,7 +2248,7 @@ async fn test_get_entry_summary_not_found() {
 
 #[tokio::test]
 async fn test_delete_entry_summary() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
@@ -2299,27 +2269,24 @@ async fn test_delete_entry_summary() {
 
 #[tokio::test]
 async fn summary_fragment_renders_completed_summary() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&app.server).await;
 
     let entry_id = entry_ids[0];
 
     // Insert a completed summary directly in the DB.
-    app.db
-        .user(move |conn| {
-            rdrs::models::entry_summary::upsert_pending(conn, user_id, entry_id)?;
-            rdrs::models::entry_summary::set_completed(
-                conn,
-                user_id,
-                entry_id,
-                "<p>Test summary content</p>",
-            )?;
-            Ok::<(), rdrs::error::AppError>(())
-        })
+    rdrs::models::entry_summary::upsert_pending(&app.db, user_id, entry_id)
         .await
-        .unwrap()
         .unwrap();
+    rdrs::models::entry_summary::set_completed(
+        &app.db,
+        user_id,
+        entry_id,
+        "<p>Test summary content</p>",
+    )
+    .await
+    .unwrap();
 
     let response = app
         .server
@@ -2339,7 +2306,7 @@ async fn summary_fragment_renders_completed_summary() {
 
 #[tokio::test]
 async fn summary_fragment_404_for_other_users_entry() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     let (_other_user_id, _other_cat_id, _other_feed_id, other_entry_ids) =
         setup_second_user_data(&app.db).await;

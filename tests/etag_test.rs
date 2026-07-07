@@ -10,26 +10,10 @@ use std::sync::Arc;
 
 use axum::http::{HeaderValue, StatusCode, header};
 use axum_test::TestServer;
-use rdrs::{AppState, Config, DbPool, auth, create_router, db, services};
-use rusqlite::Connection;
+use rdrs::{AppState, Config, Db, auth, create_router, services};
 
-fn open_shared_memory(name: &str) -> Connection {
-    let uri = format!("file:{}?mode=memory&cache=shared", name);
-    Connection::open_with_flags(
-        uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    )
-    .unwrap()
-}
-
-fn create_test_server(name: &str, config: Config) -> TestServer {
-    let write_conn = open_shared_memory(name);
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory(name);
-
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
+async fn create_test_server(config: Config) -> TestServer {
+    let db = Db::connect_in_memory().await.unwrap();
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -51,7 +35,7 @@ fn create_test_server(name: &str, config: Config) -> TestServer {
 
 #[tokio::test]
 async fn html_response_carries_weak_etag() {
-    let server = create_test_server("etag_test_a", default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/login").await;
 
@@ -67,7 +51,7 @@ async fn html_response_carries_weak_etag() {
 
 #[tokio::test]
 async fn matching_if_none_match_returns_304() {
-    let server = create_test_server("etag_test_b", default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let first = server.get("/login").await;
     first.assert_status_ok();
@@ -92,7 +76,7 @@ async fn matching_if_none_match_returns_304() {
 #[tokio::test]
 async fn non_html_response_has_no_etag() {
     // /favicon.svg returns image/svg+xml — should not be tagged.
-    let server = create_test_server("etag_test_c", default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/favicon.svg").await;
 
@@ -105,7 +89,7 @@ async fn non_html_response_has_no_etag() {
 
 #[tokio::test]
 async fn non_matching_if_none_match_returns_full_body() {
-    let server = create_test_server("etag_test_d", default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .get("/login")

@@ -43,32 +43,28 @@ pub async fn get_entry_neighbors(
     Query(query): Query<NeighborsQuery>,
 ) -> AppResult<Json<entry::EntryNeighbors>> {
     let user_id = auth_user.user.id;
-    let neighbors = state
-        .db
-        .read_user(move |conn| {
-            // Verify entry belongs to user
-            let entry_with_feed =
-                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
-            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
-                .ok_or(AppError::CategoryNotFound)?;
-            if cat.user_id != user_id {
-                return Err(AppError::EntryNotFound);
-            }
+    // Verify entry belongs to user
+    let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
+        .await?
+        .ok_or(AppError::EntryNotFound)?;
+    let cat = category::find_by_id(&state.db, entry_with_feed.category_id)
+        .await?
+        .ok_or(AppError::CategoryNotFound)?;
+    if cat.user_id != user_id {
+        return Err(AppError::EntryNotFound);
+    }
 
-            let filter = entry::EntryFilter {
-                feed_id: query.feed_id,
-                category_id: query.category_id,
-                unread_only: query.unread_only,
-                starred_only: query.starred_only,
-                read_only: query.read_only,
-                has_summary: query.has_summary,
-                search: None,
-                read_after: query.read_after,
-            };
-            let neighbors = entry::find_neighbors(conn, user_id, id, &filter)?;
-            Ok::<_, AppError>(neighbors)
-        })
-        .await??;
+    let filter = entry::EntryFilter {
+        feed_id: query.feed_id,
+        category_id: query.category_id,
+        unread_only: query.unread_only,
+        starred_only: query.starred_only,
+        read_only: query.read_only,
+        has_summary: query.has_summary,
+        search: None,
+        read_after: query.read_after,
+    };
+    let neighbors = entry::find_neighbors(&state.db, user_id, id, &filter).await?;
     Ok(Json(neighbors))
 }
 
@@ -79,27 +75,24 @@ pub async fn fetch_full_content(
 ) -> AppResult<Json<FetchFullContentResponse>> {
     // Verify entry exists and belongs to user
     let user_id = auth_user.user.id;
-    let (link, custom_referrer) = state
-        .db
-        .read_user(move |conn| {
-            let entry_with_feed =
-                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
+    let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
+        .await?
+        .ok_or(AppError::EntryNotFound)?;
 
-            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
-                .ok_or(AppError::CategoryNotFound)?;
-            if cat.user_id != user_id {
-                return Err(AppError::EntryNotFound);
-            }
+    let cat = category::find_by_id(&state.db, entry_with_feed.category_id)
+        .await?
+        .ok_or(AppError::CategoryNotFound)?;
+    if cat.user_id != user_id {
+        return Err(AppError::EntryNotFound);
+    }
 
-            // Check if entry has a link
-            let link = entry_with_feed
-                .entry
-                .link
-                .ok_or_else(|| AppError::Validation("Entry has no link".to_string()))?;
+    // Check if entry has a link
+    let link = entry_with_feed
+        .entry
+        .link
+        .ok_or_else(|| AppError::Validation("Entry has no link".to_string()))?;
 
-            Ok((link, entry_with_feed.custom_referrer))
-        })
-        .await??;
+    let custom_referrer = entry_with_feed.custom_referrer;
 
     // Fetch and extract content
     let extracted = fetch_and_extract(&link, &state.config.user_agent).await?;
@@ -153,57 +146,48 @@ pub async fn summarize_entry(
         }));
     }
 
-    // Get entry and verify ownership
-    let link = state
-        .db
-        .user(move |conn| {
-            // Check DB for existing summary
-            if let Some(db_summary) = entry_summary::find_by_user_and_entry(conn, user_id, id)? {
-                return Ok::<_, AppError>(Err(SummaryResponse {
-                    status: db_summary.status,
-                    summary_text: db_summary.summary_text,
-                    error: db_summary.error_message,
-                    created_at: Some(db_summary.created_at),
-                }));
-            }
+    // Get entry and verify ownership.
+    // Check DB for existing summary
+    if let Some(db_summary) = entry_summary::find_by_user_and_entry(&state.db, user_id, id).await? {
+        return Ok(Json(SummaryResponse {
+            status: db_summary.status,
+            summary_text: db_summary.summary_text,
+            error: db_summary.error_message,
+            created_at: Some(db_summary.created_at),
+        }));
+    }
 
-            let entry_with_feed =
-                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
+    let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
+        .await?
+        .ok_or(AppError::EntryNotFound)?;
 
-            // Verify entry belongs to user
-            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
-                .ok_or(AppError::CategoryNotFound)?;
-            if cat.user_id != user_id {
-                return Err(AppError::EntryNotFound);
-            }
+    // Verify entry belongs to user
+    let cat = category::find_by_id(&state.db, entry_with_feed.category_id)
+        .await?
+        .ok_or(AppError::CategoryNotFound)?;
+    if cat.user_id != user_id {
+        return Err(AppError::EntryNotFound);
+    }
 
-            // Check if entry has a link
-            let link = entry_with_feed.entry.link.clone().ok_or_else(|| {
-                AppError::Validation("Entry has no link to summarize".to_string())
-            })?;
+    // Check if entry has a link
+    let link = entry_with_feed
+        .entry
+        .link
+        .clone()
+        .ok_or_else(|| AppError::Validation("Entry has no link to summarize".to_string()))?;
 
-            // Verify Kagi is configured
-            let config = user_settings::get_save_services_config(conn, user_id)?;
-            let kagi = config
-                .kagi
-                .ok_or_else(|| AppError::Validation("Kagi is not configured".to_string()))?;
+    // Verify Kagi is configured
+    let config = user_settings::get_save_services_config(&state.db, user_id).await?;
+    let kagi = config
+        .kagi
+        .ok_or_else(|| AppError::Validation("Kagi is not configured".to_string()))?;
 
-            if !kagi.is_configured() {
-                return Err(AppError::Validation("Kagi is not configured".to_string()));
-            }
+    if !kagi.is_configured() {
+        return Err(AppError::Validation("Kagi is not configured".to_string()));
+    }
 
-            // Create pending record in DB
-            entry_summary::upsert_pending(conn, user_id, id)?;
-
-            Ok(Ok(link))
-        })
-        .await??;
-
-    // Check if we got a cached summary from DB
-    let link = match link {
-        Ok(link) => link,
-        Err(response) => return Ok(Json(response)),
-    };
+    // Create pending record in DB
+    entry_summary::upsert_pending(&state.db, user_id, id).await?;
 
     // Set pending status in cache
     state.summary_cache.set_pending(user_id, id);
@@ -249,31 +233,30 @@ pub async fn get_entry_summary(
     }
 
     // Verify entry ownership and get from DB
-    let result = state
-        .db
-        .read_user(move |conn| {
-            let entry_with_feed =
-                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
+    let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
+        .await?
+        .ok_or(AppError::EntryNotFound)?;
 
-            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
-                .ok_or(AppError::CategoryNotFound)?;
-            if cat.user_id != user_id {
-                return Err(AppError::EntryNotFound);
-            }
+    let cat = category::find_by_id(&state.db, entry_with_feed.category_id)
+        .await?
+        .ok_or(AppError::CategoryNotFound)?;
+    if cat.user_id != user_id {
+        return Err(AppError::EntryNotFound);
+    }
 
-            // Get from DB
-            if let Some(db_summary) = entry_summary::find_by_user_and_entry(conn, user_id, id)? {
-                Ok::<_, AppError>(Some(SummaryResponse {
-                    status: db_summary.status,
-                    summary_text: db_summary.summary_text,
-                    error: db_summary.error_message,
-                    created_at: Some(db_summary.created_at),
-                }))
-            } else {
-                Ok(None)
-            }
+    // Get from DB
+    let result = if let Some(db_summary) =
+        entry_summary::find_by_user_and_entry(&state.db, user_id, id).await?
+    {
+        Some(SummaryResponse {
+            status: db_summary.status,
+            summary_text: db_summary.summary_text,
+            error: db_summary.error_message,
+            created_at: Some(db_summary.created_at),
         })
-        .await??;
+    } else {
+        None
+    };
 
     match result {
         Some(response) => Ok(Json(response)),
@@ -290,23 +273,19 @@ pub async fn delete_entry_summary(
     let user_id = auth_user.user.id;
 
     // Verify entry ownership and delete from DB
-    state
-        .db
-        .user(move |conn| {
-            let entry_with_feed =
-                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
+    let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
+        .await?
+        .ok_or(AppError::EntryNotFound)?;
 
-            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
-                .ok_or(AppError::CategoryNotFound)?;
-            if cat.user_id != user_id {
-                return Err(AppError::EntryNotFound);
-            }
+    let cat = category::find_by_id(&state.db, entry_with_feed.category_id)
+        .await?
+        .ok_or(AppError::CategoryNotFound)?;
+    if cat.user_id != user_id {
+        return Err(AppError::EntryNotFound);
+    }
 
-            // Delete from DB
-            entry_summary::delete(conn, user_id, id)?;
-            Ok::<_, AppError>(())
-        })
-        .await??;
+    // Delete from DB
+    entry_summary::delete(&state.db, user_id, id).await?;
 
     // Remove from cache
     state.summary_cache.remove(user_id, id);
@@ -325,45 +304,40 @@ pub async fn save_to_services(
 ) -> AppResult<Json<SaveToServicesResponse>> {
     // Get entry and verify ownership
     let user_id = auth_user.user.id;
-    let (entry_data, save_config) = state
-        .db
-        .read_user(move |conn| {
-            let entry_with_feed =
-                entry::find_by_id_with_feed(conn, id)?.ok_or(AppError::EntryNotFound)?;
+    let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
+        .await?
+        .ok_or(AppError::EntryNotFound)?;
 
-            // Verify entry belongs to user
-            let cat = category::find_by_id(conn, entry_with_feed.category_id)?
-                .ok_or(AppError::CategoryNotFound)?;
-            if cat.user_id != user_id {
-                return Err(AppError::EntryNotFound);
-            }
+    // Verify entry belongs to user
+    let cat = category::find_by_id(&state.db, entry_with_feed.category_id)
+        .await?
+        .ok_or(AppError::CategoryNotFound)?;
+    if cat.user_id != user_id {
+        return Err(AppError::EntryNotFound);
+    }
 
-            // Check if entry has a link
-            let link = entry_with_feed
-                .entry
-                .link
-                .clone()
-                .ok_or_else(|| AppError::Validation("Entry has no link to save".to_string()))?;
+    // Check if entry has a link
+    let link = entry_with_feed
+        .entry
+        .link
+        .clone()
+        .ok_or_else(|| AppError::Validation("Entry has no link to save".to_string()))?;
 
-            // Get save services config
-            let config = user_settings::get_save_services_config(conn, user_id)?;
+    // Get save services config
+    let save_config = user_settings::get_save_services_config(&state.db, user_id).await?;
 
-            if !config.has_any_service() {
-                return Err(AppError::Validation(
-                    "No save services configured".to_string(),
-                ));
-            }
+    if !save_config.has_any_service() {
+        return Err(AppError::Validation(
+            "No save services configured".to_string(),
+        ));
+    }
 
-            let bookmark = BookmarkData {
-                url: link,
-                title: entry_with_feed.entry.title.clone(),
-                description: entry_with_feed.entry.summary.clone(),
-                tags: vec![],
-            };
-
-            Ok::<_, AppError>((bookmark, config))
-        })
-        .await??;
+    let entry_data = BookmarkData {
+        url: link,
+        title: entry_with_feed.entry.title.clone(),
+        description: entry_with_feed.entry.summary.clone(),
+        tags: vec![],
+    };
 
     // Save to all configured services in parallel
     let mut results = Vec::new();

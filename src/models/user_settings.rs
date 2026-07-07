@@ -1,9 +1,10 @@
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::services::save::SaveServicesConfig;
+use crate::{db_execute, query_opt};
 
 pub const DEFAULT_ENTRIES_PER_PAGE: i64 = 30;
 pub const MIN_ENTRIES_PER_PAGE: i64 = 10;
@@ -14,7 +15,7 @@ pub const MAX_ENTRIES_PER_PAGE: i64 = 100;
 /// "effectively never delete", which `0` expresses directly.
 pub const MAX_RETENTION_READ_DAYS: i64 = 3650;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct UserSettings {
     pub id: i64,
     pub user_id: i64,
@@ -36,50 +37,24 @@ impl UserSettings {
     }
 }
 
-fn parse_datetime(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .map(|dt| dt.with_timezone(&Utc))
-        .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
-        })
-        .or_else(|_| dateparser::parse(s).map(|dt| dt.with_timezone(&Utc)))
-        .unwrap_or_else(|_| Utc::now())
-}
-
-fn row_to_user_settings(row: &rusqlite::Row) -> rusqlite::Result<UserSettings> {
-    let created_at: String = row.get(6)?;
-    let updated_at: String = row.get(7)?;
-
-    Ok(UserSettings {
-        id: row.get(0)?,
-        user_id: row.get(1)?,
-        entries_per_page: row.get(2)?,
-        retention_read_days: row.get(3)?,
-        save_services: row.get(4)?,
-        theme: row.get(5)?,
-        created_at: parse_datetime(&created_at),
-        updated_at: parse_datetime(&updated_at),
-    })
-}
-
-pub fn find_by_user_id(conn: &Connection, user_id: i64) -> AppResult<Option<UserSettings>> {
-    conn.query_row(
-        "SELECT id, user_id, entries_per_page, retention_read_days, save_services, theme, created_at, updated_at FROM user_settings WHERE user_id = ?1",
-        params![user_id],
-        row_to_user_settings,
+pub async fn find_by_user_id(db: &Db, user_id: i64) -> AppResult<Option<UserSettings>> {
+    query_opt!(
+        db,
+        UserSettings,
+        "SELECT id, user_id, entries_per_page, retention_read_days, save_services, theme, created_at, updated_at FROM user_settings WHERE user_id = $1",
+        user_id
     )
-    .optional()
     .map_err(AppError::Database)
 }
 
-pub fn get_entries_per_page(conn: &Connection, user_id: i64) -> AppResult<i64> {
-    match find_by_user_id(conn, user_id)? {
+pub async fn get_entries_per_page(db: &Db, user_id: i64) -> AppResult<i64> {
+    match find_by_user_id(db, user_id).await? {
         Some(settings) => Ok(settings.entries_per_page),
         None => Ok(DEFAULT_ENTRIES_PER_PAGE),
     }
 }
 
-pub fn upsert(conn: &Connection, user_id: i64, entries_per_page: i64) -> AppResult<UserSettings> {
+pub async fn upsert(db: &Db, user_id: i64, entries_per_page: i64) -> AppResult<UserSettings> {
     // Validate range
     if !(MIN_ENTRIES_PER_PAGE..=MAX_ENTRIES_PER_PAGE).contains(&entries_per_page) {
         return Err(AppError::Validation(format!(
@@ -88,28 +63,34 @@ pub fn upsert(conn: &Connection, user_id: i64, entries_per_page: i64) -> AppResu
         )));
     }
 
-    conn.execute(
-        "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)
-         ON CONFLICT(user_id) DO UPDATE SET entries_per_page = ?2, updated_at = datetime('now')",
-        params![user_id, entries_per_page],
-    )?;
+    db_execute!(
+        db,
+        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
+         ON CONFLICT(user_id) DO UPDATE SET entries_per_page = $2, updated_at = $3",
+        user_id,
+        entries_per_page,
+        Utc::now()
+    )
+    .map_err(AppError::Database)?;
 
-    find_by_user_id(conn, user_id)?.ok_or(AppError::Internal(
-        "Failed to retrieve user settings after upsert".to_string(),
-    ))
+    find_by_user_id(db, user_id)
+        .await?
+        .ok_or(AppError::Internal(
+            "Failed to retrieve user settings after upsert".to_string(),
+        ))
 }
 
 /// Get `SaveServicesConfig` for a user
-pub fn get_save_services_config(conn: &Connection, user_id: i64) -> AppResult<SaveServicesConfig> {
-    match find_by_user_id(conn, user_id)? {
+pub async fn get_save_services_config(db: &Db, user_id: i64) -> AppResult<SaveServicesConfig> {
+    match find_by_user_id(db, user_id).await? {
         Some(settings) => Ok(settings.get_save_services_config()),
         None => Ok(SaveServicesConfig::default()),
     }
 }
 
 /// Update `save_services` configuration for a user
-pub fn update_save_services(
-    conn: &Connection,
+pub async fn update_save_services(
+    db: &Db,
     user_id: i64,
     config: &SaveServicesConfig,
 ) -> AppResult<UserSettings> {
@@ -118,52 +99,68 @@ pub fn update_save_services(
         .map_err(|e| AppError::Internal(format!("Failed to serialize save_services: {}", e)))?;
 
     // First ensure user_settings row exists
-    conn.execute(
-        "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)
+    db_execute!(
+        db,
+        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
          ON CONFLICT(user_id) DO NOTHING",
-        params![user_id, DEFAULT_ENTRIES_PER_PAGE],
-    )?;
+        user_id,
+        DEFAULT_ENTRIES_PER_PAGE
+    )
+    .map_err(AppError::Database)?;
 
     // Then update save_services
-    conn.execute(
-        "UPDATE user_settings SET save_services = ?1, updated_at = datetime('now') WHERE user_id = ?2",
-        params![json, user_id],
-    )?;
+    db_execute!(
+        db,
+        "UPDATE user_settings SET save_services = $1, updated_at = $2 WHERE user_id = $3",
+        &json,
+        Utc::now(),
+        user_id
+    )
+    .map_err(AppError::Database)?;
 
-    find_by_user_id(conn, user_id)?.ok_or(AppError::Internal(
-        "Failed to retrieve user settings after update".to_string(),
-    ))
+    find_by_user_id(db, user_id)
+        .await?
+        .ok_or(AppError::Internal(
+            "Failed to retrieve user settings after update".to_string(),
+        ))
 }
 
 /// Get theme preference for a user
-pub fn get_theme(conn: &Connection, user_id: i64) -> AppResult<Option<String>> {
-    match find_by_user_id(conn, user_id)? {
+pub async fn get_theme(db: &Db, user_id: i64) -> AppResult<Option<String>> {
+    match find_by_user_id(db, user_id).await? {
         Some(settings) => Ok(settings.theme),
         None => Ok(None),
     }
 }
 
 /// Update theme preference for a user
-pub fn update_theme(conn: &Connection, user_id: i64, theme: Option<String>) -> AppResult<()> {
+pub async fn update_theme(db: &Db, user_id: i64, theme: Option<String>) -> AppResult<()> {
     // First ensure user_settings row exists
-    conn.execute(
-        "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)
+    db_execute!(
+        db,
+        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
          ON CONFLICT(user_id) DO NOTHING",
-        params![user_id, DEFAULT_ENTRIES_PER_PAGE],
-    )?;
+        user_id,
+        DEFAULT_ENTRIES_PER_PAGE
+    )
+    .map_err(AppError::Database)?;
 
     // Then update theme
-    conn.execute(
-        "UPDATE user_settings SET theme = ?1, updated_at = datetime('now') WHERE user_id = ?2",
-        params![theme, user_id],
-    )?;
+    db_execute!(
+        db,
+        "UPDATE user_settings SET theme = $1, updated_at = $2 WHERE user_id = $3",
+        theme.as_deref(),
+        Utc::now(),
+        user_id
+    )
+    .map_err(AppError::Database)?;
 
     Ok(())
 }
 
 /// Get the per-user read-entry retention threshold in days (0 = disabled).
-pub fn get_retention_read_days(conn: &Connection, user_id: i64) -> AppResult<i64> {
-    match find_by_user_id(conn, user_id)? {
+pub async fn get_retention_read_days(db: &Db, user_id: i64) -> AppResult<i64> {
+    match find_by_user_id(db, user_id).await? {
         Some(settings) => Ok(settings.retention_read_days),
         None => Ok(0),
     }
@@ -172,7 +169,7 @@ pub fn get_retention_read_days(conn: &Connection, user_id: i64) -> AppResult<i64
 /// Set the per-user read-entry retention threshold in days. `0` disables
 /// retention for the user; values outside `0..=MAX_RETENTION_READ_DAYS` are
 /// rejected.
-pub fn update_retention_read_days(conn: &Connection, user_id: i64, days: i64) -> AppResult<()> {
+pub async fn update_retention_read_days(db: &Db, user_id: i64, days: i64) -> AppResult<()> {
     if !(0..=MAX_RETENTION_READ_DAYS).contains(&days) {
         return Err(AppError::Validation(format!(
             "retention_read_days must be between 0 and {}",
@@ -180,171 +177,199 @@ pub fn update_retention_read_days(conn: &Connection, user_id: i64, days: i64) ->
         )));
     }
     // Ensure a row exists, then update (mirrors update_theme).
-    conn.execute(
-        "INSERT INTO user_settings (user_id, entries_per_page) VALUES (?1, ?2)
+    db_execute!(
+        db,
+        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
          ON CONFLICT(user_id) DO NOTHING",
-        params![user_id, DEFAULT_ENTRIES_PER_PAGE],
-    )?;
-    conn.execute(
-        "UPDATE user_settings SET retention_read_days = ?1, updated_at = datetime('now') WHERE user_id = ?2",
-        params![days, user_id],
-    )?;
+        user_id,
+        DEFAULT_ENTRIES_PER_PAGE
+    )
+    .map_err(AppError::Database)?;
+    db_execute!(
+        db,
+        "UPDATE user_settings SET retention_read_days = $1, updated_at = $2 WHERE user_id = $3",
+        days,
+        Utc::now(),
+        user_id
+    )
+    .map_err(AppError::Database)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
     use crate::models::user::{self, Role};
 
-    fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
-        conn
+    async fn setup_db() -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
-    #[test]
-    fn test_get_entries_per_page_default() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_get_entries_per_page_default() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
-        let entries_per_page = get_entries_per_page(&conn, user.id).unwrap();
+        let entries_per_page = get_entries_per_page(&db, user.id).await.unwrap();
         assert_eq!(entries_per_page, DEFAULT_ENTRIES_PER_PAGE);
     }
 
-    #[test]
-    fn test_upsert_and_find() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_upsert_and_find() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
         // Create settings
-        let settings = upsert(&conn, user.id, 50).unwrap();
+        let settings = upsert(&db, user.id, 50).await.unwrap();
         assert_eq!(settings.user_id, user.id);
         assert_eq!(settings.entries_per_page, 50);
 
         // Verify
-        let found = find_by_user_id(&conn, user.id).unwrap().unwrap();
+        let found = find_by_user_id(&db, user.id).await.unwrap().unwrap();
         assert_eq!(found.entries_per_page, 50);
 
         // Update settings
-        let updated = upsert(&conn, user.id, 75).unwrap();
+        let updated = upsert(&db, user.id, 75).await.unwrap();
         assert_eq!(updated.entries_per_page, 75);
 
         // Verify get_entries_per_page
-        let entries_per_page = get_entries_per_page(&conn, user.id).unwrap();
+        let entries_per_page = get_entries_per_page(&db, user.id).await.unwrap();
         assert_eq!(entries_per_page, 75);
     }
 
-    #[test]
-    fn test_upsert_validation() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_upsert_validation() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
         // Too low
-        let result = upsert(&conn, user.id, 5);
+        let result = upsert(&db, user.id, 5).await;
         assert!(matches!(result, Err(AppError::Validation(_))));
 
         // Too high
-        let result = upsert(&conn, user.id, 150);
+        let result = upsert(&db, user.id, 150).await;
         assert!(matches!(result, Err(AppError::Validation(_))));
 
         // Valid boundaries
-        let settings = upsert(&conn, user.id, MIN_ENTRIES_PER_PAGE).unwrap();
+        let settings = upsert(&db, user.id, MIN_ENTRIES_PER_PAGE).await.unwrap();
         assert_eq!(settings.entries_per_page, MIN_ENTRIES_PER_PAGE);
 
-        let settings = upsert(&conn, user.id, MAX_ENTRIES_PER_PAGE).unwrap();
+        let settings = upsert(&db, user.id, MAX_ENTRIES_PER_PAGE).await.unwrap();
         assert_eq!(settings.entries_per_page, MAX_ENTRIES_PER_PAGE);
     }
 
-    #[test]
-    fn test_get_theme_default() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_get_theme_default() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
         // No settings exist yet, should return None
-        let theme = get_theme(&conn, user.id).unwrap();
+        let theme = get_theme(&db, user.id).await.unwrap();
         assert_eq!(theme, None);
     }
 
-    #[test]
-    fn test_update_and_get_theme() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_update_and_get_theme() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
         // Set dark theme
-        update_theme(&conn, user.id, Some("dark".to_string())).unwrap();
-        let theme = get_theme(&conn, user.id).unwrap();
+        update_theme(&db, user.id, Some("dark".to_string()))
+            .await
+            .unwrap();
+        let theme = get_theme(&db, user.id).await.unwrap();
         assert_eq!(theme, Some("dark".to_string()));
 
         // Set light theme
-        update_theme(&conn, user.id, Some("light".to_string())).unwrap();
-        let theme = get_theme(&conn, user.id).unwrap();
+        update_theme(&db, user.id, Some("light".to_string()))
+            .await
+            .unwrap();
+        let theme = get_theme(&db, user.id).await.unwrap();
         assert_eq!(theme, Some("light".to_string()));
 
         // Set to system (None)
-        update_theme(&conn, user.id, None).unwrap();
-        let theme = get_theme(&conn, user.id).unwrap();
+        update_theme(&db, user.id, None).await.unwrap();
+        let theme = get_theme(&db, user.id).await.unwrap();
         assert_eq!(theme, None);
     }
 
-    #[test]
-    fn test_theme_with_existing_settings() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_theme_with_existing_settings() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
         // Create settings first via upsert
-        upsert(&conn, user.id, 50).unwrap();
+        upsert(&db, user.id, 50).await.unwrap();
 
         // Update theme should work on existing settings
-        update_theme(&conn, user.id, Some("dark".to_string())).unwrap();
-        let theme = get_theme(&conn, user.id).unwrap();
+        update_theme(&db, user.id, Some("dark".to_string()))
+            .await
+            .unwrap();
+        let theme = get_theme(&db, user.id).await.unwrap();
         assert_eq!(theme, Some("dark".to_string()));
 
         // Verify entries_per_page is preserved
-        let settings = find_by_user_id(&conn, user.id).unwrap().unwrap();
+        let settings = find_by_user_id(&db, user.id).await.unwrap().unwrap();
         assert_eq!(settings.entries_per_page, 50);
         assert_eq!(settings.theme, Some("dark".to_string()));
     }
 
-    #[test]
-    fn test_retention_read_days_default_zero() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "ret", "hash", Role::User).unwrap();
-        assert_eq!(get_retention_read_days(&conn, user.id).unwrap(), 0);
+    #[tokio::test]
+    async fn test_retention_read_days_default_zero() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "ret", "hash", Role::User)
+            .await
+            .unwrap();
+        assert_eq!(get_retention_read_days(&db, user.id).await.unwrap(), 0);
     }
 
-    #[test]
-    fn test_update_retention_read_days() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "ret", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_update_retention_read_days() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "ret", "hash", Role::User)
+            .await
+            .unwrap();
 
-        update_retention_read_days(&conn, user.id, 30).unwrap();
-        assert_eq!(get_retention_read_days(&conn, user.id).unwrap(), 30);
+        update_retention_read_days(&db, user.id, 30).await.unwrap();
+        assert_eq!(get_retention_read_days(&db, user.id).await.unwrap(), 30);
 
         // Preserves other settings.
-        upsert(&conn, user.id, 50).unwrap();
-        update_retention_read_days(&conn, user.id, 14).unwrap();
-        let s = find_by_user_id(&conn, user.id).unwrap().unwrap();
+        upsert(&db, user.id, 50).await.unwrap();
+        update_retention_read_days(&db, user.id, 14).await.unwrap();
+        let s = find_by_user_id(&db, user.id).await.unwrap().unwrap();
         assert_eq!(s.retention_read_days, 14);
         assert_eq!(s.entries_per_page, 50);
 
         // Negatives are rejected.
         assert!(matches!(
-            update_retention_read_days(&conn, user.id, -1),
+            update_retention_read_days(&db, user.id, -1).await,
             Err(AppError::Validation(_))
         ));
 
         // Values above the upper bound are rejected.
         assert!(matches!(
-            update_retention_read_days(&conn, user.id, MAX_RETENTION_READ_DAYS + 1),
+            update_retention_read_days(&db, user.id, MAX_RETENTION_READ_DAYS + 1).await,
             Err(AppError::Validation(_))
         ));
 
         // The boundary itself is accepted.
-        update_retention_read_days(&conn, user.id, MAX_RETENTION_READ_DAYS).unwrap();
+        update_retention_read_days(&db, user.id, MAX_RETENTION_READ_DAYS)
+            .await
+            .unwrap();
         assert_eq!(
-            get_retention_read_days(&conn, user.id).unwrap(),
+            get_retention_read_days(&db, user.id).await.unwrap(),
             MAX_RETENTION_READ_DAYS
         );
     }

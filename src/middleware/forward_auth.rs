@@ -11,7 +11,7 @@ use time::Duration;
 
 use crate::AppState;
 use crate::config::Config;
-use crate::error::AppError;
+use crate::error::AppResult;
 use crate::middleware::{FlashRedirect, SESSION_COOKIE_NAME};
 use crate::models::user::{self, Role};
 use crate::models::{category, session};
@@ -97,17 +97,9 @@ pub async fn forward_auth(
     // flow. A present-but-invalid cookie (e.g. after logout or expiry) must NOT
     // block forward-auth, or the user is locked out.
     if let Some(token) = jar.get(SESSION_COOKIE_NAME).map(|c| c.value().to_string()) {
-        let valid = state
-            .db
-            .read_user(move |conn| {
-                Ok::<bool, AppError>(
-                    session::find_by_token(conn, &token)?.is_some_and(|s| !s.is_expired()),
-                )
-            })
+        let valid = session::find_by_token(&state.db, &token)
             .await
-            .ok()
-            .and_then(|r| r.ok())
-            .unwrap_or(false);
+            .is_ok_and(|s| s.is_some_and(|s| !s.is_expired()));
         if valid {
             return next.run(req).await;
         }
@@ -139,49 +131,47 @@ pub async fn forward_auth(
 
     // Resolve (or JIT-create) the account and open a session. `None` means
     // "reject" (unknown user with creation off, or a disabled account).
-    let outcome = state
-        .db
-        .user(move |conn| {
-            let user = if let Some(u) = user::find_by_username(conn, &username)? {
-                if u.is_disabled() {
-                    return Ok::<Option<String>, AppError>(None);
-                }
-                if let Some(role) = desired_role
-                    && u.role != role
-                {
-                    user::update_role(conn, u.id, role)?;
-                }
-                u
-            } else {
-                if !allow_creation {
-                    return Ok(None);
-                }
-                let role = match desired_role {
-                    Some(r) => r,
-                    None if user::count(conn)? == 0 => Role::Admin,
-                    None => Role::User,
-                };
-                // Sentinel hash never verifies, so local password login is
-                // impossible for forward-auth-provisioned accounts.
-                let created = user::create_user(conn, &username, "!", role)?;
-                category::create_category(conn, created.id, "Uncategorized")?;
-                created
+    let outcome: AppResult<Option<String>> = async {
+        let user = if let Some(u) = user::find_by_username(&state.db, &username).await? {
+            if u.is_disabled() {
+                return Ok(None);
+            }
+            if let Some(role) = desired_role
+                && u.role != role
+            {
+                user::update_role(&state.db, u.id, role).await?;
+            }
+            u
+        } else {
+            if !allow_creation {
+                return Ok(None);
+            }
+            let role = match desired_role {
+                Some(r) => r,
+                None if user::count(&state.db).await? == 0 => Role::Admin,
+                None => Role::User,
             };
-            let new_session = session::create_session(conn, user.id)?;
-            Ok(Some(new_session.session_token))
-        })
-        .await;
+            // Sentinel hash never verifies, so local password login is
+            // impossible for forward-auth-provisioned accounts.
+            let created = user::create_user(&state.db, &username, "!", role).await?;
+            category::create_category(&state.db, created.id, "Uncategorized").await?;
+            created
+        };
+        let new_session = session::create_session(&state.db, user.id).await?;
+        Ok(Some(new_session.session_token))
+    }
+    .await;
 
     let token = match outcome {
-        Ok(Ok(Some(token))) => token,
-        Ok(Ok(None)) => {
+        Ok(Some(token)) => token,
+        Ok(None) => {
             return FlashRedirect::warning(
                 "/login",
                 "You are not authorized to access this instance.",
             )
             .into_response();
         }
-        // DB/join error → fail closed: fall back to the normal (cookie) flow.
+        // DB error → fail closed: fall back to the normal (cookie) flow.
         _ => return next.run(req).await,
     };
 

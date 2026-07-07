@@ -1,12 +1,12 @@
 use std::time::Duration;
 
-use rusqlite::Connection;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::db::DbPool;
-use crate::error::AppResult;
+use crate::db::Db;
+use crate::error::{AppError, AppResult};
 use crate::models::entry;
+use crate::{db_execute, query_scalar};
 
 /// Entries deleted per transaction during a drain.
 const BATCH_SIZE: usize = 500;
@@ -21,7 +21,7 @@ const VACUUM_FREELIST_RATIO: f64 = 0.20;
 /// `user_settings.retention_read_days > 0`), then runs maintenance. A no-op
 /// when nobody opted in.
 pub fn start_retention_worker(
-    db: DbPool,
+    db: Db,
     interval_hours: u64,
     cancel_token: CancellationToken,
 ) -> JoinHandle<()> {
@@ -41,13 +41,9 @@ pub fn start_retention_worker(
                         if cancel_token.is_cancelled() {
                             break;
                         }
-                        let deleted = match db
-                            .background(move |conn| entry::prune_read_retention_batch(conn, BATCH_SIZE))
-                            .await
-                        {
-                            Ok(Ok(n)) => n,
-                            Ok(Err(e)) => { tracing::error!("Retention prune failed: {}", e); break; }
-                            Err(e) => { tracing::error!("Retention DB access failed: {}", e); break; }
+                        let deleted = match entry::prune_read_retention_batch(&db, BATCH_SIZE).await {
+                            Ok(n) => n,
+                            Err(e) => { tracing::error!("Retention prune failed: {}", e); break; }
                         };
                         total += deleted;
                         if deleted < BATCH_SIZE as u64 {
@@ -57,11 +53,10 @@ pub fn start_retention_worker(
 
                     if total > 0 {
                         tracing::info!("Retention pruned {} read entries", total);
-                        match db.background(run_maintenance).await {
-                            Ok(Ok(true)) => tracing::info!("Retention maintenance: VACUUM ran"),
-                            Ok(Ok(false)) => {}
-                            Ok(Err(e)) => tracing::error!("Retention maintenance failed: {}", e),
-                            Err(e) => tracing::error!("Retention maintenance DB access failed: {}", e),
+                        match run_maintenance(&db).await {
+                            Ok(true) => tracing::info!("Retention maintenance: VACUUM ran"),
+                            Ok(false) => {}
+                            Err(e) => tracing::error!("Retention maintenance failed: {}", e),
                         }
                     }
                 }
@@ -74,51 +69,42 @@ pub fn start_retention_worker(
 
 /// Post-prune maintenance: refresh planner stats, gated full VACUUM, truncating
 /// WAL checkpoint. Returns whether a VACUUM ran. Must run outside a transaction.
-pub fn run_maintenance(conn: &Connection) -> AppResult<bool> {
-    conn.execute_batch("PRAGMA optimize;")?;
+pub async fn run_maintenance(db: &Db) -> AppResult<bool> {
+    db_execute!(db, "PRAGMA optimize;").map_err(AppError::Database)?;
 
-    let page_count: i64 = conn.pragma_query_value(None, "page_count", |r| r.get(0))?;
-    let freelist: i64 = conn.pragma_query_value(None, "freelist_count", |r| r.get(0))?;
+    let page_count: i64 =
+        query_scalar!(db, i64, "PRAGMA page_count;").map_err(AppError::Database)?;
+    let freelist: i64 =
+        query_scalar!(db, i64, "PRAGMA freelist_count;").map_err(AppError::Database)?;
     let vacuumed = page_count > 0 && (freelist as f64 / page_count as f64) >= VACUUM_FREELIST_RATIO;
     if vacuumed {
-        conn.execute_batch("VACUUM;")?;
+        db_execute!(db, "VACUUM;").map_err(AppError::Database)?;
     }
 
-    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+    db_execute!(db, "PRAGMA wal_checkpoint(TRUNCATE);").map_err(AppError::Database)?;
     Ok(vacuumed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
     use crate::models::user::Role;
     use crate::models::{category, feed, user, user_settings};
-    use rusqlite::Connection;
 
-    fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
-        conn
+    async fn setup_pool() -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
-    fn setup_pool() -> DbPool {
-        let conn = setup_db();
-        let read_conn = Connection::open_in_memory().unwrap();
-        let (pool, _h) = DbPool::new(conn, read_conn);
-        pool
-    }
-
-    #[test]
-    fn test_run_maintenance_no_vacuum_below_ratio() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_run_maintenance_no_vacuum_below_ratio() {
+        let db = setup_pool().await;
         // Fresh DB: ~0 freelist -> no VACUUM, but must not error.
-        assert!(!run_maintenance(&conn).unwrap());
+        assert!(!run_maintenance(&db).await.unwrap());
     }
 
     #[tokio::test]
     async fn test_worker_stops_on_cancellation() {
-        let db = setup_pool();
+        let db = setup_pool().await;
         let token = CancellationToken::new();
         let handle = start_retention_worker(db, 1000, token.clone());
         token.cancel();
@@ -131,40 +117,43 @@ mod tests {
 
     #[tokio::test]
     async fn test_drain_deletes_opted_in_aged_read_entries() {
-        let db = setup_pool();
-        db.user(|conn| {
-            let uid = user::create_user(conn, "u", "h", Role::User).unwrap().id;
-            let cid = category::create_category(conn, uid, "C").unwrap().id;
-            let fid = feed::create_feed(
-                conn,
-                &feed::CreateFeedParams {
-                    category_id: cid,
-                    url: "https://e.com/f.xml",
-                    title: Some("F"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
+        let db = setup_pool().await;
+        let uid = user::create_user(&db, "u", "h", Role::User)
+            .await
             .unwrap()
             .id;
-            entry::upsert_entry_id(conn, fid, "old", Some("o"), None, None, None, None, None)
-                .unwrap();
-            conn.execute(
-                "UPDATE entry SET read_at = datetime('now','-40 days') WHERE guid='old' AND feed_id=?1",
-                rusqlite::params![fid],
-            )
-            .unwrap();
-            user_settings::update_retention_read_days(conn, uid, 30).unwrap();
-        })
+        let cid = category::create_category(&db, uid, "C").await.unwrap().id;
+        let fid = feed::create_feed(
+            &db,
+            &feed::CreateFeedParams {
+                category_id: cid,
+                url: "https://e.com/f.xml",
+                title: Some("F"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
         .await
+        .unwrap()
+        .id;
+        entry::upsert_entry_id(&db, fid, "old", Some("o"), None, None, None, None, None)
+            .await
+            .unwrap();
+        db_execute!(
+            &db,
+            "UPDATE entry SET read_at = datetime('now','-40 days') WHERE guid='old' AND feed_id=$1",
+            fid,
+        )
         .unwrap();
+        user_settings::update_retention_read_days(&db, uid, 30)
+            .await
+            .unwrap();
 
         // Simulate one worker tick's drain.
-        let deleted: u64 = db
-            .background(|conn| entry::prune_read_retention_batch(conn, BATCH_SIZE).unwrap())
+        let deleted = entry::prune_read_retention_batch(&db, BATCH_SIZE)
             .await
             .unwrap();
         assert_eq!(deleted, 1);

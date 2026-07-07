@@ -1,14 +1,15 @@
 use chrono::{DateTime, Duration, Utc};
 use rand::RngExt;
-use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::{db_execute, query_one, query_opt};
 
 pub const SESSION_EXPIRY_DAYS: i64 = 7;
 pub const SESSION_ABSOLUTE_MAX_DAYS: i64 = 90;
 const TOKEN_LENGTH: usize = 32;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Session {
     pub id: i64,
     pub user_id: i64,
@@ -77,61 +78,29 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
-fn parse_datetime(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .map(|dt| dt.with_timezone(&Utc))
-        .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
-        })
-        .or_else(|_| dateparser::parse(s).map(|dt| dt.with_timezone(&Utc)))
-        .unwrap_or_else(|_| Utc::now())
-}
-
-fn row_to_session(row: &rusqlite::Row) -> rusqlite::Result<Session> {
-    let created_at: String = row.get(4)?;
-    let expires_at: String = row.get(5)?;
-
-    Ok(Session {
-        id: row.get(0)?,
-        user_id: row.get(1)?,
-        session_token: row.get(2)?,
-        original_user_id: row.get(3)?,
-        created_at: parse_datetime(&created_at),
-        expires_at: parse_datetime(&expires_at),
-    })
-}
-
-pub fn create_session(conn: &Connection, user_id: i64) -> AppResult<Session> {
+pub async fn create_session(db: &Db, user_id: i64) -> AppResult<Session> {
     let token = generate_token();
     let expires_at = Utc::now() + Duration::days(SESSION_EXPIRY_DAYS);
-    let expires_at_str = expires_at.format("%Y-%m-%d %H:%M:%S").to_string();
 
-    conn.execute(
-        "INSERT INTO session (user_id, session_token, expires_at) VALUES (?1, ?2, ?3)",
-        params![user_id, token, expires_at_str],
-    )?;
-
-    let id = conn.last_insert_rowid();
-    find_by_id(conn, id)?.ok_or(AppError::Internal("Failed to create session".to_string()))
-}
-
-fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Session>> {
-    conn.query_row(
-        "SELECT id, user_id, session_token, original_user_id, created_at, expires_at FROM session WHERE id = ?1",
-        params![id],
-        row_to_session,
+    query_one!(
+        db,
+        Session,
+        "INSERT INTO session (user_id, session_token, expires_at) VALUES ($1, $2, $3) \
+         RETURNING id, user_id, session_token, original_user_id, created_at, expires_at",
+        user_id,
+        &token,
+        expires_at
     )
-    .optional()
     .map_err(AppError::Database)
 }
 
-pub fn find_by_token(conn: &Connection, token: &str) -> AppResult<Option<Session>> {
-    conn.query_row(
-        "SELECT id, user_id, session_token, original_user_id, created_at, expires_at FROM session WHERE session_token = ?1",
-        params![token],
-        row_to_session,
+pub async fn find_by_token(db: &Db, token: &str) -> AppResult<Option<Session>> {
+    query_opt!(
+        db,
+        Session,
+        "SELECT id, user_id, session_token, original_user_id, created_at, expires_at FROM session WHERE session_token = $1",
+        token
     )
-    .optional()
     .map_err(AppError::Database)
 }
 
@@ -140,57 +109,67 @@ pub fn find_by_token(conn: &Connection, token: &str) -> AppResult<Option<Session
 /// Returns the new `expires_at` when the session was extended, or `None` when
 /// no update was necessary (session still has plenty of TTL, or it has hit the
 /// absolute cap of `created_at + SESSION_ABSOLUTE_MAX_DAYS`).
-pub fn refresh_if_needed(conn: &Connection, session: &Session) -> AppResult<Option<DateTime<Utc>>> {
+pub async fn refresh_if_needed(db: &Db, session: &Session) -> AppResult<Option<DateTime<Utc>>> {
     let Some(new_expires_at) = session.compute_refreshed_expiry(Utc::now()) else {
         return Ok(None);
     };
-    let new_expires_at_str = new_expires_at.format("%Y-%m-%d %H:%M:%S").to_string();
-    conn.execute(
-        "UPDATE session SET expires_at = ?1 WHERE id = ?2",
-        params![new_expires_at_str, session.id],
-    )?;
+    db_execute!(
+        db,
+        "UPDATE session SET expires_at = $1 WHERE id = $2",
+        new_expires_at,
+        session.id
+    )
+    .map_err(AppError::Database)?;
     Ok(Some(new_expires_at))
 }
 
-pub fn delete_session(conn: &Connection, token: &str) -> AppResult<()> {
-    conn.execute(
-        "DELETE FROM session WHERE session_token = ?1",
-        params![token],
-    )?;
+pub async fn delete_session(db: &Db, token: &str) -> AppResult<()> {
+    db_execute!(db, "DELETE FROM session WHERE session_token = $1", token)
+        .map_err(AppError::Database)?;
     Ok(())
 }
 
-pub fn delete_user_sessions(conn: &Connection, user_id: i64) -> AppResult<()> {
-    conn.execute("DELETE FROM session WHERE user_id = ?1", params![user_id])?;
+pub async fn delete_user_sessions(db: &Db, user_id: i64) -> AppResult<()> {
+    db_execute!(db, "DELETE FROM session WHERE user_id = $1", user_id)
+        .map_err(AppError::Database)?;
     Ok(())
 }
 
-pub fn start_masquerade(conn: &Connection, token: &str, target_user_id: i64) -> AppResult<()> {
-    let session = find_by_token(conn, token)?.ok_or(AppError::Unauthorized)?;
+pub async fn start_masquerade(db: &Db, token: &str, target_user_id: i64) -> AppResult<()> {
+    let session = find_by_token(db, token)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
 
     if session.is_masquerading() {
         return Err(AppError::AlreadyMasquerading);
     }
 
-    conn.execute(
-        "UPDATE session SET original_user_id = user_id, user_id = ?1 WHERE session_token = ?2",
-        params![target_user_id, token],
-    )?;
+    db_execute!(
+        db,
+        "UPDATE session SET original_user_id = user_id, user_id = $1 WHERE session_token = $2",
+        target_user_id,
+        token
+    )
+    .map_err(AppError::Database)?;
 
     Ok(())
 }
 
-pub fn stop_masquerade(conn: &Connection, token: &str) -> AppResult<()> {
-    let session = find_by_token(conn, token)?.ok_or(AppError::Unauthorized)?;
+pub async fn stop_masquerade(db: &Db, token: &str) -> AppResult<()> {
+    let session = find_by_token(db, token)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
 
     if !session.is_masquerading() {
         return Err(AppError::NotMasquerading);
     }
 
-    conn.execute(
-        "UPDATE session SET user_id = original_user_id, original_user_id = NULL WHERE session_token = ?1",
-        params![token],
-    )?;
+    db_execute!(
+        db,
+        "UPDATE session SET user_id = original_user_id, original_user_id = NULL WHERE session_token = $1",
+        token
+    )
+    .map_err(AppError::Database)?;
 
     Ok(())
 }
@@ -198,91 +177,109 @@ pub fn stop_masquerade(conn: &Connection, token: &str) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
     use crate::models::user::{self, Role};
 
-    fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
-        conn
+    async fn setup_db() -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
-    #[test]
-    fn test_create_and_find_session() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_create_and_find_session() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
-        let session = create_session(&conn, user.id).unwrap();
+        let session = create_session(&db, user.id).await.unwrap();
         assert_eq!(session.user_id, user.id);
         assert!(!session.is_masquerading());
         assert!(!session.is_expired());
 
-        let found = find_by_token(&conn, &session.session_token)
+        let found = find_by_token(&db, &session.session_token)
+            .await
             .unwrap()
             .unwrap();
         assert_eq!(found.id, session.id);
     }
 
-    #[test]
-    fn test_delete_session() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_delete_session() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
-        let session = create_session(&conn, user.id).unwrap();
-        delete_session(&conn, &session.session_token).unwrap();
+        let session = create_session(&db, user.id).await.unwrap();
+        delete_session(&db, &session.session_token).await.unwrap();
 
-        let found = find_by_token(&conn, &session.session_token).unwrap();
+        let found = find_by_token(&db, &session.session_token).await.unwrap();
         assert!(found.is_none());
     }
 
-    #[test]
-    fn test_masquerade() {
-        let conn = setup_db();
-        let admin = user::create_user(&conn, "admin", "hash", Role::Admin).unwrap();
-        let target = user::create_user(&conn, "target", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_masquerade() {
+        let db = setup_db().await;
+        let admin = user::create_user(&db, "admin", "hash", Role::Admin)
+            .await
+            .unwrap();
+        let target = user::create_user(&db, "target", "hash", Role::User)
+            .await
+            .unwrap();
 
-        let session = create_session(&conn, admin.id).unwrap();
+        let session = create_session(&db, admin.id).await.unwrap();
         assert!(!session.is_masquerading());
 
-        start_masquerade(&conn, &session.session_token, target.id).unwrap();
+        start_masquerade(&db, &session.session_token, target.id)
+            .await
+            .unwrap();
 
-        let masq = find_by_token(&conn, &session.session_token)
+        let masq = find_by_token(&db, &session.session_token)
+            .await
             .unwrap()
             .unwrap();
         assert!(masq.is_masquerading());
         assert_eq!(masq.user_id, target.id);
         assert_eq!(masq.original_user_id, Some(admin.id));
 
-        stop_masquerade(&conn, &session.session_token).unwrap();
+        stop_masquerade(&db, &session.session_token).await.unwrap();
 
-        let restored = find_by_token(&conn, &session.session_token)
+        let restored = find_by_token(&db, &session.session_token)
+            .await
             .unwrap()
             .unwrap();
         assert!(!restored.is_masquerading());
         assert_eq!(restored.user_id, admin.id);
     }
 
-    #[test]
-    fn test_already_masquerading() {
-        let conn = setup_db();
-        let admin = user::create_user(&conn, "admin", "hash", Role::Admin).unwrap();
-        let target = user::create_user(&conn, "target", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_already_masquerading() {
+        let db = setup_db().await;
+        let admin = user::create_user(&db, "admin", "hash", Role::Admin)
+            .await
+            .unwrap();
+        let target = user::create_user(&db, "target", "hash", Role::User)
+            .await
+            .unwrap();
 
-        let session = create_session(&conn, admin.id).unwrap();
-        start_masquerade(&conn, &session.session_token, target.id).unwrap();
+        let session = create_session(&db, admin.id).await.unwrap();
+        start_masquerade(&db, &session.session_token, target.id)
+            .await
+            .unwrap();
 
-        let result = start_masquerade(&conn, &session.session_token, target.id);
+        let result = start_masquerade(&db, &session.session_token, target.id).await;
         assert!(matches!(result, Err(AppError::AlreadyMasquerading)));
     }
 
-    #[test]
-    fn test_not_masquerading() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "user", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_not_masquerading() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "user", "hash", Role::User)
+            .await
+            .unwrap();
 
-        let session = create_session(&conn, user.id).unwrap();
+        let session = create_session(&db, user.id).await.unwrap();
 
-        let result = stop_masquerade(&conn, &session.session_token);
+        let result = stop_masquerade(&db, &session.session_token).await;
         assert!(matches!(result, Err(AppError::NotMasquerading)));
     }
 
@@ -350,32 +347,36 @@ mod tests {
         assert!(session.compute_refreshed_expiry(now).is_none());
     }
 
-    #[test]
-    fn refresh_if_needed_persists_new_expiry() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
-        let session = create_session(&conn, user.id).unwrap();
+    #[tokio::test]
+    async fn refresh_if_needed_persists_new_expiry() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+        let session = create_session(&db, user.id).await.unwrap();
 
-        let past_created = (Utc::now() - Duration::days(6))
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        let near_expiry = (Utc::now() + Duration::hours(12))
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        conn.execute(
-            "UPDATE session SET created_at = ?1, expires_at = ?2 WHERE id = ?3",
-            params![past_created, near_expiry, session.id],
+        let past_created = Utc::now() - Duration::days(6);
+        let near_expiry = Utc::now() + Duration::hours(12);
+        db_execute!(
+            &db,
+            "UPDATE session SET created_at = $1, expires_at = $2 WHERE id = $3",
+            past_created,
+            near_expiry,
+            session.id
         )
         .unwrap();
 
-        let reloaded = find_by_token(&conn, &session.session_token)
+        let reloaded = find_by_token(&db, &session.session_token)
+            .await
             .unwrap()
             .unwrap();
-        let new_expires = refresh_if_needed(&conn, &reloaded)
+        let new_expires = refresh_if_needed(&db, &reloaded)
+            .await
             .unwrap()
             .expect("should refresh");
 
-        let after = find_by_token(&conn, &session.session_token)
+        let after = find_by_token(&db, &session.session_token)
+            .await
             .unwrap()
             .unwrap();
         let drift = (after.expires_at - new_expires).num_seconds().abs();
@@ -383,12 +384,14 @@ mod tests {
         assert!(after.expires_at > reloaded.expires_at);
     }
 
-    #[test]
-    fn refresh_if_needed_noop_for_fresh_session() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
-        let session = create_session(&conn, user.id).unwrap();
+    #[tokio::test]
+    async fn refresh_if_needed_noop_for_fresh_session() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+        let session = create_session(&db, user.id).await.unwrap();
 
-        assert!(refresh_if_needed(&conn, &session).unwrap().is_none());
+        assert!(refresh_if_needed(&db, &session).await.unwrap().is_none());
     }
 }

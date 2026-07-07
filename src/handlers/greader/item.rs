@@ -76,55 +76,50 @@ pub async fn stream_contents(
 
     let summary_cache = state.summary_cache.clone();
 
-    let (entries, continuation, stream_id_str, db_statuses) = state
-        .db
-        .read_user(move |conn| {
-            // Resolve stream-specific constraints
-            let mut effective_filter = filter;
+    // Resolve stream-specific constraints
+    let mut effective_filter = filter;
 
-            // Resolve feed_id from stream if it's a Feed stream
-            if let StreamId::Feed(ref url) = stream_id {
-                let f = feed::find_by_url_for_user(conn, url, user_id)?
-                    .ok_or(AppError::FeedNotFound)?;
-                effective_filter.feed_id = Some(f.id);
-            }
+    // Resolve feed_id from stream if it's a Feed stream
+    if let StreamId::Feed(ref url) = stream_id {
+        let f = feed::find_by_url_for_user(&state.db, url, user_id)
+            .await?
+            .ok_or(AppError::FeedNotFound)?;
+        effective_filter.feed_id = Some(f.id);
+    }
 
-            // Resolve category_id from stream if it's a Label stream
-            if let StreamId::Label(ref name) = stream_id {
-                let cat = category::find_by_name_and_user(conn, name, user_id)?
-                    .ok_or(AppError::CategoryNotFound)?;
-                effective_filter.category_id = Some(cat.id);
-            }
+    // Resolve category_id from stream if it's a Label stream
+    if let StreamId::Label(ref name) = stream_id {
+        let cat = category::find_by_name_and_user(&state.db, name, user_id)
+            .await?
+            .ok_or(AppError::CategoryNotFound)?;
+        effective_filter.category_id = Some(cat.id);
+    }
 
-            // Fetch entries with continuation-based pagination
-            let entries = entry::list_by_user_with_continuation(
-                conn,
-                user_id,
-                &effective_filter,
-                &pagination,
-            )?;
+    // Fetch entries with continuation-based pagination
+    let entries =
+        entry::list_by_user_with_continuation(&state.db, user_id, &effective_filter, &pagination)
+            .await?;
 
-            let has_more = entries.len() as i64 > count;
-            let entries: Vec<_> = entries.into_iter().take(count as usize).collect();
+    let has_more = entries.len() as i64 > count;
+    let entries: Vec<_> = entries.into_iter().take(count as usize).collect();
 
-            let continuation = if has_more {
-                match entries.last() {
-                    Some(e) => entry::fetch_sort_ts(conn, e.entry.id, sort_order)?
-                        .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id)),
-                    None => None,
-                }
-            } else {
-                None
-            };
+    let continuation = if has_more {
+        match entries.last() {
+            Some(e) => entry::fetch_sort_ts(&state.db, e.entry.id, sort_order)
+                .await?
+                .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id)),
+            None => None,
+        }
+    } else {
+        None
+    };
 
-            // Batch-query summary statuses from DB
-            let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
-            let db_statuses = entry_summary::get_statuses_for_entries(conn, user_id, &entry_ids)?;
+    // Batch-query summary statuses from DB
+    let entry_ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
+    let db_statuses =
+        entry_summary::get_statuses_for_entries(&state.db, user_id, &entry_ids).await?;
 
-            let sid = stream_id.to_string();
-            Ok::<_, AppError>((entries, continuation, sid, db_statuses))
-        })
-        .await??;
+    let stream_id_str = stream_id.to_string();
 
     // Merge in-flight cache statuses (cache takes priority over DB)
     let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
@@ -209,52 +204,51 @@ pub async fn stream_item_ids(
         sort_order,
     };
 
-    let response = state
-        .db
-        .read_user(move |conn| {
-            let mut effective_filter = filter;
+    let mut effective_filter = filter;
 
-            if let StreamId::Feed(ref url) = stream_id {
-                let f = feed::find_by_url_for_user(conn, url, user_id)?
-                    .ok_or(AppError::FeedNotFound)?;
-                effective_filter.feed_id = Some(f.id);
-            }
+    if let StreamId::Feed(ref url) = stream_id {
+        let f = feed::find_by_url_for_user(&state.db, url, user_id)
+            .await?
+            .ok_or(AppError::FeedNotFound)?;
+        effective_filter.feed_id = Some(f.id);
+    }
 
-            if let StreamId::Label(ref name) = stream_id {
-                let cat = category::find_by_name_and_user(conn, name, user_id)?
-                    .ok_or(AppError::CategoryNotFound)?;
-                effective_filter.category_id = Some(cat.id);
-            }
+    if let StreamId::Label(ref name) = stream_id {
+        let cat = category::find_by_name_and_user(&state.db, name, user_id)
+            .await?
+            .ok_or(AppError::CategoryNotFound)?;
+        effective_filter.category_id = Some(cat.id);
+    }
 
-            let entries = entry::list_ids_by_user(conn, user_id, &effective_filter, &pagination)?;
+    let entries =
+        entry::list_ids_by_user(&state.db, user_id, &effective_filter, &pagination).await?;
 
-            let has_more = entries.len() as i64 > count;
-            let entries: Vec<_> = entries.into_iter().take(count as usize).collect();
+    let has_more = entries.len() as i64 > count;
+    let entries: Vec<_> = entries.into_iter().take(count as usize).collect();
 
-            let continuation = if has_more {
-                match entries.last() {
-                    Some((id, _)) => entry::fetch_sort_ts(conn, *id, sort_order)?
-                        .map(|ts| entry::ContinuationCursor::encode_composite(&ts, *id)),
-                    None => None,
-                }
-            } else {
-                None
-            };
+    let continuation = if has_more {
+        match entries.last() {
+            Some((id, _)) => entry::fetch_sort_ts(&state.db, *id, sort_order)
+                .await?
+                .map(|ts| entry::ContinuationCursor::encode_composite(&ts, *id)),
+            None => None,
+        }
+    } else {
+        None
+    };
 
-            let item_refs = entries
-                .iter()
-                .map(|(id, timestamp_usec)| ItemRef {
-                    id: id.to_string(),
-                    timestamp_usec: timestamp_usec.to_string(),
-                })
-                .collect();
-
-            Ok::<_, AppError>(StreamItemIdsResponse {
-                item_refs,
-                continuation,
-            })
+    let item_refs = entries
+        .iter()
+        .map(|(id, timestamp_usec)| ItemRef {
+            id: id.to_string(),
+            timestamp_usec: timestamp_usec.to_string(),
         })
-        .await??;
+        .collect();
+
+    let response = StreamItemIdsResponse {
+        item_refs,
+        continuation,
+    };
 
     Ok(Json(response))
 }
@@ -280,31 +274,28 @@ pub async fn stream_item_count(
     let stream_id = StreamId::parse(stream_str)?;
     let user_id = auth.user.id;
 
-    let count = state
-        .db
-        .read_user(move |conn| {
-            let mut filter = entry::EntryFilter::default();
+    let mut filter = entry::EntryFilter::default();
 
-            match &stream_id {
-                StreamId::ReadingList => {}
-                StreamId::Read => filter.read_only = true,
-                StreamId::Starred => filter.starred_only = true,
-                StreamId::KeptUnread => filter.unread_only = true,
-                StreamId::Label(name) => {
-                    let cat = category::find_by_name_and_user(conn, name, user_id)?
-                        .ok_or(AppError::CategoryNotFound)?;
-                    filter.category_id = Some(cat.id);
-                }
-                StreamId::Feed(url) => {
-                    let f = feed::find_by_url_for_user(conn, url, user_id)?
-                        .ok_or(AppError::FeedNotFound)?;
-                    filter.feed_id = Some(f.id);
-                }
-            }
+    match &stream_id {
+        StreamId::ReadingList => {}
+        StreamId::Read => filter.read_only = true,
+        StreamId::Starred => filter.starred_only = true,
+        StreamId::KeptUnread => filter.unread_only = true,
+        StreamId::Label(name) => {
+            let cat = category::find_by_name_and_user(&state.db, name, user_id)
+                .await?
+                .ok_or(AppError::CategoryNotFound)?;
+            filter.category_id = Some(cat.id);
+        }
+        StreamId::Feed(url) => {
+            let f = feed::find_by_url_for_user(&state.db, url, user_id)
+                .await?
+                .ok_or(AppError::FeedNotFound)?;
+            filter.feed_id = Some(f.id);
+        }
+    }
 
-            entry::count_by_user(conn, user_id, &filter)
-        })
-        .await??;
+    let count = entry::count_by_user(&state.db, user_id, &filter).await?;
 
     Ok(count.to_string())
 }
@@ -365,18 +356,11 @@ async fn fetch_items_by_ids(
 
     let summary_cache = state.summary_cache.clone();
 
-    let (entries, db_statuses) = state
-        .db
-        .read_user(move |conn| {
-            let entries = entry::find_by_ids_with_feed(conn, user_id, &entry_ids)?;
+    let entries = entry::find_by_ids_with_feed(&state.db, user_id, &entry_ids).await?;
 
-            // Batch-query summary statuses from DB
-            let ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
-            let db_statuses = entry_summary::get_statuses_for_entries(conn, user_id, &ids)?;
-
-            Ok::<_, AppError>((entries, db_statuses))
-        })
-        .await??;
+    // Batch-query summary statuses from DB
+    let ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
+    let db_statuses = entry_summary::get_statuses_for_entries(&state.db, user_id, &ids).await?;
 
     // Merge in-flight cache statuses (cache takes priority over DB)
     let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);

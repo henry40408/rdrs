@@ -46,7 +46,7 @@ where
 use super::sidebar_cache::SidebarCache;
 use super::summarize::kagi::{self, KagiConfig};
 use super::summary_cache::SummaryCache;
-use crate::db::DbPool;
+use crate::db::Db;
 use crate::models::{entry_summary, user_settings};
 use crate::services::{EventBus, SummaryStatus};
 
@@ -68,7 +68,7 @@ pub fn start_summary_worker(
     mut rx: mpsc::Receiver<SummaryJob>,
     cache: Arc<SummaryCache>,
     sidebar_cache: Arc<SidebarCache>,
-    db: DbPool,
+    db: Db,
     cancels: CancelRegistry,
     cancel_token: CancellationToken,
     events: EventBus,
@@ -105,7 +105,7 @@ async fn process_summary_job(
     job: &SummaryJob,
     cache: &Arc<SummaryCache>,
     sidebar_cache: &Arc<SidebarCache>,
-    db: &DbPool,
+    db: &Db,
     cancels: &CancelRegistry,
     events: &EventBus,
 ) {
@@ -134,7 +134,7 @@ async fn run_summary_job_body(
     job: &SummaryJob,
     cache: &Arc<SummaryCache>,
     sidebar_cache: &Arc<SidebarCache>,
-    db: &DbPool,
+    db: &Db,
     token: &CancellationToken,
     events: &EventBus,
 ) {
@@ -152,9 +152,8 @@ async fn run_summary_job_body(
     {
         let user_id = job.user_id;
         let entry_id = job.entry_id;
-        if let Ok(Err(crate::error::AppError::NotFound(_))) = db
-            .background(move |conn| entry_summary::set_processing(conn, user_id, entry_id))
-            .await
+        if let Err(crate::error::AppError::NotFound(_)) =
+            entry_summary::set_processing(db, user_id, entry_id).await
         {
             cache.remove(job.user_id, job.entry_id);
             return;
@@ -166,27 +165,13 @@ async fn run_summary_job_body(
     // Get Kagi config for the user
     let user_id = job.user_id;
     let entry_id = job.entry_id;
-    let kagi_config = match db
-        .background(move |conn| user_settings::get_save_services_config(conn, user_id))
-        .await
-    {
-        Ok(Ok(config)) => config.kagi,
-        Ok(Err(e)) => {
+    let kagi_config = match user_settings::get_save_services_config(db, user_id).await {
+        Ok(config) => config.kagi,
+        Err(e) => {
             tracing::error!("Failed to get user settings: {}", e);
             let error_msg = "Failed to load Kagi settings".to_string();
             cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
-            let _ = db
-                .background(move |conn| {
-                    entry_summary::set_failed(conn, user_id, entry_id, &error_msg)
-                })
-                .await;
-            events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
-            return;
-        }
-        Err(e) => {
-            tracing::error!("Failed to access DB: {}", e);
-            let error_msg = "Internal error: DB access failed".to_string();
-            cache.set_failed(job.user_id, job.entry_id, error_msg);
+            let _ = entry_summary::set_failed(db, user_id, entry_id, &error_msg).await;
             events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
             return;
         }
@@ -199,11 +184,7 @@ async fn run_summary_job_body(
             cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
             let user_id = job.user_id;
             let entry_id = job.entry_id;
-            let _ = db
-                .background(move |conn| {
-                    entry_summary::set_failed(conn, user_id, entry_id, &error_msg)
-                })
-                .await;
+            let _ = entry_summary::set_failed(db, user_id, entry_id, &error_msg).await;
             events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Failed));
             return;
         }
@@ -226,12 +207,8 @@ async fn run_summary_job_body(
             let user_id = job.user_id;
             let entry_id = job.entry_id;
             let text = summary_text.clone();
-            let db_res = db
-                .background(move |conn| {
-                    entry_summary::set_completed(conn, user_id, entry_id, &text)
-                })
-                .await;
-            if let Ok(Err(crate::error::AppError::NotFound(_))) = db_res {
+            let db_res = entry_summary::set_completed(db, user_id, entry_id, &text).await;
+            if let Err(crate::error::AppError::NotFound(_)) = db_res {
                 // Cancelled mid-flight (row deleted) — do not repopulate the cache.
                 cache.remove(job.user_id, job.entry_id);
             } else {
@@ -247,10 +224,8 @@ async fn run_summary_job_body(
             let user_id = job.user_id;
             let entry_id = job.entry_id;
             let err = error.clone();
-            let db_res = db
-                .background(move |conn| entry_summary::set_failed(conn, user_id, entry_id, &err))
-                .await;
-            if let Ok(Err(crate::error::AppError::NotFound(_))) = db_res {
+            let db_res = entry_summary::set_failed(db, user_id, entry_id, &err).await;
+            if let Err(crate::error::AppError::NotFound(_)) = db_res {
                 // Cancelled mid-flight (row deleted) — do not repopulate the cache.
                 cache.remove(job.user_id, job.entry_id);
             } else {
@@ -292,18 +267,14 @@ pub fn create_summary_channel(
 /// Recover incomplete summary jobs on startup
 /// Returns the number of jobs re-queued
 pub async fn recover_incomplete_jobs(
-    db: DbPool,
+    db: Db,
     tx: mpsc::Sender<SummaryJob>,
     cache: Arc<SummaryCache>,
 ) -> usize {
-    let incomplete = match db.read_background(entry_summary::find_incomplete).await {
-        Ok(Ok(jobs)) => jobs,
-        Ok(Err(e)) => {
-            tracing::error!("Failed to find incomplete jobs: {}", e);
-            return 0;
-        }
+    let incomplete = match entry_summary::find_incomplete(&db).await {
+        Ok(jobs) => jobs,
         Err(e) => {
-            tracing::error!("Failed to access DB for recovery: {}", e);
+            tracing::error!("Failed to find incomplete jobs: {}", e);
             return 0;
         }
     };
@@ -334,38 +305,16 @@ pub async fn recover_incomplete_jobs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
     use crate::models::user::Role;
     use crate::models::{category, entry, entry_summary, feed, user};
     use crate::services::{EventBus, EventKind};
-    use rusqlite::Connection;
 
     fn registry() -> CancelRegistry {
         Arc::new(Mutex::new(HashMap::new()))
     }
 
-    fn open_shared_memory(name: &str) -> Connection {
-        let uri = format!("file:{}?mode=memory&cache=shared", name);
-        Connection::open_with_flags(
-            uri,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-                | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-        )
-        .unwrap()
-    }
-
-    fn setup_test_db() -> DbPool {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let name = format!("test_summary_worker_{}", id);
-
-        let write_conn = open_shared_memory(&name);
-        init_db(&write_conn).unwrap();
-        let read_conn = open_shared_memory(&name);
-        let (pool, _handle) = DbPool::new(write_conn, read_conn);
-        pool
+    async fn setup_test_db() -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
     #[test]
@@ -431,7 +380,7 @@ mod tests {
     async fn test_worker_stops_on_cancellation() {
         let (tx, rx) = create_summary_channel(10);
         let cache = Arc::new(SummaryCache::new(100, 24));
-        let db = setup_test_db();
+        let db = setup_test_db().await;
         let cancel_token = CancellationToken::new();
 
         let handle = start_summary_worker(
@@ -465,7 +414,7 @@ mod tests {
     async fn test_worker_stops_when_channel_closed() {
         let (tx, rx) = create_summary_channel(10);
         let cache = Arc::new(SummaryCache::new(100, 24));
-        let db = setup_test_db();
+        let db = setup_test_db().await;
         let cancel_token = CancellationToken::new();
 
         let handle = start_summary_worker(
@@ -488,7 +437,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_recover_incomplete_jobs_empty() {
-        let db = setup_test_db();
+        let db = setup_test_db().await;
         let (tx, _rx) = create_summary_channel(10);
         let cache = Arc::new(SummaryCache::new(100, 24));
 
@@ -499,48 +448,52 @@ mod tests {
 
     #[tokio::test]
     async fn test_recover_incomplete_jobs_with_pending() {
-        let db = setup_test_db();
+        let db = setup_test_db().await;
 
         // Create test data with a pending summary
-        db.user(|conn| {
-            let user_id = user::create_user(conn, "testuser", "hash", Role::User)
-                .unwrap()
-                .id;
-            let category_id = category::create_category(conn, user_id, "Tech").unwrap().id;
-            let feed_id = feed::create_feed(
-                conn,
-                &feed::CreateFeedParams {
-                    category_id,
-                    url: "https://example.com/feed.xml",
-                    title: Some("Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
+        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
             .unwrap()
             .id;
+        let category_id = category::create_category(&db, user_id, "Tech")
+            .await
+            .unwrap()
+            .id;
+        let feed_id = feed::create_feed(
+            &db,
+            &feed::CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: Some("Feed"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id;
 
-            let (entry_obj, _) = entry::upsert_entry(
-                conn,
-                feed_id,
-                "guid-1",
-                Some("Entry"),
-                Some("https://example.com/article"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-
-            // Create a pending summary
-            entry_summary::upsert_pending(conn, user_id, entry_obj.id).unwrap();
-        })
+        let (entry_obj, _) = entry::upsert_entry(
+            &db,
+            feed_id,
+            "guid-1",
+            Some("Entry"),
+            Some("https://example.com/article"),
+            None,
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
+
+        // Create a pending summary
+        entry_summary::upsert_pending(&db, user_id, entry_obj.id)
+            .await
+            .unwrap();
 
         let (tx, mut rx) = create_summary_channel(10);
         let cache = Arc::new(SummaryCache::new(100, 24));
@@ -559,49 +512,55 @@ mod tests {
 
     #[tokio::test]
     async fn test_recover_incomplete_jobs_with_processing() {
-        let db = setup_test_db();
+        let db = setup_test_db().await;
 
         // Create test data with a processing (stuck) summary
-        db.user(|conn| {
-            let user_id = user::create_user(conn, "testuser", "hash", Role::User)
-                .unwrap()
-                .id;
-            let category_id = category::create_category(conn, user_id, "Tech").unwrap().id;
-            let feed_id = feed::create_feed(
-                conn,
-                &feed::CreateFeedParams {
-                    category_id,
-                    url: "https://example.com/feed.xml",
-                    title: Some("Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
+        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
             .unwrap()
             .id;
+        let category_id = category::create_category(&db, user_id, "Tech")
+            .await
+            .unwrap()
+            .id;
+        let feed_id = feed::create_feed(
+            &db,
+            &feed::CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: Some("Feed"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id;
 
-            let (entry_obj, _) = entry::upsert_entry(
-                conn,
-                feed_id,
-                "guid-2",
-                Some("Entry 2"),
-                Some("https://example.com/article2"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-
-            // Create a processing summary (simulates a crashed worker)
-            entry_summary::upsert_pending(conn, user_id, entry_obj.id).unwrap();
-            entry_summary::set_processing(conn, user_id, entry_obj.id).unwrap();
-        })
+        let (entry_obj, _) = entry::upsert_entry(
+            &db,
+            feed_id,
+            "guid-2",
+            Some("Entry 2"),
+            Some("https://example.com/article2"),
+            None,
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
+
+        // Create a processing summary (simulates a crashed worker)
+        entry_summary::upsert_pending(&db, user_id, entry_obj.id)
+            .await
+            .unwrap();
+        entry_summary::set_processing(&db, user_id, entry_obj.id)
+            .await
+            .unwrap();
 
         let (tx, mut rx) = create_summary_channel(10);
         let cache = Arc::new(SummaryCache::new(100, 24));
@@ -659,48 +618,46 @@ mod tests {
 
     #[tokio::test]
     async fn cancelled_while_queued_does_not_repopulate_cache() {
-        let db = setup_test_db();
+        let db = setup_test_db().await;
 
-        let (user_id, entry_id) = db
-            .user(|conn| {
-                let u = user::create_user(conn, "canceluser", "hash", Role::User)
-                    .unwrap()
-                    .id;
-                let cat = category::create_category(conn, u, "Tech").unwrap().id;
-                let feed_id = feed::create_feed(
-                    conn,
-                    &feed::CreateFeedParams {
-                        category_id: cat,
-                        url: "https://example.com/feed.xml",
-                        title: Some("Feed"),
-                        description: None,
-                        site_url: None,
-                        custom_user_agent: None,
-                        http2_disabled: None,
-                        custom_referrer: None,
-                    },
-                )
-                .unwrap()
-                .id;
-                let (entry_obj, _) = entry::upsert_entry(
-                    conn,
-                    feed_id,
-                    "guid-cancelled",
-                    Some("Cancelled Entry"),
-                    Some("https://example.com/x"),
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .unwrap();
-                // Intentionally do NOT create an entry_summary row — this
-                // simulates the cancel handler having already deleted it while
-                // the job was still sitting in the queue.
-                (u, entry_obj.id)
-            })
+        let u = user::create_user(&db, "canceluser", "hash", Role::User)
             .await
-            .unwrap();
+            .unwrap()
+            .id;
+        let cat = category::create_category(&db, u, "Tech").await.unwrap().id;
+        let feed_id = feed::create_feed(
+            &db,
+            &feed::CreateFeedParams {
+                category_id: cat,
+                url: "https://example.com/feed.xml",
+                title: Some("Feed"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id;
+        let (entry_obj, _) = entry::upsert_entry(
+            &db,
+            feed_id,
+            "guid-cancelled",
+            Some("Cancelled Entry"),
+            Some("https://example.com/x"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        // Intentionally do NOT create an entry_summary row — this
+        // simulates the cancel handler having already deleted it while
+        // the job was still sitting in the queue.
+        let (user_id, entry_id) = (u, entry_obj.id);
 
         let cache = Arc::new(SummaryCache::new(100, 24));
         let sidebar = Arc::new(SidebarCache::default());
@@ -727,10 +684,8 @@ mod tests {
         );
 
         // Confirm no row was resurrected in the DB either.
-        let row = db
-            .read_user(move |c| entry_summary::find_by_user_and_entry(c, user_id, entry_id))
+        let row = entry_summary::find_by_user_and_entry(&db, user_id, entry_id)
             .await
-            .unwrap()
             .unwrap();
         assert!(
             row.is_none(),
@@ -742,15 +697,13 @@ mod tests {
     async fn test_worker_drains_jobs_on_cancellation() {
         let (tx, rx) = create_summary_channel(10);
         let cache = Arc::new(SummaryCache::new(100, 24));
-        let db = setup_test_db();
+        let db = setup_test_db().await;
         let cancel_token = CancellationToken::new();
 
         // Create test user for the jobs
-        db.user(|conn| {
-            user::create_user(conn, "testuser", "hash", Role::User).unwrap();
-        })
-        .await
-        .unwrap();
+        user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
         let handle = start_summary_worker(
             rx,
@@ -788,50 +741,48 @@ mod tests {
     async fn worker_emits_processing_then_terminal_event() {
         let (tx, rx) = create_summary_channel(10);
         let cache = Arc::new(SummaryCache::new(100, 24));
-        let db = setup_test_db();
+        let db = setup_test_db().await;
         let cancel_token = CancellationToken::new();
         let bus = EventBus::new(32);
         let mut sub = bus.subscribe();
 
         // Seed a user + entry + pending summary so set_processing finds a row.
-        let (user_id, entry_id) = db
-            .user(|conn| {
-                let u = user::create_user(conn, "emit", "hash", Role::User)
-                    .unwrap()
-                    .id;
-                let cat = category::create_category(conn, u, "Tech").unwrap().id;
-                let feed_id = feed::create_feed(
-                    conn,
-                    &feed::CreateFeedParams {
-                        category_id: cat,
-                        url: "https://example.com/feed.xml",
-                        title: Some("F"),
-                        description: None,
-                        site_url: None,
-                        custom_user_agent: None,
-                        http2_disabled: None,
-                        custom_referrer: None,
-                    },
-                )
-                .unwrap()
-                .id;
-                let (e, _) = entry::upsert_entry(
-                    conn,
-                    feed_id,
-                    "g",
-                    Some("T"),
-                    Some("https://example.com/a"),
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .unwrap();
-                entry_summary::upsert_pending(conn, u, e.id).unwrap();
-                (u, e.id)
-            })
+        let u = user::create_user(&db, "emit", "hash", Role::User)
             .await
-            .unwrap();
+            .unwrap()
+            .id;
+        let cat = category::create_category(&db, u, "Tech").await.unwrap().id;
+        let feed_id = feed::create_feed(
+            &db,
+            &feed::CreateFeedParams {
+                category_id: cat,
+                url: "https://example.com/feed.xml",
+                title: Some("F"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id;
+        let (e, _) = entry::upsert_entry(
+            &db,
+            feed_id,
+            "g",
+            Some("T"),
+            Some("https://example.com/a"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        entry_summary::upsert_pending(&db, u, e.id).await.unwrap();
+        let (user_id, entry_id) = (u, e.id);
 
         let handle = start_summary_worker(
             rx,
