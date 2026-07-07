@@ -379,12 +379,13 @@ code {
     color: var(--color-text);
 }
 
-/* The active row is the one place weight steps up: 400 baseline → 600 so the
-   current location reads at a glance instead of relying on background alone. */
+/* The active row is the one place weight steps up: 400 baseline → 700 so the
+   current location reads at a glance instead of relying on background alone.
+   Archivo's grotesque strokes only read as "clearly bolder" at 700, not 600. */
 .sidebar-item.active {
     background: var(--color-sidebar-active);
     color: var(--color-text);
-    font-weight: 600;
+    font-weight: 700;
 }
 
 .sidebar-item.active .sidebar-item-icon { color: var(--color-accent); }
@@ -1434,7 +1435,7 @@ td input[type="text"] {
     min-width: 0;
     font-family: var(--font-ui);
     font-size: 16px;
-    font-weight: 600;
+    font-weight: 700;
     line-height: 1.35;
     letter-spacing: -0.005em;
     color: var(--color-text);
