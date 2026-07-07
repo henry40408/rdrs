@@ -45,6 +45,13 @@ ignore = [
     # ttf-parser unmaintained (transitive via resvg/usvg/fontdb, favicon render).
     # No maintained fix; revisit when the resvg chain drops or replaces it.
     "RUSTSEC-2026-0192",
+    # crossbeam-epoch invalid pointer deref in the `fmt::Display`/`fmt::Pointer`
+    # impls for `Atomic`/`Shared` on a null pointer (transitive via image and
+    # moka; we never format those pointers, so it's unreachable here). Sole fix
+    # is 0.9.20, published 2026-07-06 — inside the 7-day cooldown. Tracked in the
+    # follow-up issue: bump with `cargo update -p crossbeam-epoch` and drop this
+    # entry once 0.9.20 has aged past the cooldown (from 2026-07-13).
+    "RUSTSEC-2026-0204",
 ]
 
 [licenses]
