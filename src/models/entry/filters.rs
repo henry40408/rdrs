@@ -46,9 +46,10 @@ pub(super) enum Dialect {
 
 impl Dialect {
     pub(super) fn from_db(db: &Db) -> Self {
-        match db {
-            Db::Sqlite(_) => Dialect::Sqlite,
-            Db::Postgres(_) => Dialect::Postgres,
+        if db.is_postgres() {
+            Dialect::Postgres
+        } else {
+            Dialect::Sqlite
         }
     }
 

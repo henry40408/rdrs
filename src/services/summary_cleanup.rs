@@ -20,6 +20,8 @@ pub fn start_cleanup_worker(
     cancel_token: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        // Background priority: DB operations yield to interactive work on SQLite.
+        let db = db.background();
         tracing::info!(
             "Summary cleanup worker started: interval={}h, ttl={}h",
             interval_hours,

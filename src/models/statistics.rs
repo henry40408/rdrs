@@ -1,6 +1,6 @@
 use chrono::NaiveDate;
 
-use crate::db::Db;
+use crate::db::{Db, DbInner};
 use crate::error::{AppError, AppResult};
 use crate::{query_all, query_scalar};
 
@@ -10,9 +10,10 @@ use crate::{query_all, query_scalar};
 /// HH24:MI:SS')` (UTC session) — a bare read would fail to decode a timestamptz
 /// into `String`. Mirrors `entry::filters::Dialect::cursor_ts`.
 fn ts_text(db: &Db, expr: &str) -> String {
-    match db {
-        Db::Sqlite(_) => expr.to_string(),
-        Db::Postgres(_) => format!("to_char({expr}, 'YYYY-MM-DD HH24:MI:SS')"),
+    if db.is_postgres() {
+        format!("to_char({expr}, 'YYYY-MM-DD HH24:MI:SS')")
+    } else {
+        expr.to_string()
     }
 }
 
@@ -260,9 +261,10 @@ pub async fn get_daily_read_counts(
     // SQLite's `DATE()` vs PG's `to_char(...)`. The range bounds are bound as
     // dates (see `parse_ymd`) so the raw `read_at >= $2 / < $3` comparison works
     // on both backends without wrapping the column.
-    let day_bucket = match db {
-        Db::Sqlite(_) => "DATE(e.read_at)".to_string(),
-        Db::Postgres(_) => "to_char(e.read_at, 'YYYY-MM-DD')".to_string(),
+    let day_bucket = if db.is_postgres() {
+        "to_char(e.read_at, 'YYYY-MM-DD')".to_string()
+    } else {
+        "DATE(e.read_at)".to_string()
     };
     let (from_d, to_d) = (parse_ymd(from), parse_ymd(to));
     let sql = format!(
@@ -276,8 +278,8 @@ pub async fn get_daily_read_counts(
          GROUP BY read_date \
          ORDER BY read_date"
     );
-    let rows: Vec<(String, i64)> = match db {
-        Db::Sqlite(pool) => {
+    let rows: Vec<(String, i64)> = match db.inner() {
+        DbInner::Sqlite(pool) => {
             sqlx::query_as::<sqlx::Sqlite, (String, i64)>(sqlx::AssertSqlSafe(sql))
                 .bind(user_id)
                 .bind(from_d)
@@ -285,7 +287,7 @@ pub async fn get_daily_read_counts(
                 .fetch_all(pool)
                 .await
         }
-        Db::Postgres(pool) => {
+        DbInner::Postgres(pool) => {
             sqlx::query_as::<sqlx::Postgres, (String, i64)>(sqlx::AssertSqlSafe(sql))
                 .bind(user_id)
                 .bind(from_d)
@@ -455,8 +457,8 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
     // page_size). PostgreSQL reports the on-disk database size via
     // `pg_database_size()`; it has no directly comparable freelist/reclaimable
     // figure (bloat is a VACUUM concern), so reclaimable is reported as 0.
-    let (db_size_bytes, reclaimable_bytes) = match db {
-        Db::Sqlite(pool) => {
+    let (db_size_bytes, reclaimable_bytes) = match db.inner() {
+        DbInner::Sqlite(pool) => {
             let page_count = sqlx::query_scalar::<_, i64>("PRAGMA page_count")
                 .fetch_one(pool)
                 .await
@@ -471,7 +473,7 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
                 .map_err(AppError::Database)?;
             (page_count * page_size, freelist * page_size)
         }
-        Db::Postgres(pool) => {
+        DbInner::Postgres(pool) => {
             let size = sqlx::query_scalar::<_, i64>("SELECT pg_database_size(current_database())")
                 .fetch_one(pool)
                 .await
@@ -493,26 +495,26 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
     // `try_parse_datetime` expects (to_char on PG — see `ts_text`).
     let min_sql = format!("SELECT {} FROM entry", ts_text(db, "MIN(created_at)"));
     let max_sql = format!("SELECT {} FROM entry", ts_text(db, "MAX(created_at)"));
-    let min_created: Option<String> = match db {
-        Db::Sqlite(pool) => {
+    let min_created: Option<String> = match db.inner() {
+        DbInner::Sqlite(pool) => {
             sqlx::query_scalar::<_, Option<String>>(sqlx::AssertSqlSafe(min_sql))
                 .fetch_one(pool)
                 .await
         }
-        Db::Postgres(pool) => {
+        DbInner::Postgres(pool) => {
             sqlx::query_scalar::<_, Option<String>>(sqlx::AssertSqlSafe(min_sql))
                 .fetch_one(pool)
                 .await
         }
     }
     .map_err(AppError::Database)?;
-    let max_created: Option<String> = match db {
-        Db::Sqlite(pool) => {
+    let max_created: Option<String> = match db.inner() {
+        DbInner::Sqlite(pool) => {
             sqlx::query_scalar::<_, Option<String>>(sqlx::AssertSqlSafe(max_sql))
                 .fetch_one(pool)
                 .await
         }
-        Db::Postgres(pool) => {
+        DbInner::Postgres(pool) => {
             sqlx::query_scalar::<_, Option<String>>(sqlx::AssertSqlSafe(max_sql))
                 .fetch_one(pool)
                 .await

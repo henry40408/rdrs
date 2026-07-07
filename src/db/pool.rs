@@ -1,10 +1,13 @@
 use std::str::FromStr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use sqlx::migrate::Migrator;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Executor, PgPool, Postgres, Sqlite, SqlitePool};
+use tokio::sync::Notify;
 use tracing::info;
 
 use crate::config::Backend;
@@ -16,16 +19,94 @@ use crate::config::Backend;
 static SQLITE_MIGRATOR: Migrator = sqlx::migrate!("migrations/sqlite");
 static POSTGRES_MIGRATOR: Migrator = sqlx::migrate!("migrations/postgres");
 
-/// A boot-time-selected database handle wrapping a single backend's `sqlx`
-/// pool. The backend is chosen once from `DATABASE_URL` (see [`Backend`]) and
-/// never changes for the life of the process, so every query dispatches on
-/// this two-armed enum via the `query_*!` macros.
-///
-/// Cloning is cheap: `sqlx` pools are `Arc`-backed handles.
+/// The backend-tagged `sqlx` pool held inside a [`Db`]. Chosen once from
+/// `DATABASE_URL` (see [`Backend`]) and never changed for the process lifetime.
+/// Cloning is cheap — `sqlx` pools are `Arc`-backed handles.
 #[derive(Clone)]
-pub enum Db {
+pub enum DbInner {
     Sqlite(SqlitePool),
     Postgres(PgPool),
+}
+
+/// Scheduling priority of a [`Db`] handle. Every handle carries one; the default
+/// `User` handle lives in `AppState`, and background workers derive a
+/// `Background` handle via [`Db::background`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Priority {
+    /// Interactive, user-facing work (handlers, middleware).
+    User,
+    /// Background work (feed sync, summary worker, retention, backfill).
+    Background,
+}
+
+/// `SQLite` write-priority scheduler. `SQLite` serializes writers, so a background
+/// batch (a feed-sync entry upsert, a retention delete run) can make an
+/// interactive click wait on the single write lock. This restores the priority
+/// the pre-sqlx actor gave: background DB operations yield at their boundary
+/// while any interactive operation is in flight.
+///
+/// It is a thin admission gate, not a queue: `User` ops increment `inflight`
+/// for their duration; `Background` ops await `inflight == 0` before running.
+/// `PostgreSQL` has real writer concurrency (MVCC), so its handles never touch
+/// this — the gate is a no-op there.
+#[derive(Default)]
+struct SqliteSched {
+    /// Count of in-flight `User`-priority operations.
+    inflight: AtomicUsize,
+    /// Notified when `inflight` drops to zero, waking waiting background ops.
+    idle: Notify,
+}
+
+impl SqliteSched {
+    /// Register a `User` operation and return a guard that unregisters it (and
+    /// wakes background waiters when the last one finishes) on drop.
+    fn enter_user(self: &Arc<Self>) -> UserGuard {
+        self.inflight.fetch_add(1, Ordering::AcqRel);
+        UserGuard(self.clone())
+    }
+
+    /// Block until no `User` operation is in flight. Called by background ops
+    /// before they touch the write lock so interactive work goes first.
+    async fn wait_for_idle(&self) {
+        loop {
+            // Register for the wakeup *before* the final check so a
+            // notify_waiters() between the check and the await can't be lost.
+            let notified = self.idle.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.inflight.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+/// RAII marker for an in-flight `User` operation (see [`SqliteSched`]).
+pub struct UserGuard(Arc<SqliteSched>);
+
+impl Drop for UserGuard {
+    fn drop(&mut self) {
+        if self.0.inflight.fetch_sub(1, Ordering::AcqRel) == 1 {
+            // Last user op finished — let background work proceed.
+            self.0.idle.notify_waiters();
+        }
+    }
+}
+
+/// A boot-time-selected database handle: a backend pool plus a scheduling
+/// [`Priority`] and a shared `SQLite` write scheduler. Every query dispatches on
+/// the inner two-armed enum via the `query_*!` macros, which consult the
+/// priority/scheduler so background work yields to interactive work on `SQLite`.
+///
+/// Cloning is cheap (pool + `Arc` handles) and preserves the priority; use
+/// [`Db::background`] to derive a background-priority handle sharing the same
+/// pool and scheduler.
+#[derive(Clone)]
+pub struct Db {
+    inner: DbInner,
+    sched: Arc<SqliteSched>,
+    priority: Priority,
 }
 
 /// A backend-tagged transaction, the unit-of-work boundary for operations that
@@ -33,8 +114,15 @@ pub enum Db {
 /// tag edits). Inner model calls execute against `&mut Tx` via the `*_tx!`
 /// macros. Obtained from [`Db::begin`]; finished with [`Tx::commit`] or
 /// [`Tx::rollback`] (a dropped `Tx` rolls back).
+///
+/// The optional `_guard` on the `SQLite` variant holds the write-priority
+/// admission for the whole transaction: acquired at [`Db::begin`] (a background
+/// tx waits for interactive idle first) and released when the tx is dropped.
 pub enum Tx<'c> {
-    Sqlite(sqlx::Transaction<'c, Sqlite>),
+    Sqlite {
+        tx: sqlx::Transaction<'c, Sqlite>,
+        _guard: Option<UserGuard>,
+    },
     Postgres(sqlx::Transaction<'c, Postgres>),
 }
 
@@ -63,7 +151,7 @@ impl Db {
                     .max_connections(5)
                     .connect_with(opts)
                     .await?;
-                Db::Sqlite(pool)
+                DbInner::Sqlite(pool)
             }
             Backend::Postgres => {
                 // Pin every pooled connection to UTC. Entry timestamps are
@@ -84,8 +172,13 @@ impl Db {
                     })
                     .connect_with(opts)
                     .await?;
-                Db::Postgres(pool)
+                DbInner::Postgres(pool)
             }
+        };
+        let db = Db {
+            inner: db,
+            sched: Arc::new(SqliteSched::default()),
+            priority: Priority::User,
         };
         db.migrate().await?;
         Ok(db)
@@ -101,9 +194,51 @@ impl Db {
             .max_connections(1)
             .connect_with(opts)
             .await?;
-        let db = Db::Sqlite(pool);
+        let db = Db {
+            inner: DbInner::Sqlite(pool),
+            sched: Arc::new(SqliteSched::default()),
+            priority: Priority::User,
+        };
         db.migrate().await?;
         Ok(db)
+    }
+
+    /// The backend pool this handle dispatches to. Used by the `query_*!` macros
+    /// and the dynamic-query helpers to match on the concrete backend.
+    pub fn inner(&self) -> &DbInner {
+        &self.inner
+    }
+
+    /// `true` if this handle is backed by `PostgreSQL` (drives dialect forks).
+    pub fn is_postgres(&self) -> bool {
+        matches!(self.inner, DbInner::Postgres(_))
+    }
+
+    /// Derive a background-priority handle sharing this handle's pool and `SQLite`
+    /// scheduler. Background workers (feed sync, summary worker, retention,
+    /// backfill) call this once so their DB operations yield to interactive work
+    /// on `SQLite`. No-op effect on `PostgreSQL`.
+    pub fn background(&self) -> Db {
+        Db {
+            inner: self.inner.clone(),
+            sched: self.sched.clone(),
+            priority: Priority::Background,
+        }
+    }
+
+    /// Acquire this handle's write-priority admission for one operation. On
+    /// `SQLite` a `User` op returns a guard tracking it as in-flight; a
+    /// `Background` op first waits for interactive idle. On `PostgreSQL` (real
+    /// writer concurrency) this is a no-op. The `query_*!` macros hold the
+    /// returned guard across the query; [`Db::begin`] holds it across the tx.
+    pub async fn admit(&self) -> Option<UserGuard> {
+        if matches!(self.inner, DbInner::Sqlite(_)) {
+            match self.priority {
+                Priority::User => return Some(self.sched.enter_user()),
+                Priority::Background => self.sched.wait_for_idle().await,
+            }
+        }
+        None
     }
 
     /// Run the backend's embedded migrations. Migrations use `IF NOT EXISTS`,
@@ -111,25 +246,31 @@ impl Db {
     /// consolidated `0001` no-ops against already-present tables and is recorded
     /// in `_sqlx_migrations`.
     async fn migrate(&self) -> Result<(), sqlx::Error> {
-        match self {
-            Db::Sqlite(pool) => SQLITE_MIGRATOR.run(pool).await,
-            Db::Postgres(pool) => POSTGRES_MIGRATOR.run(pool).await,
+        match &self.inner {
+            DbInner::Sqlite(pool) => SQLITE_MIGRATOR.run(pool).await,
+            DbInner::Postgres(pool) => POSTGRES_MIGRATOR.run(pool).await,
         }
         .map_err(|e| sqlx::Error::Migrate(Box::new(e)))
     }
 
-    /// Begin a transaction on the underlying pool.
+    /// Begin a transaction on the underlying pool. The write-priority admission
+    /// is held for the whole transaction (a background tx waits for interactive
+    /// idle before starting).
     pub async fn begin(&self) -> Result<Tx<'_>, sqlx::Error> {
-        Ok(match self {
-            Db::Sqlite(pool) => Tx::Sqlite(pool.begin().await?),
-            Db::Postgres(pool) => Tx::Postgres(pool.begin().await?),
+        let guard = self.admit().await;
+        Ok(match &self.inner {
+            DbInner::Sqlite(pool) => Tx::Sqlite {
+                tx: pool.begin().await?,
+                _guard: guard,
+            },
+            DbInner::Postgres(pool) => Tx::Postgres(pool.begin().await?),
         })
     }
 
     /// Flush and close the pool. For `SQLite` this truncates the WAL first so no
     /// `-wal`/`-shm` sidecars linger after shutdown.
     pub async fn shutdown(&self) {
-        if let Db::Sqlite(pool) = self {
+        if let DbInner::Sqlite(pool) = &self.inner {
             info!("Executing WAL checkpoint before shutdown...");
             if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE);")
                 .execute(pool)
@@ -138,9 +279,9 @@ impl Db {
                 tracing::error!("WAL checkpoint failed: {e}");
             }
         }
-        match self {
-            Db::Sqlite(pool) => pool.close().await,
-            Db::Postgres(pool) => pool.close().await,
+        match &self.inner {
+            DbInner::Sqlite(pool) => pool.close().await,
+            DbInner::Postgres(pool) => pool.close().await,
         }
     }
 }
@@ -149,7 +290,7 @@ impl Tx<'_> {
     /// Commit the transaction.
     pub async fn commit(self) -> Result<(), sqlx::Error> {
         match self {
-            Tx::Sqlite(t) => t.commit().await,
+            Tx::Sqlite { tx, .. } => tx.commit().await,
             Tx::Postgres(t) => t.commit().await,
         }
     }
@@ -157,7 +298,7 @@ impl Tx<'_> {
     /// Roll the transaction back explicitly (dropping also rolls back).
     pub async fn rollback(self) -> Result<(), sqlx::Error> {
         match self {
-            Tx::Sqlite(t) => t.rollback().await,
+            Tx::Sqlite { tx, .. } => tx.rollback().await,
             Tx::Postgres(t) => t.rollback().await,
         }
     }
@@ -165,9 +306,9 @@ impl Tx<'_> {
 
 impl std::fmt::Debug for Db {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Db::Sqlite(_) => f.write_str("Db::Sqlite"),
-            Db::Postgres(_) => f.write_str("Db::Postgres"),
+        match self.inner {
+            DbInner::Sqlite(_) => write!(f, "Db::Sqlite({:?})", self.priority),
+            DbInner::Postgres(_) => write!(f, "Db::Postgres({:?})", self.priority),
         }
     }
 }
@@ -179,14 +320,14 @@ pub fn is_unique_violation(e: &sqlx::Error) -> bool {
     matches!(e, sqlx::Error::Database(db) if db.kind() == sqlx::error::ErrorKind::UniqueViolation)
 }
 
-/// Rewrite the SQLite-dialect fragments in a macro `$sql` literal to their
-/// PostgreSQL equivalents at dispatch time. Applied *only* in the Postgres arm
+/// Rewrite the `SQLite`-dialect fragments in a macro `$sql` literal to their
+/// `PostgreSQL` equivalents at dispatch time. Applied *only* in the Postgres arm
 /// of the `query_*!` / `db_execute!` macros so a model writes one SQL literal
 /// that runs correctly on both backends.
 ///
-/// Currently rewrites the SQLite scalar `datetime('now')` — which yields the
+/// Currently rewrites the `SQLite` scalar `datetime('now')` — which yields the
 /// `%Y-%m-%d %H:%M:%S` TEXT that the composite pagination cursor and the
-/// timestamp-column DEFAULTs depend on — to PostgreSQL `now()` (a `timestamptz`
+/// timestamp-column DEFAULTs depend on — to `PostgreSQL` `now()` (a `timestamptz`
 /// that, under the connection's pinned `TimeZone=UTC`, encodes to the same
 /// instant). The exact literal token is matched, so the comma-modifier forms
 /// (`datetime('now', '-25 hours')`, `datetime('now', $2)`) are deliberately
@@ -214,18 +355,24 @@ pub fn pg_rewrite(sql: &str) -> String {
 // derive serves both `SqliteRow` and `PgRow`). Each macro has a `_tx` sibling
 // that runs against `&mut Tx` for transactional composition.
 
+// Each non-tx macro binds `$db` once, takes the write-priority admission
+// (`admit()` — a User op registers as in-flight; a Background op waits for SQLite
+// interactive idle; no-op on PG), runs the query while holding it, then releases.
+
 /// `SELECT` exactly one row as `$ty`.
 #[macro_export]
 macro_rules! query_one {
     ($db:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        match $db {
-            $crate::db::Db::Sqlite(pool) => {
+        let __db = $db;
+        let __guard = __db.admit().await;
+        let __r = match __db.inner() {
+            $crate::db::DbInner::Sqlite(pool) => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query_as::<::sqlx::Sqlite, $ty>($sql);
                 $( q = q.bind($bind); )*
                 q.fetch_one(pool).await
             }
-            $crate::db::Db::Postgres(pool) => {
+            $crate::db::DbInner::Postgres(pool) => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
                     ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
@@ -233,7 +380,9 @@ macro_rules! query_one {
                 $( q = q.bind($bind); )*
                 q.fetch_one(pool).await
             }
-        }
+        };
+        ::core::mem::drop(__guard);
+        __r
     }};
 }
 
@@ -241,14 +390,16 @@ macro_rules! query_one {
 #[macro_export]
 macro_rules! query_opt {
     ($db:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        match $db {
-            $crate::db::Db::Sqlite(pool) => {
+        let __db = $db;
+        let __guard = __db.admit().await;
+        let __r = match __db.inner() {
+            $crate::db::DbInner::Sqlite(pool) => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query_as::<::sqlx::Sqlite, $ty>($sql);
                 $( q = q.bind($bind); )*
                 q.fetch_optional(pool).await
             }
-            $crate::db::Db::Postgres(pool) => {
+            $crate::db::DbInner::Postgres(pool) => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
                     ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
@@ -256,7 +407,9 @@ macro_rules! query_opt {
                 $( q = q.bind($bind); )*
                 q.fetch_optional(pool).await
             }
-        }
+        };
+        ::core::mem::drop(__guard);
+        __r
     }};
 }
 
@@ -264,14 +417,16 @@ macro_rules! query_opt {
 #[macro_export]
 macro_rules! query_all {
     ($db:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        match $db {
-            $crate::db::Db::Sqlite(pool) => {
+        let __db = $db;
+        let __guard = __db.admit().await;
+        let __r = match __db.inner() {
+            $crate::db::DbInner::Sqlite(pool) => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query_as::<::sqlx::Sqlite, $ty>($sql);
                 $( q = q.bind($bind); )*
                 q.fetch_all(pool).await
             }
-            $crate::db::Db::Postgres(pool) => {
+            $crate::db::DbInner::Postgres(pool) => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query_as::<::sqlx::Postgres, $ty>(
                     ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
@@ -279,7 +434,9 @@ macro_rules! query_all {
                 $( q = q.bind($bind); )*
                 q.fetch_all(pool).await
             }
-        }
+        };
+        ::core::mem::drop(__guard);
+        __r
     }};
 }
 
@@ -287,14 +444,16 @@ macro_rules! query_all {
 #[macro_export]
 macro_rules! query_scalar {
     ($db:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        match $db {
-            $crate::db::Db::Sqlite(pool) => {
+        let __db = $db;
+        let __guard = __db.admit().await;
+        let __r = match __db.inner() {
+            $crate::db::DbInner::Sqlite(pool) => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query_scalar::<::sqlx::Sqlite, $ty>($sql);
                 $( q = q.bind($bind); )*
                 q.fetch_one(pool).await
             }
-            $crate::db::Db::Postgres(pool) => {
+            $crate::db::DbInner::Postgres(pool) => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query_scalar::<::sqlx::Postgres, $ty>(
                     ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
@@ -302,7 +461,9 @@ macro_rules! query_scalar {
                 $( q = q.bind($bind); )*
                 q.fetch_one(pool).await
             }
-        }
+        };
+        ::core::mem::drop(__guard);
+        __r
     }};
 }
 
@@ -310,14 +471,16 @@ macro_rules! query_scalar {
 #[macro_export]
 macro_rules! db_execute {
     ($db:expr, $sql:expr $(, $bind:expr)* $(,)?) => {{
-        match $db {
-            $crate::db::Db::Sqlite(pool) => {
+        let __db = $db;
+        let __guard = __db.admit().await;
+        let __r = match __db.inner() {
+            $crate::db::DbInner::Sqlite(pool) => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query::<::sqlx::Sqlite>($sql);
                 $( q = q.bind($bind); )*
                 q.execute(pool).await.map(|r| r.rows_affected())
             }
-            $crate::db::Db::Postgres(pool) => {
+            $crate::db::DbInner::Postgres(pool) => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query::<::sqlx::Postgres>(
                     ::sqlx::AssertSqlSafe($crate::db::pg_rewrite($sql)),
@@ -325,7 +488,9 @@ macro_rules! db_execute {
                 $( q = q.bind($bind); )*
                 q.execute(pool).await.map(|r| r.rows_affected())
             }
-        }
+        };
+        ::core::mem::drop(__guard);
+        __r
     }};
 }
 
@@ -334,7 +499,7 @@ macro_rules! db_execute {
 macro_rules! query_one_tx {
     ($tx:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
         match $tx {
-            $crate::db::Tx::Sqlite(t) => {
+            $crate::db::Tx::Sqlite { tx: t, .. } => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query_as::<::sqlx::Sqlite, $ty>($sql);
                 $( q = q.bind($bind); )*
@@ -357,7 +522,7 @@ macro_rules! query_one_tx {
 macro_rules! query_opt_tx {
     ($tx:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
         match $tx {
-            $crate::db::Tx::Sqlite(t) => {
+            $crate::db::Tx::Sqlite { tx: t, .. } => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query_as::<::sqlx::Sqlite, $ty>($sql);
                 $( q = q.bind($bind); )*
@@ -380,7 +545,7 @@ macro_rules! query_opt_tx {
 macro_rules! query_all_tx {
     ($tx:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
         match $tx {
-            $crate::db::Tx::Sqlite(t) => {
+            $crate::db::Tx::Sqlite { tx: t, .. } => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query_as::<::sqlx::Sqlite, $ty>($sql);
                 $( q = q.bind($bind); )*
@@ -403,7 +568,7 @@ macro_rules! query_all_tx {
 macro_rules! query_scalar_tx {
     ($tx:expr, $ty:ty, $sql:expr $(, $bind:expr)* $(,)?) => {{
         match $tx {
-            $crate::db::Tx::Sqlite(t) => {
+            $crate::db::Tx::Sqlite { tx: t, .. } => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query_scalar::<::sqlx::Sqlite, $ty>($sql);
                 $( q = q.bind($bind); )*
@@ -426,7 +591,7 @@ macro_rules! query_scalar_tx {
 macro_rules! db_execute_tx {
     ($tx:expr, $sql:expr $(, $bind:expr)* $(,)?) => {{
         match $tx {
-            $crate::db::Tx::Sqlite(t) => {
+            $crate::db::Tx::Sqlite { tx: t, .. } => {
                 #[allow(unused_mut)]
                 let mut q = ::sqlx::query::<::sqlx::Sqlite>($sql);
                 $( q = q.bind($bind); )*
@@ -442,4 +607,116 @@ macro_rules! db_execute_tx {
             }
         }
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    // The write-priority guarantee: a background op must not proceed past its
+    // admission while any user op is in flight. Asserted via ordering — the
+    // background task checks a flag that the test sets only after the user op is
+    // done, and can only observe it once the gate lets it through.
+    #[tokio::test]
+    async fn sched_background_yields_until_user_finishes() {
+        let sched = Arc::new(SqliteSched::default());
+        let user_done = Arc::new(AtomicBool::new(false));
+
+        let user = sched.enter_user();
+        let bg = {
+            let sched = sched.clone();
+            let user_done = user_done.clone();
+            tokio::spawn(async move {
+                sched.wait_for_idle().await;
+                assert!(
+                    user_done.load(Ordering::Acquire),
+                    "background proceeded before the user op finished"
+                );
+            })
+        };
+
+        // Let the background task reach (and park on) its wait.
+        tokio::task::yield_now().await;
+        // Publish "user finished" before releasing the gate; the background task
+        // is still parked (inflight > 0), so it can only wake after this.
+        user_done.store(true, Ordering::Release);
+        drop(user);
+
+        tokio::time::timeout(Duration::from_secs(1), bg)
+            .await
+            .expect("background should proceed once the user op finishes")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn sched_idle_lets_background_through_immediately() {
+        let sched = Arc::new(SqliteSched::default());
+        // No user op in flight — must not block.
+        tokio::time::timeout(Duration::from_secs(1), sched.wait_for_idle())
+            .await
+            .expect("wait_for_idle must return immediately when idle");
+    }
+
+    #[tokio::test]
+    async fn sched_waits_for_all_users() {
+        let sched = Arc::new(SqliteSched::default());
+        let both_done = Arc::new(AtomicBool::new(false));
+
+        let g1 = sched.enter_user();
+        let g2 = sched.enter_user();
+        let bg = {
+            let sched = sched.clone();
+            let both_done = both_done.clone();
+            tokio::spawn(async move {
+                sched.wait_for_idle().await;
+                assert!(both_done.load(Ordering::Acquire));
+            })
+        };
+
+        tokio::task::yield_now().await;
+        drop(g1); // one still in flight → background stays gated
+        tokio::task::yield_now().await;
+        both_done.store(true, Ordering::Release);
+        drop(g2);
+
+        tokio::time::timeout(Duration::from_secs(1), bg)
+            .await
+            .expect("background proceeds only after the last user op")
+            .unwrap();
+    }
+
+    // The full Db path: a background handle's `admit()` gates behind a user
+    // handle's in-flight op on SQLite.
+    #[tokio::test]
+    async fn admit_gates_background_behind_user_on_sqlite() {
+        let db = Db::connect_in_memory().await.unwrap();
+        let bg = db.background();
+        let user_done = Arc::new(AtomicBool::new(false));
+
+        let user_guard = db.admit().await;
+        assert!(
+            user_guard.is_some(),
+            "user op on SQLite registers in-flight"
+        );
+
+        let task = {
+            let bg = bg.clone();
+            let user_done = user_done.clone();
+            tokio::spawn(async move {
+                let _g = bg.admit().await; // background: waits for idle
+                assert!(user_done.load(Ordering::Acquire));
+            })
+        };
+
+        tokio::task::yield_now().await;
+        user_done.store(true, Ordering::Release);
+        drop(user_guard);
+
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("background admit proceeds after the user op finishes")
+            .unwrap();
+    }
 }

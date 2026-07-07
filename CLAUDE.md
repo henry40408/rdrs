@@ -63,9 +63,10 @@ the cross-cutting facts that span multiple files.
 - **Dual-backend `sqlx` data layer** (`db/pool.rs`). The backend is chosen once
   at startup from `DATABASE_URL`: a bare path or `sqlite://` URL selects SQLite
   (WAL, the zero-config single-binary default); a `postgres://` URL selects
-  PostgreSQL. `enum Db { Sqlite(SqlitePool), Postgres(PgPool) }` (and a
-  backend-tagged `enum Tx`) dispatch every query through the `query_*!` /
-  `db_execute!` macros so SQL + binds are written once. The few genuine dialect
+  PostgreSQL. `struct Db` wraps `enum DbInner { Sqlite(SqlitePool),
+  Postgres(PgPool) }` plus a scheduling `Priority` and a shared SQLite scheduler;
+  it (and a backend-tagged `enum Tx`) dispatch every query through the `query_*!`
+  / `db_execute!` macros so SQL + binds are written once. The few genuine dialect
   differences are isolated behind `entry::filters::Dialect` and a `pg_rewrite`
   shim (`datetime('now')`→`now()`, `to_char` cursor comparisons, `make_interval`,
   quoted `"user"`, etc. — see the multi-db spec). PG connections pin
@@ -74,6 +75,11 @@ the cross-cutting facts that span multiple files.
   run via `sqlx::migrate!`. Models expose CRUD as free functions taking `&Db` /
   `&mut Tx` and `*Params` structs. The env-gated `tests/postgres_test.rs`
   validates the PG paths against a live server (CI Postgres service lane).
+  **Write priority (SQLite):** the default `Db` in `AppState` is `User`; the
+  background workers call `db.background()` so their DB ops yield to interactive
+  work while SQLite's single writer is contended (`admit()` gates a background op
+  until no `User` op is in flight). No-op on PostgreSQL (MVCC has real writer
+  concurrency).
 
 - **Background feed sync** (`services/background.rs`, `feed_sync.rs`). Feeds are
   distributed across 60 one-minute buckets by URL hash (`feed.bucket` column);

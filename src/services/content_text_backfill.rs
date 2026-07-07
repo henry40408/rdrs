@@ -62,6 +62,8 @@ pub async fn backfill_content_text_batch(db: &Db, batch_size: usize) -> AppResul
 /// mid-drain; remaining rows resume on the next start.
 pub fn start_content_text_backfill(db: Db, cancel_token: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
+        // Background priority: DB operations yield to interactive work on SQLite.
+        let db = db.background();
         let total: i64 = match query_scalar!(
             &db,
             i64,
