@@ -31,8 +31,7 @@ src/
 ├── version.rs           # Build version information
 │
 ├── db/
-│   ├── schema.rs        # SQLite schema initialization
-│   └── pool.rs          # Priority-based database connection pool
+│   └── pool.rs          # Dual-backend (SQLite/PostgreSQL) sqlx pool + SQLite write-priority scheduler
 │
 ├── models/              # Data models and database operations
 │   ├── user.rs          # User accounts
@@ -131,7 +130,7 @@ Defines all HTTP routes and builds the Axum application with:
 ### Configuration (`config.rs`)
 
 Loads settings from environment variables:
-- `DATABASE_URL` - SQLite file path
+- `DATABASE_URL` - Database backend: a file path or `sqlite://` URL (SQLite, the zero-config default) or a `postgres://` URL (PostgreSQL); chosen once at startup
 - `SERVER_PORT` - HTTP port
 - `SIGNUP_ENABLED` / `MULTI_USER_ENABLED` - Registration settings
 - `IMAGE_PROXY_SECRET` - HMAC secret for image proxy
@@ -153,11 +152,11 @@ Custom `AppError` type that maps to appropriate HTTP responses:
 
 ## Data Layer
 
-### Database (`db/schema.rs`)
+### Schema & Migrations (`migrations/`)
 
-Schema migrations are tracked using `PRAGMA user_version`. Each migration runs once and advances the version number, replacing the previous ad-hoc `ALTER TABLE` approach.
+Migrations are embedded per backend under `migrations/sqlite/` and `migrations/postgres/` and run at startup via `sqlx::migrate!` for the active backend. The two dialects are kept schema-equivalent; the genuine differences (e.g. non-id `INTEGER` columns are `BIGINT` on PostgreSQL, `GENERATED ALWAYS AS IDENTITY` ids) are isolated in the Postgres migration.
 
-SQLite schema with 11 tables:
+The schema has 11 tables:
 
 | Table | Purpose |
 |-------|---------|
@@ -175,12 +174,9 @@ SQLite schema with 11 tables:
 
 ### Connection Pool (`db/pool.rs`)
 
-`DbPool` manages two SQLite connections under WAL mode:
+`struct Db` wraps `enum DbInner { Sqlite(SqlitePool), Postgres(PgPool) }` — a single sqlx pool for whichever backend `DATABASE_URL` selected at startup. Every query flows through the `query_*!` / `db_execute!` dispatch macros, so SQL and binds are written once; the few genuine dialect differences are isolated behind `entry::filters::Dialect` and the `pg_rewrite` shim (`datetime('now')`→`now()`, `to_char` cursor comparisons, `make_interval`, quoted `"user"`). PG connections pin `TimeZone=UTC` so timestamp-string cursors stay byte-identical to SQLite.
 
-- **Write connection** - Handles all INSERT/UPDATE/DELETE operations via `user()` and `background()` methods
-- **Read-only connection** - Handles SELECT queries via `read_user()` and `read_background()` methods, with `PRAGMA query_only=ON` for safety
-
-Both connections use priority-based scheduling: user requests are always processed before background tasks (e.g., feed sync).
+**Write-priority scheduling (SQLite only).** SQLite has a single writer under WAL, so background writes must yield to interactive ones. `Db` carries a `Priority` (`User` by default in `AppState`; background workers call `db.background()`) and a shared `SqliteSched`: `admit()` gates a background write until no `User` write is in flight. Reads are never gated (WAL readers don't block the writer). On PostgreSQL this is a no-op — MVCC has real writer concurrency.
 
 ### Models
 
