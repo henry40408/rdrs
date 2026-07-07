@@ -78,29 +78,17 @@ impl FromRequestParts<AppState> for GReaderUser {
 
 /// Validate a session token and return (Session, User).
 async fn validate_token(state: &AppState, token: &str) -> AppResult<(Session, User)> {
-    let token_owned = token.to_string();
-    let (session, expired) = state
-        .db
-        .user(move |conn| {
-            let session =
-                session::find_by_token(conn, &token_owned)?.ok_or(AppError::Unauthorized)?;
-            if session.is_expired() {
-                session::delete_session(conn, &token_owned)?;
-                return Ok::<_, AppError>((session, true));
-            }
-            Ok((session, false))
-        })
-        .await??;
-
-    if expired {
+    let session = session::find_by_token(&state.db, token)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+    if session.is_expired() {
+        session::delete_session(&state.db, token).await?;
         return Err(AppError::Unauthorized);
     }
 
-    let user_id = session.user_id;
-    let user = state
-        .db
-        .read_user(move |conn| user::find_by_id(conn, user_id)?.ok_or(AppError::Unauthorized))
-        .await??;
+    let user = user::find_by_id(&state.db, session.user_id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
 
     if user.is_disabled() {
         return Err(AppError::UserDisabled);
@@ -130,24 +118,19 @@ pub async fn client_login(
     let username = form.email.clone();
     let password = form.passwd.clone();
 
-    let (user, new_session) = state
-        .db
-        .user(move |conn| {
-            let user =
-                user::find_by_username(conn, &username)?.ok_or(AppError::InvalidCredentials)?;
+    let user = user::find_by_username(&state.db, &username)
+        .await?
+        .ok_or(AppError::InvalidCredentials)?;
 
-            if !verify_password(&password, &user.password_hash) {
-                return Err(AppError::InvalidCredentials);
-            }
+    if !verify_password(&password, &user.password_hash) {
+        return Err(AppError::InvalidCredentials);
+    }
 
-            if user.is_disabled() {
-                return Err(AppError::UserDisabled);
-            }
+    if user.is_disabled() {
+        return Err(AppError::UserDisabled);
+    }
 
-            let new_session = session::create_session(conn, user.id)?;
-            Ok::<_, AppError>((user, new_session))
-        })
-        .await??;
+    let new_session = session::create_session(&state.db, user.id).await?;
 
     let _ = user; // user info not needed in response
 

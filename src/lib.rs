@@ -22,7 +22,7 @@ pub mod utils;
 pub mod version;
 
 pub use config::Config;
-pub use db::DbPool;
+pub use db::Db;
 pub use middleware::auth::SESSION_COOKIE_NAME;
 pub use models::{Role, User};
 pub use version::GIT_VERSION;
@@ -49,7 +49,7 @@ pub fn reclaim_memory() {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: DbPool,
+    pub db: Db,
     pub config: Arc<Config>,
     pub webauthn: Arc<Webauthn>,
     pub summary_cache: Arc<SummaryCache>,

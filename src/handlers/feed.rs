@@ -15,20 +15,18 @@ pub async fn get_feed_icon(
     Path(id): Path<i64>,
 ) -> AppResult<Response> {
     let user_id = auth_user.user.id;
-    let img = state
-        .db
-        .read_user(move |conn| {
-            let f = feed::find_by_id(conn, id)?.ok_or(AppError::FeedNotFound)?;
+    let f = feed::find_by_id(&state.db, id)
+        .await?
+        .ok_or(AppError::FeedNotFound)?;
 
-            category::find_by_id_and_user(conn, f.category_id, user_id)?
-                .ok_or(AppError::FeedNotFound)?;
+    category::find_by_id_and_user(&state.db, f.category_id, user_id)
+        .await?
+        .ok_or(AppError::FeedNotFound)?;
 
-            match image::find(conn, image::ENTITY_FEED, id)? {
-                Some(img) => Ok::<_, AppError>(img),
-                None => Err(AppError::NotFound("Icon not found".into())),
-            }
-        })
-        .await??;
+    let img = match image::find(&state.db, image::ENTITY_FEED, id).await? {
+        Some(img) => img,
+        None => return Err(AppError::NotFound("Icon not found".into())),
+    };
 
     Ok((
         StatusCode::OK,

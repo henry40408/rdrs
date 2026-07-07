@@ -7,10 +7,9 @@ use std::sync::Arc;
 use axum::http::{HeaderMap, HeaderName};
 use axum_test::TestServer;
 use rdrs::{
-    AppState, Config, DbPool, auth, config::parse_trusted_networks, create_router, db,
+    AppState, Config, Db, auth, config::parse_trusted_networks, create_router,
     middleware::forward_auth::forward_auth_identity, services,
 };
-use rusqlite::Connection;
 
 fn header_map(pairs: &[(&str, &str)]) -> HeaderMap {
     let mut h = HeaderMap::new();
@@ -65,25 +64,12 @@ fn test_forward_auth_identity() {
     );
 }
 
-fn open_shared_memory(name: &str) -> Connection {
-    let uri = format!("file:{}?mode=memory&cache=shared", name);
-    Connection::open_with_flags(
-        uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    )
-    .unwrap()
-}
-
 /// Build a server over a real loopback HTTP transport so the middleware sees a
 /// genuine `ConnectInfo` peer (127.0.0.1). `trusted` controls whether loopback
-/// is inside the trusted network. Each caller passes a unique `db_name` to
-/// avoid cross-test interference when tests run in parallel.
-fn create_server(db_name: &str, mut mutate: impl FnMut(&mut Config)) -> TestServer {
-    let write_conn = open_shared_memory(db_name);
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory(db_name);
+/// is inside the trusted network. Returns the backing `Db` so callers can seed
+/// and inspect users directly.
+async fn create_server(mut mutate: impl FnMut(&mut Config)) -> (TestServer, Db) {
+    let db = Db::connect_in_memory().await.unwrap();
 
     let mut config = default_test_config();
     config.auth_proxy_header = "Remote-User".to_string();
@@ -94,9 +80,8 @@ fn create_server(db_name: &str, mut mutate: impl FnMut(&mut Config)) -> TestServ
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _rx) = services::create_summary_channel(10);
-    let (pool, _handle) = DbPool::new(write_conn, read_conn);
     let state = AppState {
-        db: pool,
+        db: db.clone(),
         config: Arc::new(config),
         webauthn: Arc::new(webauthn),
         summary_cache,
@@ -107,24 +92,26 @@ fn create_server(db_name: &str, mut mutate: impl FnMut(&mut Config)) -> TestServ
         shutdown: tokio_util::sync::CancellationToken::new(),
     };
     let app = create_router(state).into_make_service_with_connect_info::<SocketAddr>();
-    TestServer::builder()
+    let server = TestServer::builder()
         .http_transport()
         .save_cookies()
-        .build(app)
+        .build(app);
+    (server, db)
 }
 
-fn seed_user(db_name: &str, name: &str, role: rdrs::models::user::Role) {
-    let conn = open_shared_memory(db_name);
-    rdrs::models::user::create_user(&conn, name, "!", role).unwrap();
+async fn seed_user(db: &Db, name: &str, role: rdrs::models::user::Role) {
+    rdrs::models::user::create_user(db, name, "!", role)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn test_trusted_existing_user_gets_session() {
-    let db_name = "fa_test_trusted_existing";
-    let server = create_server(db_name, |c| {
+    let (server, db) = create_server(|c| {
         c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
-    });
-    seed_user(db_name, "alice", rdrs::models::user::Role::User);
+    })
+    .await;
+    seed_user(&db, "alice", rdrs::models::user::Role::User).await;
 
     let res = server.get("/").add_header("Remote-User", "alice").await;
 
@@ -135,12 +122,12 @@ async fn test_trusted_existing_user_gets_session() {
 
 #[tokio::test]
 async fn test_untrusted_peer_ignores_header() {
-    let db_name = "fa_test_untrusted_peer";
-    let server = create_server(db_name, |c| {
+    let (server, db) = create_server(|c| {
         // Loopback is NOT in this network → header must be ignored.
         c.trusted_proxy_networks = parse_trusted_networks("10.0.0.0/8").unwrap();
-    });
-    seed_user(db_name, "alice", rdrs::models::user::Role::User);
+    })
+    .await;
+    seed_user(&db, "alice", rdrs::models::user::Role::User).await;
 
     let res = server.get("/").add_header("Remote-User", "alice").await;
 
@@ -149,11 +136,11 @@ async fn test_untrusted_peer_ignores_header() {
 
 #[tokio::test]
 async fn test_unknown_user_creation_disabled_rejected() {
-    let db_name = "fa_test_creation_disabled";
-    let server = create_server(db_name, |c| {
+    let (server, _db) = create_server(|c| {
         c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
         c.auth_proxy_user_creation = false;
-    });
+    })
+    .await;
 
     let res = server.get("/").add_header("Remote-User", "ghost").await;
 
@@ -163,11 +150,11 @@ async fn test_unknown_user_creation_disabled_rejected() {
 
 #[tokio::test]
 async fn test_unknown_user_jit_created_as_admin_via_groups() {
-    let db_name = "fa_test_jit_admin_groups";
-    let server = create_server(db_name, |c| {
+    let (server, db) = create_server(|c| {
         c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
         c.auth_proxy_user_creation = true;
-    });
+    })
+    .await;
 
     let res = server
         .get("/")
@@ -179,8 +166,8 @@ async fn test_unknown_user_jit_created_as_admin_via_groups() {
     assert!(res.maybe_cookie("session_token").is_some());
 
     // Account was created with Admin role from the groups header.
-    let conn = open_shared_memory(db_name);
-    let created = rdrs::models::user::find_by_username(&conn, "bob")
+    let created = rdrs::models::user::find_by_username(&db, "bob")
+        .await
         .unwrap()
         .unwrap();
     assert_eq!(created.role, rdrs::models::user::Role::Admin);
@@ -188,16 +175,16 @@ async fn test_unknown_user_jit_created_as_admin_via_groups() {
 
 #[tokio::test]
 async fn test_disabled_user_rejected() {
-    let db_name = "fa_test_disabled_user";
-    let server = create_server(db_name, |c| {
+    let (server, db) = create_server(|c| {
         c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
-    });
-    seed_user(db_name, "carol", rdrs::models::user::Role::User);
-    let conn = open_shared_memory(db_name);
-    let u = rdrs::models::user::find_by_username(&conn, "carol")
+    })
+    .await;
+    seed_user(&db, "carol", rdrs::models::user::Role::User).await;
+    let u = rdrs::models::user::find_by_username(&db, "carol")
+        .await
         .unwrap()
         .unwrap();
-    rdrs::models::user::disable_user(&conn, u.id).unwrap();
+    rdrs::models::user::disable_user(&db, u.id).await.unwrap();
 
     let res = server.get("/").add_header("Remote-User", "carol").await;
 
@@ -207,12 +194,12 @@ async fn test_disabled_user_rejected() {
 
 #[tokio::test]
 async fn test_existing_user_role_recomputed_on_login() {
-    let db_name = "fa_test_role_recompute";
-    let server = create_server(db_name, |c| {
+    let (server, db) = create_server(|c| {
         c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
-    });
+    })
+    .await;
     // Seed the user as Admin; the groups header will NOT include "admins".
-    seed_user(db_name, "dave", rdrs::models::user::Role::Admin);
+    seed_user(&db, "dave", rdrs::models::user::Role::Admin).await;
 
     let res = server
         .get("/")
@@ -225,8 +212,8 @@ async fn test_existing_user_role_recomputed_on_login() {
     assert!(res.maybe_cookie("session_token").is_some());
 
     // Role must have been demoted from Admin → User.
-    let conn = open_shared_memory(db_name);
-    let user = rdrs::models::user::find_by_username(&conn, "dave")
+    let user = rdrs::models::user::find_by_username(&db, "dave")
+        .await
         .unwrap()
         .unwrap();
     assert_eq!(user.role, rdrs::models::user::Role::User);
@@ -234,11 +221,11 @@ async fn test_existing_user_role_recomputed_on_login() {
 
 #[tokio::test]
 async fn test_invalid_session_cookie_still_forward_auths() {
-    let db_name = "fa_test_invalid_cookie";
-    let server = create_server(db_name, |c| {
+    let (server, db) = create_server(|c| {
         c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
-    });
-    seed_user(db_name, "erin", rdrs::models::user::Role::User);
+    })
+    .await;
+    seed_user(&db, "erin", rdrs::models::user::Role::User).await;
 
     // A stale/garbage session_token cookie must NOT block forward-auth.
     let res = server
@@ -257,11 +244,11 @@ async fn test_invalid_session_cookie_still_forward_auths() {
 
 #[tokio::test]
 async fn test_sidebar_reports_via_forward_auth_dynamically() {
-    let db_name = "fa_test_sidebar_via_forward_auth";
-    let server = create_server(db_name, |c| {
+    let (server, db) = create_server(|c| {
         c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
-    });
-    seed_user(db_name, "grace", rdrs::models::user::Role::User);
+    })
+    .await;
+    seed_user(&db, "grace", rdrs::models::user::Role::User).await;
 
     // Establish a session via forward-auth (page route mints the cookie).
     server.get("/").add_header("Remote-User", "grace").await;
@@ -285,11 +272,11 @@ async fn test_sidebar_reports_via_forward_auth_dynamically() {
 
 #[tokio::test]
 async fn test_admin_page_sidebar_bootstrap_reports_via_forward_auth() {
-    let db_name = "fa_test_admin_sidebar_bootstrap";
-    let server = create_server(db_name, |c| {
+    let (server, db) = create_server(|c| {
         c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
-    });
-    seed_user(db_name, "heidi", rdrs::models::user::Role::Admin);
+    })
+    .await;
+    seed_user(&db, "heidi", rdrs::models::user::Role::Admin).await;
 
     // Establish session via forward-auth; include the admin group so the role
     // is not demoted (create_server sets group_mapping_enabled with "admins").
@@ -318,11 +305,11 @@ async fn test_admin_page_sidebar_bootstrap_reports_via_forward_auth() {
 
 #[tokio::test]
 async fn test_valid_session_cookie_not_reminted() {
-    let db_name = "fa_test_valid_cookie_not_reminted";
-    let server = create_server(db_name, |c| {
+    let (server, db) = create_server(|c| {
         c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
-    });
-    seed_user(db_name, "frank", rdrs::models::user::Role::User);
+    })
+    .await;
+    seed_user(&db, "frank", rdrs::models::user::Role::User).await;
 
     // First login mints a valid session (saved by the client jar).
     server.get("/").add_header("Remote-User", "frank").await;

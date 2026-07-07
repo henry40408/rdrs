@@ -2,7 +2,7 @@ use axum::{Json, extract::State};
 use serde_json::{Value, json};
 
 use crate::AppState;
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use crate::models::{category, entry, feed};
 
 use super::auth::GReaderUser;
@@ -26,50 +26,45 @@ pub async fn unread_count(
 ) -> AppResult<Json<UnreadCountResponse>> {
     let user_id = auth.user.id;
 
-    let response = state
-        .db
-        .read_user(move |conn| {
-            let feed_unreads = entry::count_unread_by_feed(conn, user_id)?;
-            let category_unreads = entry::count_unread_by_category(conn, user_id)?;
-            let feeds = feed::list_by_user(conn, user_id)?;
-            let categories = category::list_by_user(conn, user_id)?;
+    let feed_unreads = entry::count_unread_by_feed(&state.db, user_id).await?;
+    let category_unreads = entry::count_unread_by_category(&state.db, user_id).await?;
+    let feeds = feed::list_by_user(&state.db, user_id).await?;
+    let categories = category::list_by_user(&state.db, user_id).await?;
 
-            let mut unreadcounts: Vec<UnreadCount> = Vec::new();
+    let mut unreadcounts: Vec<UnreadCount> = Vec::new();
 
-            // Per-feed unread counts
-            for f in &feeds {
-                let count = feed_unreads.get(&f.id).copied().unwrap_or(0);
-                unreadcounts.push(UnreadCount {
-                    id: format!("feed/{}", f.url),
-                    count,
-                    newest_item_timestamp_usec: "0".to_string(),
-                });
-            }
+    // Per-feed unread counts
+    for f in &feeds {
+        let count = feed_unreads.get(&f.id).copied().unwrap_or(0);
+        unreadcounts.push(UnreadCount {
+            id: format!("feed/{}", f.url),
+            count,
+            newest_item_timestamp_usec: "0".to_string(),
+        });
+    }
 
-            // Per-category unread counts
-            for cat in &categories {
-                let count = category_unreads.get(&cat.id).copied().unwrap_or(0);
-                unreadcounts.push(UnreadCount {
-                    id: format!("user/-/label/{}", cat.name),
-                    count,
-                    newest_item_timestamp_usec: "0".to_string(),
-                });
-            }
+    // Per-category unread counts
+    for cat in &categories {
+        let count = category_unreads.get(&cat.id).copied().unwrap_or(0);
+        unreadcounts.push(UnreadCount {
+            id: format!("user/-/label/{}", cat.name),
+            count,
+            newest_item_timestamp_usec: "0".to_string(),
+        });
+    }
 
-            // Total unread count
-            let total: i64 = feed_unreads.values().sum();
-            unreadcounts.push(UnreadCount {
-                id: "user/-/state/com.google/reading-list".to_string(),
-                count: total,
-                newest_item_timestamp_usec: "0".to_string(),
-            });
+    // Total unread count
+    let total: i64 = feed_unreads.values().sum();
+    unreadcounts.push(UnreadCount {
+        id: "user/-/state/com.google/reading-list".to_string(),
+        count: total,
+        newest_item_timestamp_usec: "0".to_string(),
+    });
 
-            Ok::<_, AppError>(UnreadCountResponse {
-                max: 1000,
-                unreadcounts,
-            })
-        })
-        .await??;
+    let response = UnreadCountResponse {
+        max: 1000,
+        unreadcounts,
+    };
 
     Ok(Json(response))
 }

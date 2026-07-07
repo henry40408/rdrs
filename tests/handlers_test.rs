@@ -16,13 +16,12 @@ use std::sync::Arc;
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum_test::TestServer;
 use axum_test::multipart::{MultipartForm, Part};
-use rdrs::{AppState, Config, DbPool, Role, auth, create_router, db, services};
-use rusqlite::Connection;
+use rdrs::{AppState, Config, Db, Role, auth, create_router, services};
 use serde_json::json;
 
 struct TestApp {
     server: TestServer,
-    db: DbPool,
+    db: Db,
 }
 
 /// Static asset cache-control depends on whether the binary was built from a
@@ -36,23 +35,8 @@ fn expected_static_cache_control() -> &'static str {
     }
 }
 
-fn open_shared_memory(name: &str) -> Connection {
-    let uri = format!("file:{}?mode=memory&cache=shared", name);
-    Connection::open_with_flags(
-        uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    )
-    .unwrap()
-}
-
-fn create_test_server(config: Config) -> TestServer {
-    let write_conn = open_shared_memory("test_handlers_server");
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory("test_handlers_server");
-
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
+async fn create_test_server(config: Config) -> TestServer {
+    let db = Db::connect_in_memory().await.unwrap();
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -73,12 +57,8 @@ fn create_test_server(config: Config) -> TestServer {
     TestServer::builder().save_cookies().build(app)
 }
 
-fn create_test_app(config: Config) -> TestApp {
-    let write_conn = open_shared_memory("test_handlers_app");
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory("test_handlers_app");
-
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
+async fn create_test_app(config: Config) -> TestApp {
+    let db = Db::connect_in_memory().await.unwrap();
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -168,7 +148,7 @@ async fn get_folder_tag_names(server: &TestServer) -> Vec<String> {
 
 #[tokio::test]
 async fn test_create_category() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form = vec![
@@ -186,7 +166,7 @@ async fn test_create_category() {
 
 #[tokio::test]
 async fn test_create_category_empty_name() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Empty label name should fail validation in StreamId::parse
@@ -200,7 +180,7 @@ async fn test_create_category_empty_name() {
 
 #[tokio::test]
 async fn test_create_category_name_too_long() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let long_name = "a".repeat(101);
@@ -222,7 +202,7 @@ async fn test_create_category_name_too_long() {
 
 #[tokio::test]
 async fn test_list_categories() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Create some categories
@@ -237,7 +217,7 @@ async fn test_list_categories() {
 
 #[tokio::test]
 async fn test_list_categories_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/reader/api/0/tag/list").await;
     response.assert_status_unauthorized();
@@ -245,7 +225,7 @@ async fn test_list_categories_unauthorized() {
 
 #[tokio::test]
 async fn test_get_category() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     create_category(&server, "Test Category").await;
@@ -257,7 +237,7 @@ async fn test_get_category() {
 
 #[tokio::test]
 async fn test_update_category() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     create_category(&server, "Old Name").await;
@@ -279,7 +259,7 @@ async fn test_update_category() {
 
 #[tokio::test]
 async fn test_update_category_empty_name() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     create_category(&server, "Test").await;
@@ -295,7 +275,7 @@ async fn test_update_category_empty_name() {
 
 #[tokio::test]
 async fn test_delete_category() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     create_category(&server, "To Delete").await;
@@ -317,7 +297,7 @@ async fn test_delete_category() {
 
 #[tokio::test]
 async fn test_list_feeds_empty() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/reader/api/0/subscription/list").await;
@@ -329,7 +309,7 @@ async fn test_list_feeds_empty() {
 
 #[tokio::test]
 async fn test_list_feeds_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/reader/api/0/subscription/list").await;
     response.assert_status_unauthorized();
@@ -337,7 +317,7 @@ async fn test_list_feeds_unauthorized() {
 
 #[tokio::test]
 async fn test_update_feed_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form: Vec<(&str, &str)> = vec![
@@ -354,7 +334,7 @@ async fn test_update_feed_not_found() {
 
 #[tokio::test]
 async fn test_get_feed_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // subscription/edit ac=edit with non-existent feed returns 404
@@ -371,7 +351,7 @@ async fn test_get_feed_not_found() {
 
 #[tokio::test]
 async fn test_delete_feed_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form: Vec<(&str, &str)> = vec![
@@ -387,7 +367,7 @@ async fn test_delete_feed_not_found() {
 
 #[tokio::test]
 async fn test_get_feed_icon_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/api/feeds/9999/icon").await;
@@ -396,7 +376,7 @@ async fn test_get_feed_icon_not_found() {
 
 #[tokio::test]
 async fn test_create_feed_empty_url() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form: Vec<(&str, &str)> = vec![("ac", "subscribe"), ("s", "feed/")];
@@ -409,7 +389,7 @@ async fn test_create_feed_empty_url() {
 
 #[tokio::test]
 async fn test_create_feed_whitespace_url() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form: Vec<(&str, &str)> = vec![("ac", "subscribe"), ("s", "feed/   ")];
@@ -428,7 +408,7 @@ async fn test_create_feed_whitespace_url() {
 
 #[tokio::test]
 async fn test_move_feed_to_different_category() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Import a feed to create it
@@ -471,7 +451,7 @@ async fn test_move_feed_to_different_category() {
 
 #[tokio::test]
 async fn test_update_feed_to_other_user_category() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     // User 1 registers
     server
@@ -550,7 +530,7 @@ async fn test_update_feed_to_other_user_category() {
 
 #[tokio::test]
 async fn test_delete_feed_other_user() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
 
     // User1 registers and imports a feed
     app.server
@@ -626,7 +606,7 @@ async fn test_delete_feed_other_user() {
 
 #[tokio::test]
 async fn test_export_opml_empty() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/reader/api/0/subscription/export").await;
@@ -638,7 +618,7 @@ async fn test_export_opml_empty() {
 
 #[tokio::test]
 async fn test_export_opml_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/reader/api/0/subscription/export").await;
     response.assert_status_unauthorized();
@@ -646,7 +626,7 @@ async fn test_export_opml_unauthorized() {
 
 #[tokio::test]
 async fn test_export_opml_with_feeds() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Import feeds to create data
@@ -675,7 +655,7 @@ async fn test_export_opml_with_feeds() {
 
 #[tokio::test]
 async fn test_import_opml_valid() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -712,7 +692,7 @@ async fn test_import_opml_valid() {
 
 #[tokio::test]
 async fn test_import_opml_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .post("/reader/api/0/subscription/import")
@@ -724,7 +704,7 @@ async fn test_import_opml_unauthorized() {
 
 #[tokio::test]
 async fn test_import_opml_invalid() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -737,7 +717,7 @@ async fn test_import_opml_invalid() {
 
 #[tokio::test]
 async fn test_import_opml_duplicate_feeds_skipped() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -774,7 +754,7 @@ async fn test_import_opml_duplicate_feeds_skipped() {
 
 #[tokio::test]
 async fn test_import_opml_multiple_categories() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -814,7 +794,7 @@ async fn test_import_opml_multiple_categories() {
 
 #[tokio::test]
 async fn test_list_entries_empty() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -828,7 +808,7 @@ async fn test_list_entries_empty() {
 
 #[tokio::test]
 async fn test_list_entries_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list")
@@ -838,7 +818,7 @@ async fn test_list_entries_unauthorized() {
 
 #[tokio::test]
 async fn test_list_entries_with_pagination() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -852,7 +832,7 @@ async fn test_list_entries_with_pagination() {
 
 #[tokio::test]
 async fn test_list_entries_with_filters() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Test unread_only filter via xt=read
@@ -870,7 +850,7 @@ async fn test_list_entries_with_filters() {
 
 #[tokio::test]
 async fn test_list_entries_invalid_category() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -881,7 +861,7 @@ async fn test_list_entries_invalid_category() {
 
 #[tokio::test]
 async fn test_list_entries_invalid_feed() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -892,7 +872,7 @@ async fn test_list_entries_invalid_feed() {
 
 #[tokio::test]
 async fn test_get_entry_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // stream/items/contents with non-existent ID returns 200 with empty items
@@ -906,7 +886,7 @@ async fn test_get_entry_not_found() {
 
 #[tokio::test]
 async fn test_mark_entry_read_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form_data: Vec<(&str, String)> = vec![
@@ -919,7 +899,7 @@ async fn test_mark_entry_read_not_found() {
 
 #[tokio::test]
 async fn test_mark_entry_unread_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form_data: Vec<(&str, String)> = vec![
@@ -932,7 +912,7 @@ async fn test_mark_entry_unread_not_found() {
 
 #[tokio::test]
 async fn test_toggle_entry_star_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form_data: Vec<(&str, String)> = vec![
@@ -945,7 +925,7 @@ async fn test_toggle_entry_star_not_found() {
 
 #[tokio::test]
 async fn test_get_entry_neighbors_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/api/entries/9999/neighbors").await;
@@ -954,7 +934,7 @@ async fn test_get_entry_neighbors_not_found() {
 
 #[tokio::test]
 async fn test_fetch_full_content_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.post("/api/entries/9999/fetch-full-content").await;
@@ -963,7 +943,7 @@ async fn test_fetch_full_content_not_found() {
 
 #[tokio::test]
 async fn test_summarize_entry_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.post("/api/entries/9999/summarize").await;
@@ -972,7 +952,7 @@ async fn test_summarize_entry_not_found() {
 
 #[tokio::test]
 async fn test_save_to_services_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.post("/api/entries/9999/save").await;
@@ -981,7 +961,7 @@ async fn test_save_to_services_not_found() {
 
 #[tokio::test]
 async fn test_list_feed_entries_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -992,7 +972,7 @@ async fn test_list_feed_entries_not_found() {
 
 #[tokio::test]
 async fn test_get_unread_stats() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/reader/api/0/unread-count").await;
@@ -1004,7 +984,7 @@ async fn test_get_unread_stats() {
 
 #[tokio::test]
 async fn test_mark_all_read_all() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form: Vec<(&str, &str)> = vec![("s", "user/-/state/com.google/reading-list")];
@@ -1018,7 +998,7 @@ async fn test_mark_all_read_all() {
 
 #[tokio::test]
 async fn test_mark_all_read_older_than_days() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Use timestamp in microseconds (7 days ago)
@@ -1038,7 +1018,7 @@ async fn test_mark_all_read_older_than_days() {
 
 #[tokio::test]
 async fn test_mark_all_read_by_category_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form: Vec<(&str, &str)> = vec![("s", "user/-/label/NonExistent")];
@@ -1051,7 +1031,7 @@ async fn test_mark_all_read_by_category_not_found() {
 
 #[tokio::test]
 async fn test_mark_all_read_by_feed_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form: Vec<(&str, &str)> = vec![("s", "feed/https://nonexistent.com/feed.xml")];
@@ -1064,7 +1044,7 @@ async fn test_mark_all_read_by_feed_not_found() {
 
 #[tokio::test]
 async fn test_entries_filter_by_valid_category() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Create a category
@@ -1090,7 +1070,7 @@ async fn test_entries_filter_by_valid_category() {
 
 #[tokio::test]
 async fn test_get_theme_default() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/api/user/settings/theme").await;
@@ -1102,7 +1082,7 @@ async fn test_get_theme_default() {
 
 #[tokio::test]
 async fn test_get_theme_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/api/user/settings/theme").await;
     response.assert_status_unauthorized();
@@ -1110,7 +1090,7 @@ async fn test_get_theme_unauthorized() {
 
 #[tokio::test]
 async fn test_update_theme_dark() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -1129,7 +1109,7 @@ async fn test_update_theme_dark() {
 
 #[tokio::test]
 async fn test_update_theme_light() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -1148,7 +1128,7 @@ async fn test_update_theme_light() {
 
 #[tokio::test]
 async fn test_update_theme_system() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // First set a theme
@@ -1175,7 +1155,7 @@ async fn test_update_theme_system() {
 
 #[tokio::test]
 async fn test_update_theme_invalid() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -1188,7 +1168,7 @@ async fn test_update_theme_invalid() {
 
 #[tokio::test]
 async fn test_update_theme_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .put("/api/user/settings/theme")
@@ -1204,7 +1184,7 @@ async fn test_update_theme_unauthorized() {
 
 #[tokio::test]
 async fn test_categories_page() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/categories").await;
@@ -1220,7 +1200,7 @@ async fn test_categories_page() {
 
 #[tokio::test]
 async fn test_categories_page_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/categories").await;
     response.assert_status_see_other();
@@ -1228,7 +1208,7 @@ async fn test_categories_page_unauthorized() {
 
 #[tokio::test]
 async fn test_feeds_page() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/feeds").await;
@@ -1246,7 +1226,7 @@ async fn test_feeds_page() {
 
 #[tokio::test]
 async fn test_feeds_page_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/feeds").await;
     response.assert_status_see_other();
@@ -1254,7 +1234,7 @@ async fn test_feeds_page_unauthorized() {
 
 #[tokio::test]
 async fn test_entries_page() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/entries").await;
@@ -1263,7 +1243,7 @@ async fn test_entries_page() {
 
 #[tokio::test]
 async fn test_entries_page_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/entries").await;
     response.assert_status_see_other();
@@ -1271,7 +1251,7 @@ async fn test_entries_page_unauthorized() {
 
 #[tokio::test]
 async fn test_entry_page() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Entry page now redirects to the list page with ?entry= param
@@ -1281,7 +1261,7 @@ async fn test_entry_page() {
 
 #[tokio::test]
 async fn test_entry_page_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/entries/1").await;
     response.assert_status_see_other();
@@ -1289,7 +1269,7 @@ async fn test_entry_page_unauthorized() {
 
 #[tokio::test]
 async fn test_user_settings_page() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/user-settings").await;
@@ -1300,7 +1280,7 @@ async fn test_user_settings_page() {
 
 #[tokio::test]
 async fn test_user_settings_page_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/user-settings").await;
     response.assert_status_see_other();
@@ -1308,7 +1288,7 @@ async fn test_user_settings_page_unauthorized() {
 
 #[tokio::test]
 async fn test_settings_page() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/settings").await;
@@ -1322,7 +1302,7 @@ async fn test_settings_page() {
 
 #[tokio::test]
 async fn test_settings_page_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/settings").await;
     response.assert_status_see_other();
@@ -1334,7 +1314,7 @@ async fn test_settings_page_unauthorized() {
 
 #[tokio::test]
 async fn test_category_isolation_between_users() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     // User 1 creates a category
     server
@@ -1391,7 +1371,7 @@ async fn test_category_isolation_between_users() {
 
 #[tokio::test]
 async fn test_create_category_with_whitespace_name() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Name with leading/trailing whitespace
@@ -1418,7 +1398,7 @@ async fn test_create_category_with_whitespace_name() {
 
 #[tokio::test]
 async fn test_update_category_with_whitespace_name() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     create_category(&server, "Original").await;
@@ -1450,7 +1430,7 @@ async fn test_update_category_with_whitespace_name() {
 
 #[tokio::test]
 async fn test_get_feed_icon_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/api/feeds/1/icon").await;
     response.assert_status_unauthorized();
@@ -1458,18 +1438,11 @@ async fn test_get_feed_icon_unauthorized() {
 
 #[tokio::test]
 async fn test_get_feed_icon_no_icon() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
 
     // Create user and a feed (via OPML import) that has no icon
     let hash = auth::hash_password("password123").unwrap();
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-                rusqlite::params!["iconuser", hash, Role::User.as_str()],
-            )
-            .unwrap();
-        })
+    rdrs::models::user::create_user(&app.db, "iconuser", &hash, Role::User)
         .await
         .unwrap();
 
@@ -1506,18 +1479,13 @@ async fn test_get_feed_icon_no_icon() {
     // We need to find the feed ID. The subscription has url field but the icon endpoint
     // needs the internal feed ID. Let's extract from iconUrl if present, or use the DB.
     // Since iconUrl is empty when no icon, we'll query via DB.
-    let feed_id: i64 = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT id FROM feed WHERE url = ?1",
-                rusqlite::params!["https://noicon.example.com/feed.xml"],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let feed_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT id FROM feed WHERE url = $1",
+        "https://noicon.example.com/feed.xml"
+    )
+    .unwrap();
 
     // Request icon for a feed that exists but has no icon -> 404
     let response = app
@@ -1536,7 +1504,7 @@ async fn test_get_feed_icon_no_icon() {
 
 #[tokio::test]
 async fn test_passkey_register_start_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.post("/api/passkey/register/start").await;
     response.assert_status_unauthorized();
@@ -1544,7 +1512,7 @@ async fn test_passkey_register_start_unauthorized() {
 
 #[tokio::test]
 async fn test_passkey_register_start_authorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.post("/api/passkey/register/start").await;
@@ -1557,7 +1525,7 @@ async fn test_passkey_register_start_authorized() {
 
 #[tokio::test]
 async fn test_passkey_register_finish_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .post("/api/passkey/register/finish")
@@ -1571,7 +1539,7 @@ async fn test_passkey_register_finish_unauthorized() {
 
 #[tokio::test]
 async fn test_passkey_auth_start_no_passkeys() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.post("/api/passkey/auth/start").await;
     response.assert_status_unauthorized();
@@ -1582,7 +1550,7 @@ async fn test_passkey_auth_start_no_passkeys() {
 
 #[tokio::test]
 async fn test_passkey_auth_finish_no_challenge() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .post("/api/passkey/auth/finish")
@@ -1607,7 +1575,7 @@ async fn test_passkey_auth_finish_no_challenge() {
 
 #[tokio::test]
 async fn test_list_passkeys_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/api/passkeys").await;
     response.assert_status_unauthorized();
@@ -1615,7 +1583,7 @@ async fn test_list_passkeys_unauthorized() {
 
 #[tokio::test]
 async fn test_list_passkeys_empty() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/api/passkeys").await;
@@ -1627,7 +1595,7 @@ async fn test_list_passkeys_empty() {
 
 #[tokio::test]
 async fn test_rename_passkey_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .put("/api/passkeys/1")
@@ -1638,7 +1606,7 @@ async fn test_rename_passkey_unauthorized() {
 
 #[tokio::test]
 async fn test_rename_passkey_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -1650,7 +1618,7 @@ async fn test_rename_passkey_not_found() {
 
 #[tokio::test]
 async fn test_rename_passkey_empty_name() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -1662,7 +1630,7 @@ async fn test_rename_passkey_empty_name() {
 
 #[tokio::test]
 async fn test_delete_passkey_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.delete("/api/passkeys/1").await;
     response.assert_status_unauthorized();
@@ -1670,7 +1638,7 @@ async fn test_delete_passkey_unauthorized() {
 
 #[tokio::test]
 async fn test_delete_passkey_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.delete("/api/passkeys/9999").await;
@@ -1679,28 +1647,24 @@ async fn test_delete_passkey_not_found() {
 
 #[tokio::test]
 async fn test_passkey_auth_start_with_invalid_passkey_data() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
 
     // Create user and passkey with invalid public_key JSON
-    app.db
-        .user(move |conn| {
-            let password_hash = auth::hash_password("password123").unwrap();
-            conn.execute(
-                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-                rusqlite::params!["testuser", password_hash, Role::User.as_str()],
-            )
-            .unwrap();
-            let user_id = conn.last_insert_rowid();
-
-            // Insert passkey with invalid JSON in public_key
-            conn.execute(
-                "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![user_id, vec![1u8, 2, 3], b"invalid json", 0, "Test Passkey"],
-            )
-            .unwrap();
-        })
+    let password_hash = auth::hash_password("password123").unwrap();
+    let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
+    // Insert passkey with invalid JSON in public_key
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES ($1, $2, $3, $4, $5)",
+        user.id,
+        vec![1u8, 2, 3],
+        b"invalid json".to_vec(),
+        0i64,
+        "Test Passkey"
+    )
+    .unwrap();
 
     let response = app.server.post("/api/passkey/auth/start").await;
     response.assert_status_unauthorized();
@@ -1716,7 +1680,7 @@ async fn test_passkey_auth_start_with_invalid_passkey_data() {
 
 #[tokio::test]
 async fn test_passkey_register_finish_empty_name() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // First start registration to create a challenge
@@ -1746,7 +1710,7 @@ async fn test_passkey_register_finish_empty_name() {
 
 #[tokio::test]
 async fn test_passkey_register_finish_no_challenge() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Try to finish registration without starting (no challenge exists)
@@ -1773,27 +1737,24 @@ async fn test_passkey_register_finish_no_challenge() {
 
 #[tokio::test]
 async fn test_list_passkeys_with_data() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
 
     // Create user and passkey
-    app.db
-        .user(move |conn| {
-            let password_hash = auth::hash_password("password123").unwrap();
-            conn.execute(
-                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-                rusqlite::params!["testuser", password_hash, Role::User.as_str()],
-            )
-            .unwrap();
-            let user_id = conn.last_insert_rowid();
-
-            conn.execute(
-                "INSERT INTO passkey (user_id, credential_id, public_key, counter, name, transports) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![user_id, vec![1u8, 2, 3], b"{}", 5, "My Passkey", "usb,nfc"],
-            )
-            .unwrap();
-        })
+    let password_hash = auth::hash_password("password123").unwrap();
+    let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO passkey (user_id, credential_id, public_key, counter, name, transports) VALUES ($1, $2, $3, $4, $5, $6)",
+        user.id,
+        vec![1u8, 2, 3],
+        b"{}".to_vec(),
+        5i64,
+        "My Passkey",
+        "usb,nfc"
+    )
+    .unwrap();
 
     // Login
     app.server
@@ -1816,29 +1777,24 @@ async fn test_list_passkeys_with_data() {
 
 #[tokio::test]
 async fn test_rename_passkey_success() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
 
     // Create user and passkey
-    let passkey_id: i64 = app
-        .db
-        .user(move |conn| {
-            let password_hash = auth::hash_password("password123").unwrap();
-            conn.execute(
-                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-                rusqlite::params!["testuser", password_hash, Role::User.as_str()],
-            )
-            .unwrap();
-            let user_id = conn.last_insert_rowid();
-
-            conn.execute(
-                "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![user_id, vec![1u8, 2, 3], b"{}", 0, "Old Name"],
-            )
-            .unwrap();
-            conn.last_insert_rowid()
-        })
+    let password_hash = auth::hash_password("password123").unwrap();
+    let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
+    let passkey_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        user.id,
+        vec![1u8, 2, 3],
+        b"{}".to_vec(),
+        0i64,
+        "Old Name"
+    )
+    .unwrap();
 
     // Login
     app.server
@@ -1865,29 +1821,24 @@ async fn test_rename_passkey_success() {
 
 #[tokio::test]
 async fn test_delete_passkey_success() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
 
     // Create user and passkey
-    let passkey_id: i64 = app
-        .db
-        .user(move |conn| {
-            let password_hash = auth::hash_password("password123").unwrap();
-            conn.execute(
-                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-                rusqlite::params!["testuser", password_hash, Role::User.as_str()],
-            )
-            .unwrap();
-            let user_id = conn.last_insert_rowid();
-
-            conn.execute(
-                "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![user_id, vec![1u8, 2, 3], b"{}", 0, "Test Passkey"],
-            )
-            .unwrap();
-            conn.last_insert_rowid()
-        })
+    let password_hash = auth::hash_password("password123").unwrap();
+    let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
+    let passkey_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        user.id,
+        vec![1u8, 2, 3],
+        b"{}".to_vec(),
+        0i64,
+        "Test Passkey"
+    )
+    .unwrap();
 
     // Login
     app.server
@@ -1917,36 +1868,26 @@ async fn test_delete_passkey_success() {
 
 #[tokio::test]
 async fn test_passkey_rename_other_user() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
 
     // Create two users, each with a passkey
-    let (passkey_id_user1,) = app
-        .db
-        .user(move |conn| {
-            let hash1 = auth::hash_password("password123").unwrap();
-            conn.execute(
-                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-                rusqlite::params!["pkuser1", hash1, Role::User.as_str()],
-            )
-            .unwrap();
-            let user1_id = conn.last_insert_rowid();
-
-            conn.execute(
-                "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![user1_id, vec![1u8, 2, 3], b"{}", 0, "User1 Passkey"],
-            )
-            .unwrap();
-            let pk_id = conn.last_insert_rowid();
-
-            let hash2 = auth::hash_password("password123").unwrap();
-            conn.execute(
-                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-                rusqlite::params!["pkuser2", hash2, Role::User.as_str()],
-            )
-            .unwrap();
-
-            (pk_id,)
-        })
+    let hash1 = auth::hash_password("password123").unwrap();
+    let user1 = rdrs::models::user::create_user(&app.db, "pkuser1", &hash1, Role::User)
+        .await
+        .unwrap();
+    let passkey_id_user1: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        user1.id,
+        vec![1u8, 2, 3],
+        b"{}".to_vec(),
+        0i64,
+        "User1 Passkey"
+    )
+    .unwrap();
+    let hash2 = auth::hash_password("password123").unwrap();
+    rdrs::models::user::create_user(&app.db, "pkuser2", &hash2, Role::User)
         .await
         .unwrap();
 
@@ -1971,36 +1912,26 @@ async fn test_passkey_rename_other_user() {
 
 #[tokio::test]
 async fn test_passkey_delete_other_user() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
 
     // Create two users, user1 has a passkey
-    let (passkey_id_user1,) = app
-        .db
-        .user(move |conn| {
-            let hash1 = auth::hash_password("password123").unwrap();
-            conn.execute(
-                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-                rusqlite::params!["pkdeluser1", hash1, Role::User.as_str()],
-            )
-            .unwrap();
-            let user1_id = conn.last_insert_rowid();
-
-            conn.execute(
-                "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![user1_id, vec![4u8, 5, 6], b"{}", 0, "User1 Key"],
-            )
-            .unwrap();
-            let pk_id = conn.last_insert_rowid();
-
-            let hash2 = auth::hash_password("password123").unwrap();
-            conn.execute(
-                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-                rusqlite::params!["pkdeluser2", hash2, Role::User.as_str()],
-            )
-            .unwrap();
-
-            (pk_id,)
-        })
+    let hash1 = auth::hash_password("password123").unwrap();
+    let user1 = rdrs::models::user::create_user(&app.db, "pkdeluser1", &hash1, Role::User)
+        .await
+        .unwrap();
+    let passkey_id_user1: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        user1.id,
+        vec![4u8, 5, 6],
+        b"{}".to_vec(),
+        0i64,
+        "User1 Key"
+    )
+    .unwrap();
+    let hash2 = auth::hash_password("password123").unwrap();
+    rdrs::models::user::create_user(&app.db, "pkdeluser2", &hash2, Role::User)
         .await
         .unwrap();
 
@@ -2028,7 +1959,7 @@ async fn test_passkey_delete_other_user() {
 
 #[tokio::test]
 async fn test_favicon_ico() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/favicon.ico").await;
     response.assert_status_ok();
@@ -2044,7 +1975,7 @@ async fn test_favicon_ico() {
 
 #[tokio::test]
 async fn test_favicon_svg() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/favicon.svg").await;
     response.assert_status_ok();
@@ -2060,7 +1991,7 @@ async fn test_favicon_svg() {
 
 #[tokio::test]
 async fn test_favicon_16() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/favicon-16x16.png").await;
     response.assert_status_ok();
@@ -2076,7 +2007,7 @@ async fn test_favicon_16() {
 
 #[tokio::test]
 async fn test_favicon_32() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/favicon-32x32.png").await;
     response.assert_status_ok();
@@ -2092,7 +2023,7 @@ async fn test_favicon_32() {
 
 #[tokio::test]
 async fn test_apple_touch_icon() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/apple-touch-icon.png").await;
     response.assert_status_ok();
@@ -2129,7 +2060,7 @@ async fn test_apple_touch_icon() {
 
 #[tokio::test]
 async fn test_static_js_serves_known_file() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/static/js/utils.js").await;
     response.assert_status_ok();
@@ -2156,7 +2087,7 @@ async fn test_static_js_serves_known_file() {
 
 #[tokio::test]
 async fn test_static_js_serves_component_file() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/static/js/components/rdrs-sidebar.js").await;
     response.assert_status_ok();
@@ -2172,7 +2103,7 @@ async fn test_static_js_serves_component_file() {
 
 #[tokio::test]
 async fn test_static_js_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/static/js/nonexistent.js").await;
     response.assert_status_not_found();
@@ -2180,7 +2111,7 @@ async fn test_static_js_not_found() {
 
 #[tokio::test]
 async fn test_static_css_serves_app_css() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/static/css/app.css").await;
     response.assert_status_ok();
@@ -2211,7 +2142,7 @@ async fn test_static_css_serves_app_css() {
 
 #[tokio::test]
 async fn test_static_font_serves_woff2() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/static/fonts/newsreader-latin.woff2").await;
     response.assert_status_ok();
@@ -2242,7 +2173,7 @@ async fn test_static_font_serves_woff2() {
 
 #[tokio::test]
 async fn test_static_font_not_found() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/static/fonts/nonexistent.woff2").await;
     response.assert_status_not_found();
@@ -2254,7 +2185,7 @@ async fn test_static_font_not_found() {
 
 #[tokio::test]
 async fn test_health_check() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/health").await;
     response.assert_status_ok();
@@ -2266,7 +2197,7 @@ async fn test_health_check() {
 
 #[tokio::test]
 async fn test_health_check_no_auth_required() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     // Health check should work without authentication
     let response = server.get("/health").await;
@@ -2279,7 +2210,7 @@ async fn test_health_check_no_auth_required() {
 
 #[tokio::test]
 async fn test_subscription_list_with_feeds() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Import a feed via OPML
@@ -2333,7 +2264,7 @@ async fn test_subscription_list_with_feeds() {
 
 #[tokio::test]
 async fn test_subscription_edit_subscribe_unreachable_url() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // subscription/edit ac=subscribe performs feed discovery before inserting.
@@ -2351,7 +2282,7 @@ async fn test_subscription_edit_subscribe_unreachable_url() {
 
 #[tokio::test]
 async fn test_subscription_edit_unknown_action() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form: Vec<(&str, &str)> = vec![
@@ -2367,7 +2298,7 @@ async fn test_subscription_edit_unknown_action() {
 
 #[tokio::test]
 async fn test_quickadd_empty_url() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let form: Vec<(&str, &str)> = vec![("quickadd", "")];
@@ -2380,7 +2311,7 @@ async fn test_quickadd_empty_url() {
 
 #[tokio::test]
 async fn test_subscribed_true() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Import a feed via OPML
@@ -2409,7 +2340,7 @@ async fn test_subscribed_true() {
 
 #[tokio::test]
 async fn test_subscribed_false() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -2421,7 +2352,7 @@ async fn test_subscribed_false() {
 
 #[tokio::test]
 async fn test_subscribed_invalid_stream() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // "invalid" does not start with "feed/" so should fail validation
@@ -2431,7 +2362,7 @@ async fn test_subscribed_invalid_stream() {
 
 #[tokio::test]
 async fn test_export_opml_content_type() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/reader/api/0/subscription/export").await;
@@ -2469,7 +2400,7 @@ async fn test_export_opml_content_type() {
 
 #[tokio::test]
 async fn test_import_opml_with_existing_category() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Pre-create a category via rename-tag
@@ -2512,7 +2443,7 @@ async fn test_import_opml_with_existing_category() {
 
 #[tokio::test]
 async fn test_subscription_edit_edit_title() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // Import a feed via OPML
@@ -2558,7 +2489,7 @@ async fn test_subscription_edit_edit_title() {
 
 #[tokio::test]
 async fn test_client_login_success() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     // Register a user first
     server
@@ -2595,7 +2526,7 @@ async fn test_client_login_success() {
 
 #[tokio::test]
 async fn test_client_login_wrong_password() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     // Register a user
     server
@@ -2615,7 +2546,7 @@ async fn test_client_login_wrong_password() {
 
 #[tokio::test]
 async fn test_client_login_nonexistent_user() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     // ClientLogin with non-existent user → 401
     let form: Vec<(&str, &str)> = vec![("Email", "nouser"), ("Passwd", "password123")];
@@ -2625,7 +2556,7 @@ async fn test_client_login_nonexistent_user() {
 
 #[tokio::test]
 async fn test_greader_auth_header() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     // Register user
     server
@@ -2667,7 +2598,7 @@ async fn test_greader_auth_header() {
 
 #[tokio::test]
 async fn test_greader_invalid_auth_header() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     // Use an invalid auth token in Authorization header → 401
     let response = server
@@ -2682,7 +2613,7 @@ async fn test_greader_invalid_auth_header() {
 
 #[tokio::test]
 async fn test_get_post_token() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/reader/api/0/token").await;
@@ -2700,7 +2631,7 @@ async fn test_get_post_token() {
 
 #[tokio::test]
 async fn test_preference_list() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/reader/api/0/preference/list").await;
@@ -2712,7 +2643,7 @@ async fn test_preference_list() {
 
 #[tokio::test]
 async fn test_preference_stream_list() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/reader/api/0/preference/stream/list").await;
@@ -2724,7 +2655,7 @@ async fn test_preference_stream_list() {
 
 #[tokio::test]
 async fn test_friend_list() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server.get("/reader/api/0/friend/list").await;
@@ -2742,7 +2673,7 @@ async fn test_friend_list() {
 
 #[tokio::test]
 async fn test_change_password_form_success() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -2761,7 +2692,7 @@ async fn test_change_password_form_success() {
 
 #[tokio::test]
 async fn test_change_password_form_mismatch() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -2780,7 +2711,7 @@ async fn test_change_password_form_mismatch() {
 
 #[tokio::test]
 async fn test_update_preferences_form() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -2799,7 +2730,7 @@ async fn test_update_preferences_form() {
 
 #[tokio::test]
 async fn test_update_preferences_form_validation() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     // entries_per_page=5 is below MIN_ENTRIES_PER_PAGE (10), expect error path
@@ -2819,7 +2750,7 @@ async fn test_update_preferences_form_validation() {
 
 #[tokio::test]
 async fn test_update_linkding_form() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -2837,7 +2768,7 @@ async fn test_update_linkding_form() {
 
 #[tokio::test]
 async fn test_update_kagi_form() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&server).await;
 
     let response = server
@@ -2892,7 +2823,7 @@ async fn register_target_user(server: &TestServer) {
 
 #[tokio::test]
 async fn test_update_role_form_promotes_user() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_admin_user(&server).await;
     register_target_user(&server).await;
 
@@ -2919,7 +2850,7 @@ async fn test_update_role_form_promotes_user() {
 
 #[tokio::test]
 async fn test_update_status_form_disables_user() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_admin_user(&server).await;
     register_target_user(&server).await;
 
@@ -2946,7 +2877,7 @@ async fn test_update_status_form_disables_user() {
 
 #[tokio::test]
 async fn test_start_masquerade_form_redirects_to_root() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_admin_user(&server).await;
     register_target_user(&server).await;
 
@@ -2960,7 +2891,7 @@ async fn test_start_masquerade_form_redirects_to_root() {
 
 #[tokio::test]
 async fn test_delete_user_form_succeeds() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_admin_user(&server).await;
     register_target_user(&server).await;
 
@@ -2981,7 +2912,7 @@ async fn test_delete_user_form_succeeds() {
 
 #[tokio::test]
 async fn test_update_role_form_self_protection() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     setup_admin_user(&server).await;
 
     // Admin (id=1) tries to change their own role — should be blocked
@@ -3011,7 +2942,7 @@ async fn test_update_role_form_self_protection() {
 
 #[tokio::test]
 async fn test_create_category_form_succeeds() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
 
     let response = app
@@ -3025,20 +2956,14 @@ async fn test_create_category_form_succeeds() {
     assert_eq!(location, "/categories");
 
     // Verify the category exists in the DB
-    let exists: bool = app
-        .db
-        .user(|conn| {
-            let count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM category WHERE name = ?1",
-                    rusqlite::params!["Tech"],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            count > 0
-        })
-        .await
-        .unwrap();
+    let count: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT COUNT(*) FROM category WHERE name = $1",
+        "Tech"
+    )
+    .unwrap();
+    let exists = count > 0;
     assert!(
         exists,
         "category 'Tech' should exist in the DB after creation"
@@ -3047,7 +2972,7 @@ async fn test_create_category_form_succeeds() {
 
 #[tokio::test]
 async fn test_create_category_form_empty_name() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
 
     let response = app
@@ -3062,14 +2987,7 @@ async fn test_create_category_form_empty_name() {
     assert_eq!(location, "/categories");
 
     // Confirm nothing was inserted
-    let count: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row("SELECT COUNT(*) FROM category", [], |row| row.get(0))
-                .unwrap()
-        })
-        .await
-        .unwrap();
+    let count: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT COUNT(*) FROM category").unwrap();
     // Only the seeded "Uncategorized" remains; the empty name created nothing.
     assert_eq!(
         count, 1,
@@ -3079,7 +2997,7 @@ async fn test_create_category_form_empty_name() {
 
 #[tokio::test]
 async fn test_rename_category_form_succeeds() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
 
     // Create a category via the new form endpoint
@@ -3090,18 +3008,13 @@ async fn test_rename_category_form_succeeds() {
         .assert_status(StatusCode::SEE_OTHER);
 
     // Fetch the inserted ID
-    let cat_id: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row(
-                "SELECT id FROM category WHERE name = ?1",
-                rusqlite::params!["OldName"],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let cat_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT id FROM category WHERE name = $1",
+        "OldName"
+    )
+    .unwrap();
 
     // Rename it
     let response = app
@@ -3115,24 +3028,19 @@ async fn test_rename_category_form_succeeds() {
     assert_eq!(location, "/categories");
 
     // Verify the rename in the DB
-    let new_name: String = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT name FROM category WHERE id = ?1",
-                rusqlite::params![cat_id],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let new_name: String = rdrs::query_scalar!(
+        &app.db,
+        String,
+        "SELECT name FROM category WHERE id = $1",
+        cat_id
+    )
+    .unwrap();
     assert_eq!(new_name, "NewName");
 }
 
 #[tokio::test]
 async fn test_delete_category_form_succeeds() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
 
     // Create a category via the new form endpoint
@@ -3143,18 +3051,13 @@ async fn test_delete_category_form_succeeds() {
         .assert_status(StatusCode::SEE_OTHER);
 
     // Fetch the inserted ID
-    let cat_id: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row(
-                "SELECT id FROM category WHERE name = ?1",
-                rusqlite::params!["ToDelete"],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let cat_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT id FROM category WHERE name = $1",
+        "ToDelete"
+    )
+    .unwrap();
 
     // Delete it
     let response = app
@@ -3167,18 +3070,13 @@ async fn test_delete_category_form_succeeds() {
     assert_eq!(location, "/categories");
 
     // Verify it's gone from the DB
-    let count: i64 = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM category WHERE id = ?1",
-                rusqlite::params![cat_id],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let count: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT COUNT(*) FROM category WHERE id = $1",
+        cat_id
+    )
+    .unwrap();
     assert_eq!(count, 0, "category should be deleted from the DB");
 }
 
@@ -3189,37 +3087,31 @@ async fn test_delete_category_form_succeeds() {
 /// Helper: insert a feed directly via the model (skips network discovery).
 /// Returns (`category_id`, `feed_id`).
 async fn insert_test_feed(app: &TestApp, category_name: &str, feed_url: &str) -> (i64, i64) {
-    let cat_name = category_name.to_string();
-    let url = feed_url.to_string();
-    app.db
-        .user(move |conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, &cat_name).unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: &url,
-                    title: Some("Test Feed"),
-                    description: None,
-                    site_url: Some("https://example.com"),
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            (cat.id, feed.id)
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, category_name)
         .await
-        .unwrap()
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: feed_url,
+            title: Some("Test Feed"),
+            description: None,
+            site_url: Some("https://example.com"),
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    (cat.id, feed.id)
 }
 
 #[tokio::test]
 async fn test_create_feed_form_empty_url() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
 
     let response = app
@@ -3231,20 +3123,13 @@ async fn test_create_feed_form_empty_url() {
     response.assert_status(StatusCode::SEE_OTHER);
     assert_eq!(response.header(header::LOCATION), "/feeds");
 
-    let count: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row("SELECT COUNT(*) FROM feed", [], |row| row.get(0))
-                .unwrap()
-        })
-        .await
-        .unwrap();
+    let count: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT COUNT(*) FROM feed").unwrap();
     assert_eq!(count, 0);
 }
 
 #[tokio::test]
 async fn test_create_feed_form_invalid_category() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
 
     let response = app
@@ -3256,14 +3141,7 @@ async fn test_create_feed_form_invalid_category() {
     response.assert_status(StatusCode::SEE_OTHER);
     assert_eq!(response.header(header::LOCATION), "/feeds");
 
-    let count: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row("SELECT COUNT(*) FROM feed", [], |row| row.get(0))
-                .unwrap()
-        })
-        .await
-        .unwrap();
+    let count: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT COUNT(*) FROM feed").unwrap();
     assert_eq!(
         count, 0,
         "no feed should be created when category is invalid"
@@ -3272,7 +3150,7 @@ async fn test_create_feed_form_invalid_category() {
 
 #[tokio::test]
 async fn test_edit_feed_form_succeeds() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
     let (cat_id, feed_id) = insert_test_feed(&app, "Tech", "https://example.com/feed.xml").await;
 
@@ -3296,41 +3174,36 @@ async fn test_edit_feed_form_succeeds() {
         format!("/feeds/{}/edit", feed_id)
     );
 
-    let (title, description): (String, String) = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT title, description FROM feed WHERE id = ?1",
-                rusqlite::params![feed_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let title: String = rdrs::query_scalar!(
+        &app.db,
+        String,
+        "SELECT title FROM feed WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
+    let description: String = rdrs::query_scalar!(
+        &app.db,
+        String,
+        "SELECT description FROM feed WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
     assert_eq!(title, "Renamed Feed");
     assert_eq!(description, "New description");
 }
 
 #[tokio::test]
 async fn test_edit_feed_form_changes_category() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
     let (_cat_a, feed_id) = insert_test_feed(&app, "Tech", "https://example.com/feed.xml").await;
 
     // Add a second category for the same user.
-    let cat_b_id: i64 = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            rdrs::models::category::create_category(conn, user_id, "Other")
-                .unwrap()
-                .id
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat_b_id = rdrs::models::category::create_category(&app.db, user_id, "Other")
         .await
-        .unwrap();
+        .unwrap()
+        .id;
 
     let response = app
         .server
@@ -3348,24 +3221,19 @@ async fn test_edit_feed_form_changes_category() {
 
     response.assert_status(StatusCode::SEE_OTHER);
 
-    let new_cat_id: i64 = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT category_id FROM feed WHERE id = ?1",
-                rusqlite::params![feed_id],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let new_cat_id: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT category_id FROM feed WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
     assert_eq!(new_cat_id, cat_b_id);
 }
 
 #[tokio::test]
 async fn test_delete_feed_form_succeeds() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
     let (_cat_id, feed_id) = insert_test_feed(&app, "Tech", "https://example.com/feed.xml").await;
 
@@ -3374,56 +3242,43 @@ async fn test_delete_feed_form_succeeds() {
     response.assert_status(StatusCode::SEE_OTHER);
     assert_eq!(response.header(header::LOCATION), "/feeds");
 
-    let count: i64 = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM feed WHERE id = ?1",
-                rusqlite::params![feed_id],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let count: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT COUNT(*) FROM feed WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
     assert_eq!(count, 0);
 }
 
 #[tokio::test]
 async fn test_delete_feed_form_not_owned() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
     // Insert a feed under another user (not the logged-in one).
-    let other_feed_id: i64 = app
-        .db
-        .user(|conn| {
-            let other_user_id: i64 = rusqlite::Connection::execute(
-                conn,
-                "INSERT INTO user (username, password_hash, role) VALUES ('other', 'x', 'user')",
-                [],
-            )
-            .map(|_| conn.last_insert_rowid())
-            .unwrap();
-            let cat =
-                rdrs::models::category::create_category(conn, other_user_id, "Other").unwrap();
-            rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://other.example.com/feed.xml",
-                    title: Some("Other"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap()
-            .id
-        })
+    let other_user = rdrs::models::user::create_user(&app.db, "other", "x", Role::User)
         .await
         .unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, other_user.id, "Other")
+        .await
+        .unwrap();
+    let other_feed_id = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://other.example.com/feed.xml",
+            title: Some("Other"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap()
+    .id;
 
     let response = app
         .server
@@ -3434,56 +3289,43 @@ async fn test_delete_feed_form_not_owned() {
     assert_eq!(response.header(header::LOCATION), "/feeds");
 
     // Other user's feed must still exist.
-    let count: i64 = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM feed WHERE id = ?1",
-                rusqlite::params![other_feed_id],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let count: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT COUNT(*) FROM feed WHERE id = $1",
+        other_feed_id
+    )
+    .unwrap();
     assert_eq!(count, 1, "non-owner delete must not remove the feed");
 }
 
 #[tokio::test]
 async fn test_refresh_feed_form_not_owned() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
     // Insert a feed under another user.
-    let other_feed_id: i64 = app
-        .db
-        .user(|conn| {
-            let other_user_id: i64 = rusqlite::Connection::execute(
-                conn,
-                "INSERT INTO user (username, password_hash, role) VALUES ('other2', 'x', 'user')",
-                [],
-            )
-            .map(|_| conn.last_insert_rowid())
-            .unwrap();
-            let cat =
-                rdrs::models::category::create_category(conn, other_user_id, "Other").unwrap();
-            rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://other2.example.com/feed.xml",
-                    title: Some("Other"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap()
-            .id
-        })
+    let other_user = rdrs::models::user::create_user(&app.db, "other2", "x", Role::User)
         .await
         .unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, other_user.id, "Other")
+        .await
+        .unwrap();
+    let other_feed_id = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://other2.example.com/feed.xml",
+            title: Some("Other"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap()
+    .id;
 
     let response = app
         .server
@@ -3497,7 +3339,7 @@ async fn test_refresh_feed_form_not_owned() {
 
 #[tokio::test]
 async fn test_import_opml_form_empty() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
 
     let form = MultipartForm::new();
@@ -3506,20 +3348,13 @@ async fn test_import_opml_form_empty() {
     response.assert_status(StatusCode::SEE_OTHER);
     assert_eq!(response.header(header::LOCATION), "/feeds/import");
 
-    let count: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row("SELECT COUNT(*) FROM feed", [], |row| row.get(0))
-                .unwrap()
-        })
-        .await
-        .unwrap();
+    let count: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT COUNT(*) FROM feed").unwrap();
     assert_eq!(count, 0);
 }
 
 #[tokio::test]
 async fn test_import_opml_form_succeeds() {
-    let app = create_test_app(default_test_config());
+    let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app.server).await;
 
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -3542,27 +3377,18 @@ async fn test_import_opml_form_succeeds() {
     response.assert_status(StatusCode::SEE_OTHER);
     assert_eq!(response.header(header::LOCATION), "/feeds");
 
-    let (cat_count, feed_count): (i64, i64) = app
-        .db
-        .user(|conn| {
-            let cats: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM category WHERE name = 'Tech'",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            let feeds: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM feed WHERE url = 'https://example.com/feed.xml'",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            (cats, feeds)
-        })
-        .await
-        .unwrap();
+    let cat_count: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT COUNT(*) FROM category WHERE name = 'Tech'"
+    )
+    .unwrap();
+    let feed_count: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT COUNT(*) FROM feed WHERE url = 'https://example.com/feed.xml'"
+    )
+    .unwrap();
     assert_eq!(cat_count, 1);
     assert_eq!(feed_count, 1);
 }
@@ -3573,12 +3399,8 @@ async fn test_import_opml_form_succeeds() {
 
 /// Isolated app factory used by the fragment tests so they don't share the
 /// `test_handlers_app` `SQLite` in-memory database with the rest of the suite.
-fn create_test_app_named(config: Config, name: &str) -> TestApp {
-    let write_conn = open_shared_memory(name);
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory(name);
-
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
+async fn create_test_app_named(config: Config, _name: &str) -> TestApp {
+    let db = Db::connect_in_memory().await.unwrap();
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -3603,7 +3425,7 @@ fn create_test_app_named(config: Config, name: &str) -> TestApp {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_renders_reading_pane() {
-    let app = create_test_app_named(default_test_config(), "test_entry_fragment_happy");
+    let app = create_test_app_named(default_test_config(), "test_entry_fragment_happy").await;
 
     // Register and log in as alice.
     app.server
@@ -3618,43 +3440,39 @@ async fn test_entry_fragment_renders_reading_pane() {
         .assert_status_ok();
 
     // Seed: category + feed + entry with content.
-    let entry_id: i64 = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/feed",
-                    title: Some("Test Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (entry, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-frag-test",
-                Some("Hello World"),
-                Some("https://x/post"),
-                Some("<p>Body text here</p>"),
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            entry.id
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/feed",
+            title: Some("Test Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-frag-test",
+        Some("Hello World"),
+        Some("https://x/post"),
+        Some("<p>Body text here</p>"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let entry_id = entry.id;
 
     let response = app
         .server
@@ -3704,17 +3522,13 @@ async fn test_entry_fragment_renders_reading_pane() {
     );
     // The mark-as-read write is now async (user_detached); a user() read-back
     // is FIFO-ordered behind it, so it observes the applied write.
-    let read_at: Option<String> = app
-        .db
-        .user(move |conn| {
-            conn.query_row("SELECT read_at FROM entry WHERE id = ?1", [entry_id], |r| {
-                r.get::<_, Option<String>>(0)
-            })
-            .map_err(rdrs::error::AppError::from)
-        })
-        .await
-        .unwrap()
-        .unwrap();
+    let read_at: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT read_at FROM entry WHERE id = $1",
+        entry_id
+    )
+    .unwrap();
     assert!(read_at.is_some(), "entry must be marked read after open");
 }
 
@@ -3724,7 +3538,7 @@ async fn test_entry_fragment_renders_reading_pane() {
 /// blank page. The redirect path is read-only and must not mark the entry read.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_redirects_on_top_level_navigation() {
-    let app = create_test_app_named(default_test_config(), "test_entry_fragment_doc_nav");
+    let app = create_test_app_named(default_test_config(), "test_entry_fragment_doc_nav").await;
 
     app.server
         .post("/api/register")
@@ -3737,43 +3551,39 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
         .await
         .assert_status_ok();
 
-    let entry_id: i64 = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/feed",
-                    title: Some("Test Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (entry, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-doc-nav",
-                Some("Hello World"),
-                Some("https://x/post"),
-                Some("<p>Body text here</p>"),
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            entry.id
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/feed",
+            title: Some("Test Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-doc-nav",
+        Some("Hello World"),
+        Some("https://x/post"),
+        Some("<p>Body text here</p>"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let entry_id = entry.id;
 
     let response = app
         .server
@@ -3794,19 +3604,13 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
 
     // The redirect short-circuits before the write transaction, so the entry
     // stays unread (the user will mark it read by opening it normally).
-    let read_at: Option<String> = app
-        .db
-        .read_user(move |conn| {
-            conn.query_row(
-                "SELECT read_at FROM entry WHERE id = ?1",
-                [entry_id],
-                |row| row.get(0),
-            )
-            .map_err(rdrs::error::AppError::from)
-        })
-        .await
-        .unwrap()
-        .unwrap();
+    let read_at: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT read_at FROM entry WHERE id = $1",
+        entry_id
+    )
+    .unwrap();
     assert!(
         read_at.is_none(),
         "the top-level-navigation redirect must not mark the entry read"
@@ -3821,7 +3625,8 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
 /// Entries" when `app.js` is stale-cached and clicks fall through to navigation.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_document_nav_preserves_referer_scope() {
-    let app = create_test_app_named(default_test_config(), "test_entry_fragment_referer_scope");
+    let app =
+        create_test_app_named(default_test_config(), "test_entry_fragment_referer_scope").await;
 
     app.server
         .post("/api/register")
@@ -3861,7 +3666,7 @@ async fn test_entry_fragment_document_nav_preserves_referer_scope() {
 /// mirroring miniflux's media proxy.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_proxy_image_304_on_if_none_match() {
-    let app = create_test_app_named(default_test_config(), "test_proxy_image_inm");
+    let app = create_test_app_named(default_test_config(), "test_proxy_image_inm").await;
 
     let response = app
         .server
@@ -3883,7 +3688,7 @@ async fn test_proxy_image_304_on_if_none_match() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_404_for_other_user() {
-    let app = create_test_app_named(default_test_config(), "test_entry_fragment_404");
+    let app = create_test_app_named(default_test_config(), "test_entry_fragment_404").await;
 
     // Register alice (will be logged in).
     app.server
@@ -3899,48 +3704,41 @@ async fn test_entry_fragment_404_for_other_user() {
 
     // Insert bob + bob's entry directly via the DB — bob never logs in via the
     // test server so alice's session cookie stays active.
-    let bob_entry_id: i64 = app
-        .db
-        .user(|conn| {
-            let bob_id: i64 = conn
-                .execute(
-                    "INSERT INTO user (username, password_hash, role) VALUES ('bob_404', 'x', 'user')",
-                    [],
-                )
-                .map(|_| conn.last_insert_rowid())
-                .unwrap();
-            let cat =
-                rdrs::models::category::create_category(conn, bob_id, "T").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://b/feed",
-                    title: Some("Bob Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (entry, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-bob-entry",
-                Some("Bob's Entry"),
-                Some("https://b/post"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            entry.id
-        })
+    let bob = rdrs::models::user::create_user(&app.db, "bob_404", "x", Role::User)
         .await
         .unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, bob.id, "T")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://b/feed",
+            title: Some("Bob Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-bob-entry",
+        Some("Bob's Entry"),
+        Some("https://b/post"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let bob_entry_id = entry.id;
 
     // Alice tries to read Bob's entry — must get 404, not 200.
     let response = app
@@ -3961,7 +3759,7 @@ async fn test_entry_fragment_404_for_other_user() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_star_entry_form_is_idempotent_mark_starred() {
-    let app = create_test_app_named(default_test_config(), "test_star_entry_form");
+    let app = create_test_app_named(default_test_config(), "test_star_entry_form").await;
 
     // Register and log in as alice.
     app.server
@@ -3976,43 +3774,39 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
         .assert_status_ok();
 
     // Seed: category + feed + one unread, unstarred entry.
-    let entry_id: i64 = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/star-feed",
-                    title: Some("Star Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (entry, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-star-test",
-                Some("E"),
-                Some("https://x/p"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            entry.id
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/star-feed",
+            title: Some("Star Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-star-test",
+        Some("E"),
+        Some("https://x/p"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let entry_id = entry.id;
 
     // First /star — real state change, must star the entry.
     let resp = app
@@ -4063,7 +3857,7 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
-    let app = create_test_app_named(default_test_config(), "test_unstar_entry_form");
+    let app = create_test_app_named(default_test_config(), "test_unstar_entry_form").await;
 
     app.server
         .post("/api/register")
@@ -4078,44 +3872,42 @@ async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
 
     // Seed one already-starred entry so /unstar's first call is a real
     // state change and the second call exercises the no-op path.
-    let entry_id: i64 = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/unstar-feed",
-                    title: Some("Unstar Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (entry, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-unstar-test",
-                Some("E"),
-                Some("https://x/u"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            rdrs::models::entry::star_entry(conn, entry.id).unwrap();
-            entry.id
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/unstar-feed",
+            title: Some("Unstar Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-unstar-test",
+        Some("E"),
+        Some("https://x/u"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    rdrs::models::entry::star_entry(&app.db, entry.id)
+        .await
+        .unwrap();
+    let entry_id = entry.id;
 
     // First /unstar — real state change.
     let resp = app
@@ -4152,7 +3944,7 @@ async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_read_entry_form_is_idempotent_mark_read() {
-    let app = create_test_app_named(default_test_config(), "test_read_entry_form");
+    let app = create_test_app_named(default_test_config(), "test_read_entry_form").await;
 
     // Register and log in as alice.
     app.server
@@ -4167,43 +3959,39 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
         .assert_status_ok();
 
     // Seed: category + feed + one unread entry.
-    let entry_id: i64 = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/read-feed",
-                    title: Some("Read Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (entry, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-read-test",
-                Some("E"),
-                Some("https://x/r"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            entry.id
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/read-feed",
+            title: Some("Read Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-read-test",
+        Some("E"),
+        Some("https://x/r"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let entry_id = entry.id;
 
     // First POST — should mark read.
     let resp = app
@@ -4240,7 +4028,7 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unread_entry_form_is_idempotent_mark_unread() {
-    let app = create_test_app_named(default_test_config(), "test_unread_entry_form");
+    let app = create_test_app_named(default_test_config(), "test_unread_entry_form").await;
 
     app.server
         .post("/api/register")
@@ -4255,44 +4043,42 @@ async fn test_unread_entry_form_is_idempotent_mark_unread() {
 
     // Seed one entry already in the read state so the first /unread is a real
     // state change and the second one is a no-op.
-    let entry_id: i64 = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/unread-feed",
-                    title: Some("Unread Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (entry, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-unread-test",
-                Some("E"),
-                Some("https://x/u"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            rdrs::models::entry::mark_as_read(conn, entry.id).unwrap();
-            entry.id
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/unread-feed",
+            title: Some("Unread Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-unread-test",
+        Some("E"),
+        Some("https://x/u"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    rdrs::models::entry::mark_as_read(&app.db, entry.id)
+        .await
+        .unwrap();
+    let entry_id = entry.id;
 
     // First /unread — real state change, must mark unread + emit flash.
     let resp = app
@@ -4334,7 +4120,7 @@ async fn test_unread_entry_form_is_idempotent_mark_unread() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_star_entry_form_404_for_other_user() {
-    let app = create_test_app_named(default_test_config(), "test_star_entry_form_404");
+    let app = create_test_app_named(default_test_config(), "test_star_entry_form_404").await;
 
     // Register + login alice (session cookie is now alice's).
     app.server
@@ -4350,48 +4136,41 @@ async fn test_star_entry_form_404_for_other_user() {
 
     // Insert bob + bob's entry directly via DB — bob never logs in via the test
     // server so alice's session cookie stays active.
-    let bob_entry_id: i64 = app
-        .db
-        .user(|conn| {
-            let bob_id: i64 = conn
-                .execute(
-                    "INSERT INTO user (username, password_hash, role) VALUES ('bob_s404', 'x', 'user')",
-                    [],
-                )
-                .map(|_| conn.last_insert_rowid())
-                .unwrap();
-            let cat =
-                rdrs::models::category::create_category(conn, bob_id, "Bob Cat").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://bob/star-feed",
-                    title: Some("Bob Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (entry, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-bob-star",
-                Some("Bob Entry"),
-                Some("https://bob/entry"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            entry.id
-        })
+    let bob = rdrs::models::user::create_user(&app.db, "bob_s404", "x", Role::User)
         .await
         .unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, bob.id, "Bob Cat")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://bob/star-feed",
+            title: Some("Bob Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-bob-star",
+        Some("Bob Entry"),
+        Some("https://bob/entry"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let bob_entry_id = entry.id;
 
     // Alice tries to star bob's entry → 404.
     let resp = app
@@ -4422,7 +4201,7 @@ async fn test_star_entry_form_404_for_other_user() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_read_entry_form_404_for_other_user() {
-    let app = create_test_app_named(default_test_config(), "test_read_entry_form_404");
+    let app = create_test_app_named(default_test_config(), "test_read_entry_form_404").await;
 
     // Register + login alice (session cookie is now alice's).
     app.server
@@ -4438,48 +4217,41 @@ async fn test_read_entry_form_404_for_other_user() {
 
     // Insert bob + bob's entry directly via DB — bob never logs in via the test
     // server so alice's session cookie stays active.
-    let bob_entry_id: i64 = app
-        .db
-        .user(|conn| {
-            let bob_id: i64 = conn
-                .execute(
-                    "INSERT INTO user (username, password_hash, role) VALUES ('bob_r404', 'x', 'user')",
-                    [],
-                )
-                .map(|_| conn.last_insert_rowid())
-                .unwrap();
-            let cat =
-                rdrs::models::category::create_category(conn, bob_id, "Bob Cat").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://bob/read-feed",
-                    title: Some("Bob Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (entry, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-bob-read",
-                Some("Bob Entry"),
-                Some("https://bob/entry"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            entry.id
-        })
+    let bob = rdrs::models::user::create_user(&app.db, "bob_r404", "x", Role::User)
         .await
         .unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, bob.id, "Bob Cat")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://bob/read-feed",
+            title: Some("Bob Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-bob-read",
+        Some("Bob Entry"),
+        Some("https://bob/entry"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let bob_entry_id = entry.id;
 
     // Alice tries to mark bob's entry as read → 404.
     let resp = app
@@ -4511,7 +4283,7 @@ async fn test_read_entry_form_404_for_other_user() {
 // Fetch-Full-Content view keeps its externally-fetched article body.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_summarize_entry_form_renders_summary_pending_fragment() {
-    let app = create_test_app_named(default_test_config(), "test_summarize_entry_form");
+    let app = create_test_app_named(default_test_config(), "test_summarize_entry_form").await;
 
     // Register and log in as alice.
     app.server
@@ -4526,43 +4298,39 @@ async fn test_summarize_entry_form_renders_summary_pending_fragment() {
         .assert_status_ok();
 
     // Seed: category + feed + entry with a link.
-    let entry_id: i64 = app
-        .db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat = rdrs::models::category::create_category(conn, user_id, "T").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://x/sum-feed",
-                    title: Some("Sum Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            let (entry, _) = rdrs::models::entry::upsert_entry(
-                conn,
-                feed.id,
-                "guid-sum-test",
-                Some("Summarizable Entry"),
-                Some("https://x/sum-post"),
-                Some("<p>Content to summarize</p>"),
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            entry.id
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
         .await
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/sum-feed",
+            title: Some("Sum Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-sum-test",
+        Some("Summarizable Entry"),
+        Some("https://x/sum-post"),
+        Some("<p>Content to summarize</p>"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let entry_id = entry.id;
 
     // POST /entries/{id}/summarize — should return only the
     // `#rp-summary-container` swap fragment with a pending state.
@@ -4594,7 +4362,7 @@ async fn test_summarize_entry_form_renders_summary_pending_fragment() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entries_load_more_returns_row_fragments() {
-    let app = create_test_app_named(default_test_config(), "test_load_more_fragment");
+    let app = create_test_app_named(default_test_config(), "test_load_more_fragment").await;
 
     // Register and log in as alice.
     app.server
@@ -4609,46 +4377,40 @@ async fn test_entries_load_more_returns_row_fragments() {
         .assert_status_ok();
 
     // Seed: category + feed + 75 entries.
-    app.db
-        .user(|conn| {
-            let user_id: i64 = conn
-                .query_row("SELECT id FROM user LIMIT 1", [], |row| row.get(0))
-                .unwrap();
-            let cat =
-                rdrs::models::category::create_category(conn, user_id, "LoadMore Cat").unwrap();
-            let feed = rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://lm/feed",
-                    title: Some("LM Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap();
-            for i in 0..75i64 {
-                rdrs::models::entry::upsert_entry(
-                    conn,
-                    feed.id,
-                    &format!("guid-lm-{i}"),
-                    Some(&format!("LM Entry {i}")),
-                    Some(&format!("https://lm/{i}")),
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .unwrap();
-            }
-            Ok::<_, rdrs::error::AppError>(())
-        })
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "LoadMore Cat")
         .await
-        .unwrap()
         .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://lm/feed",
+            title: Some("LM Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    for i in 0..75i64 {
+        rdrs::models::entry::upsert_entry(
+            &app.db,
+            feed.id,
+            &format!("guid-lm-{i}"),
+            Some(&format!("LM Entry {i}")),
+            Some(&format!("https://lm/{i}")),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
 
     // GET /entries — fetch page 1 (50 entries) and extract the keyset cursor.
     let page1 = app.server.get("/entries").await;
@@ -4697,7 +4459,7 @@ async fn test_entries_load_more_returns_row_fragments() {
 
 #[tokio::test]
 async fn test_edit_feed_form_empty_url() {
-    let app = create_test_app_named(default_test_config(), "test_edit_feed_empty_url");
+    let app = create_test_app_named(default_test_config(), "test_edit_feed_empty_url").await;
     setup_authenticated_user(&app.server).await;
     let (cat_id, feed_id) =
         insert_test_feed(&app, "Tech", "https://empty-url-test.example.com/feed.xml").await;
@@ -4724,24 +4486,19 @@ async fn test_edit_feed_form_empty_url() {
     );
 
     // Verify url unchanged in DB.
-    let url: String = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT url FROM feed WHERE id = ?1",
-                rusqlite::params![feed_id],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let url: String = rdrs::query_scalar!(
+        &app.db,
+        String,
+        "SELECT url FROM feed WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
     assert_eq!(url, "https://empty-url-test.example.com/feed.xml");
 }
 
 #[tokio::test]
 async fn test_edit_feed_form_not_found() {
-    let app = create_test_app_named(default_test_config(), "test_edit_feed_not_found");
+    let app = create_test_app_named(default_test_config(), "test_edit_feed_not_found").await;
     setup_authenticated_user(&app.server).await;
     let (cat_id, _) =
         insert_test_feed(&app, "Tech", "https://notfound-test.example.com/feed.xml").await;
@@ -4767,40 +4524,32 @@ async fn test_edit_feed_form_not_found() {
 
 #[tokio::test]
 async fn test_edit_feed_form_other_users_feed() {
-    let app = create_test_app_named(default_test_config(), "test_edit_other_user_feed");
+    let app = create_test_app_named(default_test_config(), "test_edit_other_user_feed").await;
     setup_authenticated_user(&app.server).await;
 
     // Seed a feed under a different user (not testuser).
-    let other_feed_id: i64 = app
-        .db
-        .user(|conn| {
-            let other_uid: i64 = conn
-                .execute(
-                    "INSERT INTO user (username, password_hash, role) VALUES ('other_editfeed', 'x', 'user')",
-                    [],
-                )
-                .map(|_| conn.last_insert_rowid())
-                .unwrap();
-            let cat =
-                rdrs::models::category::create_category(conn, other_uid, "OtherCat").unwrap();
-            rdrs::models::feed::create_feed(
-                conn,
-                &rdrs::models::feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: "https://other-edit.example.com/feed.xml",
-                    title: Some("Other Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap()
-            .id
-        })
+    let other_user = rdrs::models::user::create_user(&app.db, "other_editfeed", "x", Role::User)
         .await
         .unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, other_user.id, "OtherCat")
+        .await
+        .unwrap();
+    let other_feed_id = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://other-edit.example.com/feed.xml",
+            title: Some("Other Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap()
+    .id;
 
     // testuser tries to edit the other user's feed — the handler checks
     // category ownership (find_by_id_and_user on the feed's category)
@@ -4822,24 +4571,19 @@ async fn test_edit_feed_form_other_users_feed() {
     response.assert_status(StatusCode::SEE_OTHER);
 
     // The other user's feed must be unchanged.
-    let title: String = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT title FROM feed WHERE id = ?1",
-                rusqlite::params![other_feed_id],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let title: String = rdrs::query_scalar!(
+        &app.db,
+        String,
+        "SELECT title FROM feed WHERE id = $1",
+        other_feed_id
+    )
+    .unwrap();
     assert_eq!(title, "Other Feed");
 }
 
 #[tokio::test]
 async fn test_edit_feed_form_category_not_owned() {
-    let app = create_test_app_named(default_test_config(), "test_edit_feed_cat_not_owned");
+    let app = create_test_app_named(default_test_config(), "test_edit_feed_cat_not_owned").await;
     setup_authenticated_user(&app.server).await;
     let (cat_id, feed_id) = insert_test_feed(
         &app,
@@ -4849,22 +4593,14 @@ async fn test_edit_feed_form_category_not_owned() {
     .await;
 
     // Create a category that belongs to a different user.
-    let other_cat_id: i64 = app
-        .db
-        .user(|conn| {
-            let other_uid: i64 = conn
-                .execute(
-                    "INSERT INTO user (username, password_hash, role) VALUES ('other_catowner', 'x', 'user')",
-                    [],
-                )
-                .map(|_| conn.last_insert_rowid())
-                .unwrap();
-            rdrs::models::category::create_category(conn, other_uid, "NotMyCategory")
-                .unwrap()
-                .id
-        })
+    let other_user = rdrs::models::user::create_user(&app.db, "other_catowner", "x", Role::User)
         .await
         .unwrap();
+    let other_cat_id =
+        rdrs::models::category::create_category(&app.db, other_user.id, "NotMyCategory")
+            .await
+            .unwrap()
+            .id;
 
     // testuser tries to move their feed into the other user's category.
     let response = app
@@ -4884,39 +4620,30 @@ async fn test_edit_feed_form_category_not_owned() {
     response.assert_status(StatusCode::SEE_OTHER);
 
     // The feed's category must remain unchanged.
-    let actual_cat: i64 = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT category_id FROM feed WHERE id = ?1",
-                rusqlite::params![feed_id],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let actual_cat: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT category_id FROM feed WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
     assert_eq!(actual_cat, cat_id);
 }
 
 #[tokio::test]
 async fn test_edit_feed_form_clear_user_agent() {
-    let app = create_test_app_named(default_test_config(), "test_edit_feed_clear_ua");
+    let app = create_test_app_named(default_test_config(), "test_edit_feed_clear_ua").await;
     setup_authenticated_user(&app.server).await;
 
     // Seed a feed and set a custom_user_agent on it directly.
     let (cat_id, feed_id) =
         insert_test_feed(&app, "Tech", "https://clear-ua.example.com/feed.xml").await;
-    app.db
-        .user(move |conn| {
-            conn.execute(
-                "UPDATE feed SET custom_user_agent = 'MyBot/1.0' WHERE id = ?1",
-                rusqlite::params![feed_id],
-            )
-            .unwrap();
-        })
-        .await
-        .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "UPDATE feed SET custom_user_agent = 'MyBot/1.0' WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
 
     // POST edit with _clear_user_agent=on
     let response = app
@@ -4941,18 +4668,13 @@ async fn test_edit_feed_form_clear_user_agent() {
     );
 
     // custom_user_agent must now be NULL.
-    let ua: Option<String> = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT custom_user_agent FROM feed WHERE id = ?1",
-                rusqlite::params![feed_id],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let ua: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT custom_user_agent FROM feed WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
     assert!(
         ua.is_none(),
         "custom_user_agent should be NULL after _clear_user_agent=on, got: {:?}",
@@ -4962,7 +4684,7 @@ async fn test_edit_feed_form_clear_user_agent() {
 
 #[tokio::test]
 async fn test_delete_feed_form_not_found() {
-    let app = create_test_app_named(default_test_config(), "test_delete_feed_not_found");
+    let app = create_test_app_named(default_test_config(), "test_delete_feed_not_found").await;
     setup_authenticated_user(&app.server).await;
 
     let response = app.server.post("/feeds/999999/delete").await;
@@ -4973,7 +4695,7 @@ async fn test_delete_feed_form_not_found() {
 
 #[tokio::test]
 async fn test_import_opml_form_invalid() {
-    let app = create_test_app_named(default_test_config(), "test_import_opml_invalid_form");
+    let app = create_test_app_named(default_test_config(), "test_import_opml_invalid_form").await;
     setup_authenticated_user(&app.server).await;
 
     let invalid_xml = b"<not valid opml";
@@ -4988,20 +4710,13 @@ async fn test_import_opml_form_invalid() {
     assert_eq!(response.header(header::LOCATION), "/feeds/import");
 
     // No feeds created.
-    let count: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row("SELECT COUNT(*) FROM feed", [], |row| row.get(0))
-                .unwrap()
-        })
-        .await
-        .unwrap();
+    let count: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT COUNT(*) FROM feed").unwrap();
     assert_eq!(count, 0);
 }
 
 #[tokio::test]
 async fn test_import_opml_form_duplicate_skipped() {
-    let app = create_test_app_named(default_test_config(), "test_import_opml_dup_skipped");
+    let app = create_test_app_named(default_test_config(), "test_import_opml_dup_skipped").await;
     setup_authenticated_user(&app.server).await;
 
     // Pre-seed a feed with a specific URL in a specific category.
@@ -5030,18 +4745,13 @@ async fn test_import_opml_form_duplicate_skipped() {
     assert_eq!(response.header(header::LOCATION), "/feeds");
 
     // Feed count for that URL must still be 1 (duplicate skipped).
-    let count: i64 = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM feed WHERE url = ?1",
-                rusqlite::params![feed_url],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let count: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT COUNT(*) FROM feed WHERE url = $1",
+        feed_url
+    )
+    .unwrap();
     assert_eq!(
         count, 1,
         "duplicate import must not create a second feed row"
@@ -5062,18 +4772,11 @@ async fn test_create_feed_form_success() {
     use wiremock::matchers::{any, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let app = create_test_app_named(default_test_config(), "test_create_feed_success");
+    let app = create_test_app_named(default_test_config(), "test_create_feed_success").await;
     setup_authenticated_user(&app.server).await;
 
     // Get the owned category id (the seeded "Uncategorized").
-    let cat_id: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row("SELECT id FROM category LIMIT 1", [], |row| row.get(0))
-                .unwrap()
-        })
-        .await
-        .unwrap();
+    let cat_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM category LIMIT 1").unwrap();
 
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -5098,18 +4801,13 @@ async fn test_create_feed_form_success() {
     assert_eq!(response.header(header::LOCATION), "/feeds");
 
     // One feed row with that URL must exist.
-    let count: i64 = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM feed WHERE url = ?1",
-                rusqlite::params![feed_url],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let count: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT COUNT(*) FROM feed WHERE url = $1",
+        feed_url
+    )
+    .unwrap();
     assert_eq!(count, 1, "feed should have been created in the DB");
 }
 
@@ -5118,7 +4816,7 @@ async fn test_create_feed_form_duplicate() {
     use wiremock::matchers::{any, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let app = create_test_app_named(default_test_config(), "test_create_feed_dup");
+    let app = create_test_app_named(default_test_config(), "test_create_feed_dup").await;
     setup_authenticated_user(&app.server).await;
 
     let mock_server = MockServer::start().await;
@@ -5137,14 +4835,7 @@ async fn test_create_feed_form_duplicate() {
     // Pre-create the feed.
     insert_test_feed(&app, "Tech", &feed_url).await;
 
-    let cat_id: i64 = app
-        .db
-        .user(|conn| {
-            conn.query_row("SELECT id FROM category LIMIT 1", [], |row| row.get(0))
-                .unwrap()
-        })
-        .await
-        .unwrap();
+    let cat_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM category LIMIT 1").unwrap();
 
     // POST create with the same URL.
     let response = app
@@ -5157,18 +4848,13 @@ async fn test_create_feed_form_duplicate() {
     assert_eq!(response.header(header::LOCATION), "/feeds");
 
     // Feed count must still be 1.
-    let count: i64 = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM feed WHERE url = ?1",
-                rusqlite::params![feed_url],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let count: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT COUNT(*) FROM feed WHERE url = $1",
+        feed_url
+    )
+    .unwrap();
     assert_eq!(count, 1, "duplicate create must not add a second feed row");
 }
 
@@ -5177,7 +4863,7 @@ async fn test_refresh_feed_form_success() {
     use wiremock::matchers::{any, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let app = create_test_app_named(default_test_config(), "test_refresh_feed_success");
+    let app = create_test_app_named(default_test_config(), "test_refresh_feed_success").await;
     setup_authenticated_user(&app.server).await;
 
     let mock_server = MockServer::start().await;
@@ -5203,18 +4889,13 @@ async fn test_refresh_feed_form_success() {
     assert_eq!(response.header(header::LOCATION), "/feeds");
 
     // At least 1 entry should have been synced.
-    let entry_count: i64 = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM entry WHERE feed_id = ?1",
-                rusqlite::params![feed_id],
-                |row| row.get(0),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let entry_count: i64 = rdrs::query_scalar!(
+        &app.db,
+        i64,
+        "SELECT COUNT(*) FROM entry WHERE feed_id = $1",
+        feed_id
+    )
+    .unwrap();
     assert!(
         entry_count >= 1,
         "refresh should have synced at least 1 entry, got {}",
@@ -5227,7 +4908,7 @@ async fn test_fetch_metadata_form_success() {
     use wiremock::matchers::{any, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let app = create_test_app_named(default_test_config(), "test_fetch_metadata_success");
+    let app = create_test_app_named(default_test_config(), "test_fetch_metadata_success").await;
     setup_authenticated_user(&app.server).await;
 
     let mock_server = MockServer::start().await;
@@ -5257,18 +4938,20 @@ async fn test_fetch_metadata_form_success() {
 
     // The RSS fixture has title "Mock Feed" and description "Mock Desc"; these
     // must now be reflected in the DB.
-    let (title, description): (String, String) = app
-        .db
-        .user(move |conn| {
-            conn.query_row(
-                "SELECT title, description FROM feed WHERE id = ?1",
-                rusqlite::params![feed_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .unwrap()
-        })
-        .await
-        .unwrap();
+    let title: String = rdrs::query_scalar!(
+        &app.db,
+        String,
+        "SELECT title FROM feed WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
+    let description: String = rdrs::query_scalar!(
+        &app.db,
+        String,
+        "SELECT description FROM feed WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
     assert_eq!(title, "Mock Feed");
     assert_eq!(description, "Mock Desc");
 }
@@ -5279,7 +4962,7 @@ async fn test_fetch_metadata_form_success() {
 
 #[tokio::test]
 async fn events_endpoint_requires_auth() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     // GET /events without a session cookie — PageAuthUser redirects to /login.
     let response = server.get("/events").await;
     // PageAuthUser always redirects unauthenticated requests to /login (303).

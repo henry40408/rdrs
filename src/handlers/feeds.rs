@@ -6,7 +6,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::AppState;
-use crate::error::AppError;
+use crate::error::{AppError, AppResult};
 use crate::middleware::AuthUser;
 use crate::middleware::flash::FlashRedirect;
 use crate::models::{category, feed};
@@ -37,15 +37,9 @@ pub async fn create_feed_form(
     let category_id = req.category_id;
     let user_agent = state.config.user_agent.clone();
 
-    let owned = state
-        .db
-        .read_user(move |conn| {
-            Ok::<_, AppError>(category::find_by_id_and_user(conn, category_id, user_id)?.is_some())
-        })
+    let owned = category::find_by_id_and_user(&state.db, category_id, user_id)
         .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or(false);
+        .is_ok_and(|c| c.is_some());
     if !owned {
         return FlashRedirect::error("/feeds", "Invalid category").into_response();
     }
@@ -62,38 +56,40 @@ pub async fn create_feed_form(
     let create_title = discovered.title.clone();
     let create_desc = discovered.description.clone();
     let create_site = discovered.site_url.clone();
-    let result = state
-        .db
-        .user(move |conn| {
-            if feed::find_by_url_for_user(conn, &create_url, user_id)?.is_some() {
-                return Err(AppError::FeedExists);
-            }
-            feed::create_feed(
-                conn,
-                &feed::CreateFeedParams {
-                    category_id,
-                    url: &create_url,
-                    title: create_title.as_deref(),
-                    description: create_desc.as_deref(),
-                    site_url: create_site.as_deref(),
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )?;
-            Ok::<_, AppError>(())
-        })
-        .await;
+    let result: AppResult<()> = async {
+        if feed::find_by_url_for_user(&state.db, &create_url, user_id)
+            .await?
+            .is_some()
+        {
+            return Err(AppError::FeedExists);
+        }
+        feed::create_feed(
+            &state.db,
+            &feed::CreateFeedParams {
+                category_id,
+                url: &create_url,
+                title: create_title.as_deref(),
+                description: create_desc.as_deref(),
+                site_url: create_site.as_deref(),
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
 
     match result {
-        Ok(Ok(())) => {
+        Ok(()) => {
             state.sidebar_cache.bust(user_id);
             FlashRedirect::success("/feeds", "Feed added.").into_response()
         }
-        Ok(Err(AppError::FeedExists)) => {
+        Err(AppError::FeedExists) => {
             FlashRedirect::error("/feeds", "Feed already subscribed").into_response()
         }
-        Ok(Err(AppError::Validation(msg))) => FlashRedirect::error("/feeds", msg).into_response(),
+        Err(AppError::Validation(msg)) => FlashRedirect::error("/feeds", msg).into_response(),
         _ => FlashRedirect::error("/feeds", "Failed to add feed").into_response(),
     }
 }
@@ -134,85 +130,88 @@ pub async fn edit_feed_form(
     let user_id = auth_user.user.id;
     let new_category_id = req.category_id;
 
-    let result = state
-        .db
-        .user(move |conn| {
-            let f = feed::find_by_id(conn, id)?.ok_or(AppError::FeedNotFound)?;
-            category::find_by_id_and_user(conn, f.category_id, user_id)?
-                .ok_or(AppError::FeedNotFound)?;
-            category::find_by_id_and_user(conn, new_category_id, user_id)?
-                .ok_or(AppError::CategoryNotFound)?;
+    let result: AppResult<()> = async {
+        let f = feed::find_by_id(&state.db, id)
+            .await?
+            .ok_or(AppError::FeedNotFound)?;
+        category::find_by_id_and_user(&state.db, f.category_id, user_id)
+            .await?
+            .ok_or(AppError::FeedNotFound)?;
+        category::find_by_id_and_user(&state.db, new_category_id, user_id)
+            .await?
+            .ok_or(AppError::CategoryNotFound)?;
 
-            let trimmed_title = req.title.trim();
-            let title: Option<String> = if trimmed_title.is_empty() {
-                f.title.clone()
+        let trimmed_title = req.title.trim();
+        let title: Option<String> = if trimmed_title.is_empty() {
+            f.title.clone()
+        } else {
+            Some(trimmed_title.to_string())
+        };
+
+        let trimmed_desc = req.description.trim();
+        let description: Option<String> = if trimmed_desc.is_empty() {
+            None
+        } else {
+            Some(trimmed_desc.to_string())
+        };
+
+        let trimmed_site = req.site_url.trim();
+        let site_url: Option<String> = if trimmed_site.is_empty() {
+            None
+        } else {
+            Some(trimmed_site.to_string())
+        };
+
+        let custom_user_agent: Option<String> = if req._clear_user_agent.is_some() {
+            None
+        } else {
+            let trimmed = req.custom_user_agent.trim();
+            if trimmed.is_empty() {
+                f.custom_user_agent.clone()
             } else {
-                Some(trimmed_title.to_string())
-            };
+                Some(trimmed.to_string())
+            }
+        };
 
-            let trimmed_desc = req.description.trim();
-            let description: Option<String> = if trimmed_desc.is_empty() {
-                None
+        let custom_referrer: Option<String> = if req._clear_referrer.is_some() {
+            None
+        } else {
+            let trimmed = req.custom_referrer.trim();
+            if trimmed.is_empty() {
+                f.custom_referrer.clone()
             } else {
-                Some(trimmed_desc.to_string())
-            };
+                Some(trimmed.to_string())
+            }
+        };
 
-            let trimmed_site = req.site_url.trim();
-            let site_url: Option<String> = if trimmed_site.is_empty() {
-                None
-            } else {
-                Some(trimmed_site.to_string())
-            };
+        let http2_disabled = req.http2_disabled.is_some();
 
-            let custom_user_agent: Option<String> = if req._clear_user_agent.is_some() {
-                None
-            } else {
-                let trimmed = req.custom_user_agent.trim();
-                if trimmed.is_empty() {
-                    f.custom_user_agent.clone()
-                } else {
-                    Some(trimmed.to_string())
-                }
-            };
-
-            let custom_referrer: Option<String> = if req._clear_referrer.is_some() {
-                None
-            } else {
-                let trimmed = req.custom_referrer.trim();
-                if trimmed.is_empty() {
-                    f.custom_referrer.clone()
-                } else {
-                    Some(trimmed.to_string())
-                }
-            };
-
-            let http2_disabled = req.http2_disabled.is_some();
-
-            feed::update_feed(
-                conn,
-                &feed::UpdateFeedParams {
-                    id: f.id,
-                    category_id: f.category_id,
-                    new_category_id,
-                    url: &new_url,
-                    title: title.as_deref(),
-                    description: description.as_deref(),
-                    site_url: site_url.as_deref(),
-                    custom_user_agent: custom_user_agent.as_deref(),
-                    http2_disabled,
-                    custom_referrer: custom_referrer.as_deref(),
-                },
-            )?;
-            Ok::<_, AppError>(())
-        })
-        .await;
+        feed::update_feed(
+            &state.db,
+            &feed::UpdateFeedParams {
+                id: f.id,
+                category_id: f.category_id,
+                new_category_id,
+                url: &new_url,
+                title: title.as_deref(),
+                description: description.as_deref(),
+                site_url: site_url.as_deref(),
+                custom_user_agent: custom_user_agent.as_deref(),
+                http2_disabled,
+                custom_referrer: custom_referrer.as_deref(),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
 
     match result {
-        Ok(Ok(())) => {
+        Ok(()) => {
             state.sidebar_cache.bust(user_id);
             FlashRedirect::success(format!("/feeds/{id}/edit"), "Feed updated.").into_response()
         }
-        Ok(Err(AppError::Validation(msg))) => {
+        Err(AppError::Validation(msg)) => {
             FlashRedirect::error(format!("/feeds/{id}/edit"), msg).into_response()
         }
         _ => FlashRedirect::error(format!("/feeds/{id}/edit"), "Failed to update feed")
@@ -226,22 +225,23 @@ pub async fn delete_feed_form(
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
     let user_id = auth_user.user.id;
-    let result = state
-        .db
-        .user(move |conn| {
-            let f = feed::find_by_id(conn, id)?.ok_or(AppError::FeedNotFound)?;
-            category::find_by_id_and_user(conn, f.category_id, user_id)?
-                .ok_or(AppError::FeedNotFound)?;
-            feed::delete_feed(conn, f.id, f.category_id)?;
-            Ok::<_, AppError>(())
-        })
-        .await;
+    let result: AppResult<()> = async {
+        let f = feed::find_by_id(&state.db, id)
+            .await?
+            .ok_or(AppError::FeedNotFound)?;
+        category::find_by_id_and_user(&state.db, f.category_id, user_id)
+            .await?
+            .ok_or(AppError::FeedNotFound)?;
+        feed::delete_feed(&state.db, f.id, f.category_id).await?;
+        Ok(())
+    }
+    .await;
     match result {
-        Ok(Ok(())) => {
+        Ok(()) => {
             state.sidebar_cache.bust(user_id);
             FlashRedirect::success("/feeds", "Feed deleted.").into_response()
         }
-        Ok(Err(AppError::FeedNotFound)) => {
+        Err(AppError::FeedNotFound) => {
             FlashRedirect::error("/feeds", "Feed not found.").into_response()
         }
         _ => FlashRedirect::error("/feeds", "Failed to delete feed.").into_response(),
@@ -254,19 +254,19 @@ pub async fn refresh_feed_form(
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
     let user_id = auth_user.user.id;
-    let owned = state
-        .db
-        .read_user(move |conn| {
-            let f = match feed::find_by_id(conn, id)? {
-                Some(f) => f,
-                None => return Ok::<_, AppError>(false),
-            };
-            Ok(category::find_by_id_and_user(conn, f.category_id, user_id)?.is_some())
-        })
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or(false);
+    let owned = async {
+        let f = match feed::find_by_id(&state.db, id).await? {
+            Some(f) => f,
+            None => return Ok::<_, AppError>(false),
+        };
+        Ok(
+            category::find_by_id_and_user(&state.db, f.category_id, user_id)
+                .await?
+                .is_some(),
+        )
+    }
+    .await
+    .unwrap_or(false);
     if !owned {
         return FlashRedirect::error("/feeds", "Feed not found").into_response();
     }
@@ -296,22 +296,22 @@ pub async fn fetch_metadata_form(
     let user_id = auth_user.user.id;
     let edit_path = format!("/feeds/{id}/edit");
 
-    let feed_owned = state
-        .db
-        .read_user(move |conn| {
-            let f = match feed::find_by_id(conn, id)? {
-                Some(f) => f,
-                None => return Ok::<_, AppError>(None),
-            };
-            if category::find_by_id_and_user(conn, f.category_id, user_id)?.is_none() {
-                return Ok(None);
-            }
-            Ok(Some(f))
-        })
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .flatten();
+    let feed_owned = async {
+        let f = match feed::find_by_id(&state.db, id).await? {
+            Some(f) => f,
+            None => return Ok::<_, AppError>(None),
+        };
+        if category::find_by_id_and_user(&state.db, f.category_id, user_id)
+            .await?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        Ok(Some(f))
+    }
+    .await
+    .ok()
+    .flatten();
     let feed = match feed_owned {
         Some(f) => f,
         None => return FlashRedirect::error(edit_path, "Feed not found").into_response(),
@@ -327,32 +327,27 @@ pub async fn fetch_metadata_form(
     };
 
     let category_id = feed.category_id;
-    let result = state
-        .db
-        .user(move |conn| {
-            feed::update_feed(
-                conn,
-                &feed::UpdateFeedParams {
-                    id: feed.id,
-                    category_id,
-                    new_category_id: category_id,
-                    url: &feed.url,
-                    title: discovered.title.as_deref().or(feed.title.as_deref()),
-                    description: discovered
-                        .description
-                        .as_deref()
-                        .or(feed.description.as_deref()),
-                    site_url: discovered.site_url.as_deref().or(feed.site_url.as_deref()),
-                    custom_user_agent: feed.custom_user_agent.as_deref(),
-                    http2_disabled: feed.http2_disabled,
-                    custom_referrer: feed.custom_referrer.as_deref(),
-                },
-            )?;
-            Ok::<_, AppError>(())
-        })
-        .await;
+    let result = feed::update_feed(
+        &state.db,
+        &feed::UpdateFeedParams {
+            id: feed.id,
+            category_id,
+            new_category_id: category_id,
+            url: &feed.url,
+            title: discovered.title.as_deref().or(feed.title.as_deref()),
+            description: discovered
+                .description
+                .as_deref()
+                .or(feed.description.as_deref()),
+            site_url: discovered.site_url.as_deref().or(feed.site_url.as_deref()),
+            custom_user_agent: feed.custom_user_agent.as_deref(),
+            http2_disabled: feed.http2_disabled,
+            custom_referrer: feed.custom_referrer.as_deref(),
+        },
+    )
+    .await;
     match result {
-        Ok(Ok(())) => FlashRedirect::success(edit_path, "Metadata fetched.").into_response(),
+        Ok(_) => FlashRedirect::success(edit_path, "Metadata fetched.").into_response(),
         _ => FlashRedirect::error(edit_path, "Failed to update feed").into_response(),
     }
 }
@@ -397,43 +392,50 @@ pub async fn import_opml_form(
         }
     };
     let user_id = auth_user.user.id;
-    let result = state
-        .db
-        .user(move |conn| {
-            for outline in outlines {
-                let cat =
-                    match category::find_by_name_and_user(conn, &outline.category_name, user_id)? {
-                        Some(cat) => cat,
-                        None => category::create_category(conn, user_id, &outline.category_name)?,
-                    };
-                for opml_feed in outline.feeds {
-                    if feed::find_by_url_and_category(conn, &opml_feed.xml_url, cat.id)?.is_some() {
-                        continue;
+    let result: AppResult<()> = async {
+        for outline in outlines {
+            let cat =
+                match category::find_by_name_and_user(&state.db, &outline.category_name, user_id)
+                    .await?
+                {
+                    Some(cat) => cat,
+                    None => {
+                        category::create_category(&state.db, user_id, &outline.category_name)
+                            .await?
                     }
-                    let _ = feed::create_feed(
-                        conn,
-                        &feed::CreateFeedParams {
-                            category_id: cat.id,
-                            url: &opml_feed.xml_url,
-                            title: opml_feed.title.as_deref(),
-                            description: None,
-                            site_url: opml_feed.html_url.as_deref(),
-                            custom_user_agent: None,
-                            http2_disabled: None,
-                            custom_referrer: None,
-                        },
-                    );
+                };
+            for opml_feed in outline.feeds {
+                if feed::find_by_url_and_category(&state.db, &opml_feed.xml_url, cat.id)
+                    .await?
+                    .is_some()
+                {
+                    continue;
                 }
+                let _ = feed::create_feed(
+                    &state.db,
+                    &feed::CreateFeedParams {
+                        category_id: cat.id,
+                        url: &opml_feed.xml_url,
+                        title: opml_feed.title.as_deref(),
+                        description: None,
+                        site_url: opml_feed.html_url.as_deref(),
+                        custom_user_agent: None,
+                        http2_disabled: None,
+                        custom_referrer: None,
+                    },
+                )
+                .await;
             }
-            Ok::<_, AppError>(())
-        })
-        .await;
+        }
+        Ok(())
+    }
+    .await;
     // The import dropped its transient OPML parse tree and per-feed buffers;
     // return those freed pages to the OS now instead of waiting for the
     // allocator's lazy purge.
     crate::reclaim_memory();
     match result {
-        Ok(Ok(())) => {
+        Ok(()) => {
             state.sidebar_cache.bust(user_id);
             FlashRedirect::success("/feeds", "OPML imported.").into_response()
         }

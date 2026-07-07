@@ -22,10 +22,7 @@ pub async fn stop_masquerade(
     }
 
     let session_token = admin.session.session_token.clone();
-    state
-        .db
-        .user(move |conn| session::stop_masquerade(conn, &session_token))
-        .await??;
+    session::stop_masquerade(&state.db, &session_token).await?;
 
     Ok(StatusCode::OK)
 }
@@ -54,21 +51,19 @@ pub async fn update_role_form(
     }
 
     let role = req.role;
-    let result = state
-        .db
-        .user(move |conn| {
-            let target = user::find_by_id(conn, user_id)?.ok_or(AppError::UserNotFound)?;
-            if target.role != role {
-                user::update_role(conn, user_id, role)?;
-            }
-            Ok::<_, AppError>(())
-        })
-        .await;
+    let result: AppResult<()> = async {
+        let target = user::find_by_id(&state.db, user_id)
+            .await?
+            .ok_or(AppError::UserNotFound)?;
+        if target.role != role {
+            user::update_role(&state.db, user_id, role).await?;
+        }
+        Ok(())
+    }
+    .await;
 
     match result {
-        Ok(Ok(())) => {
-            FlashRedirect::success("/admin", format!("Role updated to {}.", role.as_str()))
-        }
+        Ok(()) => FlashRedirect::success("/admin", format!("Role updated to {}.", role.as_str())),
         _ => FlashRedirect::error("/admin", "Failed to update role."),
     }
 }
@@ -90,22 +85,22 @@ pub async fn update_status_form(
     }
 
     let disabled = req.disabled;
-    let result = state
-        .db
-        .user(move |conn| {
-            let target = user::find_by_id(conn, user_id)?.ok_or(AppError::UserNotFound)?;
-            if disabled && !target.is_disabled() {
-                user::disable_user(conn, user_id)?;
-                session::delete_user_sessions(conn, user_id)?;
-            } else if !disabled && target.is_disabled() {
-                user::enable_user(conn, user_id)?;
-            }
-            Ok::<_, AppError>(())
-        })
-        .await;
+    let result: AppResult<()> = async {
+        let target = user::find_by_id(&state.db, user_id)
+            .await?
+            .ok_or(AppError::UserNotFound)?;
+        if disabled && !target.is_disabled() {
+            user::disable_user(&state.db, user_id).await?;
+            session::delete_user_sessions(&state.db, user_id).await?;
+        } else if !disabled && target.is_disabled() {
+            user::enable_user(&state.db, user_id).await?;
+        }
+        Ok(())
+    }
+    .await;
 
     match result {
-        Ok(Ok(())) => {
+        Ok(()) => {
             let msg = if disabled {
                 "User disabled."
             } else {
@@ -127,20 +122,20 @@ pub async fn start_masquerade_form(
     }
 
     let session_token = admin.session.session_token.clone();
-    let result = state
-        .db
-        .user(move |conn| {
-            let target = user::find_by_id(conn, target_user_id)?.ok_or(AppError::UserNotFound)?;
-            if target.is_disabled() {
-                return Err(AppError::UserDisabled);
-            }
-            session::start_masquerade(conn, &session_token, target_user_id)?;
-            Ok::<_, AppError>(())
-        })
-        .await;
+    let result: AppResult<()> = async {
+        let target = user::find_by_id(&state.db, target_user_id)
+            .await?
+            .ok_or(AppError::UserNotFound)?;
+        if target.is_disabled() {
+            return Err(AppError::UserDisabled);
+        }
+        session::start_masquerade(&state.db, &session_token, target_user_id).await?;
+        Ok(())
+    }
+    .await;
 
     match result {
-        Ok(Ok(())) => FlashRedirect::info("/", "You are now masquerading as another user."),
+        Ok(()) => FlashRedirect::info("/", "You are now masquerading as another user."),
         _ => FlashRedirect::error("/admin", "Failed to start masquerade."),
     }
 }
@@ -155,13 +150,10 @@ pub async fn delete_user_form(
         return FlashRedirect::error("/admin", "You cannot delete your own account.");
     }
 
-    let result = state
-        .db
-        .user(move |conn| user::delete_user(conn, user_id))
-        .await;
+    let result = user::delete_user(&state.db, user_id).await;
 
     match result {
-        Ok(Ok(())) => {
+        Ok(()) => {
             state.sidebar_cache.bust(user_id);
             FlashRedirect::success("/admin", "User deleted.")
         }

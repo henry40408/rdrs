@@ -28,10 +28,7 @@ pub async fn start_registration(
     let user_id = auth_user.user.id;
     let username = auth_user.user.username.clone();
 
-    let existing_passkeys = state
-        .db
-        .read_user(move |conn| passkey::list_by_user(conn, user_id))
-        .await??;
+    let existing_passkeys = passkey::list_by_user(&state.db, user_id).await?;
 
     let exclude_credentials: Vec<CredentialID> = existing_passkeys
         .iter()
@@ -49,18 +46,14 @@ pub async fn start_registration(
         serde_json::to_string(&reg_state).map_err(|e| AppError::Internal(e.to_string()))?;
     let challenge_bytes: Vec<u8> = ccr.public_key.challenge.as_ref().to_vec();
 
-    state
-        .db
-        .user(move |conn| {
-            webauthn_challenge::create_challenge(
-                conn,
-                &challenge_bytes,
-                Some(user_id),
-                webauthn_challenge::ChallengeType::Registration,
-                &state_json,
-            )
-        })
-        .await??;
+    webauthn_challenge::create_challenge(
+        &state.db,
+        &challenge_bytes,
+        Some(user_id),
+        webauthn_challenge::ChallengeType::Registration,
+        &state_json,
+    )
+    .await?;
 
     Ok(Json(StartRegistrationResponse { options: ccr }))
 }
@@ -89,16 +82,12 @@ pub async fn finish_registration(
     let user_id = auth_user.user.id;
 
     // Find and consume the challenge
-    let challenge = state
-        .db
-        .user(move |conn| {
-            webauthn_challenge::find_and_delete_challenge(
-                conn,
-                Some(user_id),
-                webauthn_challenge::ChallengeType::Registration,
-            )
-        })
-        .await??;
+    let challenge = webauthn_challenge::find_and_delete_challenge(
+        &state.db,
+        Some(user_id),
+        webauthn_challenge::ChallengeType::Registration,
+    )
+    .await?;
 
     // Deserialize the registration state
     let reg_state: PasskeyRegistration = serde_json::from_str(&challenge.state_data)
@@ -124,20 +113,16 @@ pub async fn finish_registration(
     });
 
     let name = req.name;
-    let new_passkey = state
-        .db
-        .user(move |conn| {
-            passkey::create_passkey(
-                conn,
-                user_id,
-                &credential_id,
-                &public_key_json,
-                0,
-                &name,
-                transports.as_deref(),
-            )
-        })
-        .await??;
+    let new_passkey = passkey::create_passkey(
+        &state.db,
+        user_id,
+        &credential_id,
+        &public_key_json,
+        0,
+        &name,
+        transports.as_deref(),
+    )
+    .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -158,7 +143,7 @@ pub struct StartAuthenticationResponse {
 pub async fn start_authentication(
     State(state): State<AppState>,
 ) -> AppResult<Json<StartAuthenticationResponse>> {
-    let all_passkeys = state.db.read_user(passkey::get_all_passkeys).await??;
+    let all_passkeys = passkey::get_all_passkeys(&state.db).await?;
 
     if all_passkeys.is_empty() {
         return Err(AppError::PasskeyAuthenticationFailed(
@@ -189,18 +174,14 @@ pub async fn start_authentication(
         serde_json::to_string(&auth_state).map_err(|e| AppError::Internal(e.to_string()))?;
     let challenge_bytes: Vec<u8> = rcr.public_key.challenge.as_ref().to_vec();
 
-    state
-        .db
-        .user(move |conn| {
-            webauthn_challenge::create_challenge(
-                conn,
-                &challenge_bytes,
-                None, // No user_id for authentication
-                webauthn_challenge::ChallengeType::Authentication,
-                &state_json,
-            )
-        })
-        .await??;
+    webauthn_challenge::create_challenge(
+        &state.db,
+        &challenge_bytes,
+        None, // No user_id for authentication
+        webauthn_challenge::ChallengeType::Authentication,
+        &state_json,
+    )
+    .await?;
 
     Ok(Json(StartAuthenticationResponse { options: rcr }))
 }
@@ -222,16 +203,12 @@ pub async fn finish_authentication(
     Json(req): Json<FinishAuthenticationRequest>,
 ) -> AppResult<(CookieJar, Json<FinishAuthenticationResponse>)> {
     // Find and consume the challenge
-    let challenge = state
-        .db
-        .user(|conn| {
-            webauthn_challenge::find_and_delete_challenge(
-                conn,
-                None,
-                webauthn_challenge::ChallengeType::Authentication,
-            )
-        })
-        .await??;
+    let challenge = webauthn_challenge::find_and_delete_challenge(
+        &state.db,
+        None,
+        webauthn_challenge::ChallengeType::Authentication,
+    )
+    .await?;
 
     // Deserialize the auth state
     let auth_state: PasskeyAuthentication = serde_json::from_str(&challenge.state_data)
@@ -239,22 +216,17 @@ pub async fn finish_authentication(
 
     // Find the passkey by credential ID (use raw_id which contains raw bytes)
     let credential_id: Vec<u8> = req.credential.raw_id.as_ref().to_vec();
-    let (stored_passkey, db_user) = state
-        .db
-        .user(move |conn| {
-            let stored_passkey = passkey::find_by_credential_id(conn, &credential_id)?
-                .ok_or(AppError::PasskeyNotFound)?;
+    let stored_passkey = passkey::find_by_credential_id(&state.db, &credential_id)
+        .await?
+        .ok_or(AppError::PasskeyNotFound)?;
 
-            // Verify the user is not disabled
-            let db_user =
-                user::find_by_id(conn, stored_passkey.user_id)?.ok_or(AppError::UserNotFound)?;
-            if db_user.is_disabled() {
-                return Err(AppError::UserDisabled);
-            }
-
-            Ok::<_, AppError>((stored_passkey, db_user))
-        })
-        .await??;
+    // Verify the user is not disabled
+    let db_user = user::find_by_id(&state.db, stored_passkey.user_id)
+        .await?
+        .ok_or(AppError::UserNotFound)?;
+    if db_user.is_disabled() {
+        return Err(AppError::UserDisabled);
+    }
 
     // Deserialize the stored passkey data
     let mut passkey_data: Passkey = serde_json::from_slice(&stored_passkey.public_key)
@@ -272,14 +244,8 @@ pub async fn finish_authentication(
     let counter = auth_result.counter() as i64;
     let passkey_user_id = stored_passkey.user_id;
 
-    let new_session = state
-        .db
-        .user(move |conn| {
-            passkey::update_counter(conn, passkey_id, counter)?;
-            let new_session = session::create_session(conn, passkey_user_id)?;
-            Ok::<_, AppError>(new_session)
-        })
-        .await??;
+    passkey::update_counter(&state.db, passkey_id, counter).await?;
+    let new_session = session::create_session(&state.db, passkey_user_id).await?;
 
     let cookie = Cookie::build((SESSION_COOKIE_NAME, new_session.session_token))
         .path("/")
@@ -317,10 +283,7 @@ pub async fn list_passkeys(
     auth_user: AuthUser,
 ) -> AppResult<Json<ListPasskeysResponse>> {
     let user_id = auth_user.user.id;
-    let passkeys = state
-        .db
-        .read_user(move |conn| passkey::list_by_user(conn, user_id))
-        .await??;
+    let passkeys = passkey::list_by_user(&state.db, user_id).await?;
 
     let passkey_infos: Vec<PasskeyInfo> = passkeys
         .into_iter()
@@ -356,10 +319,7 @@ pub async fn rename_passkey(
 
     let user_id = auth_user.user.id;
     let name = req.name;
-    state
-        .db
-        .user(move |conn| passkey::rename_passkey(conn, id, user_id, &name))
-        .await??;
+    passkey::rename_passkey(&state.db, id, user_id, &name).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -370,10 +330,7 @@ pub async fn delete_passkey(
     Path(id): Path<i64>,
 ) -> AppResult<StatusCode> {
     let user_id = auth_user.user.id;
-    state
-        .db
-        .user(move |conn| passkey::delete_passkey(conn, id, user_id))
-        .await??;
+    passkey::delete_passkey(&state.db, id, user_id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

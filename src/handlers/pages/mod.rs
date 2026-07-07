@@ -264,41 +264,40 @@ pub(crate) async fn build_entries_page(
     page_size: i64,
     cursor: Option<entry::ContinuationCursor>,
 ) -> (Vec<EntryRowView>, Option<String>) {
-    let result = state
-        .db
-        .read_user(move |conn| {
-            let params = entry::ContinuationParams {
-                oldest_first: false,
-                limit: page_size + 1,
-                continuation: cursor,
-                ot: None,
-                nt: None,
-                sort_order: sort,
-            };
-            let rows = entry::list_by_user_with_continuation(conn, user_id, &filter, &params)?;
-            let kept_len = rows.len().min(page_size as usize);
-            // Derive the next cursor from the last *kept* row when an extra
-            // (sentinel) row was returned. Mirrors greader/item.rs.
-            // Next cursor comes from the last KEPT row (the sentinel row beyond
-            // page_size is dropped). `.take(kept_len).next_back()` avoids an
-            // index subtraction and is None-safe when there are no rows.
-            let next = if rows.len() as i64 > page_size {
-                match rows.iter().take(kept_len).next_back() {
-                    Some(e) => entry::fetch_sort_ts(conn, e.entry.id, sort)?
-                        .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id)),
-                    None => None,
-                }
-            } else {
-                None
-            };
-            let ids: Vec<i64> = rows.iter().take(kept_len).map(|e| e.entry.id).collect();
-            let statuses = entry_summary::get_statuses_for_entries(conn, user_id, &ids)?;
-            Ok::<_, AppError>((rows, kept_len, next, statuses))
-        })
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or_else(|| (Vec::new(), 0, None, HashMap::new()));
+    let result = async move {
+        let params = entry::ContinuationParams {
+            oldest_first: false,
+            limit: page_size + 1,
+            continuation: cursor,
+            ot: None,
+            nt: None,
+            sort_order: sort,
+        };
+        let rows =
+            entry::list_by_user_with_continuation(&state.db, user_id, &filter, &params).await?;
+        let kept_len = rows.len().min(page_size as usize);
+        // Derive the next cursor from the last *kept* row when an extra
+        // (sentinel) row was returned. Mirrors greader/item.rs.
+        // Next cursor comes from the last KEPT row (the sentinel row beyond
+        // page_size is dropped). `.take(kept_len).next_back()` avoids an
+        // index subtraction and is None-safe when there are no rows.
+        let next = if rows.len() as i64 > page_size {
+            match rows.iter().take(kept_len).next_back() {
+                Some(e) => entry::fetch_sort_ts(&state.db, e.entry.id, sort)
+                    .await?
+                    .map(|ts| entry::ContinuationCursor::encode_composite(&ts, e.entry.id)),
+                None => None,
+            }
+        } else {
+            None
+        };
+        let ids: Vec<i64> = rows.iter().take(kept_len).map(|e| e.entry.id).collect();
+        let statuses = entry_summary::get_statuses_for_entries(&state.db, user_id, &ids).await?;
+        Ok::<_, AppError>((rows, kept_len, next, statuses))
+    }
+    .await
+    .ok()
+    .unwrap_or_else(|| (Vec::new(), 0, None, HashMap::new()));
     let (rows, kept_len, next_cursor, statuses) = result;
     let views = rows
         .iter()
@@ -349,11 +348,8 @@ async fn maybe_build_reading_pane(
     entry_id: Option<i64>,
 ) -> Option<ReadingPaneView> {
     let entry_id = entry_id?;
-    let ewf = state
-        .db
-        .read_user(move |conn| entry::find_by_id_for_user(conn, user_id, entry_id))
+    let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await
-        .ok()?
         .ok()??;
     let (has_save, has_kagi) = crate::handlers::entries::load_pane_action_flags(state, user_id)
         .await
@@ -514,12 +510,9 @@ pub async fn login_page(
         return Redirect::to("/").into_response();
     }
 
-    let signup_enabled = state
-        .db
-        .read_user(|c| crate::models::user::count(c).ok())
+    let signup_enabled = crate::models::user::count(&state.db)
         .await
         .ok()
-        .flatten()
         .is_some_and(|count| state.config.can_register(count));
 
     (
@@ -555,12 +548,9 @@ pub async fn register_page(
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, RegisterTemplate) {
-    let can_register = state
-        .db
-        .read_user(|c| crate::models::user::count(c).ok())
+    let can_register = crate::models::user::count(&state.db)
         .await
         .ok()
-        .flatten()
         .is_some_and(|count| state.config.can_register(count));
 
     (
@@ -639,12 +629,8 @@ pub async fn unread_page(
     // When the unread list is empty, distinguish a brand-new account with no
     // feeds yet (→ getting-started onboarding) from an inbox where everything
     // has been read (→ "All caught up"). Only query when the list is empty.
-    let no_feeds = entries.is_empty()
-        && state
-            .db
-            .read_user(move |conn| feed::count_by_user(conn, user_id).unwrap_or(0))
-            .await
-            .is_ok_and(|count| count == 0);
+    let no_feeds =
+        entries.is_empty() && feed::count_by_user(&state.db, user_id).await.unwrap_or(0) == 0;
 
     (
         flash,
@@ -702,12 +688,9 @@ pub async fn admin_page(
     let original_admin_id = admin.session.original_user_id.unwrap_or(admin.user.id);
     let effective_admin_id = admin.user.id;
 
-    let users = state
-        .db
-        .read_user(crate::models::user::list_all)
+    let users = crate::models::user::list_all(&state.db)
         .await
         .ok()
-        .and_then(|r| r.ok())
         .unwrap_or_default()
         .into_iter()
         .map(|u| {
@@ -757,47 +740,38 @@ pub async fn user_settings_page(
         linkding_api_url,
         kagi_configured,
         kagi_language,
-    ) = state
-        .db
-        .read_user(move |conn| {
-            let theme = user_settings::get_theme(conn, user_id).unwrap_or(None);
-            let entries_per_page = user_settings::get_entries_per_page(conn, user_id)
-                .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
-            let retention_read_days =
-                user_settings::get_retention_read_days(conn, user_id).unwrap_or(0);
-            let save_config =
-                user_settings::get_save_services_config(conn, user_id).unwrap_or_default();
+    ) = {
+        let theme = user_settings::get_theme(&state.db, user_id)
+            .await
+            .unwrap_or(None);
+        let entries_per_page = user_settings::get_entries_per_page(&state.db, user_id)
+            .await
+            .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE);
+        let retention_read_days = user_settings::get_retention_read_days(&state.db, user_id)
+            .await
+            .unwrap_or(0);
+        let save_config = user_settings::get_save_services_config(&state.db, user_id)
+            .await
+            .unwrap_or_default();
 
-            let linkding = save_config.linkding.as_ref();
-            let linkding_configured = linkding.is_some_and(|c| c.is_configured());
-            let linkding_api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
+        let linkding = save_config.linkding.as_ref();
+        let linkding_configured = linkding.is_some_and(|c| c.is_configured());
+        let linkding_api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
 
-            let kagi = save_config.kagi.as_ref();
-            let kagi_configured = kagi.is_some_and(|c| c.is_configured());
-            let kagi_language = kagi.and_then(|c| c.language.clone());
+        let kagi = save_config.kagi.as_ref();
+        let kagi_configured = kagi.is_some_and(|c| c.is_configured());
+        let kagi_language = kagi.and_then(|c| c.language.clone());
 
-            Ok::<_, AppError>((
-                theme,
-                entries_per_page,
-                retention_read_days,
-                linkding_configured,
-                linkding_api_url,
-                kagi_configured,
-                kagi_language,
-            ))
-        })
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or((
-            None,
-            user_settings::DEFAULT_ENTRIES_PER_PAGE,
-            0,
-            false,
-            String::new(),
-            false,
-            None,
-        ));
+        (
+            theme,
+            entries_per_page,
+            retention_read_days,
+            linkding_configured,
+            linkding_api_url,
+            kagi_configured,
+            kagi_language,
+        )
+    };
 
     let public_base_url = state
         .config
@@ -870,86 +844,87 @@ pub async fn feeds_page(
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let user_id = auth_user.user.id;
 
-    let (mut rows, categories, total_feed_count) = state
-        .db
-        .read_user(move |conn| {
-            let cats = category::list_by_user(conn, user_id).unwrap_or_default();
-            let all_feeds = feed::list_by_user(conn, user_id).unwrap_or_default();
-            let unread_map = entry::count_unread_by_feed(conn, user_id).unwrap_or_default();
-
-            let cat_map: std::collections::HashMap<i64, String> =
-                cats.iter().map(|cat| (cat.id, cat.name.clone())).collect();
-            let mut count_by_cat: std::collections::HashMap<i64, i64> =
-                std::collections::HashMap::new();
-            for f in &all_feeds {
-                *count_by_cat.entry(f.category_id).or_insert(0) += 1;
-            }
-
-            let total_feed_count = all_feeds.len() as i64;
-
-            // Resolve which feeds have an icon in one query instead of one per feed.
-            let feed_ids: Vec<i64> = all_feeds.iter().map(|f| f.id).collect();
-            let feeds_with_icon = crate::models::image::existing_ids(
-                conn,
-                crate::models::image::ENTITY_FEED,
-                &feed_ids,
-            )
+    let (mut rows, categories, total_feed_count) = {
+        let cats = category::list_by_user(&state.db, user_id)
+            .await
+            .unwrap_or_default();
+        let all_feeds = feed::list_by_user(&state.db, user_id)
+            .await
+            .unwrap_or_default();
+        let unread_map = entry::count_unread_by_feed(&state.db, user_id)
+            .await
             .unwrap_or_default();
 
-            let row_views: Vec<FeedRowView> = all_feeds
-                .into_iter()
-                .map(|f| {
-                    let has_icon = feeds_with_icon.contains(&f.id);
-                    let (fetched_rel, fetched_dt) = format_relative_time(f.fetched_at);
-                    let (updated_rel, updated_dt) = if f.feed_updated_at.is_some() {
-                        format_relative_time(f.feed_updated_at)
-                    } else if f
-                        .fetched_at
-                        .is_some_and(|ft| (chrono::Utc::now() - ft).num_days() <= 30)
-                    {
-                        ("No date info".to_string(), String::new())
-                    } else {
-                        ("Never".to_string(), String::new())
-                    };
-                    let (freshness_class, freshness_key) =
-                        compute_freshness(f.feed_updated_at, f.fetched_at);
-                    FeedRowView {
-                        title: f.title.clone().unwrap_or_else(|| f.url.clone()),
-                        category_name: cat_map
-                            .get(&f.category_id)
-                            .cloned()
-                            .unwrap_or_else(|| "Unknown".to_string()),
-                        has_icon,
-                        unread_count: *unread_map.get(&f.id).unwrap_or(&0),
-                        id: f.id,
-                        url: f.url,
-                        category_id: f.category_id,
-                        fetch_error: f.fetch_error,
-                        fetched_at_relative: fetched_rel,
-                        fetched_at_datetime: fetched_dt,
-                        feed_updated_at_relative: updated_rel,
-                        feed_updated_at_datetime: updated_dt,
-                        freshness_class,
-                        freshness_key,
-                    }
-                })
-                .collect();
+        let cat_map: std::collections::HashMap<i64, String> =
+            cats.iter().map(|cat| (cat.id, cat.name.clone())).collect();
+        let mut count_by_cat: std::collections::HashMap<i64, i64> =
+            std::collections::HashMap::new();
+        for f in &all_feeds {
+            *count_by_cat.entry(f.category_id).or_insert(0) += 1;
+        }
 
-            let cat_options: Vec<FeedCategoryOption> = cats
-                .into_iter()
-                .map(|cat| FeedCategoryOption {
-                    feed_count: count_by_cat.get(&cat.id).copied().unwrap_or(0),
-                    id: cat.id,
-                    name: cat.name,
-                })
-                .collect();
+        let total_feed_count = all_feeds.len() as i64;
 
-            Ok::<_, AppError>((row_views, cat_options, total_feed_count))
-        })
+        // Resolve which feeds have an icon in one query instead of one per feed.
+        let feed_ids: Vec<i64> = all_feeds.iter().map(|f| f.id).collect();
+        let feeds_with_icon = crate::models::image::existing_ids(
+            &state.db,
+            crate::models::image::ENTITY_FEED,
+            &feed_ids,
+        )
         .await
-        .ok()
-        .and_then(|r| r.ok())
         .unwrap_or_default();
+
+        let row_views: Vec<FeedRowView> = all_feeds
+            .into_iter()
+            .map(|f| {
+                let has_icon = feeds_with_icon.contains(&f.id);
+                let (fetched_rel, fetched_dt) = format_relative_time(f.fetched_at);
+                let (updated_rel, updated_dt) = if f.feed_updated_at.is_some() {
+                    format_relative_time(f.feed_updated_at)
+                } else if f
+                    .fetched_at
+                    .is_some_and(|ft| (chrono::Utc::now() - ft).num_days() <= 30)
+                {
+                    ("No date info".to_string(), String::new())
+                } else {
+                    ("Never".to_string(), String::new())
+                };
+                let (freshness_class, freshness_key) =
+                    compute_freshness(f.feed_updated_at, f.fetched_at);
+                FeedRowView {
+                    title: f.title.clone().unwrap_or_else(|| f.url.clone()),
+                    category_name: cat_map
+                        .get(&f.category_id)
+                        .cloned()
+                        .unwrap_or_else(|| "Unknown".to_string()),
+                    has_icon,
+                    unread_count: *unread_map.get(&f.id).unwrap_or(&0),
+                    id: f.id,
+                    url: f.url,
+                    category_id: f.category_id,
+                    fetch_error: f.fetch_error,
+                    fetched_at_relative: fetched_rel,
+                    fetched_at_datetime: fetched_dt,
+                    feed_updated_at_relative: updated_rel,
+                    feed_updated_at_datetime: updated_dt,
+                    freshness_class,
+                    freshness_key,
+                }
+            })
+            .collect();
+
+        let cat_options: Vec<FeedCategoryOption> = cats
+            .into_iter()
+            .map(|cat| FeedCategoryOption {
+                feed_count: count_by_cat.get(&cat.id).copied().unwrap_or(0),
+                id: cat.id,
+                name: cat.name,
+            })
+            .collect();
+
+        (row_views, cat_options, total_feed_count)
+    };
 
     let active_filter_raw = query.filter.as_deref().unwrap_or("all").to_string();
     let active_sort = query.sort.as_deref().unwrap_or("title").to_string();
@@ -1029,35 +1004,36 @@ pub async fn feed_edit_page(
 ) -> Result<Response, AppError> {
     let user_id = auth_user.user.id;
 
-    let lookup = state
-        .db
-        .read_user(move |conn| {
-            let f = feed::find_by_id(conn, id)?.ok_or(AppError::FeedNotFound)?;
-            category::find_by_id_and_user(conn, f.category_id, user_id)?
-                .ok_or(AppError::FeedNotFound)?;
-            let cats = category::list_by_user(conn, user_id)?;
-            Ok::<_, AppError>((
-                FeedEditView {
-                    id: f.id,
-                    url: f.url,
-                    title: f.title.unwrap_or_default(),
-                    description: f.description.unwrap_or_default(),
-                    site_url: f.site_url.unwrap_or_default(),
-                    category_id: f.category_id,
-                    custom_user_agent: f.custom_user_agent.unwrap_or_default(),
-                    http2_disabled: f.http2_disabled,
-                    custom_referrer: f.custom_referrer.unwrap_or_default(),
-                },
-                cats.into_iter()
-                    .map(|c| FeedCategoryOption {
-                        id: c.id,
-                        name: c.name,
-                        feed_count: 0,
-                    })
-                    .collect::<Vec<_>>(),
-            ))
-        })
-        .await?;
+    let lookup = async {
+        let f = feed::find_by_id(&state.db, id)
+            .await?
+            .ok_or(AppError::FeedNotFound)?;
+        category::find_by_id_and_user(&state.db, f.category_id, user_id)
+            .await?
+            .ok_or(AppError::FeedNotFound)?;
+        let cats = category::list_by_user(&state.db, user_id).await?;
+        Ok::<_, AppError>((
+            FeedEditView {
+                id: f.id,
+                url: f.url,
+                title: f.title.unwrap_or_default(),
+                description: f.description.unwrap_or_default(),
+                site_url: f.site_url.unwrap_or_default(),
+                category_id: f.category_id,
+                custom_user_agent: f.custom_user_agent.unwrap_or_default(),
+                http2_disabled: f.http2_disabled,
+                custom_referrer: f.custom_referrer.unwrap_or_default(),
+            },
+            cats.into_iter()
+                .map(|c| FeedCategoryOption {
+                    id: c.id,
+                    name: c.name,
+                    feed_count: 0,
+                })
+                .collect::<Vec<_>>(),
+        ))
+    }
+    .await;
 
     let (feed_view, cats) = match lookup {
         Ok(v) => v,
@@ -1575,14 +1551,13 @@ pub async fn category_entries_page(
     const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
 
-    let lookup = state
-        .db
-        .read_user(move |c| {
-            let cat =
-                category::find_by_id_and_user(c, id, user_id)?.ok_or(AppError::CategoryNotFound)?;
-            Ok::<_, AppError>(cat.name)
-        })
-        .await?;
+    let lookup = async {
+        let cat = category::find_by_id_and_user(&state.db, id, user_id)
+            .await?
+            .ok_or(AppError::CategoryNotFound)?;
+        Ok::<_, AppError>(cat.name)
+    }
+    .await;
 
     let category_name = match lookup {
         Ok(name) => name,
@@ -1655,12 +1630,9 @@ pub async fn category_entries_page(
             unread_only: true,
             ..Default::default()
         };
-        state
-            .db
-            .read_user(move |conn| entry::count_by_user(conn, user_id, &mark_filter))
+        entry::count_by_user(&state.db, user_id, &mark_filter)
             .await
             .ok()
-            .and_then(|r| r.ok())
     } else {
         None
     };
@@ -1774,55 +1746,53 @@ pub async fn search_page(
         Vec::new()
     } else {
         let q_for_filter = q.clone();
-        state
-            .db
-            .read_user(move |conn| {
-                let filter = entry::EntryFilter {
-                    search: Some(q_for_filter.clone()),
-                    ..Default::default()
-                };
-                // SQL now matches stored plain text (content_text), so every
-                // returned row is a real visible match — no phantom re-filter.
-                const LIMIT: i64 = 50;
-                let rows = entry::list_by_user(
-                    conn,
-                    user_id,
-                    &filter,
-                    entry::EntrySortOrder::PublishedAt,
-                    LIMIT,
-                    0,
-                )?;
-                let out: Vec<SearchResultView> = rows
-                    .into_iter()
-                    .map(|e| {
-                        let title = e
-                            .entry
-                            .title
-                            .clone()
-                            .unwrap_or_else(|| "(no title)".to_string());
-                        let snippet = build_snippet(
-                            e.entry.content.as_deref().or(e.entry.summary.as_deref()),
-                            &q_for_filter,
-                            200,
-                        );
-                        let (published_relative, published_at_iso) =
-                            format_relative_time(e.entry.published_at);
-                        SearchResultView {
-                            entry_id: e.entry.id,
-                            title_html: highlight_html(&title, &q_for_filter),
-                            feed_title: e.feed_title.clone().unwrap_or_else(|| e.feed_url.clone()),
-                            published_relative,
-                            published_at_iso,
-                            snippet_html: highlight_html(&snippet, &q_for_filter),
-                        }
-                    })
-                    .collect();
-                Ok::<_, AppError>(out)
-            })
-            .await
-            .ok()
-            .and_then(|r| r.ok())
-            .unwrap_or_default()
+        async {
+            let filter = entry::EntryFilter {
+                search: Some(q_for_filter.clone()),
+                ..Default::default()
+            };
+            // SQL now matches stored plain text (content_text), so every
+            // returned row is a real visible match — no phantom re-filter.
+            const LIMIT: i64 = 50;
+            let rows = entry::list_by_user(
+                &state.db,
+                user_id,
+                &filter,
+                entry::EntrySortOrder::PublishedAt,
+                LIMIT,
+                0,
+            )
+            .await?;
+            let out: Vec<SearchResultView> = rows
+                .into_iter()
+                .map(|e| {
+                    let title = e
+                        .entry
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| "(no title)".to_string());
+                    let snippet = build_snippet(
+                        e.entry.content.as_deref().or(e.entry.summary.as_deref()),
+                        &q_for_filter,
+                        200,
+                    );
+                    let (published_relative, published_at_iso) =
+                        format_relative_time(e.entry.published_at);
+                    SearchResultView {
+                        entry_id: e.entry.id,
+                        title_html: highlight_html(&title, &q_for_filter),
+                        feed_title: e.feed_title.clone().unwrap_or_else(|| e.feed_url.clone()),
+                        published_relative,
+                        published_at_iso,
+                        snippet_html: highlight_html(&snippet, &q_for_filter),
+                    }
+                })
+                .collect();
+            Ok::<_, AppError>(out)
+        }
+        .await
+        .ok()
+        .unwrap_or_default()
     };
 
     (
@@ -1852,24 +1822,26 @@ pub async fn feed_entries_page(
     const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
 
-    let lookup = state
-        .db
-        .read_user(move |c| {
-            let f = feed::find_by_id(c, id)?.ok_or(AppError::FeedNotFound)?;
-            let cat = category::find_by_id(c, f.category_id)?.ok_or(AppError::CategoryNotFound)?;
-            if cat.user_id != user_id {
-                return Err(AppError::FeedNotFound);
-            }
-            let has_icon = crate::models::image::exists(c, "feed", f.id)?;
-            Ok::<_, AppError>((
-                f.title.unwrap_or_else(|| "(untitled feed)".to_string()),
-                f.url,
-                has_icon,
-                cat.id,
-                cat.name,
-            ))
-        })
-        .await?;
+    let lookup = async {
+        let f = feed::find_by_id(&state.db, id)
+            .await?
+            .ok_or(AppError::FeedNotFound)?;
+        let cat = category::find_by_id(&state.db, f.category_id)
+            .await?
+            .ok_or(AppError::CategoryNotFound)?;
+        if cat.user_id != user_id {
+            return Err(AppError::FeedNotFound);
+        }
+        let has_icon = crate::models::image::exists(&state.db, "feed", f.id).await?;
+        Ok::<_, AppError>((
+            f.title.unwrap_or_else(|| "(untitled feed)".to_string()),
+            f.url,
+            has_icon,
+            cat.id,
+            cat.name,
+        ))
+    }
+    .await;
 
     let (feed_title, feed_url, feed_has_icon, cat_id, cat_name) = match lookup {
         Ok(v) => v,
@@ -1945,12 +1917,9 @@ pub async fn feed_entries_page(
             unread_only: true,
             ..Default::default()
         };
-        state
-            .db
-            .read_user(move |conn| entry::count_by_user(conn, user_id, &mark_filter))
+        entry::count_by_user(&state.db, user_id, &mark_filter)
             .await
             .ok()
-            .and_then(|r| r.ok())
     } else {
         None
     };
@@ -2152,27 +2121,14 @@ async fn mark_read_scoped(
         search: Some(search.clone()),
         ..Default::default()
     };
-    // `db.user` runs on the priority (write) connection and returns the
-    // closure's value wrapped in `Result<_, DbError>`; the closure itself
-    // returns `AppResult<i64>`, hence the double unwrap. Mirrors the GReader
-    // mark-all handler (`state.db.user(...).await??`), but here we keep the
-    // count for the flash instead of `?`-propagating.
-    let affected = match state
-        .db
-        .user(move |conn| entry::mark_read_by_filter(conn, user_id, &filter))
-        .await
-    {
-        Ok(Ok(n)) => Some(n),
-        Ok(Err(e)) => {
-            tracing::warn!(
-                "mark_read_scoped: mark_read_by_filter failed for user {user_id} \
-                 (category_id={category_id:?}, feed_id={feed_id:?}): {e}"
-            );
-            None
-        }
+    // `mark_read_by_filter` returns `AppResult<i64>`; we keep the count for the
+    // flash instead of `?`-propagating so a failure renders an error flash
+    // rather than a 500.
+    let affected = match entry::mark_read_by_filter(&state.db, user_id, &filter).await {
+        Ok(n) => Some(n),
         Err(e) => {
             tracing::warn!(
-                "mark_read_scoped: write-connection error for user {user_id} \
+                "mark_read_scoped: mark_read_by_filter failed for user {user_id} \
                  (category_id={category_id:?}, feed_id={feed_id:?}): {e}"
             );
             None
@@ -2882,49 +2838,58 @@ pub async fn statistics_page(
     let to_c = to.clone();
     let chart_from_c = chart_from.clone();
 
-    let (overview, daily, cats, feeds, admin_counts, admin_entry_stats, admin_db_stats) = state
-        .db
-        .read_user(move |c| {
-            let overview =
-                crate::models::statistics::get_personal_overview(c, user_id, &from_c, &to_c)
-                    .unwrap_or_default();
-            let daily =
-                crate::models::statistics::get_daily_read_counts(c, user_id, &chart_from_c, &to_c)
-                    .unwrap_or_default();
-            let cats =
-                crate::models::statistics::get_entries_by_category(c, user_id, &from_c, &to_c)
-                    .unwrap_or_default();
-            let feeds = crate::models::statistics::get_top_feeds(c, user_id, &from_c, &to_c, 10)
+    let (overview, daily, cats, feeds, admin_counts, admin_entry_stats, admin_db_stats) = {
+        let overview =
+            crate::models::statistics::get_personal_overview(&state.db, user_id, &from_c, &to_c)
+                .await
                 .unwrap_or_default();
-            let admin_counts = if show_admin_stats {
-                crate::models::statistics::get_admin_counts(c).ok()
-            } else {
-                None
-            };
-            let admin_entry_stats = if show_admin_stats {
-                crate::models::statistics::get_admin_entry_stats(c, &from_c, &to_c).ok()
-            } else {
-                None
-            };
-            let admin_db_stats = if show_admin_stats {
-                crate::models::statistics::get_admin_database_stats(c).ok()
-            } else {
-                None
-            };
-            Ok::<_, AppError>((
-                overview,
-                daily,
-                cats,
-                feeds,
-                admin_counts,
-                admin_entry_stats,
-                admin_db_stats,
-            ))
-        })
+        let daily = crate::models::statistics::get_daily_read_counts(
+            &state.db,
+            user_id,
+            &chart_from_c,
+            &to_c,
+        )
         .await
-        .ok()
-        .and_then(|r| r.ok())
         .unwrap_or_default();
+        let cats =
+            crate::models::statistics::get_entries_by_category(&state.db, user_id, &from_c, &to_c)
+                .await
+                .unwrap_or_default();
+        let feeds =
+            crate::models::statistics::get_top_feeds(&state.db, user_id, &from_c, &to_c, 10)
+                .await
+                .unwrap_or_default();
+        let admin_counts = if show_admin_stats {
+            crate::models::statistics::get_admin_counts(&state.db)
+                .await
+                .ok()
+        } else {
+            None
+        };
+        let admin_entry_stats = if show_admin_stats {
+            crate::models::statistics::get_admin_entry_stats(&state.db, &from_c, &to_c)
+                .await
+                .ok()
+        } else {
+            None
+        };
+        let admin_db_stats = if show_admin_stats {
+            crate::models::statistics::get_admin_database_stats(&state.db)
+                .await
+                .ok()
+        } else {
+            None
+        };
+        (
+            overview,
+            daily,
+            cats,
+            feeds,
+            admin_counts,
+            admin_entry_stats,
+            admin_db_stats,
+        )
+    };
 
     let (custom_from, custom_to) = if active_period == "custom" {
         (
@@ -3063,29 +3028,26 @@ pub async fn categories_page(
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let user_id = auth_user.user.id;
 
-    let categories = state
-        .db
-        .read_user(move |conn| {
-            let cats = crate::models::category::list_by_user(conn, user_id)?;
-            let feeds = crate::models::feed::list_by_user(conn, user_id)?;
-            let mut counts: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
-            for f in &feeds {
-                *counts.entry(f.category_id).or_insert(0) += 1;
-            }
-            Ok::<_, AppError>(
-                cats.into_iter()
-                    .map(|c| CategoryRowView {
-                        feed_count: *counts.get(&c.id).unwrap_or(&0),
-                        id: c.id,
-                        name: c.name,
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or_default();
+    let categories = async {
+        let cats = crate::models::category::list_by_user(&state.db, user_id).await?;
+        let feeds = crate::models::feed::list_by_user(&state.db, user_id).await?;
+        let mut counts: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+        for f in &feeds {
+            *counts.entry(f.category_id).or_insert(0) += 1;
+        }
+        Ok::<_, AppError>(
+            cats.into_iter()
+                .map(|c| CategoryRowView {
+                    feed_count: *counts.get(&c.id).unwrap_or(&0),
+                    id: c.id,
+                    name: c.name,
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+    .await
+    .ok()
+    .unwrap_or_default();
 
     (
         flash,

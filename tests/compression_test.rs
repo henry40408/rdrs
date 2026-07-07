@@ -8,26 +8,10 @@ use std::sync::Arc;
 
 use axum::http::{HeaderValue, header};
 use axum_test::TestServer;
-use rdrs::{AppState, Config, DbPool, auth, create_router, db, services};
-use rusqlite::Connection;
+use rdrs::{AppState, Config, Db, auth, create_router, services};
 
-fn open_shared_memory(name: &str) -> Connection {
-    let uri = format!("file:{}?mode=memory&cache=shared", name);
-    Connection::open_with_flags(
-        uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    )
-    .unwrap()
-}
-
-fn create_test_server(config: Config) -> TestServer {
-    let write_conn = open_shared_memory("test_compression");
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory("test_compression");
-
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
+async fn create_test_server(config: Config) -> TestServer {
+    let db = Db::connect_in_memory().await.unwrap();
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -49,7 +33,7 @@ fn create_test_server(config: Config) -> TestServer {
 
 #[tokio::test]
 async fn test_login_page_gzip_when_accepted() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .get("/login")
@@ -65,7 +49,7 @@ async fn test_login_page_gzip_when_accepted() {
 
 #[tokio::test]
 async fn test_login_page_not_compressed_without_accept_encoding() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/login").await;
 
@@ -78,7 +62,7 @@ async fn test_login_page_not_compressed_without_accept_encoding() {
 
 #[tokio::test]
 async fn test_login_page_brotli_when_accepted() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .get("/login")

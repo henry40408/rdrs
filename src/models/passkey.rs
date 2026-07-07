@@ -1,10 +1,11 @@
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
+use crate::{db_execute, query_all, query_one, query_opt};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Passkey {
     pub id: i64,
     pub user_id: i64,
@@ -19,35 +20,8 @@ pub struct Passkey {
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
-fn parse_datetime(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .map(|dt| dt.with_timezone(&Utc))
-        .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
-        })
-        .or_else(|_| dateparser::parse(s).map(|dt| dt.with_timezone(&Utc)))
-        .unwrap_or_else(|_| Utc::now())
-}
-
-fn row_to_passkey(row: &rusqlite::Row) -> rusqlite::Result<Passkey> {
-    let created_at: String = row.get(7)?;
-    let last_used_at: Option<String> = row.get(8)?;
-
-    Ok(Passkey {
-        id: row.get(0)?,
-        user_id: row.get(1)?,
-        credential_id: row.get(2)?,
-        public_key: row.get(3)?,
-        counter: row.get(4)?,
-        name: row.get(5)?,
-        transports: row.get(6)?,
-        created_at: parse_datetime(&created_at),
-        last_used_at: last_used_at.map(|s| parse_datetime(&s)),
-    })
-}
-
-pub fn create_passkey(
-    conn: &Connection,
+pub async fn create_passkey(
+    db: &Db,
     user_id: i64,
     credential_id: &[u8],
     public_key: &[u8],
@@ -55,82 +29,96 @@ pub fn create_passkey(
     name: &str,
     transports: Option<&str>,
 ) -> AppResult<Passkey> {
-    conn.execute(
-        "INSERT INTO passkey (user_id, credential_id, public_key, counter, name, transports) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![user_id, credential_id, public_key, counter, name, transports],
-    )?;
-
-    let id = conn.last_insert_rowid();
-    find_by_id(conn, id)?.ok_or(AppError::Internal("Failed to create passkey".to_string()))
-}
-
-pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Passkey>> {
-    conn.query_row(
-        "SELECT id, user_id, credential_id, public_key, counter, name, transports, created_at, last_used_at FROM passkey WHERE id = ?1",
-        params![id],
-        row_to_passkey,
+    query_one!(
+        db,
+        Passkey,
+        "INSERT INTO passkey (user_id, credential_id, public_key, counter, name, transports) \
+         VALUES ($1, $2, $3, $4, $5, $6) \
+         RETURNING id, user_id, credential_id, public_key, counter, name, transports, created_at, last_used_at",
+        user_id,
+        credential_id,
+        public_key,
+        counter,
+        name,
+        transports
     )
-    .optional()
     .map_err(AppError::Database)
 }
 
-pub fn find_by_credential_id(
-    conn: &Connection,
-    credential_id: &[u8],
-) -> AppResult<Option<Passkey>> {
-    conn.query_row(
-        "SELECT id, user_id, credential_id, public_key, counter, name, transports, created_at, last_used_at FROM passkey WHERE credential_id = ?1",
-        params![credential_id],
-        row_to_passkey,
+pub async fn find_by_id(db: &Db, id: i64) -> AppResult<Option<Passkey>> {
+    query_opt!(
+        db,
+        Passkey,
+        "SELECT id, user_id, credential_id, public_key, counter, name, transports, created_at, last_used_at FROM passkey WHERE id = $1",
+        id
     )
-    .optional()
     .map_err(AppError::Database)
 }
 
-pub fn list_by_user(conn: &Connection, user_id: i64) -> AppResult<Vec<Passkey>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, user_id, credential_id, public_key, counter, name, transports, created_at, last_used_at FROM passkey WHERE user_id = ?1 ORDER BY created_at DESC",
-    )?;
-    let passkeys = stmt
-        .query_map(params![user_id], row_to_passkey)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(passkeys)
+pub async fn find_by_credential_id(db: &Db, credential_id: &[u8]) -> AppResult<Option<Passkey>> {
+    query_opt!(
+        db,
+        Passkey,
+        "SELECT id, user_id, credential_id, public_key, counter, name, transports, created_at, last_used_at FROM passkey WHERE credential_id = $1",
+        credential_id
+    )
+    .map_err(AppError::Database)
 }
 
-pub fn get_all_passkeys(conn: &Connection) -> AppResult<Vec<Passkey>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, user_id, credential_id, public_key, counter, name, transports, created_at, last_used_at FROM passkey ORDER BY user_id, created_at DESC",
-    )?;
-    let passkeys = stmt
-        .query_map([], row_to_passkey)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(passkeys)
+pub async fn list_by_user(db: &Db, user_id: i64) -> AppResult<Vec<Passkey>> {
+    query_all!(
+        db,
+        Passkey,
+        "SELECT id, user_id, credential_id, public_key, counter, name, transports, created_at, last_used_at FROM passkey WHERE user_id = $1 ORDER BY created_at DESC",
+        user_id
+    )
+    .map_err(AppError::Database)
 }
 
-pub fn update_counter(conn: &Connection, id: i64, counter: i64) -> AppResult<()> {
-    conn.execute(
-        "UPDATE passkey SET counter = ?1, last_used_at = datetime('now') WHERE id = ?2",
-        params![counter, id],
-    )?;
+pub async fn get_all_passkeys(db: &Db) -> AppResult<Vec<Passkey>> {
+    query_all!(
+        db,
+        Passkey,
+        "SELECT id, user_id, credential_id, public_key, counter, name, transports, created_at, last_used_at FROM passkey ORDER BY user_id, created_at DESC"
+    )
+    .map_err(AppError::Database)
+}
+
+pub async fn update_counter(db: &Db, id: i64, counter: i64) -> AppResult<()> {
+    db_execute!(
+        db,
+        "UPDATE passkey SET counter = $1, last_used_at = $2 WHERE id = $3",
+        counter,
+        Utc::now(),
+        id
+    )
+    .map_err(AppError::Database)?;
     Ok(())
 }
 
-pub fn rename_passkey(conn: &Connection, id: i64, user_id: i64, name: &str) -> AppResult<()> {
-    let updated = conn.execute(
-        "UPDATE passkey SET name = ?1 WHERE id = ?2 AND user_id = ?3",
-        params![name, id, user_id],
-    )?;
+pub async fn rename_passkey(db: &Db, id: i64, user_id: i64, name: &str) -> AppResult<()> {
+    let updated = db_execute!(
+        db,
+        "UPDATE passkey SET name = $1 WHERE id = $2 AND user_id = $3",
+        name,
+        id,
+        user_id
+    )
+    .map_err(AppError::Database)?;
     if updated == 0 {
         return Err(AppError::PasskeyNotFound);
     }
     Ok(())
 }
 
-pub fn delete_passkey(conn: &Connection, id: i64, user_id: i64) -> AppResult<()> {
-    let deleted = conn.execute(
-        "DELETE FROM passkey WHERE id = ?1 AND user_id = ?2",
-        params![id, user_id],
-    )?;
+pub async fn delete_passkey(db: &Db, id: i64, user_id: i64) -> AppResult<()> {
+    let deleted = db_execute!(
+        db,
+        "DELETE FROM passkey WHERE id = $1 AND user_id = $2",
+        id,
+        user_id
+    )
+    .map_err(AppError::Database)?;
     if deleted == 0 {
         return Err(AppError::PasskeyNotFound);
     }
@@ -140,25 +128,24 @@ pub fn delete_passkey(conn: &Connection, id: i64, user_id: i64) -> AppResult<()>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
     use crate::models::user::{self, Role};
 
-    fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
-        conn
+    async fn setup_db() -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
-    #[test]
-    fn test_create_and_find_passkey() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_create_and_find_passkey() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
         let credential_id = vec![1, 2, 3, 4];
         let public_key = vec![5, 6, 7, 8];
 
         let passkey = create_passkey(
-            &conn,
+            &db,
             user.id,
             &credential_id,
             &public_key,
@@ -166,115 +153,157 @@ mod tests {
             "My Passkey",
             Some("usb,nfc"),
         )
+        .await
         .unwrap();
 
         assert_eq!(passkey.user_id, user.id);
         assert_eq!(passkey.credential_id, credential_id);
         assert_eq!(passkey.name, "My Passkey");
 
-        let found = find_by_id(&conn, passkey.id).unwrap().unwrap();
+        let found = find_by_id(&db, passkey.id).await.unwrap().unwrap();
         assert_eq!(found.id, passkey.id);
 
-        let found = find_by_credential_id(&conn, &credential_id)
+        let found = find_by_credential_id(&db, &credential_id)
+            .await
             .unwrap()
             .unwrap();
         assert_eq!(found.id, passkey.id);
     }
 
-    #[test]
-    fn test_list_passkeys() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_list_passkeys() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
-        create_passkey(&conn, user.id, &[1], &[1], 0, "Passkey 1", None).unwrap();
-        create_passkey(&conn, user.id, &[2], &[2], 0, "Passkey 2", None).unwrap();
+        create_passkey(&db, user.id, &[1], &[1], 0, "Passkey 1", None)
+            .await
+            .unwrap();
+        create_passkey(&db, user.id, &[2], &[2], 0, "Passkey 2", None)
+            .await
+            .unwrap();
 
-        let passkeys = list_by_user(&conn, user.id).unwrap();
+        let passkeys = list_by_user(&db, user.id).await.unwrap();
         assert_eq!(passkeys.len(), 2);
     }
 
-    #[test]
-    fn test_update_counter() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_update_counter() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
-        let passkey = create_passkey(&conn, user.id, &[1], &[1], 0, "Passkey", None).unwrap();
+        let passkey = create_passkey(&db, user.id, &[1], &[1], 0, "Passkey", None)
+            .await
+            .unwrap();
         assert_eq!(passkey.counter, 0);
         assert!(passkey.last_used_at.is_none());
 
-        update_counter(&conn, passkey.id, 5).unwrap();
+        update_counter(&db, passkey.id, 5).await.unwrap();
 
-        let updated = find_by_id(&conn, passkey.id).unwrap().unwrap();
+        let updated = find_by_id(&db, passkey.id).await.unwrap().unwrap();
         assert_eq!(updated.counter, 5);
         assert!(updated.last_used_at.is_some());
     }
 
-    #[test]
-    fn test_rename_passkey() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_rename_passkey() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
-        let passkey = create_passkey(&conn, user.id, &[1], &[1], 0, "Old Name", None).unwrap();
-        rename_passkey(&conn, passkey.id, user.id, "New Name").unwrap();
+        let passkey = create_passkey(&db, user.id, &[1], &[1], 0, "Old Name", None)
+            .await
+            .unwrap();
+        rename_passkey(&db, passkey.id, user.id, "New Name")
+            .await
+            .unwrap();
 
-        let updated = find_by_id(&conn, passkey.id).unwrap().unwrap();
+        let updated = find_by_id(&db, passkey.id).await.unwrap().unwrap();
         assert_eq!(updated.name, "New Name");
     }
 
-    #[test]
-    fn test_delete_passkey() {
-        let conn = setup_db();
-        let user = user::create_user(&conn, "testuser", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_delete_passkey() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
 
-        let passkey = create_passkey(&conn, user.id, &[1], &[1], 0, "Passkey", None).unwrap();
-        delete_passkey(&conn, passkey.id, user.id).unwrap();
+        let passkey = create_passkey(&db, user.id, &[1], &[1], 0, "Passkey", None)
+            .await
+            .unwrap();
+        delete_passkey(&db, passkey.id, user.id).await.unwrap();
 
-        let found = find_by_id(&conn, passkey.id).unwrap();
+        let found = find_by_id(&db, passkey.id).await.unwrap();
         assert!(found.is_none());
     }
 
-    #[test]
-    fn test_delete_passkey_wrong_user() {
-        let conn = setup_db();
-        let user1 = user::create_user(&conn, "user1", "hash", Role::User).unwrap();
-        let user2 = user::create_user(&conn, "user2", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_delete_passkey_wrong_user() {
+        let db = setup_db().await;
+        let user1 = user::create_user(&db, "user1", "hash", Role::User)
+            .await
+            .unwrap();
+        let user2 = user::create_user(&db, "user2", "hash", Role::User)
+            .await
+            .unwrap();
 
-        let passkey = create_passkey(&conn, user1.id, &[1], &[1], 0, "Passkey", None).unwrap();
+        let passkey = create_passkey(&db, user1.id, &[1], &[1], 0, "Passkey", None)
+            .await
+            .unwrap();
 
-        let result = delete_passkey(&conn, passkey.id, user2.id);
+        let result = delete_passkey(&db, passkey.id, user2.id).await;
         assert!(matches!(result, Err(AppError::PasskeyNotFound)));
     }
 
-    #[test]
-    fn test_get_all_passkeys() {
-        let conn = setup_db();
-        let user1 = user::create_user(&conn, "user1", "hash", Role::User).unwrap();
-        let user2 = user::create_user(&conn, "user2", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_get_all_passkeys() {
+        let db = setup_db().await;
+        let user1 = user::create_user(&db, "user1", "hash", Role::User)
+            .await
+            .unwrap();
+        let user2 = user::create_user(&db, "user2", "hash", Role::User)
+            .await
+            .unwrap();
 
-        create_passkey(&conn, user1.id, &[1], &[1], 0, "User1 Passkey", None).unwrap();
-        create_passkey(&conn, user2.id, &[2], &[2], 0, "User2 Passkey", None).unwrap();
+        create_passkey(&db, user1.id, &[1], &[1], 0, "User1 Passkey", None)
+            .await
+            .unwrap();
+        create_passkey(&db, user2.id, &[2], &[2], 0, "User2 Passkey", None)
+            .await
+            .unwrap();
 
-        let all_passkeys = get_all_passkeys(&conn).unwrap();
+        let all_passkeys = get_all_passkeys(&db).await.unwrap();
         assert_eq!(all_passkeys.len(), 2);
     }
 
-    #[test]
-    fn test_rename_passkey_wrong_user() {
-        let conn = setup_db();
-        let user1 = user::create_user(&conn, "user1", "hash", Role::User).unwrap();
-        let user2 = user::create_user(&conn, "user2", "hash", Role::User).unwrap();
+    #[tokio::test]
+    async fn test_rename_passkey_wrong_user() {
+        let db = setup_db().await;
+        let user1 = user::create_user(&db, "user1", "hash", Role::User)
+            .await
+            .unwrap();
+        let user2 = user::create_user(&db, "user2", "hash", Role::User)
+            .await
+            .unwrap();
 
-        let passkey = create_passkey(&conn, user1.id, &[1], &[1], 0, "Passkey", None).unwrap();
+        let passkey = create_passkey(&db, user1.id, &[1], &[1], 0, "Passkey", None)
+            .await
+            .unwrap();
 
-        let result = rename_passkey(&conn, passkey.id, user2.id, "New Name");
+        let result = rename_passkey(&db, passkey.id, user2.id, "New Name").await;
         assert!(matches!(result, Err(AppError::PasskeyNotFound)));
     }
 
-    #[test]
-    fn test_find_by_credential_id_not_found() {
-        let conn = setup_db();
+    #[tokio::test]
+    async fn test_find_by_credential_id_not_found() {
+        let db = setup_db().await;
 
-        let result = find_by_credential_id(&conn, &[99, 99, 99]).unwrap();
+        let result = find_by_credential_id(&db, &[99, 99, 99]).await.unwrap();
         assert!(result.is_none());
     }
 }

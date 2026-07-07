@@ -11,34 +11,19 @@ use common::default_test_config;
 use std::sync::Arc;
 
 use axum_test::TestServer;
-use rdrs::{AppState, Config, DbPool, Role, auth, create_router, db, services};
-use rusqlite::Connection;
+use rdrs::models::{category, entry, feed, user};
+use rdrs::{AppState, Config, Db, Role, auth, create_router, services};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 struct TestApp {
     server: TestServer,
-    db: DbPool,
+    db: Db,
     state: AppState,
 }
 
-fn open_shared_memory(name: &str) -> Connection {
-    let uri = format!("file:{}?mode=memory&cache=shared", name);
-    Connection::open_with_flags(
-        uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    )
-    .unwrap()
-}
-
-fn create_test_app(config: Config, db_name: &str) -> TestApp {
-    let write_conn = open_shared_memory(db_name);
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory(db_name);
-
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
+async fn create_test_app(config: Config, _db_name: &str) -> TestApp {
+    let db = Db::connect_in_memory().await.unwrap();
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
@@ -62,54 +47,47 @@ fn create_test_app(config: Config, db_name: &str) -> TestApp {
 }
 
 /// Seed a user, category, feed, and one entry. Returns (`user_id`, `entry_id`).
-async fn setup_user_with_entry(db: &DbPool, username: &str, password: &str) -> (i64, i64) {
-    let username = username.to_owned();
-    let password = password.to_owned();
-    db.user(move |conn| {
-        let password_hash = auth::hash_password(&password).unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-            rusqlite::params![username, password_hash, Role::Admin.as_str()],
-        )
+async fn setup_user_with_entry(db: &Db, username: &str, password: &str) -> (i64, i64) {
+    let password_hash = auth::hash_password(password).unwrap();
+    let user = user::create_user(db, username, &password_hash, Role::Admin)
+        .await
         .unwrap();
-        let user_id = conn.last_insert_rowid();
 
-        conn.execute(
-            "INSERT INTO category (user_id, name) VALUES (?1, ?2)",
-            rusqlite::params![user_id, "Test Category"],
-        )
+    let cat = category::create_category(db, user.id, "Test Category")
+        .await
         .unwrap();
-        let category_id = conn.last_insert_rowid();
 
-        conn.execute(
-            "INSERT INTO feed (category_id, url, title) VALUES (?1, ?2, ?3)",
-            rusqlite::params![
-                category_id,
-                format!("https://example.com/{}/feed.xml", username),
-                "Test Feed"
-            ],
-        )
-        .unwrap();
-        let feed_id = conn.last_insert_rowid();
-
-        conn.execute(
-            "INSERT INTO entry (feed_id, guid, title, link, content, published_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
-            rusqlite::params![
-                feed_id,
-                format!("{}-guid-1", username),
-                "Test Entry",
-                "https://example.com/entry/1",
-                "<p>Content</p>"
-            ],
-        )
-        .unwrap();
-        let entry_id = conn.last_insert_rowid();
-
-        (user_id, entry_id)
-    })
+    let feed = feed::create_feed(
+        db,
+        &feed::CreateFeedParams {
+            category_id: cat.id,
+            url: &format!("https://example.com/{}/feed.xml", username),
+            title: Some("Test Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
     .await
-    .unwrap()
+    .unwrap();
+
+    let (e, _) = entry::upsert_entry(
+        db,
+        feed.id,
+        &format!("{}-guid-1", username),
+        Some("Test Entry"),
+        Some("https://example.com/entry/1"),
+        Some("<p>Content</p>"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    (user.id, e.id)
 }
 
 async fn login(server: &TestServer, username: &str, password: &str) {
@@ -129,19 +107,16 @@ async fn login(server: &TestServer, username: &str, password: &str) {
 
 #[tokio::test]
 async fn test_cancel_clears_failed_summary() {
-    let app = create_test_app(default_test_config(), "test_cancel_clears_failed");
+    let app = create_test_app(default_test_config(), "test_cancel_clears_failed").await;
     let (uid, eid) = setup_user_with_entry(&app.db, "user1", "password123").await;
     login(&app.server, "user1", "password123").await;
 
     // Seed a failed summary record
-    app.db
-        .user(move |conn| {
-            rdrs::models::entry_summary::upsert_pending(conn, uid, eid).unwrap();
-            rdrs::models::entry_summary::set_failed(conn, uid, eid, "API error").unwrap();
-            Ok::<_, rdrs::error::AppError>(())
-        })
+    rdrs::models::entry_summary::upsert_pending(&app.db, uid, eid)
         .await
-        .unwrap()
+        .unwrap();
+    rdrs::models::entry_summary::set_failed(&app.db, uid, eid, "API error")
+        .await
         .unwrap();
 
     // POST cancel
@@ -152,11 +127,8 @@ async fn test_cancel_clears_failed_summary() {
     response.assert_status_ok();
 
     // Assert the summary record is gone
-    let gone = app
-        .db
-        .read_user(move |c| rdrs::models::entry_summary::find_by_user_and_entry(c, uid, eid))
+    let gone = rdrs::models::entry_summary::find_by_user_and_entry(&app.db, uid, eid)
         .await
-        .unwrap()
         .unwrap();
     assert!(gone.is_none(), "expected summary record to be deleted");
 }
@@ -167,24 +139,15 @@ async fn test_cancel_clears_failed_summary() {
 
 #[tokio::test]
 async fn test_cancel_non_owner_returns_404() {
-    let app = create_test_app(default_test_config(), "test_cancel_non_owner");
+    let app = create_test_app(default_test_config(), "test_cancel_non_owner").await;
 
     // Create owner user with an entry
     let (_uid1, eid) = setup_user_with_entry(&app.db, "owner", "password123").await;
 
     // Create a second user who does NOT own that entry
-    app.db
-        .user(move |conn| {
-            let password_hash = auth::hash_password("password456").unwrap();
-            conn.execute(
-                "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, ?3)",
-                rusqlite::params!["attacker", password_hash, "user"],
-            )
-            .unwrap();
-            Ok::<_, rdrs::error::AppError>(())
-        })
+    let password_hash = auth::hash_password("password456").unwrap();
+    user::create_user(&app.db, "attacker", &password_hash, Role::User)
         .await
-        .unwrap()
         .unwrap();
 
     // Login as attacker
@@ -204,7 +167,7 @@ async fn test_cancel_non_owner_returns_404() {
 
 #[tokio::test]
 async fn summarize_emits_pending_event() {
-    let app = create_test_app(default_test_config(), "test_summarize_emits_pending");
+    let app = create_test_app(default_test_config(), "test_summarize_emits_pending").await;
     let mut sub = app.state.events.subscribe();
     let (uid, eid) = setup_user_with_entry(&app.db, "pendinguser", "password123").await;
     login(&app.server, "pendinguser", "password123").await;
@@ -234,18 +197,13 @@ async fn summarize_emits_pending_event() {
 
 #[tokio::test]
 async fn test_cancel_removes_inflight_token() {
-    let app = create_test_app(default_test_config(), "test_cancel_inflight_token");
+    let app = create_test_app(default_test_config(), "test_cancel_inflight_token").await;
     let (uid, eid) = setup_user_with_entry(&app.db, "tokenuser", "password123").await;
     login(&app.server, "tokenuser", "password123").await;
 
     // Seed a pending summary record so delete has a row
-    app.db
-        .user(move |conn| {
-            rdrs::models::entry_summary::upsert_pending(conn, uid, eid).unwrap();
-            Ok::<_, rdrs::error::AppError>(())
-        })
+    rdrs::models::entry_summary::upsert_pending(&app.db, uid, eid)
         .await
-        .unwrap()
         .unwrap();
 
     // Insert a CancellationToken into the registry

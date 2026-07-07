@@ -4,33 +4,20 @@ use common::default_test_config;
 use axum::http::{StatusCode, header};
 use axum_test::TestServer;
 use chrono::{DateTime, Duration, Utc};
-use rdrs::{AppState, Config, DbPool, auth, create_router, db, services};
-use rusqlite::{Connection, params};
+use rdrs::{AppState, Config, Db, auth, create_router, services};
 use serde_json::json;
 
-fn open_shared_memory(name: &str) -> Connection {
-    let uri = format!("file:{}?mode=memory&cache=shared", name);
-    Connection::open_with_flags(
-        uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    )
-    .unwrap()
-}
-
-fn create_test_server(config: Config) -> TestServer {
-    let write_conn = open_shared_memory("test_auth");
-    db::init_db(&write_conn).unwrap();
-    let read_conn = open_shared_memory("test_auth");
+/// Build a test server and return it together with the backing `Db` so tests
+/// that inspect the `session` table directly can share the same connection.
+async fn build_server(config: Config) -> (TestServer, Db) {
+    let db = Db::connect_in_memory().await.unwrap();
 
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
 
-    let (db, _handle) = DbPool::new(write_conn, read_conn);
     let state = AppState {
-        db,
+        db: db.clone(),
         config: Arc::new(config),
         webauthn: Arc::new(webauthn),
         summary_cache,
@@ -42,14 +29,19 @@ fn create_test_server(config: Config) -> TestServer {
     };
 
     let app = create_router(state);
-    TestServer::builder().save_cookies().build(app)
+    let server = TestServer::builder().save_cookies().build(app);
+    (server, db)
+}
+
+async fn create_test_server(config: Config) -> TestServer {
+    build_server(config).await.0
 }
 
 use std::sync::Arc;
 
 #[tokio::test]
 async fn test_register_first_user_becomes_admin() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .post("/api/register")
@@ -67,7 +59,7 @@ async fn test_register_first_user_becomes_admin() {
 
 #[tokio::test]
 async fn test_register_second_user_becomes_user() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -94,7 +86,7 @@ async fn test_register_second_user_becomes_user() {
 
 #[tokio::test]
 async fn test_register_duplicate_username() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -125,7 +117,7 @@ async fn test_register_disabled_still_allows_first_account() {
         signup_enabled: false,
         ..default_test_config()
     };
-    let server = create_test_server(config);
+    let server = create_test_server(config).await;
 
     server
         .post("/api/register")
@@ -154,7 +146,7 @@ async fn test_register_multi_user_disabled() {
         multi_user_enabled: false,
         ..default_test_config()
     };
-    let server = create_test_server(config);
+    let server = create_test_server(config).await;
 
     server
         .post("/api/register")
@@ -178,7 +170,7 @@ async fn test_register_multi_user_disabled() {
 
 #[tokio::test]
 async fn test_login_success() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -204,7 +196,7 @@ async fn test_login_success() {
 
 #[tokio::test]
 async fn test_login_wrong_password() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -228,7 +220,7 @@ async fn test_login_wrong_password() {
 
 #[tokio::test]
 async fn test_login_nonexistent_user() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .post("/api/session")
@@ -243,7 +235,7 @@ async fn test_login_nonexistent_user() {
 
 #[tokio::test]
 async fn test_get_current_user() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -272,7 +264,7 @@ async fn test_get_current_user() {
 
 #[tokio::test]
 async fn test_get_current_user_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/api/user").await;
     response.assert_status_unauthorized();
@@ -280,7 +272,7 @@ async fn test_get_current_user_unauthorized() {
 
 #[tokio::test]
 async fn test_logout() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -316,7 +308,7 @@ async fn test_logout() {
 
 #[tokio::test]
 async fn test_masquerade() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -368,7 +360,7 @@ async fn test_masquerade() {
 
 #[tokio::test]
 async fn test_masquerade_already_masquerading() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -412,7 +404,7 @@ async fn test_masquerade_already_masquerading() {
 
 #[tokio::test]
 async fn test_unmasquerade_not_masquerading() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -438,7 +430,7 @@ async fn test_unmasquerade_not_masquerading() {
 
 #[tokio::test]
 async fn test_login_page() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/login").await;
     response.assert_status_ok();
@@ -448,7 +440,7 @@ async fn test_login_page() {
 
 #[tokio::test]
 async fn test_register_page() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/register").await;
     response.assert_status_ok();
@@ -458,7 +450,7 @@ async fn test_register_page() {
 
 #[tokio::test]
 async fn test_validation_short_password() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .post("/api/register")
@@ -473,7 +465,7 @@ async fn test_validation_short_password() {
 
 #[tokio::test]
 async fn test_validation_empty_username() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server
         .post("/api/register")
@@ -488,7 +480,7 @@ async fn test_validation_empty_username() {
 
 #[tokio::test]
 async fn test_unread_page() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -522,7 +514,7 @@ async fn test_unread_page() {
 
 #[tokio::test]
 async fn test_unread_page_unauthorized() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/").await;
     // Page routes redirect to login instead of returning 401
@@ -531,7 +523,7 @@ async fn test_unread_page_unauthorized() {
 
 #[tokio::test]
 async fn test_admin_page_accessible_by_admin() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -559,7 +551,7 @@ async fn test_admin_page_accessible_by_admin() {
 
 #[tokio::test]
 async fn test_admin_page_forbidden_for_regular_user() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -595,7 +587,7 @@ async fn test_admin_page_forbidden_for_regular_user() {
 
 #[tokio::test]
 async fn test_admin_page_unauthorized_without_login() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/admin").await;
     // Page routes redirect to login instead of returning 401
@@ -604,7 +596,7 @@ async fn test_admin_page_unauthorized_without_login() {
 
 #[tokio::test]
 async fn test_unread_page_shows_admin_link_for_admin() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -634,7 +626,7 @@ async fn test_unread_page_shows_admin_link_for_admin() {
 
 #[tokio::test]
 async fn test_unread_page_hides_admin_link_for_regular_user() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -672,7 +664,7 @@ async fn test_unread_page_hides_admin_link_for_regular_user() {
 
 #[tokio::test]
 async fn test_flash_message_displayed_on_login_page() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     // Set a flash message cookie using add_cookie with cookie::Cookie
     let response = server
@@ -692,7 +684,7 @@ async fn test_flash_message_displayed_on_login_page() {
 
 #[tokio::test]
 async fn test_flash_message_cleared_after_display() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     // First request with flash cookie
     let response = server
@@ -716,7 +708,7 @@ async fn test_flash_message_cleared_after_display() {
 
 #[tokio::test]
 async fn test_flash_message_on_unread_page() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -754,44 +746,29 @@ async fn test_flash_message_on_unread_page() {
     assert!(body.contains(r#""level":"warning""#));
 }
 
-fn parse_session_ts(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .map(|dt| dt.with_timezone(&Utc))
-        .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
-        })
-        .unwrap()
-}
-
 /// Force a logged-in user's session into the refresh window by back-dating
 /// `created_at` 5 days and setting `expires_at` 2 hours from now. Returns the
 /// aged `expires_at` so callers can assert forward movement.
-fn age_session(conn: &Connection) -> DateTime<Utc> {
+async fn age_session(db: &Db) -> DateTime<Utc> {
     let aged_expiry = Utc::now() + Duration::hours(2);
-    let aged_expiry_str = aged_expiry.format("%Y-%m-%d %H:%M:%S").to_string();
-    let created_str = (Utc::now() - Duration::days(5))
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string();
-    conn.execute(
-        "UPDATE session SET created_at = ?1, expires_at = ?2",
-        params![created_str, aged_expiry_str],
+    let created = Utc::now() - Duration::days(5);
+    rdrs::db_execute!(
+        db,
+        "UPDATE session SET created_at = $1, expires_at = $2",
+        created,
+        aged_expiry
     )
     .unwrap();
     aged_expiry
 }
 
-fn read_expiry(conn: &Connection) -> DateTime<Utc> {
-    let expires_at: String = conn
-        .query_row("SELECT expires_at FROM session LIMIT 1", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    parse_session_ts(&expires_at)
+async fn read_expiry(db: &Db) -> DateTime<Utc> {
+    rdrs::query_scalar!(db, DateTime<Utc>, "SELECT expires_at FROM session LIMIT 1").unwrap()
 }
 
 #[tokio::test]
 async fn test_api_request_slides_session_expiry_forward() {
-    let server = create_test_server(default_test_config());
+    let (server, db) = build_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -805,12 +782,11 @@ async fn test_api_request_slides_session_expiry_forward() {
         .await
         .assert_status_ok();
 
-    let db_conn = open_shared_memory("test_auth");
-    let aged_expiry = age_session(&db_conn);
+    let aged_expiry = age_session(&db).await;
 
     server.get("/api/user").await.assert_status_ok();
 
-    let refreshed = read_expiry(&db_conn);
+    let refreshed = read_expiry(&db).await;
     assert!(
         refreshed > aged_expiry,
         "expiry should slide forward: aged={aged_expiry} refreshed={refreshed}"
@@ -825,7 +801,7 @@ async fn test_api_request_slides_session_expiry_forward() {
 
 #[tokio::test]
 async fn test_page_request_slides_session_expiry_forward() {
-    let server = create_test_server(default_test_config());
+    let (server, db) = build_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -839,12 +815,11 @@ async fn test_page_request_slides_session_expiry_forward() {
         .await
         .assert_status_ok();
 
-    let db_conn = open_shared_memory("test_auth");
-    let aged_expiry = age_session(&db_conn);
+    let aged_expiry = age_session(&db).await;
 
     server.get("/").await.assert_status_ok();
 
-    let refreshed = read_expiry(&db_conn);
+    let refreshed = read_expiry(&db).await;
     assert!(
         refreshed > aged_expiry,
         "page request should slide expiry forward: aged={aged_expiry} refreshed={refreshed}"
@@ -857,7 +832,7 @@ async fn test_disable_local_auth_blocks_password_login() {
     config.disable_local_auth = true;
     config.auth_proxy_header = "Remote-User".to_string();
     config.trusted_proxy_networks = rdrs::config::parse_trusted_networks("127.0.0.0/8").unwrap();
-    let server = create_test_server(config);
+    let server = create_test_server(config).await;
 
     // Seed a normal password user.
     server
@@ -885,7 +860,7 @@ fn set_cookie_headers(res: &axum_test::TestResponse) -> Vec<String> {
 
 #[tokio::test]
 async fn test_logout_clears_cookie_with_path() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
         .json(&json!({ "username": "u", "password": "password123" }))
@@ -912,7 +887,7 @@ async fn test_logout_clears_cookie_with_path() {
 
 #[tokio::test]
 async fn test_logout_redirect_default_is_login() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
         .json(&json!({ "username": "u", "password": "password123" }))
@@ -933,7 +908,7 @@ async fn test_logout_redirect_default_is_login() {
 async fn test_logout_redirect_uses_configured_url() {
     let mut config = default_test_config();
     config.auth_proxy_logout_url = Some("https://auth.example.com/logout".to_string());
-    let server = create_test_server(config);
+    let server = create_test_server(config).await;
     server
         .post("/api/register")
         .json(&json!({ "username": "u", "password": "password123" }))
@@ -952,7 +927,7 @@ async fn test_logout_redirect_uses_configured_url() {
 
 #[tokio::test]
 async fn test_login_page_redirects_authenticated_to_root() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
         .json(&json!({ "username": "u", "password": "password123" }))
@@ -971,7 +946,7 @@ async fn test_login_page_redirects_authenticated_to_root() {
 
 #[tokio::test]
 async fn test_login_page_renders_when_anonymous() {
-    let server = create_test_server(default_test_config());
+    let server = create_test_server(default_test_config()).await;
     let res = server.get("/login").await;
     res.assert_status_ok();
     assert!(res.text().contains("login-form") || res.text().contains("rdrs"));
@@ -979,7 +954,7 @@ async fn test_login_page_renders_when_anonymous() {
 
 #[tokio::test]
 async fn test_fresh_session_is_not_refreshed() {
-    let server = create_test_server(default_test_config());
+    let (server, db) = build_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -993,12 +968,11 @@ async fn test_fresh_session_is_not_refreshed() {
         .await
         .assert_status_ok();
 
-    let db_conn = open_shared_memory("test_auth");
-    let before = read_expiry(&db_conn);
+    let before = read_expiry(&db).await;
 
     server.get("/api/user").await.assert_status_ok();
 
-    let after = read_expiry(&db_conn);
+    let after = read_expiry(&db).await;
     assert_eq!(
         before, after,
         "fresh session should not be refreshed on every request"

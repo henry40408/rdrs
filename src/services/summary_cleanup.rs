@@ -3,7 +3,7 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::db::DbPool;
+use crate::db::Db;
 use crate::models::entry_summary;
 
 /// Start the summary cleanup worker that periodically removes expired summaries
@@ -14,7 +14,7 @@ use crate::models::entry_summary;
 /// * `ttl_hours` - Delete summaries older than this many hours
 /// * `cancel_token` - Token to signal graceful shutdown
 pub fn start_cleanup_worker(
-    db: DbPool,
+    db: Db,
     interval_hours: u64,
     ttl_hours: i64,
     cancel_token: CancellationToken,
@@ -37,17 +37,10 @@ pub fn start_cleanup_worker(
                 _ = interval.tick() => {
                     tracing::debug!("Running summary cleanup...");
 
-                    let deleted = match db
-                        .background(move |conn| entry_summary::delete_expired(conn, ttl_hours))
-                        .await
-                    {
-                        Ok(Ok(count)) => count,
-                        Ok(Err(e)) => {
-                            tracing::error!("Failed to cleanup expired summaries: {}", e);
-                            continue;
-                        }
+                    let deleted = match entry_summary::delete_expired(&db, ttl_hours).await {
+                        Ok(count) => count,
                         Err(e) => {
-                            tracing::error!("Failed to access DB for cleanup: {}", e);
+                            tracing::error!("Failed to cleanup expired summaries: {}", e);
                             continue;
                         }
                     };
@@ -66,35 +59,27 @@ pub fn start_cleanup_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
+    use crate::db_execute;
     use crate::models::user::Role;
     use crate::models::{category, entry, feed, user};
-    use rusqlite::Connection;
 
-    fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
-        conn
+    async fn setup_db() -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
-    fn setup_db_pool() -> DbPool {
-        let conn = setup_db();
-        let read_conn = Connection::open_in_memory().unwrap();
-        let (pool, _handle) = DbPool::new(conn, read_conn);
-        pool
-    }
-
-    #[test]
-    fn test_delete_expired() {
-        let conn = setup_db();
-        let user_id = user::create_user(&conn, "testuser", "hash", Role::User)
+    #[tokio::test]
+    async fn test_delete_expired() {
+        let db = setup_db().await;
+        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
             .unwrap()
             .id;
-        let category_id = category::create_category(&conn, user_id, "Tech")
+        let category_id = category::create_category(&db, user_id, "Tech")
+            .await
             .unwrap()
             .id;
         let feed_id = feed::create_feed(
-            &conn,
+            &db,
             &feed::CreateFeedParams {
                 category_id,
                 url: "https://example.com/feed.xml",
@@ -106,11 +91,12 @@ mod tests {
                 custom_referrer: None,
             },
         )
+        .await
         .unwrap()
         .id;
 
         let (entry, _) = entry::upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-1",
             Some("Entry"),
@@ -120,33 +106,40 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         // Create a summary
-        entry_summary::upsert_pending(&conn, user_id, entry.id).unwrap();
-        entry_summary::set_completed(&conn, user_id, entry.id, "Summary text").unwrap();
+        entry_summary::upsert_pending(&db, user_id, entry.id)
+            .await
+            .unwrap();
+        entry_summary::set_completed(&db, user_id, entry.id, "Summary text")
+            .await
+            .unwrap();
 
         // Verify it exists
-        assert!(entry_summary::exists(&conn, user_id, entry.id).unwrap());
+        assert!(entry_summary::exists(&db, user_id, entry.id).await.unwrap());
 
         // Manually set created_at to 25 hours ago
-        conn.execute(
-            "UPDATE entry_summary SET created_at = datetime('now', '-25 hours') WHERE user_id = ?1 AND entry_id = ?2",
-            rusqlite::params![user_id, entry.id],
+        db_execute!(
+            &db,
+            "UPDATE entry_summary SET created_at = datetime('now', '-25 hours') WHERE user_id = $1 AND entry_id = $2",
+            user_id,
+            entry.id,
         )
         .unwrap();
 
         // Delete entries older than 24 hours
-        let deleted = entry_summary::delete_expired(&conn, 24).unwrap();
+        let deleted = entry_summary::delete_expired(&db, 24).await.unwrap();
         assert_eq!(deleted, 1);
 
         // Verify it's gone
-        assert!(!entry_summary::exists(&conn, user_id, entry.id).unwrap());
+        assert!(!entry_summary::exists(&db, user_id, entry.id).await.unwrap());
     }
 
     #[tokio::test]
     async fn test_cleanup_worker_stops_on_cancellation() {
-        let db = setup_db_pool();
+        let db = setup_db().await;
         let cancel_token = CancellationToken::new();
 
         // Start cleanup worker with a long interval (won't trigger during test)
@@ -165,78 +158,74 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_worker_runs_cleanup_on_interval() {
-        let db = setup_db_pool();
+        let db = setup_db().await;
 
         // Create test data with an expired summary
-        db.user(|conn| {
-            let user_id =
-                user::create_user(conn, "testuser", "hash", Role::User)
-                    .unwrap()
-                    .id;
-            let category_id = category::create_category(conn, user_id, "Tech")
-                .unwrap()
-                .id;
-            let feed_id = feed::create_feed(
-                conn,
-                &feed::CreateFeedParams {
-                    category_id,
-                    url: "https://example.com/feed.xml",
-                    title: Some("Feed"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
+        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
             .unwrap()
             .id;
+        let category_id = category::create_category(&db, user_id, "Tech")
+            .await
+            .unwrap()
+            .id;
+        let feed_id = feed::create_feed(
+            &db,
+            &feed::CreateFeedParams {
+                category_id,
+                url: "https://example.com/feed.xml",
+                title: Some("Feed"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id;
 
-            let (entry_obj, _) = entry::upsert_entry(
-                conn,
-                feed_id,
-                "guid-1",
-                Some("Entry"),
-                Some("https://example.com"),
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-
-            // Create an expired summary (25 hours old)
-            entry_summary::upsert_pending(conn, user_id, entry_obj.id).unwrap();
-            entry_summary::set_completed(conn, user_id, entry_obj.id, "Summary text").unwrap();
-
-            conn.execute(
-                "UPDATE entry_summary SET created_at = datetime('now', '-25 hours') WHERE user_id = ?1 AND entry_id = ?2",
-                rusqlite::params![user_id, entry_obj.id],
-            )
-            .unwrap();
-        })
+        let (entry_obj, _) = entry::upsert_entry(
+            &db,
+            feed_id,
+            "guid-1",
+            Some("Entry"),
+            Some("https://example.com"),
+            None,
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
 
-        // Verify summary exists before cleanup
-        let exists_before: bool = db
-            .user(|conn| entry_summary::exists(conn, 1, 1).unwrap())
+        // Create an expired summary (25 hours old)
+        entry_summary::upsert_pending(&db, user_id, entry_obj.id)
             .await
             .unwrap();
+        entry_summary::set_completed(&db, user_id, entry_obj.id, "Summary text")
+            .await
+            .unwrap();
+
+        db_execute!(
+            &db,
+            "UPDATE entry_summary SET created_at = datetime('now', '-25 hours') WHERE user_id = $1 AND entry_id = $2",
+            user_id,
+            entry_obj.id,
+        )
+        .unwrap();
+
+        // Verify summary exists before cleanup
+        let exists_before = entry_summary::exists(&db, 1, 1).await.unwrap();
         assert!(exists_before);
 
         // Run cleanup directly (simulating what the worker does)
-        let deleted: usize = db
-            .background(|conn| entry_summary::delete_expired(conn, 24).unwrap())
-            .await
-            .unwrap();
+        let deleted = entry_summary::delete_expired(&db, 24).await.unwrap();
         assert_eq!(deleted, 1);
 
         // Verify summary was deleted
-        let exists_after: bool = db
-            .user(|conn| entry_summary::exists(conn, 1, 1).unwrap())
-            .await
-            .unwrap();
+        let exists_after = entry_summary::exists(&db, 1, 1).await.unwrap();
         assert!(!exists_after);
     }
 }

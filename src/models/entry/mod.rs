@@ -1,14 +1,16 @@
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use crate::db::{Db, Tx};
 use crate::error::{AppError, AppResult};
-use crate::utils::datetime::parse_datetime;
 use crate::utils::text::strip_to_search_text;
+use crate::{
+    db_execute, db_execute_tx, query_all, query_all_tx, query_opt, query_opt_tx, query_scalar,
+};
 
 mod filters;
 use filters::{
-    apply_continuation_condition, apply_filter_conditions, apply_time_conditions,
+    Bind, Dialect, apply_continuation_condition, apply_filter_conditions, apply_time_conditions,
     published_sort_entry_hint,
 };
 // Only the unit tests exercise this predicate directly; production code reaches
@@ -26,7 +28,7 @@ pub enum EntrySortOrder {
     StarredAt, // starred_at DESC
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Entry {
     pub id: i64,
     pub feed_id: i64,
@@ -126,135 +128,275 @@ pub struct ContinuationParams {
     pub sort_order: EntrySortOrder,
 }
 
-fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<Entry> {
-    let published_at: Option<String> = row.get(8)?;
-    let read_at: Option<String> = row.get(9)?;
-    let starred_at: Option<String> = row.get(10)?;
-    let created_at: String = row.get(11)?;
-    let updated_at: String = row.get(12)?;
-
-    Ok(Entry {
-        id: row.get(0)?,
-        feed_id: row.get(1)?,
-        guid: row.get(2)?,
-        title: row.get(3)?,
-        link: row.get(4)?,
-        content: row.get(5)?,
-        summary: row.get(6)?,
-        author: row.get(7)?,
-        published_at: published_at.map(|s| parse_datetime(&s)),
-        read_at: read_at.map(|s| parse_datetime(&s)),
-        starred_at: starred_at.map(|s| parse_datetime(&s)),
-        created_at: parse_datetime(&created_at),
-        updated_at: parse_datetime(&updated_at),
-    })
+/// Flat row for the `EntryWithFeed` join. `sqlx::FromRow` matches by column
+/// NAME, and the join has duplicate base names (`e.title`/`f.title`,
+/// `e.id`/`c.id`), so the `ENTRY_WITH_FEED_COLUMNS_*` lists alias every column
+/// to the field names below. `has_icon` is an integer (COUNT or 0/1 CASE) that
+/// maps to the `bool` `feed_has_icon` in the conversion.
+#[derive(sqlx::FromRow)]
+struct EntryWithFeedRow {
+    id: i64,
+    feed_id: i64,
+    guid: String,
+    title: Option<String>,
+    link: Option<String>,
+    content: Option<String>,
+    summary: Option<String>,
+    author: Option<String>,
+    published_at: Option<DateTime<Utc>>,
+    read_at: Option<DateTime<Utc>>,
+    starred_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    feed_title: Option<String>,
+    feed_url: String,
+    site_url: Option<String>,
+    category_id: i64,
+    category_name: String,
+    has_icon: i64,
+    custom_referrer: Option<String>,
 }
 
-fn row_to_entry_with_feed(row: &rusqlite::Row) -> rusqlite::Result<EntryWithFeed> {
-    let published_at: Option<String> = row.get(8)?;
-    let read_at: Option<String> = row.get(9)?;
-    let starred_at: Option<String> = row.get(10)?;
-    let created_at: String = row.get(11)?;
-    let updated_at: String = row.get(12)?;
-    let has_icon: i64 = row.get(18)?;
-
-    Ok(EntryWithFeed {
-        entry: Entry {
-            id: row.get(0)?,
-            feed_id: row.get(1)?,
-            guid: row.get(2)?,
-            title: row.get(3)?,
-            link: row.get(4)?,
-            content: row.get(5)?,
-            summary: row.get(6)?,
-            author: row.get(7)?,
-            published_at: published_at.map(|s| parse_datetime(&s)),
-            read_at: read_at.map(|s| parse_datetime(&s)),
-            starred_at: starred_at.map(|s| parse_datetime(&s)),
-            created_at: parse_datetime(&created_at),
-            updated_at: parse_datetime(&updated_at),
-        },
-        feed_title: row.get(13)?,
-        feed_url: row.get(14)?,
-        site_url: row.get(15)?,
-        category_id: row.get(16)?,
-        category_name: row.get(17)?,
-        feed_has_icon: has_icon > 0,
-        custom_referrer: row.get(19)?,
-    })
+impl From<EntryWithFeedRow> for EntryWithFeed {
+    fn from(r: EntryWithFeedRow) -> Self {
+        EntryWithFeed {
+            entry: Entry {
+                id: r.id,
+                feed_id: r.feed_id,
+                guid: r.guid,
+                title: r.title,
+                link: r.link,
+                content: r.content,
+                summary: r.summary,
+                author: r.author,
+                published_at: r.published_at,
+                read_at: r.read_at,
+                starred_at: r.starred_at,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            },
+            feed_title: r.feed_title,
+            feed_url: r.feed_url,
+            site_url: r.site_url,
+            category_id: r.category_id,
+            category_name: r.category_name,
+            feed_has_icon: r.has_icon > 0,
+            custom_referrer: r.custom_referrer,
+        }
+    }
 }
 
-const SELECT_COLUMNS: &str = "id, feed_id, guid, title, link, content, summary, author, published_at, read_at, starred_at, created_at, updated_at";
-
-/// Full SELECT column list for `EntryWithFeed` rows, in the exact order
-/// `row_to_entry_with_feed` reads (columns 0–19). The `has_icon` column (18) is
-/// computed two ways depending on the query shape; this variant uses a
-/// correlated COUNT subquery, for queries that do NOT `LEFT JOIN image`. Keep
-/// both variants and the mapper in sync.
-const ENTRY_WITH_FEED_COLUMNS_COUNT: &str = "e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author, e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at, f.title, f.url, f.site_url, c.id, c.name, (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) as has_icon, f.custom_referrer";
+/// SELECT column list for [`EntryWithFeedRow`], aliased to its field names.
+/// `has_icon` here uses a correlated COUNT subquery, for queries that do NOT
+/// `LEFT JOIN image`. Keep both variants and the row struct in sync.
+const ENTRY_WITH_FEED_COLUMNS_COUNT: &str = "e.id AS id, e.feed_id AS feed_id, e.guid AS guid, e.title AS title, e.link AS link, e.content AS content, e.summary AS summary, e.author AS author, e.published_at AS published_at, e.read_at AS read_at, e.starred_at AS starred_at, e.created_at AS created_at, e.updated_at AS updated_at, f.title AS feed_title, f.url AS feed_url, f.site_url AS site_url, c.id AS category_id, c.name AS category_name, (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) AS has_icon, f.custom_referrer AS custom_referrer";
 
 /// Same columns as [`ENTRY_WITH_FEED_COLUMNS_COUNT`] but computes `has_icon`
 /// from a `LEFT JOIN image i` already present in the query.
-const ENTRY_WITH_FEED_COLUMNS_JOIN: &str = "e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author, e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at, f.title, f.url, f.site_url, c.id, c.name, CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon, f.custom_referrer";
+const ENTRY_WITH_FEED_COLUMNS_JOIN: &str = "e.id AS id, e.feed_id AS feed_id, e.guid AS guid, e.title AS title, e.link AS link, e.content AS content, e.summary AS summary, e.author AS author, e.published_at AS published_at, e.read_at AS read_at, e.starred_at AS starred_at, e.created_at AS created_at, e.updated_at AS updated_at, f.title AS feed_title, f.url AS feed_url, f.site_url AS site_url, c.id AS category_id, c.name AS category_name, CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END AS has_icon, f.custom_referrer AS custom_referrer";
 
-pub fn find_by_id(conn: &Connection, id: i64) -> AppResult<Option<Entry>> {
-    conn.query_row(
-        &format!("SELECT {} FROM entry WHERE id = ?1", SELECT_COLUMNS),
-        params![id],
-        row_to_entry,
+// --- dynamic-query execution helpers ---------------------------------------
+//
+// Several list/count queries are built at runtime (filter conditions +
+// continuation cursor) into a SQL `String` with `$N` placeholders and a
+// parallel `Vec<Bind>`. These helpers dispatch on the backend and apply the
+// binds in order. Runtime strings are wrapped in `sqlx::AssertSqlSafe` (every
+// fragment is built by this module from `filters`, never from user input).
+
+async fn fetch_entries_with_feed(
+    db: &Db,
+    sql: String,
+    binds: Vec<Bind>,
+) -> Result<Vec<EntryWithFeed>, sqlx::Error> {
+    let rows = match db {
+        Db::Sqlite(pool) => {
+            let mut q = sqlx::query_as::<sqlx::Sqlite, EntryWithFeedRow>(sqlx::AssertSqlSafe(sql));
+            for b in &binds {
+                q = match b {
+                    Bind::Int(i) => q.bind(*i),
+                    Bind::Text(s) => q.bind(s.as_str()),
+                };
+            }
+            q.fetch_all(pool).await?
+        }
+        Db::Postgres(pool) => {
+            let mut q =
+                sqlx::query_as::<sqlx::Postgres, EntryWithFeedRow>(sqlx::AssertSqlSafe(sql));
+            for b in &binds {
+                q = match b {
+                    Bind::Int(i) => q.bind(*i),
+                    Bind::Text(s) => q.bind(s.as_str()),
+                };
+            }
+            q.fetch_all(pool).await?
+        }
+    };
+    Ok(rows.into_iter().map(EntryWithFeed::from).collect())
+}
+
+async fn fetch_scalar_i64(db: &Db, sql: String, binds: Vec<Bind>) -> Result<i64, sqlx::Error> {
+    match db {
+        Db::Sqlite(pool) => {
+            let mut q = sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql));
+            for b in &binds {
+                q = match b {
+                    Bind::Int(i) => q.bind(*i),
+                    Bind::Text(s) => q.bind(s.as_str()),
+                };
+            }
+            q.fetch_one(pool).await
+        }
+        Db::Postgres(pool) => {
+            let mut q = sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql));
+            for b in &binds {
+                q = match b {
+                    Bind::Int(i) => q.bind(*i),
+                    Bind::Text(s) => q.bind(s.as_str()),
+                };
+            }
+            q.fetch_one(pool).await
+        }
+    }
+}
+
+/// Fetch `(id, sort_ts_micros)` id-list rows for the continuation index query.
+async fn fetch_id_ts_rows(
+    db: &Db,
+    sql: String,
+    binds: Vec<Bind>,
+) -> Result<Vec<(i64, i64)>, sqlx::Error> {
+    match db {
+        Db::Sqlite(pool) => {
+            let mut q = sqlx::query_as::<sqlx::Sqlite, (i64, i64)>(sqlx::AssertSqlSafe(sql));
+            for b in &binds {
+                q = match b {
+                    Bind::Int(i) => q.bind(*i),
+                    Bind::Text(s) => q.bind(s.as_str()),
+                };
+            }
+            q.fetch_all(pool).await
+        }
+        Db::Postgres(pool) => {
+            let mut q = sqlx::query_as::<sqlx::Postgres, (i64, i64)>(sqlx::AssertSqlSafe(sql));
+            for b in &binds {
+                q = match b {
+                    Bind::Int(i) => q.bind(*i),
+                    Bind::Text(s) => q.bind(s.as_str()),
+                };
+            }
+            q.fetch_all(pool).await
+        }
+    }
+}
+
+/// Execute a runtime-built statement, returning rows affected.
+async fn exec_dynamic(db: &Db, sql: String, binds: Vec<Bind>) -> Result<u64, sqlx::Error> {
+    match db {
+        Db::Sqlite(pool) => {
+            let mut q = sqlx::query::<sqlx::Sqlite>(sqlx::AssertSqlSafe(sql));
+            for b in &binds {
+                q = match b {
+                    Bind::Int(i) => q.bind(*i),
+                    Bind::Text(s) => q.bind(s.as_str()),
+                };
+            }
+            q.execute(pool).await.map(|r| r.rows_affected())
+        }
+        Db::Postgres(pool) => {
+            let mut q = sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(sql));
+            for b in &binds {
+                q = match b {
+                    Bind::Int(i) => q.bind(*i),
+                    Bind::Text(s) => q.bind(s.as_str()),
+                };
+            }
+            q.execute(pool).await.map(|r| r.rows_affected())
+        }
+    }
+}
+
+/// `exec_dynamic` against an open transaction.
+async fn exec_dynamic_tx(
+    tx: &mut Tx<'_>,
+    sql: String,
+    binds: Vec<Bind>,
+) -> Result<u64, sqlx::Error> {
+    match tx {
+        Tx::Sqlite(t) => {
+            let mut q = sqlx::query::<sqlx::Sqlite>(sqlx::AssertSqlSafe(sql));
+            for b in &binds {
+                q = match b {
+                    Bind::Int(i) => q.bind(*i),
+                    Bind::Text(s) => q.bind(s.as_str()),
+                };
+            }
+            q.execute(&mut **t).await.map(|r| r.rows_affected())
+        }
+        Tx::Postgres(t) => {
+            let mut q = sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(sql));
+            for b in &binds {
+                q = match b {
+                    Bind::Int(i) => q.bind(*i),
+                    Bind::Text(s) => q.bind(s.as_str()),
+                };
+            }
+            q.execute(&mut **t).await.map(|r| r.rows_affected())
+        }
+    }
+}
+
+pub async fn find_by_id(db: &Db, id: i64) -> AppResult<Option<Entry>> {
+    query_opt!(
+        db,
+        Entry,
+        "SELECT id, feed_id, guid, title, link, content, summary, author, \
+         published_at, read_at, starred_at, created_at, updated_at \
+         FROM entry WHERE id = $1",
+        id
     )
-    .optional()
     .map_err(AppError::Database)
 }
 
-pub fn find_by_id_with_feed(conn: &Connection, id: i64) -> AppResult<Option<EntryWithFeed>> {
-    conn.query_row(
-        &format!(
-            r#"
-        SELECT {ENTRY_WITH_FEED_COLUMNS_COUNT}
-        FROM entry e
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
-        WHERE e.id = ?1
-        "#
-        ),
-        params![id],
-        row_to_entry_with_feed,
-    )
-    .optional()
-    .map_err(AppError::Database)
+pub async fn find_by_id_with_feed(db: &Db, id: i64) -> AppResult<Option<EntryWithFeed>> {
+    let sql = format!(
+        "SELECT {ENTRY_WITH_FEED_COLUMNS_COUNT} \
+         FROM entry e \
+         INNER JOIN feed f ON e.feed_id = f.id \
+         INNER JOIN category c ON f.category_id = c.id \
+         WHERE e.id = $1"
+    );
+    fetch_entries_with_feed(db, sql, vec![Bind::Int(id)])
+        .await
+        .map(|v| v.into_iter().next())
+        .map_err(AppError::Database)
 }
 
 /// Fetch a single entry by id, scoped to a specific user via the feed→category
 /// ownership join. Returns `None` if the entry does not exist or belongs to a
 /// different user (callers should treat both as 404).
-pub fn find_by_id_for_user(
-    conn: &Connection,
+pub async fn find_by_id_for_user(
+    db: &Db,
     user_id: i64,
     entry_id: i64,
 ) -> AppResult<Option<EntryWithFeed>> {
-    conn.query_row(
-        &format!(
-            r#"
-        SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}
-        FROM entry e
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
-        LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
-        WHERE e.id = ?1 AND c.user_id = ?2
-        "#
-        ),
-        params![entry_id, user_id],
-        row_to_entry_with_feed,
-    )
-    .optional()
-    .map_err(AppError::Database)
+    let sql = format!(
+        "SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN} \
+         FROM entry e \
+         INNER JOIN feed f ON e.feed_id = f.id \
+         INNER JOIN category c ON f.category_id = c.id \
+         LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id \
+         WHERE e.id = $1 AND c.user_id = $2"
+    );
+    fetch_entries_with_feed(db, sql, vec![Bind::Int(entry_id), Bind::Int(user_id)])
+        .await
+        .map(|v| v.into_iter().next())
+        .map_err(AppError::Database)
 }
 
 /// Fetch the sort-field value (as the exact TEXT string `SQLite` stores) for
 /// emitting a composite cursor. Returns `None` if the entry doesn't exist.
-pub fn fetch_sort_ts(
-    conn: &Connection,
+pub async fn fetch_sort_ts(
+    db: &Db,
     entry_id: i64,
     sort_order: EntrySortOrder,
 ) -> AppResult<Option<String>> {
@@ -263,62 +405,68 @@ pub fn fetch_sort_ts(
         EntrySortOrder::StarredAt => "starred_at",
         EntrySortOrder::PublishedAt => "COALESCE(published_at, created_at)",
     };
-    let sql = format!("SELECT {} FROM entry WHERE id = ?1", column_expr);
-    conn.query_row(&sql, params![entry_id], |row| {
-        row.get::<_, Option<String>>(0)
-    })
-    .optional()
-    .map(|opt| opt.flatten())
-    .map_err(AppError::Database)
+    // TODO(phase-c): reads the raw stored timestamp TEXT; on PG these columns are
+    // TIMESTAMPTZ and would need `to_char`/cast to reproduce the cursor string.
+    let sql = format!("SELECT {column_expr} FROM entry WHERE id = $1");
+    let r = match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_scalar::<sqlx::Sqlite, Option<String>>(sqlx::AssertSqlSafe(sql))
+                .bind(entry_id)
+                .fetch_optional(pool)
+                .await
+        }
+        Db::Postgres(pool) => {
+            sqlx::query_scalar::<sqlx::Postgres, Option<String>>(sqlx::AssertSqlSafe(sql))
+                .bind(entry_id)
+                .fetch_optional(pool)
+                .await
+        }
+    }
+    .map_err(AppError::Database)?;
+    Ok(r.flatten())
 }
 
-pub fn find_by_guid_and_feed(
-    conn: &Connection,
-    guid: &str,
-    feed_id: i64,
-) -> AppResult<Option<Entry>> {
-    conn.query_row(
-        &format!(
-            "SELECT {} FROM entry WHERE guid = ?1 AND feed_id = ?2",
-            SELECT_COLUMNS
-        ),
-        params![guid, feed_id],
-        row_to_entry,
+pub async fn find_by_guid_and_feed(db: &Db, guid: &str, feed_id: i64) -> AppResult<Option<Entry>> {
+    query_opt!(
+        db,
+        Entry,
+        "SELECT id, feed_id, guid, title, link, content, summary, author, \
+         published_at, read_at, starred_at, created_at, updated_at \
+         FROM entry WHERE guid = $1 AND feed_id = $2",
+        guid,
+        feed_id
     )
-    .optional()
     .map_err(AppError::Database)
 }
 
-pub fn list_by_feed(
-    conn: &Connection,
-    feed_id: i64,
-    limit: i64,
-    offset: i64,
-) -> AppResult<Vec<Entry>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {} FROM entry WHERE feed_id = ?1 ORDER BY COALESCE(published_at, created_at) DESC LIMIT ?2 OFFSET ?3",
-        SELECT_COLUMNS
-    ))?;
-
-    let entries = stmt
-        .query_map(params![feed_id, limit, offset], row_to_entry)?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(entries)
+pub async fn list_by_feed(db: &Db, feed_id: i64, limit: i64, offset: i64) -> AppResult<Vec<Entry>> {
+    query_all!(
+        db,
+        Entry,
+        "SELECT id, feed_id, guid, title, link, content, summary, author, \
+         published_at, read_at, starred_at, created_at, updated_at \
+         FROM entry WHERE feed_id = $1 \
+         ORDER BY COALESCE(published_at, created_at) DESC LIMIT $2 OFFSET $3",
+        feed_id,
+        limit,
+        offset
+    )
+    .map_err(AppError::Database)
 }
 
-pub fn list_by_user(
-    conn: &Connection,
+pub async fn list_by_user(
+    db: &Db,
     user_id: i64,
     filter: &EntryFilter,
     sort_order: EntrySortOrder,
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<EntryWithFeed>> {
-    let mut conditions = vec!["c.user_id = ?1".to_string()];
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+    let dialect = Dialect::from_db(db);
+    let mut conditions = vec!["c.user_id = $1".to_string()];
+    let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
 
-    apply_filter_conditions(&mut conditions, &mut params_vec, filter);
+    apply_filter_conditions(&mut conditions, &mut binds, filter, dialect);
 
     let where_clause = conditions.join(" AND ");
 
@@ -333,144 +481,103 @@ pub fn list_by_user(
     // every row before sorting (worst case for a single-user instance that
     // owns 100% of entries). The hint only applies to the published-order
     // sort; the read_at / starred_at sorts have their own dedicated indexes.
+    // `Dialect::index_hint` drops the SQLite-only `INDEXED BY` on PostgreSQL.
     let entry_hint = if sort_order == EntrySortOrder::PublishedAt {
-        published_sort_entry_hint(filter)
+        dialect.index_hint(published_sort_entry_hint(filter))
     } else {
         ""
     };
 
+    let limit_idx = binds.len() + 1;
+    let offset_idx = binds.len() + 2;
     let sql = format!(
-        r#"
-        SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}
-        FROM entry e{}
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
-        LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
-        WHERE {}
-        ORDER BY {}
-        LIMIT ?{} OFFSET ?{}
-        "#,
-        entry_hint,
-        where_clause,
-        order_by,
-        params_vec.len() + 1,
-        params_vec.len() + 2
+        "SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN} \
+         FROM entry e{entry_hint} \
+         INNER JOIN feed f ON e.feed_id = f.id \
+         INNER JOIN category c ON f.category_id = c.id \
+         LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id \
+         WHERE {where_clause} \
+         ORDER BY {order_by} \
+         LIMIT ${limit_idx} OFFSET ${offset_idx}"
     );
 
-    params_vec.push(Box::new(limit));
-    params_vec.push(Box::new(offset));
+    binds.push(Bind::Int(limit));
+    binds.push(Bind::Int(offset));
 
-    let mut stmt = conn.prepare(&sql)?;
-
-    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-
-    let entries = stmt
-        .query_map(params_refs.as_slice(), row_to_entry_with_feed)?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(entries)
+    fetch_entries_with_feed(db, sql, binds)
+        .await
+        .map_err(AppError::Database)
 }
 
-pub fn count_by_user(conn: &Connection, user_id: i64, filter: &EntryFilter) -> AppResult<i64> {
-    let mut conditions = vec!["c.user_id = ?1".to_string()];
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+pub async fn count_by_user(db: &Db, user_id: i64, filter: &EntryFilter) -> AppResult<i64> {
+    let dialect = Dialect::from_db(db);
+    let mut conditions = vec!["c.user_id = $1".to_string()];
+    let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
 
-    apply_filter_conditions(&mut conditions, &mut params_vec, filter);
+    apply_filter_conditions(&mut conditions, &mut binds, filter, dialect);
 
     let where_clause = conditions.join(" AND ");
 
     let sql = format!(
-        r#"
-        SELECT COUNT(*)
-        FROM entry e
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
-        WHERE {}
-        "#,
-        where_clause
+        "SELECT COUNT(*) \
+         FROM entry e \
+         INNER JOIN feed f ON e.feed_id = f.id \
+         INNER JOIN category c ON f.category_id = c.id \
+         WHERE {where_clause}"
     );
 
-    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-
-    let count: i64 = conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0))?;
-
-    Ok(count)
+    fetch_scalar_i64(db, sql, binds)
+        .await
+        .map_err(AppError::Database)
 }
 
-pub fn count_unread_by_user(conn: &Connection, user_id: i64) -> AppResult<i64> {
-    let count: i64 = conn.query_row(
-        r#"
-        SELECT COUNT(*)
-        FROM entry e
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
-        WHERE c.user_id = ?1 AND e.read_at IS NULL
-        "#,
-        params![user_id],
-        |row| row.get(0),
-    )?;
-
-    Ok(count)
+pub async fn count_unread_by_user(db: &Db, user_id: i64) -> AppResult<i64> {
+    query_scalar!(
+        db,
+        i64,
+        "SELECT COUNT(*) FROM entry e \
+         INNER JOIN feed f ON e.feed_id = f.id \
+         INNER JOIN category c ON f.category_id = c.id \
+         WHERE c.user_id = $1 AND e.read_at IS NULL",
+        user_id
+    )
+    .map_err(AppError::Database)
 }
 
 /// Returns a map of `feed_id` -> unread count for a user
-pub fn count_unread_by_feed(
-    conn: &Connection,
+pub async fn count_unread_by_feed(
+    db: &Db,
     user_id: i64,
 ) -> AppResult<std::collections::HashMap<i64, i64>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT f.id, COUNT(e.id)
-        FROM feed f
-        INNER JOIN category c ON f.category_id = c.id
-        LEFT JOIN entry e INDEXED BY idx_entry_unread_feed
-            ON e.feed_id = f.id AND e.read_at IS NULL
-        WHERE c.user_id = ?1
-        GROUP BY f.id
-        "#,
-    )?;
-
-    let rows = stmt.query_map(params![user_id], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
-    })?;
-
-    let mut map = std::collections::HashMap::new();
-    for row in rows {
-        let (feed_id, count) = row?;
-        map.insert(feed_id, count);
-    }
-
-    Ok(map)
+    let hint = Dialect::from_db(db).index_hint(" INDEXED BY idx_entry_unread_feed");
+    let sql = format!(
+        "SELECT f.id, COUNT(e.id) FROM feed f \
+         INNER JOIN category c ON f.category_id = c.id \
+         LEFT JOIN entry e{hint} ON e.feed_id = f.id AND e.read_at IS NULL \
+         WHERE c.user_id = $1 GROUP BY f.id"
+    );
+    let rows = fetch_id_ts_rows(db, sql, vec![Bind::Int(user_id)])
+        .await
+        .map_err(AppError::Database)?;
+    Ok(rows.into_iter().collect())
 }
 
 /// Returns a map of `category_id` -> unread count for a user
-pub fn count_unread_by_category(
-    conn: &Connection,
+pub async fn count_unread_by_category(
+    db: &Db,
     user_id: i64,
 ) -> AppResult<std::collections::HashMap<i64, i64>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT c.id, COUNT(e.id)
-        FROM category c
-        LEFT JOIN feed f ON f.category_id = c.id
-        LEFT JOIN entry e INDEXED BY idx_entry_unread_feed
-            ON e.feed_id = f.id AND e.read_at IS NULL
-        WHERE c.user_id = ?1
-        GROUP BY c.id
-        "#,
-    )?;
-
-    let rows = stmt.query_map(params![user_id], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
-    })?;
-
-    let mut map = std::collections::HashMap::new();
-    for row in rows {
-        let (category_id, count) = row?;
-        map.insert(category_id, count);
-    }
-
-    Ok(map)
+    let hint = Dialect::from_db(db).index_hint(" INDEXED BY idx_entry_unread_feed");
+    let sql = format!(
+        "SELECT c.id, COUNT(e.id) FROM category c \
+         LEFT JOIN feed f ON f.category_id = c.id \
+         LEFT JOIN entry e{hint} ON e.feed_id = f.id AND e.read_at IS NULL \
+         WHERE c.user_id = $1 GROUP BY c.id"
+    );
+    let rows = fetch_id_ts_rows(db, sql, vec![Bind::Int(user_id)])
+        .await
+        .map_err(AppError::Database)?;
+    Ok(rows.into_iter().collect())
 }
 
 /// Result of an entry upsert. The insert path is guarded against tombstones,
@@ -490,9 +597,22 @@ pub enum UpsertOutcome {
 /// `prepare_cached` so the three hot statements are compiled once per
 /// connection rather than once per entry. Wrap a sync loop in a single
 /// transaction (see `feed_sync`) to collapse the per-entry commits.
+// Shared upsert statements. `datetime('now')` is kept (not a bound `Utc::now()`)
+// so `updated_at` matches the TEXT format of the `datetime('now')` column
+// DEFAULTs — the composite pagination cursor compares timestamps as strings, so
+// all entry timestamps must share one format. `published_at` is likewise bound
+// as a `%Y-%m-%d %H:%M:%S` string, not a `DateTime<Utc>` (which sqlx would
+// encode as RFC3339). TODO(phase-c): PG needs `now()` here.
+const UPSERT_SELECT_SQL: &str = "SELECT id FROM entry WHERE guid = $1 AND feed_id = $2";
+const UPSERT_UPDATE_SQL: &str = "UPDATE entry SET title = $1, link = $2, content = $3, summary = $4, author = $5, content_text = $6, updated_at = datetime('now') WHERE id = $7";
+const UPSERT_INSERT_SQL: &str = "INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at, content_text) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9 WHERE NOT EXISTS (SELECT 1 FROM entry_tombstone WHERE feed_id = $1 AND guid = $2) RETURNING id";
+
+/// Upsert an entry, returning [`UpsertOutcome`] without re-reading the full row.
+/// The tombstone-guarded insert uses `RETURNING id`, so a `Some` row means an
+/// insert happened (its id) and `None` means the guid is tombstoned.
 #[allow(clippy::too_many_arguments)]
-pub fn upsert_entry_id(
-    conn: &Connection,
+pub async fn upsert_entry_id(
+    db: &Db,
     feed_id: i64,
     guid: &str,
     title: Option<&str>,
@@ -505,81 +625,129 @@ pub fn upsert_entry_id(
     let published_at_str = published_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
     let content_text = content.map(strip_to_search_text);
 
-    // Look up only the id of any existing row (not the full record).
-    let existing: Option<i64> = conn
-        .prepare_cached("SELECT id FROM entry WHERE guid = ?1 AND feed_id = ?2")?
-        .query_row(params![guid, feed_id], |row| row.get(0))
-        .optional()?;
+    let existing =
+        query_opt!(db, (i64,), UPSERT_SELECT_SQL, guid, feed_id).map_err(AppError::Database)?;
 
-    if let Some(id) = existing {
-        // Update existing entry (preserve read_at, starred_at, and published_at)
-        // We don't update published_at because:
-        // 1. The published date shouldn't change for existing entries
-        // 2. Some feeds don't provide dates, causing fallback to current time on each refresh
-        conn.prepare_cached(
-            r#"
-            UPDATE entry
-            SET title = ?1, link = ?2, content = ?3, summary = ?4, author = ?5,
-                content_text = ?7, updated_at = datetime('now')
-            WHERE id = ?6
-            "#,
-        )?
-        .execute(params![
+    if let Some((id,)) = existing {
+        db_execute!(
+            db,
+            UPSERT_UPDATE_SQL,
             title,
             link,
             content,
             summary,
             author,
-            id,
-            content_text
-        ])?;
-
+            content_text.as_deref(),
+            id
+        )
+        .map_err(AppError::Database)?;
         return Ok(UpsertOutcome::Updated(id));
     }
 
-    // Insert, but never resurrect a tombstoned guid. The WHERE NOT EXISTS makes
-    // the tombstone check atomic with the insert, so a retention delete that
-    // commits between a separate check and this statement cannot bring the
-    // entry back as unread.
-    let inserted = conn
-        .prepare_cached(
-            r#"
-            INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at, content_text)
-            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
-            WHERE NOT EXISTS (
-                SELECT 1 FROM entry_tombstone WHERE feed_id = ?1 AND guid = ?2
-            )
-            "#,
-        )?
-        .execute(params![
-            feed_id,
-            guid,
+    let inserted = query_opt!(
+        db,
+        (i64,),
+        UPSERT_INSERT_SQL,
+        feed_id,
+        guid,
+        title,
+        link,
+        content,
+        summary,
+        author,
+        published_at_str.as_deref(),
+        content_text.as_deref()
+    )
+    .map_err(AppError::Database)?;
+
+    Ok(match inserted {
+        Some((id,)) => UpsertOutcome::Inserted(id),
+        None => UpsertOutcome::SkippedTombstoned,
+    })
+}
+
+/// Transactional sibling of [`upsert_entry_id`] for the feed-sync unit of work,
+/// which upserts a whole feed's entries and records the fetch result atomically.
+#[allow(clippy::too_many_arguments)]
+pub async fn upsert_entry_id_tx(
+    tx: &mut Tx<'_>,
+    feed_id: i64,
+    guid: &str,
+    title: Option<&str>,
+    link: Option<&str>,
+    content: Option<&str>,
+    summary: Option<&str>,
+    author: Option<&str>,
+    published_at: Option<DateTime<Utc>>,
+) -> AppResult<UpsertOutcome> {
+    let published_at_str = published_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
+    let content_text = content.map(strip_to_search_text);
+
+    let existing =
+        query_opt_tx!(tx, (i64,), UPSERT_SELECT_SQL, guid, feed_id).map_err(AppError::Database)?;
+
+    if let Some((id,)) = existing {
+        db_execute_tx!(
+            tx,
+            UPSERT_UPDATE_SQL,
             title,
             link,
             content,
             summary,
             author,
-            published_at_str,
-            content_text
-        ])?;
-
-    if inserted == 0 {
-        return Ok(UpsertOutcome::SkippedTombstoned);
+            content_text.as_deref(),
+            id
+        )
+        .map_err(AppError::Database)?;
+        return Ok(UpsertOutcome::Updated(id));
     }
-    Ok(UpsertOutcome::Inserted(conn.last_insert_rowid()))
+
+    let inserted = query_opt_tx!(
+        tx,
+        (i64,),
+        UPSERT_INSERT_SQL,
+        feed_id,
+        guid,
+        title,
+        link,
+        content,
+        summary,
+        author,
+        published_at_str.as_deref(),
+        content_text.as_deref()
+    )
+    .map_err(AppError::Database)?;
+
+    Ok(match inserted {
+        Some((id,)) => UpsertOutcome::Inserted(id),
+        None => UpsertOutcome::SkippedTombstoned,
+    })
 }
 
 /// Idempotent `(feed_id, guid)` tombstone insert. Shared by the single-shot
 /// [`insert_tombstone`] helper and the batched `prune_read_retention_batch`
 /// loop so the statement text lives in exactly one place.
-const INSERT_TOMBSTONE_SQL: &str = "INSERT INTO entry_tombstone (feed_id, guid) VALUES (?1, ?2)
-     ON CONFLICT(feed_id, guid) DO NOTHING";
+const INSERT_TOMBSTONE_SQL: &str = "INSERT INTO entry_tombstone (feed_id, guid) VALUES ($1, $2) ON CONFLICT(feed_id, guid) DO NOTHING";
 
 /// Record a tombstone for `(feed_id, guid)`. Idempotent.
-pub fn insert_tombstone(conn: &Connection, feed_id: i64, guid: &str) -> AppResult<()> {
-    conn.execute(INSERT_TOMBSTONE_SQL, params![feed_id, guid])?;
+pub async fn insert_tombstone(db: &Db, feed_id: i64, guid: &str) -> AppResult<()> {
+    db_execute!(db, INSERT_TOMBSTONE_SQL, feed_id, guid).map_err(AppError::Database)?;
     Ok(())
 }
+
+/// Victim-selection query for retention pruning. TODO(phase-c): the per-row
+/// `datetime('now', '-' || us.retention_read_days || ' days')` interval is
+/// SQLite-only; PG needs `now() - make_interval(days => us.retention_read_days)`.
+const RETENTION_VICTIMS_SQL: &str = "SELECT e.id, e.feed_id, e.guid \
+     FROM entry e \
+     JOIN feed f           ON f.id = e.feed_id \
+     JOIN category c       ON c.id = f.category_id \
+     JOIN user_settings us ON us.user_id = c.user_id \
+     WHERE us.retention_read_days > 0 \
+       AND e.read_at    IS NOT NULL \
+       AND e.starred_at IS NULL \
+       AND e.read_at < datetime('now', '-' || us.retention_read_days || ' days') \
+     LIMIT $1";
 
 /// Delete up to `batch_size` read, aged, non-starred entries belonging to users
 /// who have opted into retention (`user_settings.retention_read_days > 0`),
@@ -589,45 +757,30 @@ pub fn insert_tombstone(conn: &Connection, feed_id: i64, guid: &str) -> AppResul
 /// atomic against a concurrent feed refresh. Victims are gathered first (Rust
 /// side) so the delete targets exact ids rather than re-running a `LIMIT`
 /// without `ORDER BY`. Each user's own threshold is applied via the join.
-pub fn prune_read_retention_batch(conn: &Connection, batch_size: usize) -> AppResult<u64> {
-    let tx = conn.unchecked_transaction()?;
+pub async fn prune_read_retention_batch(db: &Db, batch_size: usize) -> AppResult<u64> {
+    let mut tx = db.begin().await?;
 
-    let victims: Vec<(i64, i64, String)> = {
-        let mut stmt = tx.prepare_cached(
-            r#"
-            SELECT e.id, e.feed_id, e.guid
-            FROM entry e
-            JOIN feed f           ON f.id = e.feed_id
-            JOIN category c       ON c.id = f.category_id
-            JOIN user_settings us ON us.user_id = c.user_id
-            WHERE us.retention_read_days > 0
-              AND e.read_at    IS NOT NULL
-              AND e.starred_at IS NULL
-              AND e.read_at < datetime('now', '-' || us.retention_read_days || ' days')
-            LIMIT ?1
-            "#,
-        )?;
-
-        stmt.query_map(params![batch_size as i64], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?
-    };
+    let victims: Vec<(i64, i64, String)> = query_all_tx!(
+        &mut tx,
+        (i64, i64, String),
+        RETENTION_VICTIMS_SQL,
+        batch_size as i64
+    )
+    .map_err(AppError::Database)?;
 
     if victims.is_empty() {
+        tx.commit().await?;
         return Ok(0);
     }
 
-    {
-        let mut ins = tx.prepare_cached(INSERT_TOMBSTONE_SQL)?;
-        let mut del = tx.prepare_cached("DELETE FROM entry WHERE id = ?1")?;
-        for (id, feed_id, guid) in &victims {
-            ins.execute(params![feed_id, guid])?;
-            del.execute(params![id])?;
-        }
+    for (id, feed_id, guid) in &victims {
+        db_execute_tx!(&mut tx, INSERT_TOMBSTONE_SQL, *feed_id, guid.as_str())
+            .map_err(AppError::Database)?;
+        db_execute_tx!(&mut tx, "DELETE FROM entry WHERE id = $1", *id)
+            .map_err(AppError::Database)?;
     }
 
-    tx.commit()?;
+    tx.commit().await?;
     Ok(victims.len() as u64)
 }
 
@@ -637,8 +790,8 @@ pub fn prune_read_retention_batch(conn: &Connection, batch_size: usize) -> AppRe
 /// (tests, summary worker/cleanup seeding). The feed-sync hot path should call
 /// [`upsert_entry_id`] directly to skip the extra full-row read this performs.
 #[allow(clippy::too_many_arguments)]
-pub fn upsert_entry(
-    conn: &Connection,
+pub async fn upsert_entry(
+    db: &Db,
     feed_id: i64,
     guid: &str,
     title: Option<&str>,
@@ -649,7 +802,7 @@ pub fn upsert_entry(
     published_at: Option<DateTime<Utc>>,
 ) -> AppResult<(Entry, bool)> {
     let (id, is_new) = match upsert_entry_id(
-        conn,
+        db,
         feed_id,
         guid,
         title,
@@ -658,7 +811,9 @@ pub fn upsert_entry(
         summary,
         author,
         published_at,
-    )? {
+    )
+    .await?
+    {
         UpsertOutcome::Inserted(id) => (id, true),
         UpsertOutcome::Updated(id) => (id, false),
         UpsertOutcome::SkippedTombstoned => {
@@ -667,83 +822,95 @@ pub fn upsert_entry(
             ));
         }
     };
-    let entry = find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)?;
+    let entry = find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)?;
     Ok((entry, is_new))
 }
 
-pub fn mark_as_read(conn: &Connection, id: i64) -> AppResult<Entry> {
-    let rows = conn.execute(
-        "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1 AND read_at IS NULL",
-        params![id],
-    )?;
+pub async fn mark_as_read(db: &Db, id: i64) -> AppResult<Entry> {
+    let rows = db_execute!(
+        db,
+        "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') WHERE id = $1 AND read_at IS NULL",
+        id
+    )
+    .map_err(AppError::Database)?;
 
     if rows == 0 {
         // Entry might already be read or not exist
-        if find_by_id(conn, id)?.is_none() {
+        if find_by_id(db, id).await?.is_none() {
             return Err(AppError::EntryNotFound);
         }
     }
 
-    find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
+    find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)
 }
 
-pub fn mark_as_unread(conn: &Connection, id: i64) -> AppResult<Entry> {
-    let rows = conn.execute(
-        "UPDATE entry SET read_at = NULL, updated_at = datetime('now') WHERE id = ?1",
-        params![id],
-    )?;
+pub async fn mark_as_unread(db: &Db, id: i64) -> AppResult<Entry> {
+    let rows = db_execute!(
+        db,
+        "UPDATE entry SET read_at = NULL, updated_at = datetime('now') WHERE id = $1",
+        id
+    )
+    .map_err(AppError::Database)?;
 
     if rows == 0 {
         return Err(AppError::EntryNotFound);
     }
 
-    find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
+    find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)
 }
 
 /// Explicitly star an entry (set `starred_at` if not already set).
-pub fn star_entry(conn: &Connection, id: i64) -> AppResult<Entry> {
-    let rows = conn.execute(
-        "UPDATE entry SET starred_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1 AND starred_at IS NULL",
-        params![id],
-    )?;
+pub async fn star_entry(db: &Db, id: i64) -> AppResult<Entry> {
+    let rows = db_execute!(
+        db,
+        "UPDATE entry SET starred_at = datetime('now'), updated_at = datetime('now') WHERE id = $1 AND starred_at IS NULL",
+        id
+    )
+    .map_err(AppError::Database)?;
 
-    if rows == 0 && find_by_id(conn, id)?.is_none() {
+    if rows == 0 && find_by_id(db, id).await?.is_none() {
         return Err(AppError::EntryNotFound);
     }
 
-    find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
+    find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)
 }
 
 /// Explicitly unstar an entry (clear `starred_at`).
-pub fn unstar_entry(conn: &Connection, id: i64) -> AppResult<Entry> {
-    let rows = conn.execute(
-        "UPDATE entry SET starred_at = NULL, updated_at = datetime('now') WHERE id = ?1",
-        params![id],
-    )?;
+pub async fn unstar_entry(db: &Db, id: i64) -> AppResult<Entry> {
+    let rows = db_execute!(
+        db,
+        "UPDATE entry SET starred_at = NULL, updated_at = datetime('now') WHERE id = $1",
+        id
+    )
+    .map_err(AppError::Database)?;
 
     if rows == 0 {
         return Err(AppError::EntryNotFound);
     }
 
-    find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
+    find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)
 }
 
-pub fn toggle_star(conn: &Connection, id: i64) -> AppResult<Entry> {
-    let entry = find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)?;
+pub async fn toggle_star(db: &Db, id: i64) -> AppResult<Entry> {
+    let entry = find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)?;
 
     if entry.starred_at.is_some() {
-        conn.execute(
-            "UPDATE entry SET starred_at = NULL, updated_at = datetime('now') WHERE id = ?1",
-            params![id],
-        )?;
+        db_execute!(
+            db,
+            "UPDATE entry SET starred_at = NULL, updated_at = datetime('now') WHERE id = $1",
+            id
+        )
+        .map_err(AppError::Database)?;
     } else {
-        conn.execute(
-            "UPDATE entry SET starred_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1",
-            params![id],
-        )?;
+        db_execute!(
+            db,
+            "UPDATE entry SET starred_at = datetime('now'), updated_at = datetime('now') WHERE id = $1",
+            id
+        )
+        .map_err(AppError::Database)?;
     }
 
-    find_by_id(conn, id)?.ok_or(AppError::EntryNotFound)
+    find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)
 }
 
 /// Set the starred state for an entry, scoped to the owning user. Idempotent
@@ -751,13 +918,13 @@ pub fn toggle_star(conn: &Connection, id: i64) -> AppResult<Entry> {
 /// resulting `EntryWithFeed` plus a `changed` bool (parallels
 /// `set_read_for_user`). `None` when the entry does not exist or belongs to
 /// a different user (callers treat both as 404).
-pub fn set_starred_for_user(
-    conn: &Connection,
+pub async fn set_starred_for_user(
+    db: &Db,
     user_id: i64,
     entry_id: i64,
     desired_starred: bool,
 ) -> AppResult<Option<(EntryWithFeed, bool)>> {
-    let cur = find_by_id_for_user(conn, user_id, entry_id)?;
+    let cur = find_by_id_for_user(db, user_id, entry_id).await?;
     let Some(e) = cur else {
         return Ok(None);
     };
@@ -765,13 +932,15 @@ pub fn set_starred_for_user(
     let changed = was_starred != desired_starred;
     if changed {
         let sql = if desired_starred {
-            "UPDATE entry SET starred_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1"
+            "UPDATE entry SET starred_at = datetime('now'), updated_at = datetime('now') WHERE id = $1"
         } else {
-            "UPDATE entry SET starred_at = NULL, updated_at = datetime('now') WHERE id = ?1"
+            "UPDATE entry SET starred_at = NULL, updated_at = datetime('now') WHERE id = $1"
         };
-        conn.execute(sql, params![entry_id])?;
+        db_execute!(db, sql, entry_id).map_err(AppError::Database)?;
     }
-    Ok(find_by_id_for_user(conn, user_id, entry_id)?.map(|ewf| (ewf, changed)))
+    Ok(find_by_id_for_user(db, user_id, entry_id)
+        .await?
+        .map(|ewf| (ewf, changed)))
 }
 
 /// Set the read state for an entry, scoped to the owning user. Idempotent —
@@ -780,13 +949,13 @@ pub fn set_starred_for_user(
 /// belongs to a different user), plus a bool indicating whether the call
 /// actually changed state (used by handlers to decide whether to emit a
 /// flash toast).
-pub fn set_read_for_user(
-    conn: &Connection,
+pub async fn set_read_for_user(
+    db: &Db,
     user_id: i64,
     entry_id: i64,
     desired_read: bool,
 ) -> AppResult<Option<(EntryWithFeed, bool)>> {
-    let cur = find_by_id_for_user(conn, user_id, entry_id)?;
+    let cur = find_by_id_for_user(db, user_id, entry_id).await?;
     let Some(e) = cur else {
         return Ok(None);
     };
@@ -794,13 +963,15 @@ pub fn set_read_for_user(
     let changed = was_read != desired_read;
     if changed {
         let sql = if desired_read {
-            "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') WHERE id = ?1"
+            "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') WHERE id = $1"
         } else {
-            "UPDATE entry SET read_at = NULL, updated_at = datetime('now') WHERE id = ?1"
+            "UPDATE entry SET read_at = NULL, updated_at = datetime('now') WHERE id = $1"
         };
-        conn.execute(sql, params![entry_id])?;
+        db_execute!(db, sql, entry_id).map_err(AppError::Database)?;
     }
-    Ok(find_by_id_for_user(conn, user_id, entry_id)?.map(|ewf| (ewf, changed)))
+    Ok(find_by_id_for_user(db, user_id, entry_id)
+        .await?
+        .map(|ewf| (ewf, changed)))
 }
 
 /// Unread count per feed for a user.
@@ -811,29 +982,28 @@ pub struct UnreadCount {
 }
 
 /// Return the unread entry count grouped by feed for the given user.
-pub fn unread_counts_per_feed(conn: &Connection, user_id: i64) -> AppResult<Vec<UnreadCount>> {
-    let mut stmt = conn.prepare(
+pub async fn unread_counts_per_feed(db: &Db, user_id: i64) -> AppResult<Vec<UnreadCount>> {
+    let hint = Dialect::from_db(db).index_hint(" INDEXED BY idx_entry_unread_feed");
+    let sql = format!(
         "SELECT e.feed_id, COUNT(*) AS unread \
-         FROM entry e INDEXED BY idx_entry_unread_feed \
+         FROM entry e{hint} \
          INNER JOIN feed f ON f.id = e.feed_id \
          INNER JOIN category c ON c.id = f.category_id \
-         WHERE c.user_id = ?1 AND e.read_at IS NULL \
-         GROUP BY e.feed_id",
-    )?;
-    let rows = stmt
-        .query_map([user_id], |row| {
-            Ok(UnreadCount {
-                feed_id: row.get(0)?,
-                unread: row.get(1)?,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+         WHERE c.user_id = $1 AND e.read_at IS NULL \
+         GROUP BY e.feed_id"
+    );
+    let rows = fetch_id_ts_rows(db, sql, vec![Bind::Int(user_id)])
+        .await
+        .map_err(AppError::Database)?;
+    Ok(rows
+        .into_iter()
+        .map(|(feed_id, unread)| UnreadCount { feed_id, unread })
+        .collect())
 }
 
 /// Batch query entries by IDs with feed info, verifying user ownership.
-pub fn find_by_ids_with_feed(
-    conn: &Connection,
+pub async fn find_by_ids_with_feed(
+    db: &Db,
     user_id: i64,
     ids: &[i64],
 ) -> AppResult<Vec<EntryWithFeed>> {
@@ -844,57 +1014,51 @@ pub fn find_by_ids_with_feed(
     let placeholders: Vec<String> = ids
         .iter()
         .enumerate()
-        .map(|(i, _)| format!("?{}", i + 2))
+        .map(|(i, _)| format!("${}", i + 2))
         .collect();
     let in_clause = placeholders.join(", ");
 
     let sql = format!(
-        r#"
-        SELECT {ENTRY_WITH_FEED_COLUMNS_COUNT}
-        FROM entry e
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
-        WHERE c.user_id = ?1 AND e.id IN ({})
-        "#,
-        in_clause
+        "SELECT {ENTRY_WITH_FEED_COLUMNS_COUNT} \
+         FROM entry e \
+         INNER JOIN feed f ON e.feed_id = f.id \
+         INNER JOIN category c ON f.category_id = c.id \
+         WHERE c.user_id = $1 AND e.id IN ({in_clause})"
     );
 
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+    let mut binds = vec![Bind::Int(user_id)];
     for id in ids {
-        params_vec.push(Box::new(*id));
+        binds.push(Bind::Int(*id));
     }
 
-    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-
-    let mut stmt = conn.prepare(&sql)?;
-    let entries = stmt
-        .query_map(params_refs.as_slice(), row_to_entry_with_feed)?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(entries)
+    fetch_entries_with_feed(db, sql, binds)
+        .await
+        .map_err(AppError::Database)
 }
 
 /// List entry IDs with timestamps for a user, using continuation-based pagination.
 /// Returns Vec<(`entry_id`, `timestamp_usec`)>.
-pub fn list_ids_by_user(
-    conn: &Connection,
+pub async fn list_ids_by_user(
+    db: &Db,
     user_id: i64,
     filter: &EntryFilter,
     pagination: &ContinuationParams,
 ) -> AppResult<Vec<(i64, i64)>> {
-    let mut conditions = vec!["c.user_id = ?1".to_string()];
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+    let dialect = Dialect::from_db(db);
+    let mut conditions = vec!["c.user_id = $1".to_string()];
+    let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
 
-    apply_filter_conditions(&mut conditions, &mut params_vec, filter);
+    apply_filter_conditions(&mut conditions, &mut binds, filter, dialect);
     apply_time_conditions(
         &mut conditions,
-        &mut params_vec,
+        &mut binds,
         pagination.ot,
         pagination.nt,
+        dialect,
     );
     apply_continuation_condition(
         &mut conditions,
-        &mut params_vec,
+        &mut binds,
         pagination.continuation.as_ref(),
         pagination.sort_order,
         pagination.oldest_first,
@@ -910,54 +1074,47 @@ pub fn list_ids_by_user(
         (_, false) => "COALESCE(e.published_at, e.created_at) DESC, e.id DESC",
     };
 
+    let limit_idx = binds.len() + 1;
+    // TODO(phase-c): `strftime('%s', ...)` epoch extraction is SQLite-only; PG
+    // needs `EXTRACT(EPOCH FROM ...)::bigint`.
     let sql = format!(
-        r#"
-        SELECT e.id, CAST(strftime('%s', COALESCE(e.published_at, e.created_at)) AS INTEGER) * 1000000
-        FROM entry e
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
-        WHERE {}
-        ORDER BY {}
-        LIMIT ?{}
-        "#,
-        where_clause,
-        order,
-        params_vec.len() + 1
+        "SELECT e.id, CAST(strftime('%s', COALESCE(e.published_at, e.created_at)) AS INTEGER) * 1000000 \
+         FROM entry e \
+         INNER JOIN feed f ON e.feed_id = f.id \
+         INNER JOIN category c ON f.category_id = c.id \
+         WHERE {where_clause} \
+         ORDER BY {order} \
+         LIMIT ${limit_idx}"
     );
 
-    params_vec.push(Box::new(pagination.limit));
-    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(params_refs.as_slice(), |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(rows)
+    binds.push(Bind::Int(pagination.limit));
+    fetch_id_ts_rows(db, sql, binds)
+        .await
+        .map_err(AppError::Database)
 }
 
 /// List entries with continuation-based pagination (for Google Reader stream/contents).
-pub fn list_by_user_with_continuation(
-    conn: &Connection,
+pub async fn list_by_user_with_continuation(
+    db: &Db,
     user_id: i64,
     filter: &EntryFilter,
     pagination: &ContinuationParams,
 ) -> AppResult<Vec<EntryWithFeed>> {
-    let mut conditions = vec!["c.user_id = ?1".to_string()];
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+    let dialect = Dialect::from_db(db);
+    let mut conditions = vec!["c.user_id = $1".to_string()];
+    let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
 
-    apply_filter_conditions(&mut conditions, &mut params_vec, filter);
+    apply_filter_conditions(&mut conditions, &mut binds, filter, dialect);
     apply_time_conditions(
         &mut conditions,
-        &mut params_vec,
+        &mut binds,
         pagination.ot,
         pagination.nt,
+        dialect,
     );
     apply_continuation_condition(
         &mut conditions,
-        &mut params_vec,
+        &mut binds,
         pagination.continuation.as_ref(),
         pagination.sort_order,
         pagination.oldest_first,
@@ -982,37 +1139,27 @@ pub fn list_by_user_with_continuation(
     let entry_hint = if pagination.sort_order == EntrySortOrder::PublishedAt
         && pagination.continuation.is_none()
     {
-        published_sort_entry_hint(filter)
+        dialect.index_hint(published_sort_entry_hint(filter))
     } else {
         ""
     };
 
+    let limit_idx = binds.len() + 1;
     let sql = format!(
-        r#"
-        SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN}
-        FROM entry e{}
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
-        LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
-        WHERE {}
-        ORDER BY {}
-        LIMIT ?{}
-        "#,
-        entry_hint,
-        where_clause,
-        order,
-        params_vec.len() + 1
+        "SELECT {ENTRY_WITH_FEED_COLUMNS_JOIN} \
+         FROM entry e{entry_hint} \
+         INNER JOIN feed f ON e.feed_id = f.id \
+         INNER JOIN category c ON f.category_id = c.id \
+         LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id \
+         WHERE {where_clause} \
+         ORDER BY {order} \
+         LIMIT ${limit_idx}"
     );
 
-    params_vec.push(Box::new(pagination.limit));
-    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-
-    let mut stmt = conn.prepare(&sql)?;
-    let entries = stmt
-        .query_map(params_refs.as_slice(), row_to_entry_with_feed)?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(entries)
+    binds.push(Bind::Int(pagination.limit));
+    fetch_entries_with_feed(db, sql, binds)
+        .await
+        .map_err(AppError::Database)
 }
 
 /// Apply common filter conditions to query builder.
@@ -1020,88 +1167,82 @@ pub fn list_by_user_with_continuation(
 /// table itself. Used to gate the `INDEXED BY idx_entry_sort_ts` hint: without
 /// any entry-side filter, scanning the sort index DESC with LIMIT is far
 /// cheaper than the planner's default `category -> feed -> entry` walk.
-pub fn mark_all_read_by_feed(
-    conn: &Connection,
+pub async fn mark_all_read_by_feed(
+    db: &Db,
     feed_id: i64,
     older_than_days: Option<i64>,
 ) -> AppResult<i64> {
+    // `days` is an `i64` interpolated into the SQL (not injectable). The
+    // `datetime('now', ...)` math keeps timestamps in the cursor-comparable
+    // TEXT format. TODO(phase-c): PG needs `now() - make_interval(days => ...)`.
     let age_condition = older_than_days
         .map(|days| {
-            format!(
-                " AND COALESCE(published_at, created_at) < datetime('now', '-{} days')",
-                days
-            )
+            format!(" AND COALESCE(published_at, created_at) < datetime('now', '-{days} days')")
         })
         .unwrap_or_default();
 
     let sql = format!(
-        "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') WHERE feed_id = ?1 AND read_at IS NULL{}",
-        age_condition
+        "UPDATE entry SET read_at = datetime('now'), updated_at = datetime('now') \
+         WHERE feed_id = $1 AND read_at IS NULL{age_condition}"
     );
 
-    let rows = conn.execute(&sql, params![feed_id])?;
+    let rows = exec_dynamic(db, sql, vec![Bind::Int(feed_id)])
+        .await
+        .map_err(AppError::Database)?;
     Ok(rows as i64)
 }
 
-pub fn mark_all_read_by_user(
-    conn: &Connection,
+pub async fn mark_all_read_by_user(
+    db: &Db,
     user_id: i64,
     older_than_days: Option<i64>,
 ) -> AppResult<i64> {
     let age_condition = older_than_days
         .map(|days| {
-            format!(
-                " AND COALESCE(published_at, created_at) < datetime('now', '-{} days')",
-                days
-            )
+            format!(" AND COALESCE(published_at, created_at) < datetime('now', '-{days} days')")
         })
         .unwrap_or_default();
 
     let sql = format!(
-        r#"
-        UPDATE entry
-        SET read_at = datetime('now'), updated_at = datetime('now')
-        WHERE read_at IS NULL{} AND feed_id IN (
-            SELECT f.id FROM feed f
-            INNER JOIN category c ON f.category_id = c.id
-            WHERE c.user_id = ?1
-        )
-        "#,
-        age_condition
+        "UPDATE entry \
+         SET read_at = datetime('now'), updated_at = datetime('now') \
+         WHERE read_at IS NULL{age_condition} AND feed_id IN ( \
+             SELECT f.id FROM feed f \
+             INNER JOIN category c ON f.category_id = c.id \
+             WHERE c.user_id = $1 \
+         )"
     );
 
-    let rows = conn.execute(&sql, params![user_id])?;
+    let rows = exec_dynamic(db, sql, vec![Bind::Int(user_id)])
+        .await
+        .map_err(AppError::Database)?;
     Ok(rows as i64)
 }
 
 /// Mark every entry matching `filter` (and owned by `user_id`, and currently
 /// unread) as read. Reuses the shared filter builder so scoped search + status
 /// combine exactly as they do in the list query. Returns rows affected.
-pub fn mark_read_by_filter(
-    conn: &Connection,
-    user_id: i64,
-    filter: &EntryFilter,
-) -> AppResult<i64> {
-    let mut conditions = vec!["c.user_id = ?1".to_string()];
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
-    apply_filter_conditions(&mut conditions, &mut params_vec, filter);
+pub async fn mark_read_by_filter(db: &Db, user_id: i64, filter: &EntryFilter) -> AppResult<i64> {
+    let dialect = Dialect::from_db(db);
+    let mut conditions = vec!["c.user_id = $1".to_string()];
+    let mut binds: Vec<Bind> = vec![Bind::Int(user_id)];
+    apply_filter_conditions(&mut conditions, &mut binds, filter, dialect);
     let where_clause = conditions.join(" AND ");
 
     let sql = format!(
-        r#"
-        UPDATE entry
-        SET read_at = datetime('now'), updated_at = datetime('now')
-        WHERE read_at IS NULL AND id IN (
-            SELECT e.id FROM entry e
-            INNER JOIN feed f ON e.feed_id = f.id
-            INNER JOIN category c ON f.category_id = c.id
-            WHERE {where_clause}
-        )
-        "#
+        "UPDATE entry \
+         SET read_at = datetime('now'), updated_at = datetime('now') \
+         WHERE read_at IS NULL AND id IN ( \
+             SELECT e.id FROM entry e \
+             INNER JOIN feed f ON e.feed_id = f.id \
+             INNER JOIN category c ON f.category_id = c.id \
+             WHERE {where_clause} \
+         )"
     );
 
-    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-    let rows = conn.execute(&sql, params_refs.as_slice())?;
+    let rows = exec_dynamic(db, sql, binds)
+        .await
+        .map_err(AppError::Database)?;
     Ok(rows as i64)
 }
 
@@ -1118,29 +1259,30 @@ pub struct EntryNeighbors {
 /// - `next_id`: the entry that comes after (older/lower in list)
 ///
 /// Uses `EntryFilter` to support all filtering conditions (unread, starred, read, feed, category, `has_summary`).
-pub fn find_neighbors(
-    conn: &Connection,
+pub async fn find_neighbors(
+    db: &Db,
     user_id: i64,
     entry_id: i64,
     filter: &EntryFilter,
 ) -> AppResult<EntryNeighbors> {
-    // Get the current entry's sort timestamp
-    let sort_time: Option<String> = conn
-        .query_row(
-            r#"
-            SELECT COALESCE(e.published_at, e.created_at)
-            FROM entry e
-            INNER JOIN feed f ON e.feed_id = f.id
-            INNER JOIN category c ON f.category_id = c.id
-            WHERE e.id = ?1 AND c.user_id = ?2
-            "#,
-            params![entry_id, user_id],
-            |row| row.get(0),
-        )
-        .optional()?;
+    let dialect = Dialect::from_db(db);
+
+    // Get the current entry's sort timestamp (raw stored TEXT).
+    let sort_time = query_opt!(
+        db,
+        (String,),
+        "SELECT COALESCE(e.published_at, e.created_at) \
+         FROM entry e \
+         INNER JOIN feed f ON e.feed_id = f.id \
+         INNER JOIN category c ON f.category_id = c.id \
+         WHERE e.id = $1 AND c.user_id = $2",
+        entry_id,
+        user_id
+    )
+    .map_err(AppError::Database)?;
 
     let sort_time = match sort_time {
-        Some(t) => t,
+        Some((t,)) => t,
         None => {
             return Ok(EntryNeighbors {
                 prev_id: None,
@@ -1150,17 +1292,19 @@ pub fn find_neighbors(
     };
 
     // Build filter conditions using apply_filter_conditions.
-    // Prev query base params: ?1=user_id, ?2=sort_time
+    // Prev query base binds: $1=user_id, $2=sort_time
     let mut prev_conditions = Vec::new();
-    let mut prev_params: Vec<Box<dyn rusqlite::ToSql>> =
-        vec![Box::new(user_id), Box::new(sort_time.clone())];
-    apply_filter_conditions(&mut prev_conditions, &mut prev_params, filter);
+    let mut prev_binds: Vec<Bind> = vec![Bind::Int(user_id), Bind::Text(sort_time.clone())];
+    apply_filter_conditions(&mut prev_conditions, &mut prev_binds, filter, dialect);
 
-    // Next query base params: ?1=user_id, ?2=sort_time, ?3=entry_id
+    // Next query base binds: $1=user_id, $2=sort_time, $3=entry_id
     let mut next_conditions = Vec::new();
-    let mut next_params: Vec<Box<dyn rusqlite::ToSql>> =
-        vec![Box::new(user_id), Box::new(sort_time), Box::new(entry_id)];
-    apply_filter_conditions(&mut next_conditions, &mut next_params, filter);
+    let mut next_binds: Vec<Bind> = vec![
+        Bind::Int(user_id),
+        Bind::Text(sort_time),
+        Bind::Int(entry_id),
+    ];
+    apply_filter_conditions(&mut next_conditions, &mut next_binds, filter, dialect);
 
     let prev_extra = if prev_conditions.is_empty() {
         String::new()
@@ -1190,99 +1334,139 @@ pub fn find_neighbors(
     // strict `read_at IS NULL` path (no `read_after`) keeps its prior plan,
     // which can still use the partial `idx_entry_unread_feed` and so must not
     // be force-pinned to the full sort index.
-    let (entry_hint, join_kw) = if filter.unread_only && filter.read_after.is_some() {
+    // `Dialect::index_hint` drops the SQLite-only `INDEXED BY` on PostgreSQL.
+    let (raw_hint, join_kw) = if filter.unread_only && filter.read_after.is_some() {
         (" INDEXED BY idx_entry_sort_ts", "CROSS JOIN")
     } else {
         (published_sort_entry_hint(filter), "INNER JOIN")
     };
+    let entry_hint = dialect.index_hint(raw_hint);
 
     // Find previous entry (newer, comes before in DESC order)
     let prev_sql = format!(
-        r#"
-        SELECT e.id
-        FROM entry e{hint}
-        {join} feed f ON e.feed_id = f.id
-        {join} category c ON f.category_id = c.id
-        WHERE c.user_id = ?1
-          AND COALESCE(e.published_at, e.created_at) > ?2
-          {extra}
-        ORDER BY COALESCE(e.published_at, e.created_at) ASC
-        LIMIT 1
-        "#,
-        hint = entry_hint,
-        join = join_kw,
-        extra = prev_extra
+        "SELECT e.id \
+         FROM entry e{entry_hint} \
+         {join_kw} feed f ON e.feed_id = f.id \
+         {join_kw} category c ON f.category_id = c.id \
+         WHERE c.user_id = $1 \
+           AND COALESCE(e.published_at, e.created_at) > $2{prev_extra} \
+         ORDER BY COALESCE(e.published_at, e.created_at) ASC \
+         LIMIT 1"
     );
-    let prev_refs: Vec<&dyn rusqlite::ToSql> = prev_params.iter().map(|p| p.as_ref()).collect();
-    let prev_id: Option<i64> = conn
-        .query_row(&prev_sql, prev_refs.as_slice(), |row| row.get(0))
-        .optional()?;
 
     // Find next entry (older, comes after in DESC order)
     let next_sql = format!(
-        r#"
-        SELECT e.id
-        FROM entry e{hint}
-        {join} feed f ON e.feed_id = f.id
-        {join} category c ON f.category_id = c.id
-        WHERE c.user_id = ?1
-          AND (COALESCE(e.published_at, e.created_at) < ?2
-               OR (COALESCE(e.published_at, e.created_at) = ?2 AND e.id < ?3))
-          {extra}
-        ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
-        LIMIT 1
-        "#,
-        hint = entry_hint,
-        join = join_kw,
-        extra = next_extra
+        "SELECT e.id \
+         FROM entry e{entry_hint} \
+         {join_kw} feed f ON e.feed_id = f.id \
+         {join_kw} category c ON f.category_id = c.id \
+         WHERE c.user_id = $1 \
+           AND (COALESCE(e.published_at, e.created_at) < $2 \
+                OR (COALESCE(e.published_at, e.created_at) = $2 AND e.id < $3)){next_extra} \
+         ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC \
+         LIMIT 1"
     );
-    let next_refs: Vec<&dyn rusqlite::ToSql> = next_params.iter().map(|p| p.as_ref()).collect();
-    let next_id: Option<i64> = conn
-        .query_row(&next_sql, next_refs.as_slice(), |row| row.get(0))
-        .optional()?;
+
+    async fn one(db: &Db, sql: String, binds: Vec<Bind>) -> Result<Option<i64>, sqlx::Error> {
+        match db {
+            Db::Sqlite(pool) => {
+                let mut q = sqlx::query_scalar::<sqlx::Sqlite, i64>(sqlx::AssertSqlSafe(sql));
+                for b in &binds {
+                    q = match b {
+                        Bind::Int(i) => q.bind(*i),
+                        Bind::Text(s) => q.bind(s.as_str()),
+                    };
+                }
+                q.fetch_optional(pool).await
+            }
+            Db::Postgres(pool) => {
+                let mut q = sqlx::query_scalar::<sqlx::Postgres, i64>(sqlx::AssertSqlSafe(sql));
+                for b in &binds {
+                    q = match b {
+                        Bind::Int(i) => q.bind(*i),
+                        Bind::Text(s) => q.bind(s.as_str()),
+                    };
+                }
+                q.fetch_optional(pool).await
+            }
+        }
+    }
+
+    let prev_id = one(db, prev_sql, prev_binds)
+        .await
+        .map_err(AppError::Database)?;
+    let next_id = one(db, next_sql, next_binds)
+        .await
+        .map_err(AppError::Database)?;
 
     Ok(EntryNeighbors { prev_id, next_id })
 }
 
-pub fn mark_all_read_by_category(
-    conn: &Connection,
+pub async fn mark_all_read_by_category(
+    db: &Db,
     category_id: i64,
     older_than_days: Option<i64>,
 ) -> AppResult<i64> {
     let age_condition = older_than_days
         .map(|days| {
-            format!(
-                " AND COALESCE(published_at, created_at) < datetime('now', '-{} days')",
-                days
-            )
+            format!(" AND COALESCE(published_at, created_at) < datetime('now', '-{days} days')")
         })
         .unwrap_or_default();
 
     let sql = format!(
-        r#"
-        UPDATE entry
-        SET read_at = datetime('now'), updated_at = datetime('now')
-        WHERE read_at IS NULL{} AND feed_id IN (
-            SELECT id FROM feed WHERE category_id = ?1
-        )
-        "#,
-        age_condition
+        "UPDATE entry \
+         SET read_at = datetime('now'), updated_at = datetime('now') \
+         WHERE read_at IS NULL{age_condition} AND feed_id IN ( \
+             SELECT id FROM feed WHERE category_id = $1 \
+         )"
     );
 
-    let rows = conn.execute(&sql, params![category_id])?;
+    let rows = exec_dynamic(db, sql, vec![Bind::Int(category_id)])
+        .await
+        .map_err(AppError::Database)?;
     Ok(rows as i64)
 }
 
-/// Mark multiple entries as read by their IDs.
-/// Only marks entries that belong to the user (via feed -> category -> user).
-/// Returns the count of entries that were actually marked as read.
+/// Build the bulk-update SQL + binds for the by-ids operations. `set_clause` is
+/// the `SET ...` body; `extra_where` is an optional predicate (e.g.
+/// `" AND read_at IS NULL"`) appended after the `id IN (...)` clause. `$1` is
+/// the user id; the ids fill `$2, $3, ...`.
+fn build_update_by_ids(
+    user_id: i64,
+    entry_ids: &[i64],
+    set_clause: &str,
+    extra_where: &str,
+) -> (String, Vec<Bind>) {
+    let placeholders: Vec<String> = entry_ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("${}", i + 2))
+        .collect();
+    let in_clause = placeholders.join(", ");
+
+    let sql = format!(
+        "UPDATE entry \
+         SET {set_clause} \
+         WHERE id IN ({in_clause}){extra_where} \
+           AND feed_id IN ( \
+               SELECT f.id FROM feed f \
+               INNER JOIN category c ON f.category_id = c.id \
+               WHERE c.user_id = $1 \
+           )"
+    );
+
+    let mut binds = vec![Bind::Int(user_id)];
+    for id in entry_ids {
+        binds.push(Bind::Int(*id));
+    }
+    (sql, binds)
+}
+
 /// Apply a bulk `SET` to the given entry ids in a single statement, scoped to
-/// the feeds the user owns. `set_clause` is the `SET ...` body; `extra_where`
-/// is an optional predicate (e.g. `" AND read_at IS NULL"`) appended after the
-/// `id IN (...)` clause. Returns the number of rows updated. Empty `entry_ids`
-/// is a no-op returning 0.
-fn update_entries_by_ids(
-    conn: &Connection,
+/// the feeds the user owns. Returns the number of rows updated. Empty
+/// `entry_ids` is a no-op returning 0.
+async fn update_entries_by_ids(
+    db: &Db,
     user_id: i64,
     entry_ids: &[i64],
     set_clause: &str,
@@ -1291,113 +1475,151 @@ fn update_entries_by_ids(
     if entry_ids.is_empty() {
         return Ok(0);
     }
+    let (sql, binds) = build_update_by_ids(user_id, entry_ids, set_clause, extra_where);
+    let rows = exec_dynamic(db, sql, binds)
+        .await
+        .map_err(AppError::Database)?;
+    Ok(rows as i64)
+}
 
-    // Build placeholders for IN clause (?2, ?3, ...; ?1 is user_id)
-    let placeholders: Vec<String> = entry_ids
-        .iter()
-        .enumerate()
-        .map(|(i, _)| format!("?{}", i + 2))
-        .collect();
-    let in_clause = placeholders.join(", ");
-
-    let sql = format!(
-        r#"
-        UPDATE entry
-        SET {set_clause}
-        WHERE id IN ({in_clause}){extra_where}
-          AND feed_id IN (
-              SELECT f.id FROM feed f
-              INNER JOIN category c ON f.category_id = c.id
-              WHERE c.user_id = ?1
-          )
-        "#,
-    );
-
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
-    for id in entry_ids {
-        params_vec.push(Box::new(*id));
+/// Transactional twin of [`update_entries_by_ids`], for the `GReader` `edit_tag`
+/// unit of work that batches several tag mutations atomically.
+async fn update_entries_by_ids_tx(
+    tx: &mut Tx<'_>,
+    user_id: i64,
+    entry_ids: &[i64],
+    set_clause: &str,
+    extra_where: &str,
+) -> AppResult<i64> {
+    if entry_ids.is_empty() {
+        return Ok(0);
     }
-
-    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-
-    let rows = conn.execute(&sql, params_refs.as_slice())?;
+    let (sql, binds) = build_update_by_ids(user_id, entry_ids, set_clause, extra_where);
+    let rows = exec_dynamic_tx(tx, sql, binds)
+        .await
+        .map_err(AppError::Database)?;
     Ok(rows as i64)
 }
 
 /// Bulk mark the given entries as read (only those currently unread), scoped to
 /// the user's feeds. Returns the number of rows updated.
-pub fn mark_read_by_ids(conn: &Connection, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
+pub async fn mark_read_by_ids(db: &Db, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
     update_entries_by_ids(
-        conn,
+        db,
         user_id,
         entry_ids,
         "read_at = datetime('now'), updated_at = datetime('now')",
         " AND read_at IS NULL",
     )
+    .await
 }
 
 /// Bulk mark the given entries as unread, scoped to the user's feeds.
-pub fn mark_unread_by_ids(conn: &Connection, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
+pub async fn mark_unread_by_ids(db: &Db, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
     update_entries_by_ids(
-        conn,
+        db,
         user_id,
         entry_ids,
         "read_at = NULL, updated_at = datetime('now')",
         "",
     )
+    .await
 }
 
 /// Bulk star the given entries (only those not already starred), scoped to the
 /// user's feeds.
-pub fn star_by_ids(conn: &Connection, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
+pub async fn star_by_ids(db: &Db, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
     update_entries_by_ids(
-        conn,
+        db,
         user_id,
         entry_ids,
         "starred_at = datetime('now'), updated_at = datetime('now')",
         " AND starred_at IS NULL",
     )
+    .await
 }
 
 /// Bulk unstar the given entries, scoped to the user's feeds.
-pub fn unstar_by_ids(conn: &Connection, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
+pub async fn unstar_by_ids(db: &Db, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
     update_entries_by_ids(
-        conn,
+        db,
         user_id,
         entry_ids,
         "starred_at = NULL, updated_at = datetime('now')",
         "",
     )
+    .await
+}
+
+/// Transactional variant of [`mark_unread_by_ids`] (`GReader` `edit_tag`).
+pub async fn mark_unread_by_ids_tx(
+    tx: &mut Tx<'_>,
+    user_id: i64,
+    entry_ids: &[i64],
+) -> AppResult<i64> {
+    update_entries_by_ids_tx(
+        tx,
+        user_id,
+        entry_ids,
+        "read_at = NULL, updated_at = datetime('now')",
+        "",
+    )
+    .await
+}
+
+/// Transactional variant of [`star_by_ids`] (`GReader` `edit_tag`).
+pub async fn star_by_ids_tx(tx: &mut Tx<'_>, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
+    update_entries_by_ids_tx(
+        tx,
+        user_id,
+        entry_ids,
+        "starred_at = datetime('now'), updated_at = datetime('now')",
+        " AND starred_at IS NULL",
+    )
+    .await
+}
+
+/// Transactional variant of [`unstar_by_ids`] (`GReader` `edit_tag`).
+pub async fn unstar_by_ids_tx(tx: &mut Tx<'_>, user_id: i64, entry_ids: &[i64]) -> AppResult<i64> {
+    update_entries_by_ids_tx(
+        tx,
+        user_id,
+        entry_ids,
+        "starred_at = NULL, updated_at = datetime('now')",
+        "",
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
     use crate::models::category;
     use crate::models::feed;
     use crate::models::user::{self, Role};
     use chrono::TimeZone;
 
-    fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
-        conn
+    async fn setup_db() -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
-    fn create_test_user(conn: &Connection, username: &str) -> i64 {
-        user::create_user(conn, username, "hash123", Role::User)
+    async fn create_test_user(db: &Db, username: &str) -> i64 {
+        user::create_user(db, username, "hash123", Role::User)
+            .await
             .unwrap()
             .id
     }
 
-    fn create_test_category(conn: &Connection, user_id: i64, name: &str) -> i64 {
-        category::create_category(conn, user_id, name).unwrap().id
+    async fn create_test_category(db: &Db, user_id: i64, name: &str) -> i64 {
+        category::create_category(db, user_id, name)
+            .await
+            .unwrap()
+            .id
     }
 
-    fn create_test_feed(conn: &Connection, category_id: i64, url: &str) -> i64 {
+    async fn create_test_feed(db: &Db, category_id: i64, url: &str) -> i64 {
         feed::create_feed(
-            conn,
+            db,
             &feed::CreateFeedParams {
                 category_id,
                 url,
@@ -1409,20 +1631,21 @@ mod tests {
                 custom_referrer: None,
             },
         )
+        .await
         .unwrap()
         .id
     }
 
-    #[test]
-    fn test_upsert_entry() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_upsert_entry() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         // Insert new entry
         let (entry, is_new) = upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-123",
             Some("Test Entry"),
@@ -1432,6 +1655,7 @@ mod tests {
             Some("Author"),
             Some(Utc::now()),
         )
+        .await
         .unwrap();
 
         assert!(is_new);
@@ -1441,7 +1665,7 @@ mod tests {
 
         // Update existing entry
         let (updated, is_new) = upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-123",
             Some("Updated Title"),
@@ -1451,6 +1675,7 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         assert!(!is_new);
@@ -1458,15 +1683,15 @@ mod tests {
         assert_eq!(updated.id, entry.id);
     }
 
-    #[test]
-    fn test_mark_as_read() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_mark_as_read() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         let (entry, _) = upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-123",
             Some("Test"),
@@ -1476,26 +1701,27 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         assert!(entry.read_at.is_none());
 
-        let read = mark_as_read(&conn, entry.id).unwrap();
+        let read = mark_as_read(&db, entry.id).await.unwrap();
         assert!(read.read_at.is_some());
 
-        let unread = mark_as_unread(&conn, entry.id).unwrap();
+        let unread = mark_as_unread(&db, entry.id).await.unwrap();
         assert!(unread.read_at.is_none());
     }
 
-    #[test]
-    fn mark_read_by_filter_marks_only_matching_unread_owned() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn mark_read_by_filter_marks_only_matching_unread_owned() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         let m = upsert_entry_id(
-            &conn,
+            &db,
             feed_id,
             "m",
             Some("超少女登場"),
@@ -1505,9 +1731,10 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         let n = upsert_entry_id(
-            &conn,
+            &db,
             feed_id,
             "n",
             Some("其他新聞"),
@@ -1517,6 +1744,7 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         let m_id = match m {
             UpsertOutcome::Inserted(id) => id,
@@ -1532,41 +1760,45 @@ mod tests {
             search: Some("超少女".to_string()),
             ..Default::default()
         };
-        let affected = mark_read_by_filter(&conn, user_id, &filter).unwrap();
+        let affected = mark_read_by_filter(&db, user_id, &filter).await.unwrap();
         assert_eq!(affected, 1);
 
-        let m_read: Option<String> = conn
-            .query_row("SELECT read_at FROM entry WHERE id=?1", [m_id], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        let n_read: Option<String> = conn
-            .query_row("SELECT read_at FROM entry WHERE id=?1", [n_id], |r| {
-                r.get(0)
-            })
-            .unwrap();
+        let m_read = crate::query_scalar!(
+            &db,
+            Option<String>,
+            "SELECT read_at FROM entry WHERE id = $1",
+            m_id
+        )
+        .unwrap();
+        let n_read = crate::query_scalar!(
+            &db,
+            Option<String>,
+            "SELECT read_at FROM entry WHERE id = $1",
+            n_id
+        )
+        .unwrap();
         assert!(m_read.is_some(), "matching entry marked read");
         assert!(n_read.is_none(), "non-matching entry untouched");
 
         // Idempotent: already-read matching row isn't recounted.
-        assert_eq!(mark_read_by_filter(&conn, user_id, &filter).unwrap(), 0);
+        assert_eq!(mark_read_by_filter(&db, user_id, &filter).await.unwrap(), 0);
     }
 
-    #[test]
-    fn mark_read_by_filter_does_not_cross_user_boundary() {
-        let conn = setup_db();
-        let user1 = create_test_user(&conn, "user1");
-        let user2 = create_test_user(&conn, "user2");
-        let category1 = create_test_category(&conn, user1, "Tech1");
-        let category2 = create_test_category(&conn, user2, "Tech2");
-        let feed1 = create_test_feed(&conn, category1, "https://example.com/feed1.xml");
-        let feed2 = create_test_feed(&conn, category2, "https://example.com/feed2.xml");
+    #[tokio::test]
+    async fn mark_read_by_filter_does_not_cross_user_boundary() {
+        let db = setup_db().await;
+        let user1 = create_test_user(&db, "user1").await;
+        let user2 = create_test_user(&db, "user2").await;
+        let category1 = create_test_category(&db, user1, "Tech1").await;
+        let category2 = create_test_category(&db, user2, "Tech2").await;
+        let feed1 = create_test_feed(&db, category1, "https://example.com/feed1.xml").await;
+        let feed2 = create_test_feed(&db, category2, "https://example.com/feed2.xml").await;
 
         // Same matching title in both users' feeds; filter has no feed_id/
         // category_id scoping, only a search term, so ownership must come
         // entirely from the c.user_id = ?1 seed condition.
         let e1 = upsert_entry_id(
-            &conn,
+            &db,
             feed1,
             "e1",
             Some("超少女登場"),
@@ -1576,9 +1808,10 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         let e2 = upsert_entry_id(
-            &conn,
+            &db,
             feed2,
             "e2",
             Some("超少女登場"),
@@ -1588,6 +1821,7 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         let e1_id = match e1 {
             UpsertOutcome::Inserted(id) => id,
@@ -1603,19 +1837,23 @@ mod tests {
             ..Default::default()
         };
 
-        let affected = mark_read_by_filter(&conn, user1, &filter).unwrap();
+        let affected = mark_read_by_filter(&db, user1, &filter).await.unwrap();
         assert_eq!(affected, 1);
 
-        let e1_read: Option<String> = conn
-            .query_row("SELECT read_at FROM entry WHERE id=?1", [e1_id], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        let e2_read: Option<String> = conn
-            .query_row("SELECT read_at FROM entry WHERE id=?1", [e2_id], |r| {
-                r.get(0)
-            })
-            .unwrap();
+        let e1_read = crate::query_scalar!(
+            &db,
+            Option<String>,
+            "SELECT read_at FROM entry WHERE id = $1",
+            e1_id
+        )
+        .unwrap();
+        let e2_read = crate::query_scalar!(
+            &db,
+            Option<String>,
+            "SELECT read_at FROM entry WHERE id = $1",
+            e2_id
+        )
+        .unwrap();
         assert!(
             e1_read.is_some(),
             "owning user's matching entry marked read"
@@ -1626,15 +1864,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_toggle_star() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_toggle_star() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         let (entry, _) = upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-123",
             Some("Test"),
@@ -1644,27 +1882,28 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         assert!(entry.starred_at.is_none());
 
-        let starred = toggle_star(&conn, entry.id).unwrap();
+        let starred = toggle_star(&db, entry.id).await.unwrap();
         assert!(starred.starred_at.is_some());
 
-        let unstarred = toggle_star(&conn, entry.id).unwrap();
+        let unstarred = toggle_star(&db, entry.id).await.unwrap();
         assert!(unstarred.starred_at.is_none());
     }
 
-    #[test]
-    fn test_count_unread() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_count_unread() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         for i in 0..5 {
             upsert_entry(
-                &conn,
+                &db,
                 feed_id,
                 &format!("guid-{}", i),
                 Some("Test"),
@@ -1674,29 +1913,30 @@ mod tests {
                 None,
                 None,
             )
+            .await
             .unwrap();
         }
 
-        assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 5);
+        assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 5);
 
         // Mark 2 as read
-        let entries = list_by_feed(&conn, feed_id, 10, 0).unwrap();
-        mark_as_read(&conn, entries[0].id).unwrap();
-        mark_as_read(&conn, entries[1].id).unwrap();
+        let entries = list_by_feed(&db, feed_id, 10, 0).await.unwrap();
+        mark_as_read(&db, entries[0].id).await.unwrap();
+        mark_as_read(&db, entries[1].id).await.unwrap();
 
-        assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 3);
+        assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 3);
     }
 
-    #[test]
-    fn test_search_entries_by_title() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_search_entries_by_title() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         // Create entries with different titles
         upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-1",
             Some("Rust Programming Guide"),
@@ -1706,9 +1946,10 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-2",
             Some("Python Tutorial"),
@@ -1718,14 +1959,16 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         let filter = EntryFilter {
             search: Some("Rust".to_string()),
             ..Default::default()
         };
-        let results =
-            list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 10, 0).unwrap();
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 10, 0)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].entry.title,
@@ -1733,15 +1976,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_search_entries_by_content() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_search_entries_by_content() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-1",
             Some("Entry 1"),
@@ -1751,9 +1994,10 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-2",
             Some("Entry 2"),
@@ -1763,27 +2007,29 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         let filter = EntryFilter {
             search: Some("WebAssembly".to_string()),
             ..Default::default()
         };
-        let results =
-            list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 10, 0).unwrap();
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 10, 0)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].entry.title, Some("Entry 1".to_string()));
     }
 
-    #[test]
-    fn test_search_case_insensitive() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_search_case_insensitive() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-1",
             Some("UPPERCASE Title"),
@@ -1793,6 +2039,7 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         // Search with lowercase should match uppercase title
@@ -1800,8 +2047,9 @@ mod tests {
             search: Some("uppercase".to_string()),
             ..Default::default()
         };
-        let results =
-            list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 10, 0).unwrap();
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 10, 0)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
 
         // Search with uppercase should match lowercase content
@@ -1809,20 +2057,21 @@ mod tests {
             search: Some("LOWERCASE".to_string()),
             ..Default::default()
         };
-        let results =
-            list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 10, 0).unwrap();
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 10, 0)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
     }
 
-    #[test]
-    fn test_search_combined_with_filters() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_search_combined_with_filters() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         let (entry1, _) = upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-1",
             Some("Rust Article"),
@@ -1832,9 +2081,10 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         let (entry2, _) = upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-2",
             Some("Rust Tutorial"),
@@ -1844,12 +2094,13 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         // Mark entry1 as read
-        mark_as_read(&conn, entry1.id).unwrap();
+        mark_as_read(&db, entry1.id).await.unwrap();
         // Star entry2
-        toggle_star(&conn, entry2.id).unwrap();
+        toggle_star(&db, entry2.id).await.unwrap();
 
         // Search for "Rust" with unread_only - should only return entry2
         let filter = EntryFilter {
@@ -1857,8 +2108,9 @@ mod tests {
             unread_only: true,
             ..Default::default()
         };
-        let results =
-            list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 10, 0).unwrap();
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 10, 0)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].entry.id, entry2.id);
 
@@ -1868,23 +2120,24 @@ mod tests {
             starred_only: true,
             ..Default::default()
         };
-        let results =
-            list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 10, 0).unwrap();
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 10, 0)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].entry.id, entry2.id);
     }
 
-    #[test]
-    fn test_search_pagination() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_search_pagination() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         // Create 5 entries that match the search
         for i in 0..5 {
             upsert_entry(
-                &conn,
+                &db,
                 feed_id,
                 &format!("guid-{}", i),
                 Some(&format!("Rust Article {}", i)),
@@ -1894,6 +2147,7 @@ mod tests {
                 None,
                 None,
             )
+            .await
             .unwrap();
         }
 
@@ -1903,35 +2157,38 @@ mod tests {
         };
 
         // First page (limit 2)
-        let results =
-            list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 2, 0).unwrap();
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 2, 0)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
 
         // Second page
-        let results =
-            list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 2, 2).unwrap();
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 2, 2)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
 
         // Third page (only 1 remaining)
-        let results =
-            list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 2, 4).unwrap();
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 2, 4)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
 
         // Count should be 5
-        let count = count_by_user(&conn, user_id, &filter).unwrap();
+        let count = count_by_user(&db, user_id, &filter).await.unwrap();
         assert_eq!(count, 5);
     }
 
-    #[test]
-    fn search_matches_plain_text_across_tags_not_attributes() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn search_matches_plain_text_across_tags_not_attributes() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         // (a) term split across inline tags — must match via content_text.
         upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "a",
             Some("x"),
@@ -1941,10 +2198,11 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         // (b) term only inside an href attribute — must NOT match.
         upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "b",
             Some("y"),
@@ -1954,14 +2212,16 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         let filter = EntryFilter {
             search: Some("超少女".to_string()),
             ..Default::default()
         };
-        let results =
-            list_by_user(&conn, user_id, &filter, EntrySortOrder::default(), 50, 0).unwrap();
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
         let guids: Vec<_> = results.iter().map(|r| r.entry.guid.clone()).collect();
         assert!(
             guids.contains(&"a".to_string()),
@@ -1973,19 +2233,19 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_mark_read_by_ids() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let user2_id = create_test_user(&conn, "testuser2");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let category2_id = create_test_category(&conn, user2_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
-        let feed2_id = create_test_feed(&conn, category2_id, "https://example2.com/feed.xml");
+    #[tokio::test]
+    async fn test_mark_read_by_ids() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let user2_id = create_test_user(&db, "testuser2").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let category2_id = create_test_category(&db, user2_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+        let feed2_id = create_test_feed(&db, category2_id, "https://example2.com/feed.xml").await;
 
         // Create entries for user 1
         let (entry1, _) = upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-1",
             Some("Entry 1"),
@@ -1995,9 +2255,10 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         let (entry2, _) = upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-2",
             Some("Entry 2"),
@@ -2007,9 +2268,10 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         let (entry3, _) = upsert_entry(
-            &conn,
+            &db,
             feed_id,
             "guid-3",
             Some("Entry 3"),
@@ -2019,11 +2281,12 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         // Create entry for user 2
         let (other_entry, _) = upsert_entry(
-            &conn,
+            &db,
             feed2_id,
             "guid-4",
             Some("Other Entry"),
@@ -2033,52 +2296,59 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         // All entries should be unread
-        assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 3);
-        assert_eq!(count_unread_by_user(&conn, user2_id).unwrap(), 1);
+        assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 3);
+        assert_eq!(count_unread_by_user(&db, user2_id).await.unwrap(), 1);
 
         // Mark entries 1 and 2 as read (user 1)
-        let marked = mark_read_by_ids(&conn, user_id, &[entry1.id, entry2.id]).unwrap();
+        let marked = mark_read_by_ids(&db, user_id, &[entry1.id, entry2.id])
+            .await
+            .unwrap();
         assert_eq!(marked, 2);
 
         // Entry 3 should still be unread
-        assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 1);
+        assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 1);
 
         // Try to mark user 2's entry as read with user 1's credentials - should not work
-        let marked = mark_read_by_ids(&conn, user_id, &[other_entry.id]).unwrap();
+        let marked = mark_read_by_ids(&db, user_id, &[other_entry.id])
+            .await
+            .unwrap();
         assert_eq!(marked, 0);
 
         // User 2's entry should still be unread
-        assert_eq!(count_unread_by_user(&conn, user2_id).unwrap(), 1);
+        assert_eq!(count_unread_by_user(&db, user2_id).await.unwrap(), 1);
 
         // Mark already-read entries again - should return 0
-        let marked = mark_read_by_ids(&conn, user_id, &[entry1.id, entry2.id]).unwrap();
+        let marked = mark_read_by_ids(&db, user_id, &[entry1.id, entry2.id])
+            .await
+            .unwrap();
         assert_eq!(marked, 0);
 
         // Empty array should return 0
-        let marked = mark_read_by_ids(&conn, user_id, &[]).unwrap();
+        let marked = mark_read_by_ids(&db, user_id, &[]).await.unwrap();
         assert_eq!(marked, 0);
 
         // Mark remaining entry
-        let marked = mark_read_by_ids(&conn, user_id, &[entry3.id]).unwrap();
+        let marked = mark_read_by_ids(&db, user_id, &[entry3.id]).await.unwrap();
         assert_eq!(marked, 1);
 
         // All user 1 entries should now be read
-        assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 0);
+        assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 0);
     }
 
-    #[test]
-    fn test_upsert_entry_id_returns_id_and_is_new() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_upsert_entry_id_returns_id_and_is_new() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         // First upsert: new row
         let first = upsert_entry_id(
-            &conn,
+            &db,
             feed_id,
             "guid-1",
             Some("Title"),
@@ -2088,17 +2358,18 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         let id1 = match first {
             UpsertOutcome::Inserted(id) => id,
             o => panic!("expected Inserted, got {o:?}"),
         };
-        let row = find_by_id(&conn, id1).unwrap().unwrap();
+        let row = find_by_id(&db, id1).await.unwrap().unwrap();
         assert_eq!(row.title.as_deref(), Some("Title"));
 
         // Second upsert with same guid+feed: update, same id
         let second = upsert_entry_id(
-            &conn,
+            &db,
             feed_id,
             "guid-1",
             Some("Title 2"),
@@ -2108,21 +2379,22 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         assert!(matches!(second, UpsertOutcome::Updated(id) if id == id1));
-        let row = find_by_id(&conn, id1).unwrap().unwrap();
+        let row = find_by_id(&db, id1).await.unwrap().unwrap();
         assert_eq!(row.title.as_deref(), Some("Title 2"));
     }
 
-    #[test]
-    fn upsert_populates_content_text_stripped() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn upsert_populates_content_text_stripped() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         let out = upsert_entry_id(
-            &conn,
+            &db,
             feed_id,
             "g1",
             Some("t"),
@@ -2132,29 +2404,32 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         let id = match out {
             UpsertOutcome::Inserted(id) => id,
             o => panic!("expected Inserted, got {o:?}"),
         };
-        let ct: Option<String> = conn
-            .query_row("SELECT content_text FROM entry WHERE id = ?1", [id], |r| {
-                r.get(0)
-            })
-            .unwrap();
+        let ct = crate::query_scalar!(
+            &db,
+            Option<String>,
+            "SELECT content_text FROM entry WHERE id = $1",
+            id
+        )
+        .unwrap();
         assert_eq!(ct.as_deref(), Some("超少女與機器人"));
     }
 
-    #[test]
-    fn test_upsert_skips_tombstoned_guid() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_upsert_skips_tombstoned_guid() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
-        insert_tombstone(&conn, feed_id, "ghost").unwrap();
+        insert_tombstone(&db, feed_id, "ghost").await.unwrap();
         let outcome = upsert_entry_id(
-            &conn,
+            &db,
             feed_id,
             "ghost",
             Some("Ghost"),
@@ -2164,24 +2439,26 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         assert!(matches!(outcome, UpsertOutcome::SkippedTombstoned));
         assert!(
-            find_by_guid_and_feed(&conn, "ghost", feed_id)
+            find_by_guid_and_feed(&db, "ghost", feed_id)
+                .await
                 .unwrap()
                 .is_none()
         );
     }
 
-    #[test]
-    fn test_upsert_inserts_then_updates() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_upsert_inserts_then_updates() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         let first = upsert_entry_id(
-            &conn,
+            &db,
             feed_id,
             "g1",
             Some("First"),
@@ -2191,6 +2468,7 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         let id = match first {
             UpsertOutcome::Inserted(id) => id,
@@ -2198,7 +2476,7 @@ mod tests {
         };
 
         let second = upsert_entry_id(
-            &conn,
+            &db,
             feed_id,
             "g1",
             Some("Updated"),
@@ -2208,46 +2486,29 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         assert!(matches!(second, UpsertOutcome::Updated(uid) if uid == id));
     }
 
-    #[test]
-    fn test_star_unstar_and_mark_unread_by_ids() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let user2_id = create_test_user(&conn, "testuser2");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let category2_id = create_test_category(&conn, user2_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
-        let feed2_id = create_test_feed(&conn, category2_id, "https://example2.com/feed.xml");
+    #[tokio::test]
+    async fn test_star_unstar_and_mark_unread_by_ids() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let user2_id = create_test_user(&db, "testuser2").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let category2_id = create_test_category(&db, user2_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+        let feed2_id = create_test_feed(&db, category2_id, "https://example2.com/feed.xml").await;
 
-        let (e1, _) = upsert_entry(
-            &conn,
-            feed_id,
-            "g1",
-            Some("E1"),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-        let (e2, _) = upsert_entry(
-            &conn,
-            feed_id,
-            "g2",
-            Some("E2"),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let (e1, _) = upsert_entry(&db, feed_id, "g1", Some("E1"), None, None, None, None, None)
+            .await
+            .unwrap();
+        let (e2, _) = upsert_entry(&db, feed_id, "g2", Some("E2"), None, None, None, None, None)
+            .await
+            .unwrap();
         let (other, _) = upsert_entry(
-            &conn,
+            &db,
             feed2_id,
             "g3",
             Some("E3"),
@@ -2257,13 +2518,15 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
 
         // Star e1, e2 — only currently-unstarred rows count
-        let starred = star_by_ids(&conn, user_id, &[e1.id, e2.id]).unwrap();
+        let starred = star_by_ids(&db, user_id, &[e1.id, e2.id]).await.unwrap();
         assert_eq!(starred, 2);
         assert!(
-            find_by_id(&conn, e1.id)
+            find_by_id(&db, e1.id)
+                .await
                 .unwrap()
                 .unwrap()
                 .starred_at
@@ -2271,12 +2534,13 @@ mod tests {
         );
 
         // Starring again is a no-op (already starred)
-        assert_eq!(star_by_ids(&conn, user_id, &[e1.id, e2.id]).unwrap(), 0);
+        assert_eq!(star_by_ids(&db, user_id, &[e1.id, e2.id]).await.unwrap(), 0);
 
         // Ownership scope: cannot star another user's entry
-        assert_eq!(star_by_ids(&conn, user_id, &[other.id]).unwrap(), 0);
+        assert_eq!(star_by_ids(&db, user_id, &[other.id]).await.unwrap(), 0);
         assert!(
-            find_by_id(&conn, other.id)
+            find_by_id(&db, other.id)
+                .await
                 .unwrap()
                 .unwrap()
                 .starred_at
@@ -2284,9 +2548,10 @@ mod tests {
         );
 
         // Unstar e1
-        assert_eq!(unstar_by_ids(&conn, user_id, &[e1.id]).unwrap(), 1);
+        assert_eq!(unstar_by_ids(&db, user_id, &[e1.id]).await.unwrap(), 1);
         assert!(
-            find_by_id(&conn, e1.id)
+            find_by_id(&db, e1.id)
+                .await
                 .unwrap()
                 .unwrap()
                 .starred_at
@@ -2295,32 +2560,36 @@ mod tests {
 
         // Mark read then mark unread by ids
         assert_eq!(
-            mark_read_by_ids(&conn, user_id, &[e1.id, e2.id]).unwrap(),
+            mark_read_by_ids(&db, user_id, &[e1.id, e2.id])
+                .await
+                .unwrap(),
             2
         );
-        assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 0);
-        let unread = mark_unread_by_ids(&conn, user_id, &[e1.id, e2.id]).unwrap();
+        assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 0);
+        let unread = mark_unread_by_ids(&db, user_id, &[e1.id, e2.id])
+            .await
+            .unwrap();
         assert_eq!(unread, 2);
-        assert_eq!(count_unread_by_user(&conn, user_id).unwrap(), 2);
+        assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 2);
 
         // Empty input is a no-op
-        assert_eq!(star_by_ids(&conn, user_id, &[]).unwrap(), 0);
-        assert_eq!(mark_unread_by_ids(&conn, user_id, &[]).unwrap(), 0);
+        assert_eq!(star_by_ids(&db, user_id, &[]).await.unwrap(), 0);
+        assert_eq!(mark_unread_by_ids(&db, user_id, &[]).await.unwrap(), 0);
     }
 
-    #[test]
-    fn test_find_neighbors_starred_only() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_find_neighbors_starred_only() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         // Create 5 entries with distinct timestamps
         let mut entries = Vec::new();
         for i in 0..5 {
             let published = Utc::now() + chrono::Duration::seconds(i * 10);
             let (entry, _) = upsert_entry(
-                &conn,
+                &db,
                 feed_id,
                 &format!("guid-{}", i),
                 Some(&format!("Entry {}", i)),
@@ -2330,13 +2599,14 @@ mod tests {
                 None,
                 Some(published),
             )
+            .await
             .unwrap();
             entries.push(entry);
         }
 
         // Star entries 1 and 3 (0-indexed)
-        star_entry(&conn, entries[1].id).unwrap();
-        star_entry(&conn, entries[3].id).unwrap();
+        star_entry(&db, entries[1].id).await.unwrap();
+        star_entry(&db, entries[3].id).await.unwrap();
 
         // From entry 3 (starred), with starred_only filter:
         // prev should be entry 1 (the only other starred entry that is newer... wait, entry 3 is newer)
@@ -2348,30 +2618,36 @@ mod tests {
             starred_only: true,
             ..Default::default()
         };
-        let neighbors = find_neighbors(&conn, user_id, entries[3].id, &filter).unwrap();
+        let neighbors = find_neighbors(&db, user_id, entries[3].id, &filter)
+            .await
+            .unwrap();
         assert_eq!(neighbors.prev_id, None); // no starred entry newer than entry 3
         assert_eq!(neighbors.next_id, Some(entries[1].id)); // entry 1 is older and starred
 
         // From entry 1 (starred):
         // prev (newer) = entry 3 (starred, newer)
         // next (older) = none
-        let neighbors = find_neighbors(&conn, user_id, entries[1].id, &filter).unwrap();
+        let neighbors = find_neighbors(&db, user_id, entries[1].id, &filter)
+            .await
+            .unwrap();
         assert_eq!(neighbors.prev_id, Some(entries[3].id));
         assert_eq!(neighbors.next_id, None);
 
         // Without filter, entry 3 should see entry 4 as prev and entry 2 as next
         let no_filter = EntryFilter::default();
-        let neighbors = find_neighbors(&conn, user_id, entries[3].id, &no_filter).unwrap();
+        let neighbors = find_neighbors(&db, user_id, entries[3].id, &no_filter)
+            .await
+            .unwrap();
         assert_eq!(neighbors.prev_id, Some(entries[4].id));
         assert_eq!(neighbors.next_id, Some(entries[2].id));
     }
 
-    #[test]
-    fn test_find_neighbors_unread_only_read_after() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_find_neighbors_unread_only_read_after() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         // 5 entries published ascending — entries[4] is newest in the
         // published-DESC list order.
@@ -2379,7 +2655,7 @@ mod tests {
         for i in 0..5 {
             let published = Utc::now() + chrono::Duration::seconds(i * 10);
             let (entry, _) = upsert_entry(
-                &conn,
+                &db,
                 feed_id,
                 &format!("guid-{}", i),
                 Some(&format!("Entry {}", i)),
@@ -2389,20 +2665,23 @@ mod tests {
                 None,
                 Some(published),
             )
+            .await
             .unwrap();
             entries.push(entry);
         }
 
         // entries[1]: read an hour ago — before the snapshot boundary.
-        conn.execute(
-            "UPDATE entry SET read_at = datetime('now', '-1 hour') WHERE id = ?1",
-            params![entries[1].id],
+        crate::db_execute!(
+            &db,
+            "UPDATE entry SET read_at = datetime('now', '-1 hour') WHERE id = $1",
+            entries[1].id
         )
         .unwrap();
         // entries[2]: read just now — inside the snapshot.
-        conn.execute(
-            "UPDATE entry SET read_at = datetime('now') WHERE id = ?1",
-            params![entries[2].id],
+        crate::db_execute!(
+            &db,
+            "UPDATE entry SET read_at = datetime('now') WHERE id = $1",
+            entries[2].id
         )
         .unwrap();
 
@@ -2419,13 +2698,17 @@ mod tests {
 
         // From entries[3]: next (older) lands on the just-read entries[2]
         // — still reachable inside the snapshot.
-        let neighbors = find_neighbors(&conn, user_id, entries[3].id, &filter).unwrap();
+        let neighbors = find_neighbors(&db, user_id, entries[3].id, &filter)
+            .await
+            .unwrap();
         assert_eq!(neighbors.prev_id, Some(entries[4].id));
         assert_eq!(neighbors.next_id, Some(entries[2].id));
 
         // From entries[2]: prev is the unread entries[3]; next skips the
         // pre-snapshot entries[1] and lands on the unread entries[0].
-        let neighbors = find_neighbors(&conn, user_id, entries[2].id, &filter).unwrap();
+        let neighbors = find_neighbors(&db, user_id, entries[2].id, &filter)
+            .await
+            .unwrap();
         assert_eq!(neighbors.prev_id, Some(entries[3].id));
         assert_eq!(neighbors.next_id, Some(entries[0].id));
 
@@ -2435,24 +2718,26 @@ mod tests {
             unread_only: true,
             ..Default::default()
         };
-        let neighbors = find_neighbors(&conn, user_id, entries[3].id, &strict).unwrap();
+        let neighbors = find_neighbors(&db, user_id, entries[3].id, &strict)
+            .await
+            .unwrap();
         assert_eq!(neighbors.prev_id, Some(entries[4].id));
         assert_eq!(neighbors.next_id, Some(entries[0].id));
     }
 
-    #[test]
-    fn test_find_neighbors_read_only() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "testuser");
-        let category_id = create_test_category(&conn, user_id, "Tech");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/feed.xml");
+    #[tokio::test]
+    async fn test_find_neighbors_read_only() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
         // Create 4 entries with distinct timestamps
         let mut entries = Vec::new();
         for i in 0..4 {
             let published = Utc::now() + chrono::Duration::seconds(i * 10);
             let (entry, _) = upsert_entry(
-                &conn,
+                &db,
                 feed_id,
                 &format!("guid-{}", i),
                 Some(&format!("Entry {}", i)),
@@ -2462,13 +2747,14 @@ mod tests {
                 None,
                 Some(published),
             )
+            .await
             .unwrap();
             entries.push(entry);
         }
 
         // Mark entries 0 and 2 as read
-        mark_as_read(&conn, entries[0].id).unwrap();
-        mark_as_read(&conn, entries[2].id).unwrap();
+        mark_as_read(&db, entries[0].id).await.unwrap();
+        mark_as_read(&db, entries[2].id).await.unwrap();
 
         // From entry 2 (read, published_at = now+20s), with read_only filter:
         // prev (newer) = none (entry 3 is newer but unread)
@@ -2477,14 +2763,18 @@ mod tests {
             read_only: true,
             ..Default::default()
         };
-        let neighbors = find_neighbors(&conn, user_id, entries[2].id, &filter).unwrap();
+        let neighbors = find_neighbors(&db, user_id, entries[2].id, &filter)
+            .await
+            .unwrap();
         assert_eq!(neighbors.prev_id, None);
         assert_eq!(neighbors.next_id, Some(entries[0].id));
 
         // From entry 0 (read, published_at = now+0s):
         // prev (newer) = entry 2 (read, newer)
         // next (older) = none
-        let neighbors = find_neighbors(&conn, user_id, entries[0].id, &filter).unwrap();
+        let neighbors = find_neighbors(&db, user_id, entries[0].id, &filter)
+            .await
+            .unwrap();
         assert_eq!(neighbors.prev_id, Some(entries[2].id));
         assert_eq!(neighbors.next_id, None);
     }
@@ -2526,69 +2816,86 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fetch_sort_ts_returns_published_or_created_for_publishedat() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "u");
-        let cat_id = create_test_category(&conn, user_id, "c");
-        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+    #[tokio::test]
+    async fn fetch_sort_ts_returns_published_or_created_for_publishedat() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "u").await;
+        let cat_id = create_test_category(&db, user_id, "c").await;
+        let feed_id = create_test_feed(&db, cat_id, "https://example.com/f.xml").await;
 
         // Entry with published_at set
-        conn.execute(
-            "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
-            rusqlite::params![feed_id, "g1", "2026-04-01 10:00:00"],
+        let id1 = crate::query_scalar!(
+            &db,
+            i64,
+            "INSERT INTO entry (feed_id, guid, published_at) VALUES ($1, $2, $3) RETURNING id",
+            feed_id,
+            "g1",
+            "2026-04-01 10:00:00"
         )
         .unwrap();
-        let id1: i64 = conn.last_insert_rowid();
 
         // Entry with published_at NULL → COALESCE falls back to created_at
-        conn.execute(
-            "INSERT INTO entry (feed_id, guid, created_at) VALUES (?1, ?2, ?3)",
-            rusqlite::params![feed_id, "g2", "2026-04-02 11:00:00"],
+        let id2 = crate::query_scalar!(
+            &db,
+            i64,
+            "INSERT INTO entry (feed_id, guid, created_at) VALUES ($1, $2, $3) RETURNING id",
+            feed_id,
+            "g2",
+            "2026-04-02 11:00:00"
         )
         .unwrap();
-        let id2: i64 = conn.last_insert_rowid();
 
-        let ts1 = fetch_sort_ts(&conn, id1, EntrySortOrder::PublishedAt).unwrap();
-        let ts2 = fetch_sort_ts(&conn, id2, EntrySortOrder::PublishedAt).unwrap();
+        let ts1 = fetch_sort_ts(&db, id1, EntrySortOrder::PublishedAt)
+            .await
+            .unwrap();
+        let ts2 = fetch_sort_ts(&db, id2, EntrySortOrder::PublishedAt)
+            .await
+            .unwrap();
         assert_eq!(ts1.as_deref(), Some("2026-04-01 10:00:00"));
         assert_eq!(ts2.as_deref(), Some("2026-04-02 11:00:00"));
     }
 
-    #[test]
-    fn fetch_sort_ts_returns_read_at_for_readat_sort() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "u");
-        let cat_id = create_test_category(&conn, user_id, "c");
-        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+    #[tokio::test]
+    async fn fetch_sort_ts_returns_read_at_for_readat_sort() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "u").await;
+        let cat_id = create_test_category(&db, user_id, "c").await;
+        let feed_id = create_test_feed(&db, cat_id, "https://example.com/f.xml").await;
 
-        conn.execute(
-            "INSERT INTO entry (feed_id, guid, read_at) VALUES (?1, ?2, ?3)",
-            rusqlite::params![feed_id, "g1", "2026-04-03 12:00:00"],
+        let id = crate::query_scalar!(
+            &db,
+            i64,
+            "INSERT INTO entry (feed_id, guid, read_at) VALUES ($1, $2, $3) RETURNING id",
+            feed_id,
+            "g1",
+            "2026-04-03 12:00:00"
         )
         .unwrap();
-        let id: i64 = conn.last_insert_rowid();
 
-        let ts = fetch_sort_ts(&conn, id, EntrySortOrder::ReadAt).unwrap();
+        let ts = fetch_sort_ts(&db, id, EntrySortOrder::ReadAt)
+            .await
+            .unwrap();
         assert_eq!(ts.as_deref(), Some("2026-04-03 12:00:00"));
     }
 
-    #[test]
-    fn fetch_sort_ts_returns_none_for_missing_id() {
-        let conn = setup_db();
-        let ts = fetch_sort_ts(&conn, 99999, EntrySortOrder::PublishedAt).unwrap();
+    #[tokio::test]
+    async fn fetch_sort_ts_returns_none_for_missing_id() {
+        let db = setup_db().await;
+        let ts = fetch_sort_ts(&db, 99999, EntrySortOrder::PublishedAt)
+            .await
+            .unwrap();
         assert_eq!(ts, None);
     }
 
-    #[test]
-    fn composite_cursor_walks_non_monotonic_data_without_skip() {
+    #[tokio::test]
+    async fn composite_cursor_walks_non_monotonic_data_without_skip() {
         // Repro for #164: when id↔published_at order diverges (OPML re-import,
         // back-dated feed items), the legacy `e.id < ?` cursor silently skips.
         // The composite cursor must visit every entry.
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "u");
-        let cat_id = create_test_category(&conn, user_id, "c");
-        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "u").await;
+        let cat_id = create_test_category(&db, user_id, "c").await;
+        let feed_id = create_test_feed(&db, cat_id, "https://example.com/f.xml").await;
 
         // 6 monotonic entries (newer ts ⇒ later id), then 4 "back-dated" entries
         // with NEW ids but OLD timestamps (mimics OPML re-import).
@@ -2607,9 +2914,12 @@ mod tests {
             ("g10-bd", "2026-03-04 10:00:00"),
         ];
         for (guid, ts) in monotonic.iter().chain(backdated.iter()) {
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
-                rusqlite::params![feed_id, guid, ts],
+            crate::db_execute!(
+                &db,
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES ($1, $2, $3)",
+                feed_id,
+                *guid,
+                *ts
             )
             .unwrap();
         }
@@ -2629,8 +2939,9 @@ mod tests {
                 nt: None,
                 sort_order: EntrySortOrder::PublishedAt,
             };
-            let page =
-                list_by_user_with_continuation(&conn, user_id, &filter, &pagination).unwrap();
+            let page = list_by_user_with_continuation(&db, user_id, &filter, &pagination)
+                .await
+                .unwrap();
             if page.is_empty() {
                 break;
             }
@@ -2643,7 +2954,8 @@ mod tests {
                 seen.push(ewf.entry.id);
             }
             let last = page.last().unwrap();
-            let sort_ts = fetch_sort_ts(&conn, last.entry.id, EntrySortOrder::PublishedAt)
+            let sort_ts = fetch_sort_ts(&db, last.entry.id, EntrySortOrder::PublishedAt)
+                .await
                 .unwrap()
                 .unwrap();
             cursor = Some(ContinuationCursor::Composite {
@@ -2664,15 +2976,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn composite_cursor_walks_non_monotonic_data_oldest_first_without_skip() {
+    #[tokio::test]
+    async fn composite_cursor_walks_non_monotonic_data_oldest_first_without_skip() {
         // Same shape as composite_cursor_walks_non_monotonic_data_without_skip
         // but exercises the oldest_first=true (ASC) path of the bounded-OR
         // predicate. Triggered in production by the GReader `r=o` query param.
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "u");
-        let cat_id = create_test_category(&conn, user_id, "c");
-        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "u").await;
+        let cat_id = create_test_category(&db, user_id, "c").await;
+        let feed_id = create_test_feed(&db, cat_id, "https://example.com/f.xml").await;
 
         let monotonic = [
             ("g1", "2026-04-01 10:00:00"),
@@ -2689,9 +3001,12 @@ mod tests {
             ("g10-bd", "2026-03-04 10:00:00"),
         ];
         for (guid, ts) in monotonic.iter().chain(backdated.iter()) {
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
-                rusqlite::params![feed_id, guid, ts],
+            crate::db_execute!(
+                &db,
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES ($1, $2, $3)",
+                feed_id,
+                *guid,
+                *ts
             )
             .unwrap();
         }
@@ -2710,8 +3025,9 @@ mod tests {
                 nt: None,
                 sort_order: EntrySortOrder::PublishedAt,
             };
-            let page =
-                list_by_user_with_continuation(&conn, user_id, &filter, &pagination).unwrap();
+            let page = list_by_user_with_continuation(&db, user_id, &filter, &pagination)
+                .await
+                .unwrap();
             if page.is_empty() {
                 break;
             }
@@ -2724,7 +3040,8 @@ mod tests {
                 seen.push(ewf.entry.id);
             }
             let last = page.last().unwrap();
-            let sort_ts = fetch_sort_ts(&conn, last.entry.id, EntrySortOrder::PublishedAt)
+            let sort_ts = fetch_sort_ts(&db, last.entry.id, EntrySortOrder::PublishedAt)
+                .await
                 .unwrap()
                 .unwrap();
             cursor = Some(ContinuationCursor::Composite {
@@ -2744,32 +3061,29 @@ mod tests {
         );
     }
 
-    #[test]
-    fn legacy_bare_i64_cursor_still_paginates() {
+    #[tokio::test]
+    async fn legacy_bare_i64_cursor_still_paginates() {
         // In-flight cursors from pre-#164 deployments must still work for one
         // grace period. Under monotonic data (the common case), the legacy
         // `e.id < ?` predicate is correct.
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "u");
-        let cat_id = create_test_category(&conn, user_id, "c");
-        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "u").await;
+        let cat_id = create_test_category(&db, user_id, "c").await;
+        let feed_id = create_test_feed(&db, cat_id, "https://example.com/f.xml").await;
 
         for i in 1..=5 {
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
-                rusqlite::params![
-                    feed_id,
-                    format!("g{}", i),
-                    format!("2026-04-0{} 10:00:00", i)
-                ],
+            crate::db_execute!(
+                &db,
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES ($1, $2, $3)",
+                feed_id,
+                format!("g{}", i),
+                format!("2026-04-0{} 10:00:00", i)
             )
             .unwrap();
         }
 
         // Get id of "newest" entry (highest id, latest ts)
-        let max_id: i64 = conn
-            .query_row("SELECT MAX(id) FROM entry", [], |r| r.get(0))
-            .unwrap();
+        let max_id = crate::query_scalar!(&db, i64, "SELECT MAX(id) FROM entry").unwrap();
 
         let pagination = ContinuationParams {
             oldest_first: false,
@@ -2780,7 +3094,8 @@ mod tests {
             sort_order: EntrySortOrder::PublishedAt,
         };
         let page =
-            list_by_user_with_continuation(&conn, user_id, &EntryFilter::default(), &pagination)
+            list_by_user_with_continuation(&db, user_id, &EntryFilter::default(), &pagination)
+                .await
                 .unwrap();
 
         // 4 entries below the boundary id
@@ -2842,22 +3157,32 @@ mod tests {
     /// Captures the EXPLAIN QUERY PLAN output for a SELECT. Concatenates all
     /// `detail` columns so callers can `assert!(plan.contains("idx_entry_…"))`
     /// to lock in the planner choice. The bound values are placeholders — the
-    /// planner only needs parameter count to match.
-    fn explain_plan_for(conn: &Connection, sql: &str, params: &[&dyn rusqlite::ToSql]) -> String {
+    /// planner only needs parameter count to match, so `n_params` dummy `i64`s
+    /// are bound (one per `$N` placeholder).
+    async fn explain_plan_for(db: &Db, sql: &str, n_params: usize) -> String {
         let explain_sql = format!("EXPLAIN QUERY PLAN {}", sql);
-        let mut stmt = conn.prepare(&explain_sql).unwrap();
-        let rows: Vec<String> = stmt
-            .query_map(params, |row| row.get::<_, String>(3))
-            .unwrap()
-            .filter_map(Result::ok)
-            .collect();
-        rows.join(" | ")
+        let rows: Vec<(i64, i64, i64, String)> = match db {
+            Db::Sqlite(pool) => {
+                let mut q = sqlx::query_as::<sqlx::Sqlite, (i64, i64, i64, String)>(
+                    sqlx::AssertSqlSafe(explain_sql),
+                );
+                for _ in 0..n_params {
+                    q = q.bind(1i64);
+                }
+                q.fetch_all(pool).await.unwrap()
+            }
+            Db::Postgres(_) => unreachable!("tests run against sqlite"),
+        };
+        rows.into_iter()
+            .map(|r| r.3)
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 
-    #[test]
-    fn list_by_user_uses_partial_index_for_starred() {
-        let conn = setup_db();
-        let _ = create_test_user(&conn, "u");
+    #[tokio::test]
+    async fn list_by_user_uses_partial_index_for_starred() {
+        let db = setup_db().await;
+        let _ = create_test_user(&db, "u").await;
         // Tiny in-memory dataset is enough — INDEXED BY is mandatory and the
         // planner has no choice to override the hint.
         let sql = r#"
@@ -2870,11 +3195,11 @@ mod tests {
             INNER JOIN feed f ON e.feed_id = f.id
             INNER JOIN category c ON f.category_id = c.id
             LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
-            WHERE c.user_id = ?1 AND e.starred_at IS NOT NULL
+            WHERE c.user_id = $1 AND e.starred_at IS NOT NULL
             ORDER BY COALESCE(e.published_at, e.created_at) DESC
             LIMIT 51
         "#;
-        let plan = explain_plan_for(&conn, sql, &[&1i64]);
+        let plan = explain_plan_for(&db, sql, 1).await;
         assert!(
             plan.contains("idx_entry_starred_sort"),
             "plan missing partial index: {}",
@@ -2882,19 +3207,19 @@ mod tests {
         );
     }
 
-    #[test]
-    fn list_by_user_uses_partial_index_for_read() {
-        let conn = setup_db();
-        let _ = create_test_user(&conn, "u");
+    #[tokio::test]
+    async fn list_by_user_uses_partial_index_for_read() {
+        let db = setup_db().await;
+        let _ = create_test_user(&db, "u").await;
         let sql = r#"
             SELECT e.id FROM entry e INDEXED BY idx_entry_read_sort
             INNER JOIN feed f ON e.feed_id = f.id
             INNER JOIN category c ON f.category_id = c.id
-            WHERE c.user_id = ?1 AND e.read_at IS NOT NULL
+            WHERE c.user_id = $1 AND e.read_at IS NOT NULL
             ORDER BY COALESCE(e.published_at, e.created_at) DESC
             LIMIT 51
         "#;
-        let plan = explain_plan_for(&conn, sql, &[&1i64]);
+        let plan = explain_plan_for(&db, sql, 1).await;
         assert!(
             plan.contains("idx_entry_read_sort"),
             "plan missing partial index: {}",
@@ -2902,36 +3227,36 @@ mod tests {
         );
     }
 
-    #[test]
-    fn list_by_user_no_predicate_uses_sort_ts_index() {
+    #[tokio::test]
+    async fn list_by_user_no_predicate_uses_sort_ts_index() {
         // End-to-end: prepared SQL must include the INDEXED BY hint for the
         // "All Entries" case, otherwise the planner falls back to walking
         // every row via category->feed->entry.
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "u");
-        let cat_id = create_test_category(&conn, user_id, "c");
-        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "u").await;
+        let cat_id = create_test_category(&db, user_id, "c").await;
+        let feed_id = create_test_feed(&db, cat_id, "https://example.com/f.xml").await;
         for i in 1..=3 {
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
-                rusqlite::params![
-                    feed_id,
-                    format!("g{}", i),
-                    format!("2026-05-0{} 10:00:00", i)
-                ],
+            crate::db_execute!(
+                &db,
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES ($1, $2, $3)",
+                feed_id,
+                format!("g{}", i),
+                format!("2026-05-0{} 10:00:00", i)
             )
             .unwrap();
         }
 
         // Sanity: the public API returns the right rows under the hint.
         let rows = list_by_user(
-            &conn,
+            &db,
             user_id,
             &EntryFilter::default(),
             EntrySortOrder::PublishedAt,
             10,
             0,
         )
+        .await
         .unwrap();
         assert_eq!(rows.len(), 3);
 
@@ -2943,11 +3268,11 @@ mod tests {
             SELECT e.id FROM entry e INDEXED BY idx_entry_sort_ts
             INNER JOIN feed f ON e.feed_id = f.id
             INNER JOIN category c ON f.category_id = c.id
-            WHERE c.user_id = ?1
+            WHERE c.user_id = $1
             ORDER BY COALESCE(e.published_at, e.created_at) DESC
             LIMIT 51
         "#;
-        let plan = explain_plan_for(&conn, sql, &[&user_id]);
+        let plan = explain_plan_for(&db, sql, 1).await;
         assert!(
             plan.contains("idx_entry_sort_ts"),
             "plan missing sort_ts index: {}",
@@ -2955,8 +3280,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn continuation_page0_unfiltered_uses_sort_ts_index() {
+    #[tokio::test]
+    async fn continuation_page0_unfiltered_uses_sort_ts_index() {
         // Regression guard for the page-0 index hint added to
         // `list_by_user_with_continuation`. Without `INDEXED BY idx_entry_sort_ts`
         // the planner walks category->feed->entry and temp-B-tree-sorts the whole
@@ -2968,18 +3293,17 @@ mod tests {
         // Mirrors the same pattern as `list_by_user_no_predicate_uses_sort_ts_index`:
         // replicate the SQL shape the builder emits for the cursorless case and
         // assert EXPLAIN QUERY PLAN mentions the index.
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "u");
-        let cat_id = create_test_category(&conn, user_id, "c");
-        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/f.xml");
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "u").await;
+        let cat_id = create_test_category(&db, user_id, "c").await;
+        let feed_id = create_test_feed(&db, cat_id, "https://example.com/f.xml").await;
         for i in 1..=3 {
-            conn.execute(
-                "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
-                rusqlite::params![
-                    feed_id,
-                    format!("g{}", i),
-                    format!("2026-05-0{} 10:00:00", i)
-                ],
+            crate::db_execute!(
+                &db,
+                "INSERT INTO entry (feed_id, guid, published_at) VALUES ($1, $2, $3)",
+                feed_id,
+                format!("g{}", i),
+                format!("2026-05-0{} 10:00:00", i)
             )
             .unwrap();
         }
@@ -2997,11 +3321,11 @@ mod tests {
             INNER JOIN feed f ON e.feed_id = f.id
             INNER JOIN category c ON f.category_id = c.id
             LEFT JOIN image i ON i.entity_type = 'feed' AND i.entity_id = f.id
-            WHERE c.user_id = ?1
+            WHERE c.user_id = $1
             ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
-            LIMIT ?2
+            LIMIT $2
         "#;
-        let plan = explain_plan_for(&conn, sql, &[&user_id, &51i64]);
+        let plan = explain_plan_for(&db, sql, 2).await;
         assert!(
             plan.contains("idx_entry_sort_ts"),
             "plan missing sort_ts index: {}",
@@ -3021,29 +3345,28 @@ mod tests {
     /// that scans the read-majority of the table into a temp B-tree — an
     /// O(table) scan per call that grows unbounded with inbox size. The hint
     /// turns it into an indexed range scan that short-circuits at LIMIT 1.
-    #[test]
-    fn find_neighbors_unread_read_after_uses_sort_ts_not_multi_index_or() {
-        let conn = setup_db();
-        let _ = create_test_user(&conn, "u");
+    #[tokio::test]
+    async fn find_neighbors_unread_read_after_uses_sort_ts_not_multi_index_or() {
+        let db = setup_db().await;
+        let _ = create_test_user(&db, "u").await;
         // Mirrors the next-side SQL `find_neighbors` builds for an unread
         // filter with `read_after` set (see the join_kw / entry_hint branch).
+        // Each `$N` placeholder is distinct (the builder binds the sort_ts value
+        // twice rather than reusing one slot); only the parameter count matters
+        // to the planner.
         let sql = r#"
             SELECT e.id
             FROM entry e INDEXED BY idx_entry_sort_ts
             CROSS JOIN feed f ON e.feed_id = f.id
             CROSS JOIN category c ON f.category_id = c.id
-            WHERE c.user_id = ?1
-              AND (COALESCE(e.published_at, e.created_at) < ?2
-                   OR (COALESCE(e.published_at, e.created_at) = ?2 AND e.id < ?3))
-              AND (e.read_at IS NULL OR e.read_at >= ?4)
+            WHERE c.user_id = $1
+              AND (COALESCE(e.published_at, e.created_at) < $2
+                   OR (COALESCE(e.published_at, e.created_at) = $3 AND e.id < $4))
+              AND (e.read_at IS NULL OR e.read_at >= $5)
             ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
             LIMIT 1
         "#;
-        let plan = explain_plan_for(
-            &conn,
-            sql,
-            &[&1i64, &"2020-01-01 00:00:00", &1i64, &"2020-01-01 00:00:00"],
-        );
+        let plan = explain_plan_for(&db, sql, 5).await;
         assert!(
             plan.contains("idx_entry_sort_ts"),
             "plan must pin idx_entry_sort_ts: {}",
@@ -3061,16 +3384,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_continuation_walk_is_gapless_unfiltered() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "walker");
-        let category_id = create_test_category(&conn, user_id, "C");
-        let feed_id = create_test_feed(&conn, category_id, "https://example.com/walk.xml");
+    #[tokio::test]
+    async fn test_continuation_walk_is_gapless_unfiltered() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "walker").await;
+        let category_id = create_test_category(&db, user_id, "C").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/walk.xml").await;
         // 5 entries, distinct published_at so order is deterministic.
         for i in 0..5 {
             upsert_entry(
-                &conn,
+                &db,
                 feed_id,
                 &format!("g{i}"),
                 Some(&format!("T{i}")),
@@ -3084,6 +3407,7 @@ mod tests {
                         .unwrap(),
                 ),
             )
+            .await
             .unwrap();
         }
 
@@ -3099,7 +3423,9 @@ mod tests {
                 nt: None,
                 sort_order: EntrySortOrder::PublishedAt,
             };
-            let rows = list_by_user_with_continuation(&conn, user_id, &filter, &params).unwrap();
+            let rows = list_by_user_with_continuation(&db, user_id, &filter, &params)
+                .await
+                .unwrap();
             let has_more = rows.len() > 2;
             let page = &rows[..rows.len().min(2)];
             if page.is_empty() {
@@ -3112,7 +3438,8 @@ mod tests {
                 break;
             }
             let last = page.last().unwrap();
-            let ts = fetch_sort_ts(&conn, last.entry.id, EntrySortOrder::PublishedAt)
+            let ts = fetch_sort_ts(&db, last.entry.id, EntrySortOrder::PublishedAt)
+                .await
                 .unwrap()
                 .unwrap();
             cursor = Some(ContinuationCursor::Composite {
@@ -3129,44 +3456,41 @@ mod tests {
         assert_eq!(uniq.len(), 5, "no duplicates across pages: {seen:?}");
     }
 
-    #[test]
-    fn test_prune_respects_threshold_star_and_optin() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "pruneuser");
-        let cat_id = create_test_category(&conn, user_id, "PruneCat");
-        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/prune.xml");
+    #[tokio::test]
+    async fn test_prune_respects_threshold_star_and_optin() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "pruneuser").await;
+        let cat_id = create_test_category(&db, user_id, "PruneCat").await;
+        let feed_id = create_test_feed(&db, cat_id, "https://example.com/prune.xml").await;
 
         // Helper: insert a read entry aged `days_old` (and optionally starred).
-        let mk = |guid: &str, days: i64, starred: bool| {
-            upsert_entry_id(
-                &conn,
-                feed_id,
+        async fn mk(db: &Db, feed_id: i64, guid: &str, days: i64, starred: bool) {
+            upsert_entry_id(db, feed_id, guid, Some(guid), None, None, None, None, None)
+                .await
+                .unwrap();
+            crate::db_execute!(
+                db,
+                "UPDATE entry SET read_at = datetime('now', $2) WHERE guid = $1 AND feed_id = $3",
                 guid,
-                Some(guid),
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-            conn.execute(
-                "UPDATE entry SET read_at = datetime('now', ?2) WHERE guid = ?1 AND feed_id = ?3",
-                rusqlite::params![guid, format!("-{days} days"), feed_id],
+                format!("-{days} days"),
+                feed_id
             )
             .unwrap();
             if starred {
-                conn.execute(
-                    "UPDATE entry SET starred_at = datetime('now') WHERE guid = ?1 AND feed_id = ?2",
-                    rusqlite::params![guid, feed_id],
-                ).unwrap();
+                crate::db_execute!(
+                    db,
+                    "UPDATE entry SET starred_at = datetime('now') WHERE guid = $1 AND feed_id = $2",
+                    guid,
+                    feed_id
+                )
+                .unwrap();
             }
-        };
-        mk("old", 40, false); // read, 40d, not starred -> victim once enabled
-        mk("oldstar", 40, true); // starred -> never deleted
-        mk("fresh", 1, false); // too recent -> kept
+        }
+        mk(&db, feed_id, "old", 40, false).await; // read, 40d, not starred -> victim once enabled
+        mk(&db, feed_id, "oldstar", 40, true).await; // starred -> never deleted
+        mk(&db, feed_id, "fresh", 1, false).await; // too recent -> kept
         upsert_entry_id(
-            &conn,
+            &db,
             feed_id,
             "unread",
             Some("u"),
@@ -3176,44 +3500,54 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap(); // unread
 
         // Opt-in disabled (default 0): nothing pruned.
-        assert_eq!(prune_read_retention_batch(&conn, 500).unwrap(), 0);
+        assert_eq!(prune_read_retention_batch(&db, 500).await.unwrap(), 0);
 
         // Enable retention at 30 days for the feed's owner.
-        let user_id_check: i64 = conn.query_row(
-            "SELECT c.user_id FROM feed f JOIN category c ON c.id = f.category_id WHERE f.id = ?1",
-            rusqlite::params![feed_id], |r| r.get(0),
-        ).unwrap();
-        crate::models::user_settings::update_retention_read_days(&conn, user_id_check, 30).unwrap();
+        let user_id_check = crate::query_scalar!(
+            &db,
+            i64,
+            "SELECT c.user_id FROM feed f JOIN category c ON c.id = f.category_id WHERE f.id = $1",
+            feed_id
+        )
+        .unwrap();
+        crate::models::user_settings::update_retention_read_days(&db, user_id_check, 30)
+            .await
+            .unwrap();
 
         // Only "old" is pruned; a tombstone is written for it.
-        assert_eq!(prune_read_retention_batch(&conn, 500).unwrap(), 1);
+        assert_eq!(prune_read_retention_batch(&db, 500).await.unwrap(), 1);
         assert!(
-            find_by_guid_and_feed(&conn, "old", feed_id)
+            find_by_guid_and_feed(&db, "old", feed_id)
+                .await
                 .unwrap()
                 .is_none()
         );
         assert!(
-            find_by_guid_and_feed(&conn, "oldstar", feed_id)
+            find_by_guid_and_feed(&db, "oldstar", feed_id)
+                .await
                 .unwrap()
                 .is_some()
         );
         assert!(
-            find_by_guid_and_feed(&conn, "fresh", feed_id)
+            find_by_guid_and_feed(&db, "fresh", feed_id)
+                .await
                 .unwrap()
                 .is_some()
         );
         assert!(
-            find_by_guid_and_feed(&conn, "unread", feed_id)
+            find_by_guid_and_feed(&db, "unread", feed_id)
+                .await
                 .unwrap()
                 .is_some()
         );
 
         // Tombstone present -> a refresh serving "old" again is skipped.
         let outcome = upsert_entry_id(
-            &conn,
+            &db,
             feed_id,
             "old",
             Some("Old"),
@@ -3223,35 +3557,46 @@ mod tests {
             None,
             None,
         )
+        .await
         .unwrap();
         assert!(matches!(outcome, UpsertOutcome::SkippedTombstoned));
 
         // Idempotent: nothing left to prune.
-        assert_eq!(prune_read_retention_batch(&conn, 500).unwrap(), 0);
+        assert_eq!(prune_read_retention_batch(&db, 500).await.unwrap(), 0);
     }
 
-    #[test]
-    fn test_prune_batch_size_limits_rows() {
-        let conn = setup_db();
-        let user_id = create_test_user(&conn, "batchuser");
-        let cat_id = create_test_category(&conn, user_id, "BatchCat");
-        let feed_id = create_test_feed(&conn, cat_id, "https://example.com/batch.xml");
-        let user_id_check: i64 = conn.query_row(
-            "SELECT c.user_id FROM feed f JOIN category c ON c.id = f.category_id WHERE f.id = ?1",
-            rusqlite::params![feed_id], |r| r.get(0),
-        ).unwrap();
-        crate::models::user_settings::update_retention_read_days(&conn, user_id_check, 1).unwrap();
+    #[tokio::test]
+    async fn test_prune_batch_size_limits_rows() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "batchuser").await;
+        let cat_id = create_test_category(&db, user_id, "BatchCat").await;
+        let feed_id = create_test_feed(&db, cat_id, "https://example.com/batch.xml").await;
+        let user_id_check = crate::query_scalar!(
+            &db,
+            i64,
+            "SELECT c.user_id FROM feed f JOIN category c ON c.id = f.category_id WHERE f.id = $1",
+            feed_id
+        )
+        .unwrap();
+        crate::models::user_settings::update_retention_read_days(&db, user_id_check, 1)
+            .await
+            .unwrap();
         for i in 0..5 {
             let g = format!("g{i}");
-            upsert_entry_id(&conn, feed_id, &g, Some(&g), None, None, None, None, None).unwrap();
-            conn.execute(
-                "UPDATE entry SET read_at = datetime('now', '-10 days') WHERE guid = ?1 AND feed_id = ?2",
-                rusqlite::params![g, feed_id],
-            ).unwrap();
+            upsert_entry_id(&db, feed_id, &g, Some(&g), None, None, None, None, None)
+                .await
+                .unwrap();
+            crate::db_execute!(
+                &db,
+                "UPDATE entry SET read_at = datetime('now', '-10 days') WHERE guid = $1 AND feed_id = $2",
+                g,
+                feed_id
+            )
+            .unwrap();
         }
-        assert_eq!(prune_read_retention_batch(&conn, 2).unwrap(), 2);
-        assert_eq!(prune_read_retention_batch(&conn, 2).unwrap(), 2);
-        assert_eq!(prune_read_retention_batch(&conn, 2).unwrap(), 1);
-        assert_eq!(prune_read_retention_batch(&conn, 2).unwrap(), 0);
+        assert_eq!(prune_read_retention_batch(&db, 2).await.unwrap(), 2);
+        assert_eq!(prune_read_retention_batch(&db, 2).await.unwrap(), 2);
+        assert_eq!(prune_read_retention_batch(&db, 2).await.unwrap(), 1);
+        assert_eq!(prune_read_retention_batch(&db, 2).await.unwrap(), 0);
     }
 }

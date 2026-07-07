@@ -1,7 +1,8 @@
 use chrono::NaiveDate;
-use rusqlite::{Connection, params};
 
-use crate::error::AppResult;
+use crate::db::Db;
+use crate::error::{AppError, AppResult};
+use crate::{query_all, query_scalar};
 
 /// Overview metrics for a user within a date range.
 #[derive(Default)]
@@ -74,12 +75,14 @@ pub fn bucket_daily_counts(daily: &[DailyReadCount], max_bars: usize) -> Vec<Dai
 }
 
 /// A category with its entry count.
+#[derive(sqlx::FromRow)]
 pub struct CategoryCount {
     pub name: String,
     pub count: i64,
 }
 
 /// A feed with its entry count.
+#[derive(sqlx::FromRow)]
 pub struct FeedCount {
     pub title: String,
     pub count: i64,
@@ -125,72 +128,88 @@ pub struct AdminDatabaseStats {
 ///
 /// `from` and `to` are date strings in `YYYY-MM-DD` format. The range is
 /// `[from, to)` — i.e. `from` is inclusive and `to` is exclusive.
-pub fn get_personal_overview(
-    conn: &Connection,
+pub async fn get_personal_overview(
+    db: &Db,
     user_id: i64,
     from: &str,
     to: &str,
 ) -> AppResult<PersonalOverview> {
-    let total_entries: i64 = conn.query_row(
+    let total_entries: i64 = query_scalar!(
+        db,
+        i64,
         r#"
         SELECT COUNT(e.id)
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
-        WHERE c.user_id = ?1
-          AND COALESCE(e.published_at, e.created_at) >= ?2
-          AND COALESCE(e.published_at, e.created_at) < ?3
+        WHERE c.user_id = $1
+          AND COALESCE(e.published_at, e.created_at) >= $2
+          AND COALESCE(e.published_at, e.created_at) < $3
         "#,
-        params![user_id, from, to],
-        |row| row.get(0),
-    )?;
+        user_id,
+        from,
+        to,
+    )
+    .map_err(AppError::Database)?;
 
     // Read/starred counts are the read/starred *subset of the same publish
     // cohort* as total_entries — i.e. entries published in the period that
     // have since been read/starred (whenever) — not "reading activity in the
     // period". This keeps Read ⊆ Total so Unread and Read Rate stay coherent.
-    let read_entries: i64 = conn.query_row(
+    let read_entries: i64 = query_scalar!(
+        db,
+        i64,
         r#"
         SELECT COUNT(e.id)
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
-        WHERE c.user_id = ?1
-          AND COALESCE(e.published_at, e.created_at) >= ?2
-          AND COALESCE(e.published_at, e.created_at) < ?3
+        WHERE c.user_id = $1
+          AND COALESCE(e.published_at, e.created_at) >= $2
+          AND COALESCE(e.published_at, e.created_at) < $3
           AND e.read_at IS NOT NULL
         "#,
-        params![user_id, from, to],
-        |row| row.get(0),
-    )?;
+        user_id,
+        from,
+        to,
+    )
+    .map_err(AppError::Database)?;
 
-    let starred_entries: i64 = conn.query_row(
+    let starred_entries: i64 = query_scalar!(
+        db,
+        i64,
         r#"
         SELECT COUNT(e.id)
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
-        WHERE c.user_id = ?1
-          AND COALESCE(e.published_at, e.created_at) >= ?2
-          AND COALESCE(e.published_at, e.created_at) < ?3
+        WHERE c.user_id = $1
+          AND COALESCE(e.published_at, e.created_at) >= $2
+          AND COALESCE(e.published_at, e.created_at) < $3
           AND e.starred_at IS NOT NULL
         "#,
-        params![user_id, from, to],
-        |row| row.get(0),
-    )?;
+        user_id,
+        from,
+        to,
+    )
+    .map_err(AppError::Database)?;
 
-    let summaries: i64 = conn.query_row(
+    let summaries: i64 = query_scalar!(
+        db,
+        i64,
         r#"
         SELECT COUNT(es.id)
         FROM entry_summary es
-        WHERE es.user_id = ?1
+        WHERE es.user_id = $1
           AND es.status = 'completed'
-          AND es.created_at >= ?2
-          AND es.created_at < ?3
+          AND es.created_at >= $2
+          AND es.created_at < $3
         "#,
-        params![user_id, from, to],
-        |row| row.get(0),
-    )?;
+        user_id,
+        from,
+        to,
+    )
+    .map_err(AppError::Database)?;
 
     Ok(PersonalOverview {
         total_entries,
@@ -204,35 +223,37 @@ pub fn get_personal_overview(
 ///
 /// `from` and `to` are date strings in `YYYY-MM-DD` format. The range is
 /// `[from, to)`.
-pub fn get_daily_read_counts(
-    conn: &Connection,
+pub async fn get_daily_read_counts(
+    db: &Db,
     user_id: i64,
     from: &str,
     to: &str,
 ) -> AppResult<Vec<DailyReadCount>> {
-    let mut stmt = conn.prepare(
+    // Ad-hoc `(date_string, count)` rows → fetch as a tuple and post-process in
+    // Rust (fill zero-count days below).
+    // TODO(phase-c): PG dialect — `DATE(e.read_at)` should be `(e.read_at)::date`.
+    let rows = query_all!(
+        db,
+        (String, i64),
         r#"
         SELECT DATE(e.read_at) AS read_date, COUNT(e.id) AS cnt
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
         INNER JOIN category c ON f.category_id = c.id
-        WHERE c.user_id = ?1
-          AND e.read_at >= ?2
-          AND e.read_at < ?3
+        WHERE c.user_id = $1
+          AND e.read_at >= $2
+          AND e.read_at < $3
         GROUP BY read_date
         ORDER BY read_date
         "#,
-    )?;
-
-    let rows = stmt.query_map(params![user_id, from, to], |row| {
-        let date_str: String = row.get(0)?;
-        let count: i64 = row.get(1)?;
-        Ok((date_str, count))
-    })?;
+        user_id,
+        from,
+        to,
+    )
+    .map_err(AppError::Database)?;
 
     let mut counts_map = std::collections::HashMap::new();
-    for row in rows {
-        let (date_str, count) = row?;
+    for (date_str, count) in rows {
         if let Ok(date) = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d") {
             counts_map.insert(date, count);
         }
@@ -260,81 +281,80 @@ pub fn get_daily_read_counts(
 /// Get entry counts grouped by category for a user within a date range.
 ///
 /// Only categories with at least one entry are returned, ordered by count DESC.
-pub fn get_entries_by_category(
-    conn: &Connection,
+pub async fn get_entries_by_category(
+    db: &Db,
     user_id: i64,
     from: &str,
     to: &str,
 ) -> AppResult<Vec<CategoryCount>> {
-    let mut stmt = conn.prepare(
+    // `AS count` so `FromRow` (column-name match) populates `CategoryCount.count`;
+    // HAVING/ORDER BY reference the aggregate directly (portable, alias-free).
+    query_all!(
+        db,
+        CategoryCount,
         r#"
-        SELECT c.name, COUNT(e.id) AS cnt
+        SELECT c.name, COUNT(e.id) AS count
         FROM category c
         LEFT JOIN feed f ON f.category_id = c.id
         LEFT JOIN entry e ON e.feed_id = f.id
-            AND COALESCE(e.published_at, e.created_at) >= ?2
-            AND COALESCE(e.published_at, e.created_at) < ?3
-        WHERE c.user_id = ?1
+            AND COALESCE(e.published_at, e.created_at) >= $2
+            AND COALESCE(e.published_at, e.created_at) < $3
+        WHERE c.user_id = $1
         GROUP BY c.id
-        HAVING cnt > 0
-        ORDER BY cnt DESC
+        HAVING COUNT(e.id) > 0
+        ORDER BY COUNT(e.id) DESC
         "#,
-    )?;
-
-    let rows = stmt.query_map(params![user_id, from, to], |row| {
-        Ok(CategoryCount {
-            name: row.get(0)?,
-            count: row.get(1)?,
-        })
-    })?;
-
-    let result = rows.collect::<Result<Vec<_>, _>>()?;
-    Ok(result)
+        user_id,
+        from,
+        to,
+    )
+    .map_err(AppError::Database)
 }
 
 /// Get top feeds by entry count for a user within a date range.
 ///
 /// `limit` caps the number of results. Only feeds with at least one entry are
 /// returned, ordered by count DESC.
-pub fn get_top_feeds(
-    conn: &Connection,
+pub async fn get_top_feeds(
+    db: &Db,
     user_id: i64,
     from: &str,
     to: &str,
     limit: i64,
 ) -> AppResult<Vec<FeedCount>> {
-    let mut stmt = conn.prepare(
+    // `AS count` so `FromRow` (column-name match) populates `FeedCount.count`;
+    // HAVING/ORDER BY reference the aggregate directly (portable, alias-free).
+    query_all!(
+        db,
+        FeedCount,
         r#"
-        SELECT f.title, COUNT(e.id) AS cnt
+        SELECT f.title, COUNT(e.id) AS count
         FROM feed f
         INNER JOIN category c ON f.category_id = c.id
         LEFT JOIN entry e ON e.feed_id = f.id
-            AND COALESCE(e.published_at, e.created_at) >= ?2
-            AND COALESCE(e.published_at, e.created_at) < ?3
-        WHERE c.user_id = ?1
+            AND COALESCE(e.published_at, e.created_at) >= $2
+            AND COALESCE(e.published_at, e.created_at) < $3
+        WHERE c.user_id = $1
         GROUP BY f.id
-        HAVING cnt > 0
-        ORDER BY cnt DESC
-        LIMIT ?4
+        HAVING COUNT(e.id) > 0
+        ORDER BY COUNT(e.id) DESC
+        LIMIT $4
         "#,
-    )?;
-
-    let rows = stmt.query_map(params![user_id, from, to, limit], |row| {
-        Ok(FeedCount {
-            title: row.get(0)?,
-            count: row.get(1)?,
-        })
-    })?;
-
-    let result = rows.collect::<Result<Vec<_>, _>>()?;
-    Ok(result)
+        user_id,
+        from,
+        to,
+        limit,
+    )
+    .map_err(AppError::Database)
 }
 
 /// Get site-wide admin counts (period-independent).
-pub fn get_admin_counts(conn: &Connection) -> AppResult<AdminCounts> {
-    let total_users: i64 = conn.query_row("SELECT COUNT(*) FROM user", [], |row| row.get(0))?;
+pub async fn get_admin_counts(db: &Db) -> AppResult<AdminCounts> {
+    let total_users: i64 =
+        query_scalar!(db, i64, "SELECT COUNT(*) FROM user").map_err(AppError::Database)?;
 
-    let total_feeds: i64 = conn.query_row("SELECT COUNT(*) FROM feed", [], |row| row.get(0))?;
+    let total_feeds: i64 =
+        query_scalar!(db, i64, "SELECT COUNT(*) FROM feed").map_err(AppError::Database)?;
 
     Ok(AdminCounts {
         total_users,
@@ -343,35 +363,37 @@ pub fn get_admin_counts(conn: &Connection) -> AppResult<AdminCounts> {
 }
 
 /// Get site-wide admin entry stats within a date range.
-pub fn get_admin_entry_stats(
-    conn: &Connection,
-    from: &str,
-    to: &str,
-) -> AppResult<AdminEntryStats> {
-    let total_entries: i64 = conn.query_row(
+pub async fn get_admin_entry_stats(db: &Db, from: &str, to: &str) -> AppResult<AdminEntryStats> {
+    let total_entries: i64 = query_scalar!(
+        db,
+        i64,
         r#"
         SELECT COUNT(id)
         FROM entry
-        WHERE COALESCE(published_at, created_at) >= ?1
-          AND COALESCE(published_at, created_at) < ?2
+        WHERE COALESCE(published_at, created_at) >= $1
+          AND COALESCE(published_at, created_at) < $2
         "#,
-        params![from, to],
-        |row| row.get(0),
-    )?;
+        from,
+        to,
+    )
+    .map_err(AppError::Database)?;
 
     // Read subset of the same publish cohort as total_entries (see
     // get_personal_overview), so Site Read Rate stays bounded to 0–100%.
-    let read_entries: i64 = conn.query_row(
+    let read_entries: i64 = query_scalar!(
+        db,
+        i64,
         r#"
         SELECT COUNT(id)
         FROM entry
-        WHERE COALESCE(published_at, created_at) >= ?1
-          AND COALESCE(published_at, created_at) < ?2
+        WHERE COALESCE(published_at, created_at) >= $1
+          AND COALESCE(published_at, created_at) < $2
           AND read_at IS NOT NULL
         "#,
-        params![from, to],
-        |row| row.get(0),
-    )?;
+        from,
+        to,
+    )
+    .map_err(AppError::Database)?;
 
     Ok(AdminEntryStats {
         total_entries,
@@ -380,10 +402,29 @@ pub fn get_admin_entry_stats(
 }
 
 /// Get site-wide database storage + record stats (period-independent).
-pub fn get_admin_database_stats(conn: &Connection) -> AppResult<AdminDatabaseStats> {
-    let page_count: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
-    let page_size: i64 = conn.pragma_query_value(None, "page_size", |row| row.get(0))?;
-    let freelist: i64 = conn.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
+pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> {
+    // Page-level storage stats come from SQLite PRAGMAs, which have no direct
+    // sqlx/portable equivalent, so dispatch per-backend explicitly.
+    let (page_count, page_size, freelist): (i64, i64, i64) = match db {
+        Db::Sqlite(pool) => {
+            let page_count = sqlx::query_scalar::<_, i64>("PRAGMA page_count")
+                .fetch_one(pool)
+                .await
+                .map_err(AppError::Database)?;
+            let page_size = sqlx::query_scalar::<_, i64>("PRAGMA page_size")
+                .fetch_one(pool)
+                .await
+                .map_err(AppError::Database)?;
+            let freelist = sqlx::query_scalar::<_, i64>("PRAGMA freelist_count")
+                .fetch_one(pool)
+                .await
+                .map_err(AppError::Database)?;
+            (page_count, page_size, freelist)
+        }
+        // TODO(phase-c): PG size via pg_database_size() (and there is no
+        // freelist concept — VACUUM/bloat stats differ). Zeroes for now.
+        Db::Postgres(_pool) => (0, 0, 0),
+    };
 
     let db_size_bytes = page_count * page_size;
     let reclaimable_bytes = freelist * page_size;
@@ -393,14 +434,17 @@ pub fn get_admin_database_stats(conn: &Connection) -> AppResult<AdminDatabaseSta
         0.0
     };
 
-    let total_entries: i64 = conn.query_row("SELECT COUNT(*) FROM entry", [], |row| row.get(0))?;
+    let total_entries: i64 =
+        query_scalar!(db, i64, "SELECT COUNT(*) FROM entry").map_err(AppError::Database)?;
     // Bare MIN/MAX so SQLite uses the idx_entry_created_at endpoint optimization.
     let min_created: Option<String> =
-        conn.query_row("SELECT MIN(created_at) FROM entry", [], |row| row.get(0))?;
+        query_scalar!(db, Option<String>, "SELECT MIN(created_at) FROM entry")
+            .map_err(AppError::Database)?;
     let max_created: Option<String> =
-        conn.query_row("SELECT MAX(created_at) FROM entry", [], |row| row.get(0))?;
-    let tombstone_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM entry_tombstone", [], |row| row.get(0))?;
+        query_scalar!(db, Option<String>, "SELECT MAX(created_at) FROM entry")
+            .map_err(AppError::Database)?;
+    let tombstone_count: i64 = query_scalar!(db, i64, "SELECT COUNT(*) FROM entry_tombstone")
+        .map_err(AppError::Database)?;
 
     // Use the fallible parser (not parse_datetime, whose Utc::now() fallback
     // would silently corrupt these aggregates on an unparseable timestamp).
@@ -441,104 +485,117 @@ pub fn get_admin_database_stats(conn: &Connection) -> AppResult<AdminDatabaseSta
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::params;
+    use crate::models::user::Role;
+    use crate::models::{category, feed, user};
 
-    fn setup_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        crate::db::init_db(&conn).unwrap();
-        conn
+    async fn setup_db() -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
-    fn create_user_with_data(conn: &Connection) -> i64 {
-        let password_hash = crate::auth::hash_password("test").unwrap();
-        conn.execute(
-            "INSERT INTO user (username, password_hash, role) VALUES (?1, ?2, 'user')",
-            params!["testuser", password_hash],
+    async fn create_user_with_data(db: &Db) -> i64 {
+        let user_id = user::create_user(db, "testuser", "hash", Role::User)
+            .await
+            .unwrap()
+            .id;
+        let cat = category::create_category(db, user_id, "Tech")
+            .await
+            .unwrap();
+        feed::create_feed(
+            db,
+            &feed::CreateFeedParams {
+                category_id: cat.id,
+                url: "https://example.com/feed",
+                title: Some("Test Feed"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
-        .unwrap();
-        let user_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO category (user_id, name) VALUES (?1, 'Tech')",
-            params![user_id],
-        )
-        .unwrap();
-        let cat_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO feed (category_id, url, title) VALUES (?1, 'https://example.com/feed', 'Test Feed')",
-            params![cat_id],
-        )
+        .await
         .unwrap();
         user_id
     }
 
     /// Helper: get the `feed_id` for the first feed belonging to user's category.
-    fn get_feed_id(conn: &Connection, user_id: i64) -> i64 {
-        conn.query_row(
-            "SELECT f.id FROM feed f INNER JOIN category c ON f.category_id = c.id WHERE c.user_id = ?1 LIMIT 1",
-            params![user_id],
-            |row| row.get(0),
+    async fn get_feed_id(db: &Db, user_id: i64) -> i64 {
+        query_scalar!(
+            db,
+            i64,
+            "SELECT f.id FROM feed f INNER JOIN category c ON f.category_id = c.id WHERE c.user_id = $1 LIMIT 1",
+            user_id,
         )
         .unwrap()
     }
 
     /// Helper: insert an entry with a specific `published_at` date (YYYY-MM-DD).
-    fn insert_entry(conn: &Connection, feed_id: i64, guid: &str, published_at: &str) -> i64 {
-        conn.execute(
-            "INSERT INTO entry (feed_id, guid, published_at) VALUES (?1, ?2, ?3)",
-            params![feed_id, guid, published_at],
+    async fn insert_entry(db: &Db, feed_id: i64, guid: &str, published_at: &str) -> i64 {
+        query_scalar!(
+            db,
+            i64,
+            "INSERT INTO entry (feed_id, guid, published_at) VALUES ($1, $2, $3) RETURNING id",
+            feed_id,
+            guid,
+            published_at,
         )
-        .unwrap();
-        conn.last_insert_rowid()
+        .unwrap()
     }
 
     /// Helper: insert an entry with an explicit `created_at` (YYYY-MM-DD HH:MM:SS).
-    fn insert_entry_created_at(
-        conn: &Connection,
-        feed_id: i64,
-        guid: &str,
-        created_at: &str,
-    ) -> i64 {
-        conn.execute(
-            "INSERT INTO entry (feed_id, guid, created_at) VALUES (?1, ?2, ?3)",
-            params![feed_id, guid, created_at],
+    async fn insert_entry_created_at(db: &Db, feed_id: i64, guid: &str, created_at: &str) -> i64 {
+        query_scalar!(
+            db,
+            i64,
+            "INSERT INTO entry (feed_id, guid, created_at) VALUES ($1, $2, $3) RETURNING id",
+            feed_id,
+            guid,
+            created_at,
         )
-        .unwrap();
-        conn.last_insert_rowid()
+        .unwrap()
     }
 
     /// Helper: insert a tombstone row.
-    fn insert_tombstone(conn: &Connection, feed_id: i64, guid: &str) {
-        conn.execute(
-            "INSERT INTO entry_tombstone (feed_id, guid) VALUES (?1, ?2)",
-            params![feed_id, guid],
+    async fn insert_tombstone(db: &Db, feed_id: i64, guid: &str) {
+        crate::db_execute!(
+            db,
+            "INSERT INTO entry_tombstone (feed_id, guid) VALUES ($1, $2)",
+            feed_id,
+            guid,
         )
         .unwrap();
     }
 
     /// Helper: mark entry as read at a specific datetime.
-    fn mark_read(conn: &Connection, entry_id: i64, read_at: &str) {
-        conn.execute(
-            "UPDATE entry SET read_at = ?1 WHERE id = ?2",
-            params![read_at, entry_id],
+    async fn mark_read(db: &Db, entry_id: i64, read_at: &str) {
+        crate::db_execute!(
+            db,
+            "UPDATE entry SET read_at = $1 WHERE id = $2",
+            read_at,
+            entry_id,
         )
         .unwrap();
     }
 
     /// Helper: mark entry as starred at a specific datetime.
-    fn mark_starred(conn: &Connection, entry_id: i64, starred_at: &str) {
-        conn.execute(
-            "UPDATE entry SET starred_at = ?1 WHERE id = ?2",
-            params![starred_at, entry_id],
+    async fn mark_starred(db: &Db, entry_id: i64, starred_at: &str) {
+        crate::db_execute!(
+            db,
+            "UPDATE entry SET starred_at = $1 WHERE id = $2",
+            starred_at,
+            entry_id,
         )
         .unwrap();
     }
 
-    #[test]
-    fn test_personal_overview_empty() {
-        let conn = setup_db();
-        let user_id = create_user_with_data(&conn);
+    #[tokio::test]
+    async fn test_personal_overview_empty() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
 
-        let overview = get_personal_overview(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
+        let overview = get_personal_overview(&db, user_id, "2024-01-01", "2024-02-01")
+            .await
+            .unwrap();
 
         assert_eq!(overview.total_entries, 0);
         assert_eq!(overview.read_entries, 0);
@@ -548,21 +605,23 @@ mod tests {
         assert_eq!(overview.read_rate(), 0.0);
     }
 
-    #[test]
-    fn test_personal_overview_with_data() {
-        let conn = setup_db();
-        let user_id = create_user_with_data(&conn);
-        let feed_id = get_feed_id(&conn, user_id);
+    #[tokio::test]
+    async fn test_personal_overview_with_data() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
 
-        let e1 = insert_entry(&conn, feed_id, "g1", "2024-01-05");
-        let e2 = insert_entry(&conn, feed_id, "g2", "2024-01-10");
-        let e3 = insert_entry(&conn, feed_id, "g3", "2024-01-15");
+        let e1 = insert_entry(&db, feed_id, "g1", "2024-01-05").await;
+        let e2 = insert_entry(&db, feed_id, "g2", "2024-01-10").await;
+        let e3 = insert_entry(&db, feed_id, "g3", "2024-01-15").await;
 
-        mark_read(&conn, e1, "2024-01-06");
-        mark_read(&conn, e2, "2024-01-11");
-        mark_starred(&conn, e3, "2024-01-16");
+        mark_read(&db, e1, "2024-01-06").await;
+        mark_read(&db, e2, "2024-01-11").await;
+        mark_starred(&db, e3, "2024-01-16").await;
 
-        let overview = get_personal_overview(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
+        let overview = get_personal_overview(&db, user_id, "2024-01-01", "2024-02-01")
+            .await
+            .unwrap();
 
         assert_eq!(overview.total_entries, 3);
         assert_eq!(overview.read_entries, 2);
@@ -570,34 +629,36 @@ mod tests {
         assert_eq!(overview.unread_entries(), 1);
     }
 
-    #[test]
-    fn test_personal_overview_uses_publish_cohort() {
+    #[tokio::test]
+    async fn test_personal_overview_uses_publish_cohort() {
         // Read/starred counts must be the read/starred subset of the entries
         // *published in the period* — not "activity in the period". This pins
         // the fix for Unread always 0 / Read Rate always 100%.
-        let conn = setup_db();
-        let user_id = create_user_with_data(&conn);
-        let feed_id = get_feed_id(&conn, user_id);
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
 
         // Published BEFORE the period but read+starred DURING it. The old
         // activity-based query counted these; the publish cohort must not.
-        let old = insert_entry(&conn, feed_id, "old", "2023-12-01");
-        mark_read(&conn, old, "2024-01-15");
-        mark_starred(&conn, old, "2024-01-16");
+        let old = insert_entry(&db, feed_id, "old", "2023-12-01").await;
+        mark_read(&db, old, "2024-01-15").await;
+        mark_starred(&db, old, "2024-01-16").await;
 
         // In cohort, read inside the period, also starred.
-        let e1 = insert_entry(&conn, feed_id, "e1", "2024-01-05");
-        mark_read(&conn, e1, "2024-01-06");
-        mark_starred(&conn, e1, "2024-01-07");
+        let e1 = insert_entry(&db, feed_id, "e1", "2024-01-05").await;
+        mark_read(&db, e1, "2024-01-06").await;
+        mark_starred(&db, e1, "2024-01-07").await;
 
         // In cohort, never read → unread.
-        insert_entry(&conn, feed_id, "e2", "2024-01-10");
+        insert_entry(&db, feed_id, "e2", "2024-01-10").await;
 
         // In cohort, read AFTER the period ends → still "read" (read_at set).
-        let e3 = insert_entry(&conn, feed_id, "e3", "2024-01-20");
-        mark_read(&conn, e3, "2024-03-01");
+        let e3 = insert_entry(&db, feed_id, "e3", "2024-01-20").await;
+        mark_read(&db, e3, "2024-03-01").await;
 
-        let overview = get_personal_overview(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
+        let overview = get_personal_overview(&db, user_id, "2024-01-01", "2024-02-01")
+            .await
+            .unwrap();
 
         assert_eq!(overview.total_entries, 3, "old (Dec) entry excluded");
         assert_eq!(overview.read_entries, 2, "e1 + e3, not the Dec entry");
@@ -610,30 +671,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_personal_overview_respects_date_range() {
-        let conn = setup_db();
-        let user_id = create_user_with_data(&conn);
-        let feed_id = get_feed_id(&conn, user_id);
+    #[tokio::test]
+    async fn test_personal_overview_respects_date_range() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
 
         // Inside range
-        insert_entry(&conn, feed_id, "g-in", "2024-01-15");
+        insert_entry(&db, feed_id, "g-in", "2024-01-15").await;
         // Outside range (before)
-        insert_entry(&conn, feed_id, "g-before", "2023-12-31");
+        insert_entry(&db, feed_id, "g-before", "2023-12-31").await;
         // Outside range (on to boundary — exclusive)
-        insert_entry(&conn, feed_id, "g-on-to", "2024-02-01");
+        insert_entry(&db, feed_id, "g-on-to", "2024-02-01").await;
 
-        let overview = get_personal_overview(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
+        let overview = get_personal_overview(&db, user_id, "2024-01-01", "2024-02-01")
+            .await
+            .unwrap();
 
         assert_eq!(overview.total_entries, 1);
     }
 
-    #[test]
-    fn test_daily_read_counts_empty() {
-        let conn = setup_db();
-        let user_id = create_user_with_data(&conn);
+    #[tokio::test]
+    async fn test_daily_read_counts_empty() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
 
-        let counts = get_daily_read_counts(&conn, user_id, "2024-01-01", "2024-01-04").unwrap();
+        let counts = get_daily_read_counts(&db, user_id, "2024-01-01", "2024-01-04")
+            .await
+            .unwrap();
 
         assert_eq!(counts.len(), 3); // Jan 1, 2, 3
         for c in &counts {
@@ -641,21 +706,23 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_daily_read_counts_with_data() {
-        let conn = setup_db();
-        let user_id = create_user_with_data(&conn);
-        let feed_id = get_feed_id(&conn, user_id);
+    #[tokio::test]
+    async fn test_daily_read_counts_with_data() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
 
-        let e1 = insert_entry(&conn, feed_id, "g1", "2024-01-01");
-        let e2 = insert_entry(&conn, feed_id, "g2", "2024-01-01");
-        let e3 = insert_entry(&conn, feed_id, "g3", "2024-01-02");
+        let e1 = insert_entry(&db, feed_id, "g1", "2024-01-01").await;
+        let e2 = insert_entry(&db, feed_id, "g2", "2024-01-01").await;
+        let e3 = insert_entry(&db, feed_id, "g3", "2024-01-02").await;
 
-        mark_read(&conn, e1, "2024-01-02");
-        mark_read(&conn, e2, "2024-01-02");
-        mark_read(&conn, e3, "2024-01-03");
+        mark_read(&db, e1, "2024-01-02").await;
+        mark_read(&db, e2, "2024-01-02").await;
+        mark_read(&db, e3, "2024-01-03").await;
 
-        let counts = get_daily_read_counts(&conn, user_id, "2024-01-01", "2024-01-05").unwrap();
+        let counts = get_daily_read_counts(&db, user_id, "2024-01-01", "2024-01-05")
+            .await
+            .unwrap();
 
         assert_eq!(counts.len(), 4); // Jan 1–4
         assert_eq!(counts[0].count, 0); // Jan 1: no reads on that day
@@ -678,13 +745,13 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn test_bucket_daily_counts_empty() {
+    #[tokio::test]
+    async fn test_bucket_daily_counts_empty() {
         assert!(bucket_daily_counts(&[], 14).is_empty());
     }
 
-    #[test]
-    fn test_bucket_daily_counts_no_aggregation_within_max() {
+    #[tokio::test]
+    async fn test_bucket_daily_counts_no_aggregation_within_max() {
         let daily = daily_run(&[0, 2, 1, 0]);
         let buckets = bucket_daily_counts(&daily, 14);
 
@@ -696,8 +763,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_bucket_daily_counts_aggregates_over_max() {
+    #[tokio::test]
+    async fn test_bucket_daily_counts_aggregates_over_max() {
         // 15 days > max 14 → bucket_size = ceil(15/14) = 2 → ceil(15/2) = 8 buckets.
         let daily = daily_run(&[1; 15]);
         let buckets = bucket_daily_counts(&daily, 14);
@@ -714,8 +781,8 @@ mod tests {
         assert!(buckets.len() <= 14);
     }
 
-    #[test]
-    fn test_bucket_daily_counts_last_bucket_partial() {
+    #[tokio::test]
+    async fn test_bucket_daily_counts_last_bucket_partial() {
         // 15 days, size 2 → last (8th) bucket has a single leftover day.
         let daily = daily_run(&[1; 15]);
         let buckets = bucket_daily_counts(&daily, 14);
@@ -726,8 +793,8 @@ mod tests {
         assert_eq!(last.count, 1);
     }
 
-    #[test]
-    fn test_bucket_daily_counts_sums_within_bucket() {
+    #[tokio::test]
+    async fn test_bucket_daily_counts_sums_within_bucket() {
         // 28 days → size = ceil(28/14) = 2; counts 1..=28 → bucket 0 = 1+2 = 3.
         let counts: Vec<i64> = (1..=28).collect();
         let daily = daily_run(&counts);
@@ -738,32 +805,41 @@ mod tests {
         assert_eq!(buckets[13].count, 55); // 27 + 28
     }
 
-    #[test]
-    fn test_entries_by_category() {
-        let conn = setup_db();
-        let user_id = create_user_with_data(&conn);
-        let feed_id = get_feed_id(&conn, user_id);
+    #[tokio::test]
+    async fn test_entries_by_category() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
 
         // Add a second category + feed
-        conn.execute(
-            "INSERT INTO category (user_id, name) VALUES (?1, 'Science')",
-            params![user_id],
+        let cat2 = category::create_category(&db, user_id, "Science")
+            .await
+            .unwrap();
+        let feed2_id = feed::create_feed(
+            &db,
+            &feed::CreateFeedParams {
+                category_id: cat2.id,
+                url: "https://science.com/feed",
+                title: Some("Science Feed"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
         )
-        .unwrap();
-        let cat2_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO feed (category_id, url, title) VALUES (?1, 'https://science.com/feed', 'Science Feed')",
-            params![cat2_id],
-        )
-        .unwrap();
-        let feed2_id = conn.last_insert_rowid();
+        .await
+        .unwrap()
+        .id;
 
         // 2 entries in Tech, 1 in Science
-        insert_entry(&conn, feed_id, "t1", "2024-01-05");
-        insert_entry(&conn, feed_id, "t2", "2024-01-10");
-        insert_entry(&conn, feed2_id, "s1", "2024-01-07");
+        insert_entry(&db, feed_id, "t1", "2024-01-05").await;
+        insert_entry(&db, feed_id, "t2", "2024-01-10").await;
+        insert_entry(&db, feed2_id, "s1", "2024-01-07").await;
 
-        let counts = get_entries_by_category(&conn, user_id, "2024-01-01", "2024-02-01").unwrap();
+        let counts = get_entries_by_category(&db, user_id, "2024-01-01", "2024-02-01")
+            .await
+            .unwrap();
 
         assert_eq!(counts.len(), 2);
         assert_eq!(counts[0].name, "Tech");
@@ -772,61 +848,65 @@ mod tests {
         assert_eq!(counts[1].count, 1);
     }
 
-    #[test]
-    fn test_top_feeds() {
-        let conn = setup_db();
-        let user_id = create_user_with_data(&conn);
-        let feed_id = get_feed_id(&conn, user_id);
+    #[tokio::test]
+    async fn test_top_feeds() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
 
-        insert_entry(&conn, feed_id, "g1", "2024-01-05");
+        insert_entry(&db, feed_id, "g1", "2024-01-05").await;
 
-        let feeds = get_top_feeds(&conn, user_id, "2024-01-01", "2024-02-01", 10).unwrap();
+        let feeds = get_top_feeds(&db, user_id, "2024-01-01", "2024-02-01", 10)
+            .await
+            .unwrap();
 
         assert_eq!(feeds.len(), 1);
         assert_eq!(feeds[0].title, "Test Feed");
         assert_eq!(feeds[0].count, 1);
     }
 
-    #[test]
-    fn test_admin_counts() {
-        let conn = setup_db();
-        create_user_with_data(&conn);
+    #[tokio::test]
+    async fn test_admin_counts() {
+        let db = setup_db().await;
+        create_user_with_data(&db).await;
 
-        let counts = get_admin_counts(&conn).unwrap();
+        let counts = get_admin_counts(&db).await.unwrap();
 
         assert_eq!(counts.total_users, 1);
         assert_eq!(counts.total_feeds, 1);
     }
 
-    #[test]
-    fn test_admin_entry_stats() {
-        let conn = setup_db();
-        let user_id = create_user_with_data(&conn);
-        let feed_id = get_feed_id(&conn, user_id);
+    #[tokio::test]
+    async fn test_admin_entry_stats() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
 
-        let e1 = insert_entry(&conn, feed_id, "g1", "2024-01-05");
-        let _e2 = insert_entry(&conn, feed_id, "g2", "2024-01-10");
+        let e1 = insert_entry(&db, feed_id, "g1", "2024-01-05").await;
+        let _e2 = insert_entry(&db, feed_id, "g2", "2024-01-10").await;
 
-        mark_read(&conn, e1, "2024-01-06");
+        mark_read(&db, e1, "2024-01-06").await;
 
         // Published before the period but read inside it: the old query
         // counted this toward read_entries and could push the rate past 100%.
-        let old = insert_entry(&conn, feed_id, "g-old", "2023-12-01");
-        mark_read(&conn, old, "2024-01-07");
+        let old = insert_entry(&db, feed_id, "g-old", "2023-12-01").await;
+        mark_read(&db, old, "2024-01-07").await;
 
-        let stats = get_admin_entry_stats(&conn, "2024-01-01", "2024-02-01").unwrap();
+        let stats = get_admin_entry_stats(&db, "2024-01-01", "2024-02-01")
+            .await
+            .unwrap();
 
         assert_eq!(stats.total_entries, 2, "Dec entry is outside the period");
         assert_eq!(stats.read_entries, 1, "only g1; the Dec entry is excluded");
         assert!((stats.read_rate() - 50.0).abs() < 1e-6);
     }
 
-    #[test]
-    fn test_admin_database_stats_empty() {
-        let conn = setup_db();
-        create_user_with_data(&conn);
+    #[tokio::test]
+    async fn test_admin_database_stats_empty() {
+        let db = setup_db().await;
+        create_user_with_data(&db).await;
 
-        let s = get_admin_database_stats(&conn).unwrap();
+        let s = get_admin_database_stats(&db).await.unwrap();
 
         // A freshly-initialized DB still has pages, so size is positive.
         assert!(s.db_size_bytes > 0);
@@ -839,22 +919,22 @@ mod tests {
         assert_eq!(s.tombstone_count, 0);
     }
 
-    #[test]
-    fn test_admin_database_stats_with_data() {
-        let conn = setup_db();
-        let user_id = create_user_with_data(&conn);
-        let feed_id = get_feed_id(&conn, user_id);
+    #[tokio::test]
+    async fn test_admin_database_stats_with_data() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
 
         // 4 entries spanning exactly 3 days (2024-01-01 .. 2024-01-04).
-        insert_entry_created_at(&conn, feed_id, "a", "2024-01-01 00:00:00");
-        insert_entry_created_at(&conn, feed_id, "b", "2024-01-02 00:00:00");
-        insert_entry_created_at(&conn, feed_id, "c", "2024-01-03 00:00:00");
-        insert_entry_created_at(&conn, feed_id, "d", "2024-01-04 00:00:00");
+        insert_entry_created_at(&db, feed_id, "a", "2024-01-01 00:00:00").await;
+        insert_entry_created_at(&db, feed_id, "b", "2024-01-02 00:00:00").await;
+        insert_entry_created_at(&db, feed_id, "c", "2024-01-03 00:00:00").await;
+        insert_entry_created_at(&db, feed_id, "d", "2024-01-04 00:00:00").await;
 
-        insert_tombstone(&conn, feed_id, "dead-1");
-        insert_tombstone(&conn, feed_id, "dead-2");
+        insert_tombstone(&db, feed_id, "dead-1").await;
+        insert_tombstone(&db, feed_id, "dead-2").await;
 
-        let s = get_admin_database_stats(&conn).unwrap();
+        let s = get_admin_database_stats(&db).await.unwrap();
 
         assert_eq!(s.total_entries, 4);
         assert_eq!(s.tombstone_count, 2);
@@ -873,35 +953,35 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_admin_database_stats_avg_guards_subday_span() {
+    #[tokio::test]
+    async fn test_admin_database_stats_avg_guards_subday_span() {
         // A single entry → coverage span 0 → denominator guarded at 1 day so
         // the average is finite (and equals the entry count) rather than inf.
-        let conn = setup_db();
-        let user_id = create_user_with_data(&conn);
-        let feed_id = get_feed_id(&conn, user_id);
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
 
-        insert_entry_created_at(&conn, feed_id, "only", "2024-01-01 12:00:00");
+        insert_entry_created_at(&db, feed_id, "only", "2024-01-01 12:00:00").await;
 
-        let s = get_admin_database_stats(&conn).unwrap();
+        let s = get_admin_database_stats(&db).await.unwrap();
 
         assert_eq!(s.total_entries, 1);
         assert_eq!(s.coverage_days, 0.0);
         assert!((s.avg_new_entries_per_day - 1.0).abs() < 1e-6);
     }
 
-    #[test]
-    fn test_admin_database_stats_parses_rfc3339_created_at() {
-        let conn = setup_db();
-        let user_id = create_user_with_data(&conn);
-        let feed_id = get_feed_id(&conn, user_id);
+    #[tokio::test]
+    async fn test_admin_database_stats_parses_rfc3339_created_at() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
 
         // RFC 3339 timestamps spanning exactly 2 days. The previous SQL-only
         // parser would have failed these and collapsed coverage to 0.0.
-        insert_entry_created_at(&conn, feed_id, "a", "2024-01-01T00:00:00Z");
-        insert_entry_created_at(&conn, feed_id, "b", "2024-01-03T00:00:00Z");
+        insert_entry_created_at(&db, feed_id, "a", "2024-01-01T00:00:00Z").await;
+        insert_entry_created_at(&db, feed_id, "b", "2024-01-03T00:00:00Z").await;
 
-        let s = get_admin_database_stats(&conn).unwrap();
+        let s = get_admin_database_stats(&db).await.unwrap();
 
         assert_eq!(s.total_entries, 2);
         assert!(

@@ -9,8 +9,7 @@ use std::time::Duration;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use clap::Parser;
-use rdrs::{AppState, Config, DbPool, auth, create_router, db, services};
-use rusqlite::Connection;
+use rdrs::{AppState, Config, auth, create_router, db::Db, services};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{
     EnvFilter, Layer as _, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
@@ -81,13 +80,11 @@ async fn main() {
         tracing::warn!("{warning}");
     }
 
-    let write_conn = Connection::open(&config.database_url).expect("Failed to open database");
-    db::init_db(&write_conn).expect("Failed to initialize database");
-
-    let read_conn =
-        Connection::open(&config.database_url).expect("Failed to open read-only connection");
-
-    let (db, db_handle) = DbPool::new(write_conn, read_conn);
+    // Open the pool for the configured backend and run its migrations. The
+    // backend is fixed for the process lifetime (see `Config::backend`).
+    let db = Db::connect(&config.database_url, config.backend())
+        .await
+        .expect("Failed to open database");
 
     let webauthn = auth::create_webauthn(&config).expect("Failed to create WebAuthn");
 
@@ -215,15 +212,8 @@ async fn main() {
         tracing::info!("All background tasks completed");
     }
 
-    // Shutdown database (execute WAL checkpoint)
-    if let Err(e) = db.shutdown().await {
-        tracing::error!("Failed to shutdown database cleanly: {}", e);
-    }
-
-    // Wait for database actor to exit
-    if db_handle.await.is_err() {
-        tracing::warn!("Database actor task panicked");
-    }
+    // Shutdown database: checkpoint the WAL (SQLite) and close the pool.
+    db.shutdown().await;
 
     tracing::info!("Graceful shutdown complete");
 }

@@ -3,7 +3,7 @@ use reqwest::header::{HeaderMap, HeaderValue, IF_MODIFIED_SINCE, IF_NONE_MATCH, 
 use serde::Serialize;
 use tracing::{debug, error, info, warn};
 
-use crate::db::DbPool;
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::{entry, feed, image};
 use crate::services::http::{
@@ -35,14 +35,9 @@ fn effective_feed_updated_at(
         .max()
 }
 
-pub async fn refresh_feed(
-    db: DbPool,
-    feed_id: i64,
-    default_user_agent: &str,
-) -> AppResult<SyncResult> {
-    let feed_data = db
-        .background(move |conn| feed::find_by_id(conn, feed_id))
-        .await??
+pub async fn refresh_feed(db: Db, feed_id: i64, default_user_agent: &str) -> AppResult<SyncResult> {
+    let feed_data = feed::find_by_id(&db, feed_id)
+        .await?
         .ok_or(AppError::FeedNotFound)?;
 
     // Use per-feed custom user agent if set, otherwise use global default
@@ -90,20 +85,16 @@ pub async fn refresh_feed(
         Ok(resp) => resp,
         Err(e) => {
             let error_msg = e.to_string();
-            let err_clone = error_msg.clone();
-            let _ = db
-                .background(move |conn| {
-                    feed::update_fetch_result(
-                        conn,
-                        feed_id,
-                        Utc::now(),
-                        Some(&err_clone),
-                        None,
-                        None,
-                        None,
-                    )
-                })
-                .await;
+            let _ = feed::update_fetch_result(
+                &db,
+                feed_id,
+                Utc::now(),
+                Some(&error_msg),
+                None,
+                None,
+                None,
+            )
+            .await;
             return Err(AppError::FetchError(error_msg));
         }
     };
@@ -113,20 +104,16 @@ pub async fn refresh_feed(
     // Handle 304 Not Modified
     if status == reqwest::StatusCode::NOT_MODIFIED {
         debug!("Feed {} not modified (304)", feed_id);
-        let etag = feed_data.etag.clone();
-        let last_modified = feed_data.last_modified.clone();
-        db.background(move |conn| {
-            feed::update_fetch_result(
-                conn,
-                feed_id,
-                Utc::now(),
-                None,
-                etag.as_deref(),
-                last_modified.as_deref(),
-                None,
-            )
-        })
-        .await??;
+        feed::update_fetch_result(
+            &db,
+            feed_id,
+            Utc::now(),
+            None,
+            feed_data.etag.as_deref(),
+            feed_data.last_modified.as_deref(),
+            None,
+        )
+        .await?;
         return Ok(SyncResult {
             new_entries: 0,
             updated_entries: 0,
@@ -135,19 +122,8 @@ pub async fn refresh_feed(
 
     if !status.is_success() {
         let error_msg = format!("HTTP {}", status);
-        let err_clone = error_msg.clone();
-        db.background(move |conn| {
-            feed::update_fetch_result(
-                conn,
-                feed_id,
-                Utc::now(),
-                Some(&err_clone),
-                None,
-                None,
-                None,
-            )
-        })
-        .await??;
+        feed::update_fetch_result(&db, feed_id, Utc::now(), Some(&error_msg), None, None, None)
+            .await?;
         return Err(AppError::FetchError(error_msg));
     }
 
@@ -168,20 +144,16 @@ pub async fn refresh_feed(
         Ok(text) => text,
         Err(e) => {
             let error_msg = e.to_string();
-            let err_clone = error_msg.clone();
-            let _ = db
-                .background(move |conn| {
-                    feed::update_fetch_result(
-                        conn,
-                        feed_id,
-                        Utc::now(),
-                        Some(&err_clone),
-                        None,
-                        None,
-                        None,
-                    )
-                })
-                .await;
+            let _ = feed::update_fetch_result(
+                &db,
+                feed_id,
+                Utc::now(),
+                Some(&error_msg),
+                None,
+                None,
+                None,
+            )
+            .await;
             return Err(AppError::FetchError(error_msg));
         }
     };
@@ -199,20 +171,16 @@ pub async fn refresh_feed(
         Ok(feed) => feed,
         Err(e) => {
             let error_msg = e.to_string();
-            let err_clone = error_msg.clone();
-            let _ = db
-                .background(move |conn| {
-                    feed::update_fetch_result(
-                        conn,
-                        feed_id,
-                        Utc::now(),
-                        Some(&err_clone),
-                        None,
-                        None,
-                        None,
-                    )
-                })
-                .await;
+            let _ = feed::update_fetch_result(
+                &db,
+                feed_id,
+                Utc::now(),
+                Some(&error_msg),
+                None,
+                None,
+                None,
+            )
+            .await;
             return Err(AppError::FeedParseError(error_msg));
         }
     };
@@ -222,9 +190,7 @@ pub async fn refresh_feed(
     let logo_url = parsed_feed.logo.as_ref().map(|l| l.uri.clone());
 
     // Check if icon refresh is needed
-    let needs_icon_refresh = db
-        .background(move |conn| image::needs_refresh(conn, image::ENTITY_FEED, feed_id, 7))
-        .await??;
+    let needs_icon_refresh = image::needs_refresh(&db, image::ENTITY_FEED, feed_id, 7).await?;
 
     // Fetch icon if needed (every 7 days)
     if needs_icon_refresh {
@@ -238,24 +204,18 @@ pub async fn refresh_feed(
         {
             Ok(Some(fetched)) => {
                 let source_url = fetched.source_url.clone();
-                let save_result = db
-                    .background(move |conn| {
-                        image::upsert(
-                            conn,
-                            image::ENTITY_FEED,
-                            feed_id,
-                            &fetched.data,
-                            &fetched.content_type,
-                            Some(&fetched.source_url),
-                        )
-                    })
-                    .await;
+                let save_result = image::upsert(
+                    &db,
+                    image::ENTITY_FEED,
+                    feed_id,
+                    &fetched.data,
+                    &fetched.content_type,
+                    Some(&fetched.source_url),
+                )
+                .await;
                 match save_result {
-                    Ok(Ok(())) => {
+                    Ok(()) => {
                         debug!("Saved icon for feed {} from {}", feed_id, source_url);
-                    }
-                    Ok(Err(e)) => {
-                        warn!("Failed to save icon for feed {}: {}", feed_id, e);
                     }
                     Err(e) => {
                         warn!("Failed to save icon for feed {}: {}", feed_id, e);
@@ -283,89 +243,88 @@ pub async fn refresh_feed(
     // Last-Modified; without this the feed's "last updated" would be misjudged.
     let http_last_modified = new_last_modified.as_deref().and_then(parse_timestamp);
 
-    let (new_entries, updated_entries, skipped_entries) = db
-        .background(move |conn| {
-            let mut new_entries = 0i64;
-            let mut updated_entries = 0i64;
-            let mut skipped_entries = 0i64;
-            let mut latest_entry_date: Option<chrono::DateTime<Utc>> = None;
+    // Wrap the whole feed's upserts plus the fetch-result update in one
+    // transaction: collapses N per-entry commits into a single commit and makes
+    // each sync atomic (the read side never observes a half-applied feed).
+    let (new_entries, updated_entries, skipped_entries) = {
+        let mut new_entries = 0i64;
+        let mut updated_entries = 0i64;
+        let mut skipped_entries = 0i64;
+        let mut latest_entry_date: Option<chrono::DateTime<Utc>> = None;
 
-            // Wrap the whole feed's upserts plus the fetch-result update in one
-            // transaction: collapses N per-entry commits into a single commit
-            // and makes each sync atomic (the read connection never observes a
-            // half-applied feed). `unchecked_transaction` because the actor
-            // closure only receives `&Connection`.
-            let tx = conn.unchecked_transaction()?;
+        let mut tx = db.begin().await?;
 
-            for item in parsed_feed.entries {
-                let guid = item.id;
+        for item in parsed_feed.entries {
+            let guid = item.id;
 
-                let title = item.title.map(|t| t.content);
+            let title = item.title.map(|t| t.content);
 
-                let link = item.links.first().map(|l| l.href.clone());
+            let link = item.links.first().map(|l| l.href.clone());
 
-                let content = item
-                    .content
-                    .and_then(|c| c.body)
-                    .or_else(|| item.summary.clone().map(|s| s.content));
+            let content = item
+                .content
+                .and_then(|c| c.body)
+                .or_else(|| item.summary.clone().map(|s| s.content));
 
-                let summary = item.summary.map(|s| s.content);
+            let summary = item.summary.map(|s| s.content);
 
-                let author = item.authors.first().map(|a| a.name.clone());
+            let author = item.authors.first().map(|a| a.name.clone());
 
-                // Use published date, fall back to updated date, then feed timestamp
-                // If no date is available, use None so sorting falls back to created_at
-                let published_at = item
-                    .published
-                    .or(item.updated)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .or(feed_timestamp);
+            // Use published date, fall back to updated date, then feed timestamp
+            // If no date is available, use None so sorting falls back to created_at
+            let published_at = item
+                .published
+                .or(item.updated)
+                .map(|dt| dt.with_timezone(&Utc))
+                .or(feed_timestamp);
 
-                // Track the latest entry date for feed_updated_at
-                if let Some(dt) = published_at {
-                    latest_entry_date = Some(match latest_entry_date {
-                        Some(current) if current > dt => current,
-                        _ => dt,
-                    });
-                }
-
-                match entry::upsert_entry_id(
-                    &tx,
-                    feed_id,
-                    &guid,
-                    title.as_deref(),
-                    link.as_deref(),
-                    content.as_deref(),
-                    summary.as_deref(),
-                    author.as_deref(),
-                    published_at,
-                )? {
-                    entry::UpsertOutcome::Inserted(_) => new_entries += 1,
-                    entry::UpsertOutcome::Updated(_) => updated_entries += 1,
-                    entry::UpsertOutcome::SkippedTombstoned => skipped_entries += 1,
-                }
+            // Track the latest entry date for feed_updated_at
+            if let Some(dt) = published_at {
+                latest_entry_date = Some(match latest_entry_date {
+                    Some(current) if current > dt => current,
+                    _ => dt,
+                });
             }
 
-            // Use the most recent of feed-level timestamp, latest entry date, and
-            // the HTTP Last-Modified header.
-            let effective_updated_at =
-                effective_feed_updated_at(feed_timestamp, latest_entry_date, http_last_modified);
-
-            feed::update_fetch_result(
-                &tx,
+            match entry::upsert_entry_id_tx(
+                &mut tx,
                 feed_id,
-                Utc::now(),
-                None,
-                new_etag.as_deref(),
-                new_last_modified.as_deref(),
-                effective_updated_at,
-            )?;
+                &guid,
+                title.as_deref(),
+                link.as_deref(),
+                content.as_deref(),
+                summary.as_deref(),
+                author.as_deref(),
+                published_at,
+            )
+            .await?
+            {
+                entry::UpsertOutcome::Inserted(_) => new_entries += 1,
+                entry::UpsertOutcome::Updated(_) => updated_entries += 1,
+                entry::UpsertOutcome::SkippedTombstoned => skipped_entries += 1,
+            }
+        }
 
-            tx.commit()?;
+        // Use the most recent of feed-level timestamp, latest entry date, and
+        // the HTTP Last-Modified header.
+        let effective_updated_at =
+            effective_feed_updated_at(feed_timestamp, latest_entry_date, http_last_modified);
 
-            Ok::<_, AppError>((new_entries, updated_entries, skipped_entries))
-        })
-        .await??;
+        feed::update_fetch_result_tx(
+            &mut tx,
+            feed_id,
+            Utc::now(),
+            None,
+            new_etag.as_deref(),
+            new_last_modified.as_deref(),
+            effective_updated_at,
+        )
+        .await?;
+
+        tx.commit().await?;
+
+        (new_entries, updated_entries, skipped_entries)
+    };
 
     info!(
         "Feed {} refreshed: {} new, {} updated, {} skipped (tombstoned)",
@@ -379,21 +338,14 @@ pub async fn refresh_feed(
 }
 
 pub async fn refresh_bucket(
-    db: DbPool,
+    db: Db,
     bucket: u8,
     user_agent: &str,
 ) -> Vec<(i64, Result<SyncResult, String>)> {
-    let feeds = match db
-        .background(move |conn| feed::list_by_bucket(conn, bucket))
-        .await
-    {
-        Ok(Ok(f)) => f,
-        Ok(Err(e)) => {
-            error!("Failed to list feeds for bucket {}: {}", bucket, e);
-            return vec![];
-        }
+    let feeds = match feed::list_by_bucket(&db, bucket).await {
+        Ok(f) => f,
         Err(e) => {
-            error!("Failed to access DB for bucket {}: {}", bucket, e);
+            error!("Failed to list feeds for bucket {}: {}", bucket, e);
             return vec![];
         }
     };
@@ -469,14 +421,13 @@ pub async fn refresh_bucket(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{DbPool, init_db};
+    use crate::db::Db;
     use crate::error::AppError;
     use crate::models::entry;
     use crate::models::user::Role;
     use crate::models::{category, feed, user};
     use crate::utils::datetime::normalize_timezone_format;
     use chrono::{Datelike, Timelike};
-    use rusqlite::Connection;
     use wiremock::matchers::{header, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -484,82 +435,59 @@ mod tests {
     // Test infrastructure
     // ---------------------------------------------------------------------------
 
-    /// Open a named shared-memory `SQLite` connection. Both write and read
-    /// connections must use the same name so the pool sees one database.
-    fn open_shared_memory(name: &str) -> Connection {
-        let uri = format!("file:{}?mode=memory&cache=shared", name);
-        Connection::open_with_flags(
-            uri,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-                | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-        )
-        .unwrap()
-    }
-
-    /// Build a fully-initialized `DbPool` backed by a shared in-memory database.
-    /// Returns `(pool, handle)` — the caller **must** keep `handle` alive for
-    /// the duration of the test, otherwise the actor stops and every pool
-    /// operation returns `DbError::ActorStopped`.
-    fn seeded_pool(name: &str) -> (DbPool, tokio::task::JoinHandle<()>) {
-        let write_conn = open_shared_memory(name);
-        init_db(&write_conn).unwrap();
-        let read_conn = open_shared_memory(name);
-        DbPool::new(write_conn, read_conn)
+    /// Build an in-memory `Db` for a test. Each call is an isolated database, so
+    /// the `_name` (previously a shared-cache key) is no longer needed.
+    async fn seeded_pool(_name: &str) -> Db {
+        Db::connect_in_memory().await.unwrap()
     }
 
     /// Seed one user → category → feed whose URL points at `url`.
     /// Returns the feed id.
-    async fn seed_feed(pool: &DbPool, url: &str) -> i64 {
-        let url = url.to_string();
-        pool.user(move |conn| {
-            let u = user::create_user(conn, "syncuser", "hash", Role::User).unwrap();
-            let cat = category::create_category(conn, u.id, "Tech").unwrap();
-            feed::create_feed(
-                conn,
-                &feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: &url,
-                    title: Some("F"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap()
-            .id
-        })
+    async fn seed_feed(pool: &Db, url: &str) -> i64 {
+        let u = user::create_user(pool, "syncuser", "hash", Role::User)
+            .await
+            .unwrap();
+        let cat = category::create_category(pool, u.id, "Tech").await.unwrap();
+        feed::create_feed(
+            pool,
+            &feed::CreateFeedParams {
+                category_id: cat.id,
+                url,
+                title: Some("F"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
         .await
         .unwrap()
+        .id
     }
 
     /// Like `seed_feed` but allows a custom user agent override.
-    async fn seed_feed_with_ua(pool: &DbPool, url: &str, custom_user_agent: &str) -> i64 {
-        let url = url.to_string();
-        let ua = custom_user_agent.to_string();
-        pool.user(move |conn| {
-            let u = user::create_user(conn, "uauser", "hash", Role::User).unwrap();
-            let cat = category::create_category(conn, u.id, "Tech").unwrap();
-            feed::create_feed(
-                conn,
-                &feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: &url,
-                    title: Some("F"),
-                    description: None,
-                    site_url: None,
-                    custom_user_agent: Some(&ua),
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .unwrap()
-            .id
-        })
+    async fn seed_feed_with_ua(pool: &Db, url: &str, custom_user_agent: &str) -> i64 {
+        let u = user::create_user(pool, "uauser", "hash", Role::User)
+            .await
+            .unwrap();
+        let cat = category::create_category(pool, u.id, "Tech").await.unwrap();
+        feed::create_feed(
+            pool,
+            &feed::CreateFeedParams {
+                category_id: cat.id,
+                url,
+                title: Some("F"),
+                description: None,
+                site_url: None,
+                custom_user_agent: Some(custom_user_agent),
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
         .await
         .unwrap()
+        .id
     }
 
     /// Minimal two-item RSS fixture — no `<icon>` or `<logo>` elements so the
@@ -597,7 +525,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let (pool, _handle) = seeded_pool("feed_sync_happy");
+        let pool = seeded_pool("feed_sync_happy").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
         let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
@@ -613,7 +541,7 @@ mod tests {
 
     #[tokio::test]
     async fn feed_not_found() {
-        let (pool, _handle) = seeded_pool("feed_sync_not_found");
+        let pool = seeded_pool("feed_sync_not_found").await;
         let err = refresh_feed(pool, 999_999, "RDRS-Test/1.0")
             .await
             .unwrap_err();
@@ -652,7 +580,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let (pool, _handle) = seeded_pool("feed_sync_update");
+        let pool = seeded_pool("feed_sync_update").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
         let first = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
@@ -683,13 +611,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let (pool, _handle) = seeded_pool("feed_sync_tombstone");
+        let pool = seeded_pool("feed_sync_tombstone").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
         // Tombstone g1 before the sync
-        pool.user(move |conn| entry::insert_tombstone(conn, feed_id, "g1").unwrap())
-            .await
-            .unwrap();
+        entry::insert_tombstone(&pool, feed_id, "g1").await.unwrap();
 
         let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
             .await
@@ -697,8 +623,7 @@ mod tests {
         assert_eq!(result.new_entries, 1, "g1 should be skipped");
 
         // Verify g1 was not inserted
-        let found = pool
-            .user(move |conn| entry::find_by_guid_and_feed(conn, "g1", feed_id).unwrap())
+        let found = entry::find_by_guid_and_feed(&pool, "g1", feed_id)
             .await
             .unwrap();
         assert!(found.is_none(), "g1 must not exist (tombstoned)");
@@ -716,7 +641,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let (pool, _handle) = seeded_pool("feed_sync_304");
+        let pool = seeded_pool("feed_sync_304").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
         let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
@@ -738,7 +663,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let (pool, _handle) = seeded_pool("feed_sync_fetch_err");
+        let pool = seeded_pool("feed_sync_fetch_err").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
         let err = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
@@ -750,15 +675,11 @@ mod tests {
         );
 
         // Fetch error must have been written to the feed row
-        let fetch_error = pool
-            .user(move |conn| {
-                feed::find_by_id(conn, feed_id)
-                    .unwrap()
-                    .unwrap()
-                    .fetch_error
-            })
+        let fetch_error = feed::find_by_id(&pool, feed_id)
             .await
-            .unwrap();
+            .unwrap()
+            .unwrap()
+            .fetch_error;
         assert!(
             fetch_error.is_some(),
             "feed.fetch_error should be populated after HTTP error"
@@ -781,7 +702,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let (pool, _handle) = seeded_pool("feed_sync_parse_err");
+        let pool = seeded_pool("feed_sync_parse_err").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
         let err = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
@@ -810,22 +731,19 @@ mod tests {
             .mount(&server)
             .await;
 
-        let (pool, _handle) = seeded_pool("feed_sync_cond_get");
+        let pool = seeded_pool("feed_sync_cond_get").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
         // Write etag + last_modified directly onto the feed row
-        pool.user(move |conn| {
-            feed::update_fetch_result(
-                conn,
-                feed_id,
-                chrono::Utc::now(),
-                None,
-                Some("\"abc123\""),
-                Some("Mon, 09 Jun 2025 00:00:00 GMT"),
-                None,
-            )
-            .unwrap();
-        })
+        feed::update_fetch_result(
+            &pool,
+            feed_id,
+            chrono::Utc::now(),
+            None,
+            Some("\"abc123\""),
+            Some("Mon, 09 Jun 2025 00:00:00 GMT"),
+            None,
+        )
         .await
         .unwrap();
 
@@ -854,7 +772,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let (pool, _handle) = seeded_pool("feed_sync_custom_ua");
+        let pool = seeded_pool("feed_sync_custom_ua").await;
         let feed_id = seed_feed_with_ua(&pool, &server.uri(), "Custom/9").await;
 
         let result = refresh_feed(pool.clone(), feed_id, "RDRS-Default/1.0")
@@ -870,7 +788,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_bucket_empty() {
-        let (pool, _handle) = seeded_pool("feed_sync_bucket_empty");
+        let pool = seeded_pool("feed_sync_bucket_empty").await;
         // Use bucket 255 — no feeds hashed there in our empty DB
         let results = refresh_bucket(pool, 255, "RDRS-Test/1.0").await;
         assert!(results.is_empty());
@@ -892,14 +810,15 @@ mod tests {
             .mount(&server)
             .await;
 
-        let (pool, _handle) = seeded_pool("feed_sync_bucket_feeds");
+        let pool = seeded_pool("feed_sync_bucket_feeds").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
         // Discover which bucket the seeded feed was assigned
-        let bucket = pool
-            .user(move |conn| feed::find_by_id(conn, feed_id).unwrap().unwrap().bucket)
+        let bucket = feed::find_by_id(&pool, feed_id)
             .await
             .unwrap()
+            .unwrap()
+            .bucket
             .expect("bucket should be set on create") as u8;
 
         let results = refresh_bucket(pool, bucket, "RDRS-Test/1.0").await;

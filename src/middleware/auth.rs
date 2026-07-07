@@ -38,32 +38,27 @@ impl FromRequestParts<AppState> for AuthUser {
             .map(|c| c.value().to_string())
             .ok_or(AppError::Unauthorized)?;
 
-        let token_clone = token.clone();
-        let (session, expired) = state
-            .db
-            .user(move |conn| {
-                let mut session =
-                    session::find_by_token(conn, &token_clone)?.ok_or(AppError::Unauthorized)?;
-                if session.is_expired() {
-                    session::delete_session(conn, &token_clone)?;
-                    return Ok::<_, AppError>((session, true));
-                }
-                if let Some(new_expires_at) = session::refresh_if_needed(conn, &session)? {
-                    session.expires_at = new_expires_at;
-                }
-                Ok((session, false))
-            })
-            .await??;
+        let mut session = session::find_by_token(&state.db, &token)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        let expired = if session.is_expired() {
+            session::delete_session(&state.db, &token).await?;
+            true
+        } else {
+            if let Some(new_expires_at) = session::refresh_if_needed(&state.db, &session).await? {
+                session.expires_at = new_expires_at;
+            }
+            false
+        };
 
         if expired {
             return Err(AppError::Unauthorized);
         }
 
         let user_id = session.user_id;
-        let user = state
-            .db
-            .read_user(move |conn| user::find_by_id(conn, user_id)?.ok_or(AppError::Unauthorized))
-            .await??;
+        let user = user::find_by_id(&state.db, user_id)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
 
         if user.is_disabled() {
             return Err(AppError::UserDisabled);
@@ -121,32 +116,24 @@ impl FromRequestParts<AppState> for PageAuthUser {
             .map(|c| c.value().to_string())
             .ok_or(LoginRedirect)?;
 
-        let token_clone = token.clone();
-        let result = state
-            .db
-            .user(move |conn| {
-                let mut session = session::find_by_token(conn, &token_clone)
-                    .map_err(|_e| ())?
-                    .ok_or(())?;
-                if session.is_expired() {
-                    let _ = session::delete_session(conn, &token_clone);
-                    return Err(());
-                }
-                if let Ok(Some(new_expires_at)) = session::refresh_if_needed(conn, &session) {
-                    session.expires_at = new_expires_at;
-                }
-                let user = user::find_by_id(conn, session.user_id)
-                    .map_err(|_e| ())?
-                    .ok_or(())?;
-                if user.is_disabled() {
-                    return Err(());
-                }
-                Ok((user, session))
-            })
-            .await
-            .map_err(|_e| LoginRedirect)?;
-
-        let (user, session) = result.map_err(|_e| LoginRedirect)?;
+        let mut session = match session::find_by_token(&state.db, &token).await {
+            Ok(Some(s)) => s,
+            _ => return Err(LoginRedirect),
+        };
+        if session.is_expired() {
+            let _ = session::delete_session(&state.db, &token).await;
+            return Err(LoginRedirect);
+        }
+        if let Ok(Some(new_expires_at)) = session::refresh_if_needed(&state.db, &session).await {
+            session.expires_at = new_expires_at;
+        }
+        let user = match user::find_by_id(&state.db, session.user_id).await {
+            Ok(Some(u)) => u,
+            _ => return Err(LoginRedirect),
+        };
+        if user.is_disabled() {
+            return Err(LoginRedirect);
+        }
 
         let peer_ip = parts
             .extensions
@@ -198,12 +185,9 @@ impl FromRequestParts<AppState> for AdminUser {
 
         if auth_user.session.is_masquerading() {
             if let Some(original_user_id) = auth_user.session.original_user_id {
-                let original_user = state
-                    .db
-                    .read_user(move |conn| {
-                        user::find_by_id(conn, original_user_id)?.ok_or(AppError::Unauthorized)
-                    })
-                    .await??;
+                let original_user = user::find_by_id(&state.db, original_user_id)
+                    .await?
+                    .ok_or(AppError::Unauthorized)?;
                 if !original_user.is_admin() {
                     return Err(AppError::Forbidden);
                 }
@@ -241,16 +225,10 @@ impl FromRequestParts<AppState> for PageAdminUser {
 
         if page_auth_user.session.is_masquerading() {
             if let Some(original_user_id) = page_auth_user.session.original_user_id {
-                let original_user = state
-                    .db
-                    .read_user(move |conn| {
-                        user::find_by_id(conn, original_user_id)
-                            .map_err(|_e| ())?
-                            .ok_or(())
-                    })
-                    .await
-                    .map_err(|_e| LoginRedirect)?
-                    .map_err(|_e| LoginRedirect)?;
+                let original_user = match user::find_by_id(&state.db, original_user_id).await {
+                    Ok(Some(u)) => u,
+                    _ => return Err(LoginRedirect),
+                };
                 if !original_user.is_admin() {
                     return Err(LoginRedirect);
                 }

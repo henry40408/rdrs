@@ -37,35 +37,28 @@ pub async fn register(
         ));
     }
 
-    let can_register = state.config.can_register(0); // We check count inside closure
+    let can_register = state.config.can_register(0); // We check count below
     let config = state.config.clone();
     let password_hash = hash_password(&req.password)?;
 
-    let user = state
-        .db
-        .user(move |conn| {
-            let user_count = user::count(conn)?;
+    let user_count = user::count(&state.db).await?;
 
-            if !config.can_register(user_count) {
-                return Err(AppError::RegistrationNotAllowed);
-            }
+    if !config.can_register(user_count) {
+        return Err(AppError::RegistrationNotAllowed);
+    }
 
-            let role = if user_count == 0 {
-                Role::Admin
-            } else {
-                Role::User
-            };
+    let role = if user_count == 0 {
+        Role::Admin
+    } else {
+        Role::User
+    };
 
-            let user = user::create_user(conn, &req.username, &password_hash, role)?;
+    let user = user::create_user(&state.db, &req.username, &password_hash, role).await?;
 
-            // Seed a default category so the account can add its first feed
-            // without first creating a category. Matches the "Uncategorized"
-            // convention used by OPML import and the GReader subscription API.
-            category::create_category(conn, user.id, "Uncategorized")?;
-
-            Ok::<_, AppError>(user)
-        })
-        .await??;
+    // Seed a default category so the account can add its first feed
+    // without first creating a category. Matches the "Uncategorized"
+    // convention used by OPML import and the GReader subscription API.
+    category::create_category(&state.db, user.id, "Uncategorized").await?;
 
     // Suppress unused variable warning
     let _ = can_register;
@@ -101,24 +94,19 @@ pub async fn login(
     if state.config.disable_local_auth {
         return Err(AppError::Forbidden);
     }
-    let (user, new_session) = state
-        .db
-        .user(move |conn| {
-            let user =
-                user::find_by_username(conn, &req.username)?.ok_or(AppError::InvalidCredentials)?;
+    let user = user::find_by_username(&state.db, &req.username)
+        .await?
+        .ok_or(AppError::InvalidCredentials)?;
 
-            if !verify_password(&req.password, &user.password_hash) {
-                return Err(AppError::InvalidCredentials);
-            }
+    if !verify_password(&req.password, &user.password_hash) {
+        return Err(AppError::InvalidCredentials);
+    }
 
-            if user.is_disabled() {
-                return Err(AppError::UserDisabled);
-            }
+    if user.is_disabled() {
+        return Err(AppError::UserDisabled);
+    }
 
-            let new_session = session::create_session(conn, user.id)?;
-            Ok::<_, AppError>((user, new_session))
-        })
-        .await??;
+    let new_session = session::create_session(&state.db, user.id).await?;
 
     let cookie = Cookie::build((SESSION_COOKIE_NAME, new_session.session_token))
         .path("/")
@@ -148,10 +136,7 @@ pub async fn logout(
     auth_user: AuthUser,
 ) -> AppResult<(CookieJar, Json<LogoutResponse>)> {
     let token = auth_user.session.session_token.clone();
-    state
-        .db
-        .user(move |conn| session::delete_session(conn, &token))
-        .await??;
+    session::delete_session(&state.db, &token).await?;
 
     // Removal must match the Path=/ the cookie was set with, or the browser
     // keeps the (now-invalid) session_token cookie. Mirrors flash.rs.
