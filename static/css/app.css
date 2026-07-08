@@ -3196,6 +3196,18 @@ summary {
 
     .sidebar-item { min-height: var(--touch-min); }
 
+    /* The 44px dismiss button (above) makes the banner grid row taller than a
+       single line of text; center every cell (overriding the base
+       align-items:start) and drop the icon's first-line offset so the dot
+       centers too. Give the dismiss its full 44px tap target on both axes —
+       base .banner-dismiss is 22px and only min-height fired above, so on wide
+       touch layouts it would otherwise stay 22px wide. Mirrors the
+       max-width:1024px block for wide touch devices (e.g. iPad landscape) that
+       keep the persistent split layout instead of the mobile drawer. */
+    .banner { align-items: center; }
+    .banner-icon { margin-top: 0; }
+    .banner-dismiss { min-width: var(--touch-min); }
+
     /* Summary-box mono links stay inline; expand their hit area via padding. */
     .summary-actions .rp-action {
         min-height: 0;

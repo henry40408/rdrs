@@ -84,6 +84,9 @@ Feature: Responsive layout
     And the ".banner-dismiss" control is at least 44px wide
     And the ".banner-dismiss" control is at least 44px tall
 
+  Scenario: Flash banner is vertically centered on a wide touch tablet
+    Then the flash banner is vertically centered on a wide touch tablet
+
   @tablet
   Scenario: Sidebar is a drawer on tablet
     Given I am viewing on a tablet screen
