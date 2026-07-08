@@ -7,6 +7,7 @@ use crate::utils::text::strip_to_search_text;
 use crate::{db_execute, db_execute_tx, query_all, query_opt, query_opt_tx, query_scalar};
 
 mod filters;
+pub mod query;
 use filters::{
     Bind, Dialect, apply_continuation_condition, apply_filter_conditions, apply_time_conditions,
     published_sort_entry_hint,
