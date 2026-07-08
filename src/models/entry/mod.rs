@@ -2272,6 +2272,285 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn query_is_unread_returns_only_unread() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        let (alpha, _) = upsert_entry(
+            &db,
+            feed_id,
+            "guid-alpha",
+            Some("alpha"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let (beta, _) = upsert_entry(
+            &db,
+            feed_id,
+            "guid-beta",
+            Some("beta"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mark_as_read(&db, beta.id).await.unwrap();
+        assert!(alpha.read_at.is_none());
+
+        let filter = EntryFilter {
+            query: Some(query::parse("is:unread").unwrap()),
+            ..Default::default()
+        };
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
+        let titles: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.entry.title.clone())
+            .collect();
+        assert!(titles.iter().any(|t| t == "alpha"));
+        assert!(!titles.iter().any(|t| t == "beta"));
+    }
+
+    #[tokio::test]
+    async fn query_boolean_and_negation() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-rust",
+            Some("rust"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let (rust_weekly, _) = upsert_entry(
+            &db,
+            feed_id,
+            "guid-rust-weekly",
+            Some("rust weekly"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mark_as_read(&db, rust_weekly.id).await.unwrap();
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-go",
+            Some("go"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let filter = EntryFilter {
+            query: Some(query::parse("rust -is:read").unwrap()),
+            ..Default::default()
+        };
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
+        let titles: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.entry.title.clone())
+            .collect();
+        assert!(titles.iter().any(|t| t == "rust"));
+        assert!(!titles.iter().any(|t| t == "rust weekly")); // read -> excluded
+        assert!(!titles.iter().any(|t| t == "go")); // no "rust" -> excluded
+    }
+
+    #[tokio::test]
+    async fn query_feed_name_fuzzy_match() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let rust_feed_id = feed::create_feed(
+            &db,
+            &feed::CreateFeedParams {
+                category_id,
+                url: "https://example.com/rust-blog.xml",
+                title: Some("Rust Blog"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id;
+        let other_feed_id =
+            create_test_feed(&db, category_id, "https://example.com/other.xml").await;
+
+        upsert_entry(
+            &db,
+            rust_feed_id,
+            "guid-1",
+            Some("Post from Rust Blog"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        upsert_entry(
+            &db,
+            other_feed_id,
+            "guid-2",
+            Some("Post from other feed"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let filter = EntryFilter {
+            query: Some(query::parse("feed:rust").unwrap()),
+            ..Default::default()
+        };
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+        assert!(
+            results
+                .iter()
+                .all(|r| r.entry.title.as_deref() == Some("Post from Rust Blog"))
+        );
+    }
+
+    #[tokio::test]
+    async fn query_after_date_filters() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-old",
+            Some("old"),
+            None,
+            None,
+            None,
+            None,
+            Some(chrono::Utc.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap()),
+        )
+        .await
+        .unwrap();
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-new",
+            Some("new"),
+            None,
+            None,
+            None,
+            None,
+            Some(chrono::Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap()),
+        )
+        .await
+        .unwrap();
+
+        let filter = EntryFilter {
+            query: Some(query::parse("after:2026-01-01").unwrap()),
+            ..Default::default()
+        };
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
+        let titles: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.entry.title.clone())
+            .collect();
+        assert!(titles.iter().any(|t| t == "new"));
+        assert!(!titles.iter().any(|t| t == "old"));
+    }
+
+    #[tokio::test]
+    async fn query_escapes_literal_percent() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-off",
+            Some("50% off"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-dollars",
+            Some("50 dollars"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let filter = EntryFilter {
+            query: Some(query::parse("\"50%\"").unwrap()),
+            ..Default::default()
+        };
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
+        let titles: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.entry.title.clone())
+            .collect();
+        assert!(titles.iter().any(|t| t == "50% off"));
+        assert!(!titles.iter().any(|t| t == "50 dollars")); // literal %, not wildcard
+    }
+
+    #[tokio::test]
     async fn search_matches_plain_text_across_tags_not_attributes() {
         let db = setup_db().await;
         let user_id = create_test_user(&db, "testuser").await;
