@@ -1742,57 +1742,66 @@ pub async fn search_page(
     let q = query.q.unwrap_or_default().trim().to_string();
     let user_id = auth_user.user.id;
 
+    let mut error: Option<String> = None;
     let results = if q.is_empty() {
         Vec::new()
     } else {
-        let q_for_filter = q.clone();
-        async {
-            let filter = entry::EntryFilter {
-                search: Some(q_for_filter.clone()),
-                ..Default::default()
-            };
-            // SQL now matches stored plain text (content_text), so every
-            // returned row is a real visible match — no phantom re-filter.
-            const LIMIT: i64 = 50;
-            let rows = entry::list_by_user(
-                &state.db,
-                user_id,
-                &filter,
-                entry::EntrySortOrder::PublishedAt,
-                LIMIT,
-                0,
-            )
-            .await?;
-            let out: Vec<SearchResultView> = rows
-                .into_iter()
-                .map(|e| {
-                    let title = e
-                        .entry
-                        .title
-                        .clone()
-                        .unwrap_or_else(|| "(no title)".to_string());
-                    let snippet = build_snippet(
-                        e.entry.content.as_deref().or(e.entry.summary.as_deref()),
-                        &q_for_filter,
-                        200,
-                    );
-                    let (published_relative, published_at_iso) =
-                        format_relative_time(e.entry.published_at);
-                    SearchResultView {
-                        entry_id: e.entry.id,
-                        title_html: highlight_html(&title, &q_for_filter),
-                        feed_title: e.feed_title.clone().unwrap_or_else(|| e.feed_url.clone()),
-                        published_relative,
-                        published_at_iso,
-                        snippet_html: highlight_html(&snippet, &q_for_filter),
-                    }
-                })
-                .collect();
-            Ok::<_, AppError>(out)
+        match entry::query::parse(&q) {
+            Err(e) => {
+                // Byte offset → 1-based character position for the message.
+                let char_pos = q.get(..e.position).map_or(0, |p| p.chars().count()) + 1;
+                error = Some(format!(
+                    "Search syntax error (near character {char_pos}): {}",
+                    e.message
+                ));
+                Vec::new()
+            }
+            Ok(ast) => {
+                let terms = entry::query::free_text_terms(&ast);
+                let needle = terms.first().cloned().unwrap_or_default();
+                let filter = entry::EntryFilter {
+                    query: Some(ast),
+                    ..Default::default()
+                };
+                // SQL now matches stored plain text (content_text), so every
+                // returned row is a real visible match — no phantom re-filter.
+                const LIMIT: i64 = 50;
+                let rows = entry::list_by_user(
+                    &state.db,
+                    user_id,
+                    &filter,
+                    entry::EntrySortOrder::PublishedAt,
+                    LIMIT,
+                    0,
+                )
+                .await
+                .unwrap_or_default();
+                rows.into_iter()
+                    .map(|e| {
+                        let title = e
+                            .entry
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| "(no title)".to_string());
+                        let snippet = build_snippet(
+                            e.entry.content.as_deref().or(e.entry.summary.as_deref()),
+                            &needle,
+                            200,
+                        );
+                        let (published_relative, published_at_iso) =
+                            format_relative_time(e.entry.published_at);
+                        SearchResultView {
+                            entry_id: e.entry.id,
+                            title_html: highlight_html(&title, &needle),
+                            feed_title: e.feed_title.clone().unwrap_or_else(|| e.feed_url.clone()),
+                            published_relative,
+                            published_at_iso,
+                            snippet_html: highlight_html(&snippet, &needle),
+                        }
+                    })
+                    .collect()
+            }
         }
-        .await
-        .ok()
-        .unwrap_or_default()
     };
 
     (
@@ -1802,6 +1811,7 @@ pub async fn search_page(
             git_version: crate::GIT_VERSION,
             layout,
             q,
+            error,
             results,
         },
     )
@@ -2793,6 +2803,7 @@ pub struct SearchTemplate {
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
     pub q: String,
+    pub error: Option<String>,
     pub results: Vec<SearchResultView>,
 }
 

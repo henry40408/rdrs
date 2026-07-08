@@ -7,6 +7,7 @@ use crate::utils::text::strip_to_search_text;
 use crate::{db_execute, db_execute_tx, query_all, query_opt, query_opt_tx, query_scalar};
 
 mod filters;
+pub mod query;
 use filters::{
     Bind, Dialect, apply_continuation_condition, apply_filter_conditions, apply_time_conditions,
     published_sort_entry_hint,
@@ -72,6 +73,11 @@ pub struct EntryFilter {
     /// to entries the reader just finished during this page view. Ignored
     /// when `unread_only` is false.
     pub read_after: Option<String>,
+    /// Parsed boolean query AST for the global `/search` page. Set by the
+    /// search handler from the `?q=` string; `None` on every other list path
+    /// (a no-op). Rendered to SQL by `filters::render_query`.
+    #[serde(skip)]
+    pub query: Option<query::QueryNode>,
 }
 
 /// Pagination cursor. The wire format on the API is opaque to clients; we
@@ -2263,6 +2269,352 @@ mod tests {
         // Count should be 5
         let count = count_by_user(&db, user_id, &filter).await.unwrap();
         assert_eq!(count, 5);
+    }
+
+    #[tokio::test]
+    async fn query_is_unread_returns_only_unread() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        let (alpha, _) = upsert_entry(
+            &db,
+            feed_id,
+            "guid-alpha",
+            Some("alpha"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let (beta, _) = upsert_entry(
+            &db,
+            feed_id,
+            "guid-beta",
+            Some("beta"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mark_as_read(&db, beta.id).await.unwrap();
+        assert!(alpha.read_at.is_none());
+
+        let filter = EntryFilter {
+            query: Some(query::parse("is:unread").unwrap()),
+            ..Default::default()
+        };
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
+        let titles: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.entry.title.clone())
+            .collect();
+        assert!(titles.iter().any(|t| t == "alpha"));
+        assert!(!titles.iter().any(|t| t == "beta"));
+    }
+
+    #[tokio::test]
+    async fn query_boolean_and_negation() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-rust",
+            Some("rust"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let (rust_weekly, _) = upsert_entry(
+            &db,
+            feed_id,
+            "guid-rust-weekly",
+            Some("rust weekly"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mark_as_read(&db, rust_weekly.id).await.unwrap();
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-go",
+            Some("go"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let filter = EntryFilter {
+            query: Some(query::parse("rust -is:read").unwrap()),
+            ..Default::default()
+        };
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
+        let titles: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.entry.title.clone())
+            .collect();
+        assert!(titles.iter().any(|t| t == "rust"));
+        assert!(!titles.iter().any(|t| t == "rust weekly")); // read -> excluded
+        assert!(!titles.iter().any(|t| t == "go")); // no "rust" -> excluded
+    }
+
+    // M1 regression: `NOT (NULL LIKE ...)` is NULL (not TRUE), so a naive
+    // `(NOT e.author LIKE ...)` would silently exclude every NULL-author row.
+    // The COALESCE(..., 0/FALSE) wrapper makes the leaf two-valued so negation
+    // correctly includes rows where the filtered column is NULL.
+    #[tokio::test]
+    async fn query_negated_author_includes_null_author_entries() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-jane",
+            Some("jane's post"),
+            None,
+            None,
+            None,
+            Some("jane"),
+            None,
+        )
+        .await
+        .unwrap();
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-bob",
+            Some("bob's post"),
+            None,
+            None,
+            None,
+            Some("bob"),
+            None,
+        )
+        .await
+        .unwrap();
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-anon",
+            Some("anonymous post"),
+            None,
+            None,
+            None,
+            None, // no author (NULL)
+            None,
+        )
+        .await
+        .unwrap();
+
+        let filter = EntryFilter {
+            query: Some(query::parse("-author:jane").unwrap()),
+            ..Default::default()
+        };
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
+        let titles: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.entry.title.clone())
+            .collect();
+        assert!(titles.iter().any(|t| t == "bob's post"));
+        assert!(titles.iter().any(|t| t == "anonymous post")); // NULL author -> included
+        assert!(!titles.iter().any(|t| t == "jane's post"));
+    }
+
+    #[tokio::test]
+    async fn query_feed_name_fuzzy_match() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let rust_feed_id = feed::create_feed(
+            &db,
+            &feed::CreateFeedParams {
+                category_id,
+                url: "https://example.com/rust-blog.xml",
+                title: Some("Rust Blog"),
+                description: None,
+                site_url: None,
+                custom_user_agent: None,
+                http2_disabled: None,
+                custom_referrer: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id;
+        let other_feed_id =
+            create_test_feed(&db, category_id, "https://example.com/other.xml").await;
+
+        upsert_entry(
+            &db,
+            rust_feed_id,
+            "guid-1",
+            Some("Post from Rust Blog"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        upsert_entry(
+            &db,
+            other_feed_id,
+            "guid-2",
+            Some("Post from other feed"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let filter = EntryFilter {
+            query: Some(query::parse("feed:rust").unwrap()),
+            ..Default::default()
+        };
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+        assert!(
+            results
+                .iter()
+                .all(|r| r.entry.title.as_deref() == Some("Post from Rust Blog"))
+        );
+    }
+
+    #[tokio::test]
+    async fn query_after_date_filters() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-old",
+            Some("old"),
+            None,
+            None,
+            None,
+            None,
+            Some(chrono::Utc.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap()),
+        )
+        .await
+        .unwrap();
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-new",
+            Some("new"),
+            None,
+            None,
+            None,
+            None,
+            Some(chrono::Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap()),
+        )
+        .await
+        .unwrap();
+
+        let filter = EntryFilter {
+            query: Some(query::parse("after:2026-01-01").unwrap()),
+            ..Default::default()
+        };
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
+        let titles: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.entry.title.clone())
+            .collect();
+        assert!(titles.iter().any(|t| t == "new"));
+        assert!(!titles.iter().any(|t| t == "old"));
+    }
+
+    #[tokio::test]
+    async fn query_escapes_literal_percent() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-off",
+            Some("50% off"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-dollars",
+            Some("50 dollars"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let filter = EntryFilter {
+            query: Some(query::parse("\"50%\"").unwrap()),
+            ..Default::default()
+        };
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
+        let titles: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.entry.title.clone())
+            .collect();
+        assert!(titles.iter().any(|t| t == "50% off"));
+        assert!(!titles.iter().any(|t| t == "50 dollars")); // literal %, not wildcard
     }
 
     #[tokio::test]

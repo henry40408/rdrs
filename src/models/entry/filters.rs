@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 
 use crate::db::Db;
 
+use super::query::{DateBound, QueryNode, SourceKind, Status, TextField};
 use super::{ContinuationCursor, EntryFilter, EntrySortOrder};
 
 /// A positional bind value for the dynamically-built entry queries. Applied in
@@ -63,6 +64,17 @@ impl Dialect {
         }
     }
 
+    /// Case-insensitive `LIKE` with an explicit backslash `ESCAPE` clause, so
+    /// user `%` / `_` / `\` (escaped by `like_contains`) match literally.
+    /// `SQLite`'s `LIKE` is already ASCII-case-insensitive, so no `COLLATE`
+    /// suffix is needed; `PostgreSQL` uses `ILIKE`.
+    fn ci_like_esc(self, column: &str, placeholder: usize) -> String {
+        match self {
+            Dialect::Sqlite => format!("{column} LIKE ${placeholder} ESCAPE '\\'"),
+            Dialect::Postgres => format!("{column} ILIKE ${placeholder} ESCAPE '\\'"),
+        }
+    }
+
     /// Unix-epoch-seconds expression for a timestamp column/expression:
     /// `CAST(strftime('%s', expr) AS INTEGER)` on `SQLite`,
     /// `EXTRACT(EPOCH FROM expr)::bigint` on `PostgreSQL`.
@@ -105,6 +117,17 @@ impl Dialect {
         }
     }
 
+    /// Boolean FALSE literal: `0` on `SQLite` (LIKE yields 0/1 integers),
+    /// `FALSE` on `PostgreSQL` (LIKE yields a boolean). Used to make LIKE
+    /// leaves two-valued via COALESCE so a NULL column reads as FALSE
+    /// (not NULL) and negation includes NULL-column rows.
+    fn bool_false(self) -> &'static str {
+        match self {
+            Dialect::Sqlite => "0",
+            Dialect::Postgres => "FALSE",
+        }
+    }
+
     /// A query-planner index hint. `SQLite` honours `INDEXED BY`; `PostgreSQL` has
     /// no per-query hint, so the fragment collapses to empty.
     pub(super) fn index_hint(self, sqlite_hint: &'static str) -> &'static str {
@@ -123,6 +146,7 @@ pub(super) fn is_no_entry_side_predicate(filter: &EntryFilter) -> bool {
         && !filter.read_only
         && filter.search.is_none()
         && filter.has_summary.is_none()
+        && filter.query.is_none()
 }
 
 /// `SQLite` index hint (a leading `" INDEXED BY ..."` fragment, or `""`) for
@@ -228,6 +252,113 @@ pub(super) fn apply_filter_conditions(
             );
         }
     }
+
+    if let Some(ref q) = filter.query {
+        conditions.push(render_query(q, binds, dialect));
+    }
+}
+
+/// Escape a user value for a `LIKE '%...%'` contains-match: backslash-escape
+/// the LIKE metacharacters `\`, `%`, `_` (paired with an `ESCAPE '\'` clause)
+/// and wrap in `%...%`.
+fn like_contains(value: &str) -> String {
+    let mut esc = String::with_capacity(value.len() + 2);
+    esc.push('%');
+    for c in value.chars() {
+        if matches!(c, '\\' | '%' | '_') {
+            esc.push('\\');
+        }
+        esc.push(c);
+    }
+    esc.push('%');
+    esc
+}
+
+/// Recursively render a parsed query AST into a parenthesized WHERE fragment,
+/// pushing one `Bind` per leaf that needs a value. Dispatches dialect-specific
+/// SQL through `Dialect`.
+pub(super) fn render_query(node: &QueryNode, binds: &mut Vec<Bind>, dialect: Dialect) -> String {
+    match node {
+        QueryNode::And(a, b) => format!(
+            "({} AND {})",
+            render_query(a, binds, dialect),
+            render_query(b, binds, dialect)
+        ),
+        QueryNode::Or(a, b) => format!(
+            "({} OR {})",
+            render_query(a, binds, dialect),
+            render_query(b, binds, dialect)
+        ),
+        QueryNode::Not(a) => format!("(NOT {})", render_query(a, binds, dialect)),
+        QueryNode::Text(t) => {
+            let idx = binds.len() + 1;
+            // COALESCE makes the leaf two-valued: a NULL title/content_text
+            // reads as FALSE (not NULL), so a negated free-text term (`-foo`)
+            // correctly includes rows where both columns are NULL instead of
+            // being dropped by `NOT (NULL OR NULL)` = NULL.
+            let frag = format!(
+                "COALESCE(({} OR {}), {})",
+                dialect.ci_like_esc("e.title", idx),
+                dialect.ci_like_esc("e.content_text", idx),
+                dialect.bool_false()
+            );
+            binds.push(Bind::Text(like_contains(t)));
+            frag
+        }
+        QueryNode::Field { field, value } => {
+            let col = match field {
+                TextField::Title => "e.title",
+                TextField::Author => "e.author",
+            };
+            let idx = binds.len() + 1;
+            // See QueryNode::Text above: COALESCE makes a NULL column (e.g. a
+            // missing author) read as FALSE so `-author:jane` includes it.
+            let frag = format!(
+                "COALESCE({}, {})",
+                dialect.ci_like_esc(col, idx),
+                dialect.bool_false()
+            );
+            binds.push(Bind::Text(like_contains(value)));
+            frag
+        }
+        QueryNode::Source { kind, value } => {
+            let col = match kind {
+                SourceKind::Feed => "f.title",
+                SourceKind::Category => "c.name",
+            };
+            let idx = binds.len() + 1;
+            // See QueryNode::Text above: COALESCE makes a NULL column
+            // two-valued for correct negation.
+            let frag = format!(
+                "COALESCE({}, {})",
+                dialect.ci_like_esc(col, idx),
+                dialect.bool_false()
+            );
+            binds.push(Bind::Text(like_contains(value)));
+            frag
+        }
+        QueryNode::Status(s) => match s {
+            Status::Unread => "e.read_at IS NULL".to_string(),
+            Status::Read => "e.read_at IS NOT NULL".to_string(),
+            Status::Starred => "e.starred_at IS NOT NULL".to_string(),
+        },
+        QueryNode::Date { bound, date } => {
+            let epoch = dialect.epoch("COALESCE(e.published_at, e.created_at)");
+            let secs = date
+                .and_hms_opt(0, 0, 0)
+                .expect("valid midnight")
+                .and_utc()
+                .timestamp();
+            let idx = binds.len() + 1;
+            let cmp = match bound {
+                DateBound::After => ">=",
+                DateBound::Before => "<",
+            };
+            let frag = format!("{epoch} {cmp} ${idx}");
+            binds.push(Bind::Int(secs));
+            frag
+        }
+    }
 }
 
 /// Apply time range conditions (ot = oldest timestamp, nt = newest timestamp, in seconds).
@@ -318,7 +449,93 @@ pub(super) fn apply_continuation_condition(
 
 #[cfg(test)]
 mod tests {
+    use super::super::query::parse as parse_query;
     use super::*;
+
+    fn render(qs: &str, dialect: Dialect) -> (String, Vec<Bind>) {
+        let ast = parse_query(qs).expect("valid query");
+        let mut binds = Vec::new();
+        let frag = render_query(&ast, &mut binds, dialect);
+        (frag, binds)
+    }
+
+    #[test]
+    fn render_status_unread_sqlite() {
+        let (frag, binds) = render("is:unread", Dialect::Sqlite);
+        assert_eq!(frag, "e.read_at IS NULL");
+        assert!(binds.is_empty());
+    }
+
+    #[test]
+    fn render_free_text_matches_title_and_content_with_escape() {
+        let (frag, binds) = render("rust", Dialect::Sqlite);
+        assert_eq!(
+            frag,
+            "COALESCE((e.title LIKE $1 ESCAPE '\\' OR e.content_text LIKE $1 ESCAPE '\\'), 0)"
+        );
+        assert!(matches!(&binds[0], Bind::Text(s) if s == "%rust%"));
+    }
+
+    #[test]
+    fn render_free_text_pg_uses_ilike() {
+        let (frag, _) = render("rust", Dialect::Postgres);
+        assert_eq!(
+            frag,
+            "COALESCE((e.title ILIKE $1 ESCAPE '\\' OR e.content_text ILIKE $1 ESCAPE '\\'), FALSE)"
+        );
+    }
+
+    #[test]
+    fn render_like_wildcards_are_escaped() {
+        let (_, binds) = render("50%", Dialect::Sqlite);
+        assert!(matches!(&binds[0], Bind::Text(s) if s == "%50\\%%"));
+    }
+
+    #[test]
+    fn render_feed_and_author_columns() {
+        let (feed, _) = render("feed:news", Dialect::Sqlite);
+        assert_eq!(feed, "COALESCE(f.title LIKE $1 ESCAPE '\\', 0)");
+        let (author, _) = render("author:jane", Dialect::Sqlite);
+        assert_eq!(author, "COALESCE(e.author LIKE $1 ESCAPE '\\', 0)");
+    }
+
+    #[test]
+    fn render_boolean_nesting_and_bind_numbering() {
+        // `(rust OR go) AND is:unread` — two text binds, status has none.
+        let (frag, binds) = render("(rust OR go) AND is:unread", Dialect::Sqlite);
+        assert_eq!(
+            frag,
+            "((COALESCE((e.title LIKE $1 ESCAPE '\\' OR e.content_text LIKE $1 ESCAPE '\\'), 0) \
+OR COALESCE((e.title LIKE $2 ESCAPE '\\' OR e.content_text LIKE $2 ESCAPE '\\'), 0)) AND e.read_at IS NULL)"
+        );
+        assert_eq!(binds.len(), 2);
+    }
+
+    #[test]
+    fn render_not_wraps() {
+        let (frag, _) = render("-is:read", Dialect::Sqlite);
+        assert_eq!(frag, "(NOT e.read_at IS NOT NULL)");
+    }
+
+    #[test]
+    fn render_after_date_sqlite_epoch_and_int_bind() {
+        let (frag, binds) = render("after:2026-01-01", Dialect::Sqlite);
+        assert_eq!(
+            frag,
+            "CAST(strftime('%s', COALESCE(e.published_at, e.created_at)) AS INTEGER) >= $1"
+        );
+        // 2026-01-01T00:00:00Z
+        assert!(matches!(binds[0], Bind::Int(1_767_225_600)));
+    }
+
+    #[test]
+    fn render_before_uses_lt_and_pg_epoch() {
+        let (frag, _) = render("before:2026-01-01", Dialect::Postgres);
+        assert_eq!(
+            frag,
+            "EXTRACT(EPOCH FROM COALESCE(e.published_at, e.created_at))::bigint < $1"
+        );
+    }
 
     #[test]
     fn test_unread_hint_uses_unread_sort_index() {

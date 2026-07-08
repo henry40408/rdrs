@@ -16,8 +16,10 @@
 //! dialect-fork between `SQLite` and PG — the composite-cursor `to_char`
 //! comparison, `datetime('now')`→`now()`, interval arithmetic (`make_interval`),
 //! `pg_database_size`, the `DATE()`/`to_char` stats bucket, the `"user"`
-//! reserved-word quoting, and the `is_unique_violation` mapping — against a real
-//! server.
+//! reserved-word quoting, the `is_unique_violation` mapping, and the `/search`
+//! boolean query language's `ILIKE ... ESCAPE` free-text/`is:` matching plus
+//! its `EXTRACT(EPOCH FROM ...)::bigint` date-bound comparison — against a
+//! real server.
 
 use rdrs::config::Backend;
 use rdrs::db::Db;
@@ -286,4 +288,127 @@ async fn pg_dialect_smoke() {
         matches!(err, AppError::CategoryExists),
         "expected CategoryExists, got {err:?}"
     );
+
+    // --- /search boolean query language: is:unread + free text (ILIKE ESCAPE) -
+    // Everything in this file shares one live server and one test function by
+    // design (see the module doc comment) so these query-language assertions
+    // extend `pg_dialect_smoke` with more seed data rather than adding
+    // sibling `#[tokio::test]` fns, which would TRUNCATE the same tables
+    // concurrently and race.
+    entry::upsert_entry(
+        &db,
+        feed_id,
+        "guid-rust-news",
+        Some("rust news"),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (rust_read, _) = entry::upsert_entry(
+        &db,
+        feed_id,
+        "guid-rust-read",
+        Some("rust read already"),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    entry::set_read_for_user(&db, user_id, rust_read.id, true)
+        .await
+        .unwrap();
+    entry::upsert_entry(
+        &db,
+        feed_id,
+        "guid-go-news",
+        Some("go news"),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let unread_filter = EntryFilter {
+        query: Some(entry::query::parse("is:unread rust").unwrap()),
+        ..Default::default()
+    };
+    let unread_rows = entry::list_by_user(
+        &db,
+        user_id,
+        &unread_filter,
+        EntrySortOrder::PublishedAt,
+        50,
+        0,
+    )
+    .await
+    .unwrap();
+    let unread_titles: Vec<_> = unread_rows
+        .iter()
+        .filter_map(|r| r.entry.title.clone())
+        .collect();
+    assert!(unread_titles.iter().any(|t| t == "rust news"));
+    assert!(!unread_titles.iter().any(|t| t == "rust read already")); // read -> excluded by is:unread
+    assert!(!unread_titles.iter().any(|t| t == "go news")); // no "rust" -> excluded by free text
+
+    // --- /search boolean query language: after:2026-01-01 (epoch comparison) --
+    // Exercises the PG `EXTRACT(EPOCH FROM ...)::bigint` fork for date bounds
+    // (SQLite uses `strftime('%s', ...)`; see `query_after_date_filters` in
+    // `models::entry::mod`'s unit tests for the SQLite-side mirror).
+    entry::upsert_entry(
+        &db,
+        feed_id,
+        "guid-old",
+        Some("old"),
+        None,
+        None,
+        None,
+        None,
+        Some(utc("2025-06-01T00:00:00Z")),
+    )
+    .await
+    .unwrap();
+    entry::upsert_entry(
+        &db,
+        feed_id,
+        "guid-new",
+        Some("new"),
+        None,
+        None,
+        None,
+        None,
+        Some(utc("2026-03-01T00:00:00Z")),
+    )
+    .await
+    .unwrap();
+
+    let after_filter = EntryFilter {
+        query: Some(entry::query::parse("after:2026-01-01").unwrap()),
+        ..Default::default()
+    };
+    let after_rows = entry::list_by_user(
+        &db,
+        user_id,
+        &after_filter,
+        EntrySortOrder::PublishedAt,
+        50,
+        0,
+    )
+    .await
+    .unwrap();
+    let after_titles: Vec<_> = after_rows
+        .iter()
+        .filter_map(|r| r.entry.title.clone())
+        .collect();
+    assert!(after_titles.iter().any(|t| t == "new"));
+    assert!(!after_titles.iter().any(|t| t == "old"));
 }

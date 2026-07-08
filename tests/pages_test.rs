@@ -890,6 +890,48 @@ async fn test_search_page_no_results() {
     assert!(body.contains("data-testid=\"search-empty\""));
 }
 
+#[tokio::test]
+async fn test_search_page_invalid_query_shows_error_no_results() {
+    let app = create_test_app(default_test_config()).await;
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    // "(rust OR" — unbalanced parenthesis, url-encoded.
+    let response = app.server.get("/search?q=%28rust%20OR").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("Search syntax error"));
+    assert!(body.contains("data-testid=\"search-error\""));
+    assert!(!body.contains("data-testid=\"search-results\""));
+}
+
+#[tokio::test]
+async fn test_search_page_valid_structured_query_renders_without_error() {
+    let app = create_test_app(default_test_config()).await;
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/search?q=is%3Aunread").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(!body.contains("Search syntax error"));
+    assert!(!body.contains("data-testid=\"search-error\""));
+}
+
+#[tokio::test]
+async fn test_search_page_has_syntax_help_panel() {
+    let app = create_test_app(default_test_config()).await;
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/search").await;
+    response.assert_status_ok();
+    let body = response.text();
+    assert!(body.contains("class=\"search-syntax-help\""));
+    assert!(body.contains("Search syntax"));
+    assert!(body.contains("is:unread"));
+}
+
 // ============================================================================
 // Category Entries Page Tests
 // ============================================================================

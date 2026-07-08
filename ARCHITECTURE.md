@@ -37,7 +37,7 @@ src/
 │   ├── user.rs          # User accounts
 │   ├── session.rs       # Session management
 │   ├── feed.rs          # RSS feeds
-│   ├── entry/           # Feed entries (mod.rs + filters.rs query builder)
+│   ├── entry/           # Feed entries (mod.rs + filters.rs query builder + query.rs boolean search parser)
 │   ├── entry_summary.rs # Article summaries
 │   ├── category.rs      # Feed categories
 │   ├── image.rs         # Image storage
@@ -186,6 +186,15 @@ Each model provides:
 - Query methods for common access patterns
 
 Example: `Feed` model provides `find_by_user`, `create`, `update`, `delete`, `find_due_for_sync`.
+
+The global `/search` page accepts a boolean query language (`is:`, `feed:`,
+`category:`, `title:`, `author:`, `before:`, `after:`, `AND`/`OR`/`NOT`,
+parenthesized grouping, quoting, and `-` negation), parsed by
+`models/entry/query.rs` into a `QueryNode` AST and set on `EntryFilter.query`;
+`filters::render_query` renders that AST to SQL per-`Dialect`, still matching
+via `LIKE`/`ILIKE` (no full-text search index). Scoped, per-view search (feed,
+category, starred, etc.) is unaffected and continues to use the plain
+substring `EntryFilter.search` field.
 
 ## HTTP Layer
 
