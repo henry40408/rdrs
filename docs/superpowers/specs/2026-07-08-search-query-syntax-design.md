@@ -117,14 +117,22 @@ shown (Postgres uses `ILIKE` and its own epoch form):
 | `And(a,b)` | `(<a> AND <b>)` |
 | `Or(a,b)` | `(<a> OR <b>)` |
 | `Not(a)` | `(NOT <a>)` |
-| `Text(t)` | `(e.title LIKE $n ESCAPE '\' COLLATE NOCASE OR e.content_text LIKE $n ESCAPE '\' COLLATE NOCASE)` |
-| `Field{Title,v}` | `e.title LIKE $n ESCAPE '\' COLLATE NOCASE` |
-| `Field{Author,v}` | `e.author LIKE $n ESCAPE '\' COLLATE NOCASE` (author newly searched) |
-| `Source{Feed,v}` | `f.title LIKE $n ESCAPE '\' COLLATE NOCASE` |
-| `Source{Category,v}` | `c.name LIKE $n ESCAPE '\' COLLATE NOCASE` |
+| `Text(t)` | `COALESCE((e.title LIKE $n ESCAPE '\' OR e.content_text LIKE $n ESCAPE '\'), <false>)` |
+| `Field{Title,v}` | `COALESCE(e.title LIKE $n ESCAPE '\', <false>)` |
+| `Field{Author,v}` | `COALESCE(e.author LIKE $n ESCAPE '\', <false>)` (author newly searched) |
+| `Source{Feed,v}` | `COALESCE(f.title LIKE $n ESCAPE '\', <false>)` |
+| `Source{Category,v}` | `COALESCE(c.name LIKE $n ESCAPE '\', <false>)` |
 | `Status(Unread)` | `e.read_at IS NULL` (read → `IS NOT NULL`; starred → `e.starred_at IS NOT NULL`) |
 | `Date{After,d}` | `COALESCE(e.published_at, e.created_at) >= <epoch(d)>` (before → `<`) |
 
+Postgres uses `ILIKE`; SQLite's `LIKE` is already ASCII-case-insensitive, so no
+`COLLATE NOCASE` suffix is emitted.
+
+- **Null-safe leaves:** each `LIKE` leaf is wrapped in `COALESCE(<expr>, <false>)`
+  (`<false>` = `0` on SQLite, `FALSE` on Postgres) so a `NULL` column reads as
+  `FALSE`, not `NULL`. This makes the predicate two-valued: positive matches are
+  unaffected, and a negated filter such as `-author:jane` correctly *includes*
+  entries whose `author` is `NULL` instead of silently dropping them.
 - **LIKE wildcard escaping:** user-supplied `%` / `_` / `\` are escaped and an
   explicit `ESCAPE '\'` clause is emitted, so a search for a literal `%` is a
   literal. (The current single-string path does *not* escape — a pre-existing
@@ -144,13 +152,15 @@ shown (Postgres uses `ILIKE` and its own epoch form):
 q empty            → current behavior (no search)
 parse(q) == Ok(a)  → EntryFilter.query = Some(a) → normal listing
 parse(q) == Err(e) → do NOT run the query; render the page with
-                     error = Some("搜尋語法錯誤（第 {e.position} 字）：{e.message}")
+                     error = Some("Search syntax error (near character {char_pos}): {e.message}")
 ```
 
 - `search.html` gains an `error: Option<String>` field; when `Some`, an error
   banner renders below the input and the results area stays empty.
-- Message examples: `括號不對稱：'(' 未關閉`, `'before:' 需要 YYYY-MM-DD 格式的日期`,
-  `'OR' 後面缺少搜尋條件`.
+- Messages are English, to match the English `/search` UI. Examples:
+  `Unbalanced parentheses: '(' is not closed`, `'before:' expects a date like
+  YYYY-MM-DD`, `Expected a search term here`. (`char_pos` is the 1-based
+  character position derived from the parser's byte offset `e.position`.)
 - **Screenshot impact:** the error banner only appears on invalid input; the
   four README screenshots (unread list + reading pane; keyboard-help overlay)
   do not include `/search`, so no regeneration is required. The search input
@@ -184,7 +194,7 @@ existing native `<details>/<summary>` disclosure pattern
 |---|---|---|
 | `is:unread` / `is:read` (`read_at IS [NOT] NULL`) | `read_at` | ✅ `idx_entry_read_at` + partial `idx_entry_unread_sort` / `idx_entry_read_sort` |
 | `is:starred` (`starred_at IS NOT NULL`) | `starred_at` | ✅ `idx_entry_starred_at` + `idx_entry_starred_sort` |
-| `before:` / `after:` (`COALESCE(published_at, created_at)` compare) | expression index on that COALESCE | ✅ `idx_entry_sort_ts` (exact match — this is why the date filter uses COALESCE) |
+| `before:` / `after:` (`COALESCE(published_at, created_at)` compare) | expression index on that COALESCE | ✅ `idx_entry_sort_ts` on `COALESCE(published_at, created_at)` — same expression the `ORDER BY` already uses. Note: the emitted predicate wraps it in an epoch cast (`CAST(strftime('%s', COALESCE(...)) AS INTEGER)`), so the WHERE clause is not a verbatim index seek; this matches the pre-existing `apply_time_conditions` pattern, so there is no regression and no new index is warranted. |
 | `feed:` / `category:` (`f.title` / `c.name LIKE '%v%'`) | none | feed/category are tiny per-user tables; scan is negligible |
 | free text / `title:` / `author:` (`LIKE '%v%'`) | **none possible** | leading-wildcard LIKE cannot use a B-tree index — unchanged full scan from today; only FTS (out of scope) would help |
 
@@ -206,7 +216,8 @@ Rationale:
    (unbalanced parens, `OR` missing operand, trailing operator).
 2. **SQL-shape tests** (`filters.rs`, mirroring existing dialect tests
    `319-421`): assert the WHERE fragment for representative ASTs, **SQLite and
-   Postgres each** (`LIKE … ESCAPE COLLATE NOCASE` vs `ILIKE`; both epoch forms).
+   Postgres each** (`COALESCE(… LIKE … ESCAPE '\', 0)` vs `COALESCE(… ILIKE …
+   ESCAPE '\', FALSE)`; both epoch forms).
 3. **Integration tests** (extend the search test module in `entry/mod.rs`,
    against real SQLite): seed feeds/categories/entries; verify result sets for
    each operator and boolean/negation combos; verify `%` literal escaping.
