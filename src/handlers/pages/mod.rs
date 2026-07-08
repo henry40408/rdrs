@@ -1758,7 +1758,7 @@ pub async fn search_page(
             }
             Ok(ast) => {
                 let terms = entry::query::free_text_terms(&ast);
-                let needle = terms.first().cloned().unwrap_or_default();
+                let needles: Vec<&str> = terms.iter().map(String::as_str).collect();
                 let filter = entry::EntryFilter {
                     query: Some(ast),
                     ..Default::default()
@@ -1785,18 +1785,18 @@ pub async fn search_page(
                             .unwrap_or_else(|| "(no title)".to_string());
                         let snippet = build_snippet(
                             e.entry.content.as_deref().or(e.entry.summary.as_deref()),
-                            &needle,
+                            &needles,
                             200,
                         );
                         let (published_relative, published_at_iso) =
                             format_relative_time(e.entry.published_at);
                         SearchResultView {
                             entry_id: e.entry.id,
-                            title_html: highlight_html(&title, &needle),
+                            title_html: highlight_html(&title, &needles),
                             feed_title: e.feed_title.clone().unwrap_or_else(|| e.feed_url.clone()),
                             published_relative,
                             published_at_iso,
-                            snippet_html: highlight_html(&snippet, &needle),
+                            snippet_html: highlight_html(&snippet, &needles),
                         }
                     })
                     .collect()
@@ -3121,42 +3121,64 @@ mod tests {
 
     #[test]
     fn highlight_wraps_simple_match() {
-        let out = highlight_html("Bitcoin Price Soars", "bitcoin");
-        assert_eq!(out, "<mark>Bitcoin</mark> Price Soars");
+        let out = highlight_html("Sunrise Over Kyoto", &["sunrise"]);
+        assert_eq!(out, "<mark>Sunrise</mark> Over Kyoto");
     }
 
     #[test]
     fn highlight_wraps_multiple_matches_case_insensitive() {
-        let out = highlight_html("BITCOIN bitcoin Bitcoin", "bitcoin");
+        let out = highlight_html("SUNRISE sunrise Sunrise", &["sunrise"]);
         assert_eq!(
             out,
-            "<mark>BITCOIN</mark> <mark>bitcoin</mark> <mark>Bitcoin</mark>"
+            "<mark>SUNRISE</mark> <mark>sunrise</mark> <mark>Sunrise</mark>"
         );
     }
 
     #[test]
+    fn highlight_wraps_all_terms_regardless_of_order() {
+        // Every free-text term is highlighted, not just the first — the bug
+        // where "人工智慧 AI" only marked "人工智慧" (and "AI 人工智慧" only "AI").
+        let expected = "<mark>人工智慧</mark> and <mark>AI</mark> news";
+        assert_eq!(
+            highlight_html("人工智慧 and AI news", &["人工智慧", "AI"]),
+            expected
+        );
+        assert_eq!(
+            highlight_html("人工智慧 and AI news", &["AI", "人工智慧"]),
+            expected
+        );
+    }
+
+    #[test]
+    fn highlight_merges_overlapping_term_ranges() {
+        // "learn" is contained in "learning"; ranges merge into one wrapper.
+        let out = highlight_html("machine learning", &["learn", "learning"]);
+        assert_eq!(out, "machine <mark>learning</mark>");
+    }
+
+    #[test]
     fn highlight_no_match_returns_escaped_only() {
-        let out = highlight_html("Ethereum news", "bitcoin");
-        assert_eq!(out, "Ethereum news");
+        let out = highlight_html("Weather report", &["sunrise"]);
+        assert_eq!(out, "Weather report");
     }
 
     #[test]
     fn highlight_escapes_html_special_chars() {
-        let out = highlight_html("<b>bitcoin</b>", "bitcoin");
-        assert_eq!(out, "&lt;b&gt;<mark>bitcoin</mark>&lt;/b&gt;");
+        let out = highlight_html("<b>sunrise</b>", &["sunrise"]);
+        assert_eq!(out, "&lt;b&gt;<mark>sunrise</mark>&lt;/b&gt;");
     }
 
     #[test]
-    fn highlight_empty_query_returns_escaped() {
-        let out = highlight_html("Hi <world>", "");
-        assert_eq!(out, "Hi &lt;world&gt;");
+    fn highlight_empty_terms_returns_escaped() {
+        assert_eq!(highlight_html("Hi <world>", &[]), "Hi &lt;world&gt;");
+        assert_eq!(highlight_html("Hi <world>", &[""]), "Hi &lt;world&gt;");
     }
 
     #[test]
     fn build_snippet_strips_script_and_style_bodies() {
         let out = build_snippet(
             Some("<p>hello</p><script>alert('x')</script><style>.a{}</style> world"),
-            "",
+            &[],
             200,
         );
         assert!(out.contains("hello"));
@@ -3169,26 +3191,40 @@ mod tests {
     fn build_snippet_centers_window_on_match() {
         // Match buried far past the leading 200 chars.
         let lead = "lorem ipsum ".repeat(40);
-        let html = format!("<p>{}Bitcoin price soars today across exchanges.</p>", lead);
-        let out = build_snippet(Some(&html), "bitcoin", 80);
+        let html = format!(
+            "<p>{}Sunrise lit the harbor early today over calm water.</p>",
+            lead
+        );
+        let out = build_snippet(Some(&html), &["sunrise"], 80);
         assert!(
-            out.contains("Bitcoin"),
+            out.contains("Sunrise"),
             "snippet should include match: {out}"
         );
         assert!(out.starts_with('…'), "should ellipsis-prefix: {out}");
     }
 
     #[test]
+    fn build_snippet_centers_on_earliest_matching_term() {
+        // The first term in the list appears later than the second; the window
+        // must center on whichever term matches earliest in the text.
+        let lead = "lorem ipsum ".repeat(40);
+        let html = format!("<p>{}Harbor then meadow later.</p>", lead);
+        let out = build_snippet(Some(&html), &["meadow", "harbor"], 80);
+        assert!(out.contains("Harbor"), "should center on earliest: {out}");
+        assert!(out.starts_with('…'), "should ellipsis-prefix: {out}");
+    }
+
+    #[test]
     fn build_snippet_falls_back_to_lead_when_no_match() {
-        let html = "<p>Ethereum dominated headlines this week as the merge approached.</p>";
-        let out = build_snippet(Some(html), "bitcoin", 30);
-        assert!(out.starts_with("Ethereum"));
+        let html = "<p>Monsoon clouds gathered over the valley before the rains arrived.</p>";
+        let out = build_snippet(Some(html), &["sunrise"], 30);
+        assert!(out.starts_with("Monsoon"));
         assert!(out.ends_with('…'));
     }
 
     #[test]
     fn build_snippet_strips_html_comments() {
-        let out = build_snippet(Some("hello <!-- secret note --> world"), "", 200);
+        let out = build_snippet(Some("hello <!-- secret note --> world"), &[], 200);
         assert_eq!(out, "hello world");
     }
 
