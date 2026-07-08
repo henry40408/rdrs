@@ -30,7 +30,23 @@
                     });
                 </script>
 
-                {% if q.is_empty() %}
+                <details class="search-syntax-help">
+                    <summary>Search syntax</summary>
+                    <div class="search-syntax-help-body">
+                        <ul>
+                            <li><code>is:unread</code> / <code>is:read</code> / <code>is:starred</code> — by status</li>
+                            <li><code>feed:name</code> / <code>category:name</code> — by source (fuzzy, case-insensitive)</li>
+                            <li><code>title:word</code> / <code>author:name</code> — by field</li>
+                            <li><code>before:2026-01-01</code> / <code>after:2026-01-01</code> — by date (UTC)</li>
+                            <li><code>AND</code> <code>OR</code> <code>NOT</code> and <code>(&nbsp;)</code> — combine; adjacent words imply AND</li>
+                            <li><code>-term</code> — exclude; <code>"exact phrase"</code> — quote (also for values with spaces, e.g. <code>feed:"Rust Blog"</code>)</li>
+                        </ul>
+                    </div>
+                </details>
+
+                {% if let Some(err) = error %}
+                    <div class="search-error" role="alert" data-testid="search-error">{{ err }}</div>
+                {% else if q.is_empty() %}
                     <div class="empty-state">
                         <h2 class="empty-state-title">Search your library</h2>
                         <p class="empty-state-text">Type a keyword and press <kbd class="empty-state-kbd">Enter</kbd> to find entries by title or content.</p>

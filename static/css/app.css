@@ -3243,3 +3243,30 @@ summary {
         animation: none !important;
     }
 }
+
+/* ===== /search: query-syntax help panel + inline parse-error banner =====
+   Tokens matched to the repo's actual scale (no --space-sm/md/--color-danger-*
+   exist): spacing mirrors .feed-http-settings/.feed-http-hint (space-4/space-3/
+   space-1); the error tint mirrors .banner--error's error-colour wash. */
+.search-syntax-help {
+    margin: var(--space-2) 0 var(--space-4);
+    font-size: var(--font-sm);
+}
+.search-syntax-help-body ul {
+    margin: var(--space-1) 0 0;
+    padding-left: var(--space-5);
+    color: var(--color-text-muted);
+}
+.search-syntax-help-body li {
+    margin: var(--space-1) 0;
+}
+.search-syntax-help-body code {
+    font-family: var(--font-mono);
+}
+.search-error {
+    margin: var(--space-4) 0;
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-md);
+    background: light-dark(rgba(185, 28, 28, 0.06), rgba(248, 113, 113, 0.08));
+    color: var(--color-error);
+}
