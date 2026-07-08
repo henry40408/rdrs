@@ -1750,7 +1750,10 @@ pub async fn search_page(
             Err(e) => {
                 // Byte offset → 1-based character position for the message.
                 let char_pos = q.get(..e.position).map_or(0, |p| p.chars().count()) + 1;
-                error = Some(format!("搜尋語法錯誤（第 {char_pos} 字）：{}", e.message));
+                error = Some(format!(
+                    "Search syntax error (near character {char_pos}): {}",
+                    e.message
+                ));
                 Vec::new()
             }
             Ok(ast) => {

@@ -117,6 +117,17 @@ impl Dialect {
         }
     }
 
+    /// Boolean FALSE literal: `0` on `SQLite` (LIKE yields 0/1 integers),
+    /// `FALSE` on `PostgreSQL` (LIKE yields a boolean). Used to make LIKE
+    /// leaves two-valued via COALESCE so a NULL column reads as FALSE
+    /// (not NULL) and negation includes NULL-column rows.
+    fn bool_false(self) -> &'static str {
+        match self {
+            Dialect::Sqlite => "0",
+            Dialect::Postgres => "FALSE",
+        }
+    }
+
     /// A query-planner index hint. `SQLite` honours `INDEXED BY`; `PostgreSQL` has
     /// no per-query hint, so the fragment collapses to empty.
     pub(super) fn index_hint(self, sqlite_hint: &'static str) -> &'static str {
@@ -281,10 +292,15 @@ pub(super) fn render_query(node: &QueryNode, binds: &mut Vec<Bind>, dialect: Dia
         QueryNode::Not(a) => format!("(NOT {})", render_query(a, binds, dialect)),
         QueryNode::Text(t) => {
             let idx = binds.len() + 1;
+            // COALESCE makes the leaf two-valued: a NULL title/content_text
+            // reads as FALSE (not NULL), so a negated free-text term (`-foo`)
+            // correctly includes rows where both columns are NULL instead of
+            // being dropped by `NOT (NULL OR NULL)` = NULL.
             let frag = format!(
-                "({} OR {})",
+                "COALESCE(({} OR {}), {})",
                 dialect.ci_like_esc("e.title", idx),
-                dialect.ci_like_esc("e.content_text", idx)
+                dialect.ci_like_esc("e.content_text", idx),
+                dialect.bool_false()
             );
             binds.push(Bind::Text(like_contains(t)));
             frag
@@ -295,7 +311,13 @@ pub(super) fn render_query(node: &QueryNode, binds: &mut Vec<Bind>, dialect: Dia
                 TextField::Author => "e.author",
             };
             let idx = binds.len() + 1;
-            let frag = dialect.ci_like_esc(col, idx);
+            // See QueryNode::Text above: COALESCE makes a NULL column (e.g. a
+            // missing author) read as FALSE so `-author:jane` includes it.
+            let frag = format!(
+                "COALESCE({}, {})",
+                dialect.ci_like_esc(col, idx),
+                dialect.bool_false()
+            );
             binds.push(Bind::Text(like_contains(value)));
             frag
         }
@@ -305,7 +327,13 @@ pub(super) fn render_query(node: &QueryNode, binds: &mut Vec<Bind>, dialect: Dia
                 SourceKind::Category => "c.name",
             };
             let idx = binds.len() + 1;
-            let frag = dialect.ci_like_esc(col, idx);
+            // See QueryNode::Text above: COALESCE makes a NULL column
+            // two-valued for correct negation.
+            let frag = format!(
+                "COALESCE({}, {})",
+                dialect.ci_like_esc(col, idx),
+                dialect.bool_false()
+            );
             binds.push(Bind::Text(like_contains(value)));
             frag
         }
@@ -443,7 +471,7 @@ mod tests {
         let (frag, binds) = render("rust", Dialect::Sqlite);
         assert_eq!(
             frag,
-            "(e.title LIKE $1 ESCAPE '\\' OR e.content_text LIKE $1 ESCAPE '\\')"
+            "COALESCE((e.title LIKE $1 ESCAPE '\\' OR e.content_text LIKE $1 ESCAPE '\\'), 0)"
         );
         assert!(matches!(&binds[0], Bind::Text(s) if s == "%rust%"));
     }
@@ -453,7 +481,7 @@ mod tests {
         let (frag, _) = render("rust", Dialect::Postgres);
         assert_eq!(
             frag,
-            "(e.title ILIKE $1 ESCAPE '\\' OR e.content_text ILIKE $1 ESCAPE '\\')"
+            "COALESCE((e.title ILIKE $1 ESCAPE '\\' OR e.content_text ILIKE $1 ESCAPE '\\'), FALSE)"
         );
     }
 
@@ -466,9 +494,9 @@ mod tests {
     #[test]
     fn render_feed_and_author_columns() {
         let (feed, _) = render("feed:news", Dialect::Sqlite);
-        assert_eq!(feed, "f.title LIKE $1 ESCAPE '\\'");
+        assert_eq!(feed, "COALESCE(f.title LIKE $1 ESCAPE '\\', 0)");
         let (author, _) = render("author:jane", Dialect::Sqlite);
-        assert_eq!(author, "e.author LIKE $1 ESCAPE '\\'");
+        assert_eq!(author, "COALESCE(e.author LIKE $1 ESCAPE '\\', 0)");
     }
 
     #[test]
@@ -477,8 +505,8 @@ mod tests {
         let (frag, binds) = render("(rust OR go) AND is:unread", Dialect::Sqlite);
         assert_eq!(
             frag,
-            "(((e.title LIKE $1 ESCAPE '\\' OR e.content_text LIKE $1 ESCAPE '\\') \
-OR (e.title LIKE $2 ESCAPE '\\' OR e.content_text LIKE $2 ESCAPE '\\')) AND e.read_at IS NULL)"
+            "((COALESCE((e.title LIKE $1 ESCAPE '\\' OR e.content_text LIKE $1 ESCAPE '\\'), 0) \
+OR COALESCE((e.title LIKE $2 ESCAPE '\\' OR e.content_text LIKE $2 ESCAPE '\\'), 0)) AND e.read_at IS NULL)"
         );
         assert_eq!(binds.len(), 2);
     }

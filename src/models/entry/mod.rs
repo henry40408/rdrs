@@ -2386,6 +2386,73 @@ mod tests {
         assert!(!titles.iter().any(|t| t == "go")); // no "rust" -> excluded
     }
 
+    // M1 regression: `NOT (NULL LIKE ...)` is NULL (not TRUE), so a naive
+    // `(NOT e.author LIKE ...)` would silently exclude every NULL-author row.
+    // The COALESCE(..., 0/FALSE) wrapper makes the leaf two-valued so negation
+    // correctly includes rows where the filtered column is NULL.
+    #[tokio::test]
+    async fn query_negated_author_includes_null_author_entries() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-jane",
+            Some("jane's post"),
+            None,
+            None,
+            None,
+            Some("jane"),
+            None,
+        )
+        .await
+        .unwrap();
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-bob",
+            Some("bob's post"),
+            None,
+            None,
+            None,
+            Some("bob"),
+            None,
+        )
+        .await
+        .unwrap();
+        upsert_entry(
+            &db,
+            feed_id,
+            "guid-anon",
+            Some("anonymous post"),
+            None,
+            None,
+            None,
+            None, // no author (NULL)
+            None,
+        )
+        .await
+        .unwrap();
+
+        let filter = EntryFilter {
+            query: Some(query::parse("-author:jane").unwrap()),
+            ..Default::default()
+        };
+        let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 50, 0)
+            .await
+            .unwrap();
+        let titles: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.entry.title.clone())
+            .collect();
+        assert!(titles.iter().any(|t| t == "bob's post"));
+        assert!(titles.iter().any(|t| t == "anonymous post")); // NULL author -> included
+        assert!(!titles.iter().any(|t| t == "jane's post"));
+    }
+
     #[tokio::test]
     async fn query_feed_name_fuzzy_match() {
         let db = setup_db().await;

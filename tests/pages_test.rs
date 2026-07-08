@@ -900,7 +900,7 @@ async fn test_search_page_invalid_query_shows_error_no_results() {
     let response = app.server.get("/search?q=%28rust%20OR").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("搜尋語法錯誤"));
+    assert!(body.contains("Search syntax error"));
     assert!(body.contains("data-testid=\"search-error\""));
     assert!(!body.contains("data-testid=\"search-results\""));
 }
@@ -914,7 +914,7 @@ async fn test_search_page_valid_structured_query_renders_without_error() {
     let response = app.server.get("/search?q=is%3Aunread").await;
     response.assert_status_ok();
     let body = response.text();
-    assert!(!body.contains("搜尋語法錯誤"));
+    assert!(!body.contains("Search syntax error"));
     assert!(!body.contains("data-testid=\"search-error\""));
 }
 

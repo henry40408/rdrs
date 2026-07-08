@@ -85,7 +85,7 @@ pub fn parse(input: &str) -> Result<QueryNode, ParseError> {
     if toks.is_empty() {
         return Err(ParseError {
             position: 0,
-            message: "查詢是空的".into(),
+            message: "Query is empty".into(),
         });
     }
     let mut p = Parser {
@@ -97,7 +97,7 @@ pub fn parse(input: &str) -> Result<QueryNode, ParseError> {
     if p.pos < toks.len() {
         return Err(ParseError {
             position: toks[p.pos].pos,
-            message: "多餘的字元（可能是多出的 ')'）".into(),
+            message: "Unexpected extra input (maybe an extra ')')".into(),
         });
     }
     Ok(node)
@@ -289,7 +289,7 @@ fn read_quoted(
     }
     Err(ParseError {
         position: open_byte,
-        message: "引號未關閉".into(),
+        message: "Unclosed quote".into(),
     })
 }
 
@@ -368,7 +368,7 @@ impl<'a> Parser<'a> {
                 if !matches!(self.peek(), Some(Tok::RParen)) {
                     return Err(ParseError {
                         position: open_pos,
-                        message: "括號不對稱：'(' 未關閉".into(),
+                        message: "Unbalanced parentheses: '(' is not closed".into(),
                     });
                 }
                 self.bump();
@@ -391,7 +391,7 @@ impl<'a> Parser<'a> {
             }
             _ => Err(ParseError {
                 position: self.peek_pos(),
-                message: "此處需要一個搜尋條件".into(),
+                message: "Expected a search term here".into(),
             }),
         }
     }
@@ -401,7 +401,7 @@ fn node_from_filter(field: Field, value: &str, pos: usize) -> Result<QueryNode, 
     if value.is_empty() {
         return Err(ParseError {
             position: pos,
-            message: format!("{} 後面需要一個值", field.label()),
+            message: format!("{} needs a value", field.label()),
         });
     }
     match field {
@@ -411,7 +411,7 @@ fn node_from_filter(field: Field, value: &str, pos: usize) -> Result<QueryNode, 
             "starred" => Ok(QueryNode::Status(Status::Starred)),
             other => Err(ParseError {
                 position: pos,
-                message: format!("未知的 is: 值「{other}」（可用 unread / read / starred）"),
+                message: format!("Unknown is: value \"{other}\" (use unread / read / starred)"),
             }),
         },
         Field::Feed => Ok(QueryNode::Source {
@@ -434,7 +434,7 @@ fn node_from_filter(field: Field, value: &str, pos: usize) -> Result<QueryNode, 
             let date =
                 NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_parse_err| ParseError {
                     position: pos,
-                    message: format!("{} 需要 YYYY-MM-DD 格式的日期", field.label()),
+                    message: format!("{} expects a date like YYYY-MM-DD", field.label()),
                 })?;
             let bound = if field == Field::Before {
                 DateBound::Before
