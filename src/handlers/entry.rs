@@ -63,6 +63,7 @@ pub async fn get_entry_neighbors(
         has_summary: query.has_summary,
         search: None,
         read_after: query.read_after,
+        ..Default::default()
     };
     let neighbors = entry::find_neighbors(&state.db, user_id, id, &filter).await?;
     Ok(Json(neighbors))

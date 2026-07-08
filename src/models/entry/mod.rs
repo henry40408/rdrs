@@ -73,6 +73,11 @@ pub struct EntryFilter {
     /// to entries the reader just finished during this page view. Ignored
     /// when `unread_only` is false.
     pub read_after: Option<String>,
+    /// Parsed boolean query AST for the global `/search` page. Set by the
+    /// search handler from the `?q=` string; `None` on every other list path
+    /// (a no-op). Rendered to SQL by `filters::render_query`.
+    #[serde(skip)]
+    pub query: Option<query::QueryNode>,
 }
 
 /// Pagination cursor. The wire format on the API is opaque to clients; we
