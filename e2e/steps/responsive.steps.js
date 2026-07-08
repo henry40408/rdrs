@@ -237,6 +237,52 @@ When("a flash banner is shown", async ({ page }) => {
   await expect(page.locator(".banner")).toBeVisible();
 });
 
+Then(
+  "the flash banner is vertically centered on a wide touch tablet",
+  async ({ browser, page, serverUrl }) => {
+    // Reproduce iPad-landscape: a WIDE (>1024px, so the persistent split layout
+    // rather than the mobile drawer) TOUCH viewport. Touch triggers
+    // `@media (hover: none)`, which bumps `.banner-dismiss` to 44px tall; the
+    // base `.banner { align-items: start }` then pinned the message to the top
+    // of the inflated grid row while the `align-self: center` timestamp sat
+    // lower — the visible misalignment + blank space. `hover: none` cannot be
+    // faked via viewport size or page.emulateMedia, so spin a dedicated
+    // hasTouch context (reusing the signed-in cookies) at 1180px.
+    const ctx = await browser.newContext({
+      viewport: { width: 1180, height: 820 },
+      hasTouch: true,
+    });
+    try {
+      await ctx.addCookies(await page.context().cookies());
+      const tp = await ctx.newPage();
+      await tp.goto(`${serverUrl}/`);
+      await tp.evaluate(() => window.flash.show("success", "Marked as unread."));
+      const banner = tp.locator(".banner").first();
+      await expect(banner).toBeVisible();
+      const m = await banner.evaluate((n) => {
+        const centerY = (sel) => {
+          const r = n.querySelector(sel).getBoundingClientRect();
+          return r.y + r.height / 2;
+        };
+        const d = n.querySelector(".banner-dismiss").getBoundingClientRect();
+        return {
+          msg: centerY(".banner-message"),
+          time: centerY(".banner-time"),
+          dismissW: d.width,
+          dismissH: d.height,
+        };
+      });
+      // Message and timestamp share the row's vertical center.
+      expect(Math.abs(m.msg - m.time)).toBeLessThanOrEqual(1.5);
+      // Dismiss keeps a full 44px tap target on BOTH axes at this width.
+      expect(m.dismissW).toBeGreaterThanOrEqual(44);
+      expect(m.dismissH).toBeGreaterThanOrEqual(44);
+    } finally {
+      await ctx.close();
+    }
+  },
+);
+
 Then("the flash banner sits below the hamburger", async ({ page }) => {
   const toggle = await page.locator(".sidebar-toggle").boundingBox();
   const banner = await page.locator(".banner").first().boundingBox();
