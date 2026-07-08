@@ -3248,12 +3248,35 @@ summary {
    Tokens matched to the repo's actual scale (no --space-sm/md/--color-danger-*
    exist): spacing mirrors .feed-http-settings/.feed-http-hint (space-4/space-3/
    space-1); the error tint mirrors .banner--error's error-colour wash. */
+/* Compact search form: keyword input and submit button share one row so the
+   button no longer drops to its own line. */
+.search-form-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: stretch;
+    margin-bottom: var(--space-3);
+}
+.search-form-row input[type="text"] {
+    flex: 1;
+    min-width: 0;
+}
+.search-form-row button {
+    padding-inline: var(--space-5);
+}
+
+/* Framed disclosure, mirroring .feed-http-settings so the two match. */
 .search-syntax-help {
-    margin: var(--space-2) 0 var(--space-4);
+    margin: 0 0 var(--space-4);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
     font-size: var(--font-sm);
 }
+.search-syntax-help-body {
+    margin-top: var(--space-3);
+}
 .search-syntax-help-body ul {
-    margin: var(--space-1) 0 0;
+    margin: 0;
     padding-left: var(--space-5);
     color: var(--color-text-muted);
 }

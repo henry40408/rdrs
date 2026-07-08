@@ -9,11 +9,10 @@
                 <h1>Search</h1>
 
                 <form method="get" action="/search">
-                    <div class="form-group">
-                        <label for="search-q">Keywords</label>
-                        <input type="text" id="search-q" name="q" value="{{ q }}" placeholder="Find entries by title or content" autofocus required data-testid="search-input">
+                    <div class="search-form-row">
+                        <input type="text" id="search-q" name="q" value="{{ q }}" placeholder="Find entries by title or content" aria-label="Search keywords" autofocus required data-testid="search-input">
+                        <button type="submit" data-testid="search-btn">Search</button>
                     </div>
-                    <button type="submit" data-testid="search-btn">Search</button>
                 </form>
                 <script>
                     // `/` focuses the search input (matches the legacy entries.js
