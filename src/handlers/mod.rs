@@ -13,4 +13,5 @@ pub mod pages;
 pub mod passkey;
 pub mod proxy;
 pub mod static_assets;
+pub mod summarizer;
 pub mod user;
