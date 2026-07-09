@@ -1,6 +1,8 @@
 use askama::Template;
+use axum::Form;
 use axum::extract::State;
 use axum::response::{Html, IntoResponse};
+use serde::Deserialize;
 use url::Url;
 
 use crate::AppState;
@@ -16,7 +18,6 @@ pub const MAX_URLS: usize = 30;
 /// Parse the textarea into a validated, de-duplicated, order-preserving list of
 /// URL strings. Rejects an empty list, more than `MAX_URLS`, and any line that
 /// is not a fetchable http(s) URL (SSRF-validated).
-#[allow(dead_code)]
 pub(crate) fn parse_url_lines(input: &str) -> Result<Vec<String>, String> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -44,7 +45,6 @@ pub(crate) fn parse_url_lines(input: &str) -> Result<Vec<String>, String> {
 }
 
 /// Host for the card-title fallback; returns the input unchanged if unparseable.
-#[allow(dead_code)]
 pub(crate) fn url_host(url: &str) -> String {
     Url::parse(url)
         .ok()
@@ -122,6 +122,52 @@ pub async fn summarizer_page(
             urls_text: String::new(),
             error: None,
             cards: Vec::new(),
+        },
+    )
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StartForm {
+    pub urls: String,
+}
+
+pub async fn start(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+    Form(form): Form<StartForm>,
+) -> (Flash, SummarizerTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let configured = kagi_configured(&state, auth_user.user.id).await;
+
+    let (error, cards) = match parse_url_lines(&form.urls) {
+        Ok(urls) => (
+            None,
+            urls.into_iter()
+                .enumerate()
+                .map(|(index, url)| SummarizerCard {
+                    index,
+                    title: url_host(&url),
+                    url,
+                    state: "queued",
+                    summary: String::new(),
+                    error: String::new(),
+                })
+                .collect(),
+        ),
+        Err(msg) => (Some(msg), Vec::new()),
+    };
+
+    (
+        flash,
+        SummarizerTemplate {
+            title: "Summarizer",
+            git_version: crate::GIT_VERSION,
+            layout,
+            kagi_configured: configured,
+            urls_text: form.urls,
+            error,
+            cards,
         },
     )
 }

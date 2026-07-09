@@ -89,3 +89,40 @@ async fn page_requires_auth() {
     // PageAuthUser redirects unauthenticated users to /login.
     assert!(res.status_code().is_redirection() || res.status_code().as_u16() == 200);
 }
+
+#[tokio::test]
+async fn start_renders_queued_cards() {
+    let app = create_test_app(default_test_config()).await;
+    let uid = login(&app, "carol").await;
+    configure_kagi(&app, uid).await;
+    let res = app
+        .server
+        .post("/summarizer")
+        .form(&serde_json::json!({"urls": "https://a.com/x\nhttps://b.com/y"}))
+        .await;
+    res.assert_status_ok();
+    let body = res.text();
+    assert_eq!(body.matches("data-summarizer-card").count(), 2);
+    assert!(body.contains("data-state=\"queued\""));
+    assert!(body.contains("https://a.com/x"));
+}
+
+#[tokio::test]
+async fn start_rejects_over_30() {
+    let app = create_test_app(default_test_config()).await;
+    let uid = login(&app, "dave").await;
+    configure_kagi(&app, uid).await;
+    let urls = (0..31)
+        .map(|i| format!("https://e.com/{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let res = app
+        .server
+        .post("/summarizer")
+        .form(&serde_json::json!({"urls": urls}))
+        .await;
+    res.assert_status_ok();
+    let body = res.text();
+    assert!(body.contains("30 max"));
+    assert_eq!(body.matches("data-summarizer-card").count(), 0);
+}
