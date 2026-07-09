@@ -1,3 +1,8 @@
+use askama::Template;
+// Not yet consumed by a handler — a later task renders `SummarizerCardTemplate`
+// into an `Html<String>` response.
+#[allow(unused_imports)]
+use axum::response::Html;
 use url::Url;
 
 use crate::utils::url_validation::validate_url;
@@ -42,6 +47,24 @@ pub(crate) fn url_host(url: &str) -> String {
         .ok()
         .and_then(|u| u.host_str().map(str::to_string))
         .unwrap_or_else(|| url.to_string())
+}
+
+/// One URL's card. `state` selects the rendered branch; unused string fields are
+/// empty. `summary` is trusted HTML/markdown from Kagi (rendered with `|safe`).
+#[derive(Debug, Clone)]
+pub(crate) struct SummarizerCard {
+    pub index: usize,
+    pub url: String,
+    pub title: String,
+    pub state: &'static str,
+    pub summary: String,
+    pub error: String,
+}
+
+#[derive(Template)]
+#[template(path = "_summarizer_card_fragment.html")]
+pub(crate) struct SummarizerCardTemplate {
+    pub card: SummarizerCard,
 }
 
 #[cfg(test)]

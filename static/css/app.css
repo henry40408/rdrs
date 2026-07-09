@@ -2200,6 +2200,16 @@ summary {
     display: inline-flex;
 }
 
+/* Summarizer tool — queued card dimming + in-flight spinner. */
+.summary-box.pending { opacity: 0.62; }
+.summary-box .status .sz-spinner {
+    display: inline-block; width: 11px; height: 11px; margin-right: 6px;
+    border: 2px solid var(--color-accent); border-right-color: transparent;
+    border-radius: 50%; vertical-align: -1px; animation: sz-spin 0.7s linear infinite;
+}
+@keyframes sz-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .summary-box .status .sz-spinner { animation: none; } }
+
 /* ===== Responsive: Wide screens ===== */
 @media (min-width: 1600px) {
     :root {
