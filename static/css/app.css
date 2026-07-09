@@ -1435,7 +1435,7 @@ td input[type="text"] {
     min-width: 0;
     font-family: var(--font-ui);
     font-size: 16px;
-    font-weight: 600;
+    font-weight: 500;
     line-height: 1.35;
     letter-spacing: -0.005em;
     color: var(--color-text);
@@ -1448,15 +1448,17 @@ td input[type="text"] {
     overflow: hidden;
     transition: color 0.1s;
 }
-/* Read state recedes by COLOUR only — weight stays 600 in both states so
+/* Read state recedes by COLOUR only — weight stays 500 in both states so
    toggling read/unread never changes glyph advance widths, and the 3-line
    clamp can't re-wrap and shift the row (or its neighbours). The filled/hollow
-   marker dot already carries the read/unread signal redundantly.
+   marker dot already carries the read/unread signal redundantly. (500 rather
+   than a bolder weight now that colour, not weight, carries the state — the
+   title still out-ranks the 14px/400 feed meta without reading as bold.)
    Light-mode read ink is lifted from --color-text-secondary (#55544F, 7.3:1)
    to #737068 so it reads as clearly lighter than the full-ink unread title
    while still clearing WCAG AA (4.7:1 on the panel). Dark stays #B3B2AC
    (== --color-text-secondary dark), which already separated well. */
-.entry-item.entry-read .entry-item-title { font-weight: 600; color: light-dark(#737068, #B3B2AC); }
+.entry-item.entry-read .entry-item-title { font-weight: 500; color: light-dark(#737068, #B3B2AC); }
 .entry-item:hover .entry-item-title { color: var(--color-accent); }
 
 /* Timerow (col3 row1) — summary badge + relative time, on the title's first line. */
