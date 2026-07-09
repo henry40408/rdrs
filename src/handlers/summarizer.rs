@@ -172,6 +172,64 @@ pub async fn start(
     )
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ItemForm {
+    pub url: String,
+    pub index: usize,
+}
+
+pub async fn item(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    Form(form): Form<ItemForm>,
+) -> axum::response::Response {
+    let host = url_host(&form.url);
+    let err_card = |msg: String| SummarizerCard {
+        index: form.index,
+        title: host.clone(),
+        url: form.url.clone(),
+        state: "error",
+        summary: String::new(),
+        error: msg,
+    };
+
+    // Re-validate (defense in depth — the browser could POST anything).
+    let render = |card: SummarizerCard| match (SummarizerCardTemplate { card }).render() {
+        Ok(html) => Html(html).into_response(),
+        Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+
+    let parsed = match url::Url::parse(&form.url) {
+        Ok(u) if matches!(u.scheme(), "http" | "https") => u,
+        _ => return render(err_card("Not a valid URL.".into())),
+    };
+    if validate_url(&parsed).is_err() {
+        return render(err_card("URL not allowed.".into()));
+    }
+
+    let kagi = match user_settings::get_save_services_config(&state.db, auth_user.user.id).await {
+        Ok(c) => c.kagi,
+        Err(_) => None,
+    };
+    let Some(config) = kagi.filter(|k| k.is_configured()) else {
+        return render(err_card("Kagi is not configured.".into()));
+    };
+
+    let card = match crate::services::summarize::kagi::summarize_url(&config, &form.url).await {
+        Ok(r) if r.success => SummarizerCard {
+            index: form.index,
+            title: r.title.unwrap_or(host),
+            url: form.url.clone(),
+            state: "completed",
+            summary: r.output_text.unwrap_or_default(),
+            error: String::new(),
+        },
+        Ok(r) => err_card(r.error.unwrap_or_else(|| "Summarization failed.".into())),
+        Err(e) => err_card(e.to_string()),
+    };
+    render(card)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

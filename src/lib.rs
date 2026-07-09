@@ -237,6 +237,7 @@ pub fn create_router(state: AppState) -> Router {
             "/summarizer",
             get(handlers::summarizer::summarizer_page).post(handlers::summarizer::start),
         )
+        .route("/summarizer/item", post(handlers::summarizer::item))
         .route(
             "/categories/{id}/entries",
             get(handlers::pages::category_entries_page),

@@ -8,6 +8,8 @@ use rdrs::models::user_settings;
 use rdrs::services::KagiConfig;
 use rdrs::services::save::SaveServicesConfig;
 use rdrs::{AppState, Config, Db, Role, auth, create_router, models::user, services};
+use wiremock::matchers::method;
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 struct TestApp {
     server: TestServer,
@@ -125,4 +127,42 @@ async fn start_rejects_over_30() {
     let body = res.text();
     assert!(body.contains("30 max"));
     assert_eq!(body.matches("data-summarizer-card").count(), 0);
+}
+
+#[tokio::test]
+async fn item_returns_completed_then_error_card() {
+    let app = create_test_app(default_test_config()).await;
+    let uid = login(&app, "erin").await;
+    configure_kagi(&app, uid).await;
+
+    let mock = MockServer::start().await;
+    // First a success, then swap the stub to an error body.
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "output_data": {"markdown": "Title: Hello\n\nBody text."}
+        })))
+        .mount(&mock)
+        .await;
+    // Test-only env mutation; nextest isolates each test in its own process.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("KAGI_API_BASE", mock.uri());
+    }
+
+    let ok = app
+        .server
+        .post("/summarizer/item")
+        .form(&serde_json::json!({"url": "https://a.com/x", "index": 0}))
+        .await;
+    ok.assert_status_ok();
+    let body = ok.text();
+    assert!(body.contains("data-state=\"completed\""));
+    assert!(body.contains("Hello"));
+    assert!(body.contains("Body text."));
+
+    // Test-only env mutation; nextest isolates each test in its own process.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::remove_var("KAGI_API_BASE");
+    }
 }
