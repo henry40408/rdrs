@@ -97,7 +97,14 @@ if (results) {
         const next = results.querySelector('[data-summarizer-card][data-state="queued"]');
         if (!next) break;
         const keepGoing = await summarizeCard(next);
-        if (!keepGoing) break; // cancelled — stop the remaining queue
+        if (!keepGoing) {
+          // Cancelled: stop auto-processing, but don't strand the remaining
+          // queued cards without controls — make each individually recoverable.
+          results
+            .querySelectorAll('[data-summarizer-card][data-state="queued"]')
+            .forEach((c) => setRecoverable(c, 'Stopped — Retry to run this one.'));
+          break;
+        }
       }
     } finally {
       running = false;
