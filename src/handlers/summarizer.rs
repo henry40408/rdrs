@@ -193,12 +193,12 @@ pub async fn item(
         error: msg,
     };
 
-    // Re-validate (defense in depth — the browser could POST anything).
     let render = |card: SummarizerCard| match (SummarizerCardTemplate { card }).render() {
         Ok(html) => Html(html).into_response(),
         Err(e) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
 
+    // Re-validate (defense in depth — the browser could POST anything).
     let parsed = match url::Url::parse(&form.url) {
         Ok(u) if matches!(u.scheme(), "http" | "https") => u,
         _ => return render(err_card("Not a valid URL.".into())),
