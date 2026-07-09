@@ -1,0 +1,40 @@
+{% extends "app_layout.html" %}
+{% import "macros.html" as macros %}
+
+{% block page_script %}<script type="module" src="/static/js/pages/summarizer.js?v={{ layout.git_version }}"></script>{% endblock %}
+
+{% block page %}
+    <div class="app-layout">
+        <rdrs-sidebar active="summarizer"></rdrs-sidebar>
+        <main class="main-content">
+            <rdrs-flash></rdrs-flash>
+            <div class="page-content page-content-full">
+                <h1>Summarizer</h1>
+                <p class="page-lead">Paste one or more links and get a Kagi summary for each, one after another — without adding them to a feed. Nothing here is saved to your library.</p>
+
+                {% if !kagi_configured %}
+                <div class="empty-state">
+                    <p class="empty-state-text">Kagi isn’t configured yet. Add your Kagi session link in
+                        <a href="/user-settings">Settings</a> to use the summarizer.</p>
+                </div>
+                {% else %}
+                <form method="post" action="/summarizer" data-testid="summarizer-form" data-summarizer-form>
+                    <label class="field-label" for="sz-urls">Links to summarize</label>
+                    <textarea id="sz-urls" name="urls" rows="6" spellcheck="false"
+                        placeholder="https://example.com/article&#10;https://another.com/post"
+                        data-testid="summarizer-input">{{ urls_text }}</textarea>
+                    {% if let Some(err) = error %}<p class="form-error" data-testid="summarizer-error">{{ err }}</p>{% endif %}
+                    <div class="form-actions">
+                        <span class="muted">One URL per line &middot; up to 30</span>
+                        <button type="submit" class="btn">Summarize</button>
+                    </div>
+                </form>
+
+                <div id="sz-results" data-summarizer-results>
+                    {% for card in cards %}{% call macros::summarizer_card(card) %}{% endcall %}{% endfor %}
+                </div>
+                {% endif %}
+            </div>
+        </main>
+    </div>
+{% endblock %}

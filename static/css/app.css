@@ -236,6 +236,14 @@ h2 + p.muted {
     margin-bottom: var(--space-4);
 }
 
+/* Intro sentence under an <h1> (e.g. /summarizer) — same slot as h2 + p.muted
+   but for a page-level heading. */
+.page-lead {
+    margin-top: calc(-1 * var(--space-2));
+    margin-bottom: var(--space-5);
+    color: var(--color-text-muted);
+}
+
 h3 {
     font-family: var(--font-ui);
     font-size: var(--font-base);
@@ -1047,6 +1055,34 @@ code {
 
 .form-group-inline {
     margin-bottom: 0;
+}
+
+/* Standalone field label outside a .form-group (e.g. /summarizer's textarea) —
+   mirrors .form-group > label's mono-uppercase treatment. */
+.field-label {
+    display: block;
+    margin-bottom: 5px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
+/* Row below a form's primary input holding helper text + the submit button. */
+.form-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
+}
+
+.form-error {
+    margin-top: var(--space-2);
+    color: var(--color-error);
+    font-size: var(--font-sm);
 }
 
 label {

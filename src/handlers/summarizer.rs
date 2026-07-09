@@ -1,10 +1,13 @@
 use askama::Template;
-// Not yet consumed by a handler — a later task renders `SummarizerCardTemplate`
-// into an `Html<String>` response.
-#[allow(unused_imports)]
-use axum::response::Html;
+use axum::extract::State;
+use axum::response::{Html, IntoResponse};
 use url::Url;
 
+use crate::AppState;
+use crate::handlers::pages::{AppLayoutContext, build_app_layout};
+use crate::middleware::auth::PageAuthUser;
+use crate::middleware::flash::Flash;
+use crate::models::user_settings;
 use crate::utils::url_validation::validate_url;
 
 /// Maximum URLs accepted in a single summarizer run.
@@ -51,8 +54,10 @@ pub(crate) fn url_host(url: &str) -> String {
 
 /// One URL's card. `state` selects the rendered branch; unused string fields are
 /// empty. `summary` is trusted HTML/markdown from Kagi (rendered with `|safe`).
+///
+/// `pub` (not `pub(crate)`): it's a field type of the `pub` `SummarizerTemplate`.
 #[derive(Debug, Clone)]
-pub(crate) struct SummarizerCard {
+pub struct SummarizerCard {
     pub index: usize,
     pub url: String,
     pub title: String,
@@ -65,6 +70,60 @@ pub(crate) struct SummarizerCard {
 #[template(path = "_summarizer_card_fragment.html")]
 pub(crate) struct SummarizerCardTemplate {
     pub card: SummarizerCard,
+}
+
+/// Renders the `/summarizer` page: a settings prompt when Kagi isn't
+/// configured, or the URL-list form + result cards when it is.
+#[derive(Template)]
+#[template(path = "summarizer.html")]
+pub struct SummarizerTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+    pub kagi_configured: bool,
+    pub urls_text: String,
+    pub error: Option<String>,
+    pub cards: Vec<SummarizerCard>,
+}
+
+impl IntoResponse for SummarizerTemplate {
+    fn into_response(self) -> axum::response::Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => {
+                (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+            }
+        }
+    }
+}
+
+async fn kagi_configured(state: &AppState, user_id: i64) -> bool {
+    user_settings::get_save_services_config(&state.db, user_id)
+        .await
+        .ok()
+        .and_then(|c| c.kagi)
+        .is_some_and(|k| k.is_configured())
+}
+
+pub async fn summarizer_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+) -> (Flash, SummarizerTemplate) {
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let configured = kagi_configured(&state, auth_user.user.id).await;
+    (
+        flash,
+        SummarizerTemplate {
+            title: "Summarizer",
+            git_version: crate::GIT_VERSION,
+            layout,
+            kagi_configured: configured,
+            urls_text: String::new(),
+            error: None,
+            cards: Vec::new(),
+        },
+    )
 }
 
 #[cfg(test)]
