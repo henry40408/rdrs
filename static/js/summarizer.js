@@ -135,8 +135,20 @@ if (results) {
     }
     const copy = e.target.closest('[data-sz-copy]');
     if (copy) {
-      const body = copy.closest('[data-summarizer-card]')?.querySelector('[data-sz-body]');
-      if (body) navigator.clipboard?.writeText(body.textContent.trim());
+      const card = copy.closest('[data-summarizer-card]');
+      const body = card?.querySelector('[data-sz-body]');
+      if (body) {
+        // Mirror the entry-summary copy: title + URL + summary, so the copied
+        // text keeps the source context, not just the bare summary body.
+        const title = (card.querySelector('[data-sz-title]')?.textContent || '').trim();
+        const url = (card.dataset.summarizerUrl || '').trim();
+        const summary = body.textContent.trim();
+        const parts = [];
+        if (title) parts.push(title);
+        if (url) parts.push(url);
+        parts.push(summary);
+        navigator.clipboard?.writeText(parts.join('\n\n'));
+      }
     }
   });
 
