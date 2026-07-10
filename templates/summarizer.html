@@ -20,7 +20,7 @@
                 {% else %}
                 <form method="post" action="/summarizer" data-testid="summarizer-form" data-summarizer-form>
                     <label class="field-label" for="sz-urls">Links to summarize</label>
-                    <textarea id="sz-urls" name="urls" rows="6" spellcheck="false"
+                    <textarea id="sz-urls" name="urls" rows="6" spellcheck="false" class="textarea-full"
                         placeholder="https://example.com/article&#10;https://another.com/post"
                         data-testid="summarizer-input">{{ urls_text }}</textarea>
                     {% if let Some(err) = error %}<p class="form-error" data-testid="summarizer-error">{{ err }}</p>{% endif %}

@@ -82,7 +82,14 @@ async fn page_shows_form_when_kagi_configured() {
     configure_kagi(&app, uid).await;
     let res = app.server.get("/summarizer").await;
     res.assert_status_ok();
-    assert!(res.text().contains("data-testid=\"summarizer-form\""));
+    let body = res.text();
+    assert!(body.contains("data-testid=\"summarizer-form\""));
+    // The URL textarea must carry the shared full-width class so it matches the
+    // app's other inputs rather than collapsing to the default `cols` width.
+    assert!(
+        body.contains("id=\"sz-urls\"") && body.contains("class=\"textarea-full\""),
+        "the summarizer textarea should use the textarea-full class"
+    );
 }
 
 #[tokio::test]
