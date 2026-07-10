@@ -18,3 +18,13 @@
 </div>
 {% endif %}
 {% endmacro %}
+{% macro summarizer_card(card) %}<div class="summary-box sz-card{% if card.state == "queued" %} pending{% endif %}" id="sz-card-{{ card.index }}" data-summarizer-card data-summarizer-url="{{ card.url }}" data-summarizer-index="{{ card.index }}" data-state="{{ card.state }}">
+    <div class="summary-actions" data-sz-actions>
+        {% if card.state == "completed" %}<button type="button" class="rp-action" data-sz-copy aria-label="Copy summary"><span class="action-label">Copy</span></button><button type="button" class="rp-action" data-sz-dismiss aria-label="Dismiss summary"><span class="action-label">Dismiss</span></button>{% else if card.state == "error" %}<button type="button" class="rp-action" data-sz-retry aria-label="Retry summarization"><span class="action-label">Retry</span></button><button type="button" class="rp-action" data-sz-dismiss aria-label="Dismiss"><span class="action-label">Dismiss</span></button>{% endif %}
+    </div>
+    <div class="summary-header">
+        <div class="summary-title" data-sz-title>{{ card.title }}</div>
+        <a class="summary-link" href="{{ card.url }}" target="_blank" rel="noopener noreferrer">{{ card.url }}</a>
+    </div>
+    {% if card.state == "completed" %}<blockquote class="rp-summary-content" data-sz-body>{{ card.summary|safe }}</blockquote>{% else if card.state == "error" %}<div class="summary-error-banner" data-sz-error><span class="action-icon" aria-hidden="true">{% call icons::close() %}{% endcall %}</span><span>Summarization failed: {{ card.error }}</span></div>{% else %}<p class="status" data-sz-status>Queued</p>{% endif %}
+</div>{% endmacro %}

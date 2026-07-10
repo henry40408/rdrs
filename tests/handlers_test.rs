@@ -49,6 +49,7 @@ async fn create_test_server(config: Config) -> TestServer {
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
         summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
     };
@@ -71,6 +72,7 @@ async fn create_test_app(config: Config) -> TestApp {
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
         summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
     };
@@ -3413,6 +3415,7 @@ async fn create_test_app_named(config: Config, _name: &str) -> TestApp {
         summary_tx,
         sidebar_cache: Arc::new(services::SidebarCache::default()),
         summary_cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
     };

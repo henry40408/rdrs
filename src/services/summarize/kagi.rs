@@ -40,6 +40,7 @@ pub struct SummarizeResult {
     pub success: bool,
     pub output_text: Option<String>,
     pub error: Option<String>,
+    pub title: Option<String>,
 }
 
 const KAGI_API_BASE: &str = "https://kagi.com";
@@ -62,6 +63,7 @@ async fn summarize_url_with_base(
             success: false,
             output_text: None,
             error: Some("Kagi is not configured".to_string()),
+            title: None,
         });
     }
 
@@ -110,27 +112,30 @@ async fn summarize_url_with_base(
                 success: false,
                 output_text: None,
                 error: Some(error),
+                title: None,
             })
         } else if let Some(markdown) = body.output_data.and_then(|d| d.markdown) {
-            // Remove "Title: [website title]\n\n" prefix if present
-            let cleaned = if markdown.starts_with("Title: ") {
-                markdown
-                    .find("\n\n")
-                    .map(|pos| markdown[pos + 2..].to_string())
-                    .unwrap_or(markdown)
+            // Split off a leading "Title: <t>\n\n" prefix if present.
+            let (title, cleaned) = if let Some(rest) = markdown.strip_prefix("Title: ") {
+                match rest.find("\n\n") {
+                    Some(pos) => (Some(rest[..pos].to_string()), rest[pos + 2..].to_string()),
+                    None => (None, markdown),
+                }
             } else {
-                markdown
+                (None, markdown)
             };
             Ok(SummarizeResult {
                 success: true,
                 output_text: Some(cleaned),
                 error: None,
+                title,
             })
         } else {
             Ok(SummarizeResult {
                 success: false,
                 output_text: None,
                 error: Some("No summary returned from Kagi".to_string()),
+                title: None,
             })
         }
     } else {
@@ -150,6 +155,7 @@ async fn summarize_url_with_base(
             success: false,
             output_text: None,
             error: Some(message),
+            title: None,
         })
     }
 }
@@ -456,5 +462,48 @@ mod tests {
             .unwrap();
         assert!(result.success);
         // MockServer verifies the query param expectation on drop
+    }
+
+    #[tokio::test]
+    async fn summarize_success_extracts_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "output_data": {"markdown": "Title: Foo Bar\n\nThe body."}
+            })))
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "t".into(),
+            language: None,
+        };
+        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
+            .await
+            .unwrap();
+        assert_eq!(result.title.as_deref(), Some("Foo Bar"));
+        assert_eq!(result.output_text.as_deref(), Some("The body."));
+    }
+
+    #[tokio::test]
+    async fn summarize_success_title_none_when_absent() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "output_data": {"markdown": "Plain body, no title line."}
+            })))
+            .mount(&server)
+            .await;
+        let config = KagiConfig {
+            session_token: "t".into(),
+            language: None,
+        };
+        let result = summarize_url_with_base(&server.uri(), &config, "https://x.com/a")
+            .await
+            .unwrap();
+        assert_eq!(result.title, None);
+        assert_eq!(
+            result.output_text.as_deref(),
+            Some("Plain body, no title line.")
+        );
     }
 }

@@ -56,6 +56,7 @@ pub struct AppState {
     pub summary_tx: mpsc::Sender<SummaryJob>,
     pub sidebar_cache: Arc<SidebarCache>,
     pub summary_cancels: services::CancelRegistry,
+    pub summarizer_inflight: handlers::summarizer::InFlightRegistry,
     pub events: services::EventBus,
     pub shutdown: tokio_util::sync::CancellationToken,
 }
@@ -233,6 +234,11 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/search", get(handlers::pages::search_page))
         .route("/statistics", get(handlers::pages::statistics_page))
+        .route(
+            "/summarizer",
+            get(handlers::summarizer::summarizer_page).post(handlers::summarizer::start),
+        )
+        .route("/summarizer/item", post(handlers::summarizer::item))
         .route(
             "/categories/{id}/entries",
             get(handlers::pages::category_entries_page),

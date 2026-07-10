@@ -13,6 +13,10 @@ const FILES: &[(&str, &str)] = &[
         "js/statistics.js",
         include_str!("../../static/js/statistics.js"),
     ),
+    (
+        "js/summarizer.js",
+        include_str!("../../static/js/summarizer.js"),
+    ),
     ("js/utils.js", include_str!("../../static/js/utils.js")),
     (
         "js/components/rdrs-flash.js",

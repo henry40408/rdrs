@@ -152,6 +152,7 @@ async fn main() {
         summary_tx,
         sidebar_cache: sidebar_cache.clone(),
         summary_cancels,
+        summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: events.clone(),
         shutdown: cancel_token.clone(),
     };
