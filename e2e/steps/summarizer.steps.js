@@ -36,6 +36,26 @@ Then(
   },
 );
 
+When("I copy the first summary card", async ({ page }) => {
+  // The label swap only needs the clipboard write to resolve; grant the
+  // permission so navigator.clipboard.writeText doesn't reject headlessly.
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page
+    .locator("[data-summarizer-card]")
+    .first()
+    .getByRole("button", { name: "Copy summary" })
+    .click();
+});
+
+Then(
+  "the first summary card's copy button reads {string}",
+  async ({ page }, text) => {
+    await expect(
+      page.locator("[data-summarizer-card]").first().locator("[data-sz-copy]"),
+    ).toHaveText(text);
+  },
+);
+
 Then("I should see a link to Settings", async ({ page }) => {
   // Scope to the page content: the sidebar always carries its own
   // data-testid="nav-settings" link to /user-settings, so a bare href

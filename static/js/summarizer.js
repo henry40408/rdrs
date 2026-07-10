@@ -111,7 +111,7 @@ if (results) {
     }
   };
 
-  results.addEventListener('click', (e) => {
+  results.addEventListener('click', async (e) => {
     if (e.target.closest('[data-sz-cancel]')) {
       currentController?.abort();
       return;
@@ -147,7 +147,17 @@ if (results) {
         if (title) parts.push(title);
         if (url) parts.push(url);
         parts.push(summary);
-        navigator.clipboard?.writeText(parts.join('\n\n'));
+        try {
+          await navigator.clipboard.writeText(parts.join('\n\n'));
+          // Mirror the entry-summary copy feedback: swap only the label span's
+          // text to "Copied!" (leaving any icon span intact) and restore it.
+          const label = copy.querySelector('.action-label') || copy;
+          const original = label.textContent;
+          label.textContent = 'Copied!';
+          setTimeout(() => { label.textContent = original; }, 2000);
+        } catch {
+          window.flash?.error('Failed to copy to clipboard');
+        }
       }
     }
   });
