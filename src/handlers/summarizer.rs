@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+
 use askama::Template;
 use axum::Form;
 use axum::extract::State;
@@ -15,11 +18,53 @@ use crate::utils::url_validation::validate_url;
 /// Maximum URLs accepted in a single summarizer run.
 pub const MAX_URLS: usize = 30;
 
+/// Set of user ids with a `/summarizer/item` request currently in flight. The
+/// client resolves cards one at a time, but that ordering lives only in the
+/// browser; this registry enforces **one live Kagi call per user** on the
+/// server so a hand-crafted burst of parallel `/summarizer/item` POSTs cannot
+/// fan out 30 concurrent outbound requests.
+pub type InFlightRegistry = Arc<Mutex<HashSet<i64>>>;
+
+/// Construct an empty in-flight registry (used in `AppState` and tests).
+pub fn new_inflight_registry() -> InFlightRegistry {
+    Arc::new(Mutex::new(HashSet::new()))
+}
+
+/// RAII marker: removes the user from the in-flight set when dropped, so the
+/// slot is released on every exit path (including early returns / panics).
+pub struct InFlightGuard {
+    registry: InFlightRegistry,
+    user_id: i64,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = self.registry.lock() {
+            set.remove(&self.user_id);
+        }
+    }
+}
+
+/// Reserve the user's single in-flight slot. Returns `Some(guard)` if the user
+/// had no request in flight, or `None` if one is already running (the caller
+/// should reject the new request). The lock is held only for the set insert —
+/// never across an `.await`.
+pub fn try_begin_inflight(registry: &InFlightRegistry, user_id: i64) -> Option<InFlightGuard> {
+    let mut set = registry.lock().ok()?;
+    if !set.insert(user_id) {
+        return None; // already in flight for this user
+    }
+    Some(InFlightGuard {
+        registry: registry.clone(),
+        user_id,
+    })
+}
+
 /// Parse the textarea into a validated, de-duplicated, order-preserving list of
 /// URL strings. Rejects an empty list, more than `MAX_URLS`, and any line that
 /// is not a fetchable http(s) URL (SSRF-validated).
 pub(crate) fn parse_url_lines(input: &str) -> Result<Vec<String>, String> {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     let mut out = Vec::new();
     for raw in input.lines() {
         let line = raw.trim();
@@ -207,6 +252,18 @@ pub async fn item(
         return render(err_card("URL not allowed.".into()));
     }
 
+    // Enforce one live summary per user on the server (the client already
+    // serialises, but a hand-crafted burst must not fan out concurrent Kagi
+    // calls). Held until the function returns, releasing the slot on every path.
+    let _slot = match try_begin_inflight(&state.summarizer_inflight, auth_user.user.id) {
+        Some(guard) => guard,
+        None => {
+            return render(err_card(
+                "Another summary is already in progress — wait for it to finish.".into(),
+            ));
+        }
+    };
+
     let kagi = match user_settings::get_save_services_config(&state.db, auth_user.user.id).await {
         Ok(c) => c.kagi,
         Err(_) => None,
@@ -233,6 +290,41 @@ pub async fn item(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inflight_rejects_second_concurrent_request_for_same_user() {
+        let reg = new_inflight_registry();
+        let g1 = try_begin_inflight(&reg, 42);
+        assert!(g1.is_some(), "first request acquires the slot");
+        assert!(
+            try_begin_inflight(&reg, 42).is_none(),
+            "second concurrent request for the same user is rejected"
+        );
+    }
+
+    #[test]
+    fn inflight_allows_different_users_concurrently() {
+        let reg = new_inflight_registry();
+        let _g1 = try_begin_inflight(&reg, 1);
+        assert!(
+            try_begin_inflight(&reg, 2).is_some(),
+            "a different user is not blocked"
+        );
+    }
+
+    #[test]
+    fn inflight_slot_released_on_guard_drop() {
+        let reg = new_inflight_registry();
+        {
+            let _g = try_begin_inflight(&reg, 7);
+            assert!(try_begin_inflight(&reg, 7).is_none());
+        }
+        // Guard dropped → slot free again.
+        assert!(
+            try_begin_inflight(&reg, 7).is_some(),
+            "dropping the guard releases the user's slot"
+        );
+    }
 
     #[test]
     fn parses_trims_and_drops_blanks() {

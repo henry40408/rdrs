@@ -56,6 +56,7 @@ pub struct AppState {
     pub summary_tx: mpsc::Sender<SummaryJob>,
     pub sidebar_cache: Arc<SidebarCache>,
     pub summary_cancels: services::CancelRegistry,
+    pub summarizer_inflight: handlers::summarizer::InFlightRegistry,
     pub events: services::EventBus,
     pub shutdown: tokio_util::sync::CancellationToken,
 }
