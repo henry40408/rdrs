@@ -32,7 +32,7 @@ pub use image_proxy::{
 };
 pub use opml::{OpmlFeed, OpmlOutline, export_opml, parse_opml};
 pub use readability::{ExtractedContent, fetch_and_extract};
-pub use sanitize::sanitize_html;
+pub use sanitize::{sanitize_html, strip_tracking_params};
 pub use save::{BookmarkData, LinkdingConfig, SaveResult, SaveServicesConfig};
 pub use sidebar_cache::{CachedChrome, SidebarCache};
 pub use summarize::KagiConfig;

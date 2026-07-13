@@ -255,6 +255,16 @@ fn strip_tracking_params_from_url(href: &str) -> Option<String> {
     Some(url.to_string())
 }
 
+/// Strip tracking query parameters from an outbound entry/display URL, always
+/// returning an owned `String`. Unlike [`strip_tracking_params_from_url`],
+/// inputs with nothing to strip (or non-http(s) URLs) are returned unchanged
+/// rather than `None`. Used to clean the entry `link` shown in the UI and handed
+/// to the summarizer / bookmark services, mirroring the tracking-param removal
+/// already applied to links inside article content.
+pub fn strip_tracking_params(url: &str) -> String {
+    strip_tracking_params_from_url(url).unwrap_or_else(|| url.to_string())
+}
+
 /// Consolidated post-ammonia rewrite: a single streaming `lol_html` pass that
 /// folds the former four `parse_fragment`-based passes (remove tracking pixels,
 /// strip tracking params, rewrite image URLs to the signed proxy, add link
@@ -743,6 +753,46 @@ mod tests {
         assert!(!output.contains("utm_source"));
         assert!(output.contains("id=123"));
         assert!(output.contains("valid=yes"));
+    }
+
+    #[test]
+    fn test_strip_tracking_params_removes_trackers() {
+        // The public helper (used for entry links) strips utm_*/click IDs while
+        // keeping genuine query params, and always returns an owned String.
+        let cleaned = strip_tracking_params(
+            "https://example.com/article?id=42&utm_source=news&fbclid=FB1&page=2",
+        );
+        assert!(!cleaned.contains("utm_source"));
+        assert!(!cleaned.contains("fbclid"));
+        assert!(cleaned.contains("id=42"));
+        assert!(cleaned.contains("page=2"));
+    }
+
+    #[test]
+    fn test_strip_tracking_params_returns_input_when_clean() {
+        // Nothing to strip → the URL is returned unchanged (not None).
+        assert_eq!(
+            strip_tracking_params("https://example.com/article?id=42&page=2"),
+            "https://example.com/article?id=42&page=2"
+        );
+        // A param-free URL is likewise untouched.
+        assert_eq!(
+            strip_tracking_params("https://example.com/article"),
+            "https://example.com/article"
+        );
+    }
+
+    #[test]
+    fn test_strip_tracking_params_passes_through_non_http() {
+        // Non-http(s) inputs (e.g. relative or mailto) are returned verbatim.
+        assert_eq!(
+            strip_tracking_params("/relative/path?utm_source=x"),
+            "/relative/path?utm_source=x"
+        );
+        assert_eq!(
+            strip_tracking_params("mailto:someone@example.com"),
+            "mailto:someone@example.com"
+        );
     }
 
     #[test]

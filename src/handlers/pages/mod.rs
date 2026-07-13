@@ -244,7 +244,11 @@ pub(crate) fn row_view_from(
         category_id: e.category_id,
         category_name: e.category_name.clone(),
         title,
-        link: e.entry.link.clone(),
+        link: e
+            .entry
+            .link
+            .as_deref()
+            .map(crate::services::strip_tracking_params),
         published_at_iso: published_at.to_rfc3339(),
         published_relative: format_relative_time_compact(Some(published_at)),
         is_read: e.entry.read_at.is_some(),
