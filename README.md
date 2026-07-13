@@ -140,12 +140,34 @@ header re-authenticates on the next request).
    of — the identity (and groups) headers on every request before forwarding to
    RDRS. A downstream client able to inject these headers bypasses the trust
    model entirely.
-2. The proxy **must** be configured to bypass forward-auth for the Google Reader
-   API paths — `/accounts/ClientLogin`, `/reader/api/...`, and the
-   FreshRSS-compatible `/api/greader.php/...` prefix — so native GReader clients
-   (FeedMe, Read You, etc.) can still authenticate with their stored username and
-   password. These paths authenticate via the GReader `ClientLogin` token, not
-   the proxy header. Example Authelia access-control rules:
+2. The proxy **must** be configured to bypass forward-auth for the paths that
+   are reached without a browser SSO session — they authenticate by their own
+   means (or need none), so an SSO gate breaks them without adding any security:
+   - The Google Reader API paths — `/accounts/ClientLogin`, `/reader/api/...`,
+     and the FreshRSS-compatible `/api/greader.php/...` prefix — so native
+     GReader clients (FeedMe, Read You, etc.) can still authenticate with their
+     stored username and password. These paths authenticate via the GReader
+     `ClientLogin` token, not the proxy header.
+   - The signed image proxy `/api/proxy/...`. Proxied `<img>` requests are
+     issued without the browser's SSO session (GReader clients render article
+     images with no cookie at all), so an SSO-gated proxy path returns the login
+     page instead of the image and **pictures break**. Exposing it is safe:
+     every proxy URL carries an HMAC-SHA256 signature that RDRS verifies, so the
+     signature — not the SSO session — authenticates each request.
+   - The health endpoint `/health`, if you run liveness / uptime probes through
+     the proxy. Probes carry no SSO session, so a catch-all policy makes them
+     fail and can flap your orchestrator's health checks. (It needs no rule if
+     you point probes straight at the container. Note `/health` returns the app
+     status and build version unauthenticated, so scope the rule to your
+     monitoring source if that disclosure matters.)
+
+   Everything else stays behind SSO. In particular, do **not** bypass
+   `/api/feeds/{id}/icon`: that endpoint is guarded by RDRS's own session
+   check, so a bypass would only strip a defense layer — native GReader clients
+   still cannot load those icons (they have no browser session), which is a
+   pre-existing limitation, not a forward-auth one.
+
+   Example Authelia access-control rules:
 
    ```yaml
    access_control:
@@ -156,6 +178,8 @@ header re-authenticates on the next request).
            - '^/accounts/ClientLogin$'
            - '^/reader/api/.*'
            - '^/api/greader\.php/.*'   # FreshRSS-compatible prefix
+           - '^/api/proxy/.*'          # HMAC-signed image proxy (avoids broken images)
+           - '^/health$'               # liveness / uptime probes (no SSO session)
        - domain: rdrs.example.com
          policy: one_factor            # everything else goes through SSO
    ```

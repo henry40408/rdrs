@@ -243,7 +243,7 @@ RDRS supports passwordless authentication via WebAuthn/Passkey:
 
 RDRS supports delegating browser authentication to an external forward-auth proxy (e.g., Authelia, authentik, Traefik ForwardAuth). When enabled, a Tower middleware (`middleware/forward_auth.rs`) intercepts browser page requests and attempts to establish a session from a trusted identity header before falling back to the normal cookie login flow.
 
-> **Operator setup** — the environment variables, reverse-proxy requirements (header stripping, GReader path bypass), and logout behavior live in [README.md → Authentication & SSO](README.md#authentication--sso). This section documents the internal mechanics.
+> **Operator setup** — the environment variables, reverse-proxy requirements (header stripping, GReader and image-proxy path bypass), and logout behavior live in [README.md → Authentication & SSO](README.md#authentication--sso). This section documents the internal mechanics.
 
 **Trust model:**
 
