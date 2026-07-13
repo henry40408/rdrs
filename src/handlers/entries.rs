@@ -14,6 +14,7 @@ use crate::{
     services::{
         SummaryJob, SummaryStatus, fetch_and_extract, sanitize_html,
         save::{BookmarkData, linkding},
+        strip_tracking_params,
     },
 };
 
@@ -334,7 +335,7 @@ pub(crate) async fn build_reading_pane_view(
             || "(no title)".to_string(),
             crate::services::decode_html_entities,
         ),
-        link: ewf.entry.link.clone(),
+        link: ewf.entry.link.as_deref().map(strip_tracking_params),
         feed_title: ewf.feed_title.clone().unwrap_or_default(),
         feed_id: ewf.entry.feed_id,
         feed_has_icon: ewf.feed_has_icon,
@@ -657,7 +658,12 @@ pub async fn summarize_entry_form(
     // The link may be absent; the background worker will surface an error
     // if so. We use an empty string as a sentinel to let the queue accept
     // the job and fail gracefully rather than returning 400 here.
-    let entry_link = ewf.entry.link.clone().unwrap_or_default();
+    let entry_link = ewf
+        .entry
+        .link
+        .as_deref()
+        .map(strip_tracking_params)
+        .unwrap_or_default();
 
     // Mark pending in the in-memory cache BEFORE enqueuing so the background
     // worker cannot complete before the cache entry exists.
@@ -796,7 +802,8 @@ pub async fn save_entry_form(
     let link = ewf
         .entry
         .link
-        .clone()
+        .as_deref()
+        .map(strip_tracking_params)
         .ok_or_else(|| AppError::Validation("Entry has no link to save".to_string()))?;
     if !save_config.has_any_service() {
         return Err(AppError::Validation(
