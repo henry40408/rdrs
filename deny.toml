@@ -42,13 +42,14 @@ ignore = [
     # now resolved).
     "RUSTSEC-2026-0192",
     "RUSTSEC-2026-0206",
-    # crossbeam-epoch invalid pointer deref in the `fmt::Display`/`fmt::Pointer`
-    # impls for `Atomic`/`Shared` on a null pointer (transitive via image and
-    # moka; we never format those pointers, so it's unreachable here). Sole fix
-    # is 0.9.20, published 2026-07-06 — inside the 7-day cooldown. Tracked in the
-    # follow-up issue: bump with `cargo update -p crossbeam-epoch` and drop this
-    # entry once 0.9.20 has aged past the cooldown (from 2026-07-13).
-    "RUSTSEC-2026-0204",
+    # spin 0.9.8 (and its whole back-catalog) was yanked 2026-07-13 for a UB fix
+    # in `Once::{force_into_inner, try_into_inner, into_inner_unchecked}`. We pull
+    # spin in only transitively via flume and multer, both of which use
+    # `spin::Mutex` and never the affected `Once` APIs, so the UB is unreachable
+    # for us. The crate spec silences the `yanked = "deny"` check. Fix is spin
+    # 0.9.9 (published 2026-07-13, inside our 7-day cooldown); drop this once the
+    # cooldown clears. Tracked in issue #389.
+    "spin@0.9.8",
 ]
 
 [licenses]
