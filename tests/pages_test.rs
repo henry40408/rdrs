@@ -411,7 +411,7 @@ async fn test_settings_page_renders_ssr_content() {
 async fn test_settings_page_reflects_custom_config() {
     let config = Config {
         database_url: "/data/custom.sqlite3".to_string(),
-        server_port: 8080,
+        server_bind: "0.0.0.0:9090".parse().unwrap(),
         user_agent: "Custom-Agent/2.0".to_string(),
         signup_enabled: true,
         multi_user_enabled: true,
@@ -430,7 +430,7 @@ async fn test_settings_page_reflects_custom_config() {
     assert!(body.contains("(custom)"));
     // Server section reflects the actual runtime database path and port.
     assert!(body.contains("/data/custom.sqlite3"));
-    assert!(body.contains("8080"));
+    assert!(body.contains("9090"));
     // Image proxy secret is configured (not auto-generated).
     assert!(body.contains("Configured"));
     assert!(!body.contains(">Auto-generated<"));

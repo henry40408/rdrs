@@ -24,14 +24,14 @@ mod tests {
     fn test_config() -> Config {
         Config {
             database_url: "test.db".to_string(),
-            server_port: 3000,
+            server_bind: "127.0.0.1:8080".parse().unwrap(),
             signup_enabled: true,
             multi_user_enabled: false,
             image_proxy_secret: vec![0u8; 32],
             image_proxy_secret_generated: false,
             user_agent: "test".to_string(),
             webauthn_rp_id: "localhost".to_string(),
-            webauthn_rp_origin: "http://localhost:3000".to_string(),
+            webauthn_rp_origin: "http://localhost:8080".to_string(),
             webauthn_rp_name: "rdrs".to_string(),
             public_base_url: None,
             auth_proxy_header: String::new(),

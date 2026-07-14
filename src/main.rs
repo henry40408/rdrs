@@ -168,10 +168,10 @@ async fn main() {
 
     let app = create_router(state);
 
-    let addr = format!("0.0.0.0:{}", config.server_port);
+    let addr = config.server_bind;
     tracing::info!("Starting server on {}", addr);
 
-    let listener = tokio::net::TcpListener::bind(&addr)
+    let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("Failed to bind");
 

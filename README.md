@@ -38,14 +38,14 @@ Privacy-focused, lightweight, and designed for personal use.
 ```bash
 docker run -d \
   --name rdrs \
-  -p 3000:3000 \
+  -p 8080:8080 \
   -v rdrs_data:/data \
   -e SIGNUP_ENABLED=true \
   -e IMAGE_PROXY_SECRET="$(openssl rand -base64 32)" \
   ghcr.io/henry40408/rdrs:latest
 ```
 
-Visit `http://localhost:3000` and create your account.
+Visit `http://localhost:8080` and create your account.
 
 > **`IMAGE_PROXY_SECRET`** — if left unset, a random secret is generated on
 > each startup, which invalidates every previously-proxied image URL whenever
@@ -66,7 +66,7 @@ cargo build --release
 ./target/release/rdrs
 ```
 
-Visit `http://localhost:3000` and create your account. The **first account is
+Visit `http://localhost:8080` and create your account. The **first account is
 always allowed** even when `SIGNUP_ENABLED=false` (the default), so a source
 build works out of the box. `SIGNUP_ENABLED` (together with
 `MULTI_USER_ENABLED`) only governs *additional* registrations after the first
@@ -79,7 +79,7 @@ All configuration is done via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_URL` | `rdrs.sqlite3` | Database location. A file path or `sqlite://` URL selects SQLite (zero-config default); a `postgres://` URL selects PostgreSQL. The backend is chosen once at startup. |
-| `SERVER_PORT` | `3000` | HTTP server port |
+| `SERVER_BIND` | `0.0.0.0:8080` | HTTP server bind address (`host:port`) |
 | `SIGNUP_ENABLED` | `false` | Allow new user registration |
 | `MULTI_USER_ENABLED` | `false` | Allow multiple users (requires signup enabled) |
 | `IMAGE_PROXY_SECRET` | Auto-generated | HMAC secret for secure image proxying |
@@ -231,7 +231,7 @@ services:
   rdrs:
     image: ghcr.io/henry40408/rdrs:latest
     ports:
-      - "3000:3000"
+      - "8080:8080"
     volumes:
       - rdrs_data:/data
     environment:

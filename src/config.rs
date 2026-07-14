@@ -2,7 +2,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use rand::Rng;
 use std::env;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 /// Default user agent for HTTP requests (transparent and responsible crawling)
 pub const DEFAULT_USER_AGENT: &str = concat!(
@@ -14,7 +14,7 @@ pub const DEFAULT_USER_AGENT: &str = concat!(
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
-    pub server_port: u16,
+    pub server_bind: SocketAddr,
     pub signup_enabled: bool,
     pub multi_user_enabled: bool,
     pub image_proxy_secret: Vec<u8>,
@@ -82,20 +82,30 @@ pub fn classify_backend(database_url: &str) -> Backend {
     }
 }
 
+/// Resolve the `SERVER_BIND` value into a [`SocketAddr`]. An unset or empty
+/// value yields the default `0.0.0.0:8080` (listen on all interfaces, so a
+/// reverse proxy in a separate container can reach it); any non-empty value
+/// must be a valid `host:port` socket address.
+pub fn parse_server_bind(raw: Option<&str>) -> Result<SocketAddr, String> {
+    match raw {
+        Some(v) if !v.is_empty() => v
+            .parse::<SocketAddr>()
+            .map_err(|e| format!("invalid SERVER_BIND '{v}': {e}")),
+        _ => Ok(SocketAddr::from(([0, 0, 0, 0], 8080))),
+    }
+}
+
 impl Config {
     pub fn from_env() -> Result<Self, String> {
         let (image_proxy_secret, image_proxy_secret_generated) = Self::load_image_proxy_secret();
-        let server_port = env::var("SERVER_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(3000);
+        let server_bind = parse_server_bind(env::var("SERVER_BIND").ok().as_deref())?;
 
         let trusted_proxy_networks =
             parse_trusted_networks(&env::var("TRUSTED_PROXY_NETWORKS").unwrap_or_default())?;
 
         Ok(Self {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "rdrs.sqlite3".to_string()),
-            server_port,
+            server_bind,
             signup_enabled: env::var("SIGNUP_ENABLED")
                 .is_ok_and(|v| v.to_lowercase() == "true" || v == "1"),
             multi_user_enabled: env::var("MULTI_USER_ENABLED")
@@ -105,7 +115,7 @@ impl Config {
             user_agent: env::var("USER_AGENT").unwrap_or_else(|_| DEFAULT_USER_AGENT.to_string()),
             webauthn_rp_id: env::var("WEBAUTHN_RP_ID").unwrap_or_else(|_| "localhost".to_string()),
             webauthn_rp_origin: env::var("WEBAUTHN_RP_ORIGIN")
-                .unwrap_or_else(|_| format!("http://localhost:{}", server_port)),
+                .unwrap_or_else(|_| format!("http://localhost:{}", server_bind.port())),
             webauthn_rp_name: env::var("WEBAUTHN_RP_NAME").unwrap_or_else(|_| "rdrs".to_string()),
             public_base_url: env::var("PUBLIC_BASE_URL").ok().filter(|s| !s.is_empty()),
             auth_proxy_header: env::var("AUTH_PROXY_HEADER").unwrap_or_default(),
@@ -225,14 +235,14 @@ mod tests {
     fn test_config() -> Config {
         Config {
             database_url: "test.db".to_string(),
-            server_port: 3000,
+            server_bind: "127.0.0.1:8080".parse().unwrap(),
             signup_enabled: true,
             multi_user_enabled: false,
             image_proxy_secret: vec![0u8; 32],
             image_proxy_secret_generated: false,
             user_agent: DEFAULT_USER_AGENT.to_string(),
             webauthn_rp_id: "localhost".to_string(),
-            webauthn_rp_origin: "http://localhost:3000".to_string(),
+            webauthn_rp_origin: "http://localhost:8080".to_string(),
             webauthn_rp_name: "rdrs".to_string(),
             public_base_url: None,
             auth_proxy_header: String::new(),
@@ -243,6 +253,46 @@ mod tests {
             auth_proxy_admin_group: String::new(),
             auth_proxy_logout_url: None,
         }
+    }
+
+    #[test]
+    fn test_parse_server_bind() {
+        // Unset or empty → default 0.0.0.0:8080 (all interfaces).
+        assert_eq!(
+            parse_server_bind(None).unwrap(),
+            std::net::SocketAddr::from(([0, 0, 0, 0], 8080))
+        );
+        assert_eq!(
+            parse_server_bind(Some("")).unwrap(),
+            std::net::SocketAddr::from(([0, 0, 0, 0], 8080))
+        );
+        // A valid host:port is honored, incl. a loopback-only bind.
+        assert_eq!(
+            parse_server_bind(Some("127.0.0.1:9000")).unwrap(),
+            "127.0.0.1:9000".parse().unwrap()
+        );
+        // Invalid input fails with a descriptive error; a bare host with no
+        // port is not a SocketAddr.
+        let err = parse_server_bind(Some("not-an-addr")).unwrap_err();
+        assert!(err.contains("invalid SERVER_BIND"), "got: {err}");
+        assert!(parse_server_bind(Some("127.0.0.1")).is_err());
+    }
+
+    #[test]
+    fn test_from_env_server_bind_drives_listener_and_rp_origin() {
+        // nextest runs each test in its own process, so mutating the
+        // environment here does not leak into other tests (same pattern as the
+        // Kagi tests). `set_var`/`remove_var` are `unsafe` under edition 2024.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("SERVER_BIND", "127.0.0.1:9137");
+            std::env::remove_var("WEBAUTHN_RP_ORIGIN");
+            std::env::remove_var("TRUSTED_PROXY_NETWORKS");
+        }
+        let config = Config::from_env().expect("from_env should succeed");
+        assert_eq!(config.server_bind, "127.0.0.1:9137".parse().unwrap());
+        // The WEBAUTHN_RP_ORIGIN default derives its port from SERVER_BIND.
+        assert_eq!(config.webauthn_rp_origin, "http://localhost:9137");
     }
 
     #[test]
