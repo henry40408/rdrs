@@ -79,7 +79,7 @@ All configuration is done via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_URL` | `rdrs.sqlite3` | Database location. A file path or `sqlite://` URL selects SQLite (zero-config default); a `postgres://` URL selects PostgreSQL. The backend is chosen once at startup. |
-| `SERVER_PORT` | `8080` | HTTP server port |
+| `SERVER_BIND` | `0.0.0.0:8080` | HTTP server bind address (`host:port`) |
 | `SIGNUP_ENABLED` | `false` | Allow new user registration |
 | `MULTI_USER_ENABLED` | `false` | Allow multiple users (requires signup enabled) |
 | `IMAGE_PROXY_SECRET` | Auto-generated | HMAC secret for secure image proxying |

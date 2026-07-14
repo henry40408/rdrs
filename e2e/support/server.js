@@ -63,7 +63,7 @@ export async function spawnRdrs({ extraEnv = {} } = {}) {
     env: {
       ...process.env,
       DATABASE_URL: dbPath,
-      SERVER_PORT: String(port),
+      SERVER_BIND: `127.0.0.1:${port}`,
       SIGNUP_ENABLED: "true",
       MULTI_USER_ENABLED: "true",
       RUST_LOG: "warn",

@@ -2,7 +2,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use rand::Rng;
 use std::env;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 /// Default user agent for HTTP requests (transparent and responsible crawling)
 pub const DEFAULT_USER_AGENT: &str = concat!(
@@ -14,7 +14,7 @@ pub const DEFAULT_USER_AGENT: &str = concat!(
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
-    pub server_port: u16,
+    pub server_bind: SocketAddr,
     pub signup_enabled: bool,
     pub multi_user_enabled: bool,
     pub image_proxy_secret: Vec<u8>,
@@ -85,17 +85,19 @@ pub fn classify_backend(database_url: &str) -> Backend {
 impl Config {
     pub fn from_env() -> Result<Self, String> {
         let (image_proxy_secret, image_proxy_secret_generated) = Self::load_image_proxy_secret();
-        let server_port = env::var("SERVER_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(8080);
+        let server_bind = match env::var("SERVER_BIND") {
+            Ok(v) if !v.is_empty() => v
+                .parse::<SocketAddr>()
+                .map_err(|e| format!("invalid SERVER_BIND '{v}': {e}"))?,
+            _ => SocketAddr::from(([0, 0, 0, 0], 8080)),
+        };
 
         let trusted_proxy_networks =
             parse_trusted_networks(&env::var("TRUSTED_PROXY_NETWORKS").unwrap_or_default())?;
 
         Ok(Self {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "rdrs.sqlite3".to_string()),
-            server_port,
+            server_bind,
             signup_enabled: env::var("SIGNUP_ENABLED")
                 .is_ok_and(|v| v.to_lowercase() == "true" || v == "1"),
             multi_user_enabled: env::var("MULTI_USER_ENABLED")
@@ -105,7 +107,7 @@ impl Config {
             user_agent: env::var("USER_AGENT").unwrap_or_else(|_| DEFAULT_USER_AGENT.to_string()),
             webauthn_rp_id: env::var("WEBAUTHN_RP_ID").unwrap_or_else(|_| "localhost".to_string()),
             webauthn_rp_origin: env::var("WEBAUTHN_RP_ORIGIN")
-                .unwrap_or_else(|_| format!("http://localhost:{}", server_port)),
+                .unwrap_or_else(|_| format!("http://localhost:{}", server_bind.port())),
             webauthn_rp_name: env::var("WEBAUTHN_RP_NAME").unwrap_or_else(|_| "rdrs".to_string()),
             public_base_url: env::var("PUBLIC_BASE_URL").ok().filter(|s| !s.is_empty()),
             auth_proxy_header: env::var("AUTH_PROXY_HEADER").unwrap_or_default(),
@@ -225,14 +227,14 @@ mod tests {
     fn test_config() -> Config {
         Config {
             database_url: "test.db".to_string(),
-            server_port: 3000,
+            server_bind: "127.0.0.1:8080".parse().unwrap(),
             signup_enabled: true,
             multi_user_enabled: false,
             image_proxy_secret: vec![0u8; 32],
             image_proxy_secret_generated: false,
             user_agent: DEFAULT_USER_AGENT.to_string(),
             webauthn_rp_id: "localhost".to_string(),
-            webauthn_rp_origin: "http://localhost:3000".to_string(),
+            webauthn_rp_origin: "http://localhost:8080".to_string(),
             webauthn_rp_name: "rdrs".to_string(),
             public_base_url: None,
             auth_proxy_header: String::new(),

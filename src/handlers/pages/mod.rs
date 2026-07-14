@@ -781,7 +781,7 @@ pub async fn user_settings_page(
         .config
         .public_base_url
         .clone()
-        .unwrap_or_else(|| format!("http://localhost:{}", state.config.server_port));
+        .unwrap_or_else(|| format!("http://localhost:{}", state.config.server_bind.port()));
 
     let role = auth_user.user.role.as_str().to_string();
     let created_at = auth_user
@@ -1240,7 +1240,7 @@ pub async fn settings_page(
             git_version: crate::GIT_VERSION,
             layout,
             database_url: state.config.database_url.clone(),
-            server_port: state.config.server_port,
+            server_bind: state.config.server_bind,
             user_agent: state.config.user_agent.clone(),
             user_agent_is_default,
             signup_enabled: state.config.signup_enabled,
@@ -2301,7 +2301,7 @@ pub struct SettingsTemplate {
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
     pub database_url: String,
-    pub server_port: u16,
+    pub server_bind: std::net::SocketAddr,
     pub user_agent: String,
     pub user_agent_is_default: bool,
     pub signup_enabled: bool,

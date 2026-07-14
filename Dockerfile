@@ -62,7 +62,7 @@ COPY --from=build /out/rdrs /rdrs
 VOLUME /data
 
 ENV DATABASE_URL=/data/rdrs.sqlite3
-ENV SERVER_PORT=8080
+ENV SERVER_BIND=0.0.0.0:8080
 
 EXPOSE 8080
 
