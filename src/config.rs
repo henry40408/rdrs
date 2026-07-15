@@ -83,15 +83,17 @@ pub fn classify_backend(database_url: &str) -> Backend {
 }
 
 /// Resolve the `SERVER_BIND` value into a [`SocketAddr`]. An unset or empty
-/// value yields the default `0.0.0.0:8080` (listen on all interfaces, so a
-/// reverse proxy in a separate container can reach it); any non-empty value
-/// must be a valid `host:port` socket address.
+/// value yields the default `127.0.0.1:8080` (loopback only, so a bare-metal
+/// run is not exposed on all interfaces without opting in); any non-empty
+/// value must be a valid `host:port` socket address. The container image sets
+/// `SERVER_BIND=0.0.0.0:8080` so a reverse proxy in a separate container can
+/// reach it.
 pub fn parse_server_bind(raw: Option<&str>) -> Result<SocketAddr, String> {
     match raw {
         Some(v) if !v.is_empty() => v
             .parse::<SocketAddr>()
             .map_err(|e| format!("invalid SERVER_BIND '{v}': {e}")),
-        _ => Ok(SocketAddr::from(([0, 0, 0, 0], 8080))),
+        _ => Ok(SocketAddr::from(([127, 0, 0, 1], 8080))),
     }
 }
 
@@ -257,14 +259,14 @@ mod tests {
 
     #[test]
     fn test_parse_server_bind() {
-        // Unset or empty → default 0.0.0.0:8080 (all interfaces).
+        // Unset or empty → default 127.0.0.1:8080 (loopback only).
         assert_eq!(
             parse_server_bind(None).unwrap(),
-            std::net::SocketAddr::from(([0, 0, 0, 0], 8080))
+            std::net::SocketAddr::from(([127, 0, 0, 1], 8080))
         );
         assert_eq!(
             parse_server_bind(Some("")).unwrap(),
-            std::net::SocketAddr::from(([0, 0, 0, 0], 8080))
+            std::net::SocketAddr::from(([127, 0, 0, 1], 8080))
         );
         // A valid host:port is honored, incl. a loopback-only bind.
         assert_eq!(
