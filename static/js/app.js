@@ -38,6 +38,15 @@ function installSwap() {
         const form = event.target.closest('form[data-swap]');
         if (!form) return;
         event.preventDefault();
+        // The action-bar Summarize button mirrors the 'a' shortcut. Only the
+        // action-bar form is tagged `data-summary-toggle`; the error-state
+        // Retry form is not, so Retry still regenerates.
+        if (form.hasAttribute('data-summary-toggle')) {
+            // In-flight: inert — Cancel lives in the summary box.
+            if (summaryInFlight()) return;
+            // Completed: dismiss instead of regenerating.
+            if (dismissVisibleSummary()) return;
+        }
         if (form.matches('[data-cancel-swap][aria-busy="true"]')) {
             abortFormSwap(form);
             return;
@@ -1127,14 +1136,14 @@ function installEntriesKeyboard() {
             }
             case 'a': {
                 // Summarize via Kagi — or, when a summary is already on
-                // screen, dismiss it. The dismiss button only renders
-                // inside a mounted .summary-box, so its presence is the
-                // "summary is showing" signal; clicking it reuses the
-                // DELETE + clear flow in installSummaryActions().
+                // screen, dismiss it. Same toggle the action-bar Summarize
+                // button performs; dismissVisibleSummary() is the shared path.
                 const pane = document.getElementById('reading-pane');
                 if (!pane || pane.classList.contains('reading-pane-empty')) return;
-                const dismiss = pane.querySelector('[data-summary-dismiss]');
-                if (dismiss) { e.preventDefault(); dismiss.click(); break; }
+                // In-flight: inert (Cancel lives in the summary box). Swallow
+                // the key so requestSubmit() can't bypass the disabled button.
+                if (summaryInFlight()) { e.preventDefault(); break; }
+                if (dismissVisibleSummary()) { e.preventDefault(); break; }
                 const form = paneForm('/summarize');
                 if (!form) return;
                 e.preventDefault();
@@ -1210,6 +1219,56 @@ function installEntriesKeyboard() {
 }
 installEntriesKeyboard();
 
+// Shared by the action-bar Summarize button and the 'a' shortcut: when a
+// summary is already on screen, its Dismiss control is mounted inside the
+// .summary-box (only the completed state renders it). Click it — reusing the
+// DELETE + clear flow in installSummaryActions — and report that we handled
+// the toggle. Returns false when no summary is showing, so callers fall
+// through to kicking off summarization.
+function dismissVisibleSummary() {
+    const dismiss = document.querySelector('#reading-pane [data-summary-dismiss]');
+    if (!dismiss) return false;
+    dismiss.click();
+    return true;
+}
+
+// True when the reading pane's summary is mid-generation (pending/processing).
+// The in-flight box carries `data-summary-pending` (and no Dismiss control);
+// its Cancel button is the only intended action, so the Summarize/Dismiss
+// toggle stays inert while it's showing.
+function summaryInFlight() {
+    return !!document.querySelector('#reading-pane [data-summary-pending]');
+}
+
+// Keep the action-bar toggle button's presentation in sync with whether a
+// completed summary is on screen. The button flips behavior in the submit
+// handler (see dismissVisibleSummary), so its label / icon / aria-label must
+// follow: "Dismiss" (close icon) when a summary box is mounted, "Summarize"
+// (sparkle) otherwise. Skipped while the form is mid-request so it doesn't
+// clobber the transient "Summarizing…" busy label — the SSE completion swap
+// fires another sync once busy clears. Every add/remove path (initial server
+// render, SSE swap, summarize form swap, dismiss) reaches here: swaps via the
+// `rdrs:swap-complete` event below, dismiss via a direct call in its handler.
+function syncSummarizeToggleLabel() {
+    const form = document.querySelector('#reading-pane [data-summary-toggle]');
+    if (!form || form.getAttribute('aria-busy') === 'true') return;
+    const btn = form.querySelector('button');
+    if (!btn) return;
+    const showing = !!document.querySelector('#reading-pane [data-summary-dismiss]');
+    // Keep the button disabled while a summary is generating so it visually
+    // matches the server render and can't be clicked; the handler gates are
+    // the safety net for the brief window before this sync catches up.
+    btn.disabled = summaryInFlight();
+    const labelEl = btn.querySelector('.action-label');
+    if (labelEl) labelEl.textContent = showing ? 'Dismiss' : 'Summarize';
+    btn.setAttribute('aria-label', showing ? 'Dismiss summary' : 'Summarize');
+    const summarizeIcon = btn.querySelector('.action-icon-summarize');
+    const dismissIcon = btn.querySelector('.action-icon-dismiss');
+    if (summarizeIcon) summarizeIcon.hidden = showing;
+    if (dismissIcon) dismissIcon.hidden = !showing;
+}
+document.addEventListener('rdrs:swap-complete', syncSummarizeToggleLabel);
+
 // Reading-pane summary controls (Kagi Universal Summarizer output).
 // Copy is a clipboard write; Dismiss DELETEs the cached summary and
 // strips the summary block + the entry row's summary badge.
@@ -1261,6 +1320,9 @@ function installSummaryActions() {
             // `#rp-summary-container`, so the wrapper has to stay.
             const container = document.querySelector('[data-summary-container]');
             if (container) container.replaceChildren();
+            // The summary box (and its Dismiss control) is gone; flip the
+            // action-bar toggle button back to "Summarize".
+            syncSummarizeToggleLabel();
             const row = document.querySelector(
                 `[data-entry-row][data-entry-id="${entryId}"]`
             );

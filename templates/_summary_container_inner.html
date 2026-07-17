@@ -1,6 +1,6 @@
 {%- import "_icons.html" as icons -%}
 {% if pane.summary_in_flight %}
-<div class="summary-box">
+<div class="summary-box" data-summary-pending>
     <div class="summary-actions">
         <form method="post" action="/entries/{{ pane.id }}/summarize/cancel" data-swap="#rp-summary-container">
             <button type="submit" class="rp-action" aria-label="Cancel summarization"><span class="action-icon" aria-hidden="true">{% call icons::close() %}{% endcall %}</span><span class="action-label">Cancel</span></button>

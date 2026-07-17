@@ -6,7 +6,7 @@
 {%- import "_icons.html" as icons -%}
 <template data-swap-target="#rp-summary-container">
     <div class="rp-summary-container" id="rp-summary-container" data-summary-container>
-        <div class="summary-box">
+        <div class="summary-box" data-summary-pending>
             <div class="summary-actions">
                 <form method="post" action="/entries/{{ id }}/summarize/cancel" data-swap="#rp-summary-container">
                     <button type="submit" class="rp-action" aria-label="Cancel summarization"><span class="action-icon" aria-hidden="true">{% call icons::close() %}{% endcall %}</span><span class="action-label">Cancel</span></button>

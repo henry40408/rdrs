@@ -59,6 +59,11 @@ Given("the entry titled {string} has a failed summary", async ({ seed, currentUs
   seed.insertFailedSummary(seed.findEntryIdByTitle(userId, title), userId);
 });
 
+Given("the entry titled {string} has a pending summary", async ({ seed, currentUser }, title) => {
+  const userId = seed.getUserId(currentUser.username);
+  seed.insertPendingSummary(seed.findEntryIdByTitle(userId, title), userId);
+});
+
 Given("the entry titled {string} has content with a broken image", async ({ seed, currentUser }, title) => {
   const userId = seed.getUserId(currentUser.username);
   const entryId = seed.findEntryIdByTitle(userId, title);

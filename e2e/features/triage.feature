@@ -47,14 +47,36 @@ Feature: Triage entries (star, mark-read, summarize)
     And I click the entry titled "Test Entry 1"
     And I click the "Summarize" button
     Then the reading pane shows a summary
-    And the "Summarize" button still shows its icon
+    And the reading-pane summarize toggle still shows its icon
+    And the reading-pane summarize toggle reads "Dismiss"
 
   Scenario: Dismissing a summary clears the summary from the reading pane
     Given the entry titled "Test Entry 1" has a summary
     When I open the inbox
     And I click the entry titled "Test Entry 1"
-    And I click the "Dismiss" button
+    And I click the "Dismiss" summary action
     Then the reading pane summary is dismissed
+
+  Scenario: The action-bar toggle shows Dismiss and dismisses an existing summary
+    Given the user has Kagi configured
+    And the entry titled "Test Entry 1" has a summary
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    Then the reading-pane summarize toggle reads "Dismiss"
+    When I click the reading-pane summarize toggle
+    Then the reading pane summary is dismissed
+    And the reading-pane summarize toggle reads "Summarize"
+
+  Scenario: The summarize toggle is inert while a summary is in flight
+    Given the user has Kagi configured
+    And the entry titled "Test Entry 1" has a pending summary
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    Then the reading-pane summarize toggle reads "Summarize"
+    And the reading-pane summarize toggle is disabled
+    When I watch for summarize POST requests
+    And I press the "a" key
+    Then no summarize POST request is sent
 
   Scenario: a starts summarization from the keyboard
     Given the user has Kagi configured
