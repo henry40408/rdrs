@@ -984,6 +984,29 @@ code {
     font-size: inherit;
 }
 
+/* Rouge/Pygments line-numbered code blocks nest <pre> (line-number gutter +
+   code) inside a <code> + <table> inside the outer <pre>. Without these resets
+   every nested <pre> re-applies the full block padding/border/margin, so the
+   chrome stacks and the block balloons. Keep the chrome on the outer <pre>
+   only; neutralise everything nested. */
+.reading-pane-article pre pre {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    overflow-x: visible;
+}
+
+.reading-pane-article pre table {
+    margin: 0;
+}
+
+/* Gap between the line-number gutter and the code so digits don't touch. */
+.reading-pane-article pre td:first-child {
+    padding-right: var(--space-3);
+}
+
 .reading-pane-article blockquote {
     border-left: var(--border-accent-width) solid var(--color-accent);
     margin: var(--space-6) 0;
