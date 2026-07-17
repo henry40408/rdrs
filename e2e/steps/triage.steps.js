@@ -157,8 +157,67 @@ Then("the {string} button still shows its icon", async ({ page }, label) => {
   await expect(btn.locator(".action-icon svg")).toBeVisible();
 });
 
+// The action-bar Summarize/Dismiss toggle button, located by its stable
+// `data-summary-toggle` marker rather than its (changing) accessible name —
+// its name flips between "Summarize" and "Dismiss summary" with summary state,
+// and the "Dismiss summary" name would otherwise collide with the summary
+// box's own Dismiss control.
+const SUMMARIZE_TOGGLE = ".reading-pane-actions [data-summary-toggle] button";
+
+When("I click the reading-pane summarize toggle", async ({ page }) => {
+  await page.locator(SUMMARIZE_TOGGLE).click();
+});
+
+Then(
+  "the reading-pane summarize toggle reads {string}",
+  async ({ page }, text) => {
+    await expect(page.locator(`${SUMMARIZE_TOGGLE} .action-label`)).toHaveText(
+      text,
+    );
+  },
+);
+
+Then(
+  "the reading-pane summarize toggle still shows its icon",
+  async ({ page }) => {
+    // Only the visible icon span (the hidden one is toggled off with `hidden`).
+    await expect(
+      page.locator(`${SUMMARIZE_TOGGLE} .action-icon:not([hidden]) svg`),
+    ).toBeVisible();
+  },
+);
+
 Then("the reading pane summary is dismissed", async ({ page }) => {
   // After clicking "Dismiss", app.js calls container.replaceChildren() which
   // empties #rp-summary-container but keeps the wrapper element in the DOM.
   await expect(page.locator("#rp-summary-container .summary-box")).toHaveCount(0);
+});
+
+Then("the reading-pane summarize toggle is disabled", async ({ page }) => {
+  await expect(page.locator(SUMMARIZE_TOGGLE)).toBeDisabled();
+});
+
+// Count re-queue POSTs to /entries/{id}/summarize (NOT /summarize/cancel) so a
+// test can prove the in-flight toggle is truly inert.
+const summarizeWatched = new WeakSet();
+let summarizePostCount = 0;
+
+When("I watch for summarize POST requests", async ({ page }) => {
+  summarizePostCount = 0;
+  if (!summarizeWatched.has(page)) {
+    summarizeWatched.add(page);
+    page.on("request", (req) => {
+      if (req.method() !== "POST") return;
+      if (/\/entries\/\d+\/summarize$/.test(new URL(req.url()).pathname)) {
+        summarizePostCount += 1;
+      }
+    });
+  }
+});
+
+Then("no summarize POST request is sent", async ({ page }) => {
+  // A real re-queue POSTs synchronously on submit; give it a beat to land,
+  // then assert none fired.
+  await page.waitForTimeout(300);
+  expect(summarizePostCount).toBe(0);
 });

@@ -138,6 +138,18 @@ export class SeedHelper {
     }
   }
 
+  insertPendingSummary(entryId, userId) {
+    const db = new Database(this.dbPath);
+    try {
+      db.prepare(
+        `INSERT OR IGNORE INTO entry_summary (user_id, entry_id, status)
+         VALUES (?, ?, 'pending')`
+      ).run(userId, entryId);
+    } finally {
+      db.close();
+    }
+  }
+
   setEntryContent(entryId, html) {
     const db = new Database(this.dbPath);
     try {

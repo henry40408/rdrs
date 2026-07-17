@@ -60,6 +60,14 @@ Feature: Reading entries
     When I click the "Clear" summary action
     Then I do not see the summary error banner
 
+  Scenario: Retry regenerates instead of dismissing a failed summary
+    Given the user has Kagi configured
+    And the entry titled "Test Entry 3" has a failed summary
+    When I open the inbox
+    And I click the entry titled "Test Entry 3"
+    And I click the "Retry" summary action
+    Then the reading pane shows a summary
+
   Scenario: Single-feed view filters by that feed
     When I open the entries page for feed "Reading Feed"
     Then I see 5 entries in the entry list

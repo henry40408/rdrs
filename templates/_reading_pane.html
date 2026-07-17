@@ -66,8 +66,8 @@
             </form>
             {% endif %}
             {% if pane.has_kagi || pane.summary_in_flight %}
-            <form method="post" action="/entries/{{ pane.id }}/summarize" data-swap="#rp-summary-container">
-                <button type="submit" class="rp-action" aria-label="Summarize"{% if pane.summary_in_flight %} disabled{% endif %}><span class="action-icon" aria-hidden="true">{% call icons::sparkle() %}{% endcall %}</span><span class="action-label">Summarize</span><kbd>a</kbd></button>
+            <form method="post" action="/entries/{{ pane.id }}/summarize" data-swap="#rp-summary-container" data-summary-toggle>
+                <button type="submit" class="rp-action" aria-label="{% if pane.summary_text.is_some() %}Dismiss summary{% else %}Summarize{% endif %}"{% if pane.summary_in_flight %} disabled{% endif %}><span class="action-icon action-icon-summarize" aria-hidden="true"{% if pane.summary_text.is_some() %} hidden{% endif %}>{% call icons::sparkle() %}{% endcall %}</span><span class="action-icon action-icon-dismiss" aria-hidden="true"{% if pane.summary_text.is_none() %} hidden{% endif %}>{% call icons::close() %}{% endcall %}</span><span class="action-label">{% if pane.summary_text.is_some() %}Dismiss{% else %}Summarize{% endif %}</span><kbd>a</kbd></button>
             </form>
             {% endif %}
             {% if pane.has_save %}
