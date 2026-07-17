@@ -289,3 +289,9 @@ Feature: Reading entries
     When I open the inbox
     And I click the entry titled "Test Entry 3"
     Then the reading pane shows a broken-image fallback
+
+  Scenario: Line-numbered code blocks do not stack nested pre padding
+    Given the entry titled "Test Entry 1" contains a line-numbered code block
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    Then the nested code-block pre has no padding while the outer pre does

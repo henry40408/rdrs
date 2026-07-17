@@ -78,6 +78,41 @@ Then("the reading pane shows a broken-image fallback", async ({ page }) => {
   await expect(page.locator(".rp-broken-cap")).toContainText("Image unavailable");
 });
 
+Given(
+  "the entry titled {string} contains a line-numbered code block",
+  async ({ seed, currentUser }, title) => {
+    const userId = seed.getUserId(currentUser.username);
+    // Mirror Rouge's line-numbered output: an outer <pre> wrapping a <code> +
+    // <table> whose cells each hold their own nested <pre> (gutter + code).
+    const html =
+      '<div class="highlight"><pre class="highlight"><code>' +
+      '<table class="rouge-table"><tbody><tr>' +
+      '<td class="rouge-gutter"><pre class="lineno">1\n2\n3\n</pre></td>' +
+      '<td class="rouge-code"><pre>line one\nline two\nline three\n</pre></td>' +
+      '</tr></tbody></table></code></pre></div>';
+    seed.setEntryContent(seed.findEntryIdByTitle(userId, title), html);
+  },
+);
+
+Then(
+  "the nested code-block pre has no padding while the outer pre does",
+  async ({ page }) => {
+    const outer = page.locator(".reading-pane-article pre").first();
+    // The innermost <pre> (Rouge gutter/code) must be neutralised to 0 padding.
+    const inner = page.locator(".reading-pane-article pre pre").first();
+    await expect(inner).toHaveCount(1);
+    const innerPad = await inner.evaluate(
+      (el) => getComputedStyle(el).paddingTop,
+    );
+    const outerPad = await outer.evaluate(
+      (el) => getComputedStyle(el).paddingTop,
+    );
+    expect(innerPad).toBe("0px");
+    // Outer keeps its block padding (non-zero).
+    expect(parseFloat(outerPad)).toBeGreaterThan(0);
+  },
+);
+
 Given("all entries in category {string} are marked read", async ({ seed, currentUser }, name) => {
   const userId = seed.getUserId(currentUser.username);
   seed.markCategoryRead(userId, name);
