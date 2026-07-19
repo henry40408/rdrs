@@ -53,7 +53,11 @@ pub async fn stream_contents(
 ) -> AppResult<Json<StreamContentsResponse>> {
     let stream_id = StreamId::parse(&stream)?;
     let user_id = auth.user.id;
-    let count = query.n.unwrap_or(20).min(1000);
+    // Clamp to a non-negative count: `n` is user-supplied `i64`, and a negative
+    // value would make `limit: count + 1` go negative (SQLite treats a negative
+    // LIMIT as unbounded) and `take(count as usize)` wrap to a huge value —
+    // together returning the user's entire entry set in one response.
+    let count = query.n.unwrap_or(20).clamp(0, 1000);
 
     // Build filter from stream ID and query params
     let filter = build_entry_filter(&stream_id, &query)?;
@@ -183,7 +187,9 @@ pub async fn stream_item_ids(
         .unwrap_or("user/-/state/com.google/reading-list");
     let stream_id = StreamId::parse(stream_str)?;
     let user_id = auth.user.id;
-    let count = query.n.unwrap_or(20).min(10000);
+    // Clamp to a non-negative count (see stream_contents above): a negative
+    // user-supplied `n` would otherwise bypass the limit and return everything.
+    let count = query.n.unwrap_or(20).clamp(0, 10000);
 
     let filter =
         build_entry_filter_from_params(&stream_id, query.xt.as_deref(), query.it.as_deref())?;

@@ -359,6 +359,31 @@ async fn test_stream_contents_with_limit() {
 }
 
 #[tokio::test]
+async fn test_stream_contents_negative_n_does_not_return_everything() {
+    // Regression: a negative `n` used to make `limit = count + 1` negative, which
+    // SQLite treats as unbounded (n=-2 → LIMIT -1), and `take(count as usize)`
+    // wrapped to a huge value — together dumping the user's entire entry set in
+    // one response. The count must clamp to 0.
+    let app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&app).await;
+
+    let (_cat_id, feed_id) =
+        create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
+    create_test_entries(&app.db, feed_id, 5).await;
+
+    let response = app
+        .server
+        .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=-2")
+        .await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let items = body["items"].as_array().unwrap();
+    // Clamped to 0 — not the full set of 5.
+    assert_eq!(items.len(), 0, "negative n must not bypass the limit");
+}
+
+#[tokio::test]
 async fn test_stream_contents_composite_cursor_no_skip_on_backdated() {
     // Regression for #164: legacy `e.id < c` cursor skipped entries with
     // high ids and old timestamps. Composite cursor must visit them.
