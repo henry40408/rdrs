@@ -7,6 +7,7 @@
 //! full `sanitize_html` pipeline over many iterations. Used to capture
 //! before/after numbers for the single-parse refactor.
 
+use std::fmt::Write as _;
 use std::time::Instant;
 
 use rdrs::services::sanitize::sanitize_html;
@@ -20,25 +21,29 @@ fn make_html(blocks: usize) -> String {
     let mut s = String::with_capacity(blocks * 512);
     s.push_str("<h1>A Representative Article</h1>");
     for i in 0..blocks {
-        s.push_str(&format!(
+        let _ = write!(
+            s,
             "<p>Paragraph {i} with some <strong>bold</strong> and <em>italic</em> text, \
              plus an <a href=\"https://example.com/page{i}?utm_source=feed&amp;utm_medium=rss&amp;id={i}\">tracked link</a> \
              and a <a href=\"https://other.example.org/article/{i}\">clean link</a>.</p>"
-        ));
-        s.push_str(&format!(
+        );
+        let _ = write!(
+            s,
             "<figure><img src=\"https://cdn.example.com/img/{i}.jpg?w=1200&amp;h=800\" \
              alt=\"Image {i}\" width=\"1200\" height=\"800\">\
              <figcaption>Caption {i}</figcaption></figure>"
-        ));
+        );
         // A lazy-loaded image.
-        s.push_str(&format!(
+        let _ = write!(
+            s,
             "<img src=\"data:image/svg+xml,%3Csvg%3E%3C/svg%3E\" \
              data-lazy-src=\"https://cdn.example.com/lazy/{i}.jpg\" alt=\"Lazy {i}\">"
-        ));
+        );
         // A tracking pixel that should be removed.
-        s.push_str(&format!(
+        let _ = write!(
+            s,
             "<img src=\"https://pixel.tracker.com/p{i}.gif\" width=\"1\" height=\"1\">"
-        ));
+        );
     }
     s
 }

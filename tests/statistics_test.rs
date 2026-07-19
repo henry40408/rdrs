@@ -109,8 +109,8 @@ async fn seed_entries(db: &Db, admin_id: i64) {
         let (e, _) = entry::upsert_entry(
             db,
             feed.id,
-            &format!("guid-{}", i),
-            Some(&format!("Entry {}", i)),
+            &format!("guid-{i}"),
+            Some(&format!("Entry {i}")),
             None,
             None,
             None,
@@ -276,7 +276,7 @@ async fn test_statistics_page_masquerade_hides_admin_section() {
     login(&app.server, "admin").await;
 
     app.server
-        .post(&format!("/admin/users/{}/masquerade", user_id))
+        .post(&format!("/admin/users/{user_id}/masquerade"))
         .await
         .assert_status(axum::http::StatusCode::SEE_OTHER);
 
@@ -374,7 +374,7 @@ async fn test_api_me_masquerade_flag_set() {
     let (_admin_id, user_id) = setup_users(&app.db).await;
     login(&app.server, "admin").await;
     app.server
-        .post(&format!("/admin/users/{}/masquerade", user_id))
+        .post(&format!("/admin/users/{user_id}/masquerade"))
         .await
         .assert_status(axum::http::StatusCode::SEE_OTHER);
 

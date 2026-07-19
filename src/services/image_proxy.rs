@@ -26,7 +26,7 @@ pub fn verify_signature(url: &str, signature: &str, secret: &[u8]) -> bool {
 pub fn create_proxy_url(original_url: &str, secret: &[u8], base_url: Option<&str>) -> String {
     let encoded = URL_SAFE_NO_PAD.encode(original_url);
     let signature = sign_url(original_url, secret);
-    let path = format!("/api/proxy/image?url={}&s={}", encoded, signature);
+    let path = format!("/api/proxy/image?url={encoded}&s={signature}");
 
     match base_url {
         Some(base) => format!("{}{}", base.trim_end_matches('/'), path),
@@ -37,7 +37,7 @@ pub fn create_proxy_url(original_url: &str, secret: &[u8], base_url: Option<&str
 /// Signs a URL combined with a referrer using HMAC-SHA256.
 /// The message is `url|referrer` to bind both values together.
 pub fn sign_url_with_referrer(url: &str, referrer: &str, secret: &[u8]) -> String {
-    let message = format!("{}|{}", url, referrer);
+    let message = format!("{url}|{referrer}");
     let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
     mac.update(message.as_bytes());
     let result = mac.finalize().into_bytes();
@@ -66,10 +66,7 @@ pub fn create_proxy_url_with_referrer(
     let encoded_url = URL_SAFE_NO_PAD.encode(original_url);
     let encoded_referrer = URL_SAFE_NO_PAD.encode(referrer);
     let signature = sign_url_with_referrer(original_url, referrer, secret);
-    let path = format!(
-        "/api/proxy/image?url={}&s={}&r={}",
-        encoded_url, signature, encoded_referrer
-    );
+    let path = format!("/api/proxy/image?url={encoded_url}&s={signature}&r={encoded_referrer}");
 
     match base_url {
         Some(base) => format!("{}{}", base.trim_end_matches('/'), path),
@@ -243,7 +240,7 @@ mod tests {
 
         // Verify the encoded referrer
         let encoded_referrer = URL_SAFE_NO_PAD.encode(referrer);
-        assert!(proxy_url.contains(&format!("&r={}", encoded_referrer)));
+        assert!(proxy_url.contains(&format!("&r={encoded_referrer}")));
 
         // Verify the signature
         let parts: Vec<&str> = proxy_url.split('&').collect();

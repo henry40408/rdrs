@@ -339,7 +339,7 @@ async fn test_valid_session_cookie_not_reminted() {
     // redirect to /login.)
     let location = res
         .maybe_header("location")
-        .and_then(|v| v.to_str().ok().map(|s| s.to_string()))
+        .and_then(|v| v.to_str().ok().map(std::string::ToString::to_string))
         .unwrap_or_default();
     assert_ne!(
         location, "/login",

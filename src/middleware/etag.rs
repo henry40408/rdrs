@@ -5,6 +5,7 @@
 //! Wired innermost so the body it hashes is the uncompressed one;
 //! `CompressionLayer` runs after this on the response path.
 
+use std::fmt::Write as _;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -61,7 +62,7 @@ where
             .headers()
             .get(header::IF_NONE_MATCH)
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         let mut inner = self.inner.clone();
 
@@ -73,9 +74,7 @@ where
             }
 
             let (mut parts, body) = response.into_parts();
-            let bytes = if let Ok(b) = to_bytes(body, MAX_BUFFER_BYTES).await {
-                b
-            } else {
+            let Ok(bytes) = to_bytes(body, MAX_BUFFER_BYTES).await else {
                 // Body too large or stream error — return a fresh
                 // empty 200 with a hint header. Production handlers
                 // should not exceed MAX_BUFFER_BYTES for HTML; if
@@ -123,11 +122,10 @@ fn compute_weak_etag(body: &[u8]) -> String {
     hasher.update(body);
     let digest = hasher.finalize();
     // First 16 hex chars = 64 bits — collision-safe for our use.
-    let hex: String = digest
-        .iter()
-        .take(8)
-        .map(|b| format!("{:02x}", b))
-        .collect();
+    let hex = digest.iter().take(8).fold(String::new(), |mut acc, b| {
+        let _ = write!(acc, "{b:02x}");
+        acc
+    });
     format!("W/\"{hex}\"")
 }
 

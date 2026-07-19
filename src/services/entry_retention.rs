@@ -33,7 +33,7 @@ pub fn start_retention_worker(
 
         loop {
             tokio::select! {
-                _ = cancel_token.cancelled() => {
+                () = cancel_token.cancelled() => {
                     tracing::info!("Retention worker stopping...");
                     break;
                 }

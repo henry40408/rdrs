@@ -23,9 +23,8 @@ pub async fn get_feed_icon(
         .await?
         .ok_or(AppError::FeedNotFound)?;
 
-    let img = match image::find(&state.db, image::ENTITY_FEED, id).await? {
-        Some(img) => img,
-        None => return Err(AppError::NotFound("Icon not found".into())),
+    let Some(img) = image::find(&state.db, image::ENTITY_FEED, id).await? else {
+        return Err(AppError::NotFound("Icon not found".into()));
     };
 
     Ok((

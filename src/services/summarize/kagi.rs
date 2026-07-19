@@ -70,11 +70,11 @@ async fn summarize_url_with_base(
     let client = Client::builder()
         .timeout(EXTERNAL_API_TIMEOUT)
         .build()
-        .map_err(|e| AppError::Internal(format!("Failed to build HTTP client: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("Failed to build HTTP client: {e}")))?;
 
     // Build the API URL with query parameters
-    let mut api_url = url::Url::parse(&format!("{}/mother/summary_labs", base))
-        .map_err(|e| AppError::Internal(format!("Failed to parse Kagi API URL: {}", e)))?;
+    let mut api_url = url::Url::parse(&format!("{base}/mother/summary_labs"))
+        .map_err(|e| AppError::Internal(format!("Failed to parse Kagi API URL: {e}")))?;
 
     {
         let mut query = api_url.query_pairs_mut();
@@ -97,7 +97,7 @@ async fn summarize_url_with_base(
             .header("Content-Type", "application/json")
     })
     .await
-    .map_err(|e| AppError::Internal(format!("Failed to connect to Kagi: {}", e)))?;
+    .map_err(|e| AppError::Internal(format!("Failed to connect to Kagi: {e}")))?;
 
     let status = response.status();
 
@@ -105,7 +105,7 @@ async fn summarize_url_with_base(
         let body: KagiSummaryResponse = response
             .json()
             .await
-            .map_err(|e| AppError::Internal(format!("Failed to parse Kagi response: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("Failed to parse Kagi response: {e}")))?;
 
         if let Some(error) = body.error {
             Ok(SummarizeResult {
@@ -148,7 +148,7 @@ async fn summarize_url_with_base(
             401 => "Invalid session token".to_string(),
             403 => "Access forbidden - check your Kagi subscription".to_string(),
             429 => "Rate limit exceeded - please try again later".to_string(),
-            _ => format!("Kagi error ({}): {}", status, error_text),
+            _ => format!("Kagi error ({status}): {error_text}"),
         };
 
         Ok(SummarizeResult {
@@ -175,7 +175,7 @@ mod tests {
         assert!(config.is_configured());
 
         let empty_token = KagiConfig {
-            session_token: "".to_string(),
+            session_token: String::new(),
             language: None,
         };
         assert!(!empty_token.is_configured());
@@ -228,7 +228,7 @@ mod tests {
     #[tokio::test]
     async fn not_configured() {
         let config = KagiConfig {
-            session_token: "".into(),
+            session_token: String::new(),
             language: None,
         };
         // No mock server needed — the not-configured early return fires before any HTTP call

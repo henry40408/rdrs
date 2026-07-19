@@ -1,10 +1,12 @@
 //! Boolean query-language parser for the global `/search` page.
 //!
 //! Grammar (authoritative copy in the design spec):
+//! ```text
 //!   or   := and { "OR" and }
 //!   and  := not { ["AND"] not }        // implicit AND between adjacent atoms
 //!   not  := {"NOT"|"-"} atom
 //!   atom := "(" or ")" | field ":" value | text
+//! ```
 //!
 //! Pure string → AST; no DB access. Dates are validated here via `chrono`.
 //! `NOT` / `AND` / `OR` are case-insensitive keywords (quote to search them
@@ -245,15 +247,14 @@ fn lex(input: &str) -> Result<Vec<Spanned>, ParseError> {
                         });
                         k = nk;
                         continue;
-                    } else {
-                        // `field:` with no value — parser rejects.
-                        out.push(Spanned {
-                            tok: Tok::Filter(field, String::new()),
-                            pos: bpos,
-                        });
-                        k = e;
-                        continue;
                     }
+                    // `field:` with no value — parser rejects.
+                    out.push(Spanned {
+                        tok: Tok::Filter(field, String::new()),
+                        pos: bpos,
+                    });
+                    k = e;
+                    continue;
                 }
 
                 let tok = match head.to_ascii_lowercase().as_str() {
@@ -308,7 +309,7 @@ fn starts_atom(t: &Tok) -> bool {
     )
 }
 
-impl<'a> Parser<'a> {
+impl Parser<'_> {
     fn peek(&self) -> Option<&Tok> {
         self.toks.get(self.pos).map(|s| &s.tok)
     }

@@ -54,7 +54,7 @@ pub async fn save_to_linkding(
     let client = Client::builder()
         .timeout(EXTERNAL_API_TIMEOUT)
         .build()
-        .map_err(|e| AppError::Internal(format!("Failed to build HTTP client: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("Failed to build HTTP client: {e}")))?;
 
     // Normalize API URL - ensure it ends with /api/bookmarks/
     let api_url = normalize_api_url(&config.api_url);
@@ -75,7 +75,7 @@ pub async fn save_to_linkding(
             .json(&request_body)
     })
     .await
-    .map_err(|e| AppError::Internal(format!("Failed to connect to Linkding: {}", e)))?;
+    .map_err(|e| AppError::Internal(format!("Failed to connect to Linkding: {e}")))?;
 
     let status = response.status();
 
@@ -83,7 +83,7 @@ pub async fn save_to_linkding(
         let body: LinkdingBookmarkResponse = response
             .json()
             .await
-            .map_err(|e| AppError::Internal(format!("Failed to parse Linkding response: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("Failed to parse Linkding response: {e}")))?;
 
         // Construct bookmark URL for the user to view
         let bookmark_url = construct_bookmark_url(&config.api_url, body.id);
@@ -107,13 +107,13 @@ pub async fn save_to_linkding(
                 if error_text.contains("already exists") || error_text.contains("unique") {
                     "Bookmark already exists in Linkding".to_string()
                 } else {
-                    format!("Bad request: {}", error_text)
+                    format!("Bad request: {error_text}")
                 }
             }
             401 => "Invalid API token".to_string(),
             403 => "Access forbidden".to_string(),
             404 => "Linkding API endpoint not found".to_string(),
-            _ => format!("Linkding error ({}): {}", status, error_text),
+            _ => format!("Linkding error ({status}): {error_text}"),
         };
 
         Ok(SaveResult {
@@ -157,7 +157,7 @@ fn construct_bookmark_url(base_url: &str, bookmark_id: i64) -> String {
         base_url.trim_end_matches('/')
     };
 
-    format!("{}/bookmarks/{}", base, bookmark_id)
+    format!("{base}/bookmarks/{bookmark_id}")
 }
 
 #[cfg(test)]
@@ -193,8 +193,8 @@ mod tests {
     #[tokio::test]
     async fn not_configured_short_circuits() {
         let config = LinkdingConfig {
-            api_url: "".into(),
-            api_token: "".into(),
+            api_url: String::new(),
+            api_token: String::new(),
         };
         let bookmark = BookmarkData {
             url: "https://example.com".into(),
@@ -441,14 +441,14 @@ mod tests {
         assert!(config.is_configured());
 
         let empty_url = LinkdingConfig {
-            api_url: "".to_string(),
+            api_url: String::new(),
             api_token: "abc123".to_string(),
         };
         assert!(!empty_url.is_configured());
 
         let empty_token = LinkdingConfig {
             api_url: "https://linkding.example.com".to_string(),
-            api_token: "".to_string(),
+            api_token: String::new(),
         };
         assert!(!empty_token.is_configured());
     }

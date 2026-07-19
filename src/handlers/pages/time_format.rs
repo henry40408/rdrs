@@ -91,6 +91,10 @@ mod tests {
     /// A timestamp `d` in the past, for driving the "ago" branches. Values are
     /// chosen comfortably inside each band so sub-second test latency can't tip
     /// them across a boundary.
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "returns Option to feed the Option-taking function under test directly"
+    )]
     fn ago(d: Duration) -> Option<chrono::DateTime<Utc>> {
         Some(Utc::now() - d)
     }

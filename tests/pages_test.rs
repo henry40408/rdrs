@@ -154,7 +154,7 @@ async fn test_unread_page_while_masquerading() {
 
     // Start masquerading as user via the SSR form endpoint.
     app.server
-        .post(&format!("/admin/users/{}/masquerade", user_id))
+        .post(&format!("/admin/users/{user_id}/masquerade"))
         .await
         .assert_status(StatusCode::SEE_OTHER);
 
@@ -188,15 +188,15 @@ async fn seed_one_entry(db: &Db, username: &str, slug: &str) -> i64 {
         .await
         .unwrap()
         .unwrap();
-    let cat = rdrs::models::category::create_category(db, user.id, &format!("cat-{}", slug))
+    let cat = rdrs::models::category::create_category(db, user.id, &format!("cat-{slug}"))
         .await
         .unwrap();
     let feed = rdrs::models::feed::create_feed(
         db,
         &rdrs::models::feed::CreateFeedParams {
             category_id: cat.id,
-            url: &format!("https://example.com/{}.xml", slug),
-            title: Some(&format!("Feed {}", slug)),
+            url: &format!("https://example.com/{slug}.xml"),
+            title: Some(&format!("Feed {slug}")),
             description: None,
             site_url: None,
             custom_user_agent: None,
@@ -209,10 +209,10 @@ async fn seed_one_entry(db: &Db, username: &str, slug: &str) -> i64 {
     let (entry, _) = rdrs::models::entry::upsert_entry(
         db,
         feed.id,
-        &format!("guid-{}", slug),
-        Some(&format!("Title for {}", slug)),
-        Some(&format!("https://example.com/{}", slug)),
-        Some(&format!("<p>Body for {}.</p>", slug)),
+        &format!("guid-{slug}"),
+        Some(&format!("Title for {slug}")),
+        Some(&format!("https://example.com/{slug}")),
+        Some(&format!("<p>Body for {slug}.</p>")),
         None,
         None,
         None,
@@ -229,7 +229,7 @@ async fn test_unread_page_entry_query_populates_reading_pane() {
     let entry_id = seed_one_entry(&app.db, "admin", "deep-link-ok").await;
     login(&app.server, "admin").await;
 
-    let response = app.server.get(&format!("/?entry={}", entry_id)).await;
+    let response = app.server.get(&format!("/?entry={entry_id}")).await;
     response.assert_status_ok();
     let body = response.text();
 
@@ -292,7 +292,7 @@ async fn test_unread_page_entry_query_other_user_falls_back_to_empty_pane() {
     let entry_id = seed_one_entry(&app.db, "user", "cross-user").await;
     login(&app.server, "admin").await;
 
-    let response = app.server.get(&format!("/?entry={}", entry_id)).await;
+    let response = app.server.get(&format!("/?entry={entry_id}")).await;
     response.assert_status_ok();
     let body = response.text();
 
@@ -318,7 +318,7 @@ async fn test_starred_entries_page_entry_query_populates_reading_pane() {
 
     let response = app
         .server
-        .get(&format!("/entries/starred?entry={}", entry_id))
+        .get(&format!("/entries/starred?entry={entry_id}"))
         .await;
     response.assert_status_ok();
     let body = response.text();
@@ -342,7 +342,7 @@ async fn test_admin_page_while_masquerading() {
 
     // Start masquerading via the SSR form endpoint.
     app.server
-        .post(&format!("/admin/users/{}/masquerade", user_id))
+        .post(&format!("/admin/users/{user_id}/masquerade"))
         .await
         .assert_status(StatusCode::SEE_OTHER);
 
@@ -1016,7 +1016,7 @@ async fn test_category_entries_page() {
 
     let resp = app
         .server
-        .get(&format!("/categories/{}/entries", cat_id))
+        .get(&format!("/categories/{cat_id}/entries"))
         .await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
@@ -1026,11 +1026,11 @@ async fn test_category_entries_page() {
         "page title must render the category name"
     );
     assert!(
-        html.contains(&format!("id=\"entry-row-{}\"", entry_a_id)),
+        html.contains(&format!("id=\"entry-row-{entry_a_id}\"")),
         "row for entry from feed 1 must be present"
     );
     assert!(
-        html.contains(&format!("id=\"entry-row-{}\"", entry_b_id)),
+        html.contains(&format!("id=\"entry-row-{entry_b_id}\"")),
         "row for entry from feed 2 must be present"
     );
     assert!(
@@ -1047,7 +1047,7 @@ async fn test_category_entries_page() {
     );
     if html.contains("id=\"load-more\"") {
         assert!(
-            html.contains(&format!("action=\"/categories/{}/entries\"", cat_id)),
+            html.contains(&format!("action=\"/categories/{cat_id}/entries\"")),
             "Load-More form must POST back to the category-scoped URL"
         );
     }
@@ -1064,7 +1064,7 @@ async fn test_category_entries_page() {
 
     // Sidebar must receive active-category-id so the category is highlighted.
     assert!(
-        html.contains(&format!("active-category-id=\"{}\"", cat_id)),
+        html.contains(&format!("active-category-id=\"{cat_id}\"")),
         "<rdrs-sidebar> must carry active-category-id for the current category"
     );
 
@@ -1163,7 +1163,7 @@ async fn test_category_entries_page_other_user() {
     // Bob tries to access alice's category entries — must be 404
     let resp = app
         .server
-        .get(&format!("/categories/{}/entries", cat_id))
+        .get(&format!("/categories/{cat_id}/entries"))
         .await;
     assert_eq!(
         resp.status_code(),
@@ -1210,9 +1210,9 @@ async fn test_category_entries_page_load_more_fragment() {
         rdrs::models::entry::upsert_entry(
             &app.db,
             feed.id,
-            &format!("guid-clm-{}", i),
-            Some(&format!("Entry {}", i)),
-            Some(&format!("https://x/clm/{}", i)),
+            &format!("guid-clm-{i}"),
+            Some(&format!("Entry {i}")),
+            Some(&format!("https://x/clm/{i}")),
             None,
             None,
             None,
@@ -1225,7 +1225,7 @@ async fn test_category_entries_page_load_more_fragment() {
 
     let resp = app
         .server
-        .get(&format!("/categories/{}/entries?fragment=1", cat_id))
+        .get(&format!("/categories/{cat_id}/entries?fragment=1"))
         .await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
@@ -1310,7 +1310,7 @@ async fn test_category_mark_read_scoped_search() {
 
     let response = app
         .server
-        .post(&format!("/categories/{}/entries/mark-read", cat_id))
+        .post(&format!("/categories/{cat_id}/entries/mark-read"))
         .form(&[("q", "Widget")])
         .await;
 
@@ -1318,7 +1318,7 @@ async fn test_category_mark_read_scoped_search() {
     let location = response.header(header::LOCATION);
     assert_eq!(
         location,
-        format!("/categories/{}/entries?q=Widget", cat_id),
+        format!("/categories/{cat_id}/entries?q=Widget"),
         "redirect must preserve the ?q= scoped-search keyword"
     );
 
@@ -1416,7 +1416,7 @@ async fn test_feed_mark_read_scoped_search() {
 
     let response = app
         .server
-        .post(&format!("/feeds/{}/entries/mark-read", feed_id))
+        .post(&format!("/feeds/{feed_id}/entries/mark-read"))
         .form(&[("q", "Widget")])
         .await;
 
@@ -1424,7 +1424,7 @@ async fn test_feed_mark_read_scoped_search() {
     let location = response.header(header::LOCATION);
     assert_eq!(
         location,
-        format!("/feeds/{}/entries?q=Widget", feed_id),
+        format!("/feeds/{feed_id}/entries?q=Widget"),
         "redirect must preserve the ?q= scoped-search keyword"
     );
 
@@ -1531,10 +1531,7 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
 
     let resp = app
         .server
-        .get(&format!(
-            "/categories/{}/entries?status=all&q=Widget",
-            cat_id
-        ))
+        .get(&format!("/categories/{cat_id}/entries?status=all&q=Widget"))
         .await;
     resp.assert_status_ok();
     let html = resp.text();
@@ -1546,7 +1543,7 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
 
     let response = app
         .server
-        .post(&format!("/categories/{}/entries/mark-read", cat_id))
+        .post(&format!("/categories/{cat_id}/entries/mark-read"))
         .form(&[("q", "Widget"), ("status", "all")])
         .await;
     response.assert_status_see_other();
@@ -1642,7 +1639,7 @@ async fn test_feed_entries_page() {
     .unwrap();
     let (cat_id, feed_id, entry_a_id, entry_b_id) = (cat.id, feed.id, a.id, b.id);
 
-    let resp = app.server.get(&format!("/feeds/{}/entries", feed_id)).await;
+    let resp = app.server.get(&format!("/feeds/{feed_id}/entries")).await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
 
@@ -1651,11 +1648,11 @@ async fn test_feed_entries_page() {
         "page title must render feed title"
     );
     assert!(
-        html.contains(&format!("id=\"entry-row-{}\"", entry_a_id)),
+        html.contains(&format!("id=\"entry-row-{entry_a_id}\"")),
         "row for first entry must be in the HTML"
     );
     assert!(
-        html.contains(&format!("id=\"entry-row-{}\"", entry_b_id)),
+        html.contains(&format!("id=\"entry-row-{entry_b_id}\"")),
         "row for second entry must be in the HTML"
     );
     assert!(
@@ -1672,7 +1669,7 @@ async fn test_feed_entries_page() {
     );
     if html.contains("id=\"load-more\"") {
         assert!(
-            html.contains(&format!("action=\"/feeds/{}/entries\"", feed_id)),
+            html.contains(&format!("action=\"/feeds/{feed_id}/entries\"")),
             "Load-More form must POST back to the same feed-scoped URL"
         );
     }
@@ -1688,15 +1685,14 @@ async fn test_feed_entries_page() {
     );
     assert!(
         html.contains(&format!(
-            r#"<a href="/categories/{}/entries">Tech</a>"#,
-            cat_id
+            r#"<a href="/categories/{cat_id}/entries">Tech</a>"#
         )),
         "breadcrumb must link to the parent category page"
     );
 
     // Sidebar must receive active-category-id so the parent category is highlighted.
     assert!(
-        html.contains(&format!("active-category-id=\"{}\"", cat_id)),
+        html.contains(&format!("active-category-id=\"{cat_id}\"")),
         "<rdrs-sidebar> must carry active-category-id for the feed's parent category"
     );
 
@@ -1705,8 +1701,7 @@ async fn test_feed_entries_page() {
     // skip that variant to keep this test focused on layout-context wiring.)
     assert!(
         !html.contains(&format!(
-            "src=\"/api/feeds/{}/icon\" alt=\"\" width=\"20\"",
-            feed_id
+            "src=\"/api/feeds/{feed_id}/icon\" alt=\"\" width=\"20\""
         )),
         "header feed-icon img must not render when the feed has no icon row"
     );
@@ -1813,50 +1808,50 @@ async fn test_feed_entries_page_status_filter() {
 
     // Default URL (no ?status=) → unread is the default; read entry hidden,
     // unread + starred (which is still unread) both visible.
-    let resp = app.server.get(&format!("/feeds/{}/entries", feed_id)).await;
+    let resp = app.server.get(&format!("/feeds/{feed_id}/entries")).await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
     assert!(
-        html.contains(&format!("id=\"entry-row-{}\"", unread_id)),
+        html.contains(&format!("id=\"entry-row-{unread_id}\"")),
         "default view should include the unread entry"
     );
     assert!(
-        !html.contains(&format!("id=\"entry-row-{}\"", read_id)),
+        !html.contains(&format!("id=\"entry-row-{read_id}\"")),
         "default view should hide the read entry (default = unread filter)"
     );
     assert!(
-        html.contains(&format!("id=\"entry-row-{}\"", starred_id)),
+        html.contains(&format!("id=\"entry-row-{starred_id}\"")),
         "default view should include the starred-but-unread entry"
     );
 
     // ?status=all → every entry visible.
     let resp = app
         .server
-        .get(&format!("/feeds/{}/entries?status=all", feed_id))
+        .get(&format!("/feeds/{feed_id}/entries?status=all"))
         .await;
     let html = resp.text();
-    assert!(html.contains(&format!("id=\"entry-row-{}\"", unread_id)));
-    assert!(html.contains(&format!("id=\"entry-row-{}\"", read_id)));
-    assert!(html.contains(&format!("id=\"entry-row-{}\"", starred_id)));
+    assert!(html.contains(&format!("id=\"entry-row-{unread_id}\"")));
+    assert!(html.contains(&format!("id=\"entry-row-{read_id}\"")));
+    assert!(html.contains(&format!("id=\"entry-row-{starred_id}\"")));
 
     // ?status=read → only read.
     let resp = app
         .server
-        .get(&format!("/feeds/{}/entries?status=read", feed_id))
+        .get(&format!("/feeds/{feed_id}/entries?status=read"))
         .await;
     let html = resp.text();
-    assert!(html.contains(&format!("id=\"entry-row-{}\"", read_id)));
-    assert!(!html.contains(&format!("id=\"entry-row-{}\"", unread_id)));
+    assert!(html.contains(&format!("id=\"entry-row-{read_id}\"")));
+    assert!(!html.contains(&format!("id=\"entry-row-{unread_id}\"")));
 
     // ?status=starred → only starred.
     let resp = app
         .server
-        .get(&format!("/feeds/{}/entries?status=starred", feed_id))
+        .get(&format!("/feeds/{feed_id}/entries?status=starred"))
         .await;
     let html = resp.text();
-    assert!(html.contains(&format!("id=\"entry-row-{}\"", starred_id)));
-    assert!(!html.contains(&format!("id=\"entry-row-{}\"", read_id)));
-    assert!(!html.contains(&format!("id=\"entry-row-{}\"", unread_id)));
+    assert!(html.contains(&format!("id=\"entry-row-{starred_id}\"")));
+    assert!(!html.contains(&format!("id=\"entry-row-{read_id}\"")));
+    assert!(!html.contains(&format!("id=\"entry-row-{unread_id}\"")));
 
     // Filter <select> present; the active <option> matches the query.
     assert!(
@@ -1869,31 +1864,27 @@ async fn test_feed_entries_page_status_filter() {
     );
     assert!(
         html.contains(&format!(
-            r#"<option value="/feeds/{}/entries?status=starred" selected>Starred</option>"#,
-            feed_id
+            r#"<option value="/feeds/{feed_id}/entries?status=starred" selected>Starred</option>"#
         )),
         "Starred <option> must be `selected` when ?status=starred"
     );
     // Option order: All, Unread, Read, Starred (Unread URL = base path).
     let all_pos = html
         .find(&format!(
-            r#"<option value="/feeds/{}/entries?status=all""#,
-            feed_id
+            r#"<option value="/feeds/{feed_id}/entries?status=all""#
         ))
         .expect("All option present");
     let unread_pos = html
-        .find(&format!(r#"<option value="/feeds/{}/entries""#, feed_id))
+        .find(&format!(r#"<option value="/feeds/{feed_id}/entries""#))
         .expect("Unread option present (base URL)");
     let read_pos = html
         .find(&format!(
-            r#"<option value="/feeds/{}/entries?status=read""#,
-            feed_id
+            r#"<option value="/feeds/{feed_id}/entries?status=read""#
         ))
         .expect("Read option present");
     let starred_pos = html
         .find(&format!(
-            r#"<option value="/feeds/{}/entries?status=starred""#,
-            feed_id
+            r#"<option value="/feeds/{feed_id}/entries?status=starred""#
         ))
         .expect("Starred option present");
     assert!(
@@ -1995,7 +1986,7 @@ async fn test_feed_entries_page_other_user() {
         .assert_status_ok();
 
     // Bob tries to access alice's feed entries — must be 404
-    let resp = app.server.get(&format!("/feeds/{}/entries", feed_id)).await;
+    let resp = app.server.get(&format!("/feeds/{feed_id}/entries")).await;
     assert_eq!(
         resp.status_code(),
         StatusCode::NOT_FOUND,
@@ -2041,9 +2032,9 @@ async fn test_feed_entries_page_load_more_fragment() {
         rdrs::models::entry::upsert_entry(
             &app.db,
             feed.id,
-            &format!("guid-lm-{}", i),
-            Some(&format!("Entry {}", i)),
-            Some(&format!("https://x/lm/{}", i)),
+            &format!("guid-lm-{i}"),
+            Some(&format!("Entry {i}")),
+            Some(&format!("https://x/lm/{i}")),
             None,
             None,
             None,
@@ -2056,7 +2047,7 @@ async fn test_feed_entries_page_load_more_fragment() {
 
     let resp = app
         .server
-        .get(&format!("/feeds/{}/entries?fragment=1", feed_id))
+        .get(&format!("/feeds/{feed_id}/entries?fragment=1"))
         .await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
@@ -3131,7 +3122,7 @@ async fn test_unread_load_more_uses_keyset_cursor() {
     let encoded = cursor.replace(' ', "%20").replace('|', "%7C");
     let frag = app
         .server
-        .get(&format!("/?fragment=1&after={}", encoded))
+        .get(&format!("/?fragment=1&after={encoded}"))
         .await
         .text();
     let entry_ids_page2 = extract_entry_ids(&frag);

@@ -84,7 +84,7 @@ pub(crate) fn parse_url_lines(input: &str) -> Result<Vec<String>, String> {
         return Err("Enter at least one URL.".to_string());
     }
     if out.len() > MAX_URLS {
-        return Err(format!("Too many URLs — {} max per run.", MAX_URLS));
+        return Err(format!("Too many URLs — {MAX_URLS} max per run."));
     }
     Ok(out)
 }
@@ -255,20 +255,19 @@ pub async fn item(
     // Enforce one live summary per user on the server (the client already
     // serialises, but a hand-crafted burst must not fan out concurrent Kagi
     // calls). Held until the function returns, releasing the slot on every path.
-    let _slot = match try_begin_inflight(&state.summarizer_inflight, auth_user.user.id) {
-        Some(guard) => guard,
-        None => {
-            return render(err_card(
-                "Another summary is already in progress — wait for it to finish.".into(),
-            ));
-        }
+    let Some(_slot) = try_begin_inflight(&state.summarizer_inflight, auth_user.user.id) else {
+        return render(err_card(
+            "Another summary is already in progress — wait for it to finish.".into(),
+        ));
     };
 
     let kagi = match user_settings::get_save_services_config(&state.db, auth_user.user.id).await {
         Ok(c) => c.kagi,
         Err(_) => None,
     };
-    let Some(config) = kagi.filter(|k| k.is_configured()) else {
+    let Some(config) =
+        kagi.filter(super::super::services::summarize::kagi::KagiConfig::is_configured)
+    else {
         return render(err_card("Kagi is not configured.".into()));
     };
 
@@ -345,7 +344,7 @@ mod tests {
 
     #[test]
     fn rejects_over_max() {
-        let many = (0..(MAX_URLS + 1))
+        let many = (0..=MAX_URLS)
             .map(|i| format!("https://ex.com/{i}"))
             .collect::<Vec<_>>()
             .join("\n");

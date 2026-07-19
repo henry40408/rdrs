@@ -437,8 +437,8 @@ mod tests {
             let (e, _) = entry::upsert_entry(
                 &db,
                 feed_id,
-                &format!("guid-{}", i),
-                Some(&format!("Entry {}", i)),
+                &format!("guid-{i}"),
+                Some(&format!("Entry {i}")),
                 Some("https://example.com/entry"),
                 None,
                 None,

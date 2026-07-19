@@ -110,10 +110,10 @@ pub struct EditFeedForm {
     pub custom_referrer: String,
     #[serde(default)]
     pub http2_disabled: Option<String>,
-    #[serde(default)]
-    pub _clear_referrer: Option<String>,
-    #[serde(default)]
-    pub _clear_user_agent: Option<String>,
+    #[serde(default, rename = "_clear_referrer")]
+    pub clear_referrer: Option<String>,
+    #[serde(default, rename = "_clear_user_agent")]
+    pub clear_user_agent: Option<String>,
 }
 
 pub async fn edit_feed_form(
@@ -162,7 +162,7 @@ pub async fn edit_feed_form(
             Some(trimmed_site.to_string())
         };
 
-        let custom_user_agent: Option<String> = if req._clear_user_agent.is_some() {
+        let custom_user_agent: Option<String> = if req.clear_user_agent.is_some() {
             None
         } else {
             let trimmed = req.custom_user_agent.trim();
@@ -173,7 +173,7 @@ pub async fn edit_feed_form(
             }
         };
 
-        let custom_referrer: Option<String> = if req._clear_referrer.is_some() {
+        let custom_referrer: Option<String> = if req.clear_referrer.is_some() {
             None
         } else {
             let trimmed = req.custom_referrer.trim();
@@ -255,9 +255,8 @@ pub async fn refresh_feed_form(
 ) -> impl IntoResponse {
     let user_id = auth_user.user.id;
     let owned = async {
-        let f = match feed::find_by_id(&state.db, id).await? {
-            Some(f) => f,
-            None => return Ok::<_, AppError>(false),
+        let Some(f) = feed::find_by_id(&state.db, id).await? else {
+            return Ok::<_, AppError>(false);
         };
         Ok(
             category::find_by_id_and_user(&state.db, f.category_id, user_id)
@@ -297,9 +296,8 @@ pub async fn fetch_metadata_form(
     let edit_path = format!("/feeds/{id}/edit");
 
     let feed_owned = async {
-        let f = match feed::find_by_id(&state.db, id).await? {
-            Some(f) => f,
-            None => return Ok::<_, AppError>(None),
+        let Some(f) = feed::find_by_id(&state.db, id).await? else {
+            return Ok::<_, AppError>(None);
         };
         if category::find_by_id_and_user(&state.db, f.category_id, user_id)
             .await?
@@ -312,9 +310,8 @@ pub async fn fetch_metadata_form(
     .await
     .ok()
     .flatten();
-    let feed = match feed_owned {
-        Some(f) => f,
-        None => return FlashRedirect::error(edit_path, "Feed not found").into_response(),
+    let Some(feed) = feed_owned else {
+        return FlashRedirect::error(edit_path, "Feed not found").into_response();
     };
 
     let user_agent = state.config.user_agent.clone();
@@ -363,9 +360,8 @@ pub async fn import_opml_form(
         if name != "file" && name != "content" {
             continue;
         }
-        let bytes = match field.bytes().await {
-            Ok(b) => b,
-            Err(_) => continue,
+        let Ok(bytes) = field.bytes().await else {
+            continue;
         };
         if bytes.is_empty() {
             continue;

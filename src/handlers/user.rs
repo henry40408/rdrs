@@ -97,11 +97,13 @@ pub async fn get_user_settings(
         .unwrap_or_default();
 
     let linkding = save_config.linkding.as_ref();
-    let linkding_configured = linkding.is_some_and(|c| c.is_configured());
+    let linkding_configured =
+        linkding.is_some_and(super::super::services::save::linkding::LinkdingConfig::is_configured);
     let linkding_api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
 
     let kagi = save_config.kagi.as_ref();
-    let kagi_configured = kagi.is_some_and(|c| c.is_configured());
+    let kagi_configured =
+        kagi.is_some_and(super::super::services::summarize::kagi::KagiConfig::is_configured);
     let kagi_language = kagi.and_then(|c| c.language.clone()).unwrap_or_default();
 
     let response = UserSettingsResponse {
@@ -385,11 +387,8 @@ pub async fn change_password_form(
         return FlashRedirect::error("/user-settings", "Current password is incorrect.");
     }
 
-    let new_hash = match hash_password(&req.new_password) {
-        Ok(hash) => hash,
-        Err(_) => {
-            return FlashRedirect::error("/user-settings", "Failed to hash password.");
-        }
+    let Ok(new_hash) = hash_password(&req.new_password) else {
+        return FlashRedirect::error("/user-settings", "Failed to hash password.");
     };
     let user_id = auth_user.user.id;
 

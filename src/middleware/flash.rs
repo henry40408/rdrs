@@ -532,7 +532,7 @@ mod tests {
             .header("Cookie", format!("{FLASH_COOKIE_NAME}={cookie_value}"))
             .body(())
             .unwrap();
-        let (mut parts, _) = request.into_parts();
+        let (mut parts, ()) = request.into_parts();
 
         let flash = Flash::from_request_parts(&mut parts, &()).await.unwrap();
         assert_eq!(flash.messages.len(), 1, "flash cookie should be read");

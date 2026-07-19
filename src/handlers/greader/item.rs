@@ -60,7 +60,7 @@ pub async fn stream_contents(
     let count = query.n.unwrap_or(20).clamp(0, 1000);
 
     // Build filter from stream ID and query params
-    let filter = build_entry_filter(&stream_id, &query)?;
+    let filter = build_entry_filter(&stream_id, &query);
     let sort_order = match stream_id {
         StreamId::Read => entry::EntrySortOrder::ReadAt,
         StreamId::Starred => entry::EntrySortOrder::StarredAt,
@@ -105,6 +105,7 @@ pub async fn stream_contents(
             .await?;
 
     let has_more = entries.len() as i64 > count;
+    #[allow(clippy::cast_sign_loss, reason = "`count` is clamped to >= 0 upstream")]
     let entries: Vec<_> = entries.into_iter().take(count as usize).collect();
 
     let continuation = if has_more {
@@ -192,7 +193,7 @@ pub async fn stream_item_ids(
     let count = query.n.unwrap_or(20).clamp(0, 10000);
 
     let filter =
-        build_entry_filter_from_params(&stream_id, query.xt.as_deref(), query.it.as_deref())?;
+        build_entry_filter_from_params(&stream_id, query.xt.as_deref(), query.it.as_deref());
     let sort_order = match stream_id {
         StreamId::Read => entry::EntrySortOrder::ReadAt,
         StreamId::Starred => entry::EntrySortOrder::StarredAt,
@@ -230,6 +231,7 @@ pub async fn stream_item_ids(
         entry::list_ids_by_user(&state.db, user_id, &effective_filter, &pagination).await?;
 
     let has_more = entries.len() as i64 > count;
+    #[allow(clippy::cast_sign_loss, reason = "`count` is clamped to >= 0 upstream")]
     let entries: Vec<_> = entries.into_iter().take(count as usize).collect();
 
     let continuation = if has_more {
@@ -398,22 +400,19 @@ async fn fetch_items_by_ids(
 // --- Helpers ---
 
 /// Build an `EntryFilter` from stream ID and query params.
-fn build_entry_filter(
-    stream_id: &StreamId,
-    query: &StreamContentsQuery,
-) -> AppResult<entry::EntryFilter> {
+fn build_entry_filter(stream_id: &StreamId, query: &StreamContentsQuery) -> entry::EntryFilter {
     let mut filter =
-        build_entry_filter_from_params(stream_id, query.xt.as_deref(), query.it.as_deref())?;
-    filter.search = query.q.clone();
+        build_entry_filter_from_params(stream_id, query.xt.as_deref(), query.it.as_deref());
+    filter.search.clone_from(&query.q);
     filter.has_summary = query.has_summary.as_deref().map(|v| v == "true");
-    Ok(filter)
+    filter
 }
 
 fn build_entry_filter_from_params(
     stream_id: &StreamId,
     xt: Option<&str>,
     it: Option<&str>,
-) -> AppResult<entry::EntryFilter> {
+) -> entry::EntryFilter {
     let mut filter = entry::EntryFilter::default();
 
     // Apply stream ID filter
@@ -448,7 +447,7 @@ fn build_entry_filter_from_params(
         }
     }
 
-    Ok(filter)
+    filter
 }
 
 /// Merge DB summary statuses with in-flight cache statuses.

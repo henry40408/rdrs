@@ -40,10 +40,10 @@ impl StreamId {
             } else if let Some(pos) = after_user.find('/') {
                 &after_user[pos + 1..]
             } else {
-                return Err(AppError::Validation(format!("Invalid stream ID: {}", s)));
+                return Err(AppError::Validation(format!("Invalid stream ID: {s}")));
             }
         } else {
-            return Err(AppError::Validation(format!("Invalid stream ID: {}", s)));
+            return Err(AppError::Validation(format!("Invalid stream ID: {s}")));
         };
 
         match normalized {
@@ -58,7 +58,7 @@ impl StreamId {
                 }
                 Ok(StreamId::Label(name.to_string()))
             }
-            _ => Err(AppError::Validation(format!("Unknown stream ID: {}", s))),
+            _ => Err(AppError::Validation(format!("Unknown stream ID: {s}"))),
         }
     }
 }
@@ -70,8 +70,8 @@ impl fmt::Display for StreamId {
             StreamId::Read => write!(f, "user/-/state/com.google/read"),
             StreamId::Starred => write!(f, "user/-/state/com.google/starred"),
             StreamId::KeptUnread => write!(f, "user/-/state/com.google/kept-unread"),
-            StreamId::Label(name) => write!(f, "user/-/label/{}", name),
-            StreamId::Feed(url) => write!(f, "feed/{}", url),
+            StreamId::Label(name) => write!(f, "user/-/label/{name}"),
+            StreamId::Feed(url) => write!(f, "feed/{url}"),
         }
     }
 }
@@ -82,7 +82,7 @@ const ITEM_ID_PREFIX: &str = "tag:google.com,2005:reader/item/";
 
 /// Convert an internal entry ID (i64) to a Google Reader item ID string.
 pub fn entry_id_to_item_id(id: i64) -> String {
-    format!("{}{:016x}", ITEM_ID_PREFIX, id)
+    format!("{ITEM_ID_PREFIX}{id:016x}")
 }
 
 /// Parse a Google Reader item ID string back to an internal entry ID (i64).
@@ -95,7 +95,7 @@ pub fn item_id_to_entry_id(s: &str) -> AppResult<i64> {
             return Ok(0);
         }
         return i64::from_str_radix(hex, 16)
-            .map_err(|_e| AppError::Validation(format!("Invalid item ID: {}", s)));
+            .map_err(|_e| AppError::Validation(format!("Invalid item ID: {s}")));
     }
 
     // Short format: try decimal first, then hex (some clients send bare hex like "0000000000005da1")
@@ -107,8 +107,7 @@ pub fn item_id_to_entry_id(s: &str) -> AppResult<i64> {
     if hex.is_empty() {
         return Ok(0);
     }
-    i64::from_str_radix(hex, 16)
-        .map_err(|_e| AppError::Validation(format!("Invalid item ID: {}", s)))
+    i64::from_str_radix(hex, 16).map_err(|_e| AppError::Validation(format!("Invalid item ID: {s}")))
 }
 
 // --- Shared response types ---

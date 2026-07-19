@@ -28,12 +28,16 @@ pub fn start_background_sync(
 
         loop {
             tokio::select! {
-                _ = cancel_token.cancelled() => {
+                () = cancel_token.cancelled() => {
                     info!("Background sync stopping...");
                     break;
                 }
                 _ = ticker.tick() => {
                     let now = Utc::now();
+                    #[allow(
+                        clippy::cast_sign_loss,
+                        reason = "current unix time is positive, so `timestamp()/60 % 60` is in 0..=59"
+                    )]
                     let bucket = (now.timestamp() / 60 % 60) as u8;
 
                     debug!("Running background sync for bucket {}", bucket);
@@ -144,6 +148,10 @@ mod tests {
         // Verify bucket calculation logic: (timestamp / 60 % 60)
         // Bucket should be 0-59 based on current minute
         let now = Utc::now();
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "current unix time is positive, so `timestamp()/60 % 60` is in 0..=59"
+        )]
         let bucket = (now.timestamp() / 60 % 60) as u8;
         assert!(bucket < 60, "Bucket should be between 0 and 59");
     }

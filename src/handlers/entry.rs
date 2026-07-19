@@ -204,7 +204,7 @@ pub async fn summarize_entry(
         .map_err(|_e| {
             AppError::Internal("Summary queue is full, please try again later".to_string())
         })?
-        .map_err(|e| AppError::Internal(format!("Failed to queue summary job: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("Failed to queue summary job: {e}")))?;
 
     // Return pending status
     Ok(Json(SummaryResponse {

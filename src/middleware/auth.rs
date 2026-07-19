@@ -116,9 +116,8 @@ impl FromRequestParts<AppState> for PageAuthUser {
             .map(|c| c.value().to_string())
             .ok_or(LoginRedirect)?;
 
-        let mut session = match session::find_by_token(&state.db, &token).await {
-            Ok(Some(s)) => s,
-            _ => return Err(LoginRedirect),
+        let Ok(Some(mut session)) = session::find_by_token(&state.db, &token).await else {
+            return Err(LoginRedirect);
         };
         if session.is_expired() {
             let _ = session::delete_session(&state.db, &token).await;
@@ -127,9 +126,8 @@ impl FromRequestParts<AppState> for PageAuthUser {
         if let Ok(Some(new_expires_at)) = session::refresh_if_needed(&state.db, &session).await {
             session.expires_at = new_expires_at;
         }
-        let user = match user::find_by_id(&state.db, session.user_id).await {
-            Ok(Some(u)) => u,
-            _ => return Err(LoginRedirect),
+        let Ok(Some(user)) = user::find_by_id(&state.db, session.user_id).await else {
+            return Err(LoginRedirect);
         };
         if user.is_disabled() {
             return Err(LoginRedirect);
@@ -225,9 +223,9 @@ impl FromRequestParts<AppState> for PageAdminUser {
 
         if page_auth_user.session.is_masquerading() {
             if let Some(original_user_id) = page_auth_user.session.original_user_id {
-                let original_user = match user::find_by_id(&state.db, original_user_id).await {
-                    Ok(Some(u)) => u,
-                    _ => return Err(LoginRedirect),
+                let Ok(Some(original_user)) = user::find_by_id(&state.db, original_user_id).await
+                else {
+                    return Err(LoginRedirect);
                 };
                 if !original_user.is_admin() {
                     return Err(LoginRedirect);

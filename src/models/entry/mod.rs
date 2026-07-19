@@ -114,7 +114,7 @@ impl ContinuationCursor {
     }
 
     pub fn encode_composite(sort_ts: &str, id: i64) -> String {
-        format!("{}|{}", sort_ts, id)
+        format!("{sort_ts}|{id}")
     }
 }
 
@@ -1838,13 +1838,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let m_id = match m {
-            UpsertOutcome::Inserted(id) => id,
-            _ => panic!(),
+        let UpsertOutcome::Inserted(m_id) = m else {
+            panic!()
         };
-        let n_id = match n {
-            UpsertOutcome::Inserted(id) => id,
-            _ => panic!(),
+        let UpsertOutcome::Inserted(n_id) = n else {
+            panic!()
         };
 
         let filter = EntryFilter {
@@ -1915,13 +1913,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let e1_id = match e1 {
-            UpsertOutcome::Inserted(id) => id,
-            _ => panic!(),
+        let UpsertOutcome::Inserted(e1_id) = e1 else {
+            panic!()
         };
-        let e2_id = match e2 {
-            UpsertOutcome::Inserted(id) => id,
-            _ => panic!(),
+        let UpsertOutcome::Inserted(e2_id) = e2 else {
+            panic!()
         };
 
         let filter = EntryFilter {
@@ -1997,7 +1993,7 @@ mod tests {
             upsert_entry(
                 &db,
                 feed_id,
-                &format!("guid-{}", i),
+                &format!("guid-{i}"),
                 Some("Test"),
                 None,
                 None,
@@ -2231,8 +2227,8 @@ mod tests {
             upsert_entry(
                 &db,
                 feed_id,
-                &format!("guid-{}", i),
-                Some(&format!("Rust Article {}", i)),
+                &format!("guid-{i}"),
+                Some(&format!("Rust Article {i}")),
                 None,
                 Some("Content"),
                 None,
@@ -3029,8 +3025,8 @@ mod tests {
             let (entry, _) = upsert_entry(
                 &db,
                 feed_id,
-                &format!("guid-{}", i),
-                Some(&format!("Entry {}", i)),
+                &format!("guid-{i}"),
+                Some(&format!("Entry {i}")),
                 None,
                 None,
                 None,
@@ -3095,8 +3091,8 @@ mod tests {
             let (entry, _) = upsert_entry(
                 &db,
                 feed_id,
-                &format!("guid-{}", i),
-                Some(&format!("Entry {}", i)),
+                &format!("guid-{i}"),
+                Some(&format!("Entry {i}")),
                 None,
                 None,
                 None,
@@ -3177,8 +3173,8 @@ mod tests {
             let (entry, _) = upsert_entry(
                 &db,
                 feed_id,
-                &format!("guid-{}", i),
-                Some(&format!("Entry {}", i)),
+                &format!("guid-{i}"),
+                Some(&format!("Entry {i}")),
                 None,
                 None,
                 None,
@@ -3401,9 +3397,7 @@ mod tests {
                 id: last.entry.id,
             });
             // safety: don't loop forever
-            if seen.len() > 100 {
-                panic!("runaway loop");
-            }
+            assert!(seen.len() <= 100, "runaway loop");
         }
 
         assert_eq!(
@@ -3486,9 +3480,7 @@ mod tests {
                 sort_ts,
                 id: last.entry.id,
             });
-            if seen.len() > 100 {
-                panic!("runaway loop");
-            }
+            assert!(seen.len() <= 100, "runaway loop");
         }
 
         assert_eq!(
@@ -3586,8 +3578,7 @@ mod tests {
         for f in &cases {
             assert!(
                 !is_no_entry_side_predicate(f),
-                "expected entry-side predicate for filter: {:?}",
-                f
+                "expected entry-side predicate for filter: {f:?}"
             );
         }
     }
@@ -3598,7 +3589,7 @@ mod tests {
     /// planner only needs parameter count to match, so `n_params` dummy `i64`s
     /// are bound (one per `$N` placeholder).
     async fn explain_plan_for(db: &Db, sql: &str, n_params: usize) -> String {
-        let explain_sql = format!("EXPLAIN QUERY PLAN {}", sql);
+        let explain_sql = format!("EXPLAIN QUERY PLAN {sql}");
         let rows: Vec<(i64, i64, i64, String)> = match db.inner() {
             DbInner::Sqlite(pool) => {
                 let mut q = sqlx::query_as::<sqlx::Sqlite, (i64, i64, i64, String)>(
@@ -3623,7 +3614,7 @@ mod tests {
         let _ = create_test_user(&db, "u").await;
         // Tiny in-memory dataset is enough — INDEXED BY is mandatory and the
         // planner has no choice to override the hint.
-        let sql = r#"
+        let sql = r"
             SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
                    e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
                    f.title, f.url, f.site_url, c.id, c.name,
@@ -3636,12 +3627,11 @@ mod tests {
             WHERE c.user_id = $1 AND e.starred_at IS NOT NULL
             ORDER BY COALESCE(e.published_at, e.created_at) DESC
             LIMIT 51
-        "#;
+        ";
         let plan = explain_plan_for(&db, sql, 1).await;
         assert!(
             plan.contains("idx_entry_starred_sort"),
-            "plan missing partial index: {}",
-            plan
+            "plan missing partial index: {plan}"
         );
     }
 
@@ -3649,19 +3639,18 @@ mod tests {
     async fn list_by_user_uses_partial_index_for_read() {
         let db = setup_db().await;
         let _ = create_test_user(&db, "u").await;
-        let sql = r#"
+        let sql = r"
             SELECT e.id FROM entry e INDEXED BY idx_entry_read_sort
             INNER JOIN feed f ON e.feed_id = f.id
             INNER JOIN category c ON f.category_id = c.id
             WHERE c.user_id = $1 AND e.read_at IS NOT NULL
             ORDER BY COALESCE(e.published_at, e.created_at) DESC
             LIMIT 51
-        "#;
+        ";
         let plan = explain_plan_for(&db, sql, 1).await;
         assert!(
             plan.contains("idx_entry_read_sort"),
-            "plan missing partial index: {}",
-            plan
+            "plan missing partial index: {plan}"
         );
     }
 
@@ -3702,19 +3691,18 @@ mod tests {
         // builder produces with the no-predicate hint) must scan via
         // `idx_entry_sort_ts`. We test the shape, not the exact runtime
         // statement the dynamic builder assembles.
-        let sql = r#"
+        let sql = r"
             SELECT e.id FROM entry e INDEXED BY idx_entry_sort_ts
             INNER JOIN feed f ON e.feed_id = f.id
             INNER JOIN category c ON f.category_id = c.id
             WHERE c.user_id = $1
             ORDER BY COALESCE(e.published_at, e.created_at) DESC
             LIMIT 51
-        "#;
+        ";
         let plan = explain_plan_for(&db, sql, 1).await;
         assert!(
             plan.contains("idx_entry_sort_ts"),
-            "plan missing sort_ts index: {}",
-            plan
+            "plan missing sort_ts index: {plan}"
         );
     }
 
@@ -3753,7 +3741,7 @@ mod tests {
         // `is_no_entry_side_predicate` is true and sort_order is PublishedAt.
         // The ORDER BY includes the tie-breaker `e.id DESC` that the continuation
         // builder always appends (unlike list_by_user which omits it).
-        let sql = r#"
+        let sql = r"
             SELECT e.id
             FROM entry e INDEXED BY idx_entry_sort_ts
             INNER JOIN feed f ON e.feed_id = f.id
@@ -3762,17 +3750,15 @@ mod tests {
             WHERE c.user_id = $1
             ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
             LIMIT $2
-        "#;
+        ";
         let plan = explain_plan_for(&db, sql, 2).await;
         assert!(
             plan.contains("idx_entry_sort_ts"),
-            "plan missing sort_ts index: {}",
-            plan
+            "plan missing sort_ts index: {plan}"
         );
         assert!(
             !plan.contains("USE TEMP B-TREE FOR ORDER BY"),
-            "plan must not temp-B-tree-sort: {}",
-            plan
+            "plan must not temp-B-tree-sort: {plan}"
         );
     }
 
@@ -3792,7 +3778,7 @@ mod tests {
         // Each `$N` placeholder is distinct (the builder binds the sort_ts value
         // twice rather than reusing one slot); only the parameter count matters
         // to the planner.
-        let sql = r#"
+        let sql = r"
             SELECT e.id
             FROM entry e INDEXED BY idx_entry_sort_ts
             CROSS JOIN feed f ON e.feed_id = f.id
@@ -3803,22 +3789,19 @@ mod tests {
               AND (e.read_at IS NULL OR e.read_at >= $5)
             ORDER BY COALESCE(e.published_at, e.created_at) DESC, e.id DESC
             LIMIT 1
-        "#;
+        ";
         let plan = explain_plan_for(&db, sql, 5).await;
         assert!(
             plan.contains("idx_entry_sort_ts"),
-            "plan must pin idx_entry_sort_ts: {}",
-            plan
+            "plan must pin idx_entry_sort_ts: {plan}"
         );
         assert!(
             !plan.contains("MULTI-INDEX OR"),
-            "plan must not fan out into a MULTI-INDEX OR: {}",
-            plan
+            "plan must not fan out into a MULTI-INDEX OR: {plan}"
         );
         assert!(
             !plan.contains("idx_entry_read_at"),
-            "plan must not scan via the read_at index: {}",
-            plan
+            "plan must not scan via the read_at index: {plan}"
         );
     }
 
@@ -3829,6 +3812,10 @@ mod tests {
         let category_id = create_test_category(&db, user_id, "C").await;
         let feed_id = create_test_feed(&db, category_id, "https://example.com/walk.xml").await;
         // 5 entries, distinct published_at so order is deterministic.
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "loop index from `0..5` is always non-negative"
+        )]
         for i in 0..5 {
             upsert_entry(
                 &db,

@@ -45,10 +45,10 @@ pub async fn subscription_list(
                 id: format!("feed/{}", f.url),
                 title: f.title.unwrap_or_else(|| f.url.clone()),
                 categories: vec![SubscriptionCategory {
-                    id: format!("user/-/label/{}", cat_name),
+                    id: format!("user/-/label/{cat_name}"),
                     label: cat_name.to_string(),
                 }],
-                sort_id: format!("{:08x}", cat_id),
+                sort_id: format!("{cat_id:08x}"),
                 html_url: f.site_url.clone().unwrap_or_default(),
                 url: f.url,
                 icon_url,
@@ -341,7 +341,7 @@ pub async fn quickadd(
     Ok(Json(QuickAddResponse {
         num_results: 1,
         query: url,
-        stream_id: format!("feed/{}", feed_url),
+        stream_id: format!("feed/{feed_url}"),
     }))
 }
 

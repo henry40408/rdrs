@@ -20,9 +20,8 @@ fn strip_impl(raw: &str, tag_gap: bool) -> String {
                     last_space = true;
                 }
                 continue;
-            } else {
-                break;
             }
+            break;
         }
         let ch = bytes[i] as char;
         match ch {
@@ -46,9 +45,8 @@ fn strip_impl(raw: &str, tag_gap: bool) -> String {
                             last_space = true;
                         }
                         continue;
-                    } else {
-                        break;
                     }
+                    break;
                 }
                 in_tag = true;
                 i += 1;
@@ -72,7 +70,7 @@ fn strip_impl(raw: &str, tag_gap: bool) -> String {
                 i += 1;
             }
             _ => {
-                let ch_len = raw[i..].chars().next().map_or(1, |c| c.len_utf8());
+                let ch_len = raw[i..].chars().next().map_or(1, char::len_utf8);
                 out.push_str(&raw[i..i + ch_len]);
                 last_space = false;
                 i += ch_len;

@@ -54,7 +54,7 @@ pub fn user_event_stream(
         loop {
             tokio::select! {
                 biased;
-                _ = shutdown.cancelled() => break,
+                () = shutdown.cancelled() => break,
                 recv = rx.recv() => match recv {
                     Ok(ev) if ev.user_id == user_id => yield Ok(to_sse_event(&ev)),
                     Ok(_) => {}                                  // another user's event

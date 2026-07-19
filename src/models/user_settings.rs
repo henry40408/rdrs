@@ -58,8 +58,7 @@ pub async fn upsert(db: &Db, user_id: i64, entries_per_page: i64) -> AppResult<U
     // Validate range
     if !(MIN_ENTRIES_PER_PAGE..=MAX_ENTRIES_PER_PAGE).contains(&entries_per_page) {
         return Err(AppError::Validation(format!(
-            "entries_per_page must be between {} and {}",
-            MIN_ENTRIES_PER_PAGE, MAX_ENTRIES_PER_PAGE
+            "entries_per_page must be between {MIN_ENTRIES_PER_PAGE} and {MAX_ENTRIES_PER_PAGE}"
         )));
     }
 
@@ -96,7 +95,7 @@ pub async fn update_save_services(
 ) -> AppResult<UserSettings> {
     let json = config
         .to_json()
-        .map_err(|e| AppError::Internal(format!("Failed to serialize save_services: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("Failed to serialize save_services: {e}")))?;
 
     // First ensure user_settings row exists
     db_execute!(
@@ -172,8 +171,7 @@ pub async fn get_retention_read_days(db: &Db, user_id: i64) -> AppResult<i64> {
 pub async fn update_retention_read_days(db: &Db, user_id: i64, days: i64) -> AppResult<()> {
     if !(0..=MAX_RETENTION_READ_DAYS).contains(&days) {
         return Err(AppError::Validation(format!(
-            "retention_read_days must be between 0 and {}",
-            MAX_RETENTION_READ_DAYS
+            "retention_read_days must be between 0 and {MAX_RETENTION_READ_DAYS}"
         )));
     }
     // Ensure a row exists, then update (mirrors update_theme).

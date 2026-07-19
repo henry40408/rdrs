@@ -91,11 +91,11 @@ async fn setup_test_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
         let (e, _) = entry::upsert_entry(
             db,
             feed.id,
-            &format!("guid-{}", i),
-            Some(&format!("Entry Title {}", i)),
-            Some(&format!("https://example.com/entry/{}", i)),
-            Some(&format!("<p>Entry content {}</p>", i)),
-            Some(&format!("Summary for entry {}", i)),
+            &format!("guid-{i}"),
+            Some(&format!("Entry Title {i}")),
+            Some(&format!("https://example.com/entry/{i}")),
+            Some(&format!("<p>Entry content {i}</p>")),
+            Some(&format!("Summary for entry {i}")),
             None,
             Some(published),
         )
@@ -154,10 +154,10 @@ async fn setup_second_user_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
         let (e, _) = entry::upsert_entry(
             db,
             feed.id,
-            &format!("other-guid-{}", i),
-            Some(&format!("Other Entry {}", i)),
-            Some(&format!("https://other.com/entry/{}", i)),
-            Some(&format!("<p>Other content {}</p>", i)),
+            &format!("other-guid-{i}"),
+            Some(&format!("Other Entry {i}")),
+            Some(&format!("https://other.com/entry/{i}")),
+            Some(&format!("<p>Other content {i}</p>")),
             None,
             None,
             None,
@@ -305,10 +305,10 @@ async fn test_list_entries_with_continuation() {
         entry::upsert_entry(
             &app.db,
             feed.id,
-            &format!("guid-{}", i),
-            Some(&format!("Entry Title {}", i)),
-            Some(&format!("https://example.com/entry/{}", i)),
-            Some(&format!("<p>Entry content {}</p>", i)),
+            &format!("guid-{i}"),
+            Some(&format!("Entry Title {i}")),
+            Some(&format!("https://example.com/entry/{i}")),
+            Some(&format!("<p>Entry content {i}</p>")),
             None,
             None,
             Some(published),
@@ -1626,8 +1626,7 @@ async fn test_fetch_full_content_entry_no_link() {
     let response = app
         .server
         .post(&format!(
-            "/api/entries/{}/fetch-full-content",
-            no_link_entry_id
+            "/api/entries/{no_link_entry_id}/fetch-full-content"
         ))
         .await;
     response.assert_status_bad_request();
@@ -1646,7 +1645,7 @@ async fn test_summarize_entry_no_link() {
     // Try to summarize entry without link
     let response = app
         .server
-        .post(&format!("/api/entries/{}/summarize", no_link_entry_id))
+        .post(&format!("/api/entries/{no_link_entry_id}/summarize"))
         .await;
     response.assert_status_bad_request();
 
@@ -1664,7 +1663,7 @@ async fn test_save_entry_no_link() {
     // Try to save entry without link
     let response = app
         .server
-        .post(&format!("/api/entries/{}/save", no_link_entry_id))
+        .post(&format!("/api/entries/{no_link_entry_id}/save"))
         .await;
     response.assert_status_bad_request();
 
@@ -1821,9 +1820,7 @@ async fn test_stream_contents_oldest_first() {
     let last_published = items[4]["published"].as_i64().unwrap();
     assert!(
         first_published <= last_published,
-        "First item should be oldest: first={}, last={}",
-        first_published,
-        last_published
+        "First item should be oldest: first={first_published}, last={last_published}"
     );
 }
 
@@ -1882,10 +1879,10 @@ async fn test_stream_contents_with_continuation() {
         entry::upsert_entry(
             &app.db,
             feed.id,
-            &format!("guid-{}", i),
-            Some(&format!("Entry Title {}", i)),
-            Some(&format!("https://example.com/entry/{}", i)),
-            Some(&format!("<p>Entry content {}</p>", i)),
+            &format!("guid-{i}"),
+            Some(&format!("Entry Title {i}")),
+            Some(&format!("https://example.com/entry/{i}")),
+            Some(&format!("<p>Entry content {i}</p>")),
             None,
             None,
             Some(published),
@@ -2199,8 +2196,7 @@ async fn test_stream_contents_time_filter() {
     let response = app
         .server
         .get(&format!(
-            "/reader/api/0/stream/contents/user/-/state/com.google/reading-list?ot={}",
-            ot
+            "/reader/api/0/stream/contents/user/-/state/com.google/reading-list?ot={ot}"
         ))
         .await;
     response.assert_status_ok();
@@ -2219,9 +2215,7 @@ async fn test_stream_contents_time_filter() {
         let published = item["published"].as_i64().unwrap();
         assert!(
             published >= ot,
-            "Item published timestamp {} should be >= ot {}",
-            published,
-            ot
+            "Item published timestamp {published} should be >= ot {ot}"
         );
     }
 }
@@ -2291,7 +2285,7 @@ async fn summary_fragment_renders_completed_summary() {
 
     let response = app
         .server
-        .get(&format!("/entries/{}/summary/fragment", entry_id))
+        .get(&format!("/entries/{entry_id}/summary/fragment"))
         .await;
     assert_eq!(response.status_code(), axum::http::StatusCode::OK);
     let body = response.text();

@@ -108,9 +108,9 @@ async fn create_test_feed(db: &Db, user_id: i64, cat_name: &str, feed_url: &str)
 async fn create_test_entries(db: &Db, feed_id: i64, count: usize) -> Vec<i64> {
     let mut ids = Vec::new();
     for i in 0..count {
-        let guid = format!("guid-{}", i);
-        let title = format!("Entry {}", i);
-        let link = format!("https://example.com/entry/{}", i);
+        let guid = format!("guid-{i}");
+        let title = format!("Entry {i}");
+        let link = format!("https://example.com/entry/{i}");
         let (e, _) = entry::upsert_entry(
             db,
             feed_id,
@@ -199,7 +199,7 @@ async fn test_client_login_token_used_for_api() {
         .get("/reader/api/0/subscription/list")
         .add_header(
             header::AUTHORIZATION,
-            HeaderValue::from_str(&format!("GoogleLogin auth={}", token)).unwrap(),
+            HeaderValue::from_str(&format!("GoogleLogin auth={token}")).unwrap(),
         )
         .await;
     response.assert_status_ok();
@@ -262,7 +262,7 @@ async fn test_subscription_edit_unsubscribe() {
     // Unsubscribe
     let form = vec![
         ("ac", "unsubscribe".to_string()),
-        ("s", format!("feed/{}", feed_url)),
+        ("s", format!("feed/{feed_url}")),
     ];
     let response = app
         .server
@@ -288,7 +288,7 @@ async fn test_subscription_edit_rename() {
     // Edit feed title
     let form = vec![
         ("ac", "edit".to_string()),
-        ("s", format!("feed/{}", feed_url)),
+        ("s", format!("feed/{feed_url}")),
         ("t", "New Title".to_string()),
     ];
     let response = app
@@ -432,8 +432,7 @@ async fn test_stream_contents_composite_cursor_no_skip_on_backdated() {
         .to_string();
     assert!(
         cursor.contains('|'),
-        "cursor must be composite format, got {:?}",
-        cursor
+        "cursor must be composite format, got {cursor:?}"
     );
 
     // Page 2: pass cursor via add_query_param (URL-safely encodes spaces and `|`)
@@ -874,7 +873,7 @@ async fn test_subscription_edit_add_label_moves_category() {
     // Move to a new category via ac=edit + a=user/-/label/NewCat
     let form = vec![
         ("ac", "edit".to_string()),
-        ("s", format!("feed/{}", feed_url)),
+        ("s", format!("feed/{feed_url}")),
         ("a", "user/-/label/NewCat".to_string()),
     ];
     let response = app
@@ -921,7 +920,7 @@ async fn test_subscription_subscribe_success() {
     let feed_url = mock_server.uri();
     let form = vec![
         ("ac", "subscribe".to_string()),
-        ("s", format!("feed/{}", feed_url)),
+        ("s", format!("feed/{feed_url}")),
     ];
     let response = app
         .server
@@ -957,7 +956,7 @@ async fn test_subscription_subscribe_with_label() {
     let feed_url = mock_server.uri();
     let form = vec![
         ("ac", "subscribe".to_string()),
-        ("s", format!("feed/{}", feed_url)),
+        ("s", format!("feed/{feed_url}")),
         ("a", "user/-/label/Tech".to_string()),
     ];
     let response = app
@@ -1004,7 +1003,7 @@ async fn test_subscription_subscribe_duplicate() {
     // Attempt to subscribe again → 409 CONFLICT (AppError::FeedExists)
     let form = vec![
         ("ac", "subscribe".to_string()),
-        ("s", format!("feed/{}", feed_url)),
+        ("s", format!("feed/{feed_url}")),
     ];
     let response = app
         .server
@@ -1043,6 +1042,6 @@ async fn test_quickadd_success() {
     assert_eq!(body["numResults"].as_i64().unwrap(), 1);
     assert_eq!(
         body["streamId"].as_str().unwrap(),
-        format!("feed/{}", feed_url)
+        format!("feed/{feed_url}")
     );
 }

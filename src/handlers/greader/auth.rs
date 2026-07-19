@@ -162,7 +162,7 @@ pub fn generate_post_token(secret: &[u8], session_token: &str) -> String {
     mac.update(timestamp.to_string().as_bytes());
     let result = mac.finalize();
     let hex = hex::encode(result.into_bytes());
-    format!("{}/{}", timestamp, hex)
+    format!("{timestamp}/{hex}")
 }
 
 /// Verify a POST token. Returns `Ok(())` if valid, `Err` if invalid or expired.

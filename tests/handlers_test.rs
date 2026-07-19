@@ -107,8 +107,8 @@ async fn setup_authenticated_user(server: &TestServer) {
 /// Helper to create a category via `GReader` rename-tag (s==dest creates idempotently)
 async fn create_category(server: &TestServer, name: &str) {
     let form = vec![
-        ("s", format!("user/-/label/{}", name)),
-        ("dest", format!("user/-/label/{}", name)),
+        ("s", format!("user/-/label/{name}")),
+        ("dest", format!("user/-/label/{name}")),
     ];
     let response = server.post("/reader/api/0/rename-tag").form(&form).await;
     response.assert_status_ok();
@@ -187,8 +187,8 @@ async fn test_create_category_name_too_long() {
 
     let long_name = "a".repeat(101);
     let form = vec![
-        ("s", format!("user/-/label/{}", long_name)),
-        ("dest", format!("user/-/label/{}", long_name)),
+        ("s", format!("user/-/label/{long_name}")),
+        ("dest", format!("user/-/label/{long_name}")),
     ];
     let response = server.post("/reader/api/0/rename-tag").form(&form).await;
     // GReader rename-tag may or may not validate length;
@@ -1490,10 +1490,7 @@ async fn test_get_feed_icon_no_icon() {
     .unwrap();
 
     // Request icon for a feed that exists but has no icon -> 404
-    let response = app
-        .server
-        .get(&format!("/api/feeds/{}/icon", feed_id))
-        .await;
+    let response = app.server.get(&format!("/api/feeds/{feed_id}/icon")).await;
     response.assert_status_not_found();
 
     // Also verify the subscription's iconUrl is empty (no icon)
@@ -1810,7 +1807,7 @@ async fn test_rename_passkey_success() {
 
     let response = app
         .server
-        .put(&format!("/api/passkeys/{}", passkey_id))
+        .put(&format!("/api/passkeys/{passkey_id}"))
         .json(&json!({ "name": "New Name" }))
         .await;
     response.assert_status(StatusCode::NO_CONTENT);
@@ -1854,7 +1851,7 @@ async fn test_delete_passkey_success() {
 
     let response = app
         .server
-        .delete(&format!("/api/passkeys/{}", passkey_id))
+        .delete(&format!("/api/passkeys/{passkey_id}"))
         .await;
     response.assert_status(StatusCode::NO_CONTENT);
 
@@ -1906,7 +1903,7 @@ async fn test_passkey_rename_other_user() {
     // User2 tries to rename User1's passkey -> 404
     let response = app
         .server
-        .put(&format!("/api/passkeys/{}", passkey_id_user1))
+        .put(&format!("/api/passkeys/{passkey_id_user1}"))
         .json(&json!({ "name": "Hacked Name" }))
         .await;
     response.assert_status_not_found();
@@ -1950,7 +1947,7 @@ async fn test_passkey_delete_other_user() {
     // User2 tries to delete User1's passkey -> 404
     let response = app
         .server
-        .delete(&format!("/api/passkeys/{}", passkey_id_user1))
+        .delete(&format!("/api/passkeys/{passkey_id_user1}"))
         .await;
     response.assert_status_not_found();
 }
@@ -2378,8 +2375,7 @@ async fn test_export_opml_content_type() {
         .unwrap();
     assert!(
         content_type.contains("application/xml"),
-        "Content-Type should be application/xml, got: {}",
-        content_type
+        "Content-Type should be application/xml, got: {content_type}"
     );
 
     let content_disposition = response
@@ -2390,13 +2386,11 @@ async fn test_export_opml_content_type() {
         .unwrap();
     assert!(
         content_disposition.contains("attachment"),
-        "Content-Disposition should contain 'attachment', got: {}",
-        content_disposition
+        "Content-Disposition should contain 'attachment', got: {content_disposition}"
     );
     assert!(
         content_disposition.contains("subscriptions.opml"),
-        "Content-Disposition should contain 'subscriptions.opml', got: {}",
-        content_disposition
+        "Content-Disposition should contain 'subscriptions.opml', got: {content_disposition}"
     );
 }
 
@@ -2511,18 +2505,15 @@ async fn test_client_login_success() {
     let body = response.text();
     assert!(
         body.contains("Auth="),
-        "Response should contain Auth= token, got: {}",
-        body
+        "Response should contain Auth= token, got: {body}"
     );
     assert!(
         body.contains("SID="),
-        "Response should contain SID=, got: {}",
-        body
+        "Response should contain SID=, got: {body}"
     );
     assert!(
         body.contains("LSID="),
-        "Response should contain LSID=, got: {}",
-        body
+        "Response should contain LSID=, got: {body}"
     );
 }
 
@@ -2584,7 +2575,7 @@ async fn test_greader_auth_header() {
         .unwrap();
 
     // Use the auth token in Authorization header to call user-info
-    let auth_header_value = format!("GoogleLogin auth={}", auth_token);
+    let auth_header_value = format!("GoogleLogin auth={auth_token}");
     let response = server
         .get("/reader/api/0/user-info")
         .add_header(
@@ -2626,8 +2617,7 @@ async fn test_get_post_token() {
     // Token format is "<timestamp>/<hmac_hex>"
     assert!(
         token.contains('/'),
-        "POST token should contain '/' separator, got: {}",
-        token
+        "POST token should contain '/' separator, got: {token}"
     );
 }
 
@@ -3021,7 +3011,7 @@ async fn test_rename_category_form_succeeds() {
     // Rename it
     let response = app
         .server
-        .post(&format!("/categories/{}/rename", cat_id))
+        .post(&format!("/categories/{cat_id}/rename"))
         .form(&json!({ "name": "NewName" }))
         .await;
 
@@ -3064,7 +3054,7 @@ async fn test_delete_category_form_succeeds() {
     // Delete it
     let response = app
         .server
-        .post(&format!("/categories/{}/delete", cat_id))
+        .post(&format!("/categories/{cat_id}/delete"))
         .await;
 
     response.assert_status(StatusCode::SEE_OTHER);
@@ -3137,7 +3127,7 @@ async fn test_create_feed_form_invalid_category() {
     let response = app
         .server
         .post("/feeds")
-        .form(&json!({ "url": "https://example.com/feed.xml", "category_id": 999999 }))
+        .form(&json!({ "url": "https://example.com/feed.xml", "category_id": 999_999 }))
         .await;
 
     response.assert_status(StatusCode::SEE_OTHER);
@@ -3158,7 +3148,7 @@ async fn test_edit_feed_form_succeeds() {
 
     let response = app
         .server
-        .post(&format!("/feeds/{}/edit", feed_id))
+        .post(&format!("/feeds/{feed_id}/edit"))
         .form(&json!({
             "url": "https://example.com/feed.xml",
             "title": "Renamed Feed",
@@ -3173,7 +3163,7 @@ async fn test_edit_feed_form_succeeds() {
     response.assert_status(StatusCode::SEE_OTHER);
     assert_eq!(
         response.header(header::LOCATION),
-        format!("/feeds/{}/edit", feed_id)
+        format!("/feeds/{feed_id}/edit")
     );
 
     let title: String = rdrs::query_scalar!(
@@ -3209,7 +3199,7 @@ async fn test_edit_feed_form_changes_category() {
 
     let response = app
         .server
-        .post(&format!("/feeds/{}/edit", feed_id))
+        .post(&format!("/feeds/{feed_id}/edit"))
         .form(&json!({
             "url": "https://example.com/feed.xml",
             "title": "Test Feed",
@@ -3239,7 +3229,7 @@ async fn test_delete_feed_form_succeeds() {
     setup_authenticated_user(&app.server).await;
     let (_cat_id, feed_id) = insert_test_feed(&app, "Tech", "https://example.com/feed.xml").await;
 
-    let response = app.server.post(&format!("/feeds/{}/delete", feed_id)).await;
+    let response = app.server.post(&format!("/feeds/{feed_id}/delete")).await;
 
     response.assert_status(StatusCode::SEE_OTHER);
     assert_eq!(response.header(header::LOCATION), "/feeds");
@@ -3284,7 +3274,7 @@ async fn test_delete_feed_form_not_owned() {
 
     let response = app
         .server
-        .post(&format!("/feeds/{}/delete", other_feed_id))
+        .post(&format!("/feeds/{other_feed_id}/delete"))
         .await;
 
     response.assert_status(StatusCode::SEE_OTHER);
@@ -3331,7 +3321,7 @@ async fn test_refresh_feed_form_not_owned() {
 
     let response = app
         .server
-        .post(&format!("/feeds/{}/refresh", other_feed_id))
+        .post(&format!("/feeds/{other_feed_id}/refresh"))
         .await;
 
     // Ownership check fails first → no network call attempted.
@@ -3479,7 +3469,7 @@ async fn test_entry_fragment_renders_reading_pane() {
 
     let response = app
         .server
-        .get(&format!("/entries/{}/fragment", entry_id))
+        .get(&format!("/entries/{entry_id}/fragment"))
         .await;
 
     assert_eq!(response.status_code(), StatusCode::OK);
@@ -3516,7 +3506,7 @@ async fn test_entry_fragment_renders_reading_pane() {
     );
     // Auto-mark-as-read: response carries the updated row + sidebar blocks.
     assert!(
-        html.contains(&format!(r##"data-swap-target="#entry-row-{}""##, entry_id)),
+        html.contains(&format!(r##"data-swap-target="#entry-row-{entry_id}""##)),
         "response must include a multi-target row block to clear unread state"
     );
     assert!(
@@ -3599,7 +3589,7 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
 
     let response = app
         .server
-        .get(&format!("/entries/{}/fragment", entry_id))
+        .get(&format!("/entries/{entry_id}/fragment"))
         .add_header(
             HeaderName::from_static("sec-fetch-dest"),
             HeaderValue::from_static("document"),
@@ -3755,7 +3745,7 @@ async fn test_entry_fragment_404_for_other_user() {
     // Alice tries to read Bob's entry — must get 404, not 200.
     let response = app
         .server
-        .get(&format!("/entries/{}/fragment", bob_entry_id))
+        .get(&format!("/entries/{bob_entry_id}/fragment"))
         .await;
 
     assert_eq!(
@@ -3821,10 +3811,7 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
     let entry_id = entry.id;
 
     // First /star — real state change, must star the entry.
-    let resp = app
-        .server
-        .post(&format!("/entries/{}/star", entry_id))
-        .await;
+    let resp = app.server.post(&format!("/entries/{entry_id}/star")).await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
     assert!(
@@ -3851,10 +3838,7 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
     );
 
     // Second /star — idempotent, entry stays starred (no toggle back).
-    let resp2 = app
-        .server
-        .post(&format!("/entries/{}/star", entry_id))
-        .await;
+    let resp2 = app.server.post(&format!("/entries/{entry_id}/star")).await;
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
     assert!(
@@ -3924,7 +3908,7 @@ async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
     // First /unstar — real state change.
     let resp = app
         .server
-        .post(&format!("/entries/{}/unstar", entry_id))
+        .post(&format!("/entries/{entry_id}/unstar"))
         .await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
@@ -3940,7 +3924,7 @@ async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
     // Second /unstar — no-op. Row must still be unstarred.
     let resp2 = app
         .server
-        .post(&format!("/entries/{}/unstar", entry_id))
+        .post(&format!("/entries/{entry_id}/unstar"))
         .await;
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
@@ -4006,10 +3990,7 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
     let entry_id = entry.id;
 
     // First POST — should mark read.
-    let resp = app
-        .server
-        .post(&format!("/entries/{}/read", entry_id))
-        .await;
+    let resp = app.server.post(&format!("/entries/{entry_id}/read")).await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
     assert!(
@@ -4026,10 +4007,7 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
     );
 
     // Second POST — idempotent, entry stays read (no toggle back).
-    let resp2 = app
-        .server
-        .post(&format!("/entries/{}/read", entry_id))
-        .await;
+    let resp2 = app.server.post(&format!("/entries/{entry_id}/read")).await;
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
     assert!(
@@ -4095,7 +4073,7 @@ async fn test_unread_entry_form_is_idempotent_mark_unread() {
     // First /unread — real state change, must mark unread + emit flash.
     let resp = app
         .server
-        .post(&format!("/entries/{}/unread", entry_id))
+        .post(&format!("/entries/{entry_id}/unread"))
         .await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
@@ -4112,7 +4090,7 @@ async fn test_unread_entry_form_is_idempotent_mark_unread() {
     // re-emit the flash (that would spam the user on stale-label re-clicks).
     let resp2 = app
         .server
-        .post(&format!("/entries/{}/unread", entry_id))
+        .post(&format!("/entries/{entry_id}/unread"))
         .await;
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
@@ -4187,7 +4165,7 @@ async fn test_star_entry_form_404_for_other_user() {
     // Alice tries to star bob's entry → 404.
     let resp = app
         .server
-        .post(&format!("/entries/{}/star", bob_entry_id))
+        .post(&format!("/entries/{bob_entry_id}/star"))
         .await;
     assert_eq!(
         resp.status_code(),
@@ -4198,7 +4176,7 @@ async fn test_star_entry_form_404_for_other_user() {
     // Same ownership guard for the /unstar endpoint.
     let resp_unstar = app
         .server
-        .post(&format!("/entries/{}/unstar", bob_entry_id))
+        .post(&format!("/entries/{bob_entry_id}/unstar"))
         .await;
     assert_eq!(
         resp_unstar.status_code(),
@@ -4268,7 +4246,7 @@ async fn test_read_entry_form_404_for_other_user() {
     // Alice tries to mark bob's entry as read → 404.
     let resp = app
         .server
-        .post(&format!("/entries/{}/read", bob_entry_id))
+        .post(&format!("/entries/{bob_entry_id}/read"))
         .await;
     assert_eq!(
         resp.status_code(),
@@ -4279,7 +4257,7 @@ async fn test_read_entry_form_404_for_other_user() {
     // Same ownership guard for the /unread endpoint.
     let resp_unread = app
         .server
-        .post(&format!("/entries/{}/unread", bob_entry_id))
+        .post(&format!("/entries/{bob_entry_id}/unread"))
         .await;
     assert_eq!(
         resp_unread.status_code(),
@@ -4348,7 +4326,7 @@ async fn test_summarize_entry_form_renders_summary_pending_fragment() {
     // `#rp-summary-container` swap fragment with a pending state.
     let resp = app
         .server
-        .post(&format!("/entries/{}/summarize", entry_id))
+        .post(&format!("/entries/{entry_id}/summarize"))
         .await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
@@ -4478,7 +4456,7 @@ async fn test_edit_feed_form_empty_url() {
 
     let response = app
         .server
-        .post(&format!("/feeds/{}/edit", feed_id))
+        .post(&format!("/feeds/{feed_id}/edit"))
         .form(&json!({
             "url": "",
             "title": "Test Feed",
@@ -4494,7 +4472,7 @@ async fn test_edit_feed_form_empty_url() {
     response.assert_status(StatusCode::SEE_OTHER);
     assert_eq!(
         response.header(header::LOCATION),
-        format!("/feeds/{}/edit", feed_id)
+        format!("/feeds/{feed_id}/edit")
     );
 
     // Verify url unchanged in DB.
@@ -4568,7 +4546,7 @@ async fn test_edit_feed_form_other_users_feed() {
     // which fails because the category belongs to other_editfeed.
     let response = app
         .server
-        .post(&format!("/feeds/{}/edit", other_feed_id))
+        .post(&format!("/feeds/{other_feed_id}/edit"))
         .form(&json!({
             "url": "https://other-edit.example.com/feed.xml",
             "title": "Hacked",
@@ -4617,7 +4595,7 @@ async fn test_edit_feed_form_category_not_owned() {
     // testuser tries to move their feed into the other user's category.
     let response = app
         .server
-        .post(&format!("/feeds/{}/edit", feed_id))
+        .post(&format!("/feeds/{feed_id}/edit"))
         .form(&json!({
             "url": "https://cat-not-owned.example.com/feed.xml",
             "title": "Test Feed",
@@ -4660,7 +4638,7 @@ async fn test_edit_feed_form_clear_user_agent() {
     // POST edit with _clear_user_agent=on
     let response = app
         .server
-        .post(&format!("/feeds/{}/edit", feed_id))
+        .post(&format!("/feeds/{feed_id}/edit"))
         .form(&json!({
             "url": "https://clear-ua.example.com/feed.xml",
             "title": "Test Feed",
@@ -4676,7 +4654,7 @@ async fn test_edit_feed_form_clear_user_agent() {
     response.assert_status(StatusCode::SEE_OTHER);
     assert_eq!(
         response.header(header::LOCATION),
-        format!("/feeds/{}/edit", feed_id)
+        format!("/feeds/{feed_id}/edit")
     );
 
     // custom_user_agent must now be NULL.
@@ -4689,8 +4667,7 @@ async fn test_edit_feed_form_clear_user_agent() {
     .unwrap();
     assert!(
         ua.is_none(),
-        "custom_user_agent should be NULL after _clear_user_agent=on, got: {:?}",
-        ua
+        "custom_user_agent should be NULL after _clear_user_agent=on, got: {ua:?}"
     );
 }
 
@@ -4892,10 +4869,7 @@ async fn test_refresh_feed_form_success() {
     let feed_url = mock_server.uri();
     let (_, feed_id) = insert_test_feed(&app, "Tech", &feed_url).await;
 
-    let response = app
-        .server
-        .post(&format!("/feeds/{}/refresh", feed_id))
-        .await;
+    let response = app.server.post(&format!("/feeds/{feed_id}/refresh")).await;
 
     response.assert_status(StatusCode::SEE_OTHER);
     assert_eq!(response.header(header::LOCATION), "/feeds");
@@ -4910,8 +4884,7 @@ async fn test_refresh_feed_form_success() {
     .unwrap();
     assert!(
         entry_count >= 1,
-        "refresh should have synced at least 1 entry, got {}",
-        entry_count
+        "refresh should have synced at least 1 entry, got {entry_count}"
     );
 }
 
@@ -4939,13 +4912,13 @@ async fn test_fetch_metadata_form_success() {
 
     let response = app
         .server
-        .post(&format!("/feeds/{}/fetch-metadata", feed_id))
+        .post(&format!("/feeds/{feed_id}/fetch-metadata"))
         .await;
 
     response.assert_status(StatusCode::SEE_OTHER);
     assert_eq!(
         response.header(header::LOCATION),
-        format!("/feeds/{}/edit", feed_id)
+        format!("/feeds/{feed_id}/edit")
     );
 
     // The RSS fixture has title "Mock Feed" and description "Mock Desc"; these
