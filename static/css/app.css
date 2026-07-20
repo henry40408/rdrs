@@ -2121,6 +2121,12 @@ summary {
     padding: 36px 32px 30px;
 }
 
+/* The banner stack sits directly above the wordmark, whose margin-top is 0 —
+   without this the flash message reads as part of the heading block. */
+.auth-card .banner-stack:not(:empty) {
+    margin-bottom: var(--space-6);
+}
+
 .auth-card h1 {
     font-family: var(--font-display);
     font-size: 34px;
