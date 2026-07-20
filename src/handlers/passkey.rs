@@ -107,7 +107,7 @@ pub async fn finish_registration(
     // Get transports from the credential response if available
     let transports = req.credential.response.transports.as_ref().map(|t| {
         t.iter()
-            .map(|t| format!("{:?}", t).to_lowercase())
+            .map(|t| format!("{t:?}").to_lowercase())
             .collect::<Vec<_>>()
             .join(",")
     });

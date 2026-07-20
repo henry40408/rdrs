@@ -32,9 +32,9 @@ const SKIP_PREFIXES: &[&str] = &[
 /// Parse a comma-separated groups header into trimmed, non-empty names.
 pub fn parse_groups(raw: &str) -> Vec<String> {
     raw.split(',')
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect()
 }
 

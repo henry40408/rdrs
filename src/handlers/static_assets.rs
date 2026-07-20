@@ -74,12 +74,13 @@ const FONTS: &[(&str, &[u8])] = &[
 const ASSET_VERSION_PLACEHOLDER: &str = "__RDRS_ASSET_VERSION__";
 
 fn content_type_for(path: &str) -> &'static str {
-    if path.ends_with(".css") {
-        "text/css; charset=utf-8"
-    } else if path.ends_with(".woff2") {
-        "font/woff2"
-    } else {
-        "application/javascript"
+    match std::path::Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+    {
+        Some("css") => "text/css; charset=utf-8",
+        Some("woff2") => "font/woff2",
+        _ => "application/javascript",
     }
 }
 

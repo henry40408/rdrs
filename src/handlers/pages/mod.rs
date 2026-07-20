@@ -279,6 +279,10 @@ pub(crate) async fn build_entries_page(
         };
         let rows =
             entry::list_by_user_with_continuation(&state.db, user_id, &filter, &params).await?;
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "`page_size` is a small positive constant (PAGE_SIZE = 50)"
+        )]
         let kept_len = rows.len().min(page_size as usize);
         // Derive the next cursor from the last *kept* row when an extra
         // (sentinel) row was returned. Mirrors greader/item.rs.
@@ -560,10 +564,10 @@ pub async fn register_page(
     (
         flash.clone(),
         RegisterTemplate {
-            error: if !can_register {
-                Some("Registration is currently disabled".to_string())
-            } else {
+            error: if can_register {
                 None
+            } else {
+                Some("Registration is currently disabled".to_string())
             },
             flash_messages: flash.messages,
             git_version: crate::GIT_VERSION,
@@ -759,11 +763,13 @@ pub async fn user_settings_page(
             .unwrap_or_default();
 
         let linkding = save_config.linkding.as_ref();
-        let linkding_configured = linkding.is_some_and(|c| c.is_configured());
+        let linkding_configured = linkding
+            .is_some_and(super::super::services::save::linkding::LinkdingConfig::is_configured);
         let linkding_api_url = linkding.map(|c| c.api_url.clone()).unwrap_or_default();
 
         let kagi = save_config.kagi.as_ref();
-        let kagi_configured = kagi.is_some_and(|c| c.is_configured());
+        let kagi_configured =
+            kagi.is_some_and(super::super::services::summarize::kagi::KagiConfig::is_configured);
         let kagi_language = kagi.and_then(|c| c.language.clone());
 
         (
@@ -964,17 +970,17 @@ pub async fn feeds_page(
     let filter_links = vec![
         FeedFilterLink {
             label: "All",
-            href: format!("/feeds?{}sort={}&filter=all", cat_param, active_sort),
+            href: format!("/feeds?{cat_param}sort={active_sort}&filter=all"),
             active: active_filter == "all",
         },
         FeedFilterLink {
             label: "Errors",
-            href: format!("/feeds?{}sort={}&filter=errors", cat_param, active_sort),
+            href: format!("/feeds?{cat_param}sort={active_sort}&filter=errors"),
             active: active_filter == "errors",
         },
         FeedFilterLink {
             label: "Stale",
-            href: format!("/feeds?{}sort={}&filter=stale", cat_param, active_sort),
+            href: format!("/feeds?{cat_param}sort={active_sort}&filter=stale"),
             active: active_filter == "stale",
         },
     ];
@@ -1198,14 +1204,14 @@ pub async fn entry_page(
     let base_url = match origin {
         "feed" => {
             if let Some(feed_id) = query.feed {
-                format!("/feeds/{}/entries", feed_id)
+                format!("/feeds/{feed_id}/entries")
             } else {
                 "/entries".to_string()
             }
         }
         "category" => {
             if let Some(cat_id) = query.category {
-                format!("/categories/{}/entries", cat_id)
+                format!("/categories/{cat_id}/entries")
             } else {
                 "/entries".to_string()
             }
@@ -1218,7 +1224,7 @@ pub async fn entry_page(
         _ => "/".to_string(),
     };
 
-    let redirect_url = format!("{}?entry={}", base_url, id);
+    let redirect_url = format!("{base_url}?entry={id}");
     Redirect::to(&redirect_url)
 }
 
@@ -1254,7 +1260,7 @@ pub async fn settings_page(
                 .config
                 .trusted_proxy_networks
                 .iter()
-                .map(|n| n.to_string())
+                .map(std::string::ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", "),
             auth_proxy_user_creation: state.config.auth_proxy_user_creation,
@@ -1608,7 +1614,7 @@ pub async fn category_entries_page(
     )
     .await;
 
-    let path = format!("/categories/{}/entries", id);
+    let path = format!("/categories/{id}/entries");
     let status_filter = query.status.clone();
 
     if query.fragment == Some(1) && query.after.is_some() {
@@ -1641,12 +1647,12 @@ pub async fn category_entries_page(
         None
     };
 
-    let mark_as_read_scope = Some(format!("user/-/label/{}", category_name));
-    let base = format!("/categories/{}/entries", id);
+    let mark_as_read_scope = Some(format!("user/-/label/{category_name}"));
+    let base = format!("/categories/{id}/entries");
     let filter_tabs = Some(vec![
         FilterTab {
             label: "All".to_string(),
-            href: format!("{}?status=all", base),
+            href: format!("{base}?status=all"),
             active: status == Some("all"),
         },
         FilterTab {
@@ -1656,12 +1662,12 @@ pub async fn category_entries_page(
         },
         FilterTab {
             label: "Read".to_string(),
-            href: format!("{}?status=read", base),
+            href: format!("{base}?status=read"),
             active: status == Some("read"),
         },
         FilterTab {
             label: "Starred".to_string(),
-            href: format!("{}?status=starred", base),
+            href: format!("{base}?status=starred"),
             active: status == Some("starred"),
         },
     ]);
@@ -1693,7 +1699,7 @@ pub async fn category_entries_page(
         onboarding: false,
         snapshot_at: snapshot_now(),
         search: search.clone(),
-        search_action: Some(format!("/categories/{}/entries", id)),
+        search_action: Some(format!("/categories/{id}/entries")),
         matching_count,
     };
 
@@ -1905,7 +1911,7 @@ pub async fn feed_entries_page(
     )
     .await;
 
-    let path = format!("/feeds/{}/entries", id);
+    let path = format!("/feeds/{id}/entries");
     let status_filter = query.status.clone();
 
     if query.fragment == Some(1) && query.after.is_some() {
@@ -1938,12 +1944,12 @@ pub async fn feed_entries_page(
         None
     };
 
-    let mark_as_read_scope = Some(format!("feed/{}", feed_url));
-    let base = format!("/feeds/{}/entries", id);
+    let mark_as_read_scope = Some(format!("feed/{feed_url}"));
+    let base = format!("/feeds/{id}/entries");
     let filter_tabs = Some(vec![
         FilterTab {
             label: "All".to_string(),
-            href: format!("{}?status=all", base),
+            href: format!("{base}?status=all"),
             active: status == Some("all"),
         },
         FilterTab {
@@ -1953,12 +1959,12 @@ pub async fn feed_entries_page(
         },
         FilterTab {
             label: "Read".to_string(),
-            href: format!("{}?status=read", base),
+            href: format!("{base}?status=read"),
             active: status == Some("read"),
         },
         FilterTab {
             label: "Starred".to_string(),
-            href: format!("{}?status=starred", base),
+            href: format!("{base}?status=starred"),
             active: status == Some("starred"),
         },
     ]);
@@ -1969,7 +1975,7 @@ pub async fn feed_entries_page(
         },
         BreadcrumbItem {
             label: cat_name,
-            href: Some(format!("/categories/{}/entries", cat_id)),
+            href: Some(format!("/categories/{cat_id}/entries")),
         },
         BreadcrumbItem {
             label: feed_title.clone(),
@@ -1994,7 +2000,7 @@ pub async fn feed_entries_page(
         onboarding: false,
         snapshot_at: snapshot_now(),
         search: search.clone(),
-        search_action: Some(format!("/feeds/{}/entries", id)),
+        search_action: Some(format!("/feeds/{id}/entries")),
         matching_count,
     };
 
@@ -2052,7 +2058,7 @@ pub async fn category_mark_read_form(
         None,
         form.q,
         form.status,
-        &format!("/categories/{}/entries", id),
+        &format!("/categories/{id}/entries"),
     )
     .await
 }
@@ -2071,7 +2077,7 @@ pub async fn feed_mark_read_form(
         Some(id),
         form.q,
         form.status,
-        &format!("/feeds/{}/entries", id),
+        &format!("/feeds/{id}/entries"),
     )
     .await
 }
@@ -2156,7 +2162,7 @@ async fn mark_read_scoped(
                 state.sidebar_cache.bust(user_id);
                 state.events.emit_sidebar(user_id);
             }
-            FlashRedirect::success(&redirect, format!("Marked {} matching entries as read.", n))
+            FlashRedirect::success(&redirect, format!("Marked {n} matching entries as read."))
                 .into_response()
         }
         None => FlashRedirect::error(
@@ -2437,7 +2443,7 @@ fn format_db_bytes(bytes: i64) -> String {
     } else if b >= KB {
         format!("{:.1} KB", b / KB)
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     }
 }
 
@@ -3195,10 +3201,7 @@ mod tests {
     fn build_snippet_centers_window_on_match() {
         // Match buried far past the leading 200 chars.
         let lead = "lorem ipsum ".repeat(40);
-        let html = format!(
-            "<p>{}Sunrise lit the harbor early today over calm water.</p>",
-            lead
-        );
+        let html = format!("<p>{lead}Sunrise lit the harbor early today over calm water.</p>");
         let out = build_snippet(Some(&html), &["sunrise"], 80);
         assert!(
             out.contains("Sunrise"),
@@ -3212,7 +3215,7 @@ mod tests {
         // The first term in the list appears later than the second; the window
         // must center on whichever term matches earliest in the text.
         let lead = "lorem ipsum ".repeat(40);
-        let html = format!("<p>{}Harbor then meadow later.</p>", lead);
+        let html = format!("<p>{lead}Harbor then meadow later.</p>");
         let out = build_snippet(Some(&html), &["meadow", "harbor"], 80);
         assert!(out.contains("Harbor"), "should center on earliest: {out}");
         assert!(out.starts_with('…'), "should ellipsis-prefix: {out}");

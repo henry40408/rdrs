@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_parse_opml_invalid() {
-        let opml = r#"<not-opml></not-opml>"#;
+        let opml = r"<not-opml></not-opml>";
         let result = parse_opml(opml);
         assert!(result.is_err());
     }

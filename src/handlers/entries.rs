@@ -278,7 +278,10 @@ pub(crate) async fn load_pane_action_flags(
 ) -> AppResult<(bool, bool)> {
     let cfg = crate::models::user_settings::get_save_services_config(&state.db, user_id).await?;
     let has_save = cfg.has_any_service();
-    let has_kagi = cfg.kagi.as_ref().is_some_and(|c| c.is_configured());
+    let has_kagi = cfg
+        .kagi
+        .as_ref()
+        .is_some_and(super::super::services::summarize::kagi::KagiConfig::is_configured);
     Ok((has_save, has_kagi))
 }
 

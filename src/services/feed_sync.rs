@@ -121,7 +121,7 @@ pub async fn refresh_feed(db: Db, feed_id: i64, default_user_agent: &str) -> App
     }
 
     if !status.is_success() {
-        let error_msg = format!("HTTP {}", status);
+        let error_msg = format!("HTTP {status}");
         feed::update_fetch_result(&db, feed_id, Utc::now(), Some(&error_msg), None, None, None)
             .await?;
         return Err(AppError::FetchError(error_msg));
@@ -814,6 +814,10 @@ mod tests {
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
         // Discover which bucket the seeded feed was assigned
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "`bucket` is stored as a URL-hash modulo 60, always in 0..=59"
+        )]
         let bucket = feed::find_by_id(&pool, feed_id)
             .await
             .unwrap()

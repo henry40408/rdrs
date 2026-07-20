@@ -855,7 +855,7 @@ fn set_cookie_headers(res: &axum_test::TestResponse) -> Vec<String> {
     res.headers()
         .get_all("set-cookie")
         .iter()
-        .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
+        .filter_map(|v| v.to_str().ok().map(std::string::ToString::to_string))
         .collect()
 }
 

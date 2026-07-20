@@ -62,7 +62,7 @@ async fn setup_user_with_entry(db: &Db, username: &str, password: &str) -> (i64,
         db,
         &feed::CreateFeedParams {
             category_id: cat.id,
-            url: &format!("https://example.com/{}/feed.xml", username),
+            url: &format!("https://example.com/{username}/feed.xml"),
             title: Some("Test Feed"),
             description: None,
             site_url: None,
@@ -77,7 +77,7 @@ async fn setup_user_with_entry(db: &Db, username: &str, password: &str) -> (i64,
     let (e, _) = entry::upsert_entry(
         db,
         feed.id,
-        &format!("{}-guid-1", username),
+        &format!("{username}-guid-1"),
         Some("Test Entry"),
         Some("https://example.com/entry/1"),
         Some("<p>Content</p>"),
@@ -123,7 +123,7 @@ async fn test_cancel_clears_failed_summary() {
     // POST cancel
     let response = app
         .server
-        .post(&format!("/entries/{}/summarize/cancel", eid))
+        .post(&format!("/entries/{eid}/summarize/cancel"))
         .await;
     response.assert_status_ok();
 
@@ -157,7 +157,7 @@ async fn test_cancel_non_owner_returns_404() {
     // Try to cancel the owner's entry
     let response = app
         .server
-        .post(&format!("/entries/{}/summarize/cancel", eid))
+        .post(&format!("/entries/{eid}/summarize/cancel"))
         .await;
     response.assert_status_not_found();
 }
@@ -174,7 +174,7 @@ async fn summarize_emits_pending_event() {
     login(&app.server, "pendinguser", "password123").await;
 
     app.server
-        .post(&format!("/entries/{}/summarize", eid))
+        .post(&format!("/entries/{eid}/summarize"))
         .await
         .assert_status_ok();
 
@@ -218,7 +218,7 @@ async fn test_cancel_removes_inflight_token() {
     // POST cancel
     let response = app
         .server
-        .post(&format!("/entries/{}/summarize/cancel", eid))
+        .post(&format!("/entries/{eid}/summarize/cancel"))
         .await;
     response.assert_status_ok();
 

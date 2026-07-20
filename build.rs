@@ -11,7 +11,7 @@ fn main() {
     println!("cargo:rerun-if-changed=static");
 
     let git_version = get_git_version();
-    println!("cargo:rustc-env=GIT_VERSION={}", git_version);
+    println!("cargo:rustc-env=GIT_VERSION={git_version}");
 
     // Generate favicon files
     println!("cargo:rerun-if-changed=favicon.svg");
@@ -72,7 +72,7 @@ fn generate_favicons() {
     for (size, filename, background) in sizes {
         let png_data = render_svg_to_png(&tree, size, background);
         let path = out_path.join(filename);
-        std::fs::write(&path, &png_data).unwrap_or_else(|_| panic!("Failed to write {}", filename));
+        std::fs::write(&path, &png_data).unwrap_or_else(|_| panic!("Failed to write {filename}"));
     }
 
     // Generate ICO file (contains 16x16 and 32x32)

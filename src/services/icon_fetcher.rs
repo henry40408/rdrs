@@ -108,15 +108,13 @@ async fn fetch_image(url: &str, user_agent: &str) -> AppResult<Option<FetchedIma
 }
 
 async fn fetch_favicon(site_url: &str, user_agent: &str) -> AppResult<Option<FetchedImage>> {
-    let base_url = match Url::parse(site_url) {
-        Ok(u) => u,
-        Err(_) => return Ok(None),
+    let Ok(base_url) = Url::parse(site_url) else {
+        return Ok(None);
     };
 
     // Try /favicon.ico first
-    let favicon_url = match base_url.join("/favicon.ico") {
-        Ok(u) => u,
-        Err(_) => return Ok(None),
+    let Ok(favicon_url) = base_url.join("/favicon.ico") else {
+        return Ok(None);
     };
     if let Ok(Some(img)) = fetch_image(favicon_url.as_str(), user_agent).await {
         debug!("Fetched favicon from {}", favicon_url);
@@ -395,7 +393,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let html_no_icon = r#"<html><head><title>No icon here</title></head></html>"#;
+        let html_no_icon = r"<html><head><title>No icon here</title></head></html>";
         Mock::given(method("GET"))
             .and(path("/"))
             .respond_with(
@@ -497,7 +495,7 @@ mod tests {
             Some("/favicon.ico".to_string())
         );
         assert_eq!(
-            extract_href(r#"<link href='/icon.png' rel='icon'>"#),
+            extract_href(r"<link href='/icon.png' rel='icon'>"),
             Some("/icon.png".to_string())
         );
     }

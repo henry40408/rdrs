@@ -34,7 +34,7 @@ where
 {
     tokio::select! {
         biased;
-        _ = token.cancelled() => SummaryOutcome::Cancelled,
+        () = token.cancelled() => SummaryOutcome::Cancelled,
         res = tokio::time::timeout(timeout, fut) => match res {
             Ok(Ok(text)) => SummaryOutcome::Completed(text),
             Ok(Err(e)) => SummaryOutcome::Failed(e),
@@ -80,7 +80,7 @@ pub fn start_summary_worker(
 
         loop {
             let job = tokio::select! {
-                _ = cancel_token.cancelled() => {
+                () = cancel_token.cancelled() => {
                     tracing::info!("Summary worker stopping, draining remaining jobs...");
                     // Drain remaining jobs before exiting
                     while let Ok(job) = rx.try_recv() {
@@ -255,7 +255,7 @@ async fn summarize_with_kagi(config: &KagiConfig, url: &str) -> Result<String, S
                 Err(result.error.unwrap_or_else(|| "Unknown error".to_string()))
             }
         }
-        Err(e) => Err(format!("Kagi API error: {}", e)),
+        Err(e) => Err(format!("Kagi API error: {e}")),
     }
 }
 
@@ -356,7 +356,7 @@ mod tests {
             entry_link: "https://example.com/article".to_string(),
         };
 
-        let debug_str = format!("{:?}", job);
+        let debug_str = format!("{job:?}");
         assert!(debug_str.contains("SummaryJob"));
         assert!(debug_str.contains("user_id: 1"));
         assert!(debug_str.contains("entry_id: 100"));
@@ -724,7 +724,7 @@ mod tests {
             tx.send(SummaryJob {
                 user_id: 1,
                 entry_id: i,
-                entry_link: format!("https://example.com/{}", i),
+                entry_link: format!("https://example.com/{i}"),
             })
             .await
             .unwrap();

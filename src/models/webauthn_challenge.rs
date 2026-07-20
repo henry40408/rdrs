@@ -13,7 +13,7 @@ pub enum ChallengeType {
 }
 
 impl ChallengeType {
-    fn as_str(&self) -> &'static str {
+    fn as_str(self) -> &'static str {
         match self {
             ChallengeType::Registration => "registration",
             ChallengeType::Authentication => "authentication",

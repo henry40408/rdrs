@@ -51,6 +51,10 @@ pub fn validate_url(url: &Url) -> Result<(), UrlValidationError> {
     }
 
     // Block .local and .internal domains
+    #[allow(
+        clippy::case_sensitive_file_extension_comparisons,
+        reason = "these are DNS hostname suffixes, not file extensions; `host` is already lowercased by the url crate"
+    )]
     if host.ends_with(".local") || host.ends_with(".internal") {
         return Err(UrlValidationError::BlockedHost);
     }

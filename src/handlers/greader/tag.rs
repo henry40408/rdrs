@@ -242,9 +242,8 @@ pub async fn disable_tag(
         .ok_or_else(|| AppError::Validation("Missing tag parameter (s or t)".into()))?;
 
     let stream_id = StreamId::parse(&tag_str)?;
-    let label_name = match stream_id {
-        StreamId::Label(name) => name,
-        _ => return Err(AppError::Validation("Can only disable label tags".into())),
+    let StreamId::Label(label_name) = stream_id else {
+        return Err(AppError::Validation("Can only disable label tags".into()));
     };
 
     let user_id = auth.user.id;
@@ -289,18 +288,14 @@ pub async fn rename_tag(
     let source = StreamId::parse(&source_str)?;
     let dest = StreamId::parse(&dest_str)?;
 
-    let old_name = match source {
-        StreamId::Label(name) => name,
-        _ => return Err(AppError::Validation("Can only rename label tags".into())),
+    let StreamId::Label(old_name) = source else {
+        return Err(AppError::Validation("Can only rename label tags".into()));
     };
 
-    let new_name = match dest {
-        StreamId::Label(name) => name,
-        _ => {
-            return Err(AppError::Validation(
-                "Destination must be a label tag".into(),
-            ));
-        }
+    let StreamId::Label(new_name) = dest else {
+        return Err(AppError::Validation(
+            "Destination must be a label tag".into(),
+        ));
     };
 
     let user_id = auth.user.id;

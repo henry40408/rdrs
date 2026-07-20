@@ -164,7 +164,7 @@ pub async fn get_personal_overview(
     let total_entries: i64 = query_scalar!(
         db,
         i64,
-        r#"
+        r"
         SELECT COUNT(e.id)
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
@@ -172,7 +172,7 @@ pub async fn get_personal_overview(
         WHERE c.user_id = $1
           AND COALESCE(e.published_at, e.created_at) >= $2
           AND COALESCE(e.published_at, e.created_at) < $3
-        "#,
+        ",
         user_id,
         from,
         to,
@@ -186,7 +186,7 @@ pub async fn get_personal_overview(
     let read_entries: i64 = query_scalar!(
         db,
         i64,
-        r#"
+        r"
         SELECT COUNT(e.id)
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
@@ -195,7 +195,7 @@ pub async fn get_personal_overview(
           AND COALESCE(e.published_at, e.created_at) >= $2
           AND COALESCE(e.published_at, e.created_at) < $3
           AND e.read_at IS NOT NULL
-        "#,
+        ",
         user_id,
         from,
         to,
@@ -205,7 +205,7 @@ pub async fn get_personal_overview(
     let starred_entries: i64 = query_scalar!(
         db,
         i64,
-        r#"
+        r"
         SELECT COUNT(e.id)
         FROM entry e
         INNER JOIN feed f ON e.feed_id = f.id
@@ -214,7 +214,7 @@ pub async fn get_personal_overview(
           AND COALESCE(e.published_at, e.created_at) >= $2
           AND COALESCE(e.published_at, e.created_at) < $3
           AND e.starred_at IS NOT NULL
-        "#,
+        ",
         user_id,
         from,
         to,
@@ -224,14 +224,14 @@ pub async fn get_personal_overview(
     let summaries: i64 = query_scalar!(
         db,
         i64,
-        r#"
+        r"
         SELECT COUNT(es.id)
         FROM entry_summary es
         WHERE es.user_id = $1
           AND es.status = 'completed'
           AND es.created_at >= $2
           AND es.created_at < $3
-        "#,
+        ",
         user_id,
         from,
         to,
@@ -339,7 +339,7 @@ pub async fn get_entries_by_category(
     query_all!(
         db,
         CategoryCount,
-        r#"
+        r"
         SELECT c.name, COUNT(e.id) AS count
         FROM category c
         LEFT JOIN feed f ON f.category_id = c.id
@@ -350,7 +350,7 @@ pub async fn get_entries_by_category(
         GROUP BY c.id
         HAVING COUNT(e.id) > 0
         ORDER BY COUNT(e.id) DESC
-        "#,
+        ",
         user_id,
         from,
         to,
@@ -375,7 +375,7 @@ pub async fn get_top_feeds(
     query_all!(
         db,
         FeedCount,
-        r#"
+        r"
         SELECT f.title, COUNT(e.id) AS count
         FROM feed f
         INNER JOIN category c ON f.category_id = c.id
@@ -387,7 +387,7 @@ pub async fn get_top_feeds(
         HAVING COUNT(e.id) > 0
         ORDER BY COUNT(e.id) DESC
         LIMIT $4
-        "#,
+        ",
         user_id,
         from,
         to,
@@ -416,12 +416,12 @@ pub async fn get_admin_entry_stats(db: &Db, from: &str, to: &str) -> AppResult<A
     let total_entries: i64 = query_scalar!(
         db,
         i64,
-        r#"
+        r"
         SELECT COUNT(id)
         FROM entry
         WHERE COALESCE(published_at, created_at) >= $1
           AND COALESCE(published_at, created_at) < $2
-        "#,
+        ",
         from,
         to,
     )
@@ -432,13 +432,13 @@ pub async fn get_admin_entry_stats(db: &Db, from: &str, to: &str) -> AppResult<A
     let read_entries: i64 = query_scalar!(
         db,
         i64,
-        r#"
+        r"
         SELECT COUNT(id)
         FROM entry
         WHERE COALESCE(published_at, created_at) >= $1
           AND COALESCE(published_at, created_at) < $2
           AND read_at IS NOT NULL
-        "#,
+        ",
         from,
         to,
     )
@@ -667,6 +667,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::float_cmp, reason = "exact-value test assertion")]
     async fn test_personal_overview_empty() {
         let db = setup_db().await;
         let user_id = create_user_with_data(&db).await;
@@ -980,6 +981,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::float_cmp, reason = "exact-value test assertion")]
     async fn test_admin_database_stats_empty() {
         let db = setup_db().await;
         create_user_with_data(&db).await;
@@ -1032,6 +1034,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::float_cmp, reason = "exact-value test assertion")]
     async fn test_admin_database_stats_avg_guards_subday_span() {
         // A single entry → coverage span 0 → denominator guarded at 1 day so
         // the average is finite (and equals the entry count) rather than inf.

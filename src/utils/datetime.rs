@@ -148,12 +148,12 @@ pub fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
         // Try with normalized timezone format (convert +08:00 to +0800)
         .or_else(|| {
             let normalized = normalize_timezone_format(text);
-            if normalized != text {
+            if normalized == text {
+                None
+            } else {
                 dateparser::parse(&normalized)
                     .map(|dt| dt.with_timezone(&Utc))
                     .ok()
-            } else {
-                None
             }
         })
         // Then try Chinese date format

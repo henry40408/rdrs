@@ -32,7 +32,7 @@ pub fn start_cleanup_worker(
 
         loop {
             tokio::select! {
-                _ = cancel_token.cancelled() => {
+                () = cancel_token.cancelled() => {
                     tracing::info!("Summary cleanup worker stopping...");
                     break;
                 }

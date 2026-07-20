@@ -92,7 +92,7 @@ fn style_dim(style: &str, prop: &str) -> Option<String> {
             continue;
         }
         let val = kv.next()?.trim();
-        let digits: String = val.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let digits: String = val.chars().take_while(char::is_ascii_digit).collect();
         if !digits.is_empty() {
             return Some(digits);
         }
@@ -173,11 +173,11 @@ fn promote_lazy_images(html: &str) -> String {
             continue;
         };
 
-        let new_src = format!("src=\"{}\"", real);
+        let new_src = format!("src=\"{real}\"");
         if let Some(placeholder) = current_src {
             // Replace the `data:` placeholder src with the real URL.
             let old_amp = format!("src=\"{}\"", placeholder.replace('&', "&amp;"));
-            let old_raw = format!("src=\"{}\"", placeholder);
+            let old_raw = format!("src=\"{placeholder}\"");
             if result.contains(&old_amp) {
                 result = result.replacen(&old_amp, &new_src, 1);
             } else {
@@ -186,7 +186,7 @@ fn promote_lazy_images(html: &str) -> String {
         } else {
             // No src at all: convert the lazy attribute into `src`.
             let old_amp = format!("{}=\"{}\"", attr_name, real.replace('&', "&amp;"));
-            let old_raw = format!("{}=\"{}\"", attr_name, real);
+            let old_raw = format!("{attr_name}=\"{real}\"");
             if result.contains(&old_amp) {
                 result = result.replacen(&old_amp, &new_src, 1);
             } else {

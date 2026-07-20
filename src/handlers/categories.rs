@@ -81,7 +81,7 @@ pub async fn delete_category_form(
     let user_id = auth_user.user.id;
     let result = category::delete_category(&state.db, id, user_id).await;
     match result {
-        Ok(_) => {
+        Ok(()) => {
             state.sidebar_cache.bust(user_id);
             FlashRedirect::success("/categories", "Category deleted.")
         }

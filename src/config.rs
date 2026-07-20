@@ -53,8 +53,7 @@ pub fn parse_trusted_networks(raw: &str) -> Result<Vec<IpNet>, String> {
             nets.push(net);
         } else {
             return Err(format!(
-                "invalid CIDR or IP in TRUSTED_PROXY_NETWORKS: '{}'",
-                s
+                "invalid CIDR or IP in TRUSTED_PROXY_NETWORKS: '{s}'"
             ));
         }
     }

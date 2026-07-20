@@ -48,7 +48,7 @@ async fn fetch_and_extract_validated(
 
     // Extract readable content
     let product = extractor::extract(&mut html.as_bytes(), parsed_url)
-        .map_err(|e| AppError::FetchError(format!("Failed to extract content: {}", e)))?;
+        .map_err(|e| AppError::FetchError(format!("Failed to extract content: {e}")))?;
 
     Ok(ExtractedContent {
         title: Some(product.title).filter(|t| !t.is_empty()),
@@ -62,7 +62,7 @@ mod tests {
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    const ARTICLE_HTML: &str = r#"<!DOCTYPE html>
+    const ARTICLE_HTML: &str = r"<!DOCTYPE html>
 <html>
   <head><title>The Readable Title</title></head>
   <body>
@@ -76,7 +76,7 @@ mod tests {
     </article>
     <footer>copyright boilerplate</footer>
   </body>
-</html>"#;
+</html>";
 
     // ---- Public entry: SSRF validation happens before any network I/O. ----
 
@@ -136,11 +136,11 @@ mod tests {
     async fn empty_extracted_title_becomes_none() {
         // No <title> and no heading: readability yields an empty title string,
         // which the `.filter(|t| !t.is_empty())` must collapse to None.
-        let body = r#"<!DOCTYPE html><html><head></head><body><article>
+        let body = r"<!DOCTYPE html><html><head></head><body><article>
             <p>Body-only content with no title anywhere in the document, long
             enough that the extractor keeps it as the main article region.</p>
             <p>Another paragraph of prose to reinforce the content region.</p>
-            </article></body></html>"#;
+            </article></body></html>";
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_string(body))

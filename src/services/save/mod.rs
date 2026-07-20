@@ -50,7 +50,11 @@ impl SaveServicesConfig {
     /// Get list of configured service names
     pub fn configured_services(&self) -> Vec<&'static str> {
         let mut services = Vec::new();
-        if self.linkding.as_ref().is_some_and(|c| c.is_configured()) {
+        if self
+            .linkding
+            .as_ref()
+            .is_some_and(linkding::LinkdingConfig::is_configured)
+        {
             services.push("linkding");
         }
         // Add more services here as they are implemented
