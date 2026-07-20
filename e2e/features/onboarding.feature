@@ -28,6 +28,6 @@ Feature: Onboarding from a fresh account to the first read
     And I see "All caught up" on the landing page
 
   Scenario: Settings shows the active WebAuthn relying-party origin
-    Given I am signed in
+    Given I am signed in as an admin
     When I am on the settings page
     Then I see the active WebAuthn RP origin

@@ -7,6 +7,12 @@ Given("I am a registered user", async ({ api, currentUser }) => {
   await api.register(currentUser.username, currentUser.password);
 });
 
+// Register an unrelated account first so the account under test is NOT the
+// instance's first user (the first registration is promoted to admin).
+Given("the instance already has an owner account", async ({ api }) => {
+  await api.register("e2e-owner", "password123");
+});
+
 Given("I am signed in", async ({ page, api, currentUser, serverUrl }) => {
   await api.register(currentUser.username, currentUser.password);
   await page.goto(`${serverUrl}/login`);
@@ -66,4 +72,16 @@ Then("I see {string} on the register page", async ({ page }, message) => {
 
 Then("I am still on the register page", async ({ page }) => {
   expect(page.url()).toContain("/register");
+});
+
+Then("the sidebar does not offer the app settings link", async ({ page }) => {
+  await expect(page.getByTestId("main-nav")).toBeVisible();
+  await expect(page.getByTestId("nav-app-settings")).toHaveCount(0);
+});
+
+Then("I am not shown the app settings page", async ({ page }) => {
+  // The admin guard redirects to /login, which bounces an already-signed-in
+  // session back to the inbox — either way the config table never renders.
+  await expect(page.getByRole("heading", { name: "App", exact: true })).toHaveCount(0);
+  expect(page.url()).not.toContain("/settings");
 });

@@ -461,6 +461,39 @@ async fn test_settings_page_reflects_auto_generated_image_proxy_secret() {
 }
 
 #[tokio::test]
+async fn test_settings_page_redacts_database_password() {
+    let config = Config {
+        database_url: "postgres://rdrs:sup3rs3cret@db.internal:5432/rdrs".to_string(),
+        ..default_test_config()
+    };
+    let app = create_test_app(config).await;
+    setup_users(&app.db).await;
+    login(&app.server, "admin").await;
+
+    let response = app.server.get("/settings").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(
+        !body.contains("sup3rs3cret"),
+        "database password leaked into /settings"
+    );
+    assert!(body.contains("postgres://rdrs:***@db.internal:5432/rdrs"));
+}
+
+#[tokio::test]
+async fn test_settings_page_forbidden_for_non_admin() {
+    let app = create_test_app(default_test_config()).await;
+    setup_users(&app.db).await;
+    login(&app.server, "user").await;
+
+    // Non-admins are bounced to the login page rather than shown deployment
+    // internals (database target, bind address, forward-auth headers).
+    let response = app.server.get("/settings").await;
+    response.assert_status_see_other();
+}
+
+#[tokio::test]
 async fn test_login_page_hides_signup_when_disabled() {
     let config = Config {
         signup_enabled: false,

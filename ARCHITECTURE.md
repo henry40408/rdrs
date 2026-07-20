@@ -275,7 +275,7 @@ Sign Out always clears the local `session_token` cookie (with `Path=/`) and dele
 
 **Auth-mode indicator:**
 
-The sidebar shows an **SSO** pill when the current request is served through forward-auth — computed per request from the trusted proxy header (no stored state), surfaced via `via_forward_auth` on the auth extractors and the sidebar payload. The App page (`/settings`) lists the forward-auth configuration under a grouped Configuration table.
+The sidebar shows an **SSO** pill when the current request is served through forward-auth — computed per request from the trusted proxy header (no stored state), surfaced via `via_forward_auth` on the auth extractors and the sidebar payload. The App page (`/settings`) lists the forward-auth configuration under a grouped Configuration table. That page is **admin-only** (`PageAdminUser`) because it exposes deployment internals, and the `DATABASE_URL` it shows is passed through `config::redact_database_url` so a PostgreSQL password never reaches the response; the sidebar hides its link for non-admins.
 
 ## Services
 

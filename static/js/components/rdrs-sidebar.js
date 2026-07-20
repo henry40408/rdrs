@@ -183,6 +183,14 @@ class RdrsSidebar extends HTMLElement {
                 Viewing as another user &middot; <a href="#" data-rdrs-stop-masq>Stop</a>
             </div>` : '';
 
+        // /settings and /admin are both admin-only server-side; hide the links
+        // for regular accounts so the nav matches what they can actually open.
+        const appSettingsLink = isAdmin ? `
+            <a href="/settings" class="sidebar-item${isActive('settings')}" data-testid="nav-app-settings">
+                <span class="sidebar-item-icon">${ICON.cog}</span>
+                <span>App</span>
+            </a>` : '';
+
         const adminLink = isAdmin ? `
             <a href="/admin" class="sidebar-item${isActive('admin')}" data-testid="nav-admin">
                 <span class="sidebar-item-icon">${ICON.shield}</span>
@@ -247,10 +255,7 @@ class RdrsSidebar extends HTMLElement {
                 <span class="sidebar-item-icon">${ICON.user}</span>
                 <span>Settings</span>
             </a>
-            <a href="/settings" class="sidebar-item${isActive('settings')}">
-                <span class="sidebar-item-icon">${ICON.cog}</span>
-                <span>App</span>
-            </a>
+            ${appSettingsLink}
             ${adminLink}
         </div>
     </nav>
