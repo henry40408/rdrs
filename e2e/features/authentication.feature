@@ -18,3 +18,10 @@ Feature: Authentication
     Then I see "Passwords do not match" on the register page
     And I am still on the register page
 
+
+  Scenario: A non-admin account is not offered the app settings page
+    Given the instance already has an owner account
+    And I am signed in
+    Then the sidebar does not offer the app settings link
+    When I am on the settings page
+    Then I am not shown the app settings page

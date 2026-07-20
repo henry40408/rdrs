@@ -81,6 +81,34 @@ pub fn classify_backend(database_url: &str) -> Backend {
     }
 }
 
+/// Redact the password out of a `database_url` so it is safe to display.
+///
+/// A `PostgreSQL` URL carries credentials inline
+/// (`postgres://user:secret@host/db`); the settings page renders the running
+/// instance's `DATABASE_URL`, so the password must never survive into the
+/// response. Only the password component is replaced — the scheme, user, host
+/// and database name stay legible, which is what the page is actually for.
+/// `SQLite` paths have no userinfo and pass through untouched.
+pub fn redact_database_url(database_url: &str) -> String {
+    let Some((scheme, rest)) = database_url.split_once("://") else {
+        return database_url.to_string();
+    };
+    // The authority ends at the first '/', '?' or '#'. Split userinfo off at
+    // the *last* '@' within it: an unencoded '@' in the password would
+    // otherwise leave part of the secret in the "host" half.
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(authority_end);
+    let Some((userinfo, host)) = authority.rsplit_once('@') else {
+        return database_url.to_string();
+    };
+    let user = userinfo.split_once(':').map_or(userinfo, |(u, _)| u);
+    if userinfo.contains(':') {
+        format!("{scheme}://{user}:***@{host}{tail}")
+    } else {
+        database_url.to_string()
+    }
+}
+
 /// Resolve the `SERVER_BIND` value into a [`SocketAddr`]. An unset or empty
 /// value yields the default `127.0.0.1:8080` (loopback only, so a bare-metal
 /// run is not exposed on all interfaces without opting in); any non-empty
@@ -311,6 +339,36 @@ mod tests {
         );
         // scheme match is case-insensitive and tolerant of leading whitespace
         assert_eq!(classify_backend("  POSTGRES://x"), Backend::Postgres);
+    }
+
+    #[test]
+    fn test_redact_database_url() {
+        // Password stripped, everything else legible.
+        assert_eq!(
+            redact_database_url("postgres://user:s3cr3t@db.internal:5432/rdrs"),
+            "postgres://user:***@db.internal:5432/rdrs"
+        );
+        // Query parameters after the authority survive.
+        assert_eq!(
+            redact_database_url("postgres://u:p@host/rdrs?sslmode=require"),
+            "postgres://u:***@host/rdrs?sslmode=require"
+        );
+        // A '@' inside the password does not confuse the split.
+        assert_eq!(
+            redact_database_url("postgres://user:p@ss@host/rdrs"),
+            "postgres://user:***@host/rdrs"
+        );
+        // No credentials, no change.
+        assert_eq!(
+            redact_database_url("postgres://user@host/rdrs"),
+            "postgres://user@host/rdrs"
+        );
+        // SQLite paths and URLs pass through untouched.
+        assert_eq!(redact_database_url("rdrs.sqlite3"), "rdrs.sqlite3");
+        assert_eq!(
+            redact_database_url("sqlite:///data/rdrs.sqlite3"),
+            "sqlite:///data/rdrs.sqlite3"
+        );
     }
 
     #[test]

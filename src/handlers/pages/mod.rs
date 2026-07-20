@@ -1231,11 +1231,20 @@ pub async fn entry_page(
 /// Serves `/settings` rendered fully server-side. The read-only server
 /// config table is populated directly from `state.config` via Askama —
 /// no JS executes for this page apart from the shared chrome scripts.
+///
+/// Admin-only: the table exposes deployment internals (database target, bind
+/// address, trusted proxy networks, forward-auth header names) that a regular
+/// account has no business reading.
 pub async fn settings_page(
-    auth_user: PageAuthUser,
+    admin: PageAdminUser,
     State(state): State<AppState>,
     flash: Flash,
 ) -> (Flash, SettingsTemplate) {
+    let auth_user = PageAuthUser {
+        user: admin.user.clone(),
+        session: admin.session.clone(),
+        via_forward_auth: admin.via_forward_auth,
+    };
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let user_agent_is_default = state.config.user_agent == crate::config::DEFAULT_USER_AGENT;
 
@@ -1245,7 +1254,7 @@ pub async fn settings_page(
             title: "App",
             git_version: crate::GIT_VERSION,
             layout,
-            database_url: state.config.database_url.clone(),
+            database_url: crate::config::redact_database_url(&state.config.database_url),
             server_bind: state.config.server_bind,
             user_agent: state.config.user_agent.clone(),
             user_agent_is_default,
