@@ -42,14 +42,6 @@ ignore = [
     # now resolved).
     "RUSTSEC-2026-0192",
     "RUSTSEC-2026-0206",
-    # spin 0.9.8 (and its whole back-catalog) was yanked 2026-07-13 for a UB fix
-    # in `Once::{force_into_inner, try_into_inner, into_inner_unchecked}`. We pull
-    # spin in only transitively via flume and multer, both of which use
-    # `spin::Mutex` and never the affected `Once` APIs, so the UB is unreachable
-    # for us. The crate spec silences the `yanked = "deny"` check. Fix is spin
-    # 0.9.9 (published 2026-07-13, inside our 7-day cooldown); drop this once the
-    # cooldown clears. Tracked in issue #389.
-    "spin@0.9.8",
 ]
 
 [licenses]
