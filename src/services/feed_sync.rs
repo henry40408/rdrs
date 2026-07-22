@@ -246,9 +246,10 @@ pub async fn refresh_feed(db: Db, feed_id: i64, default_user_agent: &str) -> App
     // Wrap the whole feed's upserts plus the fetch-result update in one
     // transaction: collapses N per-entry commits into a single commit and makes
     // each sync atomic (the read side never observes a half-applied feed).
-    let (new_entries, updated_entries, skipped_entries) = {
+    let (new_entries, updated_entries, unchanged_entries, skipped_entries) = {
         let mut new_entries = 0i64;
         let mut updated_entries = 0i64;
+        let mut unchanged_entries = 0i64;
         let mut skipped_entries = 0i64;
         let mut latest_entry_date: Option<chrono::DateTime<Utc>> = None;
 
@@ -301,6 +302,7 @@ pub async fn refresh_feed(db: Db, feed_id: i64, default_user_agent: &str) -> App
             {
                 entry::UpsertOutcome::Inserted(_) => new_entries += 1,
                 entry::UpsertOutcome::Updated(_) => updated_entries += 1,
+                entry::UpsertOutcome::Unchanged(_) => unchanged_entries += 1,
                 entry::UpsertOutcome::SkippedTombstoned => skipped_entries += 1,
             }
         }
@@ -323,12 +325,17 @@ pub async fn refresh_feed(db: Db, feed_id: i64, default_user_agent: &str) -> App
 
         tx.commit().await?;
 
-        (new_entries, updated_entries, skipped_entries)
+        (
+            new_entries,
+            updated_entries,
+            unchanged_entries,
+            skipped_entries,
+        )
     };
 
     info!(
-        "Feed {} refreshed: {} new, {} updated, {} skipped (tombstoned)",
-        feed_id, new_entries, updated_entries, skipped_entries
+        "Feed {} refreshed: {} new, {} updated, {} unchanged, {} skipped (tombstoned)",
+        feed_id, new_entries, updated_entries, unchanged_entries, skipped_entries
     );
 
     Ok(SyncResult {
@@ -593,6 +600,40 @@ mod tests {
             .unwrap();
         assert_eq!(second.new_entries, 0);
         assert_eq!(second.updated_entries, 2);
+    }
+
+    /// A feed that re-serves byte-identical content (no etag / last-modified,
+    /// so the 304 shortcut never fires) must report zero updates: the upsert's
+    /// guarded UPDATE writes nothing when every column already matches. This is
+    /// the dominant real-world case — feeds resend their whole window each poll.
+    #[tokio::test]
+    async fn resync_of_identical_content_updates_nothing() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/rss+xml")
+                    .set_body_string(RSS_TWO),
+            )
+            .mount(&server)
+            .await;
+
+        let pool = seeded_pool("feed_sync_identical").await;
+        let feed_id = seed_feed(&pool, &server.uri()).await;
+
+        let first = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
+            .await
+            .unwrap();
+        assert_eq!(first.new_entries, 2);
+
+        let second = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0")
+            .await
+            .unwrap();
+        assert_eq!(second.new_entries, 0);
+        assert_eq!(
+            second.updated_entries, 0,
+            "identical content must not rewrite rows"
+        );
     }
 
     // ---------------------------------------------------------------------------

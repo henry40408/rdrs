@@ -69,7 +69,12 @@ the cross-cutting facts that span multiple files.
   / `db_execute!` macros so SQL + binds are written once. The few genuine dialect
   differences are isolated behind `entry::filters::Dialect` and a `pg_rewrite`
   shim (`datetime('now')`→`now()`, `to_char` cursor comparisons, `make_interval`,
-  quoted `"user"`, etc. — see the multi-db spec). PG connections pin
+  quoted `"user"`, etc. — see the multi-db spec). Where a fork cannot go through
+  either (the entry upsert's NULL-safe inequality — `IS NOT` on SQLite,
+  `IS DISTINCT FROM` on PG) it lives as a pair of `*_SQLITE` / `*_PG` statement
+  literals dispatched by hand, deliberately *not* as a `pg_rewrite` rule: that
+  shim substitutes blindly and rewriting `IS NOT` there would corrupt every
+  `IS NOT NULL` in the codebase. PG connections pin
   `TimeZone=UTC` so timestamp-string cursors stay byte-identical to SQLite.
   Migrations are embedded per backend under `migrations/{sqlite,postgres}/` and
   run via `sqlx::migrate!`. Models expose CRUD as free functions taking `&Db` /

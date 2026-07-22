@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::{Db, DbInner, Tx};
 use crate::error::{AppError, AppResult};
 use crate::utils::text::strip_to_search_text;
-use crate::{db_execute, db_execute_tx, query_all, query_opt, query_opt_tx, query_scalar};
+use crate::{db_execute, query_all, query_opt, query_opt_tx, query_scalar};
 
 mod filters;
 pub mod query;
@@ -602,11 +602,16 @@ pub async fn count_unread_by_category(
 }
 
 /// Result of an entry upsert. The insert path is guarded against tombstones,
-/// so a third "skipped" state exists alongside insert/update.
+/// so a "skipped" state exists alongside insert/update, and an existing row
+/// whose mutable columns already match the incoming values yields `Unchanged`
+/// (no write is issued — see [`UPSERT_SELECT_SQL`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpsertOutcome {
     Inserted(i64),
     Updated(i64),
+    /// The row exists and every mutable column already equals the incoming
+    /// value, so the UPDATE was skipped entirely.
+    Unchanged(i64),
     SkippedTombstoned,
 }
 
@@ -624,13 +629,111 @@ pub enum UpsertOutcome {
 // `pg_rewrite` shim rewrites it to `now()`. `published_at` is bound as a
 // seconds-truncated `NaiveDateTime` (see the upsert fns), which sqlx encodes as
 // the same `%Y-%m-%d %H:%M:%S` TEXT on SQLite and as a `timestamp` on PG.
+// Kept to `id` only: `UNIQUE(feed_id, guid)` makes this an index-only lookup
+// that never touches the row. Selecting the comparable columns here instead
+// would force a full row read (a multi-KB `content` marshalled into a Rust
+// String) on every entry of every poll — measurably slower than the write it
+// would save. The no-op check therefore lives in the UPDATE's WHERE clause.
 const UPSERT_SELECT_SQL: &str = "SELECT id FROM entry WHERE guid = $1 AND feed_id = $2";
-const UPSERT_UPDATE_SQL: &str = "UPDATE entry SET title = $1, link = $2, content = $3, summary = $4, author = $5, content_text = $6, updated_at = datetime('now') WHERE id = $7";
+// The UPDATE is guarded by a "something actually differs" predicate so a poll
+// that re-serves byte-identical articles writes nothing at all: feeds resend
+// their whole window every time, and without this every entry is rewritten
+// (and WAL-logged) on every sync. `rows_affected() == 0` then means "already
+// current", which is what distinguishes `Updated` from `Unchanged`.
+//
+// The predicate is the one genuine dialect fork here — SQLite spells NULL-safe
+// inequality `IS NOT`, PostgreSQL `IS DISTINCT FROM`. It is kept as two
+// literals rather than a `pg_rewrite` rule on purpose: that shim does blind
+// string substitution, and rewriting `IS NOT` there would also hit every
+// `IS NOT NULL` in the codebase. `content_text` is derived from `content`, so
+// comparing `content` covers it; `$N` placeholders are referenced twice, which
+// both backends accept (see `UPSERT_INSERT_SQL`).
+const UPSERT_UPDATE_SQL_SQLITE: &str = "UPDATE entry SET title = $1, link = $2, content = $3, summary = $4, author = $5, content_text = $6, updated_at = datetime('now') WHERE id = $7 AND (title IS NOT $1 OR link IS NOT $2 OR content IS NOT $3 OR summary IS NOT $4 OR author IS NOT $5)";
+const UPSERT_UPDATE_SQL_PG: &str = "UPDATE entry SET title = $1, link = $2, content = $3, summary = $4, author = $5, content_text = $6, updated_at = now() WHERE id = $7 AND (title IS DISTINCT FROM $1 OR link IS DISTINCT FROM $2 OR content IS DISTINCT FROM $3 OR summary IS DISTINCT FROM $4 OR author IS DISTINCT FROM $5)";
 const UPSERT_INSERT_SQL: &str = "INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at, content_text) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9 WHERE NOT EXISTS (SELECT 1 FROM entry_tombstone WHERE feed_id = $1 AND guid = $2) RETURNING id";
+
+/// The mutable-column payload of an upsert, shared by the `&Db` and `&mut Tx`
+/// update helpers so the seven binds are sequenced in exactly one place.
+struct UpsertUpdate<'a> {
+    id: i64,
+    title: Option<&'a str>,
+    link: Option<&'a str>,
+    content: Option<&'a str>,
+    summary: Option<&'a str>,
+    author: Option<&'a str>,
+    content_text: Option<&'a str>,
+}
+
+/// Run the guarded UPDATE against a transaction. Dispatched by hand rather than
+/// through `db_execute_tx!` because the predicate differs per dialect and the
+/// macros take a single `&'static str`.
+async fn upsert_update_tx(tx: &mut Tx<'_>, u: &UpsertUpdate<'_>) -> Result<u64, sqlx::Error> {
+    match tx {
+        Tx::Sqlite { tx: t, .. } => {
+            sqlx::query::<sqlx::Sqlite>(sqlx::AssertSqlSafe(UPSERT_UPDATE_SQL_SQLITE))
+                .bind(u.title)
+                .bind(u.link)
+                .bind(u.content)
+                .bind(u.summary)
+                .bind(u.author)
+                .bind(u.content_text)
+                .bind(u.id)
+                .execute(&mut **t)
+                .await
+                .map(|r| r.rows_affected())
+        }
+        Tx::Postgres(t) => sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(UPSERT_UPDATE_SQL_PG))
+            .bind(u.title)
+            .bind(u.link)
+            .bind(u.content)
+            .bind(u.summary)
+            .bind(u.author)
+            .bind(u.content_text)
+            .bind(u.id)
+            .execute(&mut **t)
+            .await
+            .map(|r| r.rows_affected()),
+    }
+}
+
+/// Pooled sibling of [`upsert_update_tx`].
+async fn upsert_update(db: &Db, u: &UpsertUpdate<'_>) -> Result<u64, sqlx::Error> {
+    let _guard = db.admit().await;
+    match db.inner() {
+        DbInner::Sqlite(pool) => {
+            sqlx::query::<sqlx::Sqlite>(sqlx::AssertSqlSafe(UPSERT_UPDATE_SQL_SQLITE))
+                .bind(u.title)
+                .bind(u.link)
+                .bind(u.content)
+                .bind(u.summary)
+                .bind(u.author)
+                .bind(u.content_text)
+                .bind(u.id)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected())
+        }
+        DbInner::Postgres(pool) => {
+            sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(UPSERT_UPDATE_SQL_PG))
+                .bind(u.title)
+                .bind(u.link)
+                .bind(u.content)
+                .bind(u.summary)
+                .bind(u.author)
+                .bind(u.content_text)
+                .bind(u.id)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected())
+        }
+    }
+}
 
 /// Upsert an entry, returning [`UpsertOutcome`] without re-reading the full row.
 /// The tombstone-guarded insert uses `RETURNING id`, so a `Some` row means an
-/// insert happened (its id) and `None` means the guid is tombstoned.
+/// insert happened (its id) and `None` means the guid is tombstoned. An existing
+/// row that already matches the incoming values yields
+/// [`UpsertOutcome::Unchanged`] without issuing a write.
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert_entry_id(
     db: &Db,
@@ -655,19 +758,25 @@ pub async fn upsert_entry_id(
         query_opt!(db, (i64,), UPSERT_SELECT_SQL, guid, feed_id).map_err(AppError::Database)?;
 
     if let Some((id,)) = existing {
-        db_execute!(
+        let rows = upsert_update(
             db,
-            UPSERT_UPDATE_SQL,
-            title,
-            link,
-            content,
-            summary,
-            author,
-            content_text.as_deref(),
-            id
+            &UpsertUpdate {
+                id,
+                title,
+                link,
+                content,
+                summary,
+                author,
+                content_text: content_text.as_deref(),
+            },
         )
+        .await
         .map_err(AppError::Database)?;
-        return Ok(UpsertOutcome::Updated(id));
+        return Ok(if rows > 0 {
+            UpsertOutcome::Updated(id)
+        } else {
+            UpsertOutcome::Unchanged(id)
+        });
     }
 
     let inserted = query_opt!(
@@ -718,19 +827,25 @@ pub async fn upsert_entry_id_tx(
         query_opt_tx!(tx, (i64,), UPSERT_SELECT_SQL, guid, feed_id).map_err(AppError::Database)?;
 
     if let Some((id,)) = existing {
-        db_execute_tx!(
+        let rows = upsert_update_tx(
             tx,
-            UPSERT_UPDATE_SQL,
-            title,
-            link,
-            content,
-            summary,
-            author,
-            content_text.as_deref(),
-            id
+            &UpsertUpdate {
+                id,
+                title,
+                link,
+                content,
+                summary,
+                author,
+                content_text: content_text.as_deref(),
+            },
         )
+        .await
         .map_err(AppError::Database)?;
-        return Ok(UpsertOutcome::Updated(id));
+        return Ok(if rows > 0 {
+            UpsertOutcome::Updated(id)
+        } else {
+            UpsertOutcome::Unchanged(id)
+        });
     }
 
     let inserted = query_opt_tx!(
@@ -773,7 +888,7 @@ pub async fn insert_tombstone(db: &Db, feed_id: i64, guid: &str) -> AppResult<()
 fn retention_victims_sql(dialect: Dialect) -> String {
     let cutoff = dialect.days_ago("us.retention_read_days");
     format!(
-        "SELECT e.id, e.feed_id, e.guid \
+        "SELECT e.id \
          FROM entry e \
          JOIN feed f           ON f.id = e.feed_id \
          JOIN category c       ON c.id = f.category_id \
@@ -801,15 +916,15 @@ pub async fn prune_read_retention_batch(db: &Db, batch_size: usize) -> AppResult
     // Dynamic SQL (dialect-forked interval) can't go through the static-SQL
     // `query_all_tx!` macro, so dispatch the fetch on the transaction's backend
     // directly.
-    let victims: Vec<(i64, i64, String)> = match &mut tx {
+    let victims: Vec<(i64,)> = match &mut tx {
         Tx::Sqlite { tx: t, .. } => {
-            sqlx::query_as::<sqlx::Sqlite, (i64, i64, String)>(sqlx::AssertSqlSafe(sql))
+            sqlx::query_as::<sqlx::Sqlite, (i64,)>(sqlx::AssertSqlSafe(sql))
                 .bind(batch_size as i64)
                 .fetch_all(&mut **t)
                 .await
         }
         Tx::Postgres(t) => {
-            sqlx::query_as::<sqlx::Postgres, (i64, i64, String)>(sqlx::AssertSqlSafe(sql))
+            sqlx::query_as::<sqlx::Postgres, (i64,)>(sqlx::AssertSqlSafe(sql))
                 .bind(batch_size as i64)
                 .fetch_all(&mut **t)
                 .await
@@ -822,15 +937,47 @@ pub async fn prune_read_retention_batch(db: &Db, batch_size: usize) -> AppResult
         return Ok(0);
     }
 
-    for (id, feed_id, guid) in &victims {
-        db_execute_tx!(&mut tx, INSERT_TOMBSTONE_SQL, *feed_id, guid.as_str())
-            .map_err(AppError::Database)?;
-        db_execute_tx!(&mut tx, "DELETE FROM entry WHERE id = $1", *id)
-            .map_err(AppError::Database)?;
-    }
+    // Tombstone + delete as two set-based statements rather than a 2-per-victim
+    // loop: at BATCH_SIZE = 500 that is 2 statements per batch instead of 1000,
+    // which shortens the window the batch holds SQLite's single write lock and
+    // keeps a large retention drain from stalling interactive writes. The
+    // tombstone insert reads feed_id/guid back out of `entry` itself, so only
+    // the ids need binding and both statements target the identical id set.
+    // (The `WHERE id IN (...)` also disambiguates SQLite's
+    // `INSERT ... SELECT ... ON CONFLICT` parse, which requires a WHERE clause.)
+    let in_clause = (0..victims.len())
+        .map(|i| format!("${}", i + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let id_binds = || {
+        victims
+            .iter()
+            .map(|(id,)| Bind::Int(*id))
+            .collect::<Vec<_>>()
+    };
+
+    exec_dynamic_tx(
+        &mut tx,
+        format!(
+            "INSERT INTO entry_tombstone (feed_id, guid) \
+             SELECT feed_id, guid FROM entry WHERE id IN ({in_clause}) \
+             ON CONFLICT (feed_id, guid) DO NOTHING"
+        ),
+        id_binds(),
+    )
+    .await
+    .map_err(AppError::Database)?;
+
+    let deleted = exec_dynamic_tx(
+        &mut tx,
+        format!("DELETE FROM entry WHERE id IN ({in_clause})"),
+        id_binds(),
+    )
+    .await
+    .map_err(AppError::Database)?;
 
     tx.commit().await?;
-    Ok(victims.len() as u64)
+    Ok(deleted)
 }
 
 /// Upsert an entry and return the resulting [`Entry`] plus whether it was new.
@@ -864,7 +1011,7 @@ pub async fn upsert_entry(
     .await?
     {
         UpsertOutcome::Inserted(id) => (id, true),
-        UpsertOutcome::Updated(id) => (id, false),
+        UpsertOutcome::Updated(id) | UpsertOutcome::Unchanged(id) => (id, false),
         UpsertOutcome::SkippedTombstoned => {
             return Err(AppError::Internal(
                 "upsert_entry called for a tombstoned guid".to_string(),
@@ -2820,6 +2967,155 @@ mod tests {
         assert_eq!(row.title.as_deref(), Some("Title 2"));
     }
 
+    /// Re-upserting byte-identical values must report `Unchanged` and leave the
+    /// row (including `updated_at`) untouched — feeds re-serve their whole
+    /// window every poll, so this is the common path, and rewriting every row
+    /// each time is pure WAL churn.
+    #[tokio::test]
+    async fn upsert_identical_values_is_unchanged_and_does_not_write() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        let args = (
+            Some("Title"),
+            Some("https://example.com/a"),
+            Some("<p>body</p>"),
+            Some("summary"),
+            Some("author"),
+        );
+        let first = upsert_entry_id(
+            &db, feed_id, "guid-1", args.0, args.1, args.2, args.3, args.4, None,
+        )
+        .await
+        .unwrap();
+        let id = match first {
+            UpsertOutcome::Inserted(id) => id,
+            o => panic!("expected Inserted, got {o:?}"),
+        };
+        let before = find_by_id(&db, id).await.unwrap().unwrap();
+
+        // Same values again: no write, no bump of `updated_at`.
+        let second = upsert_entry_id(
+            &db, feed_id, "guid-1", args.0, args.1, args.2, args.3, args.4, None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(second, UpsertOutcome::Unchanged(uid) if uid == id),
+            "expected Unchanged, got {second:?}"
+        );
+        let after = find_by_id(&db, id).await.unwrap().unwrap();
+        assert_eq!(before.updated_at, after.updated_at);
+
+        // A single differing column still updates.
+        let third = upsert_entry_id(
+            &db,
+            feed_id,
+            "guid-1",
+            args.0,
+            args.1,
+            Some("<p>edited</p>"),
+            args.3,
+            args.4,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(third, UpsertOutcome::Updated(uid) if uid == id),
+            "expected Updated, got {third:?}"
+        );
+        let edited = find_by_id(&db, id).await.unwrap().unwrap();
+        assert_eq!(edited.content.as_deref(), Some("<p>edited</p>"));
+    }
+
+    /// A NULL column that stays NULL must not count as a difference — the
+    /// guard uses NULL-safe inequality (`IS NOT` / `IS DISTINCT FROM`), not
+    /// plain `<>`, which would yield NULL and silently rewrite every row.
+    #[tokio::test]
+    async fn upsert_null_columns_compare_null_safely() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "testuser").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+
+        let first = upsert_entry_id(
+            &db,
+            feed_id,
+            "guid-n",
+            Some("T"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let id = match first {
+            UpsertOutcome::Inserted(id) => id,
+            o => panic!("expected Inserted, got {o:?}"),
+        };
+
+        let second = upsert_entry_id(
+            &db,
+            feed_id,
+            "guid-n",
+            Some("T"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(second, UpsertOutcome::Unchanged(uid) if uid == id),
+            "all-NULL columns unchanged should be Unchanged, got {second:?}"
+        );
+
+        // NULL -> non-NULL is a real change.
+        let third = upsert_entry_id(
+            &db,
+            feed_id,
+            "guid-n",
+            Some("T"),
+            Some("https://example.com/x"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(third, UpsertOutcome::Updated(uid) if uid == id),
+            "NULL -> value should be Updated, got {third:?}"
+        );
+
+        // non-NULL -> NULL is a real change too.
+        let fourth = upsert_entry_id(
+            &db,
+            feed_id,
+            "guid-n",
+            Some("T"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(fourth, UpsertOutcome::Updated(uid) if uid == id),
+            "value -> NULL should be Updated, got {fourth:?}"
+        );
+    }
+
     #[tokio::test]
     async fn upsert_populates_content_text_stripped() {
         let db = setup_db().await;
@@ -4023,5 +4319,27 @@ mod tests {
         assert_eq!(prune_read_retention_batch(&db, 2).await.unwrap(), 2);
         assert_eq!(prune_read_retention_batch(&db, 2).await.unwrap(), 1);
         assert_eq!(prune_read_retention_batch(&db, 2).await.unwrap(), 0);
+
+        // Every victim of every batch must have been tombstoned, not just the
+        // first of each: the prune writes tombstones as one set-based INSERT
+        // per batch, so a partial write would silently resurrect entries on
+        // the next refresh.
+        for i in 0..5 {
+            let g = format!("g{i}");
+            assert!(
+                find_by_guid_and_feed(&db, &g, feed_id)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "{g} should have been deleted"
+            );
+            let outcome = upsert_entry_id(&db, feed_id, &g, Some(&g), None, None, None, None, None)
+                .await
+                .unwrap();
+            assert!(
+                matches!(outcome, UpsertOutcome::SkippedTombstoned),
+                "{g} should be tombstoned, got {outcome:?}"
+            );
+        }
     }
 }
