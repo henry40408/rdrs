@@ -113,6 +113,60 @@ async fn pg_dialect_smoke() {
         ids.push(e.id);
     }
 
+    // --- guarded upsert UPDATE (IS DISTINCT FROM fork) ------------------------
+    // The no-op guard is the one predicate that differs per dialect (SQLite
+    // spells it `IS NOT`), so exercise both arms of it here: identical values
+    // must not rewrite the row, a changed column must.
+    let unchanged = entry::upsert_entry_id(
+        &db,
+        feed_id,
+        "g1",
+        Some("t"),
+        Some("l"),
+        None,
+        None,
+        None,
+        Some(utc("2026-07-07T12:00:00Z")),
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(unchanged, entry::UpsertOutcome::Unchanged(id) if id == ids[0]),
+        "identical re-upsert must be Unchanged on PG, got {unchanged:?}"
+    );
+
+    let updated = entry::upsert_entry_id(
+        &db,
+        feed_id,
+        "g1",
+        Some("t changed"),
+        Some("l"),
+        None,
+        None,
+        None,
+        Some(utc("2026-07-07T12:00:00Z")),
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(updated, entry::UpsertOutcome::Updated(id) if id == ids[0]),
+        "changed column must be Updated on PG, got {updated:?}"
+    );
+    // Restore the original title so the pagination assertions below are unaffected.
+    entry::upsert_entry_id(
+        &db,
+        feed_id,
+        "g1",
+        Some("t"),
+        Some("l"),
+        None,
+        None,
+        None,
+        Some(utc("2026-07-07T12:00:00Z")),
+    )
+    .await
+    .unwrap();
+
     let filter = EntryFilter::default();
     let page1 = entry::list_by_user_with_continuation(
         &db,
