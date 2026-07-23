@@ -72,7 +72,15 @@ When(
 
     const userId = seed.getUserId(currentUser.username);
     const entryId = seed.findEntryIdByTitle(userId, title);
-    const res = await page.request.post(`${serverUrl}/entries/${entryId}/read`);
+    // `page.request` shares the session cookie but bypasses the page's patched
+    // `fetch`, so it must attach the CSRF token itself — exactly what csrf.js
+    // does in the real UI: echo the readable `csrf_token` cookie back as the
+    // `X-CSRF-Token` header. Without it the synchronizer-token guard 403s.
+    const cookies = await page.context().cookies();
+    const csrf = cookies.find((c) => c.name === "csrf_token")?.value ?? "";
+    const res = await page.request.post(`${serverUrl}/entries/${entryId}/read`, {
+      headers: { "X-CSRF-Token": csrf },
+    });
     // Accept any 2xx (200 OK or 302 redirect after form POST); the important
     // side-effect is the SSE emit, not the response body.
     expect(res.status()).toBeLessThan(400);

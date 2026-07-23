@@ -183,7 +183,7 @@ async fn test_register_multi_user_disabled() {
 
 #[tokio::test]
 async fn test_login_success() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -203,6 +203,7 @@ async fn test_login_success() {
         .await;
 
     response.assert_status_ok();
+    common::apply_csrf(&mut server, &response);
     let body: serde_json::Value = response.json();
     assert_eq!(body["username"], "admin");
 }
@@ -248,7 +249,7 @@ async fn test_login_nonexistent_user() {
 
 #[tokio::test]
 async fn test_get_current_user() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -268,6 +269,7 @@ async fn test_get_current_user() {
         .await;
 
     login_response.assert_status_ok();
+    common::apply_csrf(&mut server, &login_response);
 
     let response = server.get("/api/user").await;
     response.assert_status_ok();
@@ -285,7 +287,7 @@ async fn test_get_current_user_unauthorized() {
 
 #[tokio::test]
 async fn test_logout() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -296,14 +298,15 @@ async fn test_logout() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({
             "username": "admin",
             "password": "password123"
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     server.delete("/api/session").await.assert_status_ok();
 
@@ -321,7 +324,7 @@ async fn test_logout() {
 
 #[tokio::test]
 async fn test_masquerade() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -341,14 +344,15 @@ async fn test_masquerade() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({
             "username": "admin",
             "password": "password123"
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     server
         .post("/admin/users/2/masquerade")
@@ -373,7 +377,7 @@ async fn test_masquerade() {
 
 #[tokio::test]
 async fn test_masquerade_already_masquerading() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -393,14 +397,15 @@ async fn test_masquerade_already_masquerading() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({
             "username": "admin",
             "password": "password123"
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     // First masquerade succeeds and lands us on /.
     let response = server.post("/admin/users/2/masquerade").await;
@@ -417,7 +422,7 @@ async fn test_masquerade_already_masquerading() {
 
 #[tokio::test]
 async fn test_unmasquerade_not_masquerading() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -428,14 +433,15 @@ async fn test_unmasquerade_not_masquerading() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({
             "username": "admin",
             "password": "password123"
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     let response = server.post("/api/admin/unmasquerade").await;
     response.assert_status_bad_request();
@@ -493,7 +499,7 @@ async fn test_validation_empty_username() {
 
 #[tokio::test]
 async fn test_unread_page() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -513,6 +519,7 @@ async fn test_unread_page() {
         .await;
 
     login_response.assert_status_ok();
+    common::apply_csrf(&mut server, &login_response);
 
     let response = server.get("/").await;
     response.assert_status_ok();
@@ -536,7 +543,7 @@ async fn test_unread_page_unauthorized() {
 
 #[tokio::test]
 async fn test_admin_page_accessible_by_admin() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -547,14 +554,15 @@ async fn test_admin_page_accessible_by_admin() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({
             "username": "admin",
             "password": "password123"
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     let response = server.get("/admin").await;
     response.assert_status_ok();
@@ -564,7 +572,7 @@ async fn test_admin_page_accessible_by_admin() {
 
 #[tokio::test]
 async fn test_admin_page_forbidden_for_regular_user() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -584,14 +592,15 @@ async fn test_admin_page_forbidden_for_regular_user() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({
             "username": "user1",
             "password": "password123"
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     let response = server.get("/admin").await;
     // Page routes redirect to login instead of returning 403
@@ -609,7 +618,7 @@ async fn test_admin_page_unauthorized_without_login() {
 
 #[tokio::test]
 async fn test_unread_page_shows_admin_link_for_admin() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -620,14 +629,15 @@ async fn test_unread_page_shows_admin_link_for_admin() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({
             "username": "admin",
             "password": "password123"
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     let response = server.get("/").await;
     response.assert_status_ok();
@@ -639,7 +649,7 @@ async fn test_unread_page_shows_admin_link_for_admin() {
 
 #[tokio::test]
 async fn test_unread_page_hides_admin_link_for_regular_user() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -659,14 +669,15 @@ async fn test_unread_page_hides_admin_link_for_regular_user() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({
             "username": "user1",
             "password": "password123"
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     let response = server.get("/").await;
     response.assert_status_ok();
@@ -721,7 +732,7 @@ async fn test_flash_message_cleared_after_display() {
 
 #[tokio::test]
 async fn test_flash_message_on_unread_page() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -732,14 +743,15 @@ async fn test_flash_message_on_unread_page() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({
             "username": "admin",
             "password": "password123"
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     // Request unread page with flash message
     let response = server
@@ -781,7 +793,7 @@ async fn read_expiry(db: &Db) -> DateTime<Utc> {
 
 #[tokio::test]
 async fn test_api_request_slides_session_expiry_forward() {
-    let (server, db) = build_server(default_test_config()).await;
+    let (mut server, db) = build_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -789,11 +801,12 @@ async fn test_api_request_slides_session_expiry_forward() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({ "username": "admin", "password": "password123" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     let aged_expiry = age_session(&db).await;
 
@@ -814,7 +827,7 @@ async fn test_api_request_slides_session_expiry_forward() {
 
 #[tokio::test]
 async fn test_page_request_slides_session_expiry_forward() {
-    let (server, db) = build_server(default_test_config()).await;
+    let (mut server, db) = build_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -822,11 +835,12 @@ async fn test_page_request_slides_session_expiry_forward() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({ "username": "admin", "password": "password123" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     let aged_expiry = age_session(&db).await;
 
@@ -919,17 +933,18 @@ async fn test_session_cookie_not_secure_by_default() {
 
 #[tokio::test]
 async fn test_logout_clears_cookie_with_path() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
         .json(&json!({ "username": "u", "password": "password123" }))
         .await
         .assert_status(StatusCode::CREATED);
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({ "username": "u", "password": "password123" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     let res = server.delete("/api/session").await;
     res.assert_status_ok();
@@ -950,7 +965,7 @@ async fn test_tampered_session_cookie_is_rejected() {
     // signature is the attack the signing defends against — guessing or leaking
     // a `session.session_token` must not be enough on its own. A server without
     // `save_cookies` lets us replay a hand-edited cookie.
-    let (server, _db) = build_server_no_save_cookies(default_test_config()).await;
+    let (mut server, _db) = build_server_no_save_cookies(default_test_config()).await;
     server
         .post("/api/register")
         .json(&json!({ "username": "u", "password": "password123" }))
@@ -961,6 +976,7 @@ async fn test_tampered_session_cookie_is_rejected() {
         .json(&json!({ "username": "u", "password": "password123" }))
         .await;
     login.assert_status_ok();
+    common::apply_csrf(&mut server, &login);
 
     // Pull the signed value out of the Set-Cookie header.
     let set_cookie = set_cookie_headers(&login)
@@ -1000,17 +1016,18 @@ async fn test_tampered_session_cookie_is_rejected() {
 
 #[tokio::test]
 async fn test_logout_redirect_default_is_login() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
         .json(&json!({ "username": "u", "password": "password123" }))
         .await
         .assert_status(StatusCode::CREATED);
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({ "username": "u", "password": "password123" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     let res = server.delete("/api/session").await;
     let body: serde_json::Value = res.json();
@@ -1021,17 +1038,18 @@ async fn test_logout_redirect_default_is_login() {
 async fn test_logout_redirect_uses_configured_url() {
     let mut config = default_test_config();
     config.auth_proxy_logout_url = Some("https://auth.example.com/logout".to_string());
-    let server = create_test_server(config).await;
+    let mut server = create_test_server(config).await;
     server
         .post("/api/register")
         .json(&json!({ "username": "u", "password": "password123" }))
         .await
         .assert_status(StatusCode::CREATED);
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({ "username": "u", "password": "password123" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     let res = server.delete("/api/session").await;
     let body: serde_json::Value = res.json();
@@ -1040,17 +1058,18 @@ async fn test_logout_redirect_uses_configured_url() {
 
 #[tokio::test]
 async fn test_login_page_redirects_authenticated_to_root() {
-    let server = create_test_server(default_test_config()).await;
+    let mut server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
         .json(&json!({ "username": "u", "password": "password123" }))
         .await
         .assert_status(StatusCode::CREATED);
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({ "username": "u", "password": "password123" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     let res = server.get("/login").await;
     assert!(res.status_code().is_redirection());
@@ -1067,7 +1086,7 @@ async fn test_login_page_renders_when_anonymous() {
 
 #[tokio::test]
 async fn test_fresh_session_is_not_refreshed() {
-    let (server, db) = build_server(default_test_config()).await;
+    let (mut server, db) = build_server(default_test_config()).await;
 
     server
         .post("/api/register")
@@ -1075,11 +1094,12 @@ async fn test_fresh_session_is_not_refreshed() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
+    let __login = server
         .post("/api/session")
         .json(&json!({ "username": "admin", "password": "password123" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
 
     let before = read_expiry(&db).await;
 

@@ -49,7 +49,11 @@ impl Session {
     }
 }
 
-fn generate_token() -> String {
+/// A fresh random session token. Public so the anonymous-session middleware can
+/// mint a signed cookie for a logged-out visitor without opening a database row
+/// — the token only needs to be unguessable and to carry a valid signature; the
+/// CSRF token derives from it whether or not a `session` row ever exists.
+pub fn generate_token() -> String {
     let mut rng = rand::rng();
     let bytes: Vec<u8> = (0..TOKEN_LENGTH).map(|_| rng.random()).collect();
     base64_encode(&bytes)

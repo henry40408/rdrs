@@ -39,15 +39,17 @@ async fn create_test_app(config: Config) -> TestApp {
     TestApp { server, db }
 }
 
-async fn login(app: &TestApp, username: &str) -> i64 {
+async fn login(app: &mut TestApp, username: &str) -> i64 {
     let hash = auth::hash_password("password123").unwrap();
     let u = user::create_user(&app.db, username, &hash, Role::User)
         .await
         .unwrap();
-    app.server
+    let login = app
+        .server
         .post("/api/session")
         .json(&serde_json::json!({"username": username, "password": "password123"}))
         .await;
+    common::apply_csrf(&mut app.server, &login);
     u.id
 }
 
@@ -66,8 +68,8 @@ async fn configure_kagi(app: &TestApp, user_id: i64) {
 
 #[tokio::test]
 async fn page_shows_settings_prompt_when_kagi_unset() {
-    let app = create_test_app(default_test_config()).await;
-    login(&app, "alice").await;
+    let mut app = create_test_app(default_test_config()).await;
+    login(&mut app, "alice").await;
     let res = app.server.get("/summarizer").await;
     res.assert_status_ok();
     let body = res.text();
@@ -77,8 +79,8 @@ async fn page_shows_settings_prompt_when_kagi_unset() {
 
 #[tokio::test]
 async fn page_shows_form_when_kagi_configured() {
-    let app = create_test_app(default_test_config()).await;
-    let uid = login(&app, "bob").await;
+    let mut app = create_test_app(default_test_config()).await;
+    let uid = login(&mut app, "bob").await;
     configure_kagi(&app, uid).await;
     let res = app.server.get("/summarizer").await;
     res.assert_status_ok();
@@ -102,8 +104,8 @@ async fn page_requires_auth() {
 
 #[tokio::test]
 async fn start_renders_queued_cards() {
-    let app = create_test_app(default_test_config()).await;
-    let uid = login(&app, "carol").await;
+    let mut app = create_test_app(default_test_config()).await;
+    let uid = login(&mut app, "carol").await;
     configure_kagi(&app, uid).await;
     let res = app
         .server
@@ -119,8 +121,8 @@ async fn start_renders_queued_cards() {
 
 #[tokio::test]
 async fn start_rejects_over_30() {
-    let app = create_test_app(default_test_config()).await;
-    let uid = login(&app, "dave").await;
+    let mut app = create_test_app(default_test_config()).await;
+    let uid = login(&mut app, "dave").await;
     configure_kagi(&app, uid).await;
     let urls = (0..31)
         .map(|i| format!("https://e.com/{i}"))
@@ -139,8 +141,8 @@ async fn start_rejects_over_30() {
 
 #[tokio::test]
 async fn item_returns_completed_then_error_card() {
-    let app = create_test_app(default_test_config()).await;
-    let uid = login(&app, "erin").await;
+    let mut app = create_test_app(default_test_config()).await;
+    let uid = login(&mut app, "erin").await;
     configure_kagi(&app, uid).await;
 
     let mock = MockServer::start().await;

@@ -65,15 +65,16 @@ async fn setup_users(db: &Db) -> (i64, i64) {
     (admin.id, user.id)
 }
 
-async fn login(server: &TestServer, username: &str) {
-    server
+async fn login(server: &mut TestServer, username: &str) {
+    let login = server
         .post("/api/session")
         .json(&json!({
             "username": username,
             "password": "password123"
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    login.assert_status_ok();
+    common::apply_csrf(server, &login);
 }
 
 // ============================================================================
@@ -82,7 +83,7 @@ async fn login(server: &TestServer, username: &str) {
 
 #[tokio::test]
 async fn test_unread_page_renders_ssr_layout() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     let (admin_id, _) = setup_users(&app.db).await;
 
     // Give admin a feed (no entries) so the empty unread list is the genuine
@@ -106,7 +107,7 @@ async fn test_unread_page_renders_ssr_layout() {
     .await
     .unwrap();
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/").await;
     response.assert_status_ok();
@@ -130,10 +131,10 @@ async fn test_unread_page_renders_ssr_layout() {
 async fn test_unread_page_shows_onboarding_when_no_feeds() {
     // A brand-new account with no feeds gets the getting-started guide, not the
     // misleading "All caught up" empty state.
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/").await;
     response.assert_status_ok();
@@ -147,10 +148,10 @@ async fn test_unread_page_shows_onboarding_when_no_feeds() {
 
 #[tokio::test]
 async fn test_unread_page_while_masquerading() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     let (admin_id, user_id) = setup_users(&app.db).await;
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     // Start masquerading as user via the SSR form endpoint.
     app.server
@@ -224,10 +225,10 @@ async fn seed_one_entry(db: &Db, username: &str, slug: &str) -> i64 {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unread_page_entry_query_populates_reading_pane() {
-    let app = create_test_app_named(default_test_config(), "test_unread_entry_query_ok").await;
+    let mut app = create_test_app_named(default_test_config(), "test_unread_entry_query_ok").await;
     setup_users(&app.db).await;
     let entry_id = seed_one_entry(&app.db, "admin", "deep-link-ok").await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get(&format!("/?entry={entry_id}")).await;
     response.assert_status_ok();
@@ -262,9 +263,10 @@ async fn test_unread_page_entry_query_populates_reading_pane() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unread_page_entry_query_invalid_id_falls_back_to_empty_pane() {
-    let app = create_test_app_named(default_test_config(), "test_unread_entry_query_invalid").await;
+    let mut app =
+        create_test_app_named(default_test_config(), "test_unread_entry_query_invalid").await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     // No entries seeded, so id 99999 cannot resolve.
     let response = app.server.get("/?entry=99999").await;
@@ -285,12 +287,12 @@ async fn test_unread_page_entry_query_invalid_id_falls_back_to_empty_pane() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unread_page_entry_query_other_user_falls_back_to_empty_pane() {
-    let app =
+    let mut app =
         create_test_app_named(default_test_config(), "test_unread_entry_query_other_user").await;
     setup_users(&app.db).await; // creates `admin` and `user`
     // Entry belongs to `user`; we log in as `admin`.
     let entry_id = seed_one_entry(&app.db, "user", "cross-user").await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get(&format!("/?entry={entry_id}")).await;
     response.assert_status_ok();
@@ -311,10 +313,10 @@ async fn test_unread_page_entry_query_other_user_falls_back_to_empty_pane() {
 async fn test_starred_entries_page_entry_query_populates_reading_pane() {
     // The helper is shared, but exercise one of the non-unread routes too
     // so the wiring on a second handler is covered.
-    let app = create_test_app_named(default_test_config(), "test_starred_entry_query_ok").await;
+    let mut app = create_test_app_named(default_test_config(), "test_starred_entry_query_ok").await;
     setup_users(&app.db).await;
     let entry_id = seed_one_entry(&app.db, "admin", "starred-deep-link").await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app
         .server
@@ -335,10 +337,10 @@ async fn test_starred_entries_page_entry_query_populates_reading_pane() {
 
 #[tokio::test]
 async fn test_admin_page_while_masquerading() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     let (_admin_id, user_id) = setup_users(&app.db).await;
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     // Start masquerading via the SSR form endpoint.
     app.server
@@ -355,9 +357,9 @@ async fn test_admin_page_while_masquerading() {
 
 #[tokio::test]
 async fn test_user_settings_page_renders_ssr_content() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/user-settings").await;
     response.assert_status_ok();
@@ -380,9 +382,9 @@ async fn test_user_settings_page_renders_ssr_content() {
 
 #[tokio::test]
 async fn test_settings_page_renders_ssr_content() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/settings").await;
     response.assert_status_ok();
@@ -418,9 +420,9 @@ async fn test_settings_page_reflects_custom_config() {
         secret_generated: false,
         ..default_test_config()
     };
-    let app = create_test_app(config).await;
+    let mut app = create_test_app(config).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/settings").await;
     response.assert_status_ok();
@@ -447,9 +449,9 @@ async fn test_settings_page_reflects_auto_generated_image_proxy_secret() {
         secret_generated: true,
         ..default_test_config()
     };
-    let app = create_test_app(config).await;
+    let mut app = create_test_app(config).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/settings").await;
     response.assert_status_ok();
@@ -466,9 +468,9 @@ async fn test_settings_page_redacts_database_password() {
         database_url: "postgres://rdrs:sup3rs3cret@db.internal:5432/rdrs".to_string(),
         ..default_test_config()
     };
-    let app = create_test_app(config).await;
+    let mut app = create_test_app(config).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/settings").await;
     response.assert_status_ok();
@@ -483,9 +485,9 @@ async fn test_settings_page_redacts_database_password() {
 
 #[tokio::test]
 async fn test_settings_page_forbidden_for_non_admin() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "user").await;
+    login(&mut app.server, "user").await;
 
     // Non-admins are bounced to the login page rather than shown deployment
     // internals (database target, bind address, forward-auth headers).
@@ -560,9 +562,9 @@ async fn test_register_page_shows_disabled_after_first_user_in_single_mode() {
 
 #[tokio::test]
 async fn test_categories_page_with_flash() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app
         .server
@@ -583,9 +585,9 @@ async fn test_categories_page_with_flash() {
 
 #[tokio::test]
 async fn test_feeds_page_with_flash() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app
         .server
@@ -605,9 +607,9 @@ async fn test_feeds_page_with_flash() {
 
 #[tokio::test]
 async fn test_entries_page_with_flash() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app
         .server
@@ -628,9 +630,9 @@ async fn test_entries_page_with_flash() {
 
 #[tokio::test]
 async fn test_entries_page_renders_ssr_layout() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/entries").await;
     response.assert_status_ok();
@@ -643,9 +645,9 @@ async fn test_entries_page_renders_ssr_layout() {
 
 #[tokio::test]
 async fn test_summarized_entries_page_renders_ssr_layout() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/entries/summarized").await;
     response.assert_status_ok();
@@ -658,9 +660,9 @@ async fn test_summarized_entries_page_renders_ssr_layout() {
 
 #[tokio::test]
 async fn test_user_settings_page_with_flash() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app
         .server
@@ -692,10 +694,10 @@ async fn test_user_settings_page_with_flash() {
 
 #[tokio::test]
 async fn test_regular_user_unread_page_no_admin_link() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
-    login(&app.server, "user").await;
+    login(&mut app.server, "user").await;
 
     let response = app.server.get("/").await;
     response.assert_status_ok();
@@ -709,10 +711,10 @@ async fn test_regular_user_unread_page_no_admin_link() {
 
 #[tokio::test]
 async fn test_regular_user_cannot_access_admin_page() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
-    login(&app.server, "user").await;
+    login(&mut app.server, "user").await;
 
     let response = app.server.get("/admin").await;
     // Should redirect to login
@@ -731,7 +733,7 @@ async fn test_regular_user_cannot_access_admin_page() {
 
 #[tokio::test]
 async fn test_api_user_settings_returns_linkding_configured() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
     let config = serde_json::json!({
@@ -748,7 +750,7 @@ async fn test_api_user_settings_returns_linkding_configured() {
     )
     .unwrap();
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/api/user-settings").await;
     response.assert_status_ok();
@@ -759,7 +761,7 @@ async fn test_api_user_settings_returns_linkding_configured() {
 
 #[tokio::test]
 async fn test_api_user_settings_returns_custom_entries_per_page() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
     rdrs::db_execute!(
@@ -770,7 +772,7 @@ async fn test_api_user_settings_returns_custom_entries_per_page() {
     )
     .unwrap();
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/api/user-settings").await;
     response.assert_status_ok();
@@ -784,9 +786,9 @@ async fn test_api_user_settings_returns_custom_entries_per_page() {
 
 #[tokio::test]
 async fn test_read_entries_page() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/entries/read").await;
     response.assert_status_ok();
@@ -798,9 +800,9 @@ async fn test_read_entries_page() {
 
 #[tokio::test]
 async fn test_starred_entries_page() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/entries/starred").await;
     response.assert_status_ok();
@@ -812,9 +814,9 @@ async fn test_starred_entries_page() {
 
 #[tokio::test]
 async fn test_summarized_entries_page() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/entries/summarized").await;
     response.assert_status_ok();
@@ -826,9 +828,9 @@ async fn test_summarized_entries_page() {
 
 #[tokio::test]
 async fn test_search_page() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/search").await;
     response.assert_status_ok();
@@ -847,7 +849,7 @@ async fn test_search_page() {
 
 #[tokio::test]
 async fn test_search_page_with_results() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
     rdrs::db_execute!(
@@ -886,7 +888,7 @@ async fn test_search_page_with_results() {
     )
     .unwrap();
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/search?q=Quokka").await;
     response.assert_status_ok();
@@ -910,9 +912,9 @@ async fn test_search_page_with_results() {
 
 #[tokio::test]
 async fn test_search_page_no_results() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/search?q=zzznotfoundzzz").await;
     response.assert_status_ok();
@@ -926,9 +928,9 @@ async fn test_search_page_no_results() {
 
 #[tokio::test]
 async fn test_search_page_invalid_query_shows_error_no_results() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     // "(rust OR" — unbalanced parenthesis, url-encoded.
     let response = app.server.get("/search?q=%28rust%20OR").await;
@@ -941,9 +943,9 @@ async fn test_search_page_invalid_query_shows_error_no_results() {
 
 #[tokio::test]
 async fn test_search_page_valid_structured_query_renders_without_error() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/search?q=is%3Aunread").await;
     response.assert_status_ok();
@@ -954,9 +956,9 @@ async fn test_search_page_valid_structured_query_renders_without_error() {
 
 #[tokio::test]
 async fn test_search_page_has_syntax_help_panel() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/search").await;
     response.assert_status_ok();
@@ -972,18 +974,20 @@ async fn test_search_page_has_syntax_help_panel() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page() {
-    let app = create_test_app_named(default_test_config(), "test_category_entries_page").await;
+    let mut app = create_test_app_named(default_test_config(), "test_category_entries_page").await;
 
     app.server
         .post("/api/register")
         .json(&json!({ "username": "alice_ce", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_ce", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "Engineering")
@@ -1122,7 +1126,7 @@ async fn test_category_entries_page() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page_not_found() {
-    let app = create_test_app_named(
+    let mut app = create_test_app_named(
         default_test_config(),
         "test_category_entries_page_not_found",
     )
@@ -1133,11 +1137,13 @@ async fn test_category_entries_page_not_found() {
         .json(&json!({ "username": "alice_cnf", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_cnf", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let resp = app.server.get("/categories/999999/entries").await;
     assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
@@ -1154,7 +1160,7 @@ async fn test_category_entries_page_not_found() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page_other_user() {
-    let app = create_test_app_named(
+    let mut app = create_test_app_named(
         default_test_config(),
         "test_category_entries_page_other_user",
     )
@@ -1187,11 +1193,13 @@ async fn test_category_entries_page_other_user() {
     let cat_id: i64 = cat.id;
 
     // Log in as bob
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "bob_cou", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     // Bob tries to access alice's category entries — must be 404
     let resp = app
@@ -1207,18 +1215,21 @@ async fn test_category_entries_page_other_user() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page_load_more_fragment() {
-    let app = create_test_app_named(default_test_config(), "test_category_entries_page_lm").await;
+    let mut app =
+        create_test_app_named(default_test_config(), "test_category_entries_page_lm").await;
 
     app.server
         .post("/api/register")
         .json(&json!({ "username": "alice_cl", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_cl", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "LMCat")
@@ -1281,18 +1292,21 @@ async fn test_category_entries_page_load_more_fragment() {
 /// redirects back to the category page preserving `?q=`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_mark_read_scoped_search() {
-    let app = create_test_app_named(default_test_config(), "test_category_mark_read_scoped").await;
+    let mut app =
+        create_test_app_named(default_test_config(), "test_category_mark_read_scoped").await;
 
     app.server
         .post("/api/register")
         .json(&json!({ "username": "alice_mr", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_mr", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "MarkReadCat")
@@ -1387,18 +1401,20 @@ async fn test_category_mark_read_scoped_search() {
 /// `None/Some(id)` correctly into the shared `mark_read_scoped` helper).
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_mark_read_scoped_search() {
-    let app = create_test_app_named(default_test_config(), "test_feed_mark_read_scoped").await;
+    let mut app = create_test_app_named(default_test_config(), "test_feed_mark_read_scoped").await;
 
     app.server
         .post("/api/register")
         .json(&json!({ "username": "alice_fmr", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_fmr", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "FeedMarkReadCat")
@@ -1494,7 +1510,7 @@ async fn test_feed_mark_read_scoped_search() {
 /// mark exactly that one entry (leaving the already-read match untouched).
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
-    let app = create_test_app_named(
+    let mut app = create_test_app_named(
         default_test_config(),
         "test_category_matching_count_all_tab",
     )
@@ -1505,11 +1521,13 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
         .json(&json!({ "username": "alice_mc", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_mc", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "MatchCountCat")
@@ -1612,18 +1630,20 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page() {
-    let app = create_test_app_named(default_test_config(), "test_feed_entries_page").await;
+    let mut app = create_test_app_named(default_test_config(), "test_feed_entries_page").await;
 
     app.server
         .post("/api/register")
         .json(&json!({ "username": "alice_fe", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_fe", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "Tech")
@@ -1760,18 +1780,21 @@ async fn test_feed_entries_page() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_status_filter() {
-    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_status").await;
+    let mut app =
+        create_test_app_named(default_test_config(), "test_feed_entries_page_status").await;
 
     app.server
         .post("/api/register")
         .json(&json!({ "username": "alice_fst", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_fst", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "FST")
@@ -1938,7 +1961,7 @@ async fn test_feed_entries_page_status_filter() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_not_found() {
-    let app =
+    let mut app =
         create_test_app_named(default_test_config(), "test_feed_entries_page_not_found").await;
 
     app.server
@@ -1946,11 +1969,13 @@ async fn test_feed_entries_page_not_found() {
         .json(&json!({ "username": "alice_fnf", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_fnf", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let resp = app.server.get("/feeds/999999/entries").await;
     assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
@@ -1967,7 +1992,7 @@ async fn test_feed_entries_page_not_found() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_other_user() {
-    let app =
+    let mut app =
         create_test_app_named(default_test_config(), "test_feed_entries_page_other_user").await;
 
     // Register alice (owner of the feed)
@@ -2012,11 +2037,13 @@ async fn test_feed_entries_page_other_user() {
     let feed_id: i64 = feed.id;
 
     // Log in as bob
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "bob_fou", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     // Bob tries to access alice's feed entries — must be 404
     let resp = app.server.get(&format!("/feeds/{feed_id}/entries")).await;
@@ -2029,18 +2056,20 @@ async fn test_feed_entries_page_other_user() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page_load_more_fragment() {
-    let app = create_test_app_named(default_test_config(), "test_feed_entries_page_lm").await;
+    let mut app = create_test_app_named(default_test_config(), "test_feed_entries_page_lm").await;
 
     app.server
         .post("/api/register")
         .json(&json!({ "username": "alice_fl", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_fl", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
@@ -2110,7 +2139,7 @@ async fn test_feed_entries_page_load_more_fragment() {
 
 #[tokio::test]
 async fn test_feeds_page_renders_ssr_rows() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
     rdrs::db_execute!(
@@ -2129,7 +2158,7 @@ async fn test_feeds_page_renders_ssr_rows() {
     )
     .unwrap();
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/feeds").await;
     response.assert_status_ok();
@@ -2151,7 +2180,7 @@ async fn test_feeds_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_feed_edit_page_renders() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
     rdrs::db_execute!(
@@ -2171,7 +2200,7 @@ async fn test_feed_edit_page_renders() {
     )
     .unwrap();
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/feeds/1/edit").await;
     response.assert_status_ok();
@@ -2190,9 +2219,9 @@ async fn test_feed_edit_page_renders() {
 
 #[tokio::test]
 async fn test_feed_edit_page_not_found_renders_error_page() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/feeds/999999/edit").await;
     assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
@@ -2209,9 +2238,9 @@ async fn test_feed_edit_page_not_found_renders_error_page() {
 
 #[tokio::test]
 async fn test_unknown_route_logged_in_renders_chrome_404() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/this-page-does-not-exist").await;
     assert_eq!(response.status_code(), StatusCode::NOT_FOUND);
@@ -2238,9 +2267,9 @@ async fn test_unknown_route_logged_out_redirects_to_login() {
 
 #[tokio::test]
 async fn test_feeds_import_page_renders() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/feeds/import").await;
     response.assert_status_ok();
@@ -2254,7 +2283,7 @@ async fn test_feeds_import_page_renders() {
 
 #[tokio::test]
 async fn test_categories_page_renders_ssr_content() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
     rdrs::db_execute!(
@@ -2273,7 +2302,7 @@ async fn test_categories_page_renders_ssr_content() {
     )
     .unwrap();
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/categories").await;
     response.assert_status_ok();
@@ -2298,9 +2327,9 @@ async fn test_categories_page_renders_ssr_content() {
 
 #[tokio::test]
 async fn test_categories_page_renders_empty_state() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/categories").await;
     response.assert_status_ok();
@@ -2315,9 +2344,9 @@ async fn test_categories_page_renders_empty_state() {
 
 #[tokio::test]
 async fn test_admin_page_renders_ssr_content() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/admin").await;
     response.assert_status_ok();
@@ -2340,7 +2369,7 @@ async fn test_admin_page_renders_ssr_content() {
 
 #[tokio::test]
 async fn test_feeds_page_filter_errors_only_renders_error_rows() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
     rdrs::db_execute!(
@@ -2368,7 +2397,7 @@ async fn test_feeds_page_filter_errors_only_renders_error_rows() {
     )
     .unwrap();
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/feeds?filter=errors").await;
     response.assert_status_ok();
@@ -2381,7 +2410,7 @@ async fn test_feeds_page_filter_errors_only_renders_error_rows() {
 
 #[tokio::test]
 async fn test_feeds_page_filter_by_category_excludes_other_rows() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
 
     rdrs::db_execute!(
@@ -2415,7 +2444,7 @@ async fn test_feeds_page_filter_by_category_excludes_other_rows() {
     )
     .unwrap();
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/feeds?category=1").await;
     response.assert_status_ok();
@@ -2492,9 +2521,9 @@ async fn test_register_page_does_not_load_logged_in_chrome() {
 
 #[tokio::test]
 async fn test_logged_in_page_loads_full_chrome() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     // /settings extends app_layout.html — same chrome as every other
     // logged-in route.
@@ -2523,7 +2552,7 @@ async fn test_logged_in_page_loads_full_chrome() {
 
 #[tokio::test]
 async fn test_unread_page_renders_entry_rows() {
-    let app = create_test_app_named(default_test_config(), "test_pages_unread_ssr").await;
+    let mut app = create_test_app_named(default_test_config(), "test_pages_unread_ssr").await;
 
     // Register and login as alice
     app.server
@@ -2531,11 +2560,13 @@ async fn test_unread_page_renders_entry_rows() {
         .json(&json!({ "username": "alice_unread", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_unread", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     // Get user id
     let user_id: i64 = rdrs::query_scalar!(
@@ -2646,18 +2677,20 @@ async fn test_unread_page_renders_entry_rows() {
 
 #[tokio::test]
 async fn test_entries_page_renders_ssr_rows() {
-    let app = create_test_app_named(default_test_config(), "test_pages_entries_ssr").await;
+    let mut app = create_test_app_named(default_test_config(), "test_pages_entries_ssr").await;
 
     app.server
         .post("/api/register")
         .json(&json!({ "username": "alice_entries", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_entries", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(
         &app.db,
@@ -2743,18 +2776,20 @@ async fn test_entries_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_read_entries_page_renders_ssr_rows() {
-    let app = create_test_app_named(default_test_config(), "test_pages_read_ssr").await;
+    let mut app = create_test_app_named(default_test_config(), "test_pages_read_ssr").await;
 
     app.server
         .post("/api/register")
         .json(&json!({ "username": "alice_read", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_read", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(
         &app.db,
@@ -2852,18 +2887,20 @@ async fn test_read_entries_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_starred_entries_page_renders_ssr_rows() {
-    let app = create_test_app_named(default_test_config(), "test_pages_starred_ssr").await;
+    let mut app = create_test_app_named(default_test_config(), "test_pages_starred_ssr").await;
 
     app.server
         .post("/api/register")
         .json(&json!({ "username": "alice_starred", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_starred", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(
         &app.db,
@@ -2963,18 +3000,20 @@ async fn test_starred_entries_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_summarized_entries_page_renders_ssr_rows() {
-    let app = create_test_app_named(default_test_config(), "test_pages_summarized_ssr").await;
+    let mut app = create_test_app_named(default_test_config(), "test_pages_summarized_ssr").await;
 
     app.server
         .post("/api/register")
         .json(&json!({ "username": "alice_summarized", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "alice_summarized", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(
         &app.db,
@@ -3087,18 +3126,20 @@ async fn test_summarized_entries_page_renders_ssr_rows() {
 
 #[tokio::test]
 async fn test_unread_load_more_uses_keyset_cursor() {
-    let app = create_test_app_named(default_test_config(), "test_unread_keyset").await;
+    let mut app = create_test_app_named(default_test_config(), "test_unread_keyset").await;
 
     app.server
         .post("/api/register")
         .json(&json!({ "username": "kuser", "password": "pw123456" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&json!({ "username": "kuser", "password": "pw123456" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "K")
@@ -3196,18 +3237,20 @@ async fn test_settings_page_groups_and_forward_auth() {
     config.auth_proxy_header = "Remote-User".to_string();
     config.trusted_proxy_networks = rdrs::config::parse_trusted_networks("10.0.0.0/8").unwrap();
     config.auth_proxy_admin_group = "admins".to_string();
-    let app = create_test_app_named(config, "test_settings_groups_fa").await;
+    let mut app = create_test_app_named(config, "test_settings_groups_fa").await;
 
     app.server
         .post("/api/register")
         .json(&serde_json::json!({ "username": "admin", "password": "password123" }))
         .await
         .assert_status(StatusCode::CREATED);
-    app.server
+    let __login = app
+        .server
         .post("/api/session")
         .json(&serde_json::json!({ "username": "admin", "password": "password123" }))
-        .await
-        .assert_status_ok();
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
 
     let res = app.server.get("/settings").await;
     res.assert_status_ok();

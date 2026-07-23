@@ -5,9 +5,27 @@
 //! definitions stay in their own files because each needs a unique
 //! shared-memory database name to stay isolated from the other test binaries.
 
+use axum_test::{TestResponse, TestServer};
 use rdrs::Config;
 
+/// Echo the server-set `csrf_token` cookie back as a default `X-CSRF-Token`
+/// header on every later request from `server` — exactly what the browser's
+/// `csrf.js` does once a session exists.
+///
+/// Call it with the `POST /api/session` (or setup) response, which sets the CSRF
+/// cookie for the freshly created session. Without it, an authenticated
+/// mutation is rejected by the synchronizer-token guard, since a `save_cookies`
+/// test server stores the CSRF cookie but never turns it into a header on its
+/// own. A request with no session cookie needs none of this — the guard lets it
+/// through to the handler's own auth check.
+#[allow(dead_code)] // not every test binary performs authenticated mutations
+pub fn apply_csrf(server: &mut TestServer, login_response: &TestResponse) {
+    let token = login_response.cookie("csrf_token").value().to_string();
+    server.add_header("x-csrf-token", token);
+}
+
 /// Default in-memory `Config` shared across the integration test suites.
+#[allow(dead_code)] // a few suites build their own Config inline
 pub fn default_test_config() -> Config {
     Config {
         database_url: ":memory:".to_string(),

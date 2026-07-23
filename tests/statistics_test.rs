@@ -1,6 +1,8 @@
 //! Integration tests for the SSR `/statistics` page and the
 //! shared `/api/me` + `/api/sidebar` endpoints used by the chrome.
 
+mod common;
+
 use std::sync::Arc;
 
 use axum::http::StatusCode;
@@ -73,15 +75,16 @@ async fn setup_users(db: &Db) -> (i64, i64) {
     (admin.id, user.id)
 }
 
-async fn login(server: &TestServer, username: &str) {
-    server
+async fn login(server: &mut TestServer, username: &str) {
+    let login = server
         .post("/api/session")
         .json(&json!({
             "username": username,
             "password": "password123"
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    login.assert_status_ok();
+    common::apply_csrf(server, &login);
 }
 
 async fn seed_entries(db: &Db, admin_id: i64) {
@@ -151,10 +154,10 @@ async fn test_statistics_page_requires_login() {
 
 #[tokio::test]
 async fn test_statistics_page_renders_ssr_content() {
-    let app = create_test_app("test_stats_ssr").await;
+    let mut app = create_test_app("test_stats_ssr").await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/statistics?period=all").await;
     response.assert_status_ok();
@@ -176,9 +179,9 @@ async fn test_statistics_page_renders_ssr_content() {
 
 #[tokio::test]
 async fn test_statistics_page_default_period_is_7d() {
-    let app = create_test_app("test_stats_default_period").await;
+    let mut app = create_test_app("test_stats_default_period").await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/statistics").await;
     response.assert_status_ok();
@@ -189,9 +192,9 @@ async fn test_statistics_page_default_period_is_7d() {
 
 #[tokio::test]
 async fn test_statistics_page_period_30d() {
-    let app = create_test_app("test_stats_period_30d").await;
+    let mut app = create_test_app("test_stats_period_30d").await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/statistics?period=30d").await;
     response.assert_status_ok();
@@ -201,9 +204,9 @@ async fn test_statistics_page_period_30d() {
 
 #[tokio::test]
 async fn test_statistics_page_invalid_period_falls_back_to_7d() {
-    let app = create_test_app("test_stats_invalid_period").await;
+    let mut app = create_test_app("test_stats_invalid_period").await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/statistics?period=invalid").await;
     response.assert_status_ok();
@@ -213,9 +216,9 @@ async fn test_statistics_page_invalid_period_falls_back_to_7d() {
 
 #[tokio::test]
 async fn test_statistics_page_admin_sees_sitewide() {
-    let app = create_test_app("test_stats_admin").await;
+    let mut app = create_test_app("test_stats_admin").await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/statistics").await;
     response.assert_status_ok();
@@ -227,9 +230,9 @@ async fn test_statistics_page_admin_sees_sitewide() {
 
 #[tokio::test]
 async fn test_statistics_page_user_no_sitewide() {
-    let app = create_test_app("test_stats_user_no_sitewide").await;
+    let mut app = create_test_app("test_stats_user_no_sitewide").await;
     setup_users(&app.db).await;
-    login(&app.server, "user").await;
+    login(&mut app.server, "user").await;
 
     let response = app.server.get("/statistics").await;
     response.assert_status_ok();
@@ -239,9 +242,9 @@ async fn test_statistics_page_user_no_sitewide() {
 
 #[tokio::test]
 async fn test_statistics_page_custom_period() {
-    let app = create_test_app("test_stats_custom").await;
+    let mut app = create_test_app("test_stats_custom").await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app
         .server
@@ -256,9 +259,9 @@ async fn test_statistics_page_custom_period() {
 
 #[tokio::test]
 async fn test_statistics_page_invalid_custom_range_falls_back() {
-    let app = create_test_app("test_stats_bad_custom").await;
+    let mut app = create_test_app("test_stats_bad_custom").await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app
         .server
@@ -272,9 +275,9 @@ async fn test_statistics_page_invalid_custom_range_falls_back() {
 
 #[tokio::test]
 async fn test_statistics_page_masquerade_hides_admin_section() {
-    let app = create_test_app("test_stats_masq").await;
+    let mut app = create_test_app("test_stats_masq").await;
     let (_admin_id, user_id) = setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     app.server
         .post(&format!("/admin/users/{user_id}/masquerade"))
@@ -289,10 +292,10 @@ async fn test_statistics_page_masquerade_hides_admin_section() {
 
 #[tokio::test]
 async fn test_statistics_page_embeds_sidebar_bootstrap() {
-    let app = create_test_app("test_stats_sidebar_bootstrap").await;
+    let mut app = create_test_app("test_stats_sidebar_bootstrap").await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/statistics").await;
     response.assert_status_ok();
@@ -308,10 +311,10 @@ async fn test_statistics_page_embeds_sidebar_bootstrap() {
 
 #[tokio::test]
 async fn test_statistics_page_renders_overview_counts() {
-    let app = create_test_app("test_stats_overview").await;
+    let mut app = create_test_app("test_stats_overview").await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/statistics?period=all").await;
     response.assert_status_ok();
@@ -326,7 +329,7 @@ async fn test_statistics_page_renders_overview_counts() {
 
 #[tokio::test]
 async fn test_statistics_page_direct_labels_single_max_day() {
-    let app = create_test_app("test_stats_is_max").await;
+    let mut app = create_test_app("test_stats_is_max").await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     // seed_entries marks entries 1..=3 read at 2026-03-15, so the daily-read
     // chart has a single busiest bucket within a custom window covering that
@@ -334,7 +337,7 @@ async fn test_statistics_page_direct_labels_single_max_day() {
     // the direct-labeled `stats-bar-value` (ties must not spam a number on
     // every column).
     seed_entries(&app.db, admin_id).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app
         .server
@@ -356,9 +359,9 @@ async fn test_statistics_page_direct_labels_single_max_day() {
 
 #[tokio::test]
 async fn test_api_me_returns_role_and_flags() {
-    let app = create_test_app("test_api_me").await;
+    let mut app = create_test_app("test_api_me").await;
     setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/api/me").await;
     response.assert_status_ok();
@@ -371,9 +374,9 @@ async fn test_api_me_returns_role_and_flags() {
 
 #[tokio::test]
 async fn test_api_me_masquerade_flag_set() {
-    let app = create_test_app("test_api_me_masq").await;
+    let mut app = create_test_app("test_api_me_masq").await;
     let (_admin_id, user_id) = setup_users(&app.db).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
     app.server
         .post(&format!("/admin/users/{user_id}/masquerade"))
         .await
@@ -390,10 +393,10 @@ async fn test_api_me_masquerade_flag_set() {
 
 #[tokio::test]
 async fn test_api_sidebar_returns_categories_with_unread() {
-    let app = create_test_app("test_api_sidebar").await;
+    let mut app = create_test_app("test_api_sidebar").await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let response = app.server.get("/api/sidebar").await;
     response.assert_status_ok();
@@ -409,7 +412,7 @@ async fn test_api_sidebar_returns_categories_with_unread() {
 
 #[tokio::test]
 async fn test_api_sidebar_total_summarized() {
-    let app = create_test_app("test_api_sidebar_total_summarized").await;
+    let mut app = create_test_app("test_api_sidebar_total_summarized").await;
     let (admin_id, _user_id) = setup_users(&app.db).await;
     seed_entries(&app.db, admin_id).await;
 
@@ -425,7 +428,7 @@ async fn test_api_sidebar_total_summarized() {
         .await
         .unwrap();
 
-    login(&app.server, "admin").await;
+    login(&mut app.server, "admin").await;
 
     let body: Value = app.server.get("/api/sidebar").await.json();
     assert_eq!(body["total_summarized"], 1);

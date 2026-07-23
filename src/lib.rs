@@ -322,6 +322,21 @@ pub fn create_router(state: AppState) -> Router {
             axum::http::StatusCode::REQUEST_TIMEOUT,
             SERVER_REQUEST_TIMEOUT,
         ))
+        // Synchronizer-token CSRF guard (second line): runs just before the
+        // handler so it sees the session cookie `anonymous_session` may have
+        // injected on this same request.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::csrf::csrf_guard,
+        ))
+        // Mint a signed (row-less) session + readable CSRF cookie for a
+        // logged-out visitor, so every form — login and register included —
+        // carries a token. Layered outside `csrf_guard` so the guard sees the
+        // cookie, and inside `forward_auth` so a real forward-auth session wins.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::csrf::anonymous_session,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::forward_auth::forward_auth,

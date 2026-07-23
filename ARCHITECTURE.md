@@ -435,11 +435,29 @@ Two independent lines, so a bypass of one is not a bypass of both.
   CSRF vector and pass through. `Sec-Fetch-Site` is trusted first; the `Origin`
   path compares host only, so it survives a TLS-terminating proxy where the
   browser's `https://` `Origin` meets a scheme-less forwarded `Host`.
-- **Second line — synchronizer token** (`secret::derive_csrf` / `verify_csrf`).
-  A per-session token, HMAC of the session token under the `csrf:` domain, so it
-  needs no column and no query and cannot equal the session cookie's own
-  signature. The primitives exist; embedding the token in forms and enforcing it
-  is the follow-up change.
+- **Second line — synchronizer token** (`middleware::csrf::csrf_guard`, in
+  place). A per-session token, `secret::derive_csrf` = HMAC of the session token
+  under the `csrf:` domain, so it needs no column and no query and cannot equal
+  the session cookie's own signature. On every unsafe method `csrf_guard`
+  re-derives the expected token from the signed session cookie (no DB round trip)
+  and requires the request to echo it — via the `X-CSRF-Token` header or, failing
+  that, a `_csrf` urlencoded form field (the body is buffered and rebuilt so the
+  handler still reads it). The token reaches the page as a readable (non-`HttpOnly`)
+  `csrf_token` cookie, which `static/js/csrf.js` copies onto same-origin `fetch`
+  requests and into native POST forms; the cookie is never trusted as the
+  credential, only the derived MAC is. `multipart/form-data` is passed through and
+  self-validated by the OPML-import handler (which also accepts `X-CSRF-Token`);
+  the GReader prefixes are skipped (bearer-authenticated). A request with **no**
+  session cookie is passed through, not rejected — a forged authenticated action
+  must ride the victim's cookie, and login-CSRF is already caught by the first
+  line.
+- **Anonymous sessions** (`middleware::csrf::anonymous_session`). So the login
+  and register forms carry a token before any real session exists, a logged-out
+  visitor to an HTML page receives a signed `session_token` cookie that backs no
+  `session` row (`find_by_token` finds nothing, so they stay unauthenticated)
+  plus its `csrf_token`. Layered inside `forward_auth` so a real forward-auth
+  session's `Set-Cookie` wins; skipped for `/api`, `/static`, `/favicon`,
+  `/health`, and the GReader prefixes so shared caches are never cookie-poisoned.
 
 ### Password Hashing
 

@@ -251,9 +251,14 @@ pub async fn finish_authentication(
         &state.config.secret,
         state.config.cookie_secure,
     );
+    let csrf = crate::middleware::build_csrf_cookie(
+        &new_session.session_token,
+        &state.config.secret,
+        state.config.cookie_secure,
+    );
 
     Ok((
-        jar.add(cookie),
+        jar.add(cookie).add(csrf),
         Json(FinishAuthenticationResponse {
             id: db_user.id,
             username: db_user.username,

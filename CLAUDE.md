@@ -111,8 +111,14 @@ the cross-cutting facts that span multiple files.
 - **Security cross-cuts:** one root key (`RDRS_SECRET`) backs every signature
   through domain-separated derivation in `secret.rs` — the signed session cookie
   (`<token>.<hmac>`), the HMAC-SHA256 image proxy (`services/image_proxy.rs`),
-  and the GReader post token (`handlers/greader/auth.rs`); Ammonia HTML
-  sanitization + tracking-param/pixel removal (`services/sanitize.rs`); shared
-  SSRF validation (`utils/url_validation.rs`) guarding both the readability
-  fetcher and the proxy; Argon2id password hashing; WebAuthn/passkey auth
-  (`auth/webauthn.rs`).
+  the GReader post token (`handlers/greader/auth.rs`), and the CSRF token
+  (`derive_csrf`, `csrf:` domain); two-line CSRF defence in `middleware/csrf.rs`
+  — a stateless `csrf_origin_guard` (`Sec-Fetch-Site`/`Origin` vs `Host`) plus a
+  synchronizer-token `csrf_guard` that re-derives the per-session token from the
+  session cookie and requires it back via the `X-CSRF-Token` header or `_csrf`
+  field (delivered by the readable `csrf_token` cookie + `static/js/csrf.js`);
+  `anonymous_session` gives logged-out HTML pages a DB-less signed session so the
+  login form still carries a token; Ammonia HTML sanitization +
+  tracking-param/pixel removal (`services/sanitize.rs`); shared SSRF validation
+  (`utils/url_validation.rs`) guarding both the readability fetcher and the proxy;
+  Argon2id password hashing; WebAuthn/passkey auth (`auth/webauthn.rs`).
