@@ -91,15 +91,16 @@ async fn setup_user_with_entry(db: &Db, username: &str, password: &str) -> (i64,
     (user.id, e.id)
 }
 
-async fn login(server: &TestServer, username: &str, password: &str) {
-    server
+async fn login(server: &mut TestServer, username: &str, password: &str) {
+    let login = server
         .post("/api/session")
         .json(&json!({
             "username": username,
             "password": password
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    login.assert_status_ok();
+    common::apply_csrf(server, &login);
 }
 
 // ============================================================================
@@ -108,9 +109,9 @@ async fn login(server: &TestServer, username: &str, password: &str) {
 
 #[tokio::test]
 async fn test_cancel_clears_failed_summary() {
-    let app = create_test_app(default_test_config(), "test_cancel_clears_failed").await;
+    let mut app = create_test_app(default_test_config(), "test_cancel_clears_failed").await;
     let (uid, eid) = setup_user_with_entry(&app.db, "user1", "password123").await;
-    login(&app.server, "user1", "password123").await;
+    login(&mut app.server, "user1", "password123").await;
 
     // Seed a failed summary record
     rdrs::models::entry_summary::upsert_pending(&app.db, uid, eid)
@@ -140,7 +141,7 @@ async fn test_cancel_clears_failed_summary() {
 
 #[tokio::test]
 async fn test_cancel_non_owner_returns_404() {
-    let app = create_test_app(default_test_config(), "test_cancel_non_owner").await;
+    let mut app = create_test_app(default_test_config(), "test_cancel_non_owner").await;
 
     // Create owner user with an entry
     let (_uid1, eid) = setup_user_with_entry(&app.db, "owner", "password123").await;
@@ -152,7 +153,7 @@ async fn test_cancel_non_owner_returns_404() {
         .unwrap();
 
     // Login as attacker
-    login(&app.server, "attacker", "password456").await;
+    login(&mut app.server, "attacker", "password456").await;
 
     // Try to cancel the owner's entry
     let response = app
@@ -168,10 +169,10 @@ async fn test_cancel_non_owner_returns_404() {
 
 #[tokio::test]
 async fn summarize_emits_pending_event() {
-    let app = create_test_app(default_test_config(), "test_summarize_emits_pending").await;
+    let mut app = create_test_app(default_test_config(), "test_summarize_emits_pending").await;
     let mut sub = app.state.events.subscribe();
     let (uid, eid) = setup_user_with_entry(&app.db, "pendinguser", "password123").await;
-    login(&app.server, "pendinguser", "password123").await;
+    login(&mut app.server, "pendinguser", "password123").await;
 
     app.server
         .post(&format!("/entries/{eid}/summarize"))
@@ -198,9 +199,9 @@ async fn summarize_emits_pending_event() {
 
 #[tokio::test]
 async fn test_cancel_removes_inflight_token() {
-    let app = create_test_app(default_test_config(), "test_cancel_inflight_token").await;
+    let mut app = create_test_app(default_test_config(), "test_cancel_inflight_token").await;
     let (uid, eid) = setup_user_with_entry(&app.db, "tokenuser", "password123").await;
-    login(&app.server, "tokenuser", "password123").await;
+    login(&mut app.server, "tokenuser", "password123").await;
 
     // Seed a pending summary record so delete has a row
     rdrs::models::entry_summary::upsert_pending(&app.db, uid, eid)

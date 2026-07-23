@@ -1,6 +1,7 @@
 use axum::{
     Form,
     extract::{Multipart, Path, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 use serde::Deserialize;
@@ -352,26 +353,47 @@ pub async fn fetch_metadata_form(
 pub async fn import_opml_form(
     State(state): State<AppState>,
     auth_user: AuthUser,
+    headers: axum::http::HeaderMap,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
+    // This route is multipart, so `csrf_guard` passes it through unread; the
+    // token is validated here instead. Browsers inject it as the `_csrf` field
+    // via `csrf.js`; programmatic clients may instead send the `X-CSRF-Token`
+    // header (mirroring the patched `fetch`). Either source is accepted. The
+    // whole form is read (no early break) so the field is seen wherever it sits
+    // in the part order.
     let mut content = String::new();
+    let mut csrf = headers
+        .get(crate::middleware::CSRF_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
     while let Ok(Some(field)) = multipart.next_field().await {
         let name = field.name().unwrap_or("").to_string();
-        if name != "file" && name != "content" {
+        if name != "file" && name != "content" && name != "_csrf" {
             continue;
         }
         let Ok(bytes) = field.bytes().await else {
             continue;
         };
-        if bytes.is_empty() {
+        let Ok(text) = std::str::from_utf8(&bytes) else {
             continue;
-        }
-        if let Ok(text) = std::str::from_utf8(&bytes)
-            && !text.trim().is_empty()
-        {
+        };
+        if name == "_csrf" {
+            let field_token = text.trim();
+            if !field_token.is_empty() {
+                csrf = field_token.to_string();
+            }
+        } else if content.trim().is_empty() && !text.trim().is_empty() {
             content = text.to_string();
-            break;
         }
+    }
+    if !crate::secret::verify_csrf(
+        &state.config.secret,
+        &auth_user.session.session_token,
+        &csrf,
+    ) {
+        return StatusCode::FORBIDDEN.into_response();
     }
     if content.trim().is_empty() {
         return FlashRedirect::error(

@@ -132,7 +132,14 @@ async fn test_untrusted_peer_ignores_header() {
 
     let res = server.get("/").add_header("Remote-User", "alice").await;
 
-    assert!(res.maybe_cookie("session_token").is_none());
+    // The untrusted peer's header is ignored, so no forward-auth session is
+    // established: the request stays unauthenticated and the protected home page
+    // redirects it to /login. A logged-out visitor still receives an anonymous,
+    // DB-less `session_token` from `anonymous_session` (it only carries a CSRF
+    // token, backs no `session` row), so the meaningful assertion is that they
+    // were *not* authenticated as alice — not the mere absence of the cookie.
+    assert!(res.status_code().is_redirection());
+    assert_eq!(res.header("location"), "/login");
 }
 
 #[tokio::test]

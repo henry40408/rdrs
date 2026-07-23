@@ -112,9 +112,17 @@ pub async fn login(
         &state.config.secret,
         state.config.cookie_secure,
     );
+    // Refresh the readable CSRF cookie to match the new session token: the
+    // token the visitor was carrying was derived from their pre-login
+    // (anonymous) session and no longer verifies.
+    let csrf = crate::middleware::build_csrf_cookie(
+        &new_session.session_token,
+        &state.config.secret,
+        state.config.cookie_secure,
+    );
 
     Ok((
-        jar.add(cookie),
+        jar.add(cookie).add(csrf),
         Json(LoginResponse {
             id: user.id,
             username: user.username,
@@ -137,8 +145,13 @@ pub async fn logout(
     session::delete_session(&state.db, &token).await?;
 
     // Removal must match the Path=/ the cookie was set with, or the browser
-    // keeps the (now-invalid) session_token cookie. Mirrors flash.rs.
+    // keeps the (now-invalid) session_token cookie. Mirrors flash.rs. The
+    // readable CSRF cookie is cleared alongside it; the next page load mints a
+    // fresh anonymous pair, so a stale token cannot linger and 403 the re-login.
     let removal = Cookie::build((SESSION_COOKIE_NAME, "")).path("/").build();
+    let csrf_removal = Cookie::build((crate::middleware::CSRF_COOKIE_NAME, ""))
+        .path("/")
+        .build();
 
     let redirect_to = state
         .config
@@ -146,5 +159,8 @@ pub async fn logout(
         .clone()
         .unwrap_or_else(|| "/login".to_string());
 
-    Ok((jar.remove(removal), Json(LogoutResponse { redirect_to })))
+    Ok((
+        jar.remove(removal).remove(csrf_removal),
+        Json(LogoutResponse { redirect_to }),
+    ))
 }

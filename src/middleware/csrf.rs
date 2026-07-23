@@ -24,11 +24,70 @@
 //! standard deployment without a configured public URL.
 
 use axum::{
-    extract::Request,
-    http::{Method, StatusCode, header},
+    body::Body,
+    extract::{Request, State},
+    http::{HeaderValue, Method, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use axum_extra::extract::CookieJar;
+use axum_extra::extract::cookie::{Cookie, SameSite};
+use time::Duration;
+
+use crate::AppState;
+use crate::middleware::auth::{build_session_cookie, session_token_from_jar};
+use crate::models::session::{SESSION_ABSOLUTE_MAX_DAYS, generate_token};
+use crate::secret::{derive_csrf, verify_csrf};
+
+/// Readable (non-`HttpOnly`) cookie carrying the CSRF token, so page JavaScript
+/// can echo it back as the `X-CSRF-Token` header or inject it into a form. It is
+/// *not* the credential the guard trusts — [`csrf_guard`] always re-derives the
+/// expected token from the signed session cookie — so exposing it to script is
+/// safe: a cross-origin page can neither read this cookie nor compute its value.
+pub const CSRF_COOKIE_NAME: &str = "csrf_token";
+
+/// Header a browser echoes the token back in for `fetch`-driven mutations.
+pub const CSRF_HEADER: &str = "x-csrf-token";
+
+/// The form field carrying the token on a body-submitted POST.
+const CSRF_FIELD: &str = "_csrf";
+
+/// Path prefixes exempt from the synchronizer-token guard: the Google Reader
+/// surface authenticates by bearer token or its own `T` post token, not by an
+/// ambient cookie, so a browser CSRF cannot forge those calls.
+const CSRF_SKIP_PREFIXES: &[&str] = &["/reader", "/accounts", "/api/greader.php"];
+
+/// Path prefixes for which no anonymous session is minted: static assets and
+/// health must stay cacheable (a `Set-Cookie` would poison shared caches), and
+/// the machine APIs get their cookie, if any, from a real page load. Every HTML
+/// page a form is rendered on lives outside these, so the token is always
+/// available where it is needed.
+const ANON_SKIP_PREFIXES: &[&str] = &[
+    "/api",
+    "/reader",
+    "/accounts",
+    "/static",
+    "/favicon",
+    "/health",
+];
+
+/// Upper bound on a buffered request body when reading the `_csrf` field. Browser
+/// form POSTs are small; 1 MiB caps what a malicious client could force us to
+/// hold in memory.
+const CSRF_MAX_BODY_BYTES: usize = 1 << 20;
+
+/// Build the readable CSRF cookie for a session token. Mirrors the session
+/// cookie's `Path`, `SameSite`, `Secure`, and `Max-Age` so the two travel
+/// together, but is deliberately **not** `HttpOnly` — script must read it.
+pub fn build_csrf_cookie(session_token: &str, secret: &[u8], secure: bool) -> Cookie<'static> {
+    Cookie::build((CSRF_COOKIE_NAME, derive_csrf(secret, session_token)))
+        .path("/")
+        .http_only(false)
+        .secure(secure)
+        .same_site(SameSite::Lax)
+        .max_age(Duration::days(SESSION_ABSOLUTE_MAX_DAYS))
+        .build()
+}
 
 /// Reject a state-changing request that is provably cross-site. See the module
 /// docs for the classification. Safe methods (GET/HEAD/OPTIONS/TRACE) never
@@ -103,6 +162,173 @@ fn strip_port(authority: &str) -> String {
         .rsplit_once(':')
         .map_or(authority, |(host, _)| host)
         .to_ascii_lowercase()
+}
+
+/// Give a logged-out visitor a signed session cookie so every page — the login
+/// and register forms included — can carry a CSRF token, and make sure a
+/// readable [`CSRF_COOKIE_NAME`] cookie is present for whatever session the
+/// request ends up with.
+///
+/// The token is signed but backs no `session` row, so the visitor stays
+/// unauthenticated (`find_by_token` finds nothing) while still holding a token
+/// the guard can verify. Both cookies are injected into *this* request as well
+/// as set on the response, so [`csrf_guard`] and the handler see them on the
+/// same round trip.
+///
+/// Layered *inside* `forward_auth` (see `crate::app`): when both would establish
+/// a session, forward-auth must win, so its `Set-Cookie` has to be the last one
+/// emitted. A request that already carries a valid session cookie keeps it —
+/// only its missing CSRF cookie is filled in, which is what carries existing
+/// sessions across the upgrade that introduced this cookie.
+pub async fn anonymous_session(
+    State(state): State<AppState>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    if ANON_SKIP_PREFIXES
+        .iter()
+        .any(|p| req.uri().path().starts_with(p))
+    {
+        return next.run(req).await;
+    }
+    let secret = &state.config.secret;
+    let secure = state.config.cookie_secure;
+    let jar = CookieJar::from_headers(req.headers());
+
+    if let Some(token) = session_token_from_jar(&jar, secret) {
+        // A real (or already-anonymous) session: leave it untouched, but mint
+        // the readable CSRF cookie if it is missing — e.g. a session cookie that
+        // predates this feature, which must not have its POSTs start 403ing.
+        if jar.get(CSRF_COOKIE_NAME).is_none() {
+            let csrf = build_csrf_cookie(&token, secret, secure);
+            set_request_cookie(&mut req, &csrf);
+            return with_set_cookies(next.run(req).await, &[csrf]);
+        }
+        return next.run(req).await;
+    }
+
+    // No session at all: mint an anonymous one plus its CSRF cookie.
+    let token = generate_token();
+    let session = build_session_cookie(&token, secret, secure);
+    let csrf = build_csrf_cookie(&token, secret, secure);
+    set_request_cookie(&mut req, &session);
+    set_request_cookie(&mut req, &csrf);
+    with_set_cookies(next.run(req).await, &[session, csrf])
+}
+
+/// Synchronizer-token CSRF guard, the second line behind [`csrf_origin_guard`].
+///
+/// On every state-changing method it requires the request to prove it holds the
+/// session's token, taken from the `X-CSRF-Token` header or, failing that, the
+/// `_csrf` urlencoded form field (the body is buffered and rebuilt so the
+/// downstream handler still reads it). The expected token is re-derived from the
+/// signed session cookie via [`verify_csrf`] — a MAC over a known input — so this
+/// costs no database round trip and the readable CSRF cookie is never trusted as
+/// the credential.
+///
+/// `multipart/form-data` bodies are passed through unread: the one multipart
+/// route (OPML import) validates the field itself, since buffering and
+/// re-streaming a file upload here would be wasteful. The Google Reader prefixes
+/// are skipped entirely — they authenticate by bearer token, not a cookie.
+pub async fn csrf_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    if is_safe(req.method()) {
+        return next.run(req).await;
+    }
+    if CSRF_SKIP_PREFIXES
+        .iter()
+        .any(|p| req.uri().path().starts_with(p))
+    {
+        return next.run(req).await;
+    }
+
+    let secret = &state.config.secret;
+    // An unsigned or tampered session cookie never resolves, so no submitted
+    // token could match it.
+    //
+    // A request with *no* session cookie is passed through, not rejected. A CSRF
+    // attack necessarily rides the victim's session cookie — the browser attaches
+    // it automatically — so a cookie-less request cannot be a forged
+    // authenticated action: it reaches a handler that will reject it on its own
+    // `AuthUser` check. Login-CSRF, the one cookie-less case worth guarding, is
+    // already stopped by `csrf_origin_guard`. In the browser, `anonymous_session`
+    // means a page-driven POST always has a cookie by the time it is submitted,
+    // so this only ever relaxes direct, unauthenticated API calls.
+    let jar = CookieJar::from_headers(req.headers());
+    let Some(session_token) = session_token_from_jar(&jar, secret) else {
+        return next.run(req).await;
+    };
+
+    // Header path — no body to buffer.
+    if let Some(submitted) = req.headers().get(CSRF_HEADER).and_then(|v| v.to_str().ok()) {
+        if verify_csrf(secret, &session_token, submitted) {
+            return next.run(req).await;
+        }
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
+    // A multipart handler validates the field itself; see the OPML import route.
+    if is_multipart(&req) {
+        return next.run(req).await;
+    }
+
+    // Body path: buffer, read `_csrf`, then rebuild the request unchanged.
+    let (parts, body) = req.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, CSRF_MAX_BODY_BYTES).await else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let ok = url::form_urlencoded::parse(&bytes)
+        .find(|(k, _)| k == CSRF_FIELD)
+        .is_some_and(|(_, v)| verify_csrf(secret, &session_token, &v));
+    if !ok {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    next.run(Request::from_parts(parts, Body::from(bytes)))
+        .await
+}
+
+/// Whether the request body is `multipart/form-data`.
+fn is_multipart(req: &Request) -> bool {
+    req.headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.trim_start().starts_with("multipart/form-data"))
+}
+
+/// Rewrite the request's `Cookie` header so downstream extractors see `cookie`
+/// in place of any prior entry of the same name. Replacing rather than appending
+/// matters: `CookieJar::get` returns the first match, so a stale value left in
+/// front would shadow the one just set.
+fn set_request_cookie(req: &mut Request, cookie: &Cookie<'static>) {
+    let prefix = format!("{}=", cookie.name());
+    let kept = req
+        .headers()
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .map(str::trim)
+        .filter(|pair| !pair.is_empty() && !pair.starts_with(&prefix))
+        .map(str::to_owned)
+        .chain(std::iter::once(format!(
+            "{}={}",
+            cookie.name(),
+            cookie.value()
+        )))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if let Ok(value) = HeaderValue::from_str(&kept) {
+        req.headers_mut().insert(header::COOKIE, value);
+    }
+}
+
+/// Append each cookie as a `Set-Cookie` header on the response.
+fn with_set_cookies(mut resp: Response, cookies: &[Cookie<'static>]) -> Response {
+    for cookie in cookies {
+        if let Ok(value) = HeaderValue::from_str(&cookie.to_string()) {
+            resp.headers_mut().append(header::SET_COOKIE, value);
+        }
+    }
+    resp
 }
 
 #[cfg(test)]

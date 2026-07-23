@@ -176,6 +176,9 @@ pub async fn forward_auth(
     };
 
     let cookie = build_session_cookie(&token, &config.secret, config.cookie_secure);
+    // Pair the readable CSRF cookie with the session, so a forward-auth user's
+    // very first rendered form already carries a matching token.
+    let csrf = crate::middleware::build_csrf_cookie(&token, &config.secret, config.cookie_secure);
 
     // Redirect to the same URL; the just-set cookie authenticates the retry.
     let location = req
@@ -183,7 +186,7 @@ pub async fn forward_auth(
         .path_and_query()
         .map_or_else(|| "/".to_string(), |pq| pq.as_str().to_string());
 
-    (jar.add(cookie), Redirect::to(&location)).into_response()
+    (jar.add(cookie).add(csrf), Redirect::to(&location)).into_response()
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ use axum::{
 const FILES: &[(&str, &str)] = &[
     ("css/app.css", include_str!("../../static/css/app.css")),
     ("js/app.js", include_str!("../../static/js/app.js")),
+    ("js/csrf.js", include_str!("../../static/js/csrf.js")),
     ("js/passkey.js", include_str!("../../static/js/passkey.js")),
     (
         "js/statistics.js",
@@ -162,6 +163,54 @@ mod tests {
             assert!(
                 !body.contains("utils.js'") && !body.contains("utils.js\""),
                 "{path}: still imports utils.js without a ?v= cache-buster"
+            );
+        }
+    }
+
+    /// Every `/static/js/*.js` a template references must be registered in
+    /// `FILES`, or the browser gets a 404 for it. Assets are embedded by an
+    /// explicit list here, so adding a `<script src>` to a template without a
+    /// matching `FILES` entry silently ships a broken page — e.g. an unregistered
+    /// `csrf.js` 404s, `window.fetch` is never patched, and every token-bearing
+    /// POST starts failing. This walks the templates and fails on any referenced
+    /// script the serve table cannot satisfy.
+    #[tokio::test]
+    async fn every_template_referenced_script_is_served() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/templates");
+        let mut stack = vec![std::path::PathBuf::from(root)];
+        let mut refs: Vec<String> = Vec::new();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                let html = std::fs::read_to_string(&path).unwrap();
+                for (i, _) in html.match_indices("/static/js/") {
+                    let tail = &html[i + "/static/".len()..];
+                    let name: String = tail
+                        .chars()
+                        .take_while(|c| !matches!(c, '"' | '\'' | '?' | ' ' | '>' | '\n'))
+                        .collect();
+                    if std::path::Path::new(&name)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        == Some("js")
+                    {
+                        refs.push(name);
+                    }
+                }
+            }
+        }
+        assert!(
+            refs.iter().any(|r| r == "js/csrf.js"),
+            "sanity: expected to find at least the csrf.js reference while scanning templates"
+        );
+        for name in &refs {
+            assert!(
+                FILES.iter().any(|(n, _)| n == name),
+                "template references /static/{name} but it is not registered in FILES (404)"
             );
         }
     }

@@ -12,6 +12,11 @@
        serif (display + reading); Archivo = UI sans; IBM Plex Mono = data / mono
        (times, labels, kbd hints). #}
     <link rel="stylesheet" href="/static/css/app.css?v={{ git_version }}">
+    {# Loaded first, before any feature module, so its fetch patch is in place
+       before anything issues a state-changing request. Attaches the CSRF token
+       (from the readable `csrf_token` cookie) to same-origin fetches and native
+       POST forms. #}
+    <script type="module" src="/static/js/csrf.js?v={{ git_version }}"></script>
     <link rel="modulepreload" href="/static/js/components/rdrs-flash.js?v={{ git_version }}">
     <script type="module" src="/static/js/components/rdrs-flash.js?v={{ git_version }}"></script>
     {% block head %}{% endblock %}
