@@ -101,7 +101,7 @@ pub async fn fetch_full_content(
     // Sanitize the content (use the entry link as base URL for relative images)
     let sanitized_content = sanitize_html(
         &extracted.content,
-        &state.config.image_proxy_secret,
+        &state.config.secret,
         Some(&link),
         custom_referrer.as_deref(),
         None, // Web UI doesn't need absolute URLs

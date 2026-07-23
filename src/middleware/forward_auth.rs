@@ -11,7 +11,7 @@ use axum_extra::extract::cookie::CookieJar;
 use crate::AppState;
 use crate::config::Config;
 use crate::error::AppResult;
-use crate::middleware::{FlashRedirect, SESSION_COOKIE_NAME, build_session_cookie};
+use crate::middleware::{FlashRedirect, build_session_cookie};
 use crate::models::user::{self, Role};
 use crate::models::{category, session};
 
@@ -95,7 +95,8 @@ pub async fn forward_auth(
     // Already carrying a VALID (non-expired) session → leave it to the normal
     // flow. A present-but-invalid cookie (e.g. after logout or expiry) must NOT
     // block forward-auth, or the user is locked out.
-    if let Some(token) = jar.get(SESSION_COOKIE_NAME).map(|c| c.value().to_string()) {
+    if let Some(token) = crate::middleware::auth::session_token_from_jar(&jar, &state.config.secret)
+    {
         let valid = session::find_by_token(&state.db, &token)
             .await
             .is_ok_and(|s| s.is_some_and(|s| !s.is_expired()));
@@ -174,7 +175,7 @@ pub async fn forward_auth(
         _ => return next.run(req).await,
     };
 
-    let cookie = build_session_cookie(token, config.cookie_secure);
+    let cookie = build_session_cookie(&token, &config.secret, config.cookie_secure);
 
     // Redirect to the same URL; the just-set cookie authenticates the retry.
     let location = req

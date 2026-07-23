@@ -1,17 +1,21 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
 
-type HmacSha256 = Hmac<Sha256>;
+use crate::secret::{DOMAIN_IMAGE, tag};
 
-/// Signs a URL using HMAC-SHA256 and returns a truncated base64-encoded signature.
-/// The signature is truncated to 8 bytes (64 bits) for URL brevity.
+/// Bytes of the derived tag kept in a proxy-URL signature. 8 bytes (64 bits)
+/// keeps the URL short; forging one is still a 2^64 search against a keyed MAC
+/// whose root key never appears in a URL.
+const SIG_BYTES: usize = 8;
+
+/// Signs a URL under the image domain and returns a truncated,
+/// base64-encoded signature.
+///
+/// The signature derives from the shared root key through
+/// [`DOMAIN_IMAGE`](crate::secret::DOMAIN_IMAGE), so it can never coincide with
+/// a session-cookie or CSRF tag built from the same key.
 pub fn sign_url(url: &str, secret: &[u8]) -> String {
-    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
-    mac.update(url.as_bytes());
-    let result = mac.finalize().into_bytes();
-    // Truncate to 8 bytes and base64 encode
-    URL_SAFE_NO_PAD.encode(&result[..8])
+    let t = tag(secret, DOMAIN_IMAGE, &[url.as_bytes()]);
+    URL_SAFE_NO_PAD.encode(&t[..SIG_BYTES])
 }
 
 /// Verifies a signature for a given URL.
@@ -38,10 +42,8 @@ pub fn create_proxy_url(original_url: &str, secret: &[u8], base_url: Option<&str
 /// The message is `url|referrer` to bind both values together.
 pub fn sign_url_with_referrer(url: &str, referrer: &str, secret: &[u8]) -> String {
     let message = format!("{url}|{referrer}");
-    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
-    mac.update(message.as_bytes());
-    let result = mac.finalize().into_bytes();
-    URL_SAFE_NO_PAD.encode(&result[..8])
+    let t = tag(secret, DOMAIN_IMAGE, &[message.as_bytes()]);
+    URL_SAFE_NO_PAD.encode(&t[..SIG_BYTES])
 }
 
 /// Verifies a signature for a given URL and referrer pair.

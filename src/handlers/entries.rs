@@ -322,7 +322,7 @@ pub(crate) async fn build_reading_pane_view(
     let proxy_base_url = state.config.public_base_url.as_deref();
     let content_html = sanitize_html(
         raw_content,
-        &state.config.image_proxy_secret,
+        &state.config.secret,
         base_url,
         referrer,
         proxy_base_url,
@@ -756,7 +756,7 @@ pub async fn fetch_full_content_form(
         Ok(extracted) => {
             let sanitized = sanitize_html(
                 &extracted.content,
-                &state.config.image_proxy_secret,
+                &state.config.secret,
                 Some(&link),
                 ewf.custom_referrer.as_deref(),
                 None,

@@ -101,7 +101,7 @@ pub async fn proxy_image(
         &url_str,
         &query.s,
         referrer.as_deref(),
-        &state.config.image_proxy_secret,
+        &state.config.secret,
     ) {
         return Err(AppError::InvalidSignature);
     }

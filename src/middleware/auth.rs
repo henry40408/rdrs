@@ -17,20 +17,35 @@ use crate::models::user::{self, User};
 
 pub const SESSION_COOKIE_NAME: &str = "session_token";
 
-/// Build the session cookie for `token`.
+/// Build the session cookie carrying `token`.
 ///
 /// Every login path (password, passkey, forward-auth) goes through here so the
-/// attributes cannot drift apart between them. `secure` comes from
-/// [`crate::config::Config::cookie_secure`], which is derived from
+/// attributes cannot drift apart between them. The cookie *value* is the token
+/// plus an HMAC signature (`<token>.<hmac>`, see [`crate::secret::sign_session`]),
+/// so a tampered or forged cookie is rejected before any database lookup, and a
+/// leaked `session.session_token` is not usable without the root key. `secure`
+/// comes from [`crate::config::Config::cookie_secure`], which is derived from
 /// `RDRS_PUBLIC_BASE_URL`'s scheme.
-pub fn build_session_cookie(token: impl Into<String>, secure: bool) -> Cookie<'static> {
-    Cookie::build((SESSION_COOKIE_NAME, token.into()))
-        .path("/")
-        .http_only(true)
-        .secure(secure)
-        .same_site(SameSite::Lax)
-        .max_age(Duration::days(session::SESSION_ABSOLUTE_MAX_DAYS))
-        .build()
+pub fn build_session_cookie(token: &str, secret: &[u8], secure: bool) -> Cookie<'static> {
+    Cookie::build((
+        SESSION_COOKIE_NAME,
+        crate::secret::sign_session(secret, token),
+    ))
+    .path("/")
+    .http_only(true)
+    .secure(secure)
+    .same_site(SameSite::Lax)
+    .max_age(Duration::days(session::SESSION_ABSOLUTE_MAX_DAYS))
+    .build()
+}
+
+/// Read the signed session cookie from `jar` and return the database token it
+/// carries, or `None` when the cookie is absent or its signature does not
+/// verify. Every extractor and the forward-auth middleware funnel through here,
+/// so the signature is always checked before the token reaches the database.
+pub fn session_token_from_jar(jar: &CookieJar, secret: &[u8]) -> Option<String> {
+    let value = jar.get(SESSION_COOKIE_NAME)?.value().to_string();
+    crate::secret::verify_session(secret, &value)
 }
 
 #[derive(Debug, Clone)]
@@ -51,10 +66,8 @@ impl FromRequestParts<AppState> for AuthUser {
             .await
             .map_err(|_e| AppError::Unauthorized)?;
 
-        let token = jar
-            .get(SESSION_COOKIE_NAME)
-            .map(|c| c.value().to_string())
-            .ok_or(AppError::Unauthorized)?;
+        let token =
+            session_token_from_jar(&jar, &state.config.secret).ok_or(AppError::Unauthorized)?;
 
         let mut session = session::find_by_token(&state.db, &token)
             .await?
@@ -129,10 +142,7 @@ impl FromRequestParts<AppState> for PageAuthUser {
             .await
             .map_err(|_e| LoginRedirect)?;
 
-        let token = jar
-            .get(SESSION_COOKIE_NAME)
-            .map(|c| c.value().to_string())
-            .ok_or(LoginRedirect)?;
+        let token = session_token_from_jar(&jar, &state.config.secret).ok_or(LoginRedirect)?;
 
         let Ok(Some(mut session)) = session::find_by_token(&state.db, &token).await else {
             return Err(LoginRedirect);

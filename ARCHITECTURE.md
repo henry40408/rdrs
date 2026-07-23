@@ -133,7 +133,7 @@ Loads settings from environment variables:
 - `DATABASE_URL` - Database backend: a file path or `sqlite://` URL (SQLite, the zero-config default) or a `postgres://` URL (PostgreSQL); chosen once at startup
 - `SERVER_PORT` - HTTP port
 - `RDRS_SIGNUP_ENABLED` / `RDRS_MULTI_USER_ENABLED` - Registration settings
-- `RDRS_SECRET` - HMAC secret for image proxy
+- `RDRS_SECRET` - Root HMAC key for every signature rdrs produces (session cookies, image-proxy URLs, GReader post token), each domain-separated in `secret.rs`
 - `RDRS_AUTH_PROXY_HEADER` - Header name carrying the username from a forward-auth proxy; empty disables the feature
 - `RDRS_TRUSTED_PROXY_NETWORKS` - Comma-separated CIDRs/IPs whose TCP peer is allowed to supply the identity header; required when `RDRS_AUTH_PROXY_HEADER` is set
 - `RDRS_AUTH_PROXY_USER_CREATION` - Whether to JIT-create an account for an unknown proxy-provided username (`false` by default; on mismatch, redirects to `/login`)
@@ -218,8 +218,8 @@ Request handlers are organized by resource:
 1. User submits credentials to `POST /api/session`
 2. Server validates password with Argon2
 3. Creates session record in database
-4. Sets session cookie
-5. Subsequent requests extract user from `AuthUser` extractor
+4. Sets the signed session cookie (`<token>.<hmac>`, see [Signing & the root key](#signing--the-root-key-secretrs))
+5. Subsequent requests extract user from `AuthUser` extractor, which verifies the signature before the DB lookup
 
 ### WebAuthn/Passkey Authentication
 
@@ -396,6 +396,30 @@ RDRS integrates with Kagi AI for automatic article summarization:
 - Cleanup task removes orphaned or expired summaries
 
 ## Security
+
+### Signing & the root key (`secret.rs`)
+
+One process-wide root key — `RDRS_SECRET`, or a random one at boot — backs every
+signature rdrs produces. Each use derives its own tag through a
+domain-separation prefix (`image:`, `greader-token:`, `session:`), so a value
+minted for one purpose cannot be replayed as another. This matters concretely:
+the CSRF token (added on top of this module) derives from the session token too,
+and without the prefixes the token embedded in every rendered form *would be* the
+session cookie's signature.
+
+- **Session cookie.** The cookie value is `<session_token>.<hmac>`. Every
+  extractor and the forward-auth middleware read it through
+  `session_token_from_jar`, which verifies the signature before the token
+  reaches the database — a forged or tampered cookie costs one HMAC, not a
+  query, and a leaked `session.session_token` is useless without the root key.
+- **Image-proxy URLs** and the **GReader post token** derive from the same key
+  under their own domains (`image_proxy.rs`, `handlers/greader/auth.rs`).
+
+Rotating the key — including the implicit rotation of a restart with no
+`RDRS_SECRET` set — invalidates every signature at once: sessions end, and
+image-proxy URLs already cached by a GReader client break until it re-syncs.
+Native GReader `ClientLogin` tokens are unaffected, being the raw
+`session_token` matched against the database rather than signed.
 
 ### Password Hashing
 

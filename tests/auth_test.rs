@@ -7,9 +7,9 @@ use chrono::{DateTime, Duration, Utc};
 use rdrs::{AppState, Config, Db, auth, create_router, services};
 use serde_json::json;
 
-/// Build a test server and return it together with the backing `Db` so tests
-/// that inspect the `session` table directly can share the same connection.
-async fn build_server(config: Config) -> (TestServer, Db) {
+/// Build the router and backing `Db` for a config, without wrapping either in a
+/// `TestServer` — the cookie-jar policy is the caller's choice.
+async fn build_app(config: Config) -> (axum::Router, Db) {
     let db = Db::connect_in_memory().await.unwrap();
 
     let webauthn = auth::create_webauthn(&config).unwrap();
@@ -29,9 +29,21 @@ async fn build_server(config: Config) -> (TestServer, Db) {
         shutdown: tokio_util::sync::CancellationToken::new(),
     };
 
-    let app = create_router(state);
-    let server = TestServer::builder().save_cookies().build(app);
-    (server, db)
+    (create_router(state), db)
+}
+
+/// Build a test server and return it together with the backing `Db` so tests
+/// that inspect the `session` table directly can share the same connection.
+async fn build_server(config: Config) -> (TestServer, Db) {
+    let (app, db) = build_app(config).await;
+    (TestServer::builder().save_cookies().build(app), db)
+}
+
+/// Like [`build_server`] but without `save_cookies`, so a test can replay a
+/// hand-edited cookie instead of the jar echoing back whatever the server set.
+async fn build_server_no_save_cookies(config: Config) -> (TestServer, Db) {
+    let (app, db) = build_app(config).await;
+    (TestServer::new(app), db)
 }
 
 async fn create_test_server(config: Config) -> TestServer {
@@ -930,6 +942,60 @@ async fn test_logout_clears_cookie_with_path() {
         removal.contains("Path=/"),
         "removal cookie must carry Path=/ to actually delete the session cookie: {removal}"
     );
+}
+
+#[tokio::test]
+async fn test_tampered_session_cookie_is_rejected() {
+    // The cookie value is `<token>.<hmac>`. Swapping the token while keeping the
+    // signature is the attack the signing defends against — guessing or leaking
+    // a `session.session_token` must not be enough on its own. A server without
+    // `save_cookies` lets us replay a hand-edited cookie.
+    let (server, _db) = build_server_no_save_cookies(default_test_config()).await;
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let login = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await;
+    login.assert_status_ok();
+
+    // Pull the signed value out of the Set-Cookie header.
+    let set_cookie = set_cookie_headers(&login)
+        .into_iter()
+        .find(|s| s.starts_with("session_token="))
+        .expect("login must emit a session_token cookie");
+    let value = set_cookie
+        .trim_start_matches("session_token=")
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let (token, sig) = value.rsplit_once('.').expect("cookie value is token.sig");
+
+    // The untouched cookie authenticates.
+    server
+        .get("/api/user")
+        .add_cookie(cookie::Cookie::new("session_token", value.clone()))
+        .await
+        .assert_status_ok();
+
+    // Token changed, signature kept → rejected before any DB lookup.
+    let forged = format!("{token}x.{sig}");
+    server
+        .get("/api/user")
+        .add_cookie(cookie::Cookie::new("session_token", forged))
+        .await
+        .assert_status_unauthorized();
+
+    // Signature stripped entirely (a raw DB token) → also rejected.
+    server
+        .get("/api/user")
+        .add_cookie(cookie::Cookie::new("session_token", token.to_string()))
+        .await
+        .assert_status_unauthorized();
 }
 
 #[tokio::test]
