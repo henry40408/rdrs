@@ -23,7 +23,7 @@ set it in production.
 - Install: `npm ci`.
 - Run all: `npx playwright test` (CI shards with `--shard=1/3` etc. and `--grep-invert "@skip"`).
 - Run one feature: `npx playwright test --grep "<scenario or tag>"`.
-- After editing a `.feature` file, regenerate specs: `npx bddgen` (or just re-run `npx playwright test`, which regenerates).
+- After editing a `.feature` file, regenerate specs with `npx bddgen`. This is required: the generated `.features-gen/` is git-ignored, and auto-generation on `npx playwright test` does **not** run here because the project's custom `globalSetup` shadows playwright-bdd's generation hook. Without a prior `bddgen`, a fresh checkout has no specs and `playwright test` silently runs zero tests and passes. CI runs `bddgen` as an explicit step before the E2E run for the same reason.
 - Regenerate README screenshots: `npm run screenshots` (writes to `../screenshots/`).
 
 **Rebuild before E2E/screenshots:** static assets (CSS, JS) and templates are
