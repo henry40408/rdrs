@@ -35,6 +35,8 @@ pub const DOMAIN_IMAGE: &[u8] = b"image:";
 pub const DOMAIN_GREADER_TOKEN: &[u8] = b"greader-token:";
 /// Domain-separation prefix for the session cookie signature.
 pub const DOMAIN_SESSION: &[u8] = b"session:";
+/// Domain-separation prefix for the CSRF synchronizer token.
+pub const DOMAIN_CSRF: &[u8] = b"csrf:";
 
 /// Separates the session token from its signature in the cookie value.
 ///
@@ -115,6 +117,27 @@ pub fn verify_session(secret: &[u8], cookie_value: &str) -> Option<String> {
     verify_tag(secret, DOMAIN_SESSION, &[token.as_bytes()], &sig).then(|| token.to_string())
 }
 
+/// The CSRF synchronizer token for a session, to embed in rendered forms as a
+/// hidden `_csrf` field and accept back as the `X-CSRF-Token` header.
+///
+/// Derived from the session token under [`DOMAIN_CSRF`], so it needs no column
+/// of its own and no database round trip — and, crucially, cannot equal the
+/// session cookie's own signature, which shares the key but not the domain.
+/// A session token with no row behind it still yields a valid token, which is
+/// what lets a pre-auth page (login, register) carry one.
+pub fn derive_csrf(secret: &[u8], session_token: &str) -> String {
+    hex_encode(&tag(secret, DOMAIN_CSRF, &[session_token.as_bytes()]))
+}
+
+/// Constant-time check of a submitted CSRF token against the one derived for
+/// `session_token`. `false` for a malformed (non-hex) or mismatched token.
+pub fn verify_csrf(secret: &[u8], session_token: &str, submitted: &str) -> bool {
+    let Some(bytes) = hex_decode(submitted) else {
+        return false;
+    };
+    verify_tag(secret, DOMAIN_CSRF, &[session_token.as_bytes()], &bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,9 +179,40 @@ mod tests {
         let a = tag(SECRET, DOMAIN_SESSION, &[b"same"]);
         let b = tag(SECRET, DOMAIN_IMAGE, &[b"same"]);
         let c = tag(SECRET, DOMAIN_GREADER_TOKEN, &[b"same"]);
+        let d = tag(SECRET, DOMAIN_CSRF, &[b"same"]);
         assert_ne!(a, b);
         assert_ne!(a, c);
+        assert_ne!(a, d);
         assert_ne!(b, c);
+        assert_ne!(b, d);
+        assert_ne!(c, d);
+    }
+
+    #[test]
+    fn csrf_token_verifies_and_is_session_scoped() {
+        let token = derive_csrf(SECRET, "sess-abc");
+        assert!(verify_csrf(SECRET, "sess-abc", &token));
+        // Bound to the session token: a token minted for one session must not
+        // pass for another, nor under a different root key.
+        assert!(!verify_csrf(SECRET, "sess-xyz", &token));
+        assert!(!verify_csrf(
+            b"another key that is long enough",
+            "sess-abc",
+            &token
+        ));
+        // Malformed submissions are rejected, not panicked on.
+        assert!(!verify_csrf(SECRET, "sess-abc", "not-hex"));
+        assert!(!verify_csrf(SECRET, "sess-abc", ""));
+    }
+
+    #[test]
+    fn csrf_token_differs_from_the_session_signature() {
+        // Both derive from the same key and the same token; only the domain
+        // separates them. Without that, the `_csrf` printed into every form
+        // would be the session cookie's signature.
+        let signed = sign_session(SECRET, "tok");
+        let sig = signed.split_once('.').unwrap().1;
+        assert_ne!(sig, derive_csrf(SECRET, "tok"));
     }
 
     #[test]
