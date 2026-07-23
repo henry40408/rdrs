@@ -896,7 +896,7 @@ async fn test_session_cookie_secure_when_enabled() {
 
 #[tokio::test]
 async fn test_session_cookie_not_secure_by_default() {
-    // No PUBLIC_BASE_URL → plain-HTTP dev run. A Secure cookie would be
+    // No RDRS_PUBLIC_BASE_URL → plain-HTTP dev run. A Secure cookie would be
     // dropped by the browser and lock the developer out.
     let cookie = login_session_cookie(&create_test_server(default_test_config()).await).await;
     assert!(

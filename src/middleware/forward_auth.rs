@@ -48,7 +48,7 @@ pub fn role_from_groups(groups: &[String], admin_group: &str) -> Role {
 
 /// The identity supplied by a trusted forward-auth proxy on this request, if
 /// any. Returns `None` when the feature is off, the peer IP is missing or not
-/// in `TRUSTED_PROXY_NETWORKS`, or the identity header is absent/empty. Shared
+/// in `RDRS_TRUSTED_PROXY_NETWORKS`, or the identity header is absent/empty. Shared
 /// by the middleware and the `AuthUser`/`PageAuthUser` extractors so the
 /// trust logic lives in one place.
 pub fn forward_auth_identity(

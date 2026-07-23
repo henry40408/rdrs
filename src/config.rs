@@ -54,7 +54,7 @@ pub fn parse_trusted_networks(raw: &str) -> Result<Vec<IpNet>, String> {
             nets.push(net);
         } else {
             return Err(format!(
-                "invalid CIDR or IP in TRUSTED_PROXY_NETWORKS: '{s}'"
+                "invalid CIDR or IP in RDRS_TRUSTED_PROXY_NETWORKS: '{s}'"
             ));
         }
     }
@@ -63,9 +63,9 @@ pub fn parse_trusted_networks(raw: &str) -> Result<Vec<IpNet>, String> {
 
 /// Whether the session cookie should carry the `Secure` attribute.
 ///
-/// An explicit `COOKIE_SECURE` wins; otherwise the answer is derived from
-/// `PUBLIC_BASE_URL`'s scheme. Deriving beats a standalone knob because a real
-/// deployment already has to set `PUBLIC_BASE_URL` correctly (it drives the
+/// An explicit `RDRS_COOKIE_SECURE` wins; otherwise the answer is derived from
+/// `RDRS_PUBLIC_BASE_URL`'s scheme. Deriving beats a standalone knob because a real
+/// deployment already has to set `RDRS_PUBLIC_BASE_URL` correctly (it drives the
 /// absolute image-proxy URLs), so an HTTPS install gets `Secure` without a
 /// second setting to forget — while a plain `http://` dev run keeps working.
 /// That last part matters: a browser silently drops a `Secure` cookie sent over
@@ -76,7 +76,7 @@ pub fn parse_trusted_networks(raw: &str) -> Result<Vec<IpNet>, String> {
 ///
 /// Unlike the other boolean env vars, an unrecognized value is a hard error
 /// rather than a silent "off". Those default to `false`, so a typo there is a
-/// no-op; here the derived default can be `true`, so treating `COOKIE_SECURE=yes`
+/// no-op; here the derived default can be `true`, so treating `RDRS_COOKIE_SECURE=yes`
 /// as "off" would quietly strip `Secure` from a correctly-configured HTTPS
 /// deployment — exactly the failure this setting exists to prevent.
 pub fn parse_cookie_secure(
@@ -87,7 +87,7 @@ pub fn parse_cookie_secure(
         Some(v) if v.eq_ignore_ascii_case("true") || v == "1" => Ok(true),
         Some(v) if v.eq_ignore_ascii_case("false") || v == "0" => Ok(false),
         Some(v) => Err(format!(
-            "invalid COOKIE_SECURE '{v}': expected one of true, false, 1, 0"
+            "invalid RDRS_COOKIE_SECURE '{v}': expected one of true, false, 1, 0"
         )),
         None => Ok(public_base_url
             .is_some_and(|u| u.trim_start().to_ascii_lowercase().starts_with("https://"))),
@@ -143,22 +143,22 @@ pub fn redact_database_url(database_url: &str) -> String {
     }
 }
 
-/// Resolve the `SERVER_BIND` value into a [`SocketAddr`]. An unset or empty
+/// Resolve the `RDRS_SERVER_BIND` value into a [`SocketAddr`]. An unset or empty
 /// value yields the default `127.0.0.1:8080` (loopback only, so a bare-metal
 /// run is not exposed on all interfaces without opting in); any non-empty
 /// value must be a valid `host:port` socket address. The container image sets
-/// `SERVER_BIND=0.0.0.0:8080` so a reverse proxy in a separate container can
+/// `RDRS_SERVER_BIND=0.0.0.0:8080` so a reverse proxy in a separate container can
 /// reach it.
 pub fn parse_server_bind(raw: Option<&str>) -> Result<SocketAddr, String> {
     match raw {
         Some(v) if !v.is_empty() => v
             .parse::<SocketAddr>()
-            .map_err(|e| format!("invalid SERVER_BIND '{v}': {e}")),
+            .map_err(|e| format!("invalid RDRS_SERVER_BIND '{v}': {e}")),
         _ => Ok(SocketAddr::from(([127, 0, 0, 1], 8080))),
     }
 }
 
-/// Resolve the image-proxy HMAC secret from a raw `IMAGE_PROXY_SECRET` value,
+/// Resolve the image-proxy HMAC secret from a raw `RDRS_SECRET` value,
 /// returning the key bytes and whether they were generated rather than
 /// configured. A base64 value is decoded; otherwise the raw bytes are used.
 /// Either way at least 16 bytes are required — a shorter value is discarded in
@@ -194,7 +194,7 @@ fn load_image_proxy_secret(raw: Option<String>) -> (Vec<u8>, bool) {
 /// Every string-valued setting goes through here so `FOO=` or `FOO="  "` in a
 /// compose file means "not configured" rather than "configured to the empty
 /// string". The distinction is load-bearing for the settings that are disabled
-/// by being empty — a whitespace-only `AUTH_PROXY_HEADER` would otherwise
+/// by being empty — a whitespace-only `RDRS_AUTH_PROXY_HEADER` would otherwise
 /// enable forward auth against a header name no proxy can send.
 fn nonblank(get: &impl Fn(&str) -> Option<String>, key: &str) -> Option<String> {
     get(key)
@@ -205,10 +205,74 @@ fn nonblank(get: &impl Fn(&str) -> Option<String>, key: &str) -> Option<String> 
 /// Whether a boolean env var is on. `true` (any case) and `1` are the only
 /// accepted values; anything else — including a typo — reads as off, which is
 /// safe because every setting using this defaults to off anyway.
-/// `COOKIE_SECURE` deliberately does *not* use this: its default can be `true`,
+/// `RDRS_COOKIE_SECURE` deliberately does *not* use this: its default can be `true`,
 /// so it rejects unrecognized values instead. See [`parse_cookie_secure`].
 fn flag(get: &impl Fn(&str) -> Option<String>, key: &str) -> bool {
     nonblank(get, key).is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1")
+}
+
+/// Every variable renamed by the `RDRS_` prefix migration, old name → new name.
+///
+/// `IMAGE_PROXY_SECRET` is the one entry that is not a straight prefixing: it
+/// became `RDRS_SECRET` because the key no longer signs only image-proxy URLs.
+///
+/// `DATABASE_URL` is deliberately absent: it is a genuine cross-tool convention
+/// (Twelve-Factor, Heroku/Railway/Render, sqlx, Diesel), and pingward keeps it
+/// bare for the same reason. The rest of this list only *looks* generic —
+/// `USER_AGENT` and `SERVER_BIND` in particular are rdrs's own names, which is
+/// exactly what makes them collide in a shared compose file.
+pub const RENAMED_VARS: &[(&str, &str)] = &[
+    ("SERVER_BIND", "RDRS_SERVER_BIND"),
+    ("SIGNUP_ENABLED", "RDRS_SIGNUP_ENABLED"),
+    ("MULTI_USER_ENABLED", "RDRS_MULTI_USER_ENABLED"),
+    ("IMAGE_PROXY_SECRET", "RDRS_SECRET"),
+    ("USER_AGENT", "RDRS_USER_AGENT"),
+    ("WEBAUTHN_RP_ID", "RDRS_WEBAUTHN_RP_ID"),
+    ("WEBAUTHN_RP_ORIGIN", "RDRS_WEBAUTHN_RP_ORIGIN"),
+    ("WEBAUTHN_RP_NAME", "RDRS_WEBAUTHN_RP_NAME"),
+    ("PUBLIC_BASE_URL", "RDRS_PUBLIC_BASE_URL"),
+    ("COOKIE_SECURE", "RDRS_COOKIE_SECURE"),
+    ("AUTH_PROXY_HEADER", "RDRS_AUTH_PROXY_HEADER"),
+    ("TRUSTED_PROXY_NETWORKS", "RDRS_TRUSTED_PROXY_NETWORKS"),
+    ("AUTH_PROXY_USER_CREATION", "RDRS_AUTH_PROXY_USER_CREATION"),
+    ("DISABLE_LOCAL_AUTH", "RDRS_DISABLE_LOCAL_AUTH"),
+    ("AUTH_PROXY_GROUPS_HEADER", "RDRS_AUTH_PROXY_GROUPS_HEADER"),
+    ("AUTH_PROXY_ADMIN_GROUP", "RDRS_AUTH_PROXY_ADMIN_GROUP"),
+    ("AUTH_PROXY_LOGOUT_URL", "RDRS_AUTH_PROXY_LOGOUT_URL"),
+    ("KAGI_API_BASE", "RDRS_KAGI_API_BASE"),
+    // Not read here — clap binds it on `Args` in `main` — but listed so the
+    // check still catches it. `main` parses args before building the config, so
+    // an old `LOG_FORMAT` is honoured for the few lines until this rejects it.
+    ("LOG_FORMAT", "RDRS_LOG_FORMAT"),
+];
+
+/// Refuse to start when a pre-prefix variable name still carries a value.
+///
+/// Ignoring the old name would be the worst of the three options: an operator
+/// who upgrades without editing their compose file would get a *working* server
+/// — running on defaults, so a fresh empty database at `rdrs.sqlite3`, signup
+/// off, and a regenerated secret — instead of their actual deployment. A
+/// warning fares little better, since the same wrong server comes up and the
+/// line scrolls past. Failing names every variable that has to move, once.
+///
+/// Only a value that survives [`nonblank`] counts: `FOO=` left behind in a
+/// compose file configured nothing before the rename either, so it is not worth
+/// blocking a boot over.
+pub fn reject_legacy_vars(get: &impl Fn(&str) -> Option<String>) -> Result<(), String> {
+    let stale: Vec<String> = RENAMED_VARS
+        .iter()
+        .filter(|(old, _)| nonblank(get, old).is_some())
+        .map(|(old, new)| format!("  {old} -> {new}"))
+        .collect();
+    if stale.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "these environment variables were renamed and are no longer read. Rename them \
+         and restart:\n{}\nrdrs refuses to start rather than silently fall back to its \
+         defaults, which would come up against an empty database.",
+        stale.join("\n")
+    ))
 }
 
 impl Config {
@@ -225,45 +289,52 @@ impl Config {
     /// because nextest forks per test, which is a property of the runner rather
     /// than of the code being tested.
     pub fn from_map(get: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
+        reject_legacy_vars(&get)?;
+
         let (image_proxy_secret, image_proxy_secret_generated) =
-            load_image_proxy_secret(get("IMAGE_PROXY_SECRET"));
-        let server_bind = parse_server_bind(nonblank(&get, "SERVER_BIND").as_deref())?;
+            load_image_proxy_secret(get("RDRS_SECRET"));
+        let server_bind = parse_server_bind(nonblank(&get, "RDRS_SERVER_BIND").as_deref())?;
 
-        let trusted_proxy_networks =
-            parse_trusted_networks(&nonblank(&get, "TRUSTED_PROXY_NETWORKS").unwrap_or_default())?;
+        let trusted_proxy_networks = parse_trusted_networks(
+            &nonblank(&get, "RDRS_TRUSTED_PROXY_NETWORKS").unwrap_or_default(),
+        )?;
 
-        let public_base_url = nonblank(&get, "PUBLIC_BASE_URL");
+        let public_base_url = nonblank(&get, "RDRS_PUBLIC_BASE_URL");
         // Passed raw, not through `nonblank`: `parse_cookie_secure` does its own
         // trimming and has to tell "unset" from "unrecognized" itself.
-        let cookie_secure =
-            parse_cookie_secure(get("COOKIE_SECURE").as_deref(), public_base_url.as_deref())?;
+        let cookie_secure = parse_cookie_secure(
+            get("RDRS_COOKIE_SECURE").as_deref(),
+            public_base_url.as_deref(),
+        )?;
 
         Ok(Self {
+            // Not prefixed — see `RENAMED_VARS`.
             database_url: nonblank(&get, "DATABASE_URL")
                 .unwrap_or_else(|| "rdrs.sqlite3".to_string()),
             server_bind,
-            signup_enabled: flag(&get, "SIGNUP_ENABLED"),
-            multi_user_enabled: flag(&get, "MULTI_USER_ENABLED"),
+            signup_enabled: flag(&get, "RDRS_SIGNUP_ENABLED"),
+            multi_user_enabled: flag(&get, "RDRS_MULTI_USER_ENABLED"),
             image_proxy_secret,
             image_proxy_secret_generated,
-            user_agent: nonblank(&get, "USER_AGENT")
+            user_agent: nonblank(&get, "RDRS_USER_AGENT")
                 .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()),
-            webauthn_rp_id: nonblank(&get, "WEBAUTHN_RP_ID")
+            webauthn_rp_id: nonblank(&get, "RDRS_WEBAUTHN_RP_ID")
                 .unwrap_or_else(|| "localhost".to_string()),
-            webauthn_rp_origin: nonblank(&get, "WEBAUTHN_RP_ORIGIN")
+            webauthn_rp_origin: nonblank(&get, "RDRS_WEBAUTHN_RP_ORIGIN")
                 .unwrap_or_else(|| format!("http://localhost:{}", server_bind.port())),
-            webauthn_rp_name: nonblank(&get, "WEBAUTHN_RP_NAME")
+            webauthn_rp_name: nonblank(&get, "RDRS_WEBAUTHN_RP_NAME")
                 .unwrap_or_else(|| "rdrs".to_string()),
             public_base_url,
             cookie_secure,
-            auth_proxy_header: nonblank(&get, "AUTH_PROXY_HEADER").unwrap_or_default(),
+            auth_proxy_header: nonblank(&get, "RDRS_AUTH_PROXY_HEADER").unwrap_or_default(),
             trusted_proxy_networks,
-            auth_proxy_user_creation: flag(&get, "AUTH_PROXY_USER_CREATION"),
-            disable_local_auth: flag(&get, "DISABLE_LOCAL_AUTH"),
-            auth_proxy_groups_header: nonblank(&get, "AUTH_PROXY_GROUPS_HEADER")
+            auth_proxy_user_creation: flag(&get, "RDRS_AUTH_PROXY_USER_CREATION"),
+            disable_local_auth: flag(&get, "RDRS_DISABLE_LOCAL_AUTH"),
+            auth_proxy_groups_header: nonblank(&get, "RDRS_AUTH_PROXY_GROUPS_HEADER")
                 .unwrap_or_default(),
-            auth_proxy_admin_group: nonblank(&get, "AUTH_PROXY_ADMIN_GROUP").unwrap_or_default(),
-            auth_proxy_logout_url: nonblank(&get, "AUTH_PROXY_LOGOUT_URL"),
+            auth_proxy_admin_group: nonblank(&get, "RDRS_AUTH_PROXY_ADMIN_GROUP")
+                .unwrap_or_default(),
+            auth_proxy_logout_url: nonblank(&get, "RDRS_AUTH_PROXY_LOGOUT_URL"),
         })
     }
 
@@ -293,14 +364,14 @@ impl Config {
     pub fn validate(&self) -> Result<(), String> {
         if self.auth_proxy_enabled() && self.trusted_proxy_networks.is_empty() {
             return Err(
-                "AUTH_PROXY_HEADER is set but TRUSTED_PROXY_NETWORKS is empty. \
+                "RDRS_AUTH_PROXY_HEADER is set but RDRS_TRUSTED_PROXY_NETWORKS is empty. \
                  Refusing to trust an identity header without a trusted-source check."
                     .to_string(),
             );
         }
         if self.disable_local_auth && !self.auth_proxy_enabled() {
             return Err(
-                "DISABLE_LOCAL_AUTH is set but AUTH_PROXY_HEADER is not configured. \
+                "RDRS_DISABLE_LOCAL_AUTH is set but RDRS_AUTH_PROXY_HEADER is not configured. \
                  This would leave no way to log in via the browser."
                     .to_string(),
             );
@@ -311,9 +382,9 @@ impl Config {
     /// Whether a new account may be registered given the current user count.
     ///
     /// The very first account is always allowed so a fresh install (including a
-    /// source build that never set `SIGNUP_ENABLED`) can always create its
-    /// initial admin. Every subsequent account requires both `SIGNUP_ENABLED`
-    /// and `MULTI_USER_ENABLED`.
+    /// source build that never set `RDRS_SIGNUP_ENABLED`) can always create its
+    /// initial admin. Every subsequent account requires both `RDRS_SIGNUP_ENABLED`
+    /// and `RDRS_MULTI_USER_ENABLED`.
     pub fn can_register(&self, user_count: i64) -> bool {
         user_count == 0 || (self.signup_enabled && self.multi_user_enabled)
     }
@@ -321,12 +392,12 @@ impl Config {
     /// A startup warning about `WebAuthn` relying-party config that would silently
     /// break passkeys in a real deployment, or `None` when the config looks
     /// deployable. Returns a message when the RP origin still points at
-    /// `localhost` (the default), or when it disagrees with `PUBLIC_BASE_URL`.
+    /// `localhost` (the default), or when it disagrees with `RDRS_PUBLIC_BASE_URL`.
     pub fn webauthn_rp_warning(&self) -> Option<String> {
         if self.webauthn_rp_origin.contains("localhost") {
             return Some(format!(
-                "WEBAUTHN_RP_ORIGIN is still '{}'. Passkeys will be rejected from any other \
-                 origin — set WEBAUTHN_RP_ID and WEBAUTHN_RP_ORIGIN to your deployment domain.",
+                "RDRS_WEBAUTHN_RP_ORIGIN is still '{}'. Passkeys will be rejected from any other \
+                 origin — set RDRS_WEBAUTHN_RP_ID and RDRS_WEBAUTHN_RP_ORIGIN to your deployment domain.",
                 self.webauthn_rp_origin
             ));
         }
@@ -334,8 +405,8 @@ impl Config {
             && base.trim_end_matches('/') != self.webauthn_rp_origin.trim_end_matches('/')
         {
             return Some(format!(
-                "WEBAUTHN_RP_ORIGIN ('{}') does not match PUBLIC_BASE_URL ('{}'). Passkeys \
-                     may be rejected — align WEBAUTHN_RP_ORIGIN with the URL users access.",
+                "RDRS_WEBAUTHN_RP_ORIGIN ('{}') does not match RDRS_PUBLIC_BASE_URL ('{}'). Passkeys \
+                     may be rejected — align RDRS_WEBAUTHN_RP_ORIGIN with the URL users access.",
                 self.webauthn_rp_origin, base
             ));
         }
@@ -390,7 +461,7 @@ mod tests {
         // Invalid input fails with a descriptive error; a bare host with no
         // port is not a SocketAddr.
         let err = parse_server_bind(Some("not-an-addr")).unwrap_err();
-        assert!(err.contains("invalid SERVER_BIND"), "got: {err}");
+        assert!(err.contains("invalid RDRS_SERVER_BIND"), "got: {err}");
         assert!(parse_server_bind(Some("127.0.0.1")).is_err());
     }
 
@@ -405,10 +476,43 @@ mod tests {
     }
 
     #[test]
+    fn test_legacy_var_names_refuse_to_start() {
+        // A pre-prefix name still carrying a value fails startup rather than
+        // being ignored, which would boot a *working* server on defaults —
+        // against an empty rdrs.sqlite3 rather than the operator's database.
+        let err = Config::from_map(|k| (k == "SERVER_BIND").then(|| "0.0.0.0:8080".into()))
+            .expect_err("a legacy name must fail startup");
+        assert!(err.contains("SERVER_BIND -> RDRS_SERVER_BIND"), "{err}");
+
+        // The rename is spelled out for every stale variable at once, so a
+        // migration takes one restart rather than one per variable.
+        let err = Config::from_map(|k| match k {
+            "IMAGE_PROXY_SECRET" => Some("x".repeat(32)),
+            "AUTH_PROXY_HEADER" => Some("Remote-User".into()),
+            _ => None,
+        })
+        .expect_err("legacy names must fail startup");
+        assert!(err.contains("IMAGE_PROXY_SECRET -> RDRS_SECRET"), "{err}");
+        assert!(
+            err.contains("AUTH_PROXY_HEADER -> RDRS_AUTH_PROXY_HEADER"),
+            "{err}"
+        );
+
+        // Blank is not "still configured": `FOO=` left in a compose file
+        // configured nothing before the rename either.
+        assert!(Config::from_map(|k| (k == "SERVER_BIND").then(|| "  ".into())).is_ok());
+
+        // DATABASE_URL keeps its bare name — it is a real cross-tool
+        // convention, so it must not be caught by the legacy check.
+        let config = from_vars(&[("DATABASE_URL", "postgres://u:p@db/rdrs")]);
+        assert_eq!(config.backend(), Backend::Postgres);
+    }
+
+    #[test]
     fn test_server_bind_drives_listener_and_rp_origin() {
-        let config = from_vars(&[("SERVER_BIND", "127.0.0.1:9137")]);
+        let config = from_vars(&[("RDRS_SERVER_BIND", "127.0.0.1:9137")]);
         assert_eq!(config.server_bind, "127.0.0.1:9137".parse().unwrap());
-        // The WEBAUTHN_RP_ORIGIN default derives its port from SERVER_BIND.
+        // The RDRS_WEBAUTHN_RP_ORIGIN default derives its port from RDRS_SERVER_BIND.
         assert_eq!(config.webauthn_rp_origin, "http://localhost:9137");
     }
 
@@ -441,13 +545,13 @@ mod tests {
         // in a compose file where a value was left to be filled in later.
         let config = from_vars(&[
             ("DATABASE_URL", "  "),
-            ("USER_AGENT", ""),
-            ("PUBLIC_BASE_URL", "   "),
-            ("AUTH_PROXY_LOGOUT_URL", " "),
+            ("RDRS_USER_AGENT", ""),
+            ("RDRS_PUBLIC_BASE_URL", "   "),
+            ("RDRS_AUTH_PROXY_LOGOUT_URL", " "),
             // Blank here must leave forward auth *off*: a whitespace header
             // name would otherwise pass `auth_proxy_enabled` and then fail
             // `validate`, refusing to boot over a variable nobody meant to set.
-            ("AUTH_PROXY_HEADER", "  "),
+            ("RDRS_AUTH_PROXY_HEADER", "  "),
         ]);
         assert_eq!(config.database_url, "rdrs.sqlite3");
         assert_eq!(config.user_agent, DEFAULT_USER_AGENT);
@@ -460,8 +564,11 @@ mod tests {
     fn test_values_are_trimmed() {
         let config = from_vars(&[
             ("DATABASE_URL", "  postgres://u:p@db/rdrs  "),
-            ("AUTH_PROXY_HEADER", " Remote-User "),
-            ("AUTH_PROXY_LOGOUT_URL", " https://auth.example.com/logout "),
+            ("RDRS_AUTH_PROXY_HEADER", " Remote-User "),
+            (
+                "RDRS_AUTH_PROXY_LOGOUT_URL",
+                " https://auth.example.com/logout ",
+            ),
         ]);
         assert_eq!(config.database_url, "postgres://u:p@db/rdrs");
         assert_eq!(config.backend(), Backend::Postgres);
@@ -478,15 +585,15 @@ mod tests {
     fn test_boolean_flags() {
         for raw in ["true", "TRUE", "True", "1", " true "] {
             assert!(
-                from_vars(&[("SIGNUP_ENABLED", raw)]).signup_enabled,
+                from_vars(&[("RDRS_SIGNUP_ENABLED", raw)]).signup_enabled,
                 "{raw} should enable"
             );
         }
         // Anything else is off. These all default to off, so a typo is a no-op
-        // rather than a silent downgrade (unlike COOKIE_SECURE, which rejects).
+        // rather than a silent downgrade (unlike RDRS_COOKIE_SECURE, which rejects).
         for raw in ["false", "0", "yes", "on", "", "  "] {
             assert!(
-                !from_vars(&[("SIGNUP_ENABLED", raw)]).signup_enabled,
+                !from_vars(&[("RDRS_SIGNUP_ENABLED", raw)]).signup_enabled,
                 "{raw} should not enable"
             );
         }
@@ -516,15 +623,15 @@ mod tests {
 
     /// `parse_cookie_secure` for cases that must succeed.
     fn cookie_secure(raw: Option<&str>, public_base_url: Option<&str>) -> bool {
-        parse_cookie_secure(raw, public_base_url).expect("valid COOKIE_SECURE")
+        parse_cookie_secure(raw, public_base_url).expect("valid RDRS_COOKIE_SECURE")
     }
 
     #[test]
     fn test_parse_cookie_secure_derives_from_public_base_url() {
-        // Unset → follow PUBLIC_BASE_URL's scheme.
+        // Unset → follow RDRS_PUBLIC_BASE_URL's scheme.
         assert!(cookie_secure(None, Some("https://rdrs.example.com")));
         assert!(!cookie_secure(None, Some("http://localhost:8080")));
-        // No PUBLIC_BASE_URL at all → off, so a bare `cargo run` stays usable.
+        // No RDRS_PUBLIC_BASE_URL at all → off, so a bare `cargo run` stays usable.
         assert!(!cookie_secure(None, None));
         // Scheme match is case-insensitive and tolerant of leading whitespace,
         // matching `classify_backend`'s handling of DATABASE_URL.
@@ -559,8 +666,8 @@ mod tests {
         // as "off".
         for raw in ["yes", "on", "enabled", "no", "off", "2", "tru"] {
             let err = parse_cookie_secure(Some(raw), Some("https://rdrs.example.com"))
-                .expect_err("unrecognized COOKIE_SECURE must be rejected");
-            assert!(err.contains("COOKIE_SECURE"), "{err}");
+                .expect_err("unrecognized RDRS_COOKIE_SECURE must be rejected");
+            assert!(err.contains("RDRS_COOKIE_SECURE"), "{err}");
             assert!(err.contains(raw), "{err}");
         }
     }
@@ -714,7 +821,7 @@ mod tests {
         let config = test_config();
         assert!(config.webauthn_rp_warning().is_some());
 
-        // Real domain, no PUBLIC_BASE_URL → fine.
+        // Real domain, no RDRS_PUBLIC_BASE_URL → fine.
         let deployed = Config {
             webauthn_rp_id: "rdrs.example.com".to_string(),
             webauthn_rp_origin: "https://rdrs.example.com".to_string(),
@@ -722,14 +829,14 @@ mod tests {
         };
         assert!(deployed.webauthn_rp_warning().is_none());
 
-        // Real domain matching PUBLIC_BASE_URL (trailing slash ignored) → fine.
+        // Real domain matching RDRS_PUBLIC_BASE_URL (trailing slash ignored) → fine.
         let matched = Config {
             public_base_url: Some("https://rdrs.example.com/".to_string()),
             ..deployed.clone()
         };
         assert!(matched.webauthn_rp_warning().is_none());
 
-        // Real domain disagreeing with PUBLIC_BASE_URL → warn.
+        // Real domain disagreeing with RDRS_PUBLIC_BASE_URL → warn.
         let mismatched = Config {
             public_base_url: Some("https://reader.example.com".to_string()),
             ..deployed

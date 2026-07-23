@@ -132,15 +132,15 @@ Defines all HTTP routes and builds the Axum application with:
 Loads settings from environment variables:
 - `DATABASE_URL` - Database backend: a file path or `sqlite://` URL (SQLite, the zero-config default) or a `postgres://` URL (PostgreSQL); chosen once at startup
 - `SERVER_PORT` - HTTP port
-- `SIGNUP_ENABLED` / `MULTI_USER_ENABLED` - Registration settings
-- `IMAGE_PROXY_SECRET` - HMAC secret for image proxy
-- `AUTH_PROXY_HEADER` - Header name carrying the username from a forward-auth proxy; empty disables the feature
-- `TRUSTED_PROXY_NETWORKS` - Comma-separated CIDRs/IPs whose TCP peer is allowed to supply the identity header; required when `AUTH_PROXY_HEADER` is set
-- `AUTH_PROXY_USER_CREATION` - Whether to JIT-create an account for an unknown proxy-provided username (`false` by default; on mismatch, redirects to `/login`)
-- `AUTH_PROXY_GROUPS_HEADER` - Header name carrying comma-separated group names from the proxy
-- `AUTH_PROXY_ADMIN_GROUP` - Group membership grants the admin role; active only when both this and `AUTH_PROXY_GROUPS_HEADER` are set
-- `DISABLE_LOCAL_AUTH` - Hides the browser password form and makes `POST /api/session` return 403; does not affect GReader `ClientLogin` or passkey auth; startup refuses if set without `AUTH_PROXY_HEADER`
-- `AUTH_PROXY_LOGOUT_URL` - When set, Sign Out redirects the browser here to end the IdP/SSO session (e.g. Authelia's logout URL); when unset, Sign Out clears the local session and the proxy header re-authenticates on the next request
+- `RDRS_SIGNUP_ENABLED` / `RDRS_MULTI_USER_ENABLED` - Registration settings
+- `RDRS_SECRET` - HMAC secret for image proxy
+- `RDRS_AUTH_PROXY_HEADER` - Header name carrying the username from a forward-auth proxy; empty disables the feature
+- `RDRS_TRUSTED_PROXY_NETWORKS` - Comma-separated CIDRs/IPs whose TCP peer is allowed to supply the identity header; required when `RDRS_AUTH_PROXY_HEADER` is set
+- `RDRS_AUTH_PROXY_USER_CREATION` - Whether to JIT-create an account for an unknown proxy-provided username (`false` by default; on mismatch, redirects to `/login`)
+- `RDRS_AUTH_PROXY_GROUPS_HEADER` - Header name carrying comma-separated group names from the proxy
+- `RDRS_AUTH_PROXY_ADMIN_GROUP` - Group membership grants the admin role; active only when both this and `RDRS_AUTH_PROXY_GROUPS_HEADER` are set
+- `RDRS_DISABLE_LOCAL_AUTH` - Hides the browser password form and makes `POST /api/session` return 403; does not affect GReader `ClientLogin` or passkey auth; startup refuses if set without `RDRS_AUTH_PROXY_HEADER`
+- `RDRS_AUTH_PROXY_LOGOUT_URL` - When set, Sign Out redirects the browser here to end the IdP/SSO session (e.g. Authelia's logout URL); when unset, Sign Out clears the local session and the proxy header re-authenticates on the next request
 
 ### Error Handling (`error.rs`)
 
@@ -247,7 +247,7 @@ RDRS supports delegating browser authentication to an external forward-auth prox
 
 **Trust model:**
 
-The middleware checks the TCP peer IP of the incoming connection against a set of trusted CIDRs/IPs (`TRUSTED_PROXY_NETWORKS`). The peer address comes from the connection itself (`ConnectInfo`), not from `X-Forwarded-For`, so it cannot be spoofed by a downstream client. If the peer is untrusted, the identity header is ignored and the request proceeds to the normal session-cookie check. The middleware fails closed: any of untrusted peer, missing header, absent `ConnectInfo`, or DB error leaves the user unauthenticated.
+The middleware checks the TCP peer IP of the incoming connection against a set of trusted CIDRs/IPs (`RDRS_TRUSTED_PROXY_NETWORKS`). The peer address comes from the connection itself (`ConnectInfo`), not from `X-Forwarded-For`, so it cannot be spoofed by a downstream client. If the peer is untrusted, the identity header is ignored and the request proceeds to the normal session-cookie check. The middleware fails closed: any of untrusted peer, missing header, absent `ConnectInfo`, or DB error leaves the user unauthenticated.
 
 **Username mapping (no schema change):**
 
@@ -255,15 +255,15 @@ The proxy-provided username is matched against existing rdrs accounts by usernam
 
 **JIT account creation:**
 
-When `AUTH_PROXY_USER_CREATION=true`, a proxy-provided username that matches no existing account causes a new local account to be created with a sentinel password hash (`"!"`) that cannot match any real password input, making local password login impossible for that account.
+When `RDRS_AUTH_PROXY_USER_CREATION=true`, a proxy-provided username that matches no existing account causes a new local account to be created with a sentinel password hash (`"!"`) that cannot match any real password input, making local password login impossible for that account.
 
 **Group → role sync:**
 
-When both `AUTH_PROXY_GROUPS_HEADER` and `AUTH_PROXY_ADMIN_GROUP` are set, the user's role is recomputed from the groups header on every forward-auth login and persisted if it changed. The proxy/IdP is authoritative for role assignment while this mapping is active.
+When both `RDRS_AUTH_PROXY_GROUPS_HEADER` and `RDRS_AUTH_PROXY_ADMIN_GROUP` are set, the user's role is recomputed from the groups header on every forward-auth login and persisted if it changed. The proxy/IdP is authoritative for role assignment while this mapping is active.
 
-**`DISABLE_LOCAL_AUTH` scope:**
+**`RDRS_DISABLE_LOCAL_AUTH` scope:**
 
-Setting `DISABLE_LOCAL_AUTH=true` hides the browser password-entry form and makes `POST /api/session` return HTTP 403. It does **not** affect GReader `ClientLogin` (`/accounts/ClientLogin`) or WebAuthn/passkey authentication, so native RSS clients and passkey users are unaffected.
+Setting `RDRS_DISABLE_LOCAL_AUTH=true` hides the browser password-entry form and makes `POST /api/session` return HTTP 403. It does **not** affect GReader `ClientLogin` (`/accounts/ClientLogin`) or WebAuthn/passkey authentication, so native RSS clients and passkey users are unaffected.
 
 **Middleware scope:**
 
@@ -271,7 +271,7 @@ The middleware is applied only to browser page routes. It is never invoked for t
 
 **Logout mechanics:**
 
-Sign Out always clears the local `session_token` cookie (with `Path=/`) and deletes the server-side session. The forward-auth middleware re-authenticates whenever there is no *valid* session cookie — a stale or expired cookie no longer blocks re-authentication, which is what prevents a logout lockout under forward-auth. `/login` redirects an already-authenticated user to `/` rather than rendering the login form again. The user-facing logout behavior and the `AUTH_PROXY_LOGOUT_URL` knob are described in the README.
+Sign Out always clears the local `session_token` cookie (with `Path=/`) and deletes the server-side session. The forward-auth middleware re-authenticates whenever there is no *valid* session cookie — a stale or expired cookie no longer blocks re-authentication, which is what prevents a logout lockout under forward-auth. `/login` redirects an already-authenticated user to `/` rather than rendering the login form again. The user-facing logout behavior and the `RDRS_AUTH_PROXY_LOGOUT_URL` knob are described in the README.
 
 **Auth-mode indicator:**
 
@@ -335,11 +335,11 @@ instead of re-downloading every image.
 **URL Format:**
 - **Relative paths** (default): `/api/proxy/image?url=...&s=...`
   - Used by Web UI (browsers automatically resolve relative paths)
-  - Backward compatible behavior when `PUBLIC_BASE_URL` is not configured
+  - Backward compatible behavior when `RDRS_PUBLIC_BASE_URL` is not configured
 - **Absolute URLs** (optional): `https://rdrs.example.com/api/proxy/image?url=...&s=...`
-  - Used by Google Reader API when `PUBLIC_BASE_URL` is configured
+  - Used by Google Reader API when `RDRS_PUBLIC_BASE_URL` is configured
   - Required for native RSS clients (e.g., NetNewsWire) that render HTML directly
-  - Configured via `PUBLIC_BASE_URL` environment variable
+  - Configured via `RDRS_PUBLIC_BASE_URL` environment variable
 
 ### SSE Live Updates
 
@@ -411,8 +411,8 @@ Uses Argon2id with:
 - Absolute cap of 90 days from session creation to bound session lifetime
 - Secure cookie settings (`HttpOnly`, `SameSite=Lax`); cookie `Max-Age`
   matches the absolute cap so the browser retains it across slides
-- `Secure` is set from `Config::cookie_secure`, derived from `PUBLIC_BASE_URL`'s
-  scheme and overridable via `COOKIE_SECURE`. Every login path (password,
+- `Secure` is set from `Config::cookie_secure`, derived from `RDRS_PUBLIC_BASE_URL`'s
+  scheme and overridable via `RDRS_COOKIE_SECURE`. Every login path (password,
   passkey, forward-auth) builds its cookie through
   `middleware::auth::build_session_cookie` so the attributes cannot drift apart
 - Masquerade feature for admin testing

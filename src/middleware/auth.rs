@@ -22,7 +22,7 @@ pub const SESSION_COOKIE_NAME: &str = "session_token";
 /// Every login path (password, passkey, forward-auth) goes through here so the
 /// attributes cannot drift apart between them. `secure` comes from
 /// [`crate::config::Config::cookie_secure`], which is derived from
-/// `PUBLIC_BASE_URL`'s scheme.
+/// `RDRS_PUBLIC_BASE_URL`'s scheme.
 pub fn build_session_cookie(token: impl Into<String>, secure: bool) -> Cookie<'static> {
     Cookie::build((SESSION_COOKIE_NAME, token.into()))
         .path("/")

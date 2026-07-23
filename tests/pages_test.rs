@@ -398,9 +398,9 @@ async fn test_settings_page_renders_ssr_content() {
     assert!(body.contains("<h1>App</h1>"));
     assert!(body.contains("Configuration"));
     assert!(body.contains("DATABASE_URL"));
-    assert!(body.contains("USER_AGENT"));
-    assert!(body.contains("SIGNUP_ENABLED"));
-    assert!(body.contains("IMAGE_PROXY_SECRET"));
+    assert!(body.contains("RDRS_USER_AGENT"));
+    assert!(body.contains("RDRS_SIGNUP_ENABLED"));
+    assert!(body.contains("RDRS_SECRET"));
     // The "Current" column header surfaces the running instance's values.
     assert!(body.contains("Current"));
     // The old standalone "Environment Variables" sub-heading is gone.
@@ -3220,15 +3220,15 @@ async fn test_settings_page_groups_and_forward_auth() {
     assert!(body.contains("Accounts"), "expected 'Accounts' in body");
     // forward-auth rows present with current values reflected
     assert!(
-        body.contains("AUTH_PROXY_HEADER"),
-        "expected AUTH_PROXY_HEADER in body"
+        body.contains("RDRS_AUTH_PROXY_HEADER"),
+        "expected RDRS_AUTH_PROXY_HEADER in body"
     );
     assert!(
         body.contains("Remote-User"),
         "expected 'Remote-User' in body"
     );
     assert!(
-        body.contains("AUTH_PROXY_LOGOUT_URL"),
-        "expected AUTH_PROXY_LOGOUT_URL in body"
+        body.contains("RDRS_AUTH_PROXY_LOGOUT_URL"),
+        "expected RDRS_AUTH_PROXY_LOGOUT_URL in body"
     );
 }
