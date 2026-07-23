@@ -40,14 +40,14 @@ docker run -d \
   --name rdrs \
   -p 8080:8080 \
   -v rdrs_data:/data \
-  -e SIGNUP_ENABLED=true \
-  -e IMAGE_PROXY_SECRET="$(openssl rand -base64 32)" \
+  -e RDRS_SIGNUP_ENABLED=true \
+  -e RDRS_SECRET="$(openssl rand -base64 32)" \
   ghcr.io/henry40408/rdrs:latest
 ```
 
 Visit `http://localhost:8080` and create your account.
 
-> **`IMAGE_PROXY_SECRET`** — if left unset, a random secret is generated on
+> **`RDRS_SECRET`** — if left unset, a random secret is generated on
 > each startup, which invalidates every previously-proxied image URL whenever
 > the container restarts. Set it to a persistent value (e.g.
 > `openssl rand -base64 32`) so proxied images survive restarts.
@@ -67,42 +67,58 @@ cargo build --release
 ```
 
 Visit `http://localhost:8080` and create your account. The **first account is
-always allowed** even when `SIGNUP_ENABLED=false` (the default), so a source
-build works out of the box. `SIGNUP_ENABLED` (together with
-`MULTI_USER_ENABLED`) only governs *additional* registrations after the first
+always allowed** even when `RDRS_SIGNUP_ENABLED=false` (the default), so a source
+build works out of the box. `RDRS_SIGNUP_ENABLED` (together with
+`RDRS_MULTI_USER_ENABLED`) only governs *additional* registrations after the first
 account exists.
 
 ## Configuration
 
-All configuration is done via environment variables:
+All configuration is done via environment variables.
+
+> **Upgrading from a release before the `RDRS_` prefix?** Every rdrs-specific
+> variable gained an `RDRS_` prefix, and `IMAGE_PROXY_SECRET` became
+> `RDRS_SECRET`. The old names are **no longer read**, and rdrs **refuses to
+> start** while any of them is still set, listing each one and its replacement.
+>
+> The refusal is deliberate. Ignoring the old names would start a perfectly
+> healthy server on defaults — against an empty `rdrs.sqlite3` rather than your
+> database, with signup off and a regenerated secret. Failing once, loudly, is
+> the cheaper outcome.
+>
+> `DATABASE_URL` is the exception and keeps its bare name: it is a genuine
+> cross-tool convention. The rest only looked generic — `USER_AGENT` and
+> `SERVER_BIND` were rdrs's own names all along, which is exactly what made them
+> collide with other services in a shared compose file. `RUST_LOG` and
+> `NO_COLOR` are likewise untouched.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_URL` | `rdrs.sqlite3` | Database location. A file path or `sqlite://` URL selects SQLite (zero-config default); a `postgres://` URL selects PostgreSQL. The backend is chosen once at startup. |
-| `SERVER_BIND` | `127.0.0.1:8080` | HTTP server bind address (`host:port`). Defaults to loopback so a bare-metal run is not exposed on all interfaces without opting in; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it. |
-| `SIGNUP_ENABLED` | `false` | Allow new user registration |
-| `MULTI_USER_ENABLED` | `false` | Allow multiple users (requires signup enabled) |
-| `IMAGE_PROXY_SECRET` | Auto-generated | HMAC secret for secure image proxying |
-| `PUBLIC_BASE_URL` | - | Public base URL for generating absolute image proxy URLs in API responses (e.g., `https://rdrs.example.com`). If not set, relative paths are used (backward compatible). |
-| `COOKIE_SECURE` | Derived from `PUBLIC_BASE_URL` | Send the session cookie with the `Secure` attribute (HTTPS only). Defaults to on when `PUBLIC_BASE_URL` starts with `https://`, off otherwise — so an HTTPS deployment is secure without a second setting, while a plain-HTTP dev run keeps working. Set `true`/`1` to force it on when TLS terminates upstream and `PUBLIC_BASE_URL` is unset; set `false`/`0` to force it off. Only those four values are accepted — anything else fails startup rather than silently disabling `Secure`. |
-| `USER_AGENT` | `RDRS/...` | Custom user agent for feed fetching |
-| `WEBAUTHN_RP_ID` | `localhost` | WebAuthn Relying Party ID for passkey authentication |
-| `WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin URL |
-| `WEBAUTHN_RP_NAME` | `rdrs` | WebAuthn Relying Party display name |
+| `RDRS_SERVER_BIND` | `127.0.0.1:8080` | HTTP server bind address (`host:port`). Defaults to loopback so a bare-metal run is not exposed on all interfaces without opting in; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it. |
+| `RDRS_SIGNUP_ENABLED` | `false` | Allow new user registration |
+| `RDRS_MULTI_USER_ENABLED` | `false` | Allow multiple users (requires signup enabled) |
+| `RDRS_SECRET` | Auto-generated | HMAC secret for secure image proxying |
+| `RDRS_PUBLIC_BASE_URL` | - | Public base URL for generating absolute image proxy URLs in API responses (e.g., `https://rdrs.example.com`). If not set, relative paths are used (backward compatible). |
+| `RDRS_COOKIE_SECURE` | Derived from `RDRS_PUBLIC_BASE_URL` | Send the session cookie with the `Secure` attribute (HTTPS only). Defaults to on when `RDRS_PUBLIC_BASE_URL` starts with `https://`, off otherwise — so an HTTPS deployment is secure without a second setting, while a plain-HTTP dev run keeps working. Set `true`/`1` to force it on when TLS terminates upstream and `RDRS_PUBLIC_BASE_URL` is unset; set `false`/`0` to force it off. Only those four values are accepted — anything else fails startup rather than silently disabling `Secure`. |
+| `RDRS_USER_AGENT` | `RDRS/...` | Custom user agent for feed fetching |
+| `RDRS_WEBAUTHN_RP_ID` | `localhost` | WebAuthn Relying Party ID for passkey authentication |
+| `RDRS_WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin URL |
+| `RDRS_WEBAUTHN_RP_NAME` | `rdrs` | WebAuthn Relying Party display name |
 | `RUST_LOG` | - | Log level filter (e.g., `info`, `debug`, `rdrs=debug`). When unset, defaults to `error,rdrs=info` (rdrs' own INFO logs are visible; other crates stay at ERROR). |
-| `LOG_FORMAT` | `full` | Log output format: `full`, `compact`, `pretty`, or `json`. Can also be set via `--log-format`. |
-| `AUTH_PROXY_HEADER` | - | Header carrying the username from a forward-auth proxy (e.g. `Remote-User`, `X-Forwarded-User`). Empty disables the feature. |
-| `TRUSTED_PROXY_NETWORKS` | - | Comma-separated CIDRs or bare IPs (e.g. `10.0.0.0/8, 192.168.1.5`). The TCP peer IP must fall within one of these for the identity header to be trusted. Required when `AUTH_PROXY_HEADER` is set. |
-| `AUTH_PROXY_USER_CREATION` | `false` | When `true`, JIT-create a local account for an unknown proxy-provided username instead of redirecting to `/login`. |
-| `AUTH_PROXY_GROUPS_HEADER` | - | Header carrying comma-separated group names from the proxy (e.g. `Remote-Groups`). |
-| `AUTH_PROXY_ADMIN_GROUP` | - | Membership in this group grants the admin role, synced on every forward-auth login. Active only when `AUTH_PROXY_GROUPS_HEADER` is also set. |
-| `DISABLE_LOCAL_AUTH` | `false` | Hides the browser password form and rejects `POST /api/session` with 403. Does not affect GReader API or passkey auth. Requires `AUTH_PROXY_HEADER`. |
-| `AUTH_PROXY_LOGOUT_URL` | (unset) | When set, Sign Out redirects the browser here (e.g. the Authelia logout URL) to end the SSO session. When unset, Sign Out clears the local session and the proxy header re-authenticates on the next request (you return to the app). |
+| `RDRS_LOG_FORMAT` | `full` | Log output format: `full`, `compact`, `pretty`, or `json`. Can also be set via `--log-format`. |
+| `RDRS_AUTH_PROXY_HEADER` | - | Header carrying the username from a forward-auth proxy (e.g. `Remote-User`, `X-Forwarded-User`). Empty disables the feature. |
+| `RDRS_TRUSTED_PROXY_NETWORKS` | - | Comma-separated CIDRs or bare IPs (e.g. `10.0.0.0/8, 192.168.1.5`). The TCP peer IP must fall within one of these for the identity header to be trusted. Required when `RDRS_AUTH_PROXY_HEADER` is set. |
+| `RDRS_AUTH_PROXY_USER_CREATION` | `false` | When `true`, JIT-create a local account for an unknown proxy-provided username instead of redirecting to `/login`. |
+| `RDRS_AUTH_PROXY_GROUPS_HEADER` | - | Header carrying comma-separated group names from the proxy (e.g. `Remote-Groups`). |
+| `RDRS_AUTH_PROXY_ADMIN_GROUP` | - | Membership in this group grants the admin role, synced on every forward-auth login. Active only when `RDRS_AUTH_PROXY_GROUPS_HEADER` is also set. |
+| `RDRS_DISABLE_LOCAL_AUTH` | `false` | Hides the browser password form and rejects `POST /api/session` with 403. Does not affect GReader API or passkey auth. Requires `RDRS_AUTH_PROXY_HEADER`. |
+| `RDRS_AUTH_PROXY_LOGOUT_URL` | (unset) | When set, Sign Out redirects the browser here (e.g. the Authelia logout URL) to end the SSO session. When unset, Sign Out clears the local session and the proxy header re-authenticates on the next request (you return to the app). |
 
-> **Deploying behind a domain?** `WEBAUTHN_RP_ID` and `WEBAUTHN_RP_ORIGIN`
+> **Deploying behind a domain?** `RDRS_WEBAUTHN_RP_ID` and `RDRS_WEBAUTHN_RP_ORIGIN`
 > default to `localhost` and **must** be overridden to your public host (e.g.
-> `WEBAUTHN_RP_ID=rdrs.example.com`,
-> `WEBAUTHN_RP_ORIGIN=https://rdrs.example.com`), otherwise the browser rejects
+> `RDRS_WEBAUTHN_RP_ID=rdrs.example.com`,
+> `RDRS_WEBAUTHN_RP_ORIGIN=https://rdrs.example.com`), otherwise the browser rejects
 > passkeys. rdrs logs a startup warning while the RP origin still points at
 > `localhost`, and the active values are shown on the Settings page.
 
@@ -110,7 +126,7 @@ All configuration is done via environment variables:
 
 RDRS supports three authentication methods that all work simultaneously by
 default: local password, WebAuthn/passkeys, and **forward-auth (trusted-header)
-SSO**. `DISABLE_LOCAL_AUTH` is the only knob that narrows this set.
+SSO**. `RDRS_DISABLE_LOCAL_AUTH` is the only knob that narrows this set.
 
 ### Forward-Auth (SSO)
 
@@ -122,16 +138,16 @@ it. Existing accounts are matched by username — no migration is required.
 **Enable it** by setting (see the [Configuration](#configuration) table for all
 fields):
 
-- `AUTH_PROXY_HEADER` — the username header your proxy injects (e.g.
+- `RDRS_AUTH_PROXY_HEADER` — the username header your proxy injects (e.g.
   `Remote-User`).
-- `TRUSTED_PROXY_NETWORKS` — the CIDR(s)/IP(s) the proxy connects from. The
+- `RDRS_TRUSTED_PROXY_NETWORKS` — the CIDR(s)/IP(s) the proxy connects from. The
   identity header is trusted only when the TCP peer falls within this set, so it
   cannot be spoofed by a downstream client.
 
-**Optional:** `AUTH_PROXY_USER_CREATION` (JIT-create unknown users),
-`AUTH_PROXY_GROUPS_HEADER` + `AUTH_PROXY_ADMIN_GROUP` (map a group to the admin
-role on every login), `DISABLE_LOCAL_AUTH` (hide the password form), and
-`AUTH_PROXY_LOGOUT_URL` (redirect Sign Out to your IdP's logout endpoint to also
+**Optional:** `RDRS_AUTH_PROXY_USER_CREATION` (JIT-create unknown users),
+`RDRS_AUTH_PROXY_GROUPS_HEADER` + `RDRS_AUTH_PROXY_ADMIN_GROUP` (map a group to the admin
+role on every login), `RDRS_DISABLE_LOCAL_AUTH` (hide the password form), and
+`RDRS_AUTH_PROXY_LOGOUT_URL` (redirect Sign Out to your IdP's logout endpoint to also
 end the SSO session; when unset, Sign Out clears the local session and the proxy
 header re-authenticates on the next request).
 
@@ -236,8 +252,8 @@ services:
     volumes:
       - rdrs_data:/data
     environment:
-      - SIGNUP_ENABLED=true
-      - IMAGE_PROXY_SECRET=your-secret-here
+      - RDRS_SIGNUP_ENABLED=true
+      - RDRS_SECRET=your-secret-here
     restart: unless-stopped
 
 volumes:
@@ -256,7 +272,7 @@ size and attack surface. The build-stage design is described in
 
 ### Production Notes
 
-- Set `IMAGE_PROXY_SECRET` to a persistent value so image proxy URLs survive
+- Set `RDRS_SECRET` to a persistent value so image proxy URLs survive
   restarts (otherwise it is auto-generated on each boot).
 - Mount the `/data` volume so the SQLite database persists.
 - Put RDRS behind a reverse proxy for TLS termination.

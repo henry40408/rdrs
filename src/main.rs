@@ -28,7 +28,7 @@ enum LogFormat {
 #[command(name = "rdrs")]
 struct Args {
     /// Log output format
-    #[arg(long, env = "LOG_FORMAT", default_value = "full")]
+    #[arg(long, env = "RDRS_LOG_FORMAT", default_value = "full")]
     log_format: LogFormat,
 }
 
@@ -72,7 +72,7 @@ async fn main() {
 
     if config.image_proxy_secret_generated {
         tracing::warn!(
-            "IMAGE_PROXY_SECRET not set, using temporary key. Proxy URLs will be invalidated on restart."
+            "RDRS_SECRET not set, using temporary key. Proxy URLs will be invalidated on restart."
         );
     }
 

@@ -63,9 +63,9 @@ export async function spawnRdrs({ extraEnv = {} } = {}) {
     env: {
       ...process.env,
       DATABASE_URL: dbPath,
-      SERVER_BIND: `127.0.0.1:${port}`,
-      SIGNUP_ENABLED: "true",
-      MULTI_USER_ENABLED: "true",
+      RDRS_SERVER_BIND: `127.0.0.1:${port}`,
+      RDRS_SIGNUP_ENABLED: "true",
+      RDRS_MULTI_USER_ENABLED: "true",
       RUST_LOG: "warn",
       // This is always a throwaway test server. Use minimal Argon2 cost so the
       // register/login each scenario performs costs microseconds instead of

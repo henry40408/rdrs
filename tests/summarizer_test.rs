@@ -154,7 +154,7 @@ async fn item_returns_completed_then_error_card() {
     // Test-only env mutation; nextest isolates each test in its own process.
     #[allow(unsafe_code)]
     unsafe {
-        std::env::set_var("KAGI_API_BASE", mock.uri());
+        std::env::set_var("RDRS_KAGI_API_BASE", mock.uri());
     }
 
     let ok = app
@@ -171,6 +171,6 @@ async fn item_returns_completed_then_error_card() {
     // Test-only env mutation; nextest isolates each test in its own process.
     #[allow(unsafe_code)]
     unsafe {
-        std::env::remove_var("KAGI_API_BASE");
+        std::env::remove_var("RDRS_KAGI_API_BASE");
     }
 }

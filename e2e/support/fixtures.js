@@ -21,7 +21,7 @@ export const test = base.extend({
 
   rdrsServer: [
     async ({ kagiServer }, use) => {
-      const server = await spawnRdrs({ extraEnv: { KAGI_API_BASE: kagiServer.url } });
+      const server = await spawnRdrs({ extraEnv: { RDRS_KAGI_API_BASE: kagiServer.url } });
       try {
         await use(server);
       } finally {

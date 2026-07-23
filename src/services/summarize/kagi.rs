@@ -47,9 +47,9 @@ const KAGI_API_BASE: &str = "https://kagi.com";
 
 /// Summarize a URL using Kagi Universal Summarizer
 pub async fn summarize_url(config: &KagiConfig, url: &str) -> AppResult<SummarizeResult> {
-    // `KAGI_API_BASE` env redirects the endpoint to a local stub for tests/E2E.
+    // `RDRS_KAGI_API_BASE` env redirects the endpoint to a local stub for tests/E2E.
     // It is NEVER set in production — the default is the real Kagi host.
-    let base = std::env::var("KAGI_API_BASE").unwrap_or_else(|_| KAGI_API_BASE.to_string());
+    let base = std::env::var("RDRS_KAGI_API_BASE").unwrap_or_else(|_| KAGI_API_BASE.to_string());
     summarize_url_with_base(&base, config, url).await
 }
 
@@ -427,13 +427,13 @@ mod tests {
         // Test-only env mutation; nextest isolates each test in its own process.
         #[allow(unsafe_code)]
         unsafe {
-            std::env::set_var("KAGI_API_BASE", server.uri());
+            std::env::set_var("RDRS_KAGI_API_BASE", server.uri());
         };
         let result = summarize_url(&config, "https://x.com/a").await.unwrap();
         // Test-only env mutation; nextest isolates each test in its own process.
         #[allow(unsafe_code)]
         unsafe {
-            std::env::remove_var("KAGI_API_BASE");
+            std::env::remove_var("RDRS_KAGI_API_BASE");
         };
         assert!(result.success);
         assert_eq!(

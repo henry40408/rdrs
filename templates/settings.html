@@ -31,7 +31,7 @@
                                 <td data-label="Description">SQLite database file path</td>
                             </tr>
                             <tr>
-                                <td><code>SERVER_BIND</code></td>
+                                <td><code>RDRS_SERVER_BIND</code></td>
                                 <td class="settings-col-current" data-label="Current"><code>{{ server_bind }}</code></td>
                                 <td data-label="Default"><code>127.0.0.1:8080</code></td>
                                 <td data-label="Description">HTTP server bind address (host:port)</td>
@@ -39,13 +39,13 @@
 
                             <tr class="grouphdr"><td colspan="4">Accounts &amp; Registration</td></tr>
                             <tr>
-                                <td><code>SIGNUP_ENABLED</code></td>
+                                <td><code>RDRS_SIGNUP_ENABLED</code></td>
                                 <td class="settings-col-current" data-label="Current">{% if signup_enabled %}<span class="success-text">Yes</span>{% else %}<span class="muted">No</span>{% endif %}</td>
                                 <td data-label="Default"><code>false</code></td>
                                 <td data-label="Description">Allow new user registration</td>
                             </tr>
                             <tr>
-                                <td><code>MULTI_USER_ENABLED</code></td>
+                                <td><code>RDRS_MULTI_USER_ENABLED</code></td>
                                 <td class="settings-col-current" data-label="Current">{% if multi_user_enabled %}<span class="success-text">Yes</span>{% else %}<span class="muted">No</span>{% endif %}</td>
                                 <td data-label="Default"><code>false</code></td>
                                 <td data-label="Description">Allow multiple users</td>
@@ -53,19 +53,19 @@
 
                             <tr class="grouphdr"><td colspan="4">Authentication &mdash; Passkeys (WebAuthn)</td></tr>
                             <tr>
-                                <td><code>WEBAUTHN_RP_ID</code></td>
+                                <td><code>RDRS_WEBAUTHN_RP_ID</code></td>
                                 <td class="settings-col-current" data-label="Current"><code data-testid="webauthn-rp-id">{{ webauthn_rp_id }}</code></td>
                                 <td data-label="Default"><code>localhost</code></td>
                                 <td data-label="Description">Relying Party ID for passkeys</td>
                             </tr>
                             <tr>
-                                <td><code>WEBAUTHN_RP_ORIGIN</code></td>
+                                <td><code>RDRS_WEBAUTHN_RP_ORIGIN</code></td>
                                 <td class="settings-col-current" data-label="Current"><code data-testid="webauthn-rp-origin">{{ webauthn_rp_origin }}</code></td>
                                 <td data-label="Default"><code>http://localhost:{port}</code></td>
                                 <td data-label="Description">Relying Party origin URL (must match the URL you deploy at)</td>
                             </tr>
                             <tr>
-                                <td><code>WEBAUTHN_RP_NAME</code></td>
+                                <td><code>RDRS_WEBAUTHN_RP_NAME</code></td>
                                 <td class="settings-col-current" data-label="Current"><code data-testid="webauthn-rp-name">{{ webauthn_rp_name }}</code></td>
                                 <td data-label="Default"><code>rdrs</code></td>
                                 <td data-label="Description">Relying Party display name</td>
@@ -73,43 +73,43 @@
 
                             <tr class="grouphdr"><td colspan="4">Authentication &mdash; Forward-Auth</td></tr>
                             <tr>
-                                <td><code>AUTH_PROXY_HEADER</code></td>
+                                <td><code>RDRS_AUTH_PROXY_HEADER</code></td>
                                 <td class="settings-col-current" data-label="Current">{% call macros::current_text(auth_proxy_header) %}{% endcall %}</td>
                                 <td data-label="Default"><em>(unset)</em></td>
                                 <td data-label="Description">Username header from the forward-auth proxy</td>
                             </tr>
                             <tr>
-                                <td><code>TRUSTED_PROXY_NETWORKS</code></td>
+                                <td><code>RDRS_TRUSTED_PROXY_NETWORKS</code></td>
                                 <td class="settings-col-current" data-label="Current">{% call macros::current_text(trusted_proxy_networks) %}{% endcall %}</td>
                                 <td data-label="Default"><em>(unset)</em></td>
                                 <td data-label="Description">CIDRs the TCP peer must match</td>
                             </tr>
                             <tr>
-                                <td><code>AUTH_PROXY_USER_CREATION</code></td>
+                                <td><code>RDRS_AUTH_PROXY_USER_CREATION</code></td>
                                 <td class="settings-col-current" data-label="Current">{% if auth_proxy_user_creation %}<span class="success-text">Yes</span>{% else %}<span class="muted">No</span>{% endif %}</td>
                                 <td data-label="Default"><code>false</code></td>
                                 <td data-label="Description">JIT-create unknown users</td>
                             </tr>
                             <tr>
-                                <td><code>AUTH_PROXY_GROUPS_HEADER</code></td>
+                                <td><code>RDRS_AUTH_PROXY_GROUPS_HEADER</code></td>
                                 <td class="settings-col-current" data-label="Current">{% call macros::current_text(auth_proxy_groups_header) %}{% endcall %}</td>
                                 <td data-label="Default"><em>(unset)</em></td>
                                 <td data-label="Description">Groups header from the forward-auth proxy</td>
                             </tr>
                             <tr>
-                                <td><code>AUTH_PROXY_ADMIN_GROUP</code></td>
+                                <td><code>RDRS_AUTH_PROXY_ADMIN_GROUP</code></td>
                                 <td class="settings-col-current" data-label="Current">{% call macros::current_text(auth_proxy_admin_group) %}{% endcall %}</td>
                                 <td data-label="Default"><em>(unset)</em></td>
                                 <td data-label="Description">Group membership that grants admin</td>
                             </tr>
                             <tr>
-                                <td><code>DISABLE_LOCAL_AUTH</code></td>
+                                <td><code>RDRS_DISABLE_LOCAL_AUTH</code></td>
                                 <td class="settings-col-current" data-label="Current">{% if disable_local_auth %}<span class="success-text">Yes</span>{% else %}<span class="muted">No</span>{% endif %}</td>
                                 <td data-label="Default"><code>false</code></td>
                                 <td data-label="Description">Hide the browser password login form</td>
                             </tr>
                             <tr>
-                                <td><code>AUTH_PROXY_LOGOUT_URL</code></td>
+                                <td><code>RDRS_AUTH_PROXY_LOGOUT_URL</code></td>
                                 <td class="settings-col-current" data-label="Current">{% call macros::current_text(auth_proxy_logout_url) %}{% endcall %}</td>
                                 <td data-label="Default"><em>(unset)</em></td>
                                 <td data-label="Description">Sign Out redirects here to end the SSO session</td>
@@ -117,13 +117,13 @@
 
                             <tr class="grouphdr"><td colspan="4">Content &amp; Media</td></tr>
                             <tr>
-                                <td><code>USER_AGENT</code></td>
+                                <td><code>RDRS_USER_AGENT</code></td>
                                 <td class="settings-col-current" data-label="Current"><code>{{ user_agent }}</code> <span class="muted">({% if user_agent_is_default %}default{% else %}custom{% endif %})</span></td>
                                 <td data-label="Default"><code>RDRS/{version} (...)</code></td>
                                 <td data-label="Description">User agent for HTTP requests</td>
                             </tr>
                             <tr>
-                                <td><code>IMAGE_PROXY_SECRET</code></td>
+                                <td><code>RDRS_SECRET</code></td>
                                 <td class="settings-col-current" data-label="Current">{% if image_proxy_secret_generated %}<span class="muted">Auto-generated</span>{% else %}<span class="success-text">Configured</span>{% endif %}</td>
                                 <td data-label="Default"><em>(auto-generated)</em></td>
                                 <td data-label="Description">Secret key for image proxy URLs</td>
