@@ -260,7 +260,21 @@ impl Db {
         let guard = self.admit().await;
         Ok(match &self.inner {
             DbInner::Sqlite(pool) => Tx::Sqlite {
-                tx: pool.begin().await?,
+                // BEGIN IMMEDIATE takes the write lock up front, so a second
+                // writer blocks here — where the connection's `busy_timeout`
+                // applies and makes it wait — instead of the default DEFERRED
+                // behaviour, which starts as a reader and only tries to promote
+                // to a writer at the first write. That promotion, when another
+                // writer already holds the lock, returns SQLITE_BUSY ("database
+                // is locked") *immediately*: SQLite skips the busy handler there
+                // to avoid a deadlock, so the 5 s timeout cannot paper over it.
+                // Every `begin()` here is a write unit-of-work (upserts, OPML
+                // import, GReader tag edits), and the write-priority gate only
+                // orders user-vs-background — not the up-to-4 concurrent
+                // background feed syncs that race here — so DEFERRED let those
+                // collide. Read-only work uses the `query_*!` macros, never
+                // `begin()`, so nothing pays for an unnecessary write lock.
+                tx: pool.begin_with("BEGIN IMMEDIATE").await?,
                 _guard: guard,
             },
             DbInner::Postgres(pool) => Tx::Postgres(pool.begin().await?),
@@ -718,5 +732,70 @@ mod tests {
             .await
             .expect("background admit proceeds after the user op finishes")
             .unwrap();
+    }
+
+    // Regression: a full bucket runs up to 4 background feed syncs at once, each
+    // opening a write transaction. Under the default `BEGIN DEFERRED` their
+    // read→write promotions race and SQLite returns SQLITE_BUSY ("database is
+    // locked") that `busy_timeout` cannot retry; `begin()` uses `BEGIN
+    // IMMEDIATE` so they queue on the write lock instead. This needs a *file*
+    // database — the in-memory pool is a single shared connection and so cannot
+    // exhibit the multi-connection contention this guards against.
+    #[tokio::test]
+    async fn concurrent_write_transactions_do_not_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.sqlite3");
+        let db = Db::connect(path.to_str().unwrap(), Backend::Sqlite)
+            .await
+            .unwrap();
+
+        if let DbInner::Sqlite(pool) = &db.inner {
+            sqlx::query("CREATE TABLE probe (id INTEGER PRIMARY KEY, n INTEGER)")
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+
+        // Fire many background write transactions concurrently — more than the
+        // pool's connection count, so they genuinely contend for the writer.
+        let mut set = tokio::task::JoinSet::new();
+        for i in 0..32_i64 {
+            let bg = db.background();
+            set.spawn(async move {
+                let mut tx = bg.begin().await?;
+                if let Tx::Sqlite { tx: sqtx, .. } = &mut tx {
+                    // Read *then* write inside the transaction — the pattern a
+                    // feed sync uses. Under DEFERRED the SELECT takes a read
+                    // snapshot and the INSERT then races to promote to a writer,
+                    // which is what surfaces the lock; IMMEDIATE already holds
+                    // the write lock so there is no promotion to lose.
+                    let _n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM probe")
+                        .fetch_one(&mut **sqtx)
+                        .await?;
+                    sqlx::query("INSERT INTO probe (n) VALUES (?)")
+                        .bind(i)
+                        .execute(&mut **sqtx)
+                        .await?;
+                }
+                tx.commit().await
+            });
+        }
+
+        while let Some(joined) = set.join_next().await {
+            joined
+                .expect("task panicked")
+                .expect("a concurrent write transaction must not fail with a lock");
+        }
+
+        if let DbInner::Sqlite(pool) = &db.inner {
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM probe")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                count, 32,
+                "every concurrent transaction must have committed"
+            );
+        }
     }
 }
