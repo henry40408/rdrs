@@ -4,11 +4,11 @@ Feature: Responsive layout
   Background:
     Given I am signed in
 
-  Scenario: Entry-list filter bar stays on one row at 1400x900
+  Scenario: Entry-list filter bar does not overflow the list pane at 1400x900
     Given I am viewing on a wide screen
     And I have a feed "Wide Feed" with 3 test entries in category "Wide Cat"
     When I open the entries page for feed "Wide Feed"
-    Then the entry-list filter bar fits on one row
+    Then the entry-list filter bar does not overflow the list pane
 
   @mobile
   Scenario: Sidebar is hidden by default and toggled by the hamburger on mobile

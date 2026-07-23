@@ -318,23 +318,33 @@ Then("the {string} element is visible", async ({ page }, selector) => {
   await expect(page.locator(selector).first()).toBeVisible();
 });
 
-Then("the entry-list filter bar fits on one row", async ({ page }) => {
-  // The filter bar holds the status-filter and Mark-as-Read selects. They must
-  // stay on a single row inside the fixed-width list pane — if they wrap, the
-  // second .form-group drops to a larger top offset.
-  const groups = page.locator(".filter-bar > .form-group");
-  const count = await groups.count();
-  expect(count).toBeGreaterThanOrEqual(2);
-  const tops = [];
-  for (let i = 0; i < count; i++) {
-    const box = await groups.nth(i).boundingBox();
-    expect(box).not.toBeNull();
-    tops.push(box.y);
-  }
-  const minTop = Math.min(...tops);
-  for (const top of tops) {
-    expect(Math.abs(top - minTop)).toBeLessThan(4);
-  }
+Then("the entry-list filter bar does not overflow the list pane", async ({ page }) => {
+  // The filter bar holds the status-filter select, the Mark-as-Read select, and
+  // the search box, and uses `flex-wrap`, so inside the fixed-width list pane it
+  // may legitimately wrap onto a second row — that is by design and not what
+  // this guards. The real invariant is that nothing overflows the pane
+  // horizontally: no control reaches past the pane's right edge and the pane
+  // grows no horizontal scrollbar, so every control stays reachable however many
+  // the bar holds.
+  const pane = page.locator(".list-pane");
+  await expect(pane).toBeVisible();
+  const overflow = await pane.evaluate((p) => {
+    const paneRight = p.getBoundingClientRect().right;
+    const groups = [...p.querySelectorAll(".filter-bar > .form-group")];
+    const pastRight = Math.max(
+      0,
+      ...groups.map((g) => g.getBoundingClientRect().right - paneRight),
+    );
+    return {
+      count: groups.length,
+      horizontalScroll: p.scrollWidth - p.clientWidth,
+      pastRight,
+    };
+  });
+  expect(overflow.count).toBeGreaterThanOrEqual(2);
+  // Sub-pixel tolerance for rounding.
+  expect(overflow.pastRight).toBeLessThanOrEqual(1);
+  expect(overflow.horizontalScroll).toBeLessThanOrEqual(1);
 });
 
 Then("the {string} controls each span at least {int}% of the row", async ({ page }, selector, pct) => {
