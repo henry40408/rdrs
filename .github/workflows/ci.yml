@@ -168,6 +168,16 @@ jobs:
         working-directory: e2e
         run: npx playwright install-deps chromium
 
+      # playwright-bdd generates the runnable specs from the .feature files into
+      # .features-gen/, which is git-ignored. Auto-generation on `playwright
+      # test` does not fire here because the project sets its own `globalSetup`
+      # (to build the binary), shadowing playwright-bdd's generation hook — so a
+      # fresh checkout has no specs and `playwright test` would silently run zero
+      # tests and pass. Generate them explicitly first.
+      - name: Generate BDD specs
+        working-directory: e2e
+        run: npx bddgen
+
       - name: Run E2E tests (shard ${{ matrix.shard }})
         working-directory: e2e
         run: npx playwright test --shard=${{ matrix.shard }} --grep-invert "@skip"
