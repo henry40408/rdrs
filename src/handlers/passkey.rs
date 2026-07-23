@@ -3,15 +3,14 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use axum_extra::extract::cookie::{Cookie, CookieJar};
+use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
-use time::Duration;
 use uuid::Uuid;
 use webauthn_rs::prelude::*;
 
 use crate::AppState;
 use crate::error::{AppError, AppResult};
-use crate::middleware::{AuthUser, SESSION_COOKIE_NAME};
+use crate::middleware::{AuthUser, build_session_cookie};
 use crate::models::{passkey, session, user, webauthn_challenge};
 
 // --- Registration ---
@@ -247,12 +246,7 @@ pub async fn finish_authentication(
     passkey::update_counter(&state.db, passkey_id, counter).await?;
     let new_session = session::create_session(&state.db, passkey_user_id).await?;
 
-    let cookie = Cookie::build((SESSION_COOKIE_NAME, new_session.session_token))
-        .path("/")
-        .http_only(true)
-        .same_site(axum_extra::extract::cookie::SameSite::Lax)
-        .max_age(Duration::days(session::SESSION_ABSOLUTE_MAX_DAYS))
-        .build();
+    let cookie = build_session_cookie(new_session.session_token, state.config.cookie_secure);
 
     Ok((
         jar.add(cookie),

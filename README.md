@@ -84,6 +84,7 @@ All configuration is done via environment variables:
 | `MULTI_USER_ENABLED` | `false` | Allow multiple users (requires signup enabled) |
 | `IMAGE_PROXY_SECRET` | Auto-generated | HMAC secret for secure image proxying |
 | `PUBLIC_BASE_URL` | - | Public base URL for generating absolute image proxy URLs in API responses (e.g., `https://rdrs.example.com`). If not set, relative paths are used (backward compatible). |
+| `COOKIE_SECURE` | Derived from `PUBLIC_BASE_URL` | Send the session cookie with the `Secure` attribute (HTTPS only). Defaults to on when `PUBLIC_BASE_URL` starts with `https://`, off otherwise — so an HTTPS deployment is secure without a second setting, while a plain-HTTP dev run keeps working. Set `true`/`1` to force it on when TLS terminates upstream and `PUBLIC_BASE_URL` is unset; set `false`/`0` to force it off. Only those four values are accepted — anything else fails startup rather than silently disabling `Secure`. |
 | `USER_AGENT` | `RDRS/...` | Custom user agent for feed fetching |
 | `WEBAUTHN_RP_ID` | `localhost` | WebAuthn Relying Party ID for passkey authentication |
 | `WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin URL |
