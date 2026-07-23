@@ -325,6 +325,12 @@ pub fn create_router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::forward_auth::forward_auth,
+        ))
+        // First-line CSRF defence: reject provably cross-site state-changing
+        // requests. Header-only and stateless, so its position in the stack is
+        // immaterial; the synchronizer-token guard is layered on separately.
+        .layer(axum::middleware::from_fn(
+            middleware::csrf::csrf_origin_guard,
         ));
 
     Router::new()

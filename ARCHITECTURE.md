@@ -421,6 +421,26 @@ image-proxy URLs already cached by a GReader client break until it re-syncs.
 Native GReader `ClientLogin` tokens are unaffected, being the raw
 `session_token` matched against the database rather than signed.
 
+### CSRF protection
+
+Two independent lines, so a bypass of one is not a bypass of both.
+
+- **First line — `middleware::csrf::csrf_origin_guard`** (in place). A
+  header-only, stateless check layered over the whole router. On every
+  state-changing method it rejects a request the browser reports as cross-site
+  (`Sec-Fetch-Site: cross-site`) or that carries an `Origin` whose host does not
+  match the request's `Host` (an opaque `Origin: null` counts as cross-site).
+  Requests with neither header — native GReader clients, `curl`, server-to-server
+  calls, all bearer-authenticated rather than cookie-authenticated — are not a
+  CSRF vector and pass through. `Sec-Fetch-Site` is trusted first; the `Origin`
+  path compares host only, so it survives a TLS-terminating proxy where the
+  browser's `https://` `Origin` meets a scheme-less forwarded `Host`.
+- **Second line — synchronizer token** (`secret::derive_csrf` / `verify_csrf`).
+  A per-session token, HMAC of the session token under the `csrf:` domain, so it
+  needs no column and no query and cannot equal the session cookie's own
+  signature. The primitives exist; embedding the token in forms and enforcing it
+  is the follow-up change.
+
 ### Password Hashing
 
 Uses Argon2id with:
