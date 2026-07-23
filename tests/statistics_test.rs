@@ -28,6 +28,7 @@ async fn create_test_app(_name: &str) -> TestApp {
         webauthn_rp_origin: "http://localhost:8080".to_string(),
         webauthn_rp_name: "rdrs-test".to_string(),
         public_base_url: None,
+        cookie_secure: false,
         auth_proxy_header: String::new(),
         trusted_proxy_networks: Vec::new(),
         auth_proxy_user_creation: false,

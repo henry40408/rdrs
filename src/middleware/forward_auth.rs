@@ -6,13 +6,12 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Redirect, Response},
 };
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use time::Duration;
+use axum_extra::extract::cookie::CookieJar;
 
 use crate::AppState;
 use crate::config::Config;
 use crate::error::AppResult;
-use crate::middleware::{FlashRedirect, SESSION_COOKIE_NAME};
+use crate::middleware::{FlashRedirect, SESSION_COOKIE_NAME, build_session_cookie};
 use crate::models::user::{self, Role};
 use crate::models::{category, session};
 
@@ -175,12 +174,7 @@ pub async fn forward_auth(
         _ => return next.run(req).await,
     };
 
-    let cookie = Cookie::build((SESSION_COOKIE_NAME, token))
-        .path("/")
-        .http_only(true)
-        .same_site(SameSite::Lax)
-        .max_age(Duration::days(session::SESSION_ABSOLUTE_MAX_DAYS))
-        .build();
+    let cookie = build_session_cookie(token, config.cookie_secure);
 
     // Redirect to the same URL; the just-set cookie authenticates the retry.
     let location = req

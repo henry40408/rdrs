@@ -411,6 +411,10 @@ Uses Argon2id with:
 - Absolute cap of 90 days from session creation to bound session lifetime
 - Secure cookie settings (`HttpOnly`, `SameSite=Lax`); cookie `Max-Age`
   matches the absolute cap so the browser retains it across slides
+- `Secure` is set from `Config::cookie_secure`, derived from `PUBLIC_BASE_URL`'s
+  scheme and overridable via `COOKIE_SECURE`. Every login path (password,
+  passkey, forward-auth) builds its cookie through
+  `middleware::auth::build_session_cookie` so the attributes cannot drift apart
 - Masquerade feature for admin testing
 
 ### Input Sanitization

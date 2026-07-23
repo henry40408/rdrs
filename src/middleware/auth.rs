@@ -6,6 +6,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::CookieJar;
+use axum_extra::extract::cookie::{Cookie, SameSite};
+use time::Duration;
 
 use crate::AppState;
 use crate::error::AppError;
@@ -14,6 +16,22 @@ use crate::models::session::{self, Session};
 use crate::models::user::{self, User};
 
 pub const SESSION_COOKIE_NAME: &str = "session_token";
+
+/// Build the session cookie for `token`.
+///
+/// Every login path (password, passkey, forward-auth) goes through here so the
+/// attributes cannot drift apart between them. `secure` comes from
+/// [`crate::config::Config::cookie_secure`], which is derived from
+/// `PUBLIC_BASE_URL`'s scheme.
+pub fn build_session_cookie(token: impl Into<String>, secure: bool) -> Cookie<'static> {
+    Cookie::build((SESSION_COOKIE_NAME, token.into()))
+        .path("/")
+        .http_only(true)
+        .secure(secure)
+        .same_site(SameSite::Lax)
+        .max_age(Duration::days(session::SESSION_ABSOLUTE_MAX_DAYS))
+        .build()
+}
 
 #[derive(Debug, Clone)]
 pub struct AuthUser {

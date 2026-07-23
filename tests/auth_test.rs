@@ -859,6 +859,52 @@ fn set_cookie_headers(res: &axum_test::TestResponse) -> Vec<String> {
         .collect()
 }
 
+/// Log in a fresh user and return the raw `session_token` Set-Cookie value.
+async fn login_session_cookie(server: &TestServer) -> String {
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let res = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await;
+    res.assert_status_ok();
+    set_cookie_headers(&res)
+        .into_iter()
+        .find(|s| s.starts_with("session_token="))
+        .expect("login must emit a session_token Set-Cookie")
+}
+
+#[tokio::test]
+async fn test_session_cookie_secure_when_enabled() {
+    let config = Config {
+        cookie_secure: true,
+        ..default_test_config()
+    };
+    let cookie = login_session_cookie(&create_test_server(config).await).await;
+    assert!(
+        cookie.contains("Secure"),
+        "cookie_secure must put Secure on the session cookie: {cookie}"
+    );
+    // The other attributes must survive the shared builder.
+    assert!(cookie.contains("HttpOnly"), "{cookie}");
+    assert!(cookie.contains("SameSite=Lax"), "{cookie}");
+    assert!(cookie.contains("Path=/"), "{cookie}");
+}
+
+#[tokio::test]
+async fn test_session_cookie_not_secure_by_default() {
+    // No PUBLIC_BASE_URL → plain-HTTP dev run. A Secure cookie would be
+    // dropped by the browser and lock the developer out.
+    let cookie = login_session_cookie(&create_test_server(default_test_config()).await).await;
+    assert!(
+        !cookie.contains("Secure"),
+        "session cookie must not be Secure without cookie_secure: {cookie}"
+    );
+}
+
 #[tokio::test]
 async fn test_logout_clears_cookie_with_path() {
     let server = create_test_server(default_test_config()).await;

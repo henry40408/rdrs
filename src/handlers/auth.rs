@@ -1,12 +1,11 @@
 use axum::{Json, extract::State, http::StatusCode};
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use serde::{Deserialize, Serialize};
-use time::Duration;
 
 use crate::AppState;
 use crate::auth::{hash_password, verify_password};
 use crate::error::{AppError, AppResult};
-use crate::middleware::{AuthUser, SESSION_COOKIE_NAME};
+use crate::middleware::{AuthUser, SESSION_COOKIE_NAME, build_session_cookie};
 use crate::models::category;
 use crate::models::session;
 use crate::models::user::{self, Role};
@@ -108,12 +107,7 @@ pub async fn login(
 
     let new_session = session::create_session(&state.db, user.id).await?;
 
-    let cookie = Cookie::build((SESSION_COOKIE_NAME, new_session.session_token))
-        .path("/")
-        .http_only(true)
-        .same_site(axum_extra::extract::cookie::SameSite::Lax)
-        .max_age(Duration::days(session::SESSION_ABSOLUTE_MAX_DAYS))
-        .build();
+    let cookie = build_session_cookie(new_session.session_token, state.config.cookie_secure);
 
     Ok((
         jar.add(cookie),

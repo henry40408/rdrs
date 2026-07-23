@@ -24,6 +24,7 @@ pub struct Config {
     pub webauthn_rp_origin: String,
     pub webauthn_rp_name: String,
     pub public_base_url: Option<String>,
+    pub cookie_secure: bool,
     pub auth_proxy_header: String,
     pub trusted_proxy_networks: Vec<IpNet>,
     pub auth_proxy_user_creation: bool,
@@ -58,6 +59,39 @@ pub fn parse_trusted_networks(raw: &str) -> Result<Vec<IpNet>, String> {
         }
     }
     Ok(nets)
+}
+
+/// Whether the session cookie should carry the `Secure` attribute.
+///
+/// An explicit `COOKIE_SECURE` wins; otherwise the answer is derived from
+/// `PUBLIC_BASE_URL`'s scheme. Deriving beats a standalone knob because a real
+/// deployment already has to set `PUBLIC_BASE_URL` correctly (it drives the
+/// absolute image-proxy URLs), so an HTTPS install gets `Secure` without a
+/// second setting to forget — while a plain `http://` dev run keeps working.
+/// That last part matters: a browser silently drops a `Secure` cookie sent over
+/// HTTP, so defaulting it on would lock a developer out with no visible error.
+///
+/// The override exists for TLS-terminating setups that cannot advertise their
+/// public URL here, and for forcing the flag off while debugging.
+///
+/// Unlike the other boolean env vars, an unrecognized value is a hard error
+/// rather than a silent "off". Those default to `false`, so a typo there is a
+/// no-op; here the derived default can be `true`, so treating `COOKIE_SECURE=yes`
+/// as "off" would quietly strip `Secure` from a correctly-configured HTTPS
+/// deployment — exactly the failure this setting exists to prevent.
+pub fn parse_cookie_secure(
+    raw: Option<&str>,
+    public_base_url: Option<&str>,
+) -> Result<bool, String> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(v) if v.eq_ignore_ascii_case("true") || v == "1" => Ok(true),
+        Some(v) if v.eq_ignore_ascii_case("false") || v == "0" => Ok(false),
+        Some(v) => Err(format!(
+            "invalid COOKIE_SECURE '{v}': expected one of true, false, 1, 0"
+        )),
+        None => Ok(public_base_url
+            .is_some_and(|u| u.trim_start().to_ascii_lowercase().starts_with("https://"))),
+    }
 }
 
 /// Which database engine `database_url` selects. Determined once at startup —
@@ -132,6 +166,12 @@ impl Config {
         let trusted_proxy_networks =
             parse_trusted_networks(&env::var("TRUSTED_PROXY_NETWORKS").unwrap_or_default())?;
 
+        let public_base_url = env::var("PUBLIC_BASE_URL").ok().filter(|s| !s.is_empty());
+        let cookie_secure = parse_cookie_secure(
+            env::var("COOKIE_SECURE").ok().as_deref(),
+            public_base_url.as_deref(),
+        )?;
+
         Ok(Self {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "rdrs.sqlite3".to_string()),
             server_bind,
@@ -146,7 +186,8 @@ impl Config {
             webauthn_rp_origin: env::var("WEBAUTHN_RP_ORIGIN")
                 .unwrap_or_else(|_| format!("http://localhost:{}", server_bind.port())),
             webauthn_rp_name: env::var("WEBAUTHN_RP_NAME").unwrap_or_else(|_| "rdrs".to_string()),
-            public_base_url: env::var("PUBLIC_BASE_URL").ok().filter(|s| !s.is_empty()),
+            public_base_url,
+            cookie_secure,
             auth_proxy_header: env::var("AUTH_PROXY_HEADER").unwrap_or_default(),
             trusted_proxy_networks,
             auth_proxy_user_creation: env::var("AUTH_PROXY_USER_CREATION")
@@ -274,6 +315,7 @@ mod tests {
             webauthn_rp_origin: "http://localhost:8080".to_string(),
             webauthn_rp_name: "rdrs".to_string(),
             public_base_url: None,
+            cookie_secure: false,
             auth_proxy_header: String::new(),
             trusted_proxy_networks: Vec::new(),
             auth_proxy_user_creation: false,
@@ -322,6 +364,57 @@ mod tests {
         assert_eq!(config.server_bind, "127.0.0.1:9137".parse().unwrap());
         // The WEBAUTHN_RP_ORIGIN default derives its port from SERVER_BIND.
         assert_eq!(config.webauthn_rp_origin, "http://localhost:9137");
+    }
+
+    /// `parse_cookie_secure` for cases that must succeed.
+    fn cookie_secure(raw: Option<&str>, public_base_url: Option<&str>) -> bool {
+        parse_cookie_secure(raw, public_base_url).expect("valid COOKIE_SECURE")
+    }
+
+    #[test]
+    fn test_parse_cookie_secure_derives_from_public_base_url() {
+        // Unset → follow PUBLIC_BASE_URL's scheme.
+        assert!(cookie_secure(None, Some("https://rdrs.example.com")));
+        assert!(!cookie_secure(None, Some("http://localhost:8080")));
+        // No PUBLIC_BASE_URL at all → off, so a bare `cargo run` stays usable.
+        assert!(!cookie_secure(None, None));
+        // Scheme match is case-insensitive and tolerant of leading whitespace,
+        // matching `classify_backend`'s handling of DATABASE_URL.
+        assert!(cookie_secure(None, Some("  HTTPS://rdrs.example.com")));
+        // A host that merely starts with "https" is not an https:// URL.
+        assert!(!cookie_secure(None, Some("http://https.example.com")));
+    }
+
+    #[test]
+    fn test_parse_cookie_secure_explicit_override() {
+        // An explicit value wins over the derived one, in both directions.
+        assert!(cookie_secure(Some("true"), Some("http://localhost")));
+        assert!(cookie_secure(Some("1"), None));
+        assert!(cookie_secure(Some("TRUE"), None));
+        assert!(!cookie_secure(
+            Some("false"),
+            Some("https://rdrs.example.com")
+        ));
+        assert!(!cookie_secure(Some("0"), Some("https://rdrs.example.com")));
+        // Surrounding whitespace is trimmed off a real value.
+        assert!(cookie_secure(Some(" true "), None));
+        // Empty / whitespace-only is "unset", not "off" — an empty env var
+        // must not silently disable the derived value.
+        assert!(cookie_secure(Some(""), Some("https://rdrs.example.com")));
+        assert!(cookie_secure(Some("   "), Some("https://rdrs.example.com")));
+    }
+
+    #[test]
+    fn test_parse_cookie_secure_rejects_unrecognized_value() {
+        // A typo must not silently strip `Secure` from an HTTPS deployment, so
+        // anything outside true/false/1/0 fails startup instead of being read
+        // as "off".
+        for raw in ["yes", "on", "enabled", "no", "off", "2", "tru"] {
+            let err = parse_cookie_secure(Some(raw), Some("https://rdrs.example.com"))
+                .expect_err("unrecognized COOKIE_SECURE must be rejected");
+            assert!(err.contains("COOKIE_SECURE"), "{err}");
+            assert!(err.contains(raw), "{err}");
+        }
     }
 
     #[test]

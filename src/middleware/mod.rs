@@ -4,7 +4,9 @@ pub mod etag;
 pub mod flash;
 pub mod forward_auth;
 
-pub use auth::{AdminUser, AuthUser, PageAdminUser, PageAuthUser, SESSION_COOKIE_NAME};
+pub use auth::{
+    AdminUser, AuthUser, PageAdminUser, PageAuthUser, SESSION_COOKIE_NAME, build_session_cookie,
+};
 pub use date_header::DateHeaderLayer;
 pub use etag::ETagLayer;
 pub use flash::{FLASH_COOKIE_NAME, Flash, FlashMessage, FlashRedirect, SetFlash};
