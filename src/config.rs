@@ -158,68 +158,113 @@ pub fn parse_server_bind(raw: Option<&str>) -> Result<SocketAddr, String> {
     }
 }
 
-impl Config {
-    pub fn from_env() -> Result<Self, String> {
-        let (image_proxy_secret, image_proxy_secret_generated) = Self::load_image_proxy_secret();
-        let server_bind = parse_server_bind(env::var("SERVER_BIND").ok().as_deref())?;
-
-        let trusted_proxy_networks =
-            parse_trusted_networks(&env::var("TRUSTED_PROXY_NETWORKS").unwrap_or_default())?;
-
-        let public_base_url = env::var("PUBLIC_BASE_URL").ok().filter(|s| !s.is_empty());
-        let cookie_secure = parse_cookie_secure(
-            env::var("COOKIE_SECURE").ok().as_deref(),
-            public_base_url.as_deref(),
-        )?;
-
-        Ok(Self {
-            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "rdrs.sqlite3".to_string()),
-            server_bind,
-            signup_enabled: env::var("SIGNUP_ENABLED")
-                .is_ok_and(|v| v.to_lowercase() == "true" || v == "1"),
-            multi_user_enabled: env::var("MULTI_USER_ENABLED")
-                .is_ok_and(|v| v.to_lowercase() == "true" || v == "1"),
-            image_proxy_secret,
-            image_proxy_secret_generated,
-            user_agent: env::var("USER_AGENT").unwrap_or_else(|_| DEFAULT_USER_AGENT.to_string()),
-            webauthn_rp_id: env::var("WEBAUTHN_RP_ID").unwrap_or_else(|_| "localhost".to_string()),
-            webauthn_rp_origin: env::var("WEBAUTHN_RP_ORIGIN")
-                .unwrap_or_else(|_| format!("http://localhost:{}", server_bind.port())),
-            webauthn_rp_name: env::var("WEBAUTHN_RP_NAME").unwrap_or_else(|_| "rdrs".to_string()),
-            public_base_url,
-            cookie_secure,
-            auth_proxy_header: env::var("AUTH_PROXY_HEADER").unwrap_or_default(),
-            trusted_proxy_networks,
-            auth_proxy_user_creation: env::var("AUTH_PROXY_USER_CREATION")
-                .is_ok_and(|v| v.to_lowercase() == "true" || v == "1"),
-            disable_local_auth: env::var("DISABLE_LOCAL_AUTH")
-                .is_ok_and(|v| v.to_lowercase() == "true" || v == "1"),
-            auth_proxy_groups_header: env::var("AUTH_PROXY_GROUPS_HEADER").unwrap_or_default(),
-            auth_proxy_admin_group: env::var("AUTH_PROXY_ADMIN_GROUP").unwrap_or_default(),
-            auth_proxy_logout_url: env::var("AUTH_PROXY_LOGOUT_URL")
-                .ok()
-                .filter(|s| !s.is_empty()),
-        })
+/// Resolve the image-proxy HMAC secret from a raw `IMAGE_PROXY_SECRET` value,
+/// returning the key bytes and whether they were generated rather than
+/// configured. A base64 value is decoded; otherwise the raw bytes are used.
+/// Either way at least 16 bytes are required — a shorter value is discarded in
+/// favour of a fresh random key rather than used as a guessable one.
+///
+/// Unlike every other string setting this does *not* go through [`nonblank`]:
+/// trimming would change the key bytes for an existing deployment whose value
+/// happens to carry whitespace, silently invalidating every image-proxy URL
+/// already cached by a Google Reader client.
+fn load_image_proxy_secret(raw: Option<String>) -> (Vec<u8>, bool) {
+    if let Some(secret_str) = raw {
+        // Try to decode as base64 first
+        if let Ok(decoded) = STANDARD.decode(&secret_str)
+            && decoded.len() >= 16
+        {
+            return (decoded, false);
+        }
+        // Use raw bytes if at least 16 characters
+        if secret_str.len() >= 16 {
+            return (secret_str.into_bytes(), false);
+        }
     }
 
-    fn load_image_proxy_secret() -> (Vec<u8>, bool) {
-        if let Ok(secret_str) = env::var("IMAGE_PROXY_SECRET") {
-            // Try to decode as base64 first
-            if let Ok(decoded) = STANDARD.decode(&secret_str)
-                && decoded.len() >= 16
-            {
-                return (decoded, false);
-            }
-            // Use raw bytes if at least 16 characters
-            if secret_str.len() >= 16 {
-                return (secret_str.into_bytes(), false);
-            }
-        }
+    // Generate a random 32-byte secret
+    let mut secret = vec![0u8; 32];
+    rand::rng().fill_bytes(&mut secret);
+    (secret, true)
+}
 
-        // Generate a random 32-byte secret
-        let mut secret = vec![0u8; 32];
-        rand::rng().fill_bytes(&mut secret);
-        (secret, true)
+/// Read `key` through `get` and normalize it: surrounding whitespace is
+/// trimmed, and a value that is empty afterwards counts as unset.
+///
+/// Every string-valued setting goes through here so `FOO=` or `FOO="  "` in a
+/// compose file means "not configured" rather than "configured to the empty
+/// string". The distinction is load-bearing for the settings that are disabled
+/// by being empty — a whitespace-only `AUTH_PROXY_HEADER` would otherwise
+/// enable forward auth against a header name no proxy can send.
+fn nonblank(get: &impl Fn(&str) -> Option<String>, key: &str) -> Option<String> {
+    get(key)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// Whether a boolean env var is on. `true` (any case) and `1` are the only
+/// accepted values; anything else — including a typo — reads as off, which is
+/// safe because every setting using this defaults to off anyway.
+/// `COOKIE_SECURE` deliberately does *not* use this: its default can be `true`,
+/// so it rejects unrecognized values instead. See [`parse_cookie_secure`].
+fn flag(get: &impl Fn(&str) -> Option<String>, key: &str) -> bool {
+    nonblank(get, key).is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1")
+}
+
+impl Config {
+    /// Build the config from the process environment.
+    pub fn from_env() -> Result<Self, String> {
+        Self::from_map(|key| env::var(key).ok())
+    }
+
+    /// Build the config from an arbitrary key→value lookup.
+    ///
+    /// `from_env` is the one-line adapter over the real environment; every test
+    /// passes a closure instead. That keeps config tests pure — mutating the
+    /// process environment is `unsafe` under edition 2024 and only survives
+    /// because nextest forks per test, which is a property of the runner rather
+    /// than of the code being tested.
+    pub fn from_map(get: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
+        let (image_proxy_secret, image_proxy_secret_generated) =
+            load_image_proxy_secret(get("IMAGE_PROXY_SECRET"));
+        let server_bind = parse_server_bind(nonblank(&get, "SERVER_BIND").as_deref())?;
+
+        let trusted_proxy_networks =
+            parse_trusted_networks(&nonblank(&get, "TRUSTED_PROXY_NETWORKS").unwrap_or_default())?;
+
+        let public_base_url = nonblank(&get, "PUBLIC_BASE_URL");
+        // Passed raw, not through `nonblank`: `parse_cookie_secure` does its own
+        // trimming and has to tell "unset" from "unrecognized" itself.
+        let cookie_secure =
+            parse_cookie_secure(get("COOKIE_SECURE").as_deref(), public_base_url.as_deref())?;
+
+        Ok(Self {
+            database_url: nonblank(&get, "DATABASE_URL")
+                .unwrap_or_else(|| "rdrs.sqlite3".to_string()),
+            server_bind,
+            signup_enabled: flag(&get, "SIGNUP_ENABLED"),
+            multi_user_enabled: flag(&get, "MULTI_USER_ENABLED"),
+            image_proxy_secret,
+            image_proxy_secret_generated,
+            user_agent: nonblank(&get, "USER_AGENT")
+                .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()),
+            webauthn_rp_id: nonblank(&get, "WEBAUTHN_RP_ID")
+                .unwrap_or_else(|| "localhost".to_string()),
+            webauthn_rp_origin: nonblank(&get, "WEBAUTHN_RP_ORIGIN")
+                .unwrap_or_else(|| format!("http://localhost:{}", server_bind.port())),
+            webauthn_rp_name: nonblank(&get, "WEBAUTHN_RP_NAME")
+                .unwrap_or_else(|| "rdrs".to_string()),
+            public_base_url,
+            cookie_secure,
+            auth_proxy_header: nonblank(&get, "AUTH_PROXY_HEADER").unwrap_or_default(),
+            trusted_proxy_networks,
+            auth_proxy_user_creation: flag(&get, "AUTH_PROXY_USER_CREATION"),
+            disable_local_auth: flag(&get, "DISABLE_LOCAL_AUTH"),
+            auth_proxy_groups_header: nonblank(&get, "AUTH_PROXY_GROUPS_HEADER")
+                .unwrap_or_default(),
+            auth_proxy_admin_group: nonblank(&get, "AUTH_PROXY_ADMIN_GROUP").unwrap_or_default(),
+            auth_proxy_logout_url: nonblank(&get, "AUTH_PROXY_LOGOUT_URL"),
+        })
     }
 
     /// Whether forward-auth (trusted-header) login is enabled.
@@ -349,21 +394,124 @@ mod tests {
         assert!(parse_server_bind(Some("127.0.0.1")).is_err());
     }
 
+    /// Build a config from a fixed set of variables; everything else is unset.
+    fn from_vars(vars: &[(&str, &str)]) -> Config {
+        Config::from_map(|key| {
+            vars.iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| (*v).to_string())
+        })
+        .expect("from_map should succeed")
+    }
+
     #[test]
-    fn test_from_env_server_bind_drives_listener_and_rp_origin() {
-        // nextest runs each test in its own process, so mutating the
-        // environment here does not leak into other tests (same pattern as the
-        // Kagi tests). `set_var`/`remove_var` are `unsafe` under edition 2024.
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var("SERVER_BIND", "127.0.0.1:9137");
-            std::env::remove_var("WEBAUTHN_RP_ORIGIN");
-            std::env::remove_var("TRUSTED_PROXY_NETWORKS");
-        }
-        let config = Config::from_env().expect("from_env should succeed");
+    fn test_server_bind_drives_listener_and_rp_origin() {
+        let config = from_vars(&[("SERVER_BIND", "127.0.0.1:9137")]);
         assert_eq!(config.server_bind, "127.0.0.1:9137".parse().unwrap());
         // The WEBAUTHN_RP_ORIGIN default derives its port from SERVER_BIND.
         assert_eq!(config.webauthn_rp_origin, "http://localhost:9137");
+    }
+
+    #[test]
+    fn test_defaults_with_nothing_configured() {
+        let config = from_vars(&[]);
+        assert_eq!(config.database_url, "rdrs.sqlite3");
+        assert_eq!(
+            config.server_bind,
+            std::net::SocketAddr::from(([127, 0, 0, 1], 8080))
+        );
+        assert_eq!(config.user_agent, DEFAULT_USER_AGENT);
+        assert_eq!(config.webauthn_rp_id, "localhost");
+        assert_eq!(config.webauthn_rp_name, "rdrs");
+        assert!(!config.signup_enabled);
+        assert!(!config.multi_user_enabled);
+        assert!(!config.cookie_secure);
+        assert!(config.public_base_url.is_none());
+        assert!(config.auth_proxy_logout_url.is_none());
+        assert!(!config.auth_proxy_enabled());
+        // Nothing configured means no persistent secret, which the startup
+        // warning in `main` reports.
+        assert!(config.image_proxy_secret_generated);
+    }
+
+    #[test]
+    fn test_blank_values_count_as_unset() {
+        // A variable present but empty (or whitespace-only) must fall back to
+        // the default, not override it with nothing. `FOO=` is the common shape
+        // in a compose file where a value was left to be filled in later.
+        let config = from_vars(&[
+            ("DATABASE_URL", "  "),
+            ("USER_AGENT", ""),
+            ("PUBLIC_BASE_URL", "   "),
+            ("AUTH_PROXY_LOGOUT_URL", " "),
+            // Blank here must leave forward auth *off*: a whitespace header
+            // name would otherwise pass `auth_proxy_enabled` and then fail
+            // `validate`, refusing to boot over a variable nobody meant to set.
+            ("AUTH_PROXY_HEADER", "  "),
+        ]);
+        assert_eq!(config.database_url, "rdrs.sqlite3");
+        assert_eq!(config.user_agent, DEFAULT_USER_AGENT);
+        assert!(config.public_base_url.is_none());
+        assert!(config.auth_proxy_logout_url.is_none());
+        assert!(!config.auth_proxy_enabled());
+    }
+
+    #[test]
+    fn test_values_are_trimmed() {
+        let config = from_vars(&[
+            ("DATABASE_URL", "  postgres://u:p@db/rdrs  "),
+            ("AUTH_PROXY_HEADER", " Remote-User "),
+            ("AUTH_PROXY_LOGOUT_URL", " https://auth.example.com/logout "),
+        ]);
+        assert_eq!(config.database_url, "postgres://u:p@db/rdrs");
+        assert_eq!(config.backend(), Backend::Postgres);
+        // The header name is compared against a real HTTP header, so a stray
+        // space from a compose file must not survive into the lookup.
+        assert_eq!(config.auth_proxy_header, "Remote-User");
+        assert_eq!(
+            config.auth_proxy_logout_url.as_deref(),
+            Some("https://auth.example.com/logout")
+        );
+    }
+
+    #[test]
+    fn test_boolean_flags() {
+        for raw in ["true", "TRUE", "True", "1", " true "] {
+            assert!(
+                from_vars(&[("SIGNUP_ENABLED", raw)]).signup_enabled,
+                "{raw} should enable"
+            );
+        }
+        // Anything else is off. These all default to off, so a typo is a no-op
+        // rather than a silent downgrade (unlike COOKIE_SECURE, which rejects).
+        for raw in ["false", "0", "yes", "on", "", "  "] {
+            assert!(
+                !from_vars(&[("SIGNUP_ENABLED", raw)]).signup_enabled,
+                "{raw} should not enable"
+            );
+        }
+    }
+
+    #[test]
+    fn test_image_proxy_secret_sources() {
+        // A base64 value decoding to >= 16 bytes is used decoded.
+        let raw = STANDARD.encode([7u8; 32]);
+        let (secret, generated) = load_image_proxy_secret(Some(raw));
+        assert_eq!(secret, vec![7u8; 32]);
+        assert!(!generated);
+
+        // A non-base64 value of at least 16 characters is used as raw bytes.
+        let (secret, generated) = load_image_proxy_secret(Some("!".repeat(16)));
+        assert_eq!(secret, "!".repeat(16).into_bytes());
+        assert!(!generated);
+
+        // Too short to be trusted, and unset, both fall back to a generated key
+        // rather than a guessable one.
+        for raw in [Some("short".to_string()), None] {
+            let (secret, generated) = load_image_proxy_secret(raw);
+            assert_eq!(secret.len(), 32);
+            assert!(generated);
+        }
     }
 
     /// `parse_cookie_secure` for cases that must succeed.
