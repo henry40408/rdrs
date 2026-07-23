@@ -17,8 +17,15 @@ pub struct Config {
     pub server_bind: SocketAddr,
     pub signup_enabled: bool,
     pub multi_user_enabled: bool,
-    pub image_proxy_secret: Vec<u8>,
-    pub image_proxy_secret_generated: bool,
+    /// Process-wide root key backing every signature rdrs produces (session
+    /// cookies, image-proxy URLs, the `GReader` post token). See [`crate::secret`]
+    /// for the domain-separated derivation; each use derives its own tag.
+    pub secret: Vec<u8>,
+    /// Whether [`Config::secret`] was randomly generated because `RDRS_SECRET`
+    /// was unset or too short, rather than configured. Drives the startup
+    /// warning — a generated key means every browser session ends and every
+    /// cached image-proxy URL breaks on each restart.
+    pub secret_generated: bool,
     pub user_agent: String,
     pub webauthn_rp_id: String,
     pub webauthn_rp_origin: String,
@@ -158,26 +165,29 @@ pub fn parse_server_bind(raw: Option<&str>) -> Result<SocketAddr, String> {
     }
 }
 
-/// Resolve the image-proxy HMAC secret from a raw `RDRS_SECRET` value,
-/// returning the key bytes and whether they were generated rather than
-/// configured. A base64 value is decoded; otherwise the raw bytes are used.
-/// Either way at least 16 bytes are required — a shorter value is discarded in
-/// favour of a fresh random key rather than used as a guessable one.
+/// Resolve the root signing key from a raw `RDRS_SECRET` value, returning the
+/// key bytes and whether they were generated rather than configured. A base64
+/// value is decoded; otherwise the raw bytes are used. Either way at least
+/// [`crate::secret::MIN_SECRET_LEN`] bytes are required — a shorter value is
+/// discarded in favour of a fresh random key rather than used as a guessable
+/// one.
 ///
 /// Unlike every other string setting this does *not* go through [`nonblank`]:
 /// trimming would change the key bytes for an existing deployment whose value
-/// happens to carry whitespace, silently invalidating every image-proxy URL
-/// already cached by a Google Reader client.
-fn load_image_proxy_secret(raw: Option<String>) -> (Vec<u8>, bool) {
+/// happens to carry whitespace, rotating the key — which ends every browser
+/// session and breaks every image-proxy URL already cached by a Google Reader
+/// client.
+fn load_secret(raw: Option<String>) -> (Vec<u8>, bool) {
+    use crate::secret::MIN_SECRET_LEN;
     if let Some(secret_str) = raw {
         // Try to decode as base64 first
         if let Ok(decoded) = STANDARD.decode(&secret_str)
-            && decoded.len() >= 16
+            && decoded.len() >= MIN_SECRET_LEN
         {
             return (decoded, false);
         }
-        // Use raw bytes if at least 16 characters
-        if secret_str.len() >= 16 {
+        // Use raw bytes if at least MIN_SECRET_LEN characters
+        if secret_str.len() >= MIN_SECRET_LEN {
             return (secret_str.into_bytes(), false);
         }
     }
@@ -291,8 +301,7 @@ impl Config {
     pub fn from_map(get: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
         reject_legacy_vars(&get)?;
 
-        let (image_proxy_secret, image_proxy_secret_generated) =
-            load_image_proxy_secret(get("RDRS_SECRET"));
+        let (secret, secret_generated) = load_secret(get("RDRS_SECRET"));
         let server_bind = parse_server_bind(nonblank(&get, "RDRS_SERVER_BIND").as_deref())?;
 
         let trusted_proxy_networks = parse_trusted_networks(
@@ -314,8 +323,8 @@ impl Config {
             server_bind,
             signup_enabled: flag(&get, "RDRS_SIGNUP_ENABLED"),
             multi_user_enabled: flag(&get, "RDRS_MULTI_USER_ENABLED"),
-            image_proxy_secret,
-            image_proxy_secret_generated,
+            secret,
+            secret_generated,
             user_agent: nonblank(&get, "RDRS_USER_AGENT")
                 .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()),
             webauthn_rp_id: nonblank(&get, "RDRS_WEBAUTHN_RP_ID")
@@ -424,8 +433,8 @@ mod tests {
             server_bind: "127.0.0.1:8080".parse().unwrap(),
             signup_enabled: true,
             multi_user_enabled: false,
-            image_proxy_secret: vec![0u8; 32],
-            image_proxy_secret_generated: false,
+            secret: vec![0u8; 32],
+            secret_generated: false,
             user_agent: DEFAULT_USER_AGENT.to_string(),
             webauthn_rp_id: "localhost".to_string(),
             webauthn_rp_origin: "http://localhost:8080".to_string(),
@@ -535,7 +544,7 @@ mod tests {
         assert!(!config.auth_proxy_enabled());
         // Nothing configured means no persistent secret, which the startup
         // warning in `main` reports.
-        assert!(config.image_proxy_secret_generated);
+        assert!(config.secret_generated);
     }
 
     #[test]
@@ -603,19 +612,19 @@ mod tests {
     fn test_image_proxy_secret_sources() {
         // A base64 value decoding to >= 16 bytes is used decoded.
         let raw = STANDARD.encode([7u8; 32]);
-        let (secret, generated) = load_image_proxy_secret(Some(raw));
+        let (secret, generated) = load_secret(Some(raw));
         assert_eq!(secret, vec![7u8; 32]);
         assert!(!generated);
 
         // A non-base64 value of at least 16 characters is used as raw bytes.
-        let (secret, generated) = load_image_proxy_secret(Some("!".repeat(16)));
+        let (secret, generated) = load_secret(Some("!".repeat(16)));
         assert_eq!(secret, "!".repeat(16).into_bytes());
         assert!(!generated);
 
         // Too short to be trusted, and unset, both fall back to a generated key
         // rather than a guessable one.
         for raw in [Some("short".to_string()), None] {
-            let (secret, generated) = load_image_proxy_secret(raw);
+            let (secret, generated) = load_secret(raw);
             assert_eq!(secret.len(), 32);
             assert!(generated);
         }

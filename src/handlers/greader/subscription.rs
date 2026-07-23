@@ -482,7 +482,7 @@ fn verify_post_token_if_needed(
 
     if let Some(post_token) = token {
         super::auth::verify_post_token(
-            &state.config.image_proxy_secret,
+            &state.config.secret,
             &auth.session.session_token,
             post_token,
         )?;

@@ -129,7 +129,7 @@ pub async fn stream_contents(
     // Merge in-flight cache statuses (cache takes priority over DB)
     let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
 
-    let secret = &state.config.image_proxy_secret;
+    let secret = &state.config.secret;
     let proxy_base_url = state.config.public_base_url.as_deref();
     let no_content = query.no_content.unwrap_or(false);
     let items: Vec<GReaderItem> = entries
@@ -373,7 +373,7 @@ async fn fetch_items_by_ids(
     // Merge in-flight cache statuses (cache takes priority over DB)
     let summary_statuses = merge_summary_statuses(&db_statuses, &summary_cache, user_id, &entries);
 
-    let secret = &state.config.image_proxy_secret;
+    let secret = &state.config.secret;
     let proxy_base_url = state.config.public_base_url.as_deref();
     let items: Vec<GReaderItem> = entries
         .iter()

@@ -17,6 +17,7 @@ pub mod error;
 pub mod handlers;
 pub mod middleware;
 pub mod models;
+pub mod secret;
 pub mod services;
 pub mod utils;
 pub mod version;

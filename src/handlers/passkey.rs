@@ -246,7 +246,11 @@ pub async fn finish_authentication(
     passkey::update_counter(&state.db, passkey_id, counter).await?;
     let new_session = session::create_session(&state.db, passkey_user_id).await?;
 
-    let cookie = build_session_cookie(new_session.session_token, state.config.cookie_secure);
+    let cookie = build_session_cookie(
+        &new_session.session_token,
+        &state.config.secret,
+        state.config.cookie_secure,
+    );
 
     Ok((
         jar.add(cookie),

@@ -5,17 +5,13 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use chrono::Utc;
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
 
 use crate::AppState;
 use crate::auth::verify_password;
 use crate::error::{AppError, AppResult};
-use crate::middleware::auth::SESSION_COOKIE_NAME;
 use crate::models::session::{self, Session};
 use crate::models::user::{self, User};
-
-type HmacSha256 = Hmac<Sha256>;
+use crate::secret::{DOMAIN_GREADER_TOKEN, tag, verify_tag};
 
 /// POST token validity duration in seconds (30 minutes).
 const POST_TOKEN_VALIDITY_SECS: i64 = 30 * 60;
@@ -62,9 +58,7 @@ impl FromRequestParts<AppState> for GReaderUser {
             .await
             .map_err(|_e| AppError::Unauthorized)?;
 
-        let token = jar
-            .get(SESSION_COOKIE_NAME)
-            .map(|c| c.value().to_string())
+        let token = crate::middleware::auth::session_token_from_jar(&jar, &state.config.secret)
             .ok_or(AppError::Unauthorized)?;
 
         let (session, user) = validate_token(state, &token).await?;
@@ -145,47 +139,48 @@ pub async fn client_login(
 /// `GET /reader/api/0/token`
 ///
 /// Returns a short-lived POST token for CSRF protection.
-/// The token is HMAC(secret, `session_token` + timestamp).
+/// The token is `<timestamp>/<hmac_hex>`, keyed off the shared root secret.
 pub async fn get_post_token(auth: GReaderUser, State(state): State<AppState>) -> AppResult<String> {
-    let token = generate_post_token(
-        &state.config.image_proxy_secret,
-        &auth.session.session_token,
-    );
+    let token = generate_post_token(&state.config.secret, &auth.session.session_token);
     Ok(token)
+}
+
+/// The MAC input for a post token: the session token, a separator, and the
+/// timestamp. Session tokens use the `A-Za-z0-9-_` alphabet and so never
+/// contain `/`, which makes the concatenation unambiguous — without the
+/// separator `("a", 12)` and `("a1", 2)` would sign the same bytes.
+fn post_token_parts<'a>(session_token: &'a str, timestamp: &'a str) -> [&'a [u8]; 3] {
+    [session_token.as_bytes(), b"/", timestamp.as_bytes()]
 }
 
 /// Generate a POST token: `<timestamp>/<hmac_hex>`.
 pub fn generate_post_token(secret: &[u8], session_token: &str) -> String {
-    let timestamp = Utc::now().timestamp();
-    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
-    mac.update(session_token.as_bytes());
-    mac.update(timestamp.to_string().as_bytes());
-    let result = mac.finalize();
-    let hex = hex::encode(result.into_bytes());
+    let timestamp = Utc::now().timestamp().to_string();
+    let hex = hex::encode(tag(
+        secret,
+        DOMAIN_GREADER_TOKEN,
+        &post_token_parts(session_token, &timestamp),
+    ));
     format!("{timestamp}/{hex}")
 }
 
 /// Verify a POST token. Returns `Ok(())` if valid, `Err` if invalid or expired.
 pub fn verify_post_token(secret: &[u8], session_token: &str, post_token: &str) -> AppResult<()> {
-    let parts: Vec<&str> = post_token.splitn(2, '/').collect();
-    if parts.len() != 2 {
-        return Err(AppError::Unauthorized);
-    }
+    let (ts_str, sig_hex) = post_token.split_once('/').ok_or(AppError::Unauthorized)?;
 
-    let timestamp: i64 = parts[0].parse().map_err(|_e| AppError::Unauthorized)?;
-
+    let timestamp: i64 = ts_str.parse().map_err(|_e| AppError::Unauthorized)?;
     let now = Utc::now().timestamp();
     if now - timestamp > POST_TOKEN_VALIDITY_SECS {
         return Err(AppError::Unauthorized);
     }
 
-    // Recompute HMAC
-    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
-    mac.update(session_token.as_bytes());
-    mac.update(timestamp.to_string().as_bytes());
-
-    let expected = hex::encode(mac.finalize().into_bytes());
-    if expected != parts[1] {
+    let sig = hex::decode(sig_hex).map_err(|_e| AppError::Unauthorized)?;
+    if !verify_tag(
+        secret,
+        DOMAIN_GREADER_TOKEN,
+        &post_token_parts(session_token, ts_str),
+        &sig,
+    ) {
         return Err(AppError::Unauthorized);
     }
 

@@ -415,7 +415,7 @@ async fn test_settings_page_reflects_custom_config() {
         user_agent: "Custom-Agent/2.0".to_string(),
         signup_enabled: true,
         multi_user_enabled: true,
-        image_proxy_secret_generated: false,
+        secret_generated: false,
         ..default_test_config()
     };
     let app = create_test_app(config).await;
@@ -444,7 +444,7 @@ async fn test_settings_page_reflects_custom_config() {
 #[tokio::test]
 async fn test_settings_page_reflects_auto_generated_image_proxy_secret() {
     let config = Config {
-        image_proxy_secret_generated: true,
+        secret_generated: true,
         ..default_test_config()
     };
     let app = create_test_app(config).await;

@@ -108,8 +108,11 @@ the cross-cutting facts that span multiple files.
   so SIGINT tears it down promptly. `/events` is registered outside the
   ETag/Compression/Timeout layers in `lib.rs`.
 
-- **Security cross-cuts:** Ammonia HTML sanitization + tracking-param/pixel
-  removal (`services/sanitize.rs`); HMAC-SHA256 signed image proxy
-  (`services/image_proxy.rs`); shared SSRF validation (`utils/url_validation.rs`)
-  guarding both the readability fetcher and the proxy; Argon2id password hashing;
-  WebAuthn/passkey auth (`auth/webauthn.rs`).
+- **Security cross-cuts:** one root key (`RDRS_SECRET`) backs every signature
+  through domain-separated derivation in `secret.rs` — the signed session cookie
+  (`<token>.<hmac>`), the HMAC-SHA256 image proxy (`services/image_proxy.rs`),
+  and the GReader post token (`handlers/greader/auth.rs`); Ammonia HTML
+  sanitization + tracking-param/pixel removal (`services/sanitize.rs`); shared
+  SSRF validation (`utils/url_validation.rs`) guarding both the readability
+  fetcher and the proxy; Argon2id password hashing; WebAuthn/passkey auth
+  (`auth/webauthn.rs`).

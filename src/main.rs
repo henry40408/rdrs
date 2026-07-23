@@ -70,9 +70,12 @@ async fn main() {
         std::process::exit(1);
     }
 
-    if config.image_proxy_secret_generated {
+    if config.secret_generated {
         tracing::warn!(
-            "RDRS_SECRET not set, using temporary key. Proxy URLs will be invalidated on restart."
+            "RDRS_SECRET is not set or too short; using a key generated for this process only. \
+             Every signed-in browser session ends on restart, and image-proxy URLs already cached \
+             by Google Reader clients break until the next sync. Set RDRS_SECRET (e.g. \
+             `openssl rand -base64 32`) to keep them stable across restarts."
         );
     }
 

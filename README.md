@@ -47,10 +47,12 @@ docker run -d \
 
 Visit `http://localhost:8080` and create your account.
 
-> **`RDRS_SECRET`** — if left unset, a random secret is generated on
-> each startup, which invalidates every previously-proxied image URL whenever
-> the container restarts. Set it to a persistent value (e.g.
-> `openssl rand -base64 32`) so proxied images survive restarts.
+> **`RDRS_SECRET`** — the one key rdrs signs everything with: session cookies,
+> image-proxy URLs, and the Google Reader post token. If left unset, a random
+> key is generated on each startup, so every restart signs every signed-in user
+> out and breaks every image-proxy URL already cached by a GReader client until
+> its next sync. Set it to a persistent value (e.g. `openssl rand -base64 32`)
+> so both survive restarts.
 
 ### Building from Source
 
@@ -98,7 +100,7 @@ All configuration is done via environment variables.
 | `RDRS_SERVER_BIND` | `127.0.0.1:8080` | HTTP server bind address (`host:port`). Defaults to loopback so a bare-metal run is not exposed on all interfaces without opting in; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it. |
 | `RDRS_SIGNUP_ENABLED` | `false` | Allow new user registration |
 | `RDRS_MULTI_USER_ENABLED` | `false` | Allow multiple users (requires signup enabled) |
-| `RDRS_SECRET` | Auto-generated | HMAC secret for secure image proxying |
+| `RDRS_SECRET` | Auto-generated | Root HMAC key backing every signature rdrs produces — session cookies, image-proxy URLs, and the GReader post token — each domain-separated so a value minted for one use cannot be replayed as another. Set a persistent value (`openssl rand -base64 32`); a generated one changes on every restart, ending all sessions and breaking cached image-proxy URLs. |
 | `RDRS_PUBLIC_BASE_URL` | - | Public base URL for generating absolute image proxy URLs in API responses (e.g., `https://rdrs.example.com`). If not set, relative paths are used (backward compatible). |
 | `RDRS_COOKIE_SECURE` | Derived from `RDRS_PUBLIC_BASE_URL` | Send the session cookie with the `Secure` attribute (HTTPS only). Defaults to on when `RDRS_PUBLIC_BASE_URL` starts with `https://`, off otherwise — so an HTTPS deployment is secure without a second setting, while a plain-HTTP dev run keeps working. Set `true`/`1` to force it on when TLS terminates upstream and `RDRS_PUBLIC_BASE_URL` is unset; set `false`/`0` to force it off. Only those four values are accepted — anything else fails startup rather than silently disabling `Secure`. |
 | `RDRS_USER_AGENT` | `RDRS/...` | Custom user agent for feed fetching |
@@ -272,8 +274,9 @@ size and attack surface. The build-stage design is described in
 
 ### Production Notes
 
-- Set `RDRS_SECRET` to a persistent value so image proxy URLs survive
-  restarts (otherwise it is auto-generated on each boot).
+- Set `RDRS_SECRET` to a persistent value so sessions and image-proxy URLs
+  survive restarts (otherwise it is auto-generated on each boot, ending every
+  session and breaking cached image-proxy URLs).
 - Mount the `/data` volume so the SQLite database persists.
 - Put RDRS behind a reverse proxy for TLS termination.
 
