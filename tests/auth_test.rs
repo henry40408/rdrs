@@ -1032,6 +1032,7 @@ async fn test_logout_redirect_default_is_login() {
     let res = server.delete("/api/session").await;
     let body: serde_json::Value = res.json();
     assert_eq!(body["redirect_to"], "/login");
+    assert_eq!(body["logout_url_configured"], false);
 }
 
 #[tokio::test]
@@ -1054,6 +1055,30 @@ async fn test_logout_redirect_uses_configured_url() {
     let res = server.delete("/api/session").await;
     let body: serde_json::Value = res.json();
     assert_eq!(body["redirect_to"], "https://auth.example.com/logout");
+    assert_eq!(body["logout_url_configured"], true);
+}
+
+#[tokio::test]
+async fn test_logout_redirect_uses_relative_configured_url() {
+    let mut config = default_test_config();
+    config.auth_proxy_logout_url = Some("/logout".to_string());
+    let mut server = create_test_server(config).await;
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
+
+    let res = server.delete("/api/session").await;
+    let body: serde_json::Value = res.json();
+    assert_eq!(body["redirect_to"], "/logout");
+    assert_eq!(body["logout_url_configured"], true);
 }
 
 #[tokio::test]

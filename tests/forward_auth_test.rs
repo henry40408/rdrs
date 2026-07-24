@@ -1,15 +1,16 @@
 mod common;
-use common::default_test_config;
+use common::{apply_csrf, default_test_config};
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::http::{HeaderMap, HeaderName};
+use axum::http::{HeaderMap, HeaderName, StatusCode};
 use axum_test::TestServer;
 use rdrs::{
     AppState, Config, Db, auth, config::parse_trusted_networks, create_router,
     middleware::forward_auth::forward_auth_identity, services,
 };
+use serde_json::json;
 
 fn header_map(pairs: &[(&str, &str)]) -> HeaderMap {
     let mut h = HeaderMap::new();
@@ -352,4 +353,64 @@ async fn test_valid_session_cookie_not_reminted() {
         location, "/login",
         "a valid session must not be redirected to /login"
     );
+}
+
+#[tokio::test]
+async fn test_logout_reports_via_forward_auth() {
+    let (mut server, db) = create_server(|c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    })
+    .await;
+    seed_user(&db, "ivan", rdrs::models::user::Role::User).await;
+
+    // Establish a session via forward-auth; the response also mints the
+    // readable CSRF cookie the DELETE below needs.
+    let login = server.get("/").add_header("Remote-User", "ivan").await;
+    apply_csrf(&mut server, &login);
+
+    // No `auth_proxy_logout_url` is configured, and the proxy header is
+    // present again on this request, so AuthUser must report
+    // via_forward_auth: true — the client uses this to avoid claiming a
+    // local logout ended a session the proxy will just re-mint.
+    let res = server
+        .delete("/api/session")
+        .add_header("Remote-User", "ivan")
+        .await;
+    res.assert_status_ok();
+    let body: serde_json::Value = res.json();
+    assert_eq!(body["via_forward_auth"], true);
+    assert_eq!(body["redirect_to"], "/login");
+    assert_eq!(body["logout_url_configured"], false);
+}
+
+#[tokio::test]
+async fn test_logout_password_session_reports_via_forward_auth_false() {
+    // Same server config as above (forward-auth configured, loopback
+    // trusted), but this session is a normal local password login and the
+    // logout request carries no proxy identity header. via_forward_auth must
+    // be false: a trusted peer alone must not be enough to claim the session
+    // came from the proxy.
+    let (mut server, _db) = create_server(|c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    })
+    .await;
+
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "judy", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let login = server
+        .post("/api/session")
+        .json(&json!({ "username": "judy", "password": "password123" }))
+        .await;
+    login.assert_status_ok();
+    apply_csrf(&mut server, &login);
+
+    let res = server.delete("/api/session").await;
+    res.assert_status_ok();
+    let body: serde_json::Value = res.json();
+    assert_eq!(body["via_forward_auth"], false);
+    assert_eq!(body["redirect_to"], "/login");
+    assert_eq!(body["logout_url_configured"], false);
 }

@@ -270,14 +270,27 @@ class RdrsSidebar extends HTMLElement {
 
         this.querySelector('[data-rdrs-logout]')?.addEventListener('click', async (e) => {
             e.preventDefault();
+            // Once we've told a forward-auth user to log out at their proxy, the
+            // local session is already gone; a second click would just 401 and
+            // flash a misleading "Logout failed". Make further clicks a no-op.
+            if (this._proxyLogoutNotified) return;
             try {
                 const r = await fetch('/api/session', { method: 'DELETE' });
                 if (r.ok) {
                     const d = await r.json();
-                    if (d.redirect_to.startsWith('/')) {
-                        window.flash.redirect(d.redirect_to, 'info', 'You have been logged out.');
-                    } else {
+                    if (d.logout_url_configured) {
+                        // A proxy/SSO logout URL is configured (absolute or a same-host
+                        // path): hand off so the upstream session actually ends.
                         window.location.href = d.redirect_to;
+                    } else if (d.via_forward_auth) {
+                        // Forward-auth with no logout URL configured: a local logout is a no-op
+                        // because the proxy re-injects the identity header on the next request.
+                        // Be honest instead of bouncing to /login and silently re-authenticating.
+                        this._proxyLogoutNotified = true;
+                        window.flash.warning('You are signed in via your reverse proxy. To end your session, log out at your proxy or SSO provider, then reload this page to keep using the app.');
+                    } else {
+                        // Normal cookie/password session: fully logged out server-side.
+                        window.flash.redirect(d.redirect_to, 'info', 'You have been logged out.');
                     }
                 } else {
                     window.flash.error('Logout failed');

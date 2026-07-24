@@ -140,7 +140,7 @@ Loads settings from environment variables:
 - `RDRS_AUTH_PROXY_GROUPS_HEADER` - Header name carrying comma-separated group names from the proxy
 - `RDRS_AUTH_PROXY_ADMIN_GROUP` - Group membership grants the admin role; active only when both this and `RDRS_AUTH_PROXY_GROUPS_HEADER` are set
 - `RDRS_DISABLE_LOCAL_AUTH` - Hides the browser password form and makes `POST /api/session` return 403; does not affect GReader `ClientLogin` or passkey auth; startup refuses if set without `RDRS_AUTH_PROXY_HEADER`
-- `RDRS_AUTH_PROXY_LOGOUT_URL` - When set, Sign Out redirects the browser here to end the IdP/SSO session (e.g. Authelia's logout URL); when unset, Sign Out clears the local session and the proxy header re-authenticates on the next request
+- `RDRS_AUTH_PROXY_LOGOUT_URL` - When set, Sign Out redirects the browser here to end the IdP/SSO session (e.g. Authelia's logout URL); when unset, a forward-auth Sign Out clears the local session but warns the user to log out at the proxy instead of redirecting, since the proxy header would just re-authenticate them
 
 ### Error Handling (`error.rs`)
 
@@ -271,7 +271,9 @@ The middleware is applied only to browser page routes. It is never invoked for t
 
 **Logout mechanics:**
 
-Sign Out always clears the local `session_token` cookie (with `Path=/`) and deletes the server-side session. The forward-auth middleware re-authenticates whenever there is no *valid* session cookie — a stale or expired cookie no longer blocks re-authentication, which is what prevents a logout lockout under forward-auth. `/login` redirects an already-authenticated user to `/` rather than rendering the login form again. The user-facing logout behavior and the `RDRS_AUTH_PROXY_LOGOUT_URL` knob are described in the README.
+Sign Out always clears the local `session_token` cookie (with `Path=/`) and deletes the server-side session. The forward-auth middleware re-authenticates whenever there is no *valid* session cookie — a stale or expired cookie no longer blocks re-authentication, which is what prevents a logout lockout under forward-auth. `/login` redirects an already-authenticated user to `/` rather than rendering the login form again.
+
+Because of that re-authentication, a local-only logout cannot actually end a forward-auth session when no `RDRS_AUTH_PROXY_LOGOUT_URL` is configured: the client would just get bounced back into the app on the very next request. `DELETE /api/session` reports `logout_url_configured` so the frontend (`rdrs-sidebar.js`) can decide whether to navigate to `redirect_to` (an absolute IdP URL or a same-host path), alongside `via_forward_auth` and `redirect_to` for the client to handle the logout flow correctly — it redirects to `redirect_to` and shows "You have been logged out." for a normal session, but for a forward-auth session with no configured logout URL it does not navigate at all and instead warns the user to log out at their proxy or SSO provider. The user-facing logout behavior and the `RDRS_AUTH_PROXY_LOGOUT_URL` knob are described in the README.
 
 **Auth-mode indicator:**
 
