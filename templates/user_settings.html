@@ -20,6 +20,31 @@
                     <tr><th class="settings-th">Logged In</th><td><time datetime="{{ session_created_at_iso }}" data-local-text>{{ session_created_at }}</time></td></tr>
                 </table>
 
+                {% if show_sessions %}
+                <hr>
+
+                <h2>Active Sessions</h2>
+                <table>
+                    <thead>
+                        <tr><th class="settings-th">Signed In</th><th class="settings-th">Expires</th><th class="settings-th"></th></tr>
+                    </thead>
+                    <tbody>
+                        {% for s in sessions %}
+                        <tr>
+                            <td><time datetime="{{ s.created_at_iso }}" data-local-text>{{ s.created_at }}</time></td>
+                            <td><time datetime="{{ s.expires_at_iso }}" data-local-text>{{ s.expires_at }}</time></td>
+                            <td>{% if s.is_current %}<span class="muted">This device</span>{% endif %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <form method="post" action="/user-settings/sessions/revoke-others">
+                    <button type="submit">Sign out other sessions</button>
+                </form>
+                {% endif %}
+
+                <hr>
+
                 <h2>RSS Client (Google Reader API)</h2>
                 <p class="muted">Connect any RSS reader that supports the Google Reader API (e.g., Reeder, NetNewsWire, FeedMe, Read You, FreshRSS).</p>
                 <table>

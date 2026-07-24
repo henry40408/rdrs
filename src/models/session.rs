@@ -3,7 +3,7 @@ use rand::RngExt;
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
-use crate::{db_execute, query_one, query_opt};
+use crate::{db_execute, query_all, query_one, query_opt};
 
 pub const SESSION_EXPIRY_DAYS: i64 = 7;
 pub const SESSION_ABSOLUTE_MAX_DAYS: i64 = 90;
@@ -139,6 +139,32 @@ pub async fn delete_user_sessions(db: &Db, user_id: i64) -> AppResult<()> {
     Ok(())
 }
 
+/// All sessions belonging to `user_id`, newest first. Includes expired rows;
+/// the caller filters for display if needed.
+pub async fn list_user_sessions(db: &Db, user_id: i64) -> AppResult<Vec<Session>> {
+    query_all!(
+        db,
+        Session,
+        "SELECT id, user_id, session_token, original_user_id, created_at, expires_at \
+         FROM session WHERE user_id = $1 ORDER BY created_at DESC",
+        user_id
+    )
+    .map_err(AppError::Database)
+}
+
+/// Delete every session of `user_id` except the one whose token is `keep_token`.
+/// Used by "sign out other sessions" to preserve the caller's current session.
+pub async fn delete_user_sessions_except(db: &Db, user_id: i64, keep_token: &str) -> AppResult<()> {
+    db_execute!(
+        db,
+        "DELETE FROM session WHERE user_id = $1 AND session_token <> $2",
+        user_id,
+        keep_token
+    )
+    .map_err(AppError::Database)?;
+    Ok(())
+}
+
 pub async fn start_masquerade(db: &Db, token: &str, target_user_id: i64) -> AppResult<()> {
     let session = find_by_token(db, token)
         .await?
@@ -218,6 +244,65 @@ mod tests {
 
         let found = find_by_token(&db, &session.session_token).await.unwrap();
         assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_user_sessions() {
+        let db = setup_db().await;
+        let user_a = user::create_user(&db, "usera", "hash", Role::User)
+            .await
+            .unwrap();
+        let user_b = user::create_user(&db, "userb", "hash", Role::User)
+            .await
+            .unwrap();
+
+        create_session(&db, user_a.id).await.unwrap();
+        create_session(&db, user_a.id).await.unwrap();
+        create_session(&db, user_b.id).await.unwrap();
+
+        let sessions = list_user_sessions(&db, user_a.id).await.unwrap();
+        assert_eq!(sessions.len(), 2);
+        for s in &sessions {
+            assert_eq!(s.user_id, user_a.id);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_sessions_except() {
+        let db = setup_db().await;
+        let user_a = user::create_user(&db, "usera", "hash", Role::User)
+            .await
+            .unwrap();
+        let user_b = user::create_user(&db, "userb", "hash", Role::User)
+            .await
+            .unwrap();
+
+        let keep = create_session(&db, user_a.id).await.unwrap();
+        let other = create_session(&db, user_a.id).await.unwrap();
+        let b_session = create_session(&db, user_b.id).await.unwrap();
+
+        delete_user_sessions_except(&db, user_a.id, &keep.session_token)
+            .await
+            .unwrap();
+
+        assert!(
+            find_by_token(&db, &other.session_token)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            find_by_token(&db, &keep.session_token)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            find_by_token(&db, &b_session.session_token)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]

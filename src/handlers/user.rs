@@ -409,6 +409,26 @@ pub async fn change_password_form(
     }
 }
 
+pub async fn revoke_other_sessions_form(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> impl IntoResponse {
+    if auth_user.session.is_masquerading() {
+        return FlashRedirect::error(
+            "/user-settings",
+            "Session management is unavailable while masquerading.",
+        );
+    }
+
+    let user_id = auth_user.user.id;
+    match session::delete_user_sessions_except(&state.db, user_id, &auth_user.session.session_token)
+        .await
+    {
+        Ok(()) => FlashRedirect::success("/user-settings", "Signed out all other sessions."),
+        Err(_) => FlashRedirect::error("/user-settings", "Failed to sign out other sessions."),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UpdatePreferencesForm {
     pub theme: String,

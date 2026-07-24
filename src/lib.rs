@@ -114,6 +114,10 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::user::update_kagi_form),
         )
         .route(
+            "/user-settings/sessions/revoke-others",
+            post(handlers::user::revoke_other_sessions_form),
+        )
+        .route(
             "/api/admin/unmasquerade",
             post(handlers::admin::stop_masquerade),
         )
