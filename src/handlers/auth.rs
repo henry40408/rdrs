@@ -134,8 +134,25 @@ pub async fn login(
 #[derive(Debug, Serialize)]
 pub struct LogoutResponse {
     pub redirect_to: String,
+    /// Whether the trusted forward-auth proxy identity header is present on
+    /// this request (not whether the session itself was created via forward
+    /// auth). The SPA uses it to explain that a local logout cannot end a
+    /// proxy-managed session when no `auth_proxy_logout_url` is configured.
+    pub via_forward_auth: bool,
+    /// Whether an `auth_proxy_logout_url` is configured. When true, `redirect_to`
+    /// is that URL (absolute `IdP` URL or a same-host path) and the client should
+    /// navigate to it; when false, `redirect_to` is the `/login` fallback and no
+    /// external logout endpoint exists to hand off to.
+    pub logout_url_configured: bool,
 }
 
+/// Clears the local session and reports where the client should go next.
+///
+/// `redirect_to` is the configured `auth_proxy_logout_url`, or `/login` if
+/// none is set. `via_forward_auth` reports whether the trusted proxy identity header is
+/// present on this request. `logout_url_configured` explicitly indicates whether an
+/// `auth_proxy_logout_url` is configured, so the client can decide whether to
+/// navigate to `redirect_to`.
 pub async fn logout(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -153,6 +170,7 @@ pub async fn logout(
         .path("/")
         .build();
 
+    let logout_url_configured = state.config.auth_proxy_logout_url.is_some();
     let redirect_to = state
         .config
         .auth_proxy_logout_url
@@ -161,6 +179,10 @@ pub async fn logout(
 
     Ok((
         jar.remove(removal).remove(csrf_removal),
-        Json(LogoutResponse { redirect_to }),
+        Json(LogoutResponse {
+            redirect_to,
+            via_forward_auth: auth_user.via_forward_auth,
+            logout_url_configured,
+        }),
     ))
 }

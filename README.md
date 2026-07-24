@@ -115,7 +115,7 @@ All configuration is done via environment variables.
 | `RDRS_AUTH_PROXY_GROUPS_HEADER` | - | Header carrying comma-separated group names from the proxy (e.g. `Remote-Groups`). |
 | `RDRS_AUTH_PROXY_ADMIN_GROUP` | - | Membership in this group grants the admin role, synced on every forward-auth login. Active only when `RDRS_AUTH_PROXY_GROUPS_HEADER` is also set. |
 | `RDRS_DISABLE_LOCAL_AUTH` | `false` | Hides the browser password form and rejects `POST /api/session` with 403. Does not affect GReader API or passkey auth. Requires `RDRS_AUTH_PROXY_HEADER`. |
-| `RDRS_AUTH_PROXY_LOGOUT_URL` | (unset) | When set, Sign Out redirects the browser here (e.g. the Authelia logout URL) to end the SSO session. When unset, Sign Out clears the local session and the proxy header re-authenticates on the next request (you return to the app). |
+| `RDRS_AUTH_PROXY_LOGOUT_URL` | (unset) | When set, Sign Out redirects the browser here (e.g. the Authelia logout URL) to end the SSO session. When unset, a forward-auth Sign Out clears the local session but stays put and warns the user to log out at the proxy instead — the proxy header would just re-authenticate them, so the app does not pretend the logout succeeded. |
 
 > **Deploying behind a domain?** `RDRS_WEBAUTHN_RP_ID` and `RDRS_WEBAUTHN_RP_ORIGIN`
 > default to `localhost` and **must** be overridden to your public host (e.g.
@@ -150,8 +150,9 @@ fields):
 `RDRS_AUTH_PROXY_GROUPS_HEADER` + `RDRS_AUTH_PROXY_ADMIN_GROUP` (map a group to the admin
 role on every login), `RDRS_DISABLE_LOCAL_AUTH` (hide the password form), and
 `RDRS_AUTH_PROXY_LOGOUT_URL` (redirect Sign Out to your IdP's logout endpoint to also
-end the SSO session; when unset, Sign Out clears the local session and the proxy
-header re-authenticates on the next request).
+end the SSO session; when unset, Sign Out clears the local session but warns the
+forward-auth user to log out at the proxy instead, since the proxy header would
+otherwise just re-authenticate them).
 
 **Reverse-proxy requirements:**
 
