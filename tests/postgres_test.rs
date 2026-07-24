@@ -333,6 +333,13 @@ async fn pg_dialect_smoke() {
     let admin = statistics::get_admin_database_stats(&db).await.unwrap();
     assert!(admin.db_size_bytes > 0, "pg_database_size must be positive");
     assert_eq!(admin.total_entries, 2, "two entries remain after prune");
+    // PG cannot measure reclaimable space without an extension, so it reports
+    // None and `/statistics` drops the card. It must never report a zero, which
+    // would render as "0 B · 0% of file" and read as a bloat-free database.
+    assert!(
+        admin.reclaimable.is_none(),
+        "PG must not claim a reclaimable figure it cannot measure"
+    );
 
     // --- unique-violation mapping (is_unique_violation on PG) ------------------
     let err = category::create_category(&db, user_id, "Tech")

@@ -2509,11 +2509,18 @@ pub struct AdminStatsView {
     pub read_rate_fmt: String,
 }
 
+/// Reclaimable-space card, rendered only when the backend can measure it.
+pub struct ReclaimableView {
+    pub size_fmt: String,
+    pub frag_pct: i64,
+}
+
 /// Database storage + record stats block (admin, non-masquerading).
 pub struct AdminDatabaseStatsView {
     pub size_fmt: String,
-    pub reclaimable_fmt: String,
-    pub frag_pct: i64,
+    /// `None` on `PostgreSQL`, which cannot report free space without an
+    /// extension — see `models::statistics::get_admin_database_stats`.
+    pub reclaimable: Option<ReclaimableView>,
     pub total_entries: i64,
     pub avg_per_day_fmt: String,
     pub coverage_fmt: String,
@@ -3056,8 +3063,10 @@ pub async fn statistics_page(
 
     let admin_db = admin_db_stats.map(|s| AdminDatabaseStatsView {
         size_fmt: format_db_bytes(s.db_size_bytes),
-        reclaimable_fmt: format_db_bytes(s.reclaimable_bytes),
-        frag_pct: (s.fragmentation_ratio * 100.0).round() as i64,
+        reclaimable: s.reclaimable.map(|r| ReclaimableView {
+            size_fmt: format_db_bytes(r.bytes),
+            frag_pct: (r.fragmentation_ratio * 100.0).round() as i64,
+        }),
         total_entries: s.total_entries,
         avg_per_day_fmt: format!("{}", s.avg_new_entries_per_day.round() as i64),
         coverage_fmt: format!("{}d", s.coverage_days.round() as i64),

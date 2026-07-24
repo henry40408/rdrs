@@ -226,6 +226,14 @@ async fn test_statistics_page_admin_sees_sitewide() {
     // The admin section heading is rendered for non-masquerading admins.
     assert!(body.contains("Site-wide Statistics"));
     assert!(body.contains("Total Users"));
+    // SQLite can measure free space (freelist PRAGMAs), so the Reclaimable card
+    // is present here. It is omitted on PostgreSQL, which reports `None` rather
+    // than a zero — see `models::statistics::get_admin_database_stats` and the
+    // `reclaimable.is_none()` assertion in `tests/postgres_test.rs`.
+    assert!(
+        body.contains("Reclaimable"),
+        "SQLite must render the Reclaimable card"
+    );
 }
 
 #[tokio::test]
