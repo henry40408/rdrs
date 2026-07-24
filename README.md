@@ -29,6 +29,7 @@ Privacy-focused, lightweight, and designed for personal use.
 - **External Services** - Save entries to Linkding bookmark manager
 - **Google Reader API** - Compatible with GReader clients (FeedMe, Read You, etc.)
 - **Multi-User Support** - Role-based access control with admin panel
+- **Session Management** - View active sessions and sign out other devices from Settings
 - **Docker Ready** - Single-binary deployment with all assets embedded, multi-platform container images
 
 ## Quick Start

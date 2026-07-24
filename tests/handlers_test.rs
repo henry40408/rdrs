@@ -2797,6 +2797,103 @@ async fn test_update_kagi_form() {
     assert_eq!(location, "/user-settings");
 }
 
+#[tokio::test]
+async fn test_revoke_other_sessions_form_keeps_current_deletes_others() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let user = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .expect("user must exist");
+
+    // Seed a second session for the same user (e.g. another device/browser).
+    let other_session = rdrs::models::session::create_session(&app.db, user.id)
+        .await
+        .unwrap();
+
+    let response = app
+        .server
+        .post("/user-settings/sessions/revoke-others")
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/user-settings");
+
+    // The seeded second session is gone.
+    let found = rdrs::models::session::find_by_token(&app.db, &other_session.session_token)
+        .await
+        .unwrap();
+    assert!(found.is_none(), "other session should be deleted");
+
+    // The current (cookie) session still authenticates.
+    app.server.get("/api/me").await.assert_status_ok();
+}
+
+#[tokio::test]
+async fn test_revoke_other_sessions_form_unauthenticated_rejected() {
+    // `/user-settings/*` is not under the CSRF/anonymous-session skip prefixes
+    // (unlike `/api/*`), so `anonymous_session` mints a signed session cookie
+    // for this request and `csrf_guard` then requires a matching token. A bare
+    // POST with no cookie jar and no `_csrf` field never has one, so this is
+    // rejected as 403 Forbidden by the CSRF guard before the `AuthUser`
+    // extractor (which would otherwise 401) ever runs. This doubles as the
+    // CSRF-missing coverage for this endpoint.
+    let server = create_test_server(default_test_config()).await;
+
+    let response = server.post("/user-settings/sessions/revoke-others").await;
+
+    response.assert_status(StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_revoke_other_sessions_form_blocked_while_masquerading() {
+    // `start_masquerade` mutates the admin's own session row in place
+    // (user_id -> target, original_user_id -> admin, same token/cookie), so
+    // while masquerading, the effective session belongs to the target. The
+    // revoke-others action must refuse to run in that state — otherwise an
+    // admin masquerading as a user would silently delete that user's real
+    // sessions on their own devices.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    register_target_user(&app.server).await;
+
+    // Seed a second, real session for the target user (id=2) — e.g. a
+    // session from the target's own phone, unrelated to the masquerade.
+    let target_session = rdrs::models::session::create_session(&app.db, 2)
+        .await
+        .unwrap();
+
+    // Admin starts masquerading as target (id=2). This reuses the admin's
+    // existing session cookie/CSRF token (apply_csrf already wired it up in
+    // setup_admin_user), since start_masquerade keeps the same token.
+    app.server
+        .post("/admin/users/2/masquerade")
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    // Attempt to revoke other sessions while masquerading — must be refused.
+    let response = app
+        .server
+        .post("/user-settings/sessions/revoke-others")
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    let location = response.header(header::LOCATION);
+    assert_eq!(location, "/user-settings");
+
+    // The target's real, seeded session must still exist: the victim was not
+    // signed out of their own devices as a side effect of the masquerade.
+    let found = rdrs::models::session::find_by_token(&app.db, &target_session.session_token)
+        .await
+        .unwrap();
+    assert!(
+        found.is_some(),
+        "masquerade must not delete the target's real sessions"
+    );
+}
+
 // ============================================================================
 // Form-action admin endpoint tests (PR-5 T1)
 // ============================================================================

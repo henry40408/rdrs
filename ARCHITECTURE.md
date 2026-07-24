@@ -275,6 +275,10 @@ Sign Out always clears the local `session_token` cookie (with `Path=/`) and dele
 
 Because of that re-authentication, a local-only logout cannot actually end a forward-auth session when no `RDRS_AUTH_PROXY_LOGOUT_URL` is configured: the client would just get bounced back into the app on the very next request. `DELETE /api/session` reports `logout_url_configured` so the frontend (`rdrs-sidebar.js`) can decide whether to navigate to `redirect_to` (an absolute IdP URL or a same-host path), alongside `via_forward_auth` and `redirect_to` for the client to handle the logout flow correctly — it redirects to `redirect_to` and shows "You have been logged out." for a normal session, but for a forward-auth session with no configured logout URL it does not navigate at all and instead warns the user to log out at their proxy or SSO provider. The user-facing logout behavior and the `RDRS_AUTH_PROXY_LOGOUT_URL` knob are described in the README.
 
+**Active session list:**
+
+`/user-settings` lists the current user's non-expired sessions (created/expires times only — no token or id reaches the template). `POST /user-settings/sessions/revoke-others` deletes every one of the user's sessions except the one making the request (`session::delete_user_sessions_except`), letting a user sign out other devices/browsers without ending their own session.
+
 **Auth-mode indicator:**
 
 The sidebar shows an **SSO** pill when the current request is served through forward-auth — computed per request from the trusted proxy header (no stored state), surfaced via `via_forward_auth` on the auth extractors and the sidebar payload. The App page (`/settings`) lists the forward-auth configuration under a grouped Configuration table. That page is **admin-only** (`PageAdminUser`) because it exposes deployment internals, and the `DATABASE_URL` it shows is passed through `config::redact_database_url` so a PostgreSQL password never reaches the response; the sidebar hides its link for non-admins.

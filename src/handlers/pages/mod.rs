@@ -12,6 +12,7 @@ use crate::error::AppError;
 use crate::middleware::auth::{LoginRedirect, PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage, FlashRedirect};
 use crate::models::SummaryStatus;
+use crate::models::session;
 use crate::models::user_settings;
 use crate::models::{category, entry, entry_summary, feed};
 
@@ -804,6 +805,25 @@ pub async fn user_settings_page(
     let session_created_at_iso = auth_user.session.created_at.to_rfc3339();
     let username = auth_user.user.username.clone();
 
+    let is_masquerading = auth_user.session.is_masquerading();
+    let sessions: Vec<SessionRow> = if is_masquerading {
+        Vec::new()
+    } else {
+        session::list_user_sessions(&state.db, user_id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| !s.is_expired())
+            .map(|s| SessionRow {
+                created_at: s.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                created_at_iso: s.created_at.to_rfc3339(),
+                expires_at: s.expires_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                expires_at_iso: s.expires_at.to_rfc3339(),
+                is_current: s.id == auth_user.session.id,
+            })
+            .collect()
+    };
+
     (
         flash,
         UserSettingsTemplate {
@@ -816,6 +836,8 @@ pub async fn user_settings_page(
             created_at_iso,
             session_created_at,
             session_created_at_iso,
+            sessions,
+            show_sessions: !is_masquerading,
             public_base_url,
             theme,
             entries_per_page,
@@ -2343,6 +2365,16 @@ impl IntoResponse for SettingsTemplate {
     }
 }
 
+/// A single row in the "Active Sessions" table on `/user-settings`. Deliberately
+/// exposes no `session_token`/`id` to the template — those stay server-side.
+pub struct SessionRow {
+    pub created_at: String,
+    pub created_at_iso: String,
+    pub expires_at: String,
+    pub expires_at_iso: String,
+    pub is_current: bool,
+}
+
 /// Per-route template for `/user-settings`. Renders the full page server-side
 /// (account info, `GReader` URLs, password / preferences / linkding / kagi
 /// forms, and a `<rdrs-passkeys>` mount). Form actions target the
@@ -2359,6 +2391,11 @@ pub struct UserSettingsTemplate {
     pub created_at_iso: String,
     pub session_created_at: String,
     pub session_created_at_iso: String,
+    pub sessions: Vec<SessionRow>,
+    /// Gates the "Active Sessions" section: hidden while masquerading, since
+    /// the effective session is the target's — listing/revoking it would
+    /// silently sign the victim out of their own real sessions.
+    pub show_sessions: bool,
     pub public_base_url: String,
     pub theme: Option<String>,
     pub entries_per_page: i64,
