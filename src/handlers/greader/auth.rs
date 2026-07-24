@@ -1,7 +1,9 @@
+use std::net::SocketAddr;
+
 use axum::{
     Form,
-    extract::{FromRequestParts, State},
-    http::request::Parts,
+    extract::{ConnectInfo, Extension, FromRequestParts, State},
+    http::{HeaderMap, request::Parts},
 };
 use axum_extra::extract::CookieJar;
 use chrono::Utc;
@@ -12,6 +14,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::session::{self, Session};
 use crate::models::user::{self, User};
 use crate::secret::{DOMAIN_GREADER_TOKEN, tag, verify_tag};
+use crate::utils::http::request_user_agent;
 
 /// POST token validity duration in seconds (30 minutes).
 const POST_TOKEN_VALIDITY_SECS: i64 = 30 * 60;
@@ -107,6 +110,8 @@ pub struct ClientLoginForm {
 /// returns `SID`, `LSID`, `Auth` in text/plain.
 pub async fn client_login(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Form(form): Form<ClientLoginForm>,
 ) -> AppResult<String> {
     let username = form.email.clone();
@@ -124,7 +129,10 @@ pub async fn client_login(
         return Err(AppError::UserDisabled);
     }
 
-    let new_session = session::create_session(&state.db, user.id).await?;
+    let user_agent = request_user_agent(&headers);
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let ip = state.config.client_ip(peer, &headers).to_string();
+    let new_session = session::create_session(&state.db, user.id, &user_agent, &ip).await?;
 
     let _ = user; // user info not needed in response
 

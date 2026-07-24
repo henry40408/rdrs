@@ -26,12 +26,15 @@
                 <h2>Active Sessions</h2>
                 <table>
                     <thead>
-                        <tr><th class="settings-th">Signed In</th><th class="settings-th">Expires</th><th class="settings-th"></th></tr>
+                        <tr><th class="settings-th">Device</th><th class="settings-th">IP</th><th class="settings-th">Signed In</th><th class="settings-th">Last Active</th><th class="settings-th">Expires</th><th class="settings-th"></th></tr>
                     </thead>
                     <tbody>
                         {% for s in sessions %}
                         <tr>
+                            <td title="{{ s.user_agent }}">{{ s.user_agent }}</td>
+                            <td>{{ s.ip_address }}</td>
                             <td><time datetime="{{ s.created_at_iso }}" data-local-text>{{ s.created_at }}</time></td>
+                            <td><time datetime="{{ s.last_seen_iso }}" data-local-text>{{ s.last_seen }}</time></td>
                             <td><time datetime="{{ s.expires_at_iso }}" data-local-text>{{ s.expires_at }}</time></td>
                             <td>{% if s.is_current %}<span class="muted">This device</span>{% endif %}</td>
                         </tr>

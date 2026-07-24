@@ -2808,9 +2808,10 @@ async fn test_revoke_other_sessions_form_keeps_current_deletes_others() {
         .expect("user must exist");
 
     // Seed a second session for the same user (e.g. another device/browser).
-    let other_session = rdrs::models::session::create_session(&app.db, user.id)
-        .await
-        .unwrap();
+    let other_session =
+        rdrs::models::session::create_session(&app.db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
 
     let response = app
         .server
@@ -2861,9 +2862,10 @@ async fn test_revoke_other_sessions_form_blocked_while_masquerading() {
 
     // Seed a second, real session for the target user (id=2) — e.g. a
     // session from the target's own phone, unrelated to the masquerade.
-    let target_session = rdrs::models::session::create_session(&app.db, 2)
-        .await
-        .unwrap();
+    let target_session =
+        rdrs::models::session::create_session(&app.db, 2, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
 
     // Admin starts masquerading as target (id=2). This reuses the admin's
     // existing session cookie/CSRF token (apply_csrf already wired it up in

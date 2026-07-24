@@ -161,7 +161,7 @@ The schema has 11 tables:
 | Table | Purpose |
 |-------|---------|
 | `user` | User accounts with role (admin/user) |
-| `session` | Session tokens with masquerade support |
+| `session` | Session tokens with masquerade support, plus per-session `user_agent`/`ip_address`/`last_seen_at` metadata |
 | `category` | Feed categories per user |
 | `feed` | Feed metadata with etag caching and bucket assignment |
 | `entry` | Feed items with read/starred status |
@@ -277,7 +277,11 @@ Because of that re-authentication, a local-only logout cannot actually end a for
 
 **Active session list:**
 
-`/user-settings` lists the current user's non-expired sessions (created/expires times only — no token or id reaches the template). `POST /user-settings/sessions/revoke-others` deletes every one of the user's sessions except the one making the request (`session::delete_user_sessions_except`), letting a user sign out other devices/browsers without ending their own session.
+`/user-settings` lists the current user's non-expired sessions, showing device (`user_agent`), `ip_address`, created/last-active/expires times — no token or id reaches the template. `POST /user-settings/sessions/revoke-others` deletes every one of the user's sessions except the one making the request (`session::delete_user_sessions_except`), letting a user sign out other devices/browsers without ending their own session.
+
+Every `session` row is now created with mandatory `user_agent`, `ip_address`, and `last_seen_at` columns (all `NOT NULL`), captured at login time from the request that authenticated (the 4 sites: `POST /api/session`, forward-auth auto-login, passkey `finish_authentication`, and GReader `ClientLogin`). The client IP is resolved by `Config::client_ip`, which only honours `X-Forwarded-For`/`X-Real-IP` when the TCP peer is a trusted proxy per `RDRS_TRUSTED_PROXY_NETWORKS` (the same `is_trusted_peer` check used by forward-auth); when trusted, it reads `X-Forwarded-For` right-to-left and takes the right-most entry that is not itself a trusted proxy (append-mode proxies like nginx's `$proxy_add_x_forwarded_for`, Traefik, and Caddy add each hop's observed address on the right, so a left-most read would let the client's own spoofed prefix win), falling back to `X-Real-IP` and then the TCP peer. Because untrusted entries closer to the client are never believed and an untrusted peer's headers are ignored outright, a client cannot spoof its logged IP. `last_seen_at` is bumped by the `AuthUser`/`PageAuthUser` extractors on every authenticated request, throttled to at most once per minute per session (`session::touch_last_seen`) to avoid a write on every request.
+
+Because these columns are `NOT NULL` with no default, migration `0002_add_session_metadata` **drops and recreates the `session` table**, deleting all existing sessions — this is a breaking upgrade: every user is signed out and must log in again after upgrading.
 
 **Auth-mode indicator:**
 

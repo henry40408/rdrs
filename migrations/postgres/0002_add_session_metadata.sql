@@ -1,0 +1,19 @@
+-- Brute-force upgrade: session metadata is mandatory, so wipe all sessions and
+-- recreate with NOT NULL columns. Everyone must re-authenticate after this.
+DROP TABLE IF EXISTS session;
+
+CREATE TABLE IF NOT EXISTS session (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    session_token TEXT NOT NULL UNIQUE,
+    original_user_id BIGINT REFERENCES "user"(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    user_agent TEXT NOT NULL,
+    ip_address TEXT NOT NULL,
+    last_seen_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_token ON session(session_token);
+CREATE INDEX IF NOT EXISTS idx_session_user_id ON session(user_id);
+CREATE INDEX IF NOT EXISTS idx_session_expires_at ON session(expires_at);

@@ -1,4 +1,10 @@
-use axum::{Json, extract::State, http::StatusCode};
+use std::net::SocketAddr;
+
+use axum::{
+    Json,
+    extract::{ConnectInfo, Extension, State},
+    http::{HeaderMap, StatusCode},
+};
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +15,7 @@ use crate::middleware::{AuthUser, SESSION_COOKIE_NAME, build_session_cookie};
 use crate::models::category;
 use crate::models::session;
 use crate::models::user::{self, Role};
+use crate::utils::http::request_user_agent;
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
@@ -88,6 +95,8 @@ pub struct LoginResponse {
 pub async fn login(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<(CookieJar, Json<LoginResponse>)> {
     if state.config.disable_local_auth {
@@ -105,7 +114,10 @@ pub async fn login(
         return Err(AppError::UserDisabled);
     }
 
-    let new_session = session::create_session(&state.db, user.id).await?;
+    let user_agent = request_user_agent(&headers);
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let ip = state.config.client_ip(peer, &headers).to_string();
+    let new_session = session::create_session(&state.db, user.id, &user_agent, &ip).await?;
 
     let cookie = build_session_cookie(
         &new_session.session_token,

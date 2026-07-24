@@ -79,6 +79,7 @@ impl FromRequestParts<AppState> for AuthUser {
             if let Some(new_expires_at) = session::refresh_if_needed(&state.db, &session).await? {
                 session.expires_at = new_expires_at;
             }
+            let _ = session::touch_last_seen(&state.db, &session).await;
             false
         };
 
@@ -154,6 +155,7 @@ impl FromRequestParts<AppState> for PageAuthUser {
         if let Ok(Some(new_expires_at)) = session::refresh_if_needed(&state.db, &session).await {
             session.expires_at = new_expires_at;
         }
+        let _ = session::touch_last_seen(&state.db, &session).await;
         let Ok(Some(user)) = user::find_by_id(&state.db, session.user_id).await else {
             return Err(LoginRedirect);
         };
