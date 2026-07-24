@@ -1,7 +1,9 @@
+use std::net::SocketAddr;
+
 use axum::{
     Json,
-    extract::{Path, State},
-    http::StatusCode,
+    extract::{ConnectInfo, Extension, Path, State},
+    http::{HeaderMap, StatusCode},
 };
 use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
@@ -12,6 +14,7 @@ use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::middleware::{AuthUser, build_session_cookie};
 use crate::models::{passkey, session, user, webauthn_challenge};
+use crate::utils::http::request_user_agent;
 
 // --- Registration ---
 
@@ -199,6 +202,8 @@ pub struct FinishAuthenticationResponse {
 pub async fn finish_authentication(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(req): Json<FinishAuthenticationRequest>,
 ) -> AppResult<(CookieJar, Json<FinishAuthenticationResponse>)> {
     // Find and consume the challenge
@@ -244,7 +249,10 @@ pub async fn finish_authentication(
     let passkey_user_id = stored_passkey.user_id;
 
     passkey::update_counter(&state.db, passkey_id, counter).await?;
-    let new_session = session::create_session(&state.db, passkey_user_id).await?;
+    let user_agent = request_user_agent(&headers);
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let ip = state.config.client_ip(peer, &headers).to_string();
+    let new_session = session::create_session(&state.db, passkey_user_id, &user_agent, &ip).await?;
 
     let cookie = build_session_cookie(
         &new_session.session_token,

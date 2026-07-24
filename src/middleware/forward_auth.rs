@@ -14,6 +14,7 @@ use crate::error::AppResult;
 use crate::middleware::{FlashRedirect, build_session_cookie};
 use crate::models::user::{self, Role};
 use crate::models::{category, session};
+use crate::utils::http::request_user_agent;
 
 /// Path prefixes that must never trigger forward-auth auto-login: machine
 /// endpoints (`GReader` native clients, JSON/passkey APIs, SSE, static assets)
@@ -129,6 +130,11 @@ pub async fn forward_auth(
 
     let allow_creation = config.auth_proxy_user_creation;
 
+    // Captured as owned values (not borrowed from `req`) before the async
+    // block, since `req` is still needed afterwards to build the redirect.
+    let user_agent = request_user_agent(req.headers());
+    let ip = config.client_ip(peer_ip, req.headers()).to_string();
+
     // Resolve (or JIT-create) the account and open a session. `None` means
     // "reject" (unknown user with creation off, or a disabled account).
     let outcome: AppResult<Option<String>> = async {
@@ -157,7 +163,7 @@ pub async fn forward_auth(
             category::create_category(&state.db, created.id, "Uncategorized").await?;
             created
         };
-        let new_session = session::create_session(&state.db, user.id).await?;
+        let new_session = session::create_session(&state.db, user.id, &user_agent, &ip).await?;
         Ok(Some(new_session.session_token))
     }
     .await;

@@ -17,6 +17,9 @@ pub struct Session {
     pub original_user_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    pub user_agent: String,
+    pub ip_address: String,
+    pub last_seen_at: DateTime<Utc>,
 }
 
 impl Session {
@@ -82,18 +85,28 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
-pub async fn create_session(db: &Db, user_id: i64) -> AppResult<Session> {
+pub async fn create_session(
+    db: &Db,
+    user_id: i64,
+    user_agent: &str,
+    ip_address: &str,
+) -> AppResult<Session> {
     let token = generate_token();
-    let expires_at = Utc::now() + Duration::days(SESSION_EXPIRY_DAYS);
+    let now = Utc::now();
+    let expires_at = now + Duration::days(SESSION_EXPIRY_DAYS);
 
     query_one!(
         db,
         Session,
-        "INSERT INTO session (user_id, session_token, expires_at) VALUES ($1, $2, $3) \
-         RETURNING id, user_id, session_token, original_user_id, created_at, expires_at",
+        "INSERT INTO session (user_id, session_token, expires_at, user_agent, ip_address, last_seen_at) \
+         VALUES ($1, $2, $3, $4, $5, $6) \
+         RETURNING id, user_id, session_token, original_user_id, created_at, expires_at, user_agent, ip_address, last_seen_at",
         user_id,
         &token,
-        expires_at
+        expires_at,
+        user_agent,
+        ip_address,
+        now
     )
     .map_err(AppError::Database)
 }
@@ -102,10 +115,27 @@ pub async fn find_by_token(db: &Db, token: &str) -> AppResult<Option<Session>> {
     query_opt!(
         db,
         Session,
-        "SELECT id, user_id, session_token, original_user_id, created_at, expires_at FROM session WHERE session_token = $1",
+        "SELECT id, user_id, session_token, original_user_id, created_at, expires_at, user_agent, ip_address, last_seen_at FROM session WHERE session_token = $1",
         token
     )
     .map_err(AppError::Database)
+}
+
+/// Bump `last_seen_at` to now, but at most once per minute per session, so an
+/// active user's every request doesn't cause a write. Best-effort.
+pub async fn touch_last_seen(db: &Db, session: &Session) -> AppResult<()> {
+    let now = Utc::now();
+    if now - session.last_seen_at < Duration::minutes(1) {
+        return Ok(());
+    }
+    db_execute!(
+        db,
+        "UPDATE session SET last_seen_at = $1 WHERE id = $2",
+        now,
+        session.id
+    )
+    .map_err(AppError::Database)?;
+    Ok(())
 }
 
 /// Slide the session's `expires_at` forward if it is within the refresh window.
@@ -145,7 +175,7 @@ pub async fn list_user_sessions(db: &Db, user_id: i64) -> AppResult<Vec<Session>
     query_all!(
         db,
         Session,
-        "SELECT id, user_id, session_token, original_user_id, created_at, expires_at \
+        "SELECT id, user_id, session_token, original_user_id, created_at, expires_at, user_agent, ip_address, last_seen_at \
          FROM session WHERE user_id = $1 ORDER BY created_at DESC",
         user_id
     )
@@ -220,10 +250,20 @@ mod tests {
             .await
             .unwrap();
 
-        let session = create_session(&db, user.id).await.unwrap();
+        let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
         assert_eq!(session.user_id, user.id);
         assert!(!session.is_masquerading());
         assert!(!session.is_expired());
+        assert_eq!(session.user_agent, "test-agent");
+        assert_eq!(session.ip_address, "127.0.0.1");
+        // last_seen_at and expires_at are derived from the same `now` in
+        // create_session, so they should be exactly `SESSION_EXPIRY_DAYS` apart.
+        assert_eq!(
+            session.last_seen_at,
+            session.expires_at - Duration::days(SESSION_EXPIRY_DAYS)
+        );
 
         let found = find_by_token(&db, &session.session_token)
             .await
@@ -239,7 +279,9 @@ mod tests {
             .await
             .unwrap();
 
-        let session = create_session(&db, user.id).await.unwrap();
+        let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
         delete_session(&db, &session.session_token).await.unwrap();
 
         let found = find_by_token(&db, &session.session_token).await.unwrap();
@@ -256,9 +298,15 @@ mod tests {
             .await
             .unwrap();
 
-        create_session(&db, user_a.id).await.unwrap();
-        create_session(&db, user_a.id).await.unwrap();
-        create_session(&db, user_b.id).await.unwrap();
+        create_session(&db, user_a.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+        create_session(&db, user_a.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+        create_session(&db, user_b.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
 
         let sessions = list_user_sessions(&db, user_a.id).await.unwrap();
         assert_eq!(sessions.len(), 2);
@@ -277,9 +325,15 @@ mod tests {
             .await
             .unwrap();
 
-        let keep = create_session(&db, user_a.id).await.unwrap();
-        let other = create_session(&db, user_a.id).await.unwrap();
-        let b_session = create_session(&db, user_b.id).await.unwrap();
+        let keep = create_session(&db, user_a.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+        let other = create_session(&db, user_a.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+        let b_session = create_session(&db, user_b.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
 
         delete_user_sessions_except(&db, user_a.id, &keep.session_token)
             .await
@@ -315,7 +369,9 @@ mod tests {
             .await
             .unwrap();
 
-        let session = create_session(&db, admin.id).await.unwrap();
+        let session = create_session(&db, admin.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
         assert!(!session.is_masquerading());
 
         start_masquerade(&db, &session.session_token, target.id)
@@ -350,7 +406,9 @@ mod tests {
             .await
             .unwrap();
 
-        let session = create_session(&db, admin.id).await.unwrap();
+        let session = create_session(&db, admin.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
         start_masquerade(&db, &session.session_token, target.id)
             .await
             .unwrap();
@@ -366,7 +424,9 @@ mod tests {
             .await
             .unwrap();
 
-        let session = create_session(&db, user.id).await.unwrap();
+        let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
 
         let result = stop_masquerade(&db, &session.session_token).await;
         assert!(matches!(result, Err(AppError::NotMasquerading)));
@@ -389,6 +449,9 @@ mod tests {
             original_user_id: None,
             created_at,
             expires_at,
+            user_agent: "t".to_string(),
+            ip_address: "127.0.0.1".to_string(),
+            last_seen_at: created_at,
         }
     }
 
@@ -442,7 +505,9 @@ mod tests {
         let user = user::create_user(&db, "testuser", "hash", Role::User)
             .await
             .unwrap();
-        let session = create_session(&db, user.id).await.unwrap();
+        let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
 
         let past_created = Utc::now() - Duration::days(6);
         let near_expiry = Utc::now() + Duration::hours(12);
@@ -479,8 +544,63 @@ mod tests {
         let user = user::create_user(&db, "testuser", "hash", Role::User)
             .await
             .unwrap();
-        let session = create_session(&db, user.id).await.unwrap();
+        let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
 
         assert!(refresh_if_needed(&db, &session).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn touch_last_seen_updates_when_stale() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+        let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+
+        let stale = Utc::now() - Duration::minutes(5);
+        db_execute!(
+            &db,
+            "UPDATE session SET last_seen_at = $1 WHERE id = $2",
+            stale,
+            session.id
+        )
+        .unwrap();
+
+        let reloaded = find_by_token(&db, &session.session_token)
+            .await
+            .unwrap()
+            .unwrap();
+        touch_last_seen(&db, &reloaded).await.unwrap();
+
+        let after = find_by_token(&db, &session.session_token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(after.last_seen_at > reloaded.last_seen_at);
+        let drift = (Utc::now() - after.last_seen_at).num_seconds().abs();
+        assert!(drift <= 1, "last_seen_at not close to now: {drift}s");
+    }
+
+    #[tokio::test]
+    async fn touch_last_seen_noop_when_fresh() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+        let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+
+        touch_last_seen(&db, &session).await.unwrap();
+
+        let after = find_by_token(&db, &session.session_token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.last_seen_at, session.last_seen_at);
     }
 }

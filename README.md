@@ -29,7 +29,7 @@ Privacy-focused, lightweight, and designed for personal use.
 - **External Services** - Save entries to Linkding bookmark manager
 - **Google Reader API** - Compatible with GReader clients (FeedMe, Read You, etc.)
 - **Multi-User Support** - Role-based access control with admin panel
-- **Session Management** - View active sessions and sign out other devices from Settings
+- **Session Management** - View active sessions (device, IP, last active) and sign out other devices from Settings
 - **Docker Ready** - Single-binary deployment with all assets embedded, multi-platform container images
 
 ## Quick Start
@@ -88,6 +88,12 @@ All configuration is done via environment variables.
 > healthy server on defaults — against an empty `rdrs.sqlite3` rather than your
 > database, with signup off and a regenerated secret. Failing once, loudly, is
 > the cheaper outcome.
+>
+> **Upgrading to a version with session device/IP tracking?** The `session`
+> table gained mandatory `user_agent`, `ip_address`, and `last_seen_at`
+> columns. Since there is no sensible default for existing rows, the migration
+> **drops and recreates the `session` table** — every signed-in user,
+> including you, is logged out once and must sign back in after the upgrade.
 >
 > `DATABASE_URL` is the exception and keeps its bare name: it is a genuine
 > cross-tool convention. The rest only looked generic — `USER_AGENT` and

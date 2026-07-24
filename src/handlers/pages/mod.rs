@@ -820,6 +820,10 @@ pub async fn user_settings_page(
                 expires_at: s.expires_at.format("%Y-%m-%d %H:%M:%S").to_string(),
                 expires_at_iso: s.expires_at.to_rfc3339(),
                 is_current: s.id == auth_user.session.id,
+                user_agent: s.user_agent.clone(),
+                ip_address: s.ip_address.clone(),
+                last_seen: s.last_seen_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                last_seen_iso: s.last_seen_at.to_rfc3339(),
             })
             .collect()
     };
@@ -2373,6 +2377,10 @@ pub struct SessionRow {
     pub expires_at: String,
     pub expires_at_iso: String,
     pub is_current: bool,
+    pub user_agent: String,
+    pub ip_address: String,
+    pub last_seen: String,
+    pub last_seen_iso: String,
 }
 
 /// Per-route template for `/user-settings`. Renders the full page server-side
