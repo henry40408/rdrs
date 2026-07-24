@@ -137,11 +137,25 @@ impl AdminEntryStats {
     }
 }
 
+/// Free space a `VACUUM` would hand back, for backends that can measure it.
+///
+/// `SQLite` reads this straight off its page-level freelist accounting. There is
+/// no comparable figure on `PostgreSQL` without an extension, so PG reports
+/// `None` rather than a number — see [`get_admin_database_stats`].
+pub struct ReclaimableSpace {
+    pub bytes: i64,
+    /// `bytes / db_size_bytes`, in `0.0..=1.0`.
+    pub fragmentation_ratio: f64,
+}
+
 /// Admin database storage + record stats (period-independent).
+///
+/// `reclaimable` is `None` on backends that cannot report free space (currently
+/// `PostgreSQL`); the `/statistics` page omits the card entirely rather than
+/// rendering a zero that would read as "no bloat".
 pub struct AdminDatabaseStats {
     pub db_size_bytes: i64,
-    pub reclaimable_bytes: i64,
-    pub fragmentation_ratio: f64,
+    pub reclaimable: Option<ReclaimableSpace>,
     pub total_entries: i64,
     pub avg_new_entries_per_day: f64,
     pub coverage_days: f64,
@@ -455,8 +469,27 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
     // Storage stats dialect-fork. SQLite exposes page-level accounting via
     // PRAGMAs (total size = page_count * page_size; reclaimable = freelist *
     // page_size). PostgreSQL reports the on-disk database size via
-    // `pg_database_size()`; it has no directly comparable freelist/reclaimable
-    // figure (bloat is a VACUUM concern), so reclaimable is reported as 0.
+    // `pg_database_size()` but has no comparable free-space figure, so it
+    // reports `None` and the UI drops the card.
+    //
+    // The tempting substitute is `pg_stat_user_tables.n_dead_tup`, and it is
+    // wrong here on three counts (measured against PostgreSQL 17.10):
+    //
+    //   1. That view's own definition ends `AND schemaname !~ '^pg_toast'`, so
+    //      TOAST relations are invisible to it — and `entry.content` (HTML) is
+    //      exactly what gets TOASTed. A table holding 880 KB, 800 KB of it in
+    //      TOAST, reported 60 dead tuples through this view while the TOAST
+    //      relation itself held 420. It misses the bulk of the bloat.
+    //   2. It counts *tuples*, not bytes. Converting needs an average row
+    //      width, which is meaningless for a column whose values are TOASTed.
+    //   3. It is a transient figure, not a high-water mark: autovacuum resets
+    //      it to zero while those pages stay in the file. It measures "waiting
+    //      to be vacuumed", not "reclaimable".
+    //
+    // A trustworthy number needs the `pgstattuple` extension (a deployment
+    // dependency, and a full relation scan) — not worth it for a single-binary,
+    // zero-config app. Better no card than one that under-reports by an order
+    // of magnitude.
     let (db_size_bytes, reclaimable_bytes) = match db.inner() {
         DbInner::Sqlite(pool) => {
             let page_count = sqlx::query_scalar::<_, i64>("PRAGMA page_count")
@@ -471,22 +504,25 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
                 .fetch_one(pool)
                 .await
                 .map_err(AppError::Database)?;
-            (page_count * page_size, freelist * page_size)
+            (page_count * page_size, Some(freelist * page_size))
         }
         DbInner::Postgres(pool) => {
             let size = sqlx::query_scalar::<_, i64>("SELECT pg_database_size(current_database())")
                 .fetch_one(pool)
                 .await
                 .map_err(AppError::Database)?;
-            (size, 0)
+            (size, None)
         }
     };
 
-    let fragmentation_ratio = if db_size_bytes > 0 {
-        reclaimable_bytes as f64 / db_size_bytes as f64
-    } else {
-        0.0
-    };
+    let reclaimable = reclaimable_bytes.map(|bytes| ReclaimableSpace {
+        bytes,
+        fragmentation_ratio: if db_size_bytes > 0 {
+            bytes as f64 / db_size_bytes as f64
+        } else {
+            0.0
+        },
+    });
 
     let total_entries: i64 =
         query_scalar!(db, i64, "SELECT COUNT(*) FROM entry").map_err(AppError::Database)?;
@@ -551,8 +587,7 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
 
     Ok(AdminDatabaseStats {
         db_size_bytes,
-        reclaimable_bytes,
-        fragmentation_ratio,
+        reclaimable,
         total_entries,
         avg_new_entries_per_day,
         coverage_days,
@@ -990,8 +1025,11 @@ mod tests {
 
         // A freshly-initialized DB still has pages, so size is positive.
         assert!(s.db_size_bytes > 0);
-        assert!(s.reclaimable_bytes >= 0);
-        assert!((0.0..=1.0).contains(&s.fragmentation_ratio));
+        // SQLite can always measure free space, so the card is populated here;
+        // the PG `None` arm is asserted in `tests/postgres_test.rs`.
+        let r = s.reclaimable.expect("SQLite reports reclaimable space");
+        assert!(r.bytes >= 0);
+        assert!((0.0..=1.0).contains(&r.fragmentation_ratio));
         // No entries / tombstones yet → record metrics are zero.
         assert_eq!(s.total_entries, 0);
         assert_eq!(s.coverage_days, 0.0);

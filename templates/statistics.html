@@ -142,10 +142,12 @@
                             <div class="stats-card-value">{{ db.size_fmt }}</div>
                             <div class="stats-card-label">Database Size</div>
                         </div>
+                        {% if let Some(r) = db.reclaimable %}
                         <div class="stats-card stats-card-admin">
-                            <div class="stats-card-value">{{ db.reclaimable_fmt }}</div>
-                            <div class="stats-card-label">Reclaimable · {{ db.frag_pct }}% of file</div>
+                            <div class="stats-card-value">{{ r.size_fmt }}</div>
+                            <div class="stats-card-label">Reclaimable · {{ r.frag_pct }}% of file</div>
                         </div>
+                        {% endif %}
                         <div class="stats-card stats-card-admin">
                             <div class="stats-card-value" data-testid="stat-db-total-entries">{{ db.total_entries }}</div>
                             <div class="stats-card-label">Total Entries</div>
