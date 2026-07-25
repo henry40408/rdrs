@@ -19,6 +19,7 @@ use crate::middleware::{
 use crate::models::category;
 use crate::models::session;
 use crate::models::user::{self, Role};
+use crate::services::audit;
 use crate::utils::http::request_user_agent;
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +59,7 @@ pub async fn register(
     let ip = state.config.client_ip(peer, &headers);
     if !state.login_rate_limiter.try_acquire(Bucket::Register, ip) {
         tracing::warn!(%ip, bucket = ?Bucket::Register, endpoint = "POST /api/register", "credential attempt rate limited");
+        audit::login_rate_limited("POST /api/register", "register", &ip.to_string());
         return Err(AppError::TooManyRequests);
     }
 
@@ -126,16 +128,30 @@ pub async fn login(
     // much Argon2 work the server does per guess.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
+    let user_agent = request_user_agent(&headers);
     if !state.login_rate_limiter.try_acquire(Bucket::Login, ip) {
         tracing::warn!(%ip, bucket = ?Bucket::Login, endpoint = "POST /api/session", "credential attempt rate limited");
+        audit::login_rate_limited("POST /api/session", "login", &ip.to_string());
         return Err(AppError::TooManyRequests);
     }
 
-    let user = user::find_by_username(&state.db, &req.username)
-        .await?
-        .ok_or(AppError::InvalidCredentials)?;
+    let Some(user) = user::find_by_username(&state.db, &req.username).await? else {
+        audit::login_failed(
+            req.username.len(),
+            "unknown_user",
+            &ip.to_string(),
+            &user_agent,
+        );
+        return Err(AppError::InvalidCredentials);
+    };
 
     if !verify_password(&req.password, &user.password_hash) {
+        audit::login_failed(
+            req.username.len(),
+            "bad_password",
+            &ip.to_string(),
+            &user_agent,
+        );
         return Err(AppError::InvalidCredentials);
     }
 
@@ -146,12 +162,20 @@ pub async fn login(
     state.login_rate_limiter.release(Bucket::Login, ip);
 
     if user.is_disabled() {
+        audit::login_failed(req.username.len(), "disabled", &ip.to_string(), &user_agent);
         return Err(AppError::UserDisabled);
     }
 
-    let user_agent = request_user_agent(&headers);
     let ip = ip.to_string();
     let new_session = session::create_session(&state.db, user.id, &user_agent, &ip).await?;
+    audit::session_created(
+        &state.config.secret,
+        &new_session.session_token,
+        user.id,
+        "password",
+        &ip,
+        &user_agent,
+    );
 
     let cookie = build_session_cookie(
         &new_session.session_token,
@@ -224,6 +248,7 @@ pub async fn logout(
 )> {
     let token = auth_user.session.session_token.clone();
     session::delete_session(&state.db, &token).await?;
+    audit::session_destroyed(&state.config.secret, &token, auth_user.user.id, "logout");
 
     // Removal must match the Path=/ the cookie was set with, or the browser
     // keeps the (now-invalid) session_token cookie. Mirrors flash.rs. The

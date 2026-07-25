@@ -121,4 +121,7 @@ the cross-cutting facts that span multiple files.
   login form still carries a token; Ammonia HTML sanitization +
   tracking-param/pixel removal (`services/sanitize.rs`); shared SSRF validation
   (`utils/url_validation.rs`) guarding both the readability fetcher and the proxy;
-  Argon2id password hashing; WebAuthn/passkey auth (`auth/webauthn.rs`).
+  Argon2id password hashing; WebAuthn/passkey auth (`auth/webauthn.rs`);
+  session lifecycle audit events (`services/audit.rs`) — creation, renewal,
+  destruction, masquerade start/stop — logged under the `rdrs::audit` tracing
+  target, identifying sessions only by a salted `secret::audit_id` hash.

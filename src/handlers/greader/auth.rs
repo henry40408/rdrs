@@ -16,6 +16,7 @@ use crate::models::api_token::{self, ApiToken};
 use crate::models::session::{self, Session};
 use crate::models::user::{self, User};
 use crate::secret::{DOMAIN_GREADER_TOKEN, tag, verify_tag};
+use crate::services::audit;
 use crate::utils::http::request_user_agent;
 
 /// POST token validity duration in seconds (30 minutes).
@@ -134,6 +135,7 @@ async fn validate_token(state: &AppState, token: &str) -> AppResult<(Session, Us
         .ok_or(AppError::Unauthorized)?;
     if session.is_expired() {
         session::delete_session(&state.db, token).await?;
+        audit::session_destroyed(&state.config.secret, token, session.user_id, "expired");
         return Err(AppError::Unauthorized);
     }
 
@@ -212,16 +214,20 @@ pub async fn client_login(
     // credential check, just fronting a different client protocol.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
+    let user_agent = request_user_agent(&headers);
     if !state.login_rate_limiter.try_acquire(Bucket::Login, ip) {
         tracing::warn!(%ip, bucket = ?Bucket::Login, endpoint = "POST /accounts/ClientLogin", "credential attempt rate limited");
+        audit::login_rate_limited("POST /accounts/ClientLogin", "login", &ip.to_string());
         return Err(AppError::TooManyRequests);
     }
 
-    let user = user::find_by_username(&state.db, &username)
-        .await?
-        .ok_or(AppError::InvalidCredentials)?;
+    let Some(user) = user::find_by_username(&state.db, &username).await? else {
+        audit::login_failed(username.len(), "unknown_user", &ip.to_string(), &user_agent);
+        return Err(AppError::InvalidCredentials);
+    };
 
     if !verify_password(&password, &user.password_hash) {
+        audit::login_failed(username.len(), "bad_password", &ip.to_string(), &user_agent);
         return Err(AppError::InvalidCredentials);
     }
 
@@ -230,10 +236,10 @@ pub async fn client_login(
     state.login_rate_limiter.release(Bucket::Login, ip);
 
     if user.is_disabled() {
+        audit::login_failed(username.len(), "disabled", &ip.to_string(), &user_agent);
         return Err(AppError::UserDisabled);
     }
 
-    let user_agent = request_user_agent(&headers);
     let ip = ip.to_string();
     // The client's own reported User-Agent doubles as the label shown on the
     // /user-settings revocation list — GReader clients don't send anything
@@ -241,6 +247,14 @@ pub async fn client_login(
     let label = user_agent.clone();
     let t = api_token::create_api_token(&state.db, user.id, "greader", &label, &user_agent, &ip)
         .await?;
+    audit::api_token_created(
+        &state.config.secret,
+        &t.token,
+        user.id,
+        "client_login",
+        &ip,
+        &user_agent,
+    );
 
     let _ = user; // user info not needed in response
 

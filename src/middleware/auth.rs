@@ -15,6 +15,7 @@ use crate::error::AppError;
 use crate::middleware::flash::FlashRedirect;
 use crate::models::session::{self, Session};
 use crate::models::user::{self, User};
+use crate::services::audit;
 
 pub const SESSION_COOKIE_NAME: &str = "session_token";
 
@@ -250,9 +251,16 @@ impl FromRequestParts<AppState> for AuthUser {
             .ok_or(AppError::Unauthorized)?;
         let expired = if session.is_expired() {
             session::delete_session(&state.db, &token).await?;
+            audit::session_destroyed(&state.config.secret, &token, session.user_id, "expired");
             true
         } else {
             if let Some(new_expires_at) = session::refresh_if_needed(&state.db, &session).await? {
+                audit::session_renewed(
+                    &state.config.secret,
+                    &token,
+                    session.user_id,
+                    new_expires_at,
+                );
                 session.expires_at = new_expires_at;
             }
             let _ = session::touch_last_seen(&state.db, &session).await;
@@ -326,9 +334,16 @@ impl FromRequestParts<AppState> for PageAuthUser {
         };
         if session.is_expired() {
             let _ = session::delete_session(&state.db, &token).await;
+            audit::session_destroyed(&state.config.secret, &token, session.user_id, "expired");
             return Err(LoginRedirect);
         }
         if let Ok(Some(new_expires_at)) = session::refresh_if_needed(&state.db, &session).await {
+            audit::session_renewed(
+                &state.config.secret,
+                &token,
+                session.user_id,
+                new_expires_at,
+            );
             session.expires_at = new_expires_at;
         }
         let _ = session::touch_last_seen(&state.db, &session).await;

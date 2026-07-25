@@ -14,6 +14,7 @@ use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::middleware::{AuthUser, Bucket, build_session_cookie};
 use crate::models::{passkey, session, user, webauthn_challenge};
+use crate::services::audit;
 use crate::utils::http::request_user_agent;
 
 // --- Registration ---
@@ -158,6 +159,11 @@ pub async fn start_authentication(
         .try_acquire(Bucket::PasskeyProbe, ip)
     {
         tracing::warn!(%ip, bucket = ?Bucket::PasskeyProbe, endpoint = "POST /api/passkey/auth/start", "credential attempt rate limited");
+        audit::login_rate_limited(
+            "POST /api/passkey/auth/start",
+            "passkey_probe",
+            &ip.to_string(),
+        );
         return Err(AppError::TooManyRequests);
     }
 
@@ -229,6 +235,7 @@ pub async fn finish_authentication(
     let ip = state.config.client_ip(peer, &headers);
     if !state.login_rate_limiter.try_acquire(Bucket::Login, ip) {
         tracing::warn!(%ip, bucket = ?Bucket::Login, endpoint = "POST /api/passkey/auth/finish", "credential attempt rate limited");
+        audit::login_rate_limited("POST /api/passkey/auth/finish", "login", &ip.to_string());
         return Err(AppError::TooManyRequests);
     }
 
@@ -283,6 +290,14 @@ pub async fn finish_authentication(
     let user_agent = request_user_agent(&headers);
     let ip = ip.to_string();
     let new_session = session::create_session(&state.db, passkey_user_id, &user_agent, &ip).await?;
+    audit::session_created(
+        &state.config.secret,
+        &new_session.session_token,
+        passkey_user_id,
+        "passkey",
+        &ip,
+        &user_agent,
+    );
 
     let cookie = build_session_cookie(
         &new_session.session_token,

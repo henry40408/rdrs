@@ -10,7 +10,9 @@
 //! - [`DOMAIN_GREADER_TOKEN`] signs the Google Reader `T` post token;
 //! - [`DOMAIN_SESSION`] signs the session cookie, so `<token>.<hmac>` is
 //!   rejected before any database work and a leaked `session.session_token` is
-//!   not usable on its own.
+//!   not usable on its own;
+//! - [`DOMAIN_AUDIT`] derives the `sid` printed into `services::audit` log
+//!   lines — a one-way, salted stand-in for the token, never the token itself.
 //!
 //! The prefixes are not decoration. Two uses that MAC the same message under
 //! the same key produce the same tag, and the CSRF token that will join this
@@ -39,6 +41,8 @@ pub const DOMAIN_GREADER_TOKEN: &[u8] = b"greader-token:";
 pub const DOMAIN_SESSION: &[u8] = b"session:";
 /// Domain-separation prefix for the CSRF synchronizer token.
 pub const DOMAIN_CSRF: &[u8] = b"csrf:";
+/// Domain-separation prefix for audit-log session identifiers.
+pub const DOMAIN_AUDIT: &[u8] = b"audit:";
 
 /// Separates the session token from its signature in the cookie value.
 ///
@@ -140,6 +144,20 @@ pub fn verify_csrf(secret: &[u8], session_token: &str, submitted: &str) -> bool 
     verify_tag(secret, DOMAIN_CSRF, &[session_token.as_bytes()], &bytes)
 }
 
+/// A session/token identifier for audit logs: HMAC-SHA256 salted with the root
+/// key, truncated to the first 8 bytes and hex-encoded (16 chars). Enough to
+/// correlate events belonging to one session, impossible to invert back to the
+/// token, and not comparable across deployments because each has its own
+/// `RDRS_SECRET`.
+///
+/// The root key *is* the salt, which satisfies OWASP's "hashed with a salt"
+/// requirement without introducing another setting. The cost is that rotating
+/// `RDRS_SECRET` breaks correlation with older log lines — consistent with the
+/// fact that rotating that key already ends every session.
+pub fn audit_id(secret: &[u8], token: &str) -> String {
+    hex_encode(&tag(secret, DOMAIN_AUDIT, &[token.as_bytes()])[..8])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,12 +200,43 @@ mod tests {
         let b = tag(SECRET, DOMAIN_IMAGE, &[b"same"]);
         let c = tag(SECRET, DOMAIN_GREADER_TOKEN, &[b"same"]);
         let d = tag(SECRET, DOMAIN_CSRF, &[b"same"]);
+        let e = tag(SECRET, DOMAIN_AUDIT, &[b"same"]);
         assert_ne!(a, b);
         assert_ne!(a, c);
         assert_ne!(a, d);
+        assert_ne!(a, e);
         assert_ne!(b, c);
         assert_ne!(b, d);
+        assert_ne!(b, e);
         assert_ne!(c, d);
+        assert_ne!(c, e);
+        assert_ne!(d, e);
+    }
+
+    #[test]
+    fn audit_id_is_stable_and_16_hex_chars() {
+        let id = audit_id(SECRET, "tok-1");
+        assert_eq!(id.len(), 16);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+        // Same secret, same token -> same id every time, which is what makes
+        // it useful for correlating log lines belonging to one session.
+        assert_eq!(id, audit_id(SECRET, "tok-1"));
+    }
+
+    #[test]
+    fn audit_id_differs_per_token_and_per_key() {
+        assert_ne!(audit_id(SECRET, "tok-1"), audit_id(SECRET, "tok-2"));
+        assert_ne!(
+            audit_id(SECRET, "tok-1"),
+            audit_id(b"another key that is long enough", "tok-1")
+        );
+    }
+
+    #[test]
+    fn audit_id_never_contains_the_token() {
+        // Pins the "never log the token" rule: even a short, easily-embedded
+        // token must not surface verbatim inside its own audit id.
+        assert!(!audit_id(SECRET, "abc123").contains("abc123"));
     }
 
     #[test]

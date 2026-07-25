@@ -17,7 +17,7 @@ use crate::models::session;
 use crate::models::user;
 use crate::models::user_settings;
 use crate::models::{category, entry};
-use crate::services::{KagiConfig, LinkdingConfig};
+use crate::services::{KagiConfig, LinkdingConfig, audit};
 
 #[derive(Debug, Serialize)]
 pub struct MeResponse {
@@ -402,6 +402,7 @@ pub async fn change_password_form(
         user::update_password(&state.db, user_id, &new_hash).await?;
         // Delete all sessions for the user to force re-login
         session::delete_user_sessions(&state.db, user_id).await?;
+        audit::sessions_destroyed_bulk(user_id, "password_change", None);
         // A password change is "I want every existing credential gone" —
         // leaving GReader API tokens alive would mean the password change
         // revoked nothing for a client that never touches the browser session.
@@ -440,7 +441,10 @@ pub async fn revoke_other_sessions_form(
     match session::delete_user_sessions_except(&state.db, user_id, &auth_user.session.session_token)
         .await
     {
-        Ok(()) => FlashRedirect::success("/user-settings", "Signed out all other sessions."),
+        Ok(()) => {
+            audit::sessions_destroyed_bulk(user_id, "revoke_others", None);
+            FlashRedirect::success("/user-settings", "Signed out all other sessions.")
+        }
         Err(_) => FlashRedirect::error("/user-settings", "Failed to sign out other sessions."),
     }
 }
@@ -460,7 +464,10 @@ pub async fn revoke_api_token_form(
     }
 
     match api_token::delete_token(&state.db, id, auth_user.user.id).await {
-        Ok(()) => FlashRedirect::success("/user-settings", "API token revoked."),
+        Ok(()) => {
+            audit::api_tokens_destroyed(auth_user.user.id, "revoke_token", None);
+            FlashRedirect::success("/user-settings", "API token revoked.")
+        }
         Err(_) => FlashRedirect::error("/user-settings", "Failed to revoke API token."),
     }
 }
@@ -480,7 +487,10 @@ pub async fn revoke_all_api_tokens_form(
     }
 
     match api_token::delete_user_tokens(&state.db, auth_user.user.id).await {
-        Ok(()) => FlashRedirect::success("/user-settings", "All API tokens revoked."),
+        Ok(()) => {
+            audit::api_tokens_destroyed(auth_user.user.id, "revoke_all", None);
+            FlashRedirect::success("/user-settings", "All API tokens revoked.")
+        }
         Err(_) => FlashRedirect::error("/user-settings", "Failed to revoke API tokens."),
     }
 }

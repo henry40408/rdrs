@@ -150,6 +150,23 @@ All configuration is done via environment variables.
 > passkeys. rdrs logs a startup warning while the RP origin still points at
 > `localhost`, and the active values are shown on the Settings page.
 
+### Audit Logging
+
+Session creation, renewal, and destruction; API-token issuance and revocation;
+failed logins; rate-limited credential attempts; and masquerade start/stop are
+logged as structured events under the `rdrs::audit` tracing target. Isolate
+just that stream with `RUST_LOG=rdrs::audit=info` (combine with the default
+`rdrs=info` via `RUST_LOG=rdrs=info,rdrs::audit=info`), or set
+`RDRS_LOG_FORMAT=json` to ship the events to a SIEM.
+
+Each event that identifies a session carries an `sid` field — a salted
+HMAC-SHA256 hash of the session token, truncated to 16 hex characters, never
+the token itself, so the log can never disclose an active session ID. The
+salt is `RDRS_SECRET`, so rotating that key (including the implicit rotation
+of a restart with no `RDRS_SECRET` set) breaks `sid` correlation with older
+log lines — consistent with the fact that rotating that key already ends
+every session.
+
 ## Authentication & SSO
 
 RDRS supports three authentication methods that all work simultaneously by

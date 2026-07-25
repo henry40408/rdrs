@@ -14,6 +14,7 @@ use crate::error::AppResult;
 use crate::middleware::{FlashRedirect, build_session_cookie};
 use crate::models::user::{self, Role};
 use crate::models::{category, session};
+use crate::services::audit;
 use crate::utils::http::request_user_agent;
 
 /// Path prefixes that must never trigger forward-auth auto-login: machine
@@ -164,6 +165,14 @@ pub async fn forward_auth(
             created
         };
         let new_session = session::create_session(&state.db, user.id, &user_agent, &ip).await?;
+        audit::session_created(
+            &config.secret,
+            &new_session.session_token,
+            user.id,
+            "forward_auth",
+            &ip,
+            &user_agent,
+        );
         Ok(Some(new_session.session_token))
     }
     .await;
