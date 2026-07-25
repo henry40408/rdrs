@@ -11,6 +11,7 @@ use chrono::Utc;
 use crate::AppState;
 use crate::auth::verify_password;
 use crate::error::{AppError, AppResult};
+use crate::middleware::Bucket;
 use crate::models::session::{self, Session};
 use crate::models::user::{self, User};
 use crate::secret::{DOMAIN_GREADER_TOKEN, tag, verify_tag};
@@ -122,8 +123,8 @@ pub async fn client_login(
     // credential check, just fronting a different client protocol.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
-    if !state.login_rate_limiter.try_acquire(ip) {
-        tracing::warn!(%ip, endpoint = "POST /accounts/ClientLogin", "credential attempt rate limited");
+    if !state.login_rate_limiter.try_acquire(Bucket::Login, ip) {
+        tracing::warn!(%ip, bucket = ?Bucket::Login, endpoint = "POST /accounts/ClientLogin", "credential attempt rate limited");
         return Err(AppError::TooManyRequests);
     }
 
@@ -137,7 +138,7 @@ pub async fn client_login(
 
     // Correct password: hand the reservation back before the disabled-account
     // check, same as the web login endpoint.
-    state.login_rate_limiter.release(ip);
+    state.login_rate_limiter.release(Bucket::Login, ip);
 
     if user.is_disabled() {
         return Err(AppError::UserDisabled);

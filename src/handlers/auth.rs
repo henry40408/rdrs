@@ -13,7 +13,7 @@ use crate::AppState;
 use crate::auth::{hash_password, verify_password};
 use crate::error::{AppError, AppResult};
 use crate::middleware::{
-    AuthUser, CSRF_COOKIE_NAME_HOST, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST,
+    AuthUser, Bucket, CSRF_COOKIE_NAME_HOST, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST,
     build_session_cookie,
 };
 use crate::models::category;
@@ -56,8 +56,8 @@ pub async fn register(
     // the budget back.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
-    if !state.login_rate_limiter.try_acquire(ip) {
-        tracing::warn!(%ip, endpoint = "POST /api/register", "credential attempt rate limited");
+    if !state.login_rate_limiter.try_acquire(Bucket::Register, ip) {
+        tracing::warn!(%ip, bucket = ?Bucket::Register, endpoint = "POST /api/register", "credential attempt rate limited");
         return Err(AppError::TooManyRequests);
     }
 
@@ -126,8 +126,8 @@ pub async fn login(
     // much Argon2 work the server does per guess.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
-    if !state.login_rate_limiter.try_acquire(ip) {
-        tracing::warn!(%ip, endpoint = "POST /api/session", "credential attempt rate limited");
+    if !state.login_rate_limiter.try_acquire(Bucket::Login, ip) {
+        tracing::warn!(%ip, bucket = ?Bucket::Login, endpoint = "POST /api/session", "credential attempt rate limited");
         return Err(AppError::TooManyRequests);
     }
 
@@ -143,7 +143,7 @@ pub async fn login(
     // user is never locked out by their own successful logins. Done before
     // the disabled-account check below so a correct password never leaks
     // information via a rate-limit side channel either.
-    state.login_rate_limiter.release(ip);
+    state.login_rate_limiter.release(Bucket::Login, ip);
 
     if user.is_disabled() {
         return Err(AppError::UserDisabled);

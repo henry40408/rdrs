@@ -71,6 +71,12 @@ export async function spawnRdrs({ extraEnv = {} } = {}) {
       // register/login each scenario performs costs microseconds instead of
       // hundreds of ms — roughly halves the suite. Never set in production.
       RDRS_FAST_HASH: "1",
+      // Each scenario registers and signs in a fresh user, and every worker's
+      // server sees them all arrive from 127.0.0.1 — one shared rate-limit
+      // bucket. Leaving the limiter on makes the 6th scenario in a worker fail
+      // with "Register failed (429)". The limiter has its own unit and
+      // integration coverage; the browser suite is not where it is exercised.
+      RDRS_LOGIN_RATE_LIMIT_ATTEMPTS: "0",
       ...extraEnv,
     },
     stdio: "pipe",

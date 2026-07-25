@@ -39,13 +39,17 @@ pub struct Config {
     pub auth_proxy_groups_header: String,
     pub auth_proxy_admin_group: String,
     pub auth_proxy_logout_url: Option<String>,
-    /// Attempts allowed per client IP per [`Config::login_rate_limit_window_secs`]
-    /// on every credential-accepting endpoint (login, register, passkey
-    /// authentication, `GReader` `ClientLogin`). `0` disables the limiter — an
+    /// Attempts allowed per client IP per [`Config::login_rate_limit_window_secs`],
+    /// applied separately to each credential-accepting endpoint *class* (see
+    /// [`crate::middleware::rate_limit::Bucket`]: password login — including
+    /// `GReader` `ClientLogin` and passkey completion — registration, and
+    /// passkey ceremony start each keep their own budget). Separate budgets
+    /// stop a registration refused by configuration from also exhausting the
+    /// login budget for the same IP. `0` disables the limiter entirely — an
     /// escape hatch for deployments that already throttle upstream (e.g.
     /// behind an authenticating reverse proxy).
     pub login_rate_limit_attempts: u32,
-    /// Sliding-window length, in seconds, for [`Config::login_rate_limit_attempts`].
+    /// Fixed-window length, in seconds, for [`Config::login_rate_limit_attempts`].
     pub login_rate_limit_window_secs: u64,
 }
 
@@ -195,12 +199,28 @@ fn parse_login_rate_limit_attempts(raw: Option<&str>) -> Result<u32, String> {
 /// [`Config::login_rate_limit_window_secs`]. Same rules as
 /// [`parse_login_rate_limit_attempts`]: unset/blank falls back to
 /// [`crate::middleware::rate_limit::LOGIN_WINDOW_SECS`], anything else must
-/// parse as a `u64` or startup fails.
+/// parse as a `u64` or startup fails. A parsed `0` is also rejected: the
+/// window elapses the instant it is recorded, so every attempt starts a
+/// fresh window and the limiter silently never throttles anything while
+/// still looking configured. `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS=0` is the
+/// correct way to disable the limiter on purpose.
 fn parse_login_rate_limit_window_secs(raw: Option<&str>) -> Result<u64, String> {
     match raw {
-        Some(v) => v
-            .parse::<u64>()
-            .map_err(|e| format!("invalid RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS '{v}': {e}")),
+        Some(v) => {
+            let secs = v
+                .parse::<u64>()
+                .map_err(|e| format!("invalid RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS '{v}': {e}"))?;
+            if secs == 0 {
+                return Err(
+                    "invalid RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS '0': the window must be at \
+                     least 1 second; a zero-length window elapses instantly and silently \
+                     disables throttling. Use RDRS_LOGIN_RATE_LIMIT_ATTEMPTS=0 to disable the \
+                     limiter deliberately."
+                        .to_string(),
+                );
+            }
+            Ok(secs)
+        }
         None => Ok(crate::middleware::rate_limit::LOGIN_WINDOW_SECS),
     }
 }
@@ -517,6 +537,27 @@ impl Config {
                      may be rejected — align RDRS_WEBAUTHN_RP_ORIGIN with the URL users access.",
                 self.webauthn_rp_origin, base
             ));
+        }
+        None
+    }
+
+    /// A startup warning about the credential rate limiter running without a
+    /// trusted-proxy list, or `None` when the config looks deployable. Fires
+    /// when the limiter is enabled but `RDRS_TRUSTED_PROXY_NETWORKS` is empty:
+    /// [`Config::client_ip`] then falls back to the TCP peer for every
+    /// request, so behind a reverse proxy every visitor collapses into the
+    /// proxy's one address and a single abuser can exhaust the shared bucket
+    /// and lock out every real user.
+    pub fn rate_limit_proxy_warning(&self) -> Option<String> {
+        if self.login_rate_limit_attempts > 0 && self.trusted_proxy_networks.is_empty() {
+            return Some(
+                "RDRS_LOGIN_RATE_LIMIT_ATTEMPTS is enabled but RDRS_TRUSTED_PROXY_NETWORKS is \
+                 empty. Without a trusted-proxy list rdrs keys the credential rate limiter on \
+                 the TCP peer, so behind a reverse proxy every visitor shares one bucket and a \
+                 single abuser can lock out all users. Set RDRS_TRUSTED_PROXY_NETWORKS to the \
+                 proxy's address(es) so X-Forwarded-For is honoured."
+                    .to_string(),
+            );
         }
         None
     }
@@ -1103,5 +1144,42 @@ mod tests {
                 .expect_err("non-numeric RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS must fail startup");
         assert!(err.contains("RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS"), "{err}");
         assert!(err.contains("-1"), "{err}");
+    }
+
+    #[test]
+    fn test_login_rate_limit_zero_window_is_a_hard_error() {
+        // A zero-second window elapses instantly, so every attempt starts a
+        // fresh window and the limiter never actually throttles anything —
+        // while `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS` still reads as configured.
+        // That must fail startup rather than boot a silently-disabled limiter.
+        let err =
+            Config::from_map(|k| (k == "RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS").then(|| "0".into()))
+                .expect_err("a zero RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS must fail startup");
+        assert!(err.contains("RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS"), "{err}");
+        assert!(err.contains('0'), "{err}");
+    }
+
+    #[test]
+    fn test_rate_limit_proxy_warning() {
+        // Limiter enabled, no trusted proxies configured → warn: every
+        // visitor behind a reverse proxy would collapse into one bucket.
+        let config = test_config();
+        assert!(config.rate_limit_proxy_warning().is_some());
+
+        // Limiter enabled with a trusted-proxy list → fine.
+        let with_proxies = Config {
+            trusted_proxy_networks: parse_trusted_networks("10.0.0.0/8").unwrap(),
+            ..test_config()
+        };
+        assert!(with_proxies.rate_limit_proxy_warning().is_none());
+
+        // Limiter disabled (0 attempts) → no warning regardless of proxy config,
+        // since there is no shared bucket to worry about.
+        let disabled = Config {
+            login_rate_limit_attempts: 0,
+            trusted_proxy_networks: Vec::new(),
+            ..test_config()
+        };
+        assert!(disabled.rate_limit_proxy_warning().is_none());
     }
 }

@@ -108,10 +108,14 @@ pub enum AppError {
     Internal(String),
 
     /// A client IP exceeded its credential-attempt budget (see
-    /// [`crate::middleware::RateLimiter`]). The message is deliberately
-    /// generic: it must read identically whether the username does not
-    /// exist, the password was wrong, or the account is disabled, so a
-    /// throttled attacker learns nothing about which of those is true.
+    /// [`crate::middleware::RateLimiter`]). Covers every credential-accepting
+    /// endpoint class — password login (including `GReader` `ClientLogin`),
+    /// registration, and passkey ceremonies (both the probe-only start and
+    /// the verifying finish) — each throttled against its own budget (see
+    /// [`crate::middleware::rate_limit::Bucket`]). The message is
+    /// deliberately generic: it must read identically whether the username
+    /// does not exist, the password was wrong, or the account is disabled,
+    /// so a throttled attacker learns nothing about which of those is true.
     #[error("Too many requests")]
     TooManyRequests,
 }

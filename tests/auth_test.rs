@@ -377,6 +377,51 @@ async fn test_register_is_rate_limited() {
 }
 
 #[tokio::test]
+async fn test_registration_budget_exhaustion_does_not_lock_out_login() {
+    // CRITICAL regression: register and login used to share a single per-IP
+    // counter. Registration never releases its reservation (a successful
+    // signup is exactly the abuse the limiter targets), so five
+    // registrations from one IP left zero budget behind — a subsequent
+    // login with the CORRECT password then got 429 instead of 200,
+    // indistinguishable from a real lockout. Register and login must draw
+    // from independent buckets (`Bucket::Register` / `Bucket::Login`) so a
+    // registration spree can never deny a legitimate login.
+    let (server, db) = build_server(default_test_config()).await;
+    create_user_directly(&db, "admin", "password123").await;
+
+    for i in 0..5 {
+        server
+            .post("/api/register")
+            .json(&json!({
+                "username": format!("user{i}"),
+                "password": "password123"
+            }))
+            .await
+            .assert_status(StatusCode::CREATED);
+    }
+    // Confirm the registration budget for this IP is now exhausted.
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "user5",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::TOO_MANY_REQUESTS);
+
+    // A login with the CORRECT password must still succeed — the login
+    // bucket was never touched by the register calls above.
+    let response = server
+        .post("/api/session")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await;
+    response.assert_status_ok();
+}
+
+#[tokio::test]
 async fn test_passkey_auth_start_is_rate_limited() {
     // This endpoint leaks account existence, so it must consume budget on
     // every call even though it never itself succeeds or fails a credential

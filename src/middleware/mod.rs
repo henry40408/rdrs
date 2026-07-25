@@ -16,4 +16,4 @@ pub use csrf::{
 pub use date_header::DateHeaderLayer;
 pub use etag::ETagLayer;
 pub use flash::{FLASH_COOKIE_NAME, Flash, FlashMessage, FlashRedirect, SetFlash};
-pub use rate_limit::RateLimiter;
+pub use rate_limit::{Bucket, RateLimiter};

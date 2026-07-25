@@ -110,6 +110,8 @@ All configuration is done via environment variables.
 | `RDRS_SECRET` | Auto-generated | Root HMAC key backing every signature rdrs produces — session cookies, image-proxy URLs, and the GReader post token — each domain-separated so a value minted for one use cannot be replayed as another. Set a persistent value (`openssl rand -base64 32`); a generated one changes on every restart, ending all sessions and breaking cached image-proxy URLs. |
 | `RDRS_PUBLIC_BASE_URL` | - | Public base URL for generating absolute image proxy URLs in API responses (e.g., `https://rdrs.example.com`). If not set, relative paths are used (backward compatible). |
 | `RDRS_COOKIE_SECURE` | Derived from `RDRS_PUBLIC_BASE_URL` | Send the session cookie with the `Secure` attribute (HTTPS only). Defaults to on when `RDRS_PUBLIC_BASE_URL` starts with `https://`, off otherwise — so an HTTPS deployment is secure without a second setting, while a plain-HTTP dev run keeps working. Set `true`/`1` to force it on when TLS terminates upstream and `RDRS_PUBLIC_BASE_URL` is unset; set `false`/`0` to force it off. Only those four values are accepted — anything else fails startup rather than silently disabling `Secure`. |
+| `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS` | `5` | Attempts allowed per client IP per window for each credential-endpoint class (password login, registration, passkey ceremonies) — each class has its own budget. `0` disables the limiter. |
+| `RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS` | `60` | Fixed window length in seconds. Must be ≥ 1. |
 | `RDRS_USER_AGENT` | `RDRS/...` | Custom user agent for feed fetching |
 | `RDRS_WEBAUTHN_RP_ID` | `localhost` | WebAuthn Relying Party ID for passkey authentication |
 | `RDRS_WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin URL |
@@ -117,7 +119,7 @@ All configuration is done via environment variables.
 | `RUST_LOG` | - | Log level filter (e.g., `info`, `debug`, `rdrs=debug`). When unset, defaults to `error,rdrs=info` (rdrs' own INFO logs are visible; other crates stay at ERROR). |
 | `RDRS_LOG_FORMAT` | `full` | Log output format: `full`, `compact`, `pretty`, or `json`. Can also be set via `--log-format`. |
 | `RDRS_AUTH_PROXY_HEADER` | - | Header carrying the username from a forward-auth proxy (e.g. `Remote-User`, `X-Forwarded-User`). Empty disables the feature. |
-| `RDRS_TRUSTED_PROXY_NETWORKS` | - | Comma-separated CIDRs or bare IPs (e.g. `10.0.0.0/8, 192.168.1.5`). The TCP peer IP must fall within one of these for the identity header to be trusted. Required when `RDRS_AUTH_PROXY_HEADER` is set. |
+| `RDRS_TRUSTED_PROXY_NETWORKS` | - | Comma-separated CIDRs or bare IPs (e.g. `10.0.0.0/8, 192.168.1.5`). The TCP peer IP must fall within one of these for the identity header to be trusted. Required when `RDRS_AUTH_PROXY_HEADER` is set. Also determines how the credential rate limiter identifies clients, so it should be set whenever rdrs runs behind a reverse proxy — not only when `RDRS_AUTH_PROXY_HEADER` is set. Without it, all requests appear to come from the proxy and share one rate-limit bucket. |
 | `RDRS_AUTH_PROXY_USER_CREATION` | `false` | When `true`, JIT-create a local account for an unknown proxy-provided username instead of redirecting to `/login`. |
 | `RDRS_AUTH_PROXY_GROUPS_HEADER` | - | Header carrying comma-separated group names from the proxy (e.g. `Remote-Groups`). |
 | `RDRS_AUTH_PROXY_ADMIN_GROUP` | - | Membership in this group grants the admin role, synced on every forward-auth login. Active only when `RDRS_AUTH_PROXY_GROUPS_HEADER` is also set. |
