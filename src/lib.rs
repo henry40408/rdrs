@@ -24,7 +24,7 @@ pub mod version;
 
 pub use config::Config;
 pub use db::Db;
-pub use middleware::auth::SESSION_COOKIE_NAME;
+pub use middleware::auth::{SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST};
 pub use models::{Role, User};
 pub use version::GIT_VERSION;
 

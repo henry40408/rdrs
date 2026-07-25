@@ -18,6 +18,42 @@ use crate::models::user::{self, User};
 
 pub const SESSION_COOKIE_NAME: &str = "session_token";
 
+/// `__Host-`-prefixed session cookie name, used only when `Secure` is in
+/// effect (see [`session_cookie_name`]).
+///
+/// OWASP's Session Management Cheat Sheet recommends the `__Host-` prefix for
+/// the session cookie whenever possible: a browser enforces that a cookie
+/// under this name is `Secure`, carries `Path=/`, has **no** `Domain`
+/// attribute, and was set by this exact host — closing the channel by which a
+/// sibling subdomain (or a same-site attacker who cannot touch this exact
+/// host) could otherwise *write* a cookie that shadows ours.
+///
+/// This is defence in depth, not a fix for a real gap: session-cookie
+/// fixation is already impossible in rdrs, because every cookie value carries
+/// an HMAC signature (see [`crate::secret::sign_session`]) that
+/// [`session_token_from_jar`] verifies before any database lookup — a
+/// malicious subdomain cannot mint a cookie value that verifies, prefix or
+/// no prefix. Adopting the prefix closes the OWASP checklist item and adds a
+/// browser-enforced backstop, but no exploitable vulnerability existed
+/// beforehand.
+///
+/// A `__Host-` cookie without `Secure` is silently *discarded* by the
+/// browser, so this name must never be written while `Secure` is off — that
+/// would make login silently impossible on a plain-HTTP deployment (rdrs's
+/// own default). Hence it is only ever selected via [`session_cookie_name`].
+pub const SESSION_COOKIE_NAME_HOST: &str = "__Host-session_token";
+
+/// Which cookie name to *write* for the session cookie, given whether
+/// `Secure` is in effect. See [`SESSION_COOKIE_NAME_HOST`] for why the
+/// `__Host-` prefix cannot be used unconditionally.
+pub fn session_cookie_name(secure: bool) -> &'static str {
+    if secure {
+        SESSION_COOKIE_NAME_HOST
+    } else {
+        SESSION_COOKIE_NAME
+    }
+}
+
 /// Build the session cookie carrying `token`.
 ///
 /// Every login path (password, passkey, forward-auth) goes through here so the
@@ -26,10 +62,13 @@ pub const SESSION_COOKIE_NAME: &str = "session_token";
 /// so a tampered or forged cookie is rejected before any database lookup, and a
 /// leaked `session.session_token` is not usable without the root key. `secure`
 /// comes from [`crate::config::Config::cookie_secure`], which is derived from
-/// `RDRS_PUBLIC_BASE_URL`'s scheme.
+/// `RDRS_PUBLIC_BASE_URL`'s scheme, and also picks the cookie *name* via
+/// [`session_cookie_name`] — `Path=/` and no `Domain` (both already true
+/// below) are the other two `__Host-` requirements, so whenever `secure` is
+/// on this cookie is fully prefix-compliant.
 pub fn build_session_cookie(token: &str, secret: &[u8], secure: bool) -> Cookie<'static> {
     Cookie::build((
-        SESSION_COOKIE_NAME,
+        session_cookie_name(secure),
         crate::secret::sign_session(secret, token),
     ))
     .path("/")
@@ -44,7 +83,29 @@ pub fn build_session_cookie(token: &str, secret: &[u8], secure: bool) -> Cookie<
 /// carries, or `None` when the cookie is absent or its signature does not
 /// verify. Every extractor and the forward-auth middleware funnel through here,
 /// so the signature is always checked before the token reaches the database.
+///
+/// Tries [`SESSION_COOKIE_NAME_HOST`] first, then falls back to the
+/// unprefixed [`SESSION_COOKIE_NAME`] — not only when the prefixed cookie is
+/// *absent*, but also when it is present and fails to verify, before giving
+/// up. Accepting the unprefixed name never weakens anything — forgery
+/// resistance comes entirely from the HMAC signature verified below, not
+/// from the cookie's name — and it is necessary: a server upgrade, or an
+/// operator flipping `RDRS_COOKIE_SECURE`, must not silently log out every
+/// existing session just because the cookie it is carrying no longer
+/// matches the name the current config would mint. Falling through past a
+/// present-but-invalid prefixed cookie (rather than stopping there) matters
+/// too: a browser can easily be carrying a stale, empty `__Host-` cookie
+/// left over from a logout's removal `Set-Cookie` (`Max-Age=0`, so a real
+/// browser evicts it — but the moment before eviction, or a client that
+/// mishandles expiry, could still send it) alongside a perfectly valid
+/// unprefixed one; that must not shadow the valid cookie.
 pub fn session_token_from_jar(jar: &CookieJar, secret: &[u8]) -> Option<String> {
+    if let Some(token) = jar
+        .get(SESSION_COOKIE_NAME_HOST)
+        .and_then(|c| crate::secret::verify_session(secret, c.value()))
+    {
+        return Some(token);
+    }
     let value = jar.get(SESSION_COOKIE_NAME)?.value().to_string();
     crate::secret::verify_session(secret, &value)
 }
@@ -79,10 +140,17 @@ const SLIDE_SKIP_PREFIXES: &[&str] = &["/static", "/favicon", "/health"];
 /// `crate::create_router`), so it observes — and must never clobber — the
 /// `Set-Cookie`s that layer and every handler below it emit. In particular,
 /// `logout`'s empty removal cookies must reach the browser unmodified: for
-/// each of the two cookie names, a `Set-Cookie` already present on the
-/// response is left alone, and only its absence causes a fresh one (same
-/// value, refreshed `Max-Age`, token never rotated) to be appended. See
-/// [`response_has_set_cookie_for`] for the exact matching rule.
+/// each of the two *cookie purposes* (session, CSRF) — each of which may be
+/// carried under either its unprefixed or `__Host-`-prefixed name — a
+/// `Set-Cookie` already present under *either* name is left alone, and only
+/// the absence of both causes a fresh one (same value, refreshed `Max-Age`,
+/// token never rotated, written under whichever name `secure` selects) to be
+/// appended. Checking both names matters most for `logout`: it emits removal
+/// cookies under all four names (see `handlers::auth::logout`), and if this
+/// check only recognised the name it would itself write, it would happily
+/// append a *live* cookie under the other name right next to a removal —
+/// silently undoing the logout. See [`response_has_set_cookie_for_any`] for
+/// the exact matching rule.
 pub async fn slide_session_cookie(
     State(state): State<AppState>,
     req: Request,
@@ -104,10 +172,16 @@ pub async fn slide_session_cookie(
     let secure = state.config.cookie_secure;
     let mut resp = next.run(req).await;
 
-    if !response_has_set_cookie_for(&resp, SESSION_COOKIE_NAME) {
+    if !response_has_set_cookie_for_any(&resp, &[SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST]) {
         append_set_cookie(&mut resp, &build_session_cookie(&token, secret, secure));
     }
-    if !response_has_set_cookie_for(&resp, crate::middleware::CSRF_COOKIE_NAME) {
+    if !response_has_set_cookie_for_any(
+        &resp,
+        &[
+            crate::middleware::CSRF_COOKIE_NAME,
+            crate::middleware::CSRF_COOKIE_NAME_HOST,
+        ],
+    ) {
         append_set_cookie(
             &mut resp,
             &crate::middleware::build_csrf_cookie(&token, secret, secure),
@@ -130,6 +204,17 @@ fn response_has_set_cookie_for(resp: &Response, name: &str) -> bool {
         .iter()
         .filter_map(|v| v.to_str().ok())
         .any(|v| v.split_once('=').is_some_and(|(n, _)| n.trim() == name))
+}
+
+/// Whether `resp` already carries a `Set-Cookie` for *any* of `names`.
+///
+/// Used to check "is this cookie purpose already covered", where the purpose
+/// (session, or CSRF) may be represented by either its unprefixed or
+/// `__Host-`-prefixed name — see [`slide_session_cookie`].
+fn response_has_set_cookie_for_any(resp: &Response, names: &[&str]) -> bool {
+    names
+        .iter()
+        .any(|name| response_has_set_cookie_for(resp, name))
 }
 
 /// Append `cookie` as a `Set-Cookie` header on `resp`.
@@ -416,5 +501,46 @@ mod tests {
         let resp = resp_with_set_cookies(&["session_token=; Path=/", "csrf_token=abc; Path=/"]);
         assert!(response_has_set_cookie_for(&resp, "session_token"));
         assert!(response_has_set_cookie_for(&resp, "csrf_token"));
+    }
+
+    #[test]
+    fn response_has_set_cookie_for_any_matches_either_name() {
+        // The exact scenario slide_session_cookie relies on: logout's removal
+        // cookie under the __Host- name must count as "already covered" even
+        // though it isn't the unprefixed name.
+        let resp = resp_with_set_cookies(&["__Host-session_token=; Path=/; Secure"]);
+        assert!(response_has_set_cookie_for_any(
+            &resp,
+            &[SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST]
+        ));
+        assert!(!response_has_set_cookie_for_any(
+            &resp,
+            &[crate::middleware::CSRF_COOKIE_NAME, "__Host-csrf_token"]
+        ));
+    }
+
+    #[test]
+    fn session_cookie_name_is_prefixed_only_when_secure() {
+        assert_eq!(session_cookie_name(true), SESSION_COOKIE_NAME_HOST);
+        assert_eq!(session_cookie_name(false), SESSION_COOKIE_NAME);
+    }
+
+    #[test]
+    fn build_session_cookie_prefixed_variant_carries_secure_and_root_path() {
+        let cookie = build_session_cookie("tok", b"01234567890123456789012345678901", true);
+        assert_eq!(cookie.name(), SESSION_COOKIE_NAME_HOST);
+        assert_eq!(cookie.secure(), Some(true));
+        assert_eq!(cookie.path(), Some("/"));
+        // A __Host- cookie must never carry a Domain attribute — the browser
+        // rejects it outright if it does.
+        assert_eq!(cookie.domain(), None);
+    }
+
+    #[test]
+    fn build_session_cookie_unprefixed_variant_when_not_secure() {
+        let cookie = build_session_cookie("tok", b"01234567890123456789012345678901", false);
+        assert_eq!(cookie.name(), SESSION_COOKIE_NAME);
+        assert_eq!(cookie.secure(), Some(false));
+        assert_eq!(cookie.domain(), None);
     }
 }

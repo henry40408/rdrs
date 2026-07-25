@@ -7,10 +7,12 @@ pub mod forward_auth;
 pub mod rate_limit;
 
 pub use auth::{
-    AdminUser, AuthUser, PageAdminUser, PageAuthUser, SESSION_COOKIE_NAME, build_session_cookie,
-    slide_session_cookie,
+    AdminUser, AuthUser, PageAdminUser, PageAuthUser, SESSION_COOKIE_NAME,
+    SESSION_COOKIE_NAME_HOST, build_session_cookie, session_cookie_name, slide_session_cookie,
 };
-pub use csrf::{CSRF_COOKIE_NAME, CSRF_HEADER, build_csrf_cookie};
+pub use csrf::{
+    CSRF_COOKIE_NAME, CSRF_COOKIE_NAME_HOST, CSRF_HEADER, build_csrf_cookie, csrf_cookie_name,
+};
 pub use date_header::DateHeaderLayer;
 pub use etag::ETagLayer;
 pub use flash::{FLASH_COOKIE_NAME, Flash, FlashMessage, FlashRedirect, SetFlash};

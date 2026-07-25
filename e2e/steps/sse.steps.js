@@ -77,7 +77,14 @@ When(
     // does in the real UI: echo the readable `csrf_token` cookie back as the
     // `X-CSRF-Token` header. Without it the synchronizer-token guard 403s.
     const cookies = await page.context().cookies();
-    const csrf = cookies.find((c) => c.name === "csrf_token")?.value ?? "";
+    // The server writes __Host-csrf_token instead of csrf_token whenever the
+    // deployment is Secure (see csrf.js's own __Host- handling). E2E
+    // currently runs over plain HTTP, so cookie_secure is false and this is
+    // not yet load-bearing — but it will break the day E2E moves to HTTPS.
+    const csrf =
+      cookies.find((c) => c.name === "__Host-csrf_token")?.value ??
+      cookies.find((c) => c.name === "csrf_token")?.value ??
+      "";
     const res = await page.request.post(`${serverUrl}/entries/${entryId}/read`, {
       headers: { "X-CSRF-Token": csrf },
     });

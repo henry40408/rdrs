@@ -16,7 +16,15 @@
 // `fetch` patch is in place before anything calls it.
 
 function csrfToken() {
-  const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+  // The server writes __Host-csrf_token instead of csrf_token whenever the
+  // deployment is Secure (see middleware::csrf::csrf_cookie_name on the Rust
+  // side). Match the __Host- prefix too — a plain `csrf_token=` pattern does
+  // NOT match `__Host-csrf_token=` (the character before `csrf_token` is
+  // `-`, which fails the `(?:^|;\s*)` anchor), so on a Secure deployment
+  // every JS-driven POST would silently send no token and get 403'd by the
+  // synchronizer-token guard. The prefixed form is tried first in case both
+  // are somehow present.
+  const m = document.cookie.match(/(?:^|;\s*)(?:__Host-)?csrf_token=([^;]*)/);
   return m ? decodeURIComponent(m[1]) : "";
 }
 

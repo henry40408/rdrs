@@ -1030,7 +1030,9 @@ fn set_cookie_headers(res: &axum_test::TestResponse) -> Vec<String> {
         .collect()
 }
 
-/// Log in a fresh user and return the raw `session_token` Set-Cookie value.
+/// Log in a fresh user and return the raw session Set-Cookie value, under
+/// whichever name (`session_token` or `__Host-session_token`) the server's
+/// `cookie_secure` config selects.
 async fn login_session_cookie(server: &TestServer) -> String {
     server
         .post("/api/register")
@@ -1044,8 +1046,8 @@ async fn login_session_cookie(server: &TestServer) -> String {
     res.assert_status_ok();
     set_cookie_headers(&res)
         .into_iter()
-        .find(|s| s.starts_with("session_token="))
-        .expect("login must emit a session_token Set-Cookie")
+        .find(|s| s.starts_with("session_token=") || s.starts_with("__Host-session_token="))
+        .expect("login must emit a session_token or __Host-session_token Set-Cookie")
 }
 
 #[tokio::test]
@@ -1055,6 +1057,14 @@ async fn test_session_cookie_secure_when_enabled() {
         ..default_test_config()
     };
     let cookie = login_session_cookie(&create_test_server(config).await).await;
+    // cookie_secure must select the __Host--prefixed name (OWASP Cookies:
+    // "use the __Host- prefix whenever possible" — see
+    // middleware::auth::SESSION_COOKIE_NAME_HOST for why this is defence in
+    // depth, not a fix for an exploitable gap).
+    assert!(
+        cookie.starts_with("__Host-session_token="),
+        "cookie_secure must select the __Host- prefixed cookie name: {cookie}"
+    );
     assert!(
         cookie.contains("Secure"),
         "cookie_secure must put Secure on the session cookie: {cookie}"
@@ -1063,6 +1073,12 @@ async fn test_session_cookie_secure_when_enabled() {
     assert!(cookie.contains("HttpOnly"), "{cookie}");
     assert!(cookie.contains("SameSite=Lax"), "{cookie}");
     assert!(cookie.contains("Path=/"), "{cookie}");
+    // A __Host- cookie must never carry Domain — the browser rejects it
+    // outright if it does.
+    assert!(
+        !cookie.to_ascii_lowercase().contains("domain="),
+        "a __Host- cookie must not carry a Domain attribute: {cookie}"
+    );
 }
 
 #[tokio::test]
@@ -1071,8 +1087,68 @@ async fn test_session_cookie_not_secure_by_default() {
     // dropped by the browser and lock the developer out.
     let cookie = login_session_cookie(&create_test_server(default_test_config()).await).await;
     assert!(
+        cookie.starts_with("session_token="),
+        "default config must stay on the unprefixed cookie name: {cookie}"
+    );
+    assert!(
         !cookie.contains("Secure"),
         "session cookie must not be Secure without cookie_secure: {cookie}"
+    );
+}
+
+/// An old-style unprefixed `session_token` cookie, minted before an operator
+/// enables `cookie_secure`, must keep authenticating afterwards —
+/// `session_token_from_jar` falls back to the unprefixed name precisely so an
+/// upgrade or a config flip never silently logs everyone out.
+#[tokio::test]
+async fn test_unprefixed_cookie_still_authenticates_when_secure_enabled() {
+    // A cookie_secure = true server only ever *writes* the __Host- prefixed
+    // name, so simulate an old-style cookie (minted before an upgrade, or
+    // before an operator flipped RDRS_COOKIE_SECURE) by signing a session
+    // token directly with the shared secret, bypassing the cookie-minting
+    // handlers entirely.
+    let config = Config {
+        cookie_secure: true,
+        ..default_test_config()
+    };
+    let (server, db) = build_server(config.clone()).await;
+    let user = rdrs::models::user::create_user(&db, "u", "!", rdrs::Role::User)
+        .await
+        .unwrap();
+    let session = rdrs::models::session::create_session(&db, user.id, "test-agent", "127.0.0.1")
+        .await
+        .unwrap();
+    let old_style_value = rdrs::secret::sign_session(&config.secret, &session.session_token);
+
+    let res = server
+        .get("/api/user")
+        .add_cookie(cookie::Cookie::new("session_token", old_style_value))
+        .await;
+    res.assert_status_ok();
+}
+
+/// The dangerous failure mode, guarded negatively: with `cookie_secure`
+/// false, the server must never emit a `__Host-` prefixed cookie — the
+/// browser silently discards a `__Host-` cookie without `Secure`, so doing
+/// this would make login silently impossible.
+#[tokio::test]
+async fn test_prefixed_cookie_is_never_emitted_without_secure() {
+    let server = create_test_server(default_test_config()).await;
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let res = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await;
+    res.assert_status_ok();
+
+    let all_cookies = set_cookie_headers(&res);
+    assert!(
+        all_cookies.iter().all(|c| !c.starts_with("__Host-")),
+        "no __Host- prefixed cookie must be emitted when cookie_secure is false: {all_cookies:?}"
     );
 }
 
@@ -1140,14 +1216,44 @@ async fn test_logout_clears_cookie_with_path() {
     let res = server.delete("/api/session").await;
     res.assert_status_ok();
 
-    let removal = set_cookie_headers(&res)
-        .into_iter()
+    let all_cookies = set_cookie_headers(&res);
+
+    let removal = all_cookies
+        .iter()
         .find(|s| s.starts_with("session_token="))
         .expect("logout must emit a session_token Set-Cookie");
     assert!(
         removal.contains("Path=/"),
         "removal cookie must carry Path=/ to actually delete the session cookie: {removal}"
     );
+
+    // logout emits four removal cookies total: both names (unprefixed,
+    // __Host--prefixed) for both purposes (session, CSRF) — so a cookie
+    // leftover from before an upgrade or a cookie_secure flip is always
+    // cleared regardless of which name this deployment currently mints.
+    for name in [
+        "session_token=",
+        "csrf_token=",
+        "__Host-session_token=",
+        "__Host-csrf_token=",
+    ] {
+        let cookie = all_cookies
+            .iter()
+            .find(|s| s.starts_with(name))
+            .unwrap_or_else(|| {
+                panic!("logout must emit a {name} removal Set-Cookie: {all_cookies:?}")
+            });
+        if name.starts_with("__Host-") {
+            assert!(
+                cookie.contains("Secure"),
+                "__Host- removal cookie must carry Secure unconditionally: {cookie}"
+            );
+            assert!(
+                cookie.contains("Path=/"),
+                "__Host- removal cookie must carry Path=/: {cookie}"
+            );
+        }
+    }
 }
 
 /// The most important test in this task: `logout` emits empty removal
@@ -1215,6 +1321,61 @@ async fn test_logout_removal_cookie_is_not_overwritten_by_slide() {
         "the sliding middleware must not overwrite logout's empty csrf removal cookie: {}",
         csrf_cookies[0]
     );
+}
+
+/// With `cookie_secure = true`, the live session/CSRF cookies are minted
+/// under the `__Host-` names, so the sliding middleware sees those names on
+/// the incoming request. Logout must still clear them: the __Host- removal
+/// cookies are always appended (never gated on `jar.remove()`'s "was this
+/// name in the request's Cookie header" check, see `handlers::auth::logout`),
+/// so `slide_session_cookie`'s "is this purpose already covered" check must
+/// recognize its own removal and must not append a live `__Host-session_token`
+/// (or `__Host-csrf_token`) alongside it — that would silently undo the logout.
+#[tokio::test]
+async fn test_logout_clears_prefixed_cookies_when_secure_enabled() {
+    let config = Config {
+        cookie_secure: true,
+        ..default_test_config()
+    };
+    let mut server = create_test_server(config).await;
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await;
+    __login.assert_status_ok();
+    let token = __login.cookie("__Host-csrf_token").value().to_string();
+    server.add_header("x-csrf-token", token);
+
+    let res = server.delete("/api/session").await;
+    res.assert_status_ok();
+
+    let all_cookies = set_cookie_headers(&res);
+
+    for name in ["__Host-session_token=", "__Host-csrf_token="] {
+        let matches: Vec<_> = all_cookies.iter().filter(|s| s.starts_with(name)).collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected exactly one {name} Set-Cookie (the removal), not a live one \
+             appended by the sliding middleware: {all_cookies:?}"
+        );
+        let value = matches[0]
+            .trim_start_matches(name)
+            .split(';')
+            .next()
+            .unwrap();
+        assert!(
+            value.is_empty(),
+            "the sliding middleware must not overwrite logout's empty {name} removal: {}",
+            matches[0]
+        );
+        assert!(matches[0].contains("Secure"), "{}", matches[0]);
+    }
 }
 
 #[tokio::test]

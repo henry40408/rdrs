@@ -123,6 +123,32 @@ async fn test_trusted_existing_user_gets_session() {
     assert!(res.maybe_cookie("session_token").is_some());
 }
 
+/// With `cookie_secure = true`, forward-auth's own cookie-minting path
+/// (`build_session_cookie` / `build_csrf_cookie` in
+/// `middleware::forward_auth::forward_auth`) must also select the
+/// `__Host-` prefixed name, not just the password/passkey login handlers.
+#[tokio::test]
+async fn test_trusted_user_gets_prefixed_session_cookie_when_secure_enabled() {
+    let (server, db) = create_server(|c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+        c.cookie_secure = true;
+    })
+    .await;
+    seed_user(&db, "alice", rdrs::models::user::Role::User).await;
+
+    let res = server.get("/").add_header("Remote-User", "alice").await;
+
+    assert!(res.status_code().is_redirection());
+    assert!(
+        res.maybe_cookie("__Host-session_token").is_some(),
+        "forward-auth must mint the __Host- prefixed session cookie when cookie_secure is true"
+    );
+    assert!(
+        res.maybe_cookie("session_token").is_none(),
+        "forward-auth must not also mint the unprefixed cookie when cookie_secure is true"
+    );
+}
+
 #[tokio::test]
 async fn test_untrusted_peer_ignores_header() {
     let (server, db) = create_server(|c| {
