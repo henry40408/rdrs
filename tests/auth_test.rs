@@ -27,6 +27,7 @@ async fn build_app(config: Config) -> (axum::Router, Db) {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
 
     (create_router(state), db)
@@ -48,6 +49,18 @@ async fn build_server_no_save_cookies(config: Config) -> (TestServer, Db) {
 
 async fn create_test_server(config: Config) -> TestServer {
     build_server(config).await.0
+}
+
+/// Create a user directly in the database, bypassing `POST /api/register` —
+/// so setup does not itself consume a slot from the client's rate-limit
+/// budget (registration is a guarded, never-released endpoint; going through
+/// it here would leave fewer than 5 attempts free for a test that means to
+/// exercise the login endpoint specifically).
+async fn create_user_directly(db: &Db, username: &str, password: &str) {
+    let hash = auth::hash_password(password).unwrap();
+    rdrs::models::user::create_user(db, username, &hash, rdrs::Role::User)
+        .await
+        .unwrap();
 }
 
 use std::sync::Arc;
@@ -245,6 +258,138 @@ async fn test_login_nonexistent_user() {
         .await;
 
     response.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn test_login_rate_limited_after_five_failures() {
+    let (server, db) = build_server(default_test_config()).await;
+    create_user_directly(&db, "admin", "password123").await;
+
+    for _ in 0..5 {
+        let response = server
+            .post("/api/session")
+            .json(&json!({
+                "username": "admin",
+                "password": "wrongpassword"
+            }))
+            .await;
+        response.assert_status_unauthorized();
+    }
+
+    // The 6th failed attempt is throttled before it ever reaches the
+    // database or Argon2 verification.
+    let response = server
+        .post("/api/session")
+        .json(&json!({
+            "username": "admin",
+            "password": "wrongpassword"
+        }))
+        .await;
+    response.assert_status(StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn test_login_rate_limit_does_not_leak_valid_credentials() {
+    // Proves the rate-limit check runs before `verify_password`: once the
+    // budget is exhausted, even the CORRECT password gets 429, not 200 or
+    // 401. If the check ran after verification, a throttled attacker could
+    // distinguish "right password, rate limited" from "wrong password,
+    // rate limited" by noticing the correct guess still succeeds.
+    let (server, db) = build_server(default_test_config()).await;
+    create_user_directly(&db, "admin", "password123").await;
+
+    for _ in 0..5 {
+        server
+            .post("/api/session")
+            .json(&json!({
+                "username": "admin",
+                "password": "wrongpassword"
+            }))
+            .await
+            .assert_status_unauthorized();
+    }
+
+    let response = server
+        .post("/api/session")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await;
+    response.assert_status(StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn test_successful_login_does_not_consume_the_budget() {
+    // Proves `release` works end-to-end: ten successful logins in a row
+    // never hit the 5-attempt budget because each one hands its reservation
+    // back immediately after the password verifies.
+    let (mut server, db) = build_server(default_test_config()).await;
+    create_user_directly(&db, "admin", "password123").await;
+
+    for _ in 0..10 {
+        let response = server
+            .post("/api/session")
+            .json(&json!({
+                "username": "admin",
+                "password": "password123"
+            }))
+            .await;
+        response.assert_status_ok();
+        // Each login mints a fresh session and CSRF cookie pair; refresh the
+        // header so the *next* iteration's POST clears the synchronizer-token
+        // guard too. `add_header` accumulates rather than replaces, so the
+        // stale header from the previous iteration must be cleared first —
+        // otherwise `X-CSRF-Token` would carry two values and the guard would
+        // read the oldest (now-mismatched) one. Unrelated to rate limiting —
+        // just what repeated login through the same cookie jar requires.
+        server.clear_headers();
+        common::apply_csrf(&mut server, &response);
+    }
+}
+
+#[tokio::test]
+async fn test_register_is_rate_limited() {
+    // A successful registration never releases its reservation — account
+    // creation is exactly the abuse this limiter targets — so five
+    // registrations exhaust the budget and the sixth is throttled outright.
+    let server = create_test_server(default_test_config()).await;
+
+    for i in 0..5 {
+        let response = server
+            .post("/api/register")
+            .json(&json!({
+                "username": format!("user{i}"),
+                "password": "password123"
+            }))
+            .await;
+        response.assert_status(StatusCode::CREATED);
+    }
+
+    let response = server
+        .post("/api/register")
+        .json(&json!({
+            "username": "user5",
+            "password": "password123"
+        }))
+        .await;
+    response.assert_status(StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn test_passkey_auth_start_is_rate_limited() {
+    // This endpoint leaks account existence, so it must consume budget on
+    // every call even though it never itself succeeds or fails a credential
+    // check the way password login does.
+    let server = create_test_server(default_test_config()).await;
+
+    for _ in 0..5 {
+        let response = server.post("/api/passkey/auth/start").await;
+        assert_ne!(response.status_code(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    let response = server.post("/api/passkey/auth/start").await;
+    response.assert_status(StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]

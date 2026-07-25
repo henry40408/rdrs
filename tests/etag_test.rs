@@ -29,6 +29,7 @@ async fn create_test_server(config: Config) -> TestServer {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
 
     TestServer::builder().build(create_router(state))

@@ -38,6 +38,8 @@ async fn create_test_app(_name: &str) -> TestApp {
         auth_proxy_groups_header: String::new(),
         auth_proxy_admin_group: String::new(),
         auth_proxy_logout_url: None,
+        login_rate_limit_attempts: rdrs::middleware::rate_limit::LOGIN_MAX_ATTEMPTS,
+        login_rate_limit_window_secs: rdrs::middleware::rate_limit::LOGIN_WINDOW_SECS,
     };
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
@@ -54,6 +56,7 @@ async fn create_test_app(_name: &str) -> TestApp {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
 
     let app = create_router(state);

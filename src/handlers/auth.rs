@@ -32,6 +32,8 @@ pub struct RegisterResponse {
 
 pub async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(req): Json<RegisterRequest>,
 ) -> AppResult<(StatusCode, Json<RegisterResponse>)> {
     if req.username.is_empty() {
@@ -41,6 +43,18 @@ pub async fn register(
         return Err(AppError::Validation(
             "Password must be at least 6 characters".to_string(),
         ));
+    }
+
+    // Reserve an attempt before any DB query or password hashing. Never
+    // released: a successful registration is exactly the abuse this limiter
+    // exists to slow down (an attacker scripting account creation), so
+    // unlike login there is no "correct credential" outcome that should hand
+    // the budget back.
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let ip = state.config.client_ip(peer, &headers);
+    if !state.login_rate_limiter.try_acquire(ip) {
+        tracing::warn!(%ip, endpoint = "POST /api/register", "credential attempt rate limited");
+        return Err(AppError::TooManyRequests);
     }
 
     let can_register = state.config.can_register(0); // We check count below
@@ -102,6 +116,17 @@ pub async fn login(
     if state.config.disable_local_auth {
         return Err(AppError::Forbidden);
     }
+
+    // Reserve an attempt before the username lookup or password verification
+    // — enforcing the limit any later would still let an attacker choose how
+    // much Argon2 work the server does per guess.
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let ip = state.config.client_ip(peer, &headers);
+    if !state.login_rate_limiter.try_acquire(ip) {
+        tracing::warn!(%ip, endpoint = "POST /api/session", "credential attempt rate limited");
+        return Err(AppError::TooManyRequests);
+    }
+
     let user = user::find_by_username(&state.db, &req.username)
         .await?
         .ok_or(AppError::InvalidCredentials)?;
@@ -110,13 +135,18 @@ pub async fn login(
         return Err(AppError::InvalidCredentials);
     }
 
+    // The password was correct: hand the reservation back so a legitimate
+    // user is never locked out by their own successful logins. Done before
+    // the disabled-account check below so a correct password never leaks
+    // information via a rate-limit side channel either.
+    state.login_rate_limiter.release(ip);
+
     if user.is_disabled() {
         return Err(AppError::UserDisabled);
     }
 
     let user_agent = request_user_agent(&headers);
-    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
-    let ip = state.config.client_ip(peer, &headers).to_string();
+    let ip = ip.to_string();
     let new_session = session::create_session(&state.db, user.id, &user_agent, &ip).await?;
 
     let cookie = build_session_cookie(

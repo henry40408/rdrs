@@ -39,6 +39,14 @@ pub struct Config {
     pub auth_proxy_groups_header: String,
     pub auth_proxy_admin_group: String,
     pub auth_proxy_logout_url: Option<String>,
+    /// Attempts allowed per client IP per [`Config::login_rate_limit_window_secs`]
+    /// on every credential-accepting endpoint (login, register, passkey
+    /// authentication, `GReader` `ClientLogin`). `0` disables the limiter — an
+    /// escape hatch for deployments that already throttle upstream (e.g.
+    /// behind an authenticating reverse proxy).
+    pub login_rate_limit_attempts: u32,
+    /// Sliding-window length, in seconds, for [`Config::login_rate_limit_attempts`].
+    pub login_rate_limit_window_secs: u64,
 }
 
 /// Parse a comma-separated list of CIDR networks or bare IPs into `IpNet`s.
@@ -162,6 +170,38 @@ pub fn parse_server_bind(raw: Option<&str>) -> Result<SocketAddr, String> {
             .parse::<SocketAddr>()
             .map_err(|e| format!("invalid RDRS_SERVER_BIND '{v}': {e}")),
         _ => Ok(SocketAddr::from(([127, 0, 0, 1], 8080))),
+    }
+}
+
+/// Resolve `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS` into the attempt budget for
+/// [`Config::login_rate_limit_attempts`]. An unset or blank value yields the
+/// default of [`crate::middleware::rate_limit::LOGIN_MAX_ATTEMPTS`]; a
+/// non-empty value must parse as a `u32` (`0` is valid and disables the
+/// limiter — see the field doc). Unparseable input is a hard startup error
+/// rather than a silent fallback: silently keeping the default here would
+/// mean a typo (`RDRS_LOGIN_RATE_LIMIT_ATTEMPTS=5o`) leaves the protection
+/// looking configured while actually running on the default, exactly the
+/// failure mode `parse_cookie_secure` refuses for the same reason.
+fn parse_login_rate_limit_attempts(raw: Option<&str>) -> Result<u32, String> {
+    match raw {
+        Some(v) => v
+            .parse::<u32>()
+            .map_err(|e| format!("invalid RDRS_LOGIN_RATE_LIMIT_ATTEMPTS '{v}': {e}")),
+        None => Ok(crate::middleware::rate_limit::LOGIN_MAX_ATTEMPTS),
+    }
+}
+
+/// Resolve `RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS` into the window length for
+/// [`Config::login_rate_limit_window_secs`]. Same rules as
+/// [`parse_login_rate_limit_attempts`]: unset/blank falls back to
+/// [`crate::middleware::rate_limit::LOGIN_WINDOW_SECS`], anything else must
+/// parse as a `u64` or startup fails.
+fn parse_login_rate_limit_window_secs(raw: Option<&str>) -> Result<u64, String> {
+    match raw {
+        Some(v) => v
+            .parse::<u64>()
+            .map_err(|e| format!("invalid RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS '{v}': {e}")),
+        None => Ok(crate::middleware::rate_limit::LOGIN_WINDOW_SECS),
     }
 }
 
@@ -316,6 +356,13 @@ impl Config {
             public_base_url.as_deref(),
         )?;
 
+        let login_rate_limit_attempts = parse_login_rate_limit_attempts(
+            nonblank(&get, "RDRS_LOGIN_RATE_LIMIT_ATTEMPTS").as_deref(),
+        )?;
+        let login_rate_limit_window_secs = parse_login_rate_limit_window_secs(
+            nonblank(&get, "RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS").as_deref(),
+        )?;
+
         Ok(Self {
             // Not prefixed — see `RENAMED_VARS`.
             database_url: nonblank(&get, "DATABASE_URL")
@@ -344,6 +391,8 @@ impl Config {
             auth_proxy_admin_group: nonblank(&get, "RDRS_AUTH_PROXY_ADMIN_GROUP")
                 .unwrap_or_default(),
             auth_proxy_logout_url: nonblank(&get, "RDRS_AUTH_PROXY_LOGOUT_URL"),
+            login_rate_limit_attempts,
+            login_rate_limit_window_secs,
         })
     }
 
@@ -476,6 +525,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::middleware::rate_limit::{LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_SECS};
 
     fn test_config() -> Config {
         Config {
@@ -498,6 +548,8 @@ mod tests {
             auth_proxy_groups_header: String::new(),
             auth_proxy_admin_group: String::new(),
             auth_proxy_logout_url: None,
+            login_rate_limit_attempts: LOGIN_MAX_ATTEMPTS,
+            login_rate_limit_window_secs: LOGIN_WINDOW_SECS,
         }
     }
 
@@ -1005,5 +1057,51 @@ mod tests {
             ..deployed
         };
         assert!(mismatched.webauthn_rp_warning().is_some());
+    }
+
+    #[test]
+    fn test_login_rate_limit_defaults_when_unset() {
+        let config = from_vars(&[]);
+        assert_eq!(config.login_rate_limit_attempts, LOGIN_MAX_ATTEMPTS);
+        assert_eq!(config.login_rate_limit_window_secs, LOGIN_WINDOW_SECS);
+
+        // Blank counts as unset, same as every other setting.
+        let config = from_vars(&[
+            ("RDRS_LOGIN_RATE_LIMIT_ATTEMPTS", "  "),
+            ("RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS", ""),
+        ]);
+        assert_eq!(config.login_rate_limit_attempts, LOGIN_MAX_ATTEMPTS);
+        assert_eq!(config.login_rate_limit_window_secs, LOGIN_WINDOW_SECS);
+    }
+
+    #[test]
+    fn test_login_rate_limit_explicit_override() {
+        let config = from_vars(&[
+            ("RDRS_LOGIN_RATE_LIMIT_ATTEMPTS", "10"),
+            ("RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS", "120"),
+        ]);
+        assert_eq!(config.login_rate_limit_attempts, 10);
+        assert_eq!(config.login_rate_limit_window_secs, 120);
+
+        // 0 is a valid, meaningful override: it disables the limiter.
+        let config = from_vars(&[("RDRS_LOGIN_RATE_LIMIT_ATTEMPTS", "0")]);
+        assert_eq!(config.login_rate_limit_attempts, 0);
+    }
+
+    #[test]
+    fn test_login_rate_limit_non_numeric_value_is_a_hard_error() {
+        // A typo must not silently fall back to the default and leave the
+        // protection looking configured while actually running unconfigured.
+        let err =
+            Config::from_map(|k| (k == "RDRS_LOGIN_RATE_LIMIT_ATTEMPTS").then(|| "five".into()))
+                .expect_err("non-numeric RDRS_LOGIN_RATE_LIMIT_ATTEMPTS must fail startup");
+        assert!(err.contains("RDRS_LOGIN_RATE_LIMIT_ATTEMPTS"), "{err}");
+        assert!(err.contains("five"), "{err}");
+
+        let err =
+            Config::from_map(|k| (k == "RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS").then(|| "-1".into()))
+                .expect_err("non-numeric RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS must fail startup");
+        assert!(err.contains("RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS"), "{err}");
+        assert!(err.contains("-1"), "{err}");
     }
 }

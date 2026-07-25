@@ -106,6 +106,14 @@ pub enum AppError {
 
     #[error("Internal server error")]
     Internal(String),
+
+    /// A client IP exceeded its credential-attempt budget (see
+    /// [`crate::middleware::RateLimiter`]). The message is deliberately
+    /// generic: it must read identically whether the username does not
+    /// exist, the password was wrong, or the account is disabled, so a
+    /// throttled attacker learns nothing about which of those is true.
+    #[error("Too many requests")]
+    TooManyRequests,
 }
 
 impl IntoResponse for AppError {
@@ -153,6 +161,7 @@ impl IntoResponse for AppError {
                 return (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response();
             }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
+            AppError::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, "Too many requests"),
         };
 
         (status, Json(json!({ "error": message }))).into_response()
@@ -422,6 +431,15 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let body = get_response_body(response).await;
         assert!(body.contains("Resource not found"));
+    }
+
+    #[tokio::test]
+    async fn test_too_many_requests_response() {
+        let err = AppError::TooManyRequests;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = get_response_body(response).await;
+        assert!(body.contains("Too many requests"));
     }
 
     #[tokio::test]

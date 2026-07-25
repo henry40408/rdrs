@@ -60,6 +60,11 @@ pub struct AppState {
     pub summarizer_inflight: handlers::summarizer::InFlightRegistry,
     pub events: services::EventBus,
     pub shutdown: tokio_util::sync::CancellationToken,
+    /// Per-client-IP throttle shared by every credential-accepting endpoint
+    /// (login, register, passkey authentication, `GReader` `ClientLogin`).
+    /// See [`middleware::RateLimiter`] for why the check-and-count is a
+    /// single locked operation rather than a separate check/record pair.
+    pub login_rate_limiter: Arc<crate::middleware::RateLimiter>,
 }
 
 pub fn create_router(state: AppState) -> Router {

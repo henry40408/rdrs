@@ -92,6 +92,7 @@ async fn create_server(mut mutate: impl FnMut(&mut Config)) -> (TestServer, Db) 
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
     let app = create_router(state).into_make_service_with_connect_info::<SocketAddr>();
     let server = TestServer::builder()

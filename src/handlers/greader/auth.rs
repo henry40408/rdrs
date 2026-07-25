@@ -117,6 +117,16 @@ pub async fn client_login(
     let username = form.email.clone();
     let password = form.passwd.clone();
 
+    // Reserve an attempt before the username lookup or password
+    // verification, mirroring the web login endpoint — this is the same
+    // credential check, just fronting a different client protocol.
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let ip = state.config.client_ip(peer, &headers);
+    if !state.login_rate_limiter.try_acquire(ip) {
+        tracing::warn!(%ip, endpoint = "POST /accounts/ClientLogin", "credential attempt rate limited");
+        return Err(AppError::TooManyRequests);
+    }
+
     let user = user::find_by_username(&state.db, &username)
         .await?
         .ok_or(AppError::InvalidCredentials)?;
@@ -125,13 +135,16 @@ pub async fn client_login(
         return Err(AppError::InvalidCredentials);
     }
 
+    // Correct password: hand the reservation back before the disabled-account
+    // check, same as the web login endpoint.
+    state.login_rate_limiter.release(ip);
+
     if user.is_disabled() {
         return Err(AppError::UserDisabled);
     }
 
     let user_agent = request_user_agent(&headers);
-    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
-    let ip = state.config.client_ip(peer, &headers).to_string();
+    let ip = ip.to_string();
     let new_session = session::create_session(&state.db, user.id, &user_agent, &ip).await?;
 
     let _ = user; // user info not needed in response

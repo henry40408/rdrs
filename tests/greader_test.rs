@@ -45,6 +45,7 @@ async fn create_test_app(config: Config) -> TestApp {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
 
     let app = create_router(state);
@@ -203,6 +204,65 @@ async fn test_client_login_token_used_for_api() {
         )
         .await;
     response.assert_status_ok();
+}
+
+/// Create a user directly in the database, bypassing `POST /api/register` —
+/// so setup does not itself consume a slot from the client's rate-limit
+/// budget (registration is a guarded, never-released endpoint; going through
+/// it here would leave fewer than 5 attempts free for the test itself).
+async fn create_user_directly(db: &Db, username: &str, password: &str) {
+    let hash = auth::hash_password(password).unwrap();
+    rdrs::models::user::create_user(db, username, &hash, rdrs::Role::User)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_client_login_rate_limited() {
+    let app = create_test_app(default_test_config()).await;
+    create_user_directly(&app.db, "testuser", "password123").await;
+
+    let form = vec![
+        ("Email", "testuser".to_string()),
+        ("Passwd", "wrongpassword".to_string()),
+    ];
+    for _ in 0..5 {
+        let response = app.server.post("/accounts/ClientLogin").form(&form).await;
+        assert_eq!(response.status_code(), StatusCode::UNAUTHORIZED);
+    }
+
+    // The 6th failed attempt is throttled rather than evaluated.
+    let response = app.server.post("/accounts/ClientLogin").form(&form).await;
+    assert_eq!(response.status_code(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn test_client_login_rate_limit_applies_to_greader_php_prefix() {
+    // The router `.nest()`s the same handler under /api/greader.php (see
+    // src/lib.rs), so the two paths must share the same rate-limit bucket —
+    // an attacker cannot dodge the limiter by switching prefixes mid-attack.
+    let app = create_test_app(default_test_config()).await;
+    create_user_directly(&app.db, "testuser", "password123").await;
+
+    let form = vec![
+        ("Email", "testuser".to_string()),
+        ("Passwd", "wrongpassword".to_string()),
+    ];
+    for _ in 0..5 {
+        let response = app
+            .server
+            .post("/api/greader.php/accounts/ClientLogin")
+            .form(&form)
+            .await;
+        assert_eq!(response.status_code(), StatusCode::UNAUTHORIZED);
+    }
+
+    let response = app
+        .server
+        .post("/api/greader.php/accounts/ClientLogin")
+        .form(&form)
+        .await;
+    assert_eq!(response.status_code(), StatusCode::TOO_MANY_REQUESTS);
 }
 
 // ============================================================================
@@ -762,6 +822,7 @@ async fn test_unauthenticated_access_denied() {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
 
     let app = create_router(state);

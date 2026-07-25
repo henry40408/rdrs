@@ -144,7 +144,20 @@ pub struct StartAuthenticationResponse {
 
 pub async fn start_authentication(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
 ) -> AppResult<Json<StartAuthenticationResponse>> {
+    // This endpoint leaks account existence (an empty passkey table responds
+    // differently than a populated one), so a probe must consume budget even
+    // though it never itself succeeds or fails a credential check. Reserve
+    // first thing, before any database query.
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let ip = state.config.client_ip(peer, &headers);
+    if !state.login_rate_limiter.try_acquire(ip) {
+        tracing::warn!(%ip, endpoint = "POST /api/passkey/auth/start", "credential attempt rate limited");
+        return Err(AppError::TooManyRequests);
+    }
+
     let all_passkeys = passkey::get_all_passkeys(&state.db).await?;
 
     if all_passkeys.is_empty() {
@@ -206,6 +219,16 @@ pub async fn finish_authentication(
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(req): Json<FinishAuthenticationRequest>,
 ) -> AppResult<(CookieJar, Json<FinishAuthenticationResponse>)> {
+    // Reserve an attempt before the challenge lookup or WebAuthn signature
+    // verification — same ordering rationale as password login: the check
+    // must run before any work an attacker's guess could otherwise spend.
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let ip = state.config.client_ip(peer, &headers);
+    if !state.login_rate_limiter.try_acquire(ip) {
+        tracing::warn!(%ip, endpoint = "POST /api/passkey/auth/finish", "credential attempt rate limited");
+        return Err(AppError::TooManyRequests);
+    }
+
     // Find and consume the challenge
     let challenge = webauthn_challenge::find_and_delete_challenge(
         &state.db,
@@ -242,6 +265,11 @@ pub async fn finish_authentication(
         .finish_passkey_authentication(&req.credential, &auth_state)
         .map_err(|e| AppError::PasskeyAuthenticationFailed(e.to_string()))?;
 
+    // The WebAuthn ceremony verified successfully: hand the reservation back
+    // before the session is created, so a legitimate user is never locked
+    // out by their own successful passkey sign-ins.
+    state.login_rate_limiter.release(ip);
+
     // Update the counter
     passkey_data.update_credential(&auth_result);
     let passkey_id = stored_passkey.id;
@@ -250,8 +278,7 @@ pub async fn finish_authentication(
 
     passkey::update_counter(&state.db, passkey_id, counter).await?;
     let user_agent = request_user_agent(&headers);
-    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
-    let ip = state.config.client_ip(peer, &headers).to_string();
+    let ip = ip.to_string();
     let new_session = session::create_session(&state.db, passkey_user_id, &user_agent, &ip).await?;
 
     let cookie = build_session_cookie(

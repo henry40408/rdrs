@@ -158,6 +158,10 @@ async fn main() {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: events.clone(),
         shutdown: cancel_token.clone(),
+        login_rate_limiter: Arc::new(rdrs::middleware::RateLimiter::new(
+            config.login_rate_limit_attempts,
+            config.login_rate_limit_window_secs,
+        )),
     };
 
     // Start background sync task
