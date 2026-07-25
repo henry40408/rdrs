@@ -324,6 +324,16 @@ pub fn create_router(state: AppState) -> Router {
         .nest("/api/greader.php", handlers::greader::greader_routes())
         .route("/static/{*path}", get(handlers::static_assets::serve))
         .fallback(handlers::pages::not_found_page)
+        // Mark session-bearing responses `no-store` (OWASP Session Management
+        // Cheat Sheet, Web Content Caching) so a browser disk cache or shared
+        // proxy cannot replay a logged-in page. Layered inside `ETagLayer` so
+        // it observes the handler's own `Cache-Control` (if any) — the three
+        // deliberate public-caching call sites (static assets, feed, image
+        // proxy) — before ETag processing runs; see cache_control.rs for why
+        // `no-store` also makes ETag a no-op for the responses it does touch.
+        .layer(axum::middleware::from_fn(
+            middleware::cache_control::no_store_for_authenticated,
+        ))
         .layer(middleware::ETagLayer::new())
         .layer(middleware::DateHeaderLayer::new())
         .layer(CompressionLayer::new().gzip(true).br(true))

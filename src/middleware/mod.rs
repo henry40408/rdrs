@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod cache_control;
 pub mod csrf;
 pub mod date_header;
 pub mod etag;
@@ -10,6 +11,7 @@ pub use auth::{
     AdminUser, AuthUser, PageAdminUser, PageAuthUser, SESSION_COOKIE_NAME,
     SESSION_COOKIE_NAME_HOST, build_session_cookie, session_cookie_name, slide_session_cookie,
 };
+pub use cache_control::no_store_for_authenticated;
 pub use csrf::{
     CSRF_COOKIE_NAME, CSRF_COOKIE_NAME_HOST, CSRF_HEADER, build_csrf_cookie, csrf_cookie_name,
 };

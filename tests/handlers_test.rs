@@ -5104,3 +5104,103 @@ async fn events_endpoint_requires_auth() {
     // PageAuthUser always redirects unauthenticated requests to /login (303).
     response.assert_status(StatusCode::SEE_OTHER);
 }
+
+// ============================================================================
+// middleware/cache_control.rs — no-store wiring through the real router
+// ============================================================================
+
+#[tokio::test]
+async fn test_authenticated_page_is_no_store() {
+    let mut app = create_test_app_named(default_test_config(), "test_authenticated_no_store").await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let response = app.server.get("/").await;
+
+    response.assert_status_ok();
+    assert_eq!(
+        response.header(header::CACHE_CONTROL),
+        "no-store",
+        "an authenticated page must never be retained by a disk cache or shared proxy"
+    );
+    assert_eq!(
+        response.header(header::VARY),
+        "Cookie",
+        "Vary: Cookie must accompany no-store so a proxy can't conflate the anonymous and authenticated variants"
+    );
+}
+
+#[tokio::test]
+async fn test_static_asset_keeps_its_cache_control() {
+    // Regression guard: the cache_control middleware only fills in a header
+    // when the response has none, so the long-lived static-asset directive
+    // set by handlers/static_assets.rs must survive byte-for-byte.
+    let server = create_test_server(default_test_config()).await;
+
+    let response = server.get("/static/css/app.css").await;
+
+    response.assert_status_ok();
+    assert_eq!(
+        response.header(header::CACHE_CONTROL),
+        expected_static_cache_control()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_image_proxy_keeps_upstream_cache_control() {
+    // A genuine upstream fetch can't be exercised here: `utils/url_validation`
+    // (the shared SSRF guard the proxy runs every origin URL through) rejects
+    // loopback/private addresses unconditionally and has no test escape
+    // hatch, and every mock HTTP server available to this suite (wiremock
+    // included) binds to one. `choose_cache_control`'s upstream-forwarding
+    // logic itself is exercised directly in handlers/proxy.rs's own unit
+    // tests (`test_choose_cache_control_mirrors_origin`). What this test adds
+    // is the piece those unit tests can't cover: that the cache_control
+    // *middleware* — which runs after the handler, on every response — does
+    // not clobber whatever `Cache-Control` the proxy handler already set,
+    // even on an authenticated request where rule 3 ("has a session cookie")
+    // would otherwise apply. The proxy's ETag/If-None-Match short-circuit
+    // (see `test_proxy_image_304_on_if_none_match`) is a real, SSRF-free
+    // response path that carries the handler's own `Cache-Control`
+    // (`DEFAULT_CACHE_CONTROL`, the same constant `choose_cache_control`
+    // falls back to when upstream sends none) and is reachable through the
+    // full router, so it stands in for "the proxy already set a
+    // Cache-Control" here.
+    let mut app =
+        create_test_app_named(default_test_config(), "test_proxy_keeps_upstream_cc").await;
+    // Authenticated on purpose: this is the case where the cache_control
+    // middleware could plausibly override the proxy's own header (rule 1 —
+    // "response already has Cache-Control" — must win over rule 3 — "request
+    // has a session cookie").
+    setup_authenticated_user(&mut app.server).await;
+
+    let response = app
+        .server
+        .get("/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=sometoken")
+        .add_header(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_static("\"sometoken\""),
+        )
+        .await;
+
+    response.assert_status(StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        response.header(header::CACHE_CONTROL),
+        "public, max-age=86400",
+        "the proxy's own Cache-Control must pass through untouched even on an authenticated request"
+    );
+}
+
+#[tokio::test]
+async fn test_health_endpoint_stays_cacheable() {
+    let server = create_test_server(default_test_config()).await;
+
+    // No session cookie on this request, so the cache_control middleware
+    // must leave it alone entirely (rule 2).
+    let response = server.get("/health").await;
+
+    response.assert_status_ok();
+    assert!(
+        response.maybe_header(header::CACHE_CONTROL).is_none(),
+        "an unauthenticated request must not get a forced no-store"
+    );
+}
