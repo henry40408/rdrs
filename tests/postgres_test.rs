@@ -28,7 +28,7 @@ use rdrs::models::user::Role;
 use rdrs::models::{
     category, entry,
     entry::{ContinuationCursor, ContinuationParams, EntryFilter, EntrySortOrder},
-    feed, statistics, user, user_settings,
+    feed, session, statistics, user, user_settings,
 };
 
 /// Connect to the test Postgres and wipe every table so the run is isolated and
@@ -472,4 +472,40 @@ async fn pg_dialect_smoke() {
         .collect();
     assert!(after_titles.iter().any(|t| t == "new"));
     assert!(!after_titles.iter().any(|t| t == "old"));
+
+    // --- session::delete_expired (bound-`now` comparison, no pg_rewrite) ------
+    // Exercises the `expires_at <= $1` comparison against PG's TIMESTAMPTZ vs
+    // SQLite's TEXT timestamp for a bound (not SQL-literal) `now`, which is
+    // exactly why this doesn't need a `pg_rewrite` fork.
+    let expired_session = session::create_session(&db, user_id, "test-agent", "127.0.0.1")
+        .await
+        .unwrap();
+    let fresh_session = session::create_session(&db, user_id, "test-agent", "127.0.0.1")
+        .await
+        .unwrap();
+    let past = chrono::Utc::now() - chrono::Duration::hours(1);
+    rdrs::db_execute!(
+        &db,
+        "UPDATE session SET expires_at = $1 WHERE id = $2",
+        past,
+        expired_session.id
+    )
+    .unwrap();
+
+    let swept = session::delete_expired(&db).await.unwrap();
+    assert_eq!(swept, 1, "only the backdated session must be swept");
+    assert!(
+        session::find_by_token(&db, &expired_session.session_token)
+            .await
+            .unwrap()
+            .is_none(),
+        "expired session must be gone after the sweep"
+    );
+    assert!(
+        session::find_by_token(&db, &fresh_session.session_token)
+            .await
+            .unwrap()
+            .is_some(),
+        "unexpired session must survive the sweep"
+    );
 }
