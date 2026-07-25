@@ -85,3 +85,31 @@ Then("I am not shown the app settings page", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "App", exact: true })).toHaveCount(0);
   expect(page.url()).not.toContain("/settings");
 });
+
+When("I log out", async ({ page, serverUrl }) => {
+  await page.getByTestId("logout-btn").click();
+  await page.waitForURL(`${serverUrl}/login`);
+});
+
+Then("I see the logged-out flash message", async ({ page }) => {
+  await expect(page.getByTestId("flash-message")).toBeVisible();
+  await expect(page.getByTestId("flash-message")).toContainText("You have been logged out.");
+});
+
+// Logout responds with `Clear-Site-Data: "cache", "storage"` (see
+// handlers::auth::LOGOUT_CLEAR_SITE_DATA) specifically so the sidebar's
+// sessionStorage mirror (SIDEBAR_CACHE_KEY = 'rdrs.sidebar.v1' in
+// rdrs-sidebar.js) doesn't leak the previous user's feed titles and unread
+// counts to whoever uses this browser next.
+Then("the sidebar's cached data no longer survives in session storage", async ({ page }) => {
+  const cached = await page.evaluate(() => sessionStorage.getItem("rdrs.sidebar.v1"));
+  expect(cached).toBeNull();
+});
+
+When("I visit the home page", async ({ page, serverUrl }) => {
+  await page.goto(`${serverUrl}/`);
+});
+
+Then("I am redirected to the login page", async ({ page, serverUrl }) => {
+  await page.waitForURL(`${serverUrl}/login`);
+});

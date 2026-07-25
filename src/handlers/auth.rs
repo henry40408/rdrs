@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use axum::{
     Json,
     extract::{ConnectInfo, Extension, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use serde::{Deserialize, Serialize};
@@ -192,6 +192,20 @@ pub struct LogoutResponse {
     pub logout_url_configured: bool,
 }
 
+/// Ask the browser to discard this origin's residue on logout.
+///
+/// Deliberately **omits `"cookies"`**: logout already emits explicit removal
+/// cookies, and `Clear-Site-Data` processing is asynchronous relative to JS —
+/// including `"cookies"` would race the `flash` cookie that
+/// `rdrs-flash.js:42` writes after this response lands, swallowing the
+/// "You have been logged out." notice. `"cache"` and `"storage"` have no such
+/// conflict, and `"storage"` is the real win here: it clears the sidebar
+/// mirror `rdrs-sidebar.js:61` keeps in `sessionStorage`, which otherwise
+/// leaks the previous user's feed titles and unread counts on a shared
+/// machine. `"executionContexts"` is omitted too — it would force a reload
+/// that fights the client's own redirect.
+const LOGOUT_CLEAR_SITE_DATA: &str = "\"cache\", \"storage\"";
+
 /// Clears the local session and reports where the client should go next.
 ///
 /// `redirect_to` is the configured `auth_proxy_logout_url`, or `/login` if
@@ -203,7 +217,11 @@ pub async fn logout(
     State(state): State<AppState>,
     jar: CookieJar,
     auth_user: AuthUser,
-) -> AppResult<(CookieJar, Json<LogoutResponse>)> {
+) -> AppResult<(
+    [(HeaderName, HeaderValue); 1],
+    CookieJar,
+    Json<LogoutResponse>,
+)> {
     let token = auth_user.session.session_token.clone();
     session::delete_session(&state.db, &token).await?;
 
@@ -251,6 +269,10 @@ pub async fn logout(
         .unwrap_or_else(|| "/login".to_string());
 
     Ok((
+        [(
+            HeaderName::from_static("clear-site-data"),
+            HeaderValue::from_static(LOGOUT_CLEAR_SITE_DATA),
+        )],
         jar.remove(removal)
             .remove(csrf_removal)
             .add(host_removal)

@@ -1518,7 +1518,12 @@ async fn test_logout_redirect_uses_configured_url() {
 
     let res = server.delete("/api/session").await;
     let body: serde_json::Value = res.json();
-    assert_eq!(body["redirect_to"], "https://auth.example.com/logout");
+    // Byte-for-byte: adding the Clear-Site-Data header must not touch the
+    // JSON body the client parses `redirect_to` out of.
+    assert_eq!(
+        body["redirect_to"].as_str(),
+        Some("https://auth.example.com/logout")
+    );
     assert_eq!(body["logout_url_configured"], true);
 }
 
@@ -1541,8 +1546,85 @@ async fn test_logout_redirect_uses_relative_configured_url() {
 
     let res = server.delete("/api/session").await;
     let body: serde_json::Value = res.json();
-    assert_eq!(body["redirect_to"], "/logout");
+    // Byte-for-byte: adding the Clear-Site-Data header must not touch the
+    // JSON body the client parses `redirect_to` out of.
+    assert_eq!(body["redirect_to"].as_str(), Some("/logout"));
     assert_eq!(body["logout_url_configured"], true);
+}
+
+/// OWASP Session Management Cheat Sheet, "Manual Session Expiration": logout
+/// should instruct the browser to delete data associated with the
+/// application. This pins the header value itself; the deliberate omission
+/// of `"cookies"` and `"executionContexts"` is pinned separately below so a
+/// regression in either direction fails loudly.
+#[tokio::test]
+async fn test_logout_sends_clear_site_data() {
+    let mut server = create_test_server(default_test_config()).await;
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
+
+    let res = server.delete("/api/session").await;
+    res.assert_status_ok();
+
+    let header = res
+        .headers()
+        .get("clear-site-data")
+        .expect("logout must send a Clear-Site-Data header")
+        .to_str()
+        .expect("Clear-Site-Data must be valid ASCII");
+    assert_eq!(header, "\"cache\", \"storage\"");
+}
+
+/// Pins the deliberate omission of `"cookies"` (and `"executionContexts"`)
+/// from the logout `Clear-Site-Data` header — see
+/// `handlers::auth::LOGOUT_CLEAR_SITE_DATA`. The server already emits
+/// explicit removal cookies for the session; `Clear-Site-Data` processing is
+/// asynchronous relative to JS, so clearing `"cookies"` here would race the
+/// `flash` cookie `rdrs-flash.js` writes right after this response lands and
+/// could eat the "You have been logged out." notice. A later contributor
+/// "completing" this header to include `"cookies"` would silently
+/// reintroduce that flakiness, so this test must fail if that happens.
+#[tokio::test]
+async fn test_logout_clear_site_data_omits_cookies() {
+    let mut server = create_test_server(default_test_config()).await;
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
+
+    let res = server.delete("/api/session").await;
+    res.assert_status_ok();
+
+    let header = res
+        .headers()
+        .get("clear-site-data")
+        .expect("logout must send a Clear-Site-Data header")
+        .to_str()
+        .expect("Clear-Site-Data must be valid ASCII");
+    assert!(
+        !header.contains("cookies"),
+        "\"cookies\" would race the flash cookie written after this response: {header}"
+    );
+    assert!(
+        !header.contains("executionContexts"),
+        "\"executionContexts\" would force a reload that fights the client's own redirect: {header}"
+    );
 }
 
 #[tokio::test]
