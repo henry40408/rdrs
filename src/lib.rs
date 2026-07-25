@@ -123,6 +123,14 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::user::revoke_other_sessions_form),
         )
         .route(
+            "/user-settings/api-tokens/{id}/revoke",
+            post(handlers::user::revoke_api_token_form),
+        )
+        .route(
+            "/user-settings/api-tokens/revoke-all",
+            post(handlers::user::revoke_all_api_tokens_form),
+        )
+        .route(
             "/api/admin/unmasquerade",
             post(handlers::admin::stop_masquerade),
         )

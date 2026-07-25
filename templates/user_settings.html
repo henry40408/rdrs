@@ -44,6 +44,43 @@
                 <form method="post" action="/user-settings/sessions/revoke-others">
                     <button type="submit">Sign out other sessions</button>
                 </form>
+
+                <hr>
+
+                <h2>GReader API Tokens</h2>
+                <p class="muted">
+                    These are Google Reader client tokens — issued to RSS apps (FeedMe, Read You, etc.)
+                    when they sign in below, kept separate from your browser sessions above.
+                    Revoking one forces that client to sign in again.
+                </p>
+                {% if api_tokens.is_empty() %}
+                <p class="muted">No GReader clients are currently signed in.</p>
+                {% else %}
+                <table class="mobile-cards-settings">
+                    <thead>
+                        <tr><th class="settings-th">Client</th><th class="settings-th">IP</th><th class="settings-th">Signed In</th><th class="settings-th">Last Active</th><th class="settings-th">Expires</th><th class="settings-th"></th></tr>
+                    </thead>
+                    <tbody>
+                        {% for t in api_tokens %}
+                        <tr>
+                            <td title="{{ t.user_agent }}">{{ t.label }}</td>
+                            <td data-label="IP">{{ t.ip_address }}</td>
+                            <td data-label="Signed In"><time datetime="{{ t.created_at_iso }}" data-local-text>{{ t.created_at }}</time></td>
+                            <td data-label="Last Active"><time datetime="{{ t.last_seen_iso }}" data-local-text>{{ t.last_seen }}</time></td>
+                            <td data-label="Expires"><time datetime="{{ t.expires_at_iso }}" data-local-text>{{ t.expires_at }}</time></td>
+                            <td>
+                                <form method="post" action="/user-settings/api-tokens/{{ t.id }}/revoke">
+                                    <button type="submit" class="btn btn-secondary">Revoke</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <form method="post" action="/user-settings/api-tokens/revoke-all">
+                    <button type="submit" class="btn btn-secondary" onclick="return confirm('Revoke all API tokens? Every connected GReader client will need to sign in again.')">Revoke all API tokens</button>
+                </form>
+                {% endif %}
                 {% endif %}
 
                 <hr>

@@ -65,6 +65,14 @@ pub struct Config {
     /// on; see [`Config::hsts_header_value`] for the apex-domain caveat that
     /// makes the escape hatch necessary.
     pub hsts_include_subdomains: bool,
+    /// Escape hatch for the `GReader` `ClientLogin` → `api_token` cutover
+    /// (see `handlers::greader::auth::validate_api_token`). Default `false`:
+    /// after upgrading, a client's old raw `session.session_token` no longer
+    /// authenticates and it must re-run `ClientLogin`. Setting this `true`
+    /// restores the old (insecure) behavior of matching an unrecognized
+    /// header token against `session` as a migration window — every fallback
+    /// hit logs a deprecation warning. Slated for removal; do not build on it.
+    pub greader_legacy_session_tokens: bool,
 }
 
 /// Parse a comma-separated list of CIDR networks or bare IPs into `IpNet`s.
@@ -450,6 +458,17 @@ impl Config {
             true,
         )?;
 
+        // Strict, not lenient `flag`: a typo here must fail startup rather
+        // than silently leave the fallback off (safe) or silently leave it on
+        // and take every client down (unsafe) — see the field doc. Derived
+        // value is always `false`; this is an opt-in escape hatch, not
+        // something that should ever turn on by itself.
+        let greader_legacy_session_tokens = parse_bool_derived(
+            get("RDRS_GREADER_LEGACY_SESSION_TOKENS").as_deref(),
+            "RDRS_GREADER_LEGACY_SESSION_TOKENS",
+            false,
+        )?;
+
         Ok(Self {
             // Not prefixed — see `RENAMED_VARS`.
             database_url: nonblank(&get, "DATABASE_URL")
@@ -483,6 +502,7 @@ impl Config {
             hsts,
             hsts_max_age,
             hsts_include_subdomains,
+            greader_legacy_session_tokens,
         })
     }
 
@@ -682,6 +702,7 @@ mod tests {
             hsts: false,
             hsts_max_age: 31_536_000,
             hsts_include_subdomains: true,
+            greader_legacy_session_tokens: false,
         }
     }
 

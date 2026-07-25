@@ -12,6 +12,7 @@ use crate::AppState;
 use crate::auth::verify_password;
 use crate::error::{AppError, AppResult};
 use crate::middleware::Bucket;
+use crate::models::api_token::{self, ApiToken};
 use crate::models::session::{self, Session};
 use crate::models::user::{self, User};
 use crate::secret::{DOMAIN_GREADER_TOKEN, tag, verify_tag};
@@ -22,14 +23,45 @@ const POST_TOKEN_VALIDITY_SECS: i64 = 30 * 60;
 
 // --- GReaderUser extractor ---
 
+/// Where a `GReader` request's authority comes from. The two are not
+/// interchangeable: a `Cookie` credential is a full web session (whatever it
+/// is authorized to do, so is this request), while an `ApiToken` credential is
+/// a narrower, independently-revocable GReader-only grant. Neither can forge
+/// the other — see `handlers/greader/auth.rs`'s `FromRequestParts` for how
+/// each is verified before this enum is ever constructed.
+#[derive(Debug, Clone)]
+pub enum GReaderCredential {
+    /// Web UI cookie path — the signature was already verified by
+    /// `session_token_from_jar`. Also backs the `RDRS_GREADER_LEGACY_SESSION_TOKENS`
+    /// escape hatch: a client still presenting a raw pre-upgrade session token
+    /// in the `Authorization` header resolves to this same variant, since it
+    /// really is a full session — see `validate_api_token`.
+    Cookie(Session),
+    /// Native client `ClientLogin` path — an independent `api_token` row.
+    ApiToken(ApiToken),
+}
+
+impl GReaderCredential {
+    /// The MAC subject for a post token. Both kinds share `DOMAIN_GREADER_TOKEN`,
+    /// but `api_tokens` carry the `rdrs_gr_` prefix so the two subject spaces
+    /// cannot overlap.
+    pub fn post_token_subject(&self) -> &str {
+        match self {
+            GReaderCredential::Cookie(s) => &s.session_token,
+            GReaderCredential::ApiToken(t) => &t.token,
+        }
+    }
+}
+
 /// Authentication extractor for Google Reader API endpoints.
 /// Supports dual auth:
-///   1. `Authorization: GoogleLogin auth=<token>` header (external clients)
-///   2. Session cookie fallback (Web UI)
+///   1. `Authorization: GoogleLogin auth=<token>` header (external clients) —
+///      validated as an `api_token` row (`GReaderCredential::ApiToken`).
+///   2. Session cookie fallback (Web UI) — `GReaderCredential::Cookie`.
 #[derive(Debug, Clone)]
 pub struct GReaderUser {
     pub user: User,
-    pub session: Session,
+    pub credential: GReaderCredential,
     /// Whether the user was authenticated via cookie (skip POST token check).
     pub via_cookie: bool,
 }
@@ -49,12 +81,33 @@ impl FromRequestParts<AppState> for GReaderUser {
                 .map(|s| s.trim().to_string())
             && !token.is_empty()
         {
-            let (session, user) = validate_token(state, &token).await?;
-            return Ok(GReaderUser {
-                user,
-                session,
-                via_cookie: false,
-            });
+            match validate_api_token(state, &token).await {
+                Ok((api_token, user)) => {
+                    return Ok(GReaderUser {
+                        user,
+                        credential: GReaderCredential::ApiToken(api_token),
+                        via_cookie: false,
+                    });
+                }
+                // The escape hatch: an old client still holding a raw,
+                // pre-upgrade session token. Only tried when no api_token row
+                // matched — `AppError::UserDisabled` from a genuine api_token
+                // hit must not fall through to a second lookup.
+                Err(AppError::Unauthorized) if state.config.greader_legacy_session_tokens => {
+                    tracing::warn!(
+                        "GReader client authenticated with a legacy raw session token \
+                         (RDRS_GREADER_LEGACY_SESSION_TOKENS=true); run ClientLogin again \
+                         to mint an api_token and disable this flag once no client needs it"
+                    );
+                    let (session, user) = validate_token(state, &token).await?;
+                    return Ok(GReaderUser {
+                        user,
+                        credential: GReaderCredential::Cookie(session),
+                        via_cookie: false,
+                    });
+                }
+                Err(e) => return Err(e),
+            }
         }
 
         // 2. Fallback: session cookie
@@ -68,7 +121,7 @@ impl FromRequestParts<AppState> for GReaderUser {
         let (session, user) = validate_token(state, &token).await?;
         Ok(GReaderUser {
             user,
-            session,
+            credential: GReaderCredential::Cookie(session),
             via_cookie: true,
         })
     }
@@ -95,6 +148,38 @@ async fn validate_token(state: &AppState, token: &str) -> AppResult<(Session, Us
     Ok((session, user))
 }
 
+/// Validate an `Authorization: GoogleLogin auth=<token>` value as an
+/// independent `api_token` row (not the raw `session.session_token` — that
+/// coupling is exactly what this table exists to remove). Returns
+/// `AppError::Unauthorized` when no row matches, which is also the signal the
+/// caller uses to decide whether to try the `RDRS_GREADER_LEGACY_SESSION_TOKENS`
+/// fallback.
+async fn validate_api_token(state: &AppState, token: &str) -> AppResult<(ApiToken, User)> {
+    let api_token = api_token::find_by_token(&state.db, token)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+    if api_token.is_expired() {
+        // Lazy delete, mirroring the session equivalent above.
+        api_token::delete_token(&state.db, api_token.id, api_token.user_id).await?;
+        return Err(AppError::Unauthorized);
+    }
+
+    let user = user::find_by_id(&state.db, api_token.user_id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+    if user.is_disabled() {
+        return Err(AppError::UserDisabled);
+    }
+
+    // Best-effort: a failure here must not fail the request the token is
+    // authenticating.
+    let _ = api_token::touch_and_refresh(&state.db, &api_token).await;
+
+    Ok((api_token, user))
+}
+
 // --- ClientLogin endpoint ---
 
 #[derive(Debug, serde::Deserialize)]
@@ -109,6 +194,10 @@ pub struct ClientLoginForm {
 ///
 /// Google Reader `ClientLogin`: accepts form-encoded Email + Passwd,
 /// returns `SID`, `LSID`, `Auth` in text/plain.
+///
+/// `Auth` is an `api_token` row, not the caller's web session: a token leaked
+/// from an RSS reader app must not be equivalent to a full session takeover
+/// (see `models::api_token` and the module doc on `secret.rs`).
 pub async fn client_login(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -146,14 +235,16 @@ pub async fn client_login(
 
     let user_agent = request_user_agent(&headers);
     let ip = ip.to_string();
-    let new_session = session::create_session(&state.db, user.id, &user_agent, &ip).await?;
+    // The client's own reported User-Agent doubles as the label shown on the
+    // /user-settings revocation list — GReader clients don't send anything
+    // more identifying than that.
+    let label = user_agent.clone();
+    let t = api_token::create_api_token(&state.db, user.id, "greader", &label, &user_agent, &ip)
+        .await?;
 
     let _ = user; // user info not needed in response
 
-    Ok(format!(
-        "SID=unused\nLSID=unused\nAuth={}",
-        new_session.session_token
-    ))
+    Ok(format!("SID=unused\nLSID=unused\nAuth={}", t.token))
 }
 
 // --- POST Token endpoint ---
@@ -163,31 +254,32 @@ pub async fn client_login(
 /// Returns a short-lived POST token for CSRF protection.
 /// The token is `<timestamp>/<hmac_hex>`, keyed off the shared root secret.
 pub async fn get_post_token(auth: GReaderUser, State(state): State<AppState>) -> AppResult<String> {
-    let token = generate_post_token(&state.config.secret, &auth.session.session_token);
+    let token = generate_post_token(&state.config.secret, auth.credential.post_token_subject());
     Ok(token)
 }
 
-/// The MAC input for a post token: the session token, a separator, and the
-/// timestamp. Session tokens use the `A-Za-z0-9-_` alphabet and so never
-/// contain `/`, which makes the concatenation unambiguous — without the
-/// separator `("a", 12)` and `("a1", 2)` would sign the same bytes.
-fn post_token_parts<'a>(session_token: &'a str, timestamp: &'a str) -> [&'a [u8]; 3] {
-    [session_token.as_bytes(), b"/", timestamp.as_bytes()]
+/// The MAC input for a post token: the credential subject, a separator, and
+/// the timestamp. Session tokens and `api_tokens` both use the `A-Za-z0-9-_`
+/// alphabet and so never contain `/`, which makes the concatenation
+/// unambiguous — without the separator `("a", 12)` and `("a1", 2)` would sign
+/// the same bytes.
+fn post_token_parts<'a>(subject: &'a str, timestamp: &'a str) -> [&'a [u8]; 3] {
+    [subject.as_bytes(), b"/", timestamp.as_bytes()]
 }
 
 /// Generate a POST token: `<timestamp>/<hmac_hex>`.
-pub fn generate_post_token(secret: &[u8], session_token: &str) -> String {
+pub fn generate_post_token(secret: &[u8], subject: &str) -> String {
     let timestamp = Utc::now().timestamp().to_string();
     let hex = hex::encode(tag(
         secret,
         DOMAIN_GREADER_TOKEN,
-        &post_token_parts(session_token, &timestamp),
+        &post_token_parts(subject, &timestamp),
     ));
     format!("{timestamp}/{hex}")
 }
 
 /// Verify a POST token. Returns `Ok(())` if valid, `Err` if invalid or expired.
-pub fn verify_post_token(secret: &[u8], session_token: &str, post_token: &str) -> AppResult<()> {
+pub fn verify_post_token(secret: &[u8], subject: &str, post_token: &str) -> AppResult<()> {
     let (ts_str, sig_hex) = post_token.split_once('/').ok_or(AppError::Unauthorized)?;
 
     let timestamp: i64 = ts_str.parse().map_err(|_e| AppError::Unauthorized)?;
@@ -200,7 +292,7 @@ pub fn verify_post_token(secret: &[u8], session_token: &str, post_token: &str) -
     if !verify_tag(
         secret,
         DOMAIN_GREADER_TOKEN,
-        &post_token_parts(session_token, ts_str),
+        &post_token_parts(subject, ts_str),
         &sig,
     ) {
         return Err(AppError::Unauthorized);

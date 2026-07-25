@@ -2898,6 +2898,84 @@ async fn test_revoke_other_sessions_form_blocked_while_masquerading() {
     );
 }
 
+#[tokio::test]
+async fn test_password_change_revokes_api_tokens() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let user = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .expect("user must exist");
+    let token = rdrs::models::api_token::create_api_token(
+        &app.db,
+        user.id,
+        "greader",
+        "test-client",
+        "test-agent",
+        "127.0.0.1",
+    )
+    .await
+    .unwrap();
+
+    let response = app
+        .server
+        .post("/user-settings/password")
+        .form(&json!({
+            "current_password": "password123",
+            "new_password": "newpassword456",
+            "confirm_password": "newpassword456",
+        }))
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+
+    let found = rdrs::models::api_token::find_by_token(&app.db, &token.token)
+        .await
+        .unwrap();
+    assert!(
+        found.is_none(),
+        "a password change must revoke API tokens too, not just browser sessions"
+    );
+}
+
+#[tokio::test]
+async fn test_revoke_others_does_not_touch_api_tokens() {
+    // "Sign out other sessions" means browser sessions specifically — see the
+    // comment on `revoke_other_sessions_form`. A GReader client's token must
+    // survive this action; revoking it is a separate, explicit control.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let user = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .expect("user must exist");
+    let token = rdrs::models::api_token::create_api_token(
+        &app.db,
+        user.id,
+        "greader",
+        "test-client",
+        "test-agent",
+        "127.0.0.1",
+    )
+    .await
+    .unwrap();
+
+    let response = app
+        .server
+        .post("/user-settings/sessions/revoke-others")
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+
+    let found = rdrs::models::api_token::find_by_token(&app.db, &token.token)
+        .await
+        .unwrap();
+    assert!(
+        found.is_some(),
+        "revoke-other-sessions must not touch API tokens"
+    );
+}
+
 // ============================================================================
 // Form-action admin endpoint tests (PR-5 T1)
 // ============================================================================

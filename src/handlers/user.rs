@@ -1,4 +1,9 @@
-use axum::{Form, Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    Form, Json,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -7,6 +12,7 @@ use crate::auth::{hash_password, verify_password};
 use crate::error::{AppError, AppResult};
 use crate::middleware::AuthUser;
 use crate::middleware::flash::FlashRedirect;
+use crate::models::api_token;
 use crate::models::session;
 use crate::models::user;
 use crate::models::user_settings;
@@ -396,6 +402,10 @@ pub async fn change_password_form(
         user::update_password(&state.db, user_id, &new_hash).await?;
         // Delete all sessions for the user to force re-login
         session::delete_user_sessions(&state.db, user_id).await?;
+        // A password change is "I want every existing credential gone" —
+        // leaving GReader API tokens alive would mean the password change
+        // revoked nothing for a client that never touches the browser session.
+        api_token::delete_user_tokens(&state.db, user_id).await?;
         Ok(())
     }
     .await;
@@ -409,6 +419,12 @@ pub async fn change_password_form(
     }
 }
 
+/// "Sign out other sessions" deliberately does **not** touch API tokens: this
+/// button means "browser sessions on my other devices/tabs", and a user
+/// clicking it would not expect their phone's RSS app to silently stop
+/// syncing as a side effect. Revoking `GReader` tokens is a separate, explicit
+/// action (`revoke_all_api_tokens_form` below) — do not "fix" this by folding
+/// the two together.
 pub async fn revoke_other_sessions_form(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -426,6 +442,46 @@ pub async fn revoke_other_sessions_form(
     {
         Ok(()) => FlashRedirect::success("/user-settings", "Signed out all other sessions."),
         Err(_) => FlashRedirect::error("/user-settings", "Failed to sign out other sessions."),
+    }
+}
+
+/// Revoke a single `GReader` API token. `delete_token` is `user_id`-scoped, so
+/// this cannot revoke another user's token even if `id` is guessed.
+pub async fn revoke_api_token_form(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    if auth_user.session.is_masquerading() {
+        return FlashRedirect::error(
+            "/user-settings",
+            "Session management is unavailable while masquerading.",
+        );
+    }
+
+    match api_token::delete_token(&state.db, id, auth_user.user.id).await {
+        Ok(()) => FlashRedirect::success("/user-settings", "API token revoked."),
+        Err(_) => FlashRedirect::error("/user-settings", "Failed to revoke API token."),
+    }
+}
+
+/// Revoke every `GReader` API token belonging to the current user. Every
+/// connected `GReader` client (`FeedMe`, Read You, etc.) must run `ClientLogin`
+/// again after this.
+pub async fn revoke_all_api_tokens_form(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+) -> impl IntoResponse {
+    if auth_user.session.is_masquerading() {
+        return FlashRedirect::error(
+            "/user-settings",
+            "Session management is unavailable while masquerading.",
+        );
+    }
+
+    match api_token::delete_user_tokens(&state.db, auth_user.user.id).await {
+        Ok(()) => FlashRedirect::success("/user-settings", "All API tokens revoked."),
+        Err(_) => FlashRedirect::error("/user-settings", "Failed to revoke API tokens."),
     }
 }
 

@@ -21,8 +21,10 @@
 //! `RDRS_SECRET` set — invalidates every signature at once. Browser sessions
 //! end, and image-proxy URLs already embedded in a Google Reader client's cached
 //! entry HTML break until that client re-syncs. Native `GReader` `ClientLogin`
-//! tokens are unaffected: they are the raw `session.session_token`, matched
-//! against the database rather than signed.
+//! tokens are also unaffected by a key rotation: like session tokens, they are
+//! matched against the database rather than signed — but they live in their own
+//! `api_token` table (`models::api_token`), independent of `session`, so a
+//! leaked `GReader` token is not a leaked web session.
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;

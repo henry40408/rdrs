@@ -26,7 +26,7 @@ use rdrs::db::Db;
 use rdrs::error::AppError;
 use rdrs::models::user::Role;
 use rdrs::models::{
-    category, entry,
+    api_token, category, entry,
     entry::{ContinuationCursor, ContinuationParams, EntryFilter, EntrySortOrder},
     feed, session, statistics, user, user_settings,
 };
@@ -42,7 +42,7 @@ async fn setup() -> Option<Db> {
     rdrs::db_execute!(
         &db,
         "TRUNCATE \"user\", category, feed, entry, entry_summary, entry_tombstone, \
-         image, passkey, session, user_settings, webauthn_challenge RESTART IDENTITY CASCADE"
+         image, passkey, session, api_token, user_settings, webauthn_challenge RESTART IDENTITY CASCADE"
     )
     .expect("truncate");
     Some(db)
@@ -507,5 +507,89 @@ async fn pg_dialect_smoke() {
             .unwrap()
             .is_some(),
         "unexpired session must survive the sweep"
+    );
+
+    // --- api_token CRUD + delete_expired (TIMESTAMPTZ binding + "user" FK) ----
+    // Exercises the same RETURNING-based insert / bound-`now` delete shape as
+    // the session assertions above, but against the new api_token table —
+    // validates its TIMESTAMPTZ columns and its `"user"` reserved-word FK on a
+    // real PG server, not just SQLite.
+    let created = api_token::create_api_token(
+        &db,
+        user_id,
+        "greader",
+        "pg-client",
+        "test-agent",
+        "127.0.0.1",
+    )
+    .await
+    .unwrap();
+    assert!(created.token.starts_with(api_token::API_TOKEN_PREFIX));
+
+    let found = api_token::find_by_token(&db, &created.token)
+        .await
+        .unwrap()
+        .expect("just-created api_token must be found");
+    assert_eq!(found.user_id, user_id);
+
+    let expired_token = api_token::create_api_token(
+        &db,
+        user_id,
+        "greader",
+        "pg-client-expired",
+        "test-agent",
+        "127.0.0.1",
+    )
+    .await
+    .unwrap();
+    let past = chrono::Utc::now() - chrono::Duration::hours(1);
+    rdrs::db_execute!(
+        &db,
+        "UPDATE api_token SET expires_at = $1 WHERE id = $2",
+        past,
+        expired_token.id
+    )
+    .unwrap();
+
+    let swept = api_token::delete_expired(&db).await.unwrap();
+    assert_eq!(swept, 1, "only the backdated api_token must be swept");
+    assert!(
+        api_token::find_by_token(&db, &expired_token.token)
+            .await
+            .unwrap()
+            .is_none(),
+        "expired api_token must be gone after the sweep"
+    );
+    assert!(
+        api_token::find_by_token(&db, &created.token)
+            .await
+            .unwrap()
+            .is_some(),
+        "unexpired api_token must survive the sweep"
+    );
+
+    // delete_token is user_id-scoped, same as on SQLite.
+    let other_user_id = user::create_user(&db, "pguser2", "hash", Role::User)
+        .await
+        .unwrap()
+        .id;
+    api_token::delete_token(&db, created.id, other_user_id)
+        .await
+        .unwrap();
+    assert!(
+        api_token::find_by_token(&db, &created.token)
+            .await
+            .unwrap()
+            .is_some(),
+        "delete_token must not remove a token owned by a different user"
+    );
+    api_token::delete_token(&db, created.id, user_id)
+        .await
+        .unwrap();
+    assert!(
+        api_token::find_by_token(&db, &created.token)
+            .await
+            .unwrap()
+            .is_none()
     );
 }

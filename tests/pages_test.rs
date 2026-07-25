@@ -382,6 +382,66 @@ async fn test_user_settings_page_renders_ssr_content() {
 }
 
 #[tokio::test]
+async fn test_user_settings_lists_api_tokens() {
+    let mut app = create_test_app(default_test_config()).await;
+    let (admin_id, _user_id) = setup_users(&app.db).await;
+    login(&mut app.server, "admin").await;
+
+    rdrs::models::api_token::create_api_token(
+        &app.db,
+        admin_id,
+        "greader",
+        "FeedMe/1.0",
+        "FeedMe/1.0",
+        "203.0.113.5",
+    )
+    .await
+    .unwrap();
+
+    let response = app.server.get("/user-settings").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(body.contains("GReader API Tokens"));
+    assert!(body.contains("FeedMe/1.0"));
+    assert!(body.contains("203.0.113.5"));
+    assert!(body.contains("/user-settings/api-tokens/revoke-all"));
+}
+
+#[tokio::test]
+async fn test_api_token_revoke_is_user_scoped() {
+    let mut app = create_test_app(default_test_config()).await;
+    let (admin_id, _user_id) = setup_users(&app.db).await;
+
+    let token = rdrs::models::api_token::create_api_token(
+        &app.db,
+        admin_id,
+        "greader",
+        "admin-client",
+        "test-agent",
+        "127.0.0.1",
+    )
+    .await
+    .unwrap();
+
+    // User B (the regular user) tries to revoke admin's token by guessing its id.
+    login(&mut app.server, "user").await;
+    let response = app
+        .server
+        .post(&format!("/user-settings/api-tokens/{}/revoke", token.id))
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+
+    let found = rdrs::models::api_token::find_by_token(&app.db, &token.token)
+        .await
+        .unwrap();
+    assert!(
+        found.is_some(),
+        "user B must not be able to revoke user A's (admin's) API token"
+    );
+}
+
+#[tokio::test]
 async fn test_settings_page_renders_ssr_content() {
     let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;

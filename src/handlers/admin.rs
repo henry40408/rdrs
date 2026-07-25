@@ -10,6 +10,7 @@ use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::middleware::AdminUser;
 use crate::middleware::flash::FlashRedirect;
+use crate::models::api_token;
 use crate::models::session;
 use crate::models::user::{self, Role};
 
@@ -92,6 +93,10 @@ pub async fn update_status_form(
         if disabled && !target.is_disabled() {
             user::disable_user(&state.db, user_id).await?;
             session::delete_user_sessions(&state.db, user_id).await?;
+            // Disabling an account must also cut off any GReader client still
+            // holding an API token — otherwise a disabled user's RSS app keeps
+            // syncing indefinitely, since its token never touches `session`.
+            api_token::delete_user_tokens(&state.db, user_id).await?;
         } else if !disabled && target.is_disabled() {
             user::enable_user(&state.db, user_id).await?;
         }
