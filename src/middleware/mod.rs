@@ -8,6 +8,7 @@ pub mod rate_limit;
 
 pub use auth::{
     AdminUser, AuthUser, PageAdminUser, PageAuthUser, SESSION_COOKIE_NAME, build_session_cookie,
+    slide_session_cookie,
 };
 pub use csrf::{CSRF_COOKIE_NAME, CSRF_HEADER, build_csrf_cookie};
 pub use date_header::DateHeaderLayer;

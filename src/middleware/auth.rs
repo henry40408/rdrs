@@ -1,8 +1,9 @@
 use std::net::SocketAddr;
 
 use axum::{
-    extract::{ConnectInfo, FromRequestParts, OptionalFromRequestParts},
-    http::request::Parts,
+    extract::{ConnectInfo, FromRequestParts, OptionalFromRequestParts, Request, State},
+    http::{HeaderValue, header, request::Parts},
+    middleware::Next,
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::CookieJar;
@@ -35,7 +36,7 @@ pub fn build_session_cookie(token: &str, secret: &[u8], secure: bool) -> Cookie<
     .http_only(true)
     .secure(secure)
     .same_site(SameSite::Lax)
-    .max_age(Duration::days(session::SESSION_ABSOLUTE_MAX_DAYS))
+    .max_age(Duration::days(session::SESSION_EXPIRY_DAYS))
     .build()
 }
 
@@ -46,6 +47,96 @@ pub fn build_session_cookie(token: &str, secret: &[u8], secure: bool) -> Cookie<
 pub fn session_token_from_jar(jar: &CookieJar, secret: &[u8]) -> Option<String> {
     let value = jar.get(SESSION_COOKIE_NAME)?.value().to_string();
     crate::secret::verify_session(secret, &value)
+}
+
+/// Path prefixes skipped entirely: static assets, favicons, and the health
+/// check must stay cacheable, and a `Set-Cookie` on any of them would poison
+/// a shared cache sitting in front of the app. Deliberately narrower than
+/// `ANON_SKIP_PREFIXES` in `csrf.rs` — `/api` and `/reader` are *not* skipped
+/// here, since a pure-API or `GReader` client must still get its cookie's
+/// `Max-Age` renewed.
+const SLIDE_SKIP_PREFIXES: &[&str] = &["/static", "/favicon", "/health"];
+
+/// Reissue the session and CSRF cookies on every authenticated request so
+/// their `Max-Age` — now aligned with the sliding session TTL
+/// (`SESSION_EXPIRY_DAYS`, 7 days, instead of the old 90-day absolute cap)
+/// — keeps tracking "last used" the same way the database row's own
+/// `expires_at` does, instead of logging out a browser that is still
+/// actively in use.
+///
+/// This layer never touches the database: sliding the row's own
+/// `expires_at` remains `session::refresh_if_needed`'s job, called from the
+/// `AuthUser`/`PageAuthUser` extractors. Here, an absent or HMAC-invalid
+/// session cookie is passed through untouched — `session_token_from_jar`
+/// already does the signature check, so no unverified value is ever echoed
+/// back. A verified but row-less *anonymous* session cookie (minted by
+/// `anonymous_session` for a logged-out visitor) is slid the same way; that
+/// is harmless and intentional, not a bug to "fix" later — it still expires
+/// on its own schedule regardless of this middleware, and there is no
+/// database row it could out-live.
+///
+/// Layered outside `anonymous_session` and inside `forward_auth` (see
+/// `crate::create_router`), so it observes — and must never clobber — the
+/// `Set-Cookie`s that layer and every handler below it emit. In particular,
+/// `logout`'s empty removal cookies must reach the browser unmodified: for
+/// each of the two cookie names, a `Set-Cookie` already present on the
+/// response is left alone, and only its absence causes a fresh one (same
+/// value, refreshed `Max-Age`, token never rotated) to be appended. See
+/// [`response_has_set_cookie_for`] for the exact matching rule.
+pub async fn slide_session_cookie(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if SLIDE_SKIP_PREFIXES
+        .iter()
+        .any(|p| req.uri().path().starts_with(p))
+    {
+        return next.run(req).await;
+    }
+
+    let jar = CookieJar::from_headers(req.headers());
+    let Some(token) = session_token_from_jar(&jar, &state.config.secret) else {
+        return next.run(req).await;
+    };
+
+    let secret = &state.config.secret;
+    let secure = state.config.cookie_secure;
+    let mut resp = next.run(req).await;
+
+    if !response_has_set_cookie_for(&resp, SESSION_COOKIE_NAME) {
+        append_set_cookie(&mut resp, &build_session_cookie(&token, secret, secure));
+    }
+    if !response_has_set_cookie_for(&resp, crate::middleware::CSRF_COOKIE_NAME) {
+        append_set_cookie(
+            &mut resp,
+            &crate::middleware::build_csrf_cookie(&token, secret, secure),
+        );
+    }
+
+    resp
+}
+
+/// Whether `resp` already carries a `Set-Cookie` header for cookie `name`.
+///
+/// Every `Set-Cookie` value is split at its *first* `=`; the trimmed
+/// substring before it is the cookie name, compared for an exact match. This
+/// is deliberately not a substring search — a different cookie whose value
+/// happens to contain `name` (e.g. `other=session_token_lookalike`) must not
+/// count as a match.
+fn response_has_set_cookie_for(resp: &Response, name: &str) -> bool {
+    resp.headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .any(|v| v.split_once('=').is_some_and(|(n, _)| n.trim() == name))
+}
+
+/// Append `cookie` as a `Set-Cookie` header on `resp`.
+fn append_set_cookie(resp: &mut Response, cookie: &Cookie<'static>) {
+    if let Ok(value) = HeaderValue::from_str(&cookie.to_string()) {
+        resp.headers_mut().append(header::SET_COOKIE, value);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -272,5 +363,58 @@ impl FromRequestParts<AppState> for PageAdminUser {
             session: page_auth_user.session,
             via_forward_auth: page_auth_user.via_forward_auth,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Response as HttpResponse;
+
+    fn resp_with_set_cookies(cookies: &[&str]) -> Response {
+        let mut builder = HttpResponse::builder();
+        for c in cookies {
+            builder = builder.header(header::SET_COOKIE, *c);
+        }
+        builder.body(Body::empty()).unwrap()
+    }
+
+    #[test]
+    fn response_has_set_cookie_for_matches_exact_name() {
+        let resp = resp_with_set_cookies(&["session_token=abc123; Path=/; HttpOnly"]);
+        assert!(response_has_set_cookie_for(&resp, "session_token"));
+        assert!(!response_has_set_cookie_for(&resp, "csrf_token"));
+    }
+
+    #[test]
+    fn response_has_set_cookie_for_is_not_fooled_by_value_containing_name() {
+        // A different cookie whose *value* happens to contain the target
+        // name must not count as a match.
+        let resp = resp_with_set_cookies(&["other=session_token_lookalike; Path=/"]);
+        assert!(!response_has_set_cookie_for(&resp, "session_token"));
+    }
+
+    #[test]
+    fn response_has_set_cookie_for_handles_attribute_laden_value() {
+        let resp = resp_with_set_cookies(&[
+            "csrf_token=xyz; Path=/; SameSite=Lax; Max-Age=604800; Secure",
+        ]);
+        assert!(response_has_set_cookie_for(&resp, "csrf_token"));
+        assert!(!response_has_set_cookie_for(&resp, "session_token"));
+    }
+
+    #[test]
+    fn response_has_set_cookie_for_checks_each_header_independently() {
+        // `anonymous_session` can emit only the CSRF cookie while the session
+        // cookie was already present; the session-cookie check must not be
+        // fooled by the CSRF header being present, or vice versa.
+        let resp = resp_with_set_cookies(&["csrf_token=abc; Path=/"]);
+        assert!(response_has_set_cookie_for(&resp, "csrf_token"));
+        assert!(!response_has_set_cookie_for(&resp, "session_token"));
+
+        let resp = resp_with_set_cookies(&["session_token=; Path=/", "csrf_token=abc; Path=/"]);
+        assert!(response_has_set_cookie_for(&resp, "session_token"));
+        assert!(response_has_set_cookie_for(&resp, "csrf_token"));
     }
 }

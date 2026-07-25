@@ -1077,6 +1077,52 @@ async fn test_session_cookie_not_secure_by_default() {
 }
 
 #[tokio::test]
+async fn test_session_cookie_max_age_matches_sliding_ttl() {
+    // The database row's expires_at is `now + SESSION_EXPIRY_DAYS` (7 days),
+    // sliding forward while the session stays active. The cookie's Max-Age
+    // must match that, not the 90-day absolute cap the row can eventually
+    // reach — otherwise the browser holds a cookie whose backing row is long
+    // gone for most of those 90 days.
+    let cookie = login_session_cookie(&create_test_server(default_test_config()).await).await;
+    assert!(
+        cookie.contains("Max-Age=604800"),
+        "session cookie Max-Age must be the 7-day sliding TTL: {cookie}"
+    );
+    assert!(
+        !cookie.contains("Max-Age=7776000"),
+        "session cookie must not carry the old 90-day absolute-cap Max-Age: {cookie}"
+    );
+}
+
+#[tokio::test]
+async fn test_csrf_cookie_max_age_matches_session_cookie() {
+    let server = create_test_server(default_test_config()).await;
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let login = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await;
+    login.assert_status_ok();
+
+    let csrf = set_cookie_headers(&login)
+        .into_iter()
+        .find(|s| s.starts_with("csrf_token="))
+        .expect("login must emit a csrf_token Set-Cookie");
+    assert!(
+        csrf.contains("Max-Age=604800"),
+        "csrf cookie Max-Age must mirror the session cookie's sliding TTL: {csrf}"
+    );
+    assert!(
+        !csrf.contains("Max-Age=7776000"),
+        "csrf cookie must not carry the old 90-day absolute-cap Max-Age: {csrf}"
+    );
+}
+
+#[tokio::test]
 async fn test_logout_clears_cookie_with_path() {
     let mut server = create_test_server(default_test_config()).await;
     server
@@ -1101,6 +1147,73 @@ async fn test_logout_clears_cookie_with_path() {
     assert!(
         removal.contains("Path=/"),
         "removal cookie must carry Path=/ to actually delete the session cookie: {removal}"
+    );
+}
+
+/// The most important test in this task: `logout` emits empty removal
+/// cookies for both `session_token` and `csrf_token`, and the sliding-cookie
+/// middleware — layered outside `anonymous_session` and observing this same
+/// response — must yield to them rather than reissuing a live cookie on top.
+/// If it didn't, logout would silently fail to clear the cookie.
+#[tokio::test]
+async fn test_logout_removal_cookie_is_not_overwritten_by_slide() {
+    let mut server = create_test_server(default_test_config()).await;
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
+
+    let res = server.delete("/api/session").await;
+    res.assert_status_ok();
+
+    let all_cookies = set_cookie_headers(&res);
+
+    let session_cookies: Vec<_> = all_cookies
+        .iter()
+        .filter(|s| s.starts_with("session_token="))
+        .collect();
+    assert_eq!(
+        session_cookies.len(),
+        1,
+        "logout must emit exactly one session_token Set-Cookie, not a second one \
+         reissued by the sliding middleware: {all_cookies:?}"
+    );
+    let session_value = session_cookies[0]
+        .trim_start_matches("session_token=")
+        .split(';')
+        .next()
+        .unwrap();
+    assert!(
+        session_value.is_empty(),
+        "the sliding middleware must not overwrite logout's empty removal cookie: {}",
+        session_cookies[0]
+    );
+
+    let csrf_cookies: Vec<_> = all_cookies
+        .iter()
+        .filter(|s| s.starts_with("csrf_token="))
+        .collect();
+    assert_eq!(
+        csrf_cookies.len(),
+        1,
+        "logout must emit exactly one csrf_token Set-Cookie: {all_cookies:?}"
+    );
+    let csrf_value = csrf_cookies[0]
+        .trim_start_matches("csrf_token=")
+        .split(';')
+        .next()
+        .unwrap();
+    assert!(
+        csrf_value.is_empty(),
+        "the sliding middleware must not overwrite logout's empty csrf removal cookie: {}",
+        csrf_cookies[0]
     );
 }
 
@@ -1279,5 +1392,83 @@ async fn test_fresh_session_is_not_refreshed() {
     assert_eq!(
         before, after,
         "fresh session should not be refreshed on every request"
+    );
+}
+
+#[tokio::test]
+async fn test_authenticated_request_reissues_session_cookie() {
+    let mut server = create_test_server(default_test_config()).await;
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let login = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await;
+    login.assert_status_ok();
+    common::apply_csrf(&mut server, &login);
+
+    let login_cookie = set_cookie_headers(&login)
+        .into_iter()
+        .find(|s| s.starts_with("session_token="))
+        .expect("login must emit a session_token Set-Cookie");
+    let login_value = login_cookie
+        .trim_start_matches("session_token=")
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+
+    // A second, ordinary authenticated request must still carry a fresh
+    // session_token Set-Cookie so the browser's Max-Age keeps tracking the
+    // sliding TTL — but the value must be byte-identical: only the expiry
+    // advances, the token itself is never rotated by this middleware.
+    let res = server.get("/api/user").await;
+    res.assert_status_ok();
+    let reissued_cookie = set_cookie_headers(&res)
+        .into_iter()
+        .find(|s| s.starts_with("session_token="))
+        .expect("an ordinary authenticated request must reissue the session_token cookie");
+    let reissued_value = reissued_cookie
+        .trim_start_matches("session_token=")
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+
+    assert_eq!(
+        reissued_value, login_value,
+        "the session token must not be rotated when its cookie is slid"
+    );
+    assert!(
+        reissued_cookie.contains("Max-Age=604800"),
+        "reissued cookie must carry the refreshed Max-Age: {reissued_cookie}"
+    );
+}
+
+#[tokio::test]
+async fn test_static_asset_response_has_no_set_cookie() {
+    let mut server = create_test_server(default_test_config()).await;
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let login = server
+        .post("/api/session")
+        .json(&json!({ "username": "u", "password": "password123" }))
+        .await;
+    login.assert_status_ok();
+    common::apply_csrf(&mut server, &login);
+
+    // The asset need not exist — a 404 from the static handler is fine, only
+    // the absence of Set-Cookie on this cacheable path prefix matters.
+    let res = server.get("/static/nonexistent.css").await;
+    let cookies = set_cookie_headers(&res);
+    assert!(
+        cookies.is_empty(),
+        "a static asset response must never carry Set-Cookie: {cookies:?}"
     );
 }

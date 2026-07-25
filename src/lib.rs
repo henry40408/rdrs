@@ -346,6 +346,19 @@ pub fn create_router(state: AppState) -> Router {
             state.clone(),
             middleware::csrf::anonymous_session,
         ))
+        // Reissue the session + CSRF cookies' Max-Age (never their value) on
+        // every authenticated request, so a still-in-use browser session keeps
+        // tracking the sliding server-side TTL instead of expiring on a fixed
+        // schedule. Layered outside `anonymous_session` so it sees — and can
+        // correctly skip re-setting — the Set-Cookie's that layer and every
+        // handler beneath it emit (most importantly `logout`'s removal
+        // cookies), and inside `forward_auth`, which short-circuits with its
+        // own redirect without calling `next` on every path that mints a
+        // cookie, so this layer never doubles up with it.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::auth::slide_session_cookie,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::forward_auth::forward_auth,

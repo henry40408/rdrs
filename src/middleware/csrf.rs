@@ -36,7 +36,7 @@ use time::Duration;
 
 use crate::AppState;
 use crate::middleware::auth::{build_session_cookie, session_token_from_jar};
-use crate::models::session::{SESSION_ABSOLUTE_MAX_DAYS, generate_token};
+use crate::models::session::{self, generate_token};
 use crate::secret::{derive_csrf, verify_csrf};
 
 /// Readable (non-`HttpOnly`) cookie carrying the CSRF token, so page JavaScript
@@ -85,7 +85,7 @@ pub fn build_csrf_cookie(session_token: &str, secret: &[u8], secure: bool) -> Co
         .http_only(false)
         .secure(secure)
         .same_site(SameSite::Lax)
-        .max_age(Duration::days(SESSION_ABSOLUTE_MAX_DAYS))
+        .max_age(Duration::days(session::SESSION_EXPIRY_DAYS))
         .build()
 }
 

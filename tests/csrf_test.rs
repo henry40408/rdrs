@@ -94,3 +94,34 @@ async fn non_browser_client_without_headers_reaches_the_handler() {
         .await;
     res.assert_status(StatusCode::CREATED);
 }
+
+#[tokio::test]
+async fn logged_out_page_request_emits_exactly_one_set_cookie_per_name() {
+    // `anonymous_session` mints a fresh (session_token, csrf_token) pair for a
+    // logged-out visitor, and `slide_session_cookie` (layered outside it, so it
+    // sees the same response) must recognize both are already present and not
+    // append a second Set-Cookie for either name.
+    let server = test_server().await;
+    let res = server.get("/login").await;
+    res.assert_status_ok();
+
+    let set_cookies: Vec<String> = res
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(std::string::ToString::to_string))
+        .collect();
+
+    for name in ["session_token", "csrf_token"] {
+        let prefix = format!("{name}=");
+        let matches: Vec<_> = set_cookies
+            .iter()
+            .filter(|s| s.starts_with(&prefix))
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected exactly one Set-Cookie for {name}, got {matches:?} (all: {set_cookies:?})"
+        );
+    }
+}

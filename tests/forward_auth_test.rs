@@ -322,26 +322,32 @@ async fn test_valid_session_cookie_not_reminted() {
     seed_user(&db, "frank", rdrs::models::user::Role::User).await;
 
     // First login mints a valid session (saved by the client jar).
-    server.get("/").add_header("Remote-User", "frank").await;
+    let first = server.get("/").add_header("Remote-User", "frank").await;
+    let original_value = first
+        .maybe_cookie("session_token")
+        .expect("forward-auth login must mint a session cookie")
+        .value()
+        .to_string();
 
     // Second request carries the now-valid cookie: the validity check must
     // honour the existing session (pass through to the app) rather than
-    // treating it as invalid and re-minting.  Guards against a regression where
-    // the validity check wrongly rejects a good cookie, causing a redirect to
-    // /login and/or a new cookie to be issued.
+    // treating it as invalid and re-minting a *different* one. Guards against
+    // a regression where the validity check wrongly rejects a good cookie,
+    // causing a redirect to /login and/or a brand-new session to be issued.
+    //
+    // The sliding-TTL middleware (layered inside forward_auth) is expected to
+    // still reissue *this same* cookie on the pass-through to refresh its
+    // Max-Age, so the meaningful assertion is that the token value never
+    // changes — not that no Set-Cookie appears at all.
     let res = server.get("/").add_header("Remote-User", "frank").await;
 
-    // The valid session must NOT be re-minted.
-    let reminted = res
-        .headers()
-        .get_all("set-cookie")
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .any(|s| s.starts_with("session_token="));
-    assert!(
-        !reminted,
-        "a valid session must not be re-minted on every request"
-    );
+    if let Some(reissued) = res.maybe_cookie("session_token") {
+        assert_eq!(
+            reissued.value(),
+            original_value,
+            "a valid session must not be re-minted with a different token"
+        );
+    }
 
     // The middleware must pass through to the app, not redirect to /login.
     // (A logged-in GET / may itself redirect within the app, but it must never
@@ -353,6 +359,37 @@ async fn test_valid_session_cookie_not_reminted() {
     assert_ne!(
         location, "/login",
         "a valid session must not be redirected to /login"
+    );
+}
+
+/// `forward_auth` short-circuits with its own redirect response *without*
+/// calling `next` whenever it mints a fresh session — so `slide_session_cookie`,
+/// layered inside it, never runs on that response and cannot double up with
+/// `forward_auth`'s own `Set-Cookie`. This asserts exactly that: the very first
+/// forward-auth login response carries exactly one `session_token` Set-Cookie.
+#[tokio::test]
+async fn test_forward_auth_cookie_is_not_overwritten_by_slide() {
+    let (server, db) = create_server(|c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    })
+    .await;
+    seed_user(&db, "olga", rdrs::models::user::Role::User).await;
+
+    let res = server.get("/").add_header("Remote-User", "olga").await;
+    assert!(res.status_code().is_redirection());
+
+    let session_cookies: Vec<_> = res
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .filter(|s| s.starts_with("session_token="))
+        .collect();
+    assert_eq!(
+        session_cookies.len(),
+        1,
+        "forward_auth's own Set-Cookie must not be doubled up by the sliding \
+         middleware, since forward_auth doesn't call `next` on this path: {session_cookies:?}"
     );
 }
 
