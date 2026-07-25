@@ -6,6 +6,7 @@ pub mod etag;
 pub mod flash;
 pub mod forward_auth;
 pub mod rate_limit;
+pub mod security_headers;
 
 pub use auth::{
     AdminUser, AuthUser, PageAdminUser, PageAuthUser, SESSION_COOKIE_NAME,
@@ -19,3 +20,4 @@ pub use date_header::DateHeaderLayer;
 pub use etag::ETagLayer;
 pub use flash::{FLASH_COOKIE_NAME, Flash, FlashMessage, FlashRedirect, SetFlash};
 pub use rate_limit::{Bucket, RateLimiter};
+pub use security_headers::{HstsState, set_hsts};

@@ -333,7 +333,26 @@ pub fn create_router(state: AppState) -> Router {
         // `no-store` also makes ETag a no-op for the responses it does touch.
         .layer(axum::middleware::from_fn(
             middleware::cache_control::no_store_for_authenticated,
+        ));
+
+    // Strict-Transport-Security (OWASP Session Management Cheat Sheet,
+    // Transport Layer Security): only added when `Config` says the deployment
+    // is HTTPS (see `Config::hsts_header_value` for the derivation rule). The
+    // header value is built once here, where `config` is already in scope,
+    // rather than per response — and when it's `None` (the default), no layer
+    // is added at all, so a plain-HTTP deployment pays nothing for this.
+    let core = if let Some(header_value) = state.config.hsts_header_value() {
+        let value = axum::http::HeaderValue::from_str(&header_value)
+            .expect("hsts_header_value only ever produces a valid header value");
+        core.layer(axum::middleware::from_fn_with_state(
+            middleware::HstsState::new(value),
+            middleware::set_hsts,
         ))
+    } else {
+        core
+    };
+
+    let core = core
         .layer(middleware::ETagLayer::new())
         .layer(middleware::DateHeaderLayer::new())
         .layer(CompressionLayer::new().gzip(true).br(true))

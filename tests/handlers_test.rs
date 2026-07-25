@@ -5204,3 +5204,107 @@ async fn test_health_endpoint_stays_cacheable() {
         "an unauthenticated request must not get a forced no-store"
     );
 }
+
+// ============================================================================
+// Strict-Transport-Security (HSTS) tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_hsts_header_present_when_public_base_url_is_https() {
+    // Go through Config::from_map (not a hand-built literal) so this exercises
+    // the real derivation path: RDRS_PUBLIC_BASE_URL's scheme -> parse_hsts ->
+    // Config::hsts -> Config::hsts_header_value -> the router layer.
+    let config = Config::from_map(|k| {
+        (k == "RDRS_PUBLIC_BASE_URL").then(|| "https://rdrs.example.com".to_string())
+    })
+    .expect("from_map should succeed");
+    let server = create_test_server(config).await;
+
+    let response = server.get("/health").await;
+
+    assert_eq!(
+        response.header(header::STRICT_TRANSPORT_SECURITY),
+        "max-age=31536000; includeSubDomains"
+    );
+}
+
+#[tokio::test]
+async fn test_hsts_header_absent_by_default() {
+    // The most important test in this task: a plain-HTTP deployment (the
+    // default — no RDRS_PUBLIC_BASE_URL, no RDRS_HSTS override) must never be
+    // told to enforce HTTPS. HSTS is sticky and cannot be retracted quickly,
+    // so sending it here by accident would lock browsers out of a working
+    // plain-HTTP install.
+    let server = create_test_server(default_test_config()).await;
+
+    let response = server.get("/health").await;
+
+    response.assert_status_ok();
+    assert!(
+        response
+            .maybe_header(header::STRICT_TRANSPORT_SECURITY)
+            .is_none(),
+        "a plain-HTTP deployment must never receive Strict-Transport-Security"
+    );
+}
+
+#[tokio::test]
+async fn test_hsts_header_on_static_and_health() {
+    // HSTS is a declaration about the host, not any one response, so there is
+    // no skip list: /static and /health must carry it exactly like every
+    // other path when the deployment is HTTPS.
+    let config = Config::from_map(|k| {
+        (k == "RDRS_PUBLIC_BASE_URL").then(|| "https://rdrs.example.com".to_string())
+    })
+    .expect("from_map should succeed");
+    let server = create_test_server(config).await;
+
+    let health = server.get("/health").await;
+    assert_eq!(
+        health.header(header::STRICT_TRANSPORT_SECURITY),
+        "max-age=31536000; includeSubDomains"
+    );
+
+    let static_asset = server.get("/static/css/app.css").await;
+    static_asset.assert_status_ok();
+    assert_eq!(
+        static_asset.header(header::STRICT_TRANSPORT_SECURITY),
+        "max-age=31536000; includeSubDomains"
+    );
+}
+
+#[tokio::test]
+async fn test_existing_hsts_header_is_not_overwritten() {
+    // No handler in the real app sets Strict-Transport-Security itself — the
+    // realistic source of a pre-existing header is a TLS-terminating reverse
+    // proxy in front of rdrs, which this suite has no way to stand up. This
+    // test instead wires the exact same exported `set_hsts` middleware
+    // `create_router` uses around a bare handler that stands in for the
+    // proxy by setting the header itself, and confirms the middleware leaves
+    // it alone rather than overwriting it with its own value.
+    async fn proxy_set_header() -> impl axum::response::IntoResponse {
+        (
+            [(
+                header::STRICT_TRANSPORT_SECURITY,
+                HeaderValue::from_static("max-age=1"),
+            )],
+            "ok",
+        )
+    }
+
+    let value = HeaderValue::from_static("max-age=31536000; includeSubDomains");
+    let router = axum::Router::new()
+        .route("/probe", axum::routing::get(proxy_set_header))
+        .layer(axum::middleware::from_fn_with_state(
+            rdrs::middleware::HstsState::new(value),
+            rdrs::middleware::set_hsts,
+        ));
+    let server = TestServer::new(router);
+
+    let response = server.get("/probe").await;
+
+    assert_eq!(
+        response.header(header::STRICT_TRANSPORT_SECURITY),
+        "max-age=1"
+    );
+}

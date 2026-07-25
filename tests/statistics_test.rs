@@ -40,6 +40,9 @@ async fn create_test_app(_name: &str) -> TestApp {
         auth_proxy_logout_url: None,
         login_rate_limit_attempts: rdrs::middleware::rate_limit::LOGIN_MAX_ATTEMPTS,
         login_rate_limit_window_secs: rdrs::middleware::rate_limit::LOGIN_WINDOW_SECS,
+        hsts: false,
+        hsts_max_age: 31_536_000,
+        hsts_include_subdomains: true,
     };
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);

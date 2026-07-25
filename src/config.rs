@@ -51,6 +51,20 @@ pub struct Config {
     pub login_rate_limit_attempts: u32,
     /// Fixed-window length, in seconds, for [`Config::login_rate_limit_attempts`].
     pub login_rate_limit_window_secs: u64,
+    /// Whether to send `Strict-Transport-Security` on every response. See
+    /// [`parse_hsts`] for the derivation rule and why an unrecognized value is
+    /// a hard startup error rather than a silent "off".
+    pub hsts: bool,
+    /// HSTS `max-age` in seconds. Defaults to 31536000 (one year, OWASP's
+    /// recommended value). `0` is a deliberate escape hatch rather than a synonym
+    /// for "off": serving `max-age=0` tells browsers to *forget* a previous HSTS
+    /// declaration, which is the supported way to recover from a mis-set one —
+    /// strictly more useful than simply omitting the header.
+    pub hsts_max_age: u64,
+    /// Whether the HSTS declaration includes `; includeSubDomains`. Defaults to
+    /// on; see [`Config::hsts_header_value`] for the apex-domain caveat that
+    /// makes the escape hatch necessary.
+    pub hsts_include_subdomains: bool,
 }
 
 /// Parse a comma-separated list of CIDR networks or bare IPs into `IpNet`s.
@@ -102,14 +116,50 @@ pub fn parse_cookie_secure(
     raw: Option<&str>,
     public_base_url: Option<&str>,
 ) -> Result<bool, String> {
+    let derived = public_base_url
+        .is_some_and(|u| u.trim_start().to_ascii_lowercase().starts_with("https://"));
+    parse_bool_derived(raw, "RDRS_COOKIE_SECURE", derived)
+}
+
+/// Whether `Strict-Transport-Security` should be sent on every response.
+///
+/// An explicit `RDRS_HSTS` wins; otherwise the answer is derived from
+/// `RDRS_PUBLIC_BASE_URL`'s scheme — the same rule as [`parse_cookie_secure`],
+/// for the same reason: a real deployment already has to set
+/// `RDRS_PUBLIC_BASE_URL` correctly (it drives the image-proxy URLs), so an
+/// HTTPS install gets HSTS without a second setting to forget, while a plain
+/// `http://` internal deployment (no `RDRS_PUBLIC_BASE_URL`, or one starting
+/// `http://`) gets no header and cannot lock itself out.
+///
+/// HSTS is *sticky*: a browser that has seen the header refuses plain HTTP to
+/// this host for the whole `max-age`, and the server cannot instantly retract
+/// it. That makes an unrecognized value here strictly more dangerous than for
+/// most boolean settings — silently reading `RDRS_HSTS=yes` as "off" would
+/// leave a correctly-configured HTTPS deployment without the protection it
+/// asked for, while silently reading a typo as "on" could lock browsers out
+/// of a plain-HTTP deployment with no server-side way back. Either way,
+/// guessing is wrong; only `true`/`false`/`1`/`0` are accepted.
+pub fn parse_hsts(raw: Option<&str>, public_base_url: Option<&str>) -> Result<bool, String> {
+    let derived = public_base_url
+        .is_some_and(|u| u.trim_start().to_ascii_lowercase().starts_with("https://"));
+    parse_bool_derived(raw, "RDRS_HSTS", derived)
+}
+
+/// Shared strict boolean parser behind [`parse_cookie_secure`] and
+/// [`parse_hsts`]: unset (or blank) falls back to `derived`; `true`/`1` and
+/// `false`/`0` (case-insensitive) are recognized; anything else is a hard
+/// startup error naming `var_name` rather than a silent fallback. Both
+/// callers have a derived default that can be `true`, which is exactly why
+/// they cannot use the lenient [`flag`] helper — see each function's own doc
+/// for the specific failure a silent "off" would cause.
+fn parse_bool_derived(raw: Option<&str>, var_name: &str, derived: bool) -> Result<bool, String> {
     match raw.map(str::trim).filter(|s| !s.is_empty()) {
         Some(v) if v.eq_ignore_ascii_case("true") || v == "1" => Ok(true),
         Some(v) if v.eq_ignore_ascii_case("false") || v == "0" => Ok(false),
         Some(v) => Err(format!(
-            "invalid RDRS_COOKIE_SECURE '{v}': expected one of true, false, 1, 0"
+            "invalid {var_name} '{v}': expected one of true, false, 1, 0"
         )),
-        None => Ok(public_base_url
-            .is_some_and(|u| u.trim_start().to_ascii_lowercase().starts_with("https://"))),
+        None => Ok(derived),
     }
 }
 
@@ -383,6 +433,23 @@ impl Config {
             nonblank(&get, "RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS").as_deref(),
         )?;
 
+        // Passed raw, not through `nonblank`, for the same reason as
+        // `cookie_secure` above: `parse_hsts` does its own trimming and has to
+        // tell "unset" from "unrecognized" itself.
+        let hsts = parse_hsts(get("RDRS_HSTS").as_deref(), public_base_url.as_deref())?;
+        let hsts_max_age = nonblank(&get, "RDRS_HSTS_MAX_AGE")
+            .map(|v| {
+                v.parse::<u64>()
+                    .map_err(|e| format!("invalid RDRS_HSTS_MAX_AGE '{v}': {e}"))
+            })
+            .transpose()?
+            .unwrap_or(31_536_000);
+        let hsts_include_subdomains = parse_bool_derived(
+            get("RDRS_HSTS_INCLUDE_SUBDOMAINS").as_deref(),
+            "RDRS_HSTS_INCLUDE_SUBDOMAINS",
+            true,
+        )?;
+
         Ok(Self {
             // Not prefixed — see `RENAMED_VARS`.
             database_url: nonblank(&get, "DATABASE_URL")
@@ -413,6 +480,9 @@ impl Config {
             auth_proxy_logout_url: nonblank(&get, "RDRS_AUTH_PROXY_LOGOUT_URL"),
             login_rate_limit_attempts,
             login_rate_limit_window_secs,
+            hsts,
+            hsts_max_age,
+            hsts_include_subdomains,
         })
     }
 
@@ -541,6 +611,24 @@ impl Config {
         None
     }
 
+    /// The HSTS header value, or `None` when the header must not be sent.
+    ///
+    /// Deliberately **never contains `preload`**: entering the preload list is
+    /// effectively irreversible (removal means petitioning hstspreload.org and
+    /// waiting months for browser releases to roll over), so it must never follow
+    /// from a default. An operator who wants preload can add it at their reverse
+    /// proxy.
+    pub fn hsts_header_value(&self) -> Option<String> {
+        if !self.hsts {
+            return None;
+        }
+        let mut value = format!("max-age={}", self.hsts_max_age);
+        if self.hsts_include_subdomains {
+            value.push_str("; includeSubDomains");
+        }
+        Some(value)
+    }
+
     /// A startup warning about the credential rate limiter running without a
     /// trusted-proxy list, or `None` when the config looks deployable. Fires
     /// when the limiter is enabled but `RDRS_TRUSTED_PROXY_NETWORKS` is empty:
@@ -591,6 +679,9 @@ mod tests {
             auth_proxy_logout_url: None,
             login_rate_limit_attempts: LOGIN_MAX_ATTEMPTS,
             login_rate_limit_window_secs: LOGIN_WINDOW_SECS,
+            hsts: false,
+            hsts_max_age: 31_536_000,
+            hsts_include_subdomains: true,
         }
     }
 
@@ -822,6 +913,135 @@ mod tests {
             assert!(err.contains("RDRS_COOKIE_SECURE"), "{err}");
             assert!(err.contains(raw), "{err}");
         }
+    }
+
+    /// `parse_hsts` for cases that must succeed.
+    fn hsts(raw: Option<&str>, public_base_url: Option<&str>) -> bool {
+        parse_hsts(raw, public_base_url).expect("valid RDRS_HSTS")
+    }
+
+    #[test]
+    fn test_parse_hsts_derives_from_public_base_url() {
+        // Unset → follow RDRS_PUBLIC_BASE_URL's scheme, exactly like
+        // parse_cookie_secure.
+        assert!(hsts(None, Some("https://rdrs.example.com")));
+        assert!(!hsts(None, Some("http://localhost:8080")));
+        // No RDRS_PUBLIC_BASE_URL at all → off, so a plain-HTTP internal
+        // deployment cannot lock itself out.
+        assert!(!hsts(None, None));
+        // Scheme match is case-insensitive and tolerant of leading whitespace.
+        assert!(hsts(None, Some("  HTTPS://x")));
+        // A host that merely starts with "https" is not an https:// URL — the
+        // shared helper must not regress this trap.
+        assert!(!hsts(None, Some("http://https.example.com")));
+    }
+
+    #[test]
+    fn test_parse_hsts_explicit_override() {
+        // An explicit value wins over the derived one, in both directions.
+        assert!(hsts(Some("true"), Some("http://localhost")));
+        assert!(hsts(Some("1"), None));
+        assert!(hsts(Some("TRUE"), None));
+        assert!(!hsts(Some("false"), Some("https://rdrs.example.com")));
+        assert!(!hsts(Some("0"), Some("https://rdrs.example.com")));
+        // Empty / whitespace-only is "unset", not "off".
+        assert!(hsts(Some(""), Some("https://rdrs.example.com")));
+        assert!(hsts(Some("   "), Some("https://rdrs.example.com")));
+    }
+
+    #[test]
+    fn test_parse_hsts_rejects_unrecognized_value() {
+        for raw in ["yes", "on", "off", "2"] {
+            let err = parse_hsts(Some(raw), Some("https://rdrs.example.com"))
+                .expect_err("unrecognized RDRS_HSTS must be rejected");
+            assert!(err.contains("RDRS_HSTS"), "{err}");
+            assert!(err.contains(raw), "{err}");
+        }
+    }
+
+    #[test]
+    fn test_hsts_max_age_default_and_override() {
+        let config = from_vars(&[("RDRS_PUBLIC_BASE_URL", "https://rdrs.example.com")]);
+        assert_eq!(config.hsts_max_age, 31_536_000);
+
+        let config = from_vars(&[
+            ("RDRS_PUBLIC_BASE_URL", "https://rdrs.example.com"),
+            ("RDRS_HSTS_MAX_AGE", "3600"),
+        ]);
+        assert_eq!(config.hsts_max_age, 3600);
+
+        // 0 is a valid, meaningful override: the documented recovery path for
+        // a mis-set HSTS declaration.
+        let config = from_vars(&[
+            ("RDRS_PUBLIC_BASE_URL", "https://rdrs.example.com"),
+            ("RDRS_HSTS_MAX_AGE", "0"),
+        ]);
+        assert_eq!(config.hsts_max_age, 0);
+
+        let err = Config::from_map(|k| (k == "RDRS_HSTS_MAX_AGE").then(|| "soon".into()))
+            .expect_err("non-numeric RDRS_HSTS_MAX_AGE must fail startup");
+        assert!(err.contains("RDRS_HSTS_MAX_AGE"), "{err}");
+        assert!(err.contains("soon"), "{err}");
+    }
+
+    #[test]
+    fn test_hsts_include_subdomains_default_and_override() {
+        // Defaults to on.
+        let config = from_vars(&[("RDRS_PUBLIC_BASE_URL", "https://rdrs.example.com")]);
+        assert!(config.hsts_include_subdomains);
+
+        let config = from_vars(&[
+            ("RDRS_PUBLIC_BASE_URL", "https://rdrs.example.com"),
+            ("RDRS_HSTS_INCLUDE_SUBDOMAINS", "false"),
+        ]);
+        assert!(!config.hsts_include_subdomains);
+
+        let err =
+            Config::from_map(|k| (k == "RDRS_HSTS_INCLUDE_SUBDOMAINS").then(|| "sometimes".into()))
+                .expect_err("unrecognized RDRS_HSTS_INCLUDE_SUBDOMAINS must fail startup");
+        assert!(err.contains("RDRS_HSTS_INCLUDE_SUBDOMAINS"), "{err}");
+    }
+
+    #[test]
+    fn test_hsts_header_value_never_contains_preload() {
+        // Pins the irreversibility decision (entering the preload list cannot
+        // be undone quickly) so nobody "improves" this later by adding it.
+        let config = Config {
+            hsts: true,
+            hsts_max_age: 31_536_000,
+            hsts_include_subdomains: true,
+            ..test_config()
+        };
+        let value = config.hsts_header_value().unwrap();
+        assert!(!value.contains("preload"), "{value}");
+        assert_eq!(value, "max-age=31536000; includeSubDomains");
+    }
+
+    #[test]
+    fn test_hsts_header_value_off_by_default() {
+        let config = test_config();
+        assert!(!config.hsts);
+        assert!(config.hsts_header_value().is_none());
+    }
+
+    #[test]
+    fn test_hsts_header_value_include_subdomains_toggle() {
+        let with = Config {
+            hsts: true,
+            hsts_max_age: 100,
+            hsts_include_subdomains: true,
+            ..test_config()
+        };
+        assert_eq!(
+            with.hsts_header_value().unwrap(),
+            "max-age=100; includeSubDomains"
+        );
+
+        let without = Config {
+            hsts_include_subdomains: false,
+            ..with
+        };
+        assert_eq!(without.hsts_header_value().unwrap(), "max-age=100");
     }
 
     #[test]

@@ -44,6 +44,9 @@ mod tests {
             auth_proxy_logout_url: None,
             login_rate_limit_attempts: crate::middleware::rate_limit::LOGIN_MAX_ATTEMPTS,
             login_rate_limit_window_secs: crate::middleware::rate_limit::LOGIN_WINDOW_SECS,
+            hsts: false,
+            hsts_max_age: 31_536_000,
+            hsts_include_subdomains: true,
         }
     }
 
