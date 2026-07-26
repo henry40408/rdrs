@@ -98,22 +98,59 @@ fn apply(session_cookie_present: bool, mut response: Response) -> Response {
         return response;
     }
 
-    let existing_vary = response.headers().get(header::VARY).cloned();
+    let existing_vary: Vec<HeaderValue> = response
+        .headers()
+        .get_all(header::VARY)
+        .iter()
+        .cloned()
+        .collect();
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    headers.insert(header::VARY, merged_vary(existing_vary.as_ref()));
+    if let Some(merged) = merged_vary(&existing_vary) {
+        headers.insert(header::VARY, merged);
+    }
     response
 }
 
-/// `Cookie` appended to whatever `Vary` value (if any) is already on the
-/// response, rather than overwriting it — a handler-set `Vary` (e.g.
-/// `Accept-Encoding` from compression) must survive alongside ours.
-fn merged_vary(existing: Option<&HeaderValue>) -> HeaderValue {
-    match existing.and_then(|v| v.to_str().ok()) {
-        Some(existing) => HeaderValue::from_str(&format!("{existing}, Cookie"))
-            .unwrap_or_else(|_| HeaderValue::from_static("Cookie")),
-        None => HeaderValue::from_static("Cookie"),
+/// `Cookie` merged into whatever `Vary` the response already carries, or
+/// `None` when the response should be left exactly as it is.
+///
+/// Three things this must not do, each of which the obvious one-line
+/// `format!("{existing}, Cookie")` gets wrong:
+///
+/// * **Drop sibling headers.** A response may carry several `Vary` lines;
+///   HTTP treats them as one comma-separated list. Reading only the first
+///   (`HeaderMap::get`) and then `insert`ing the result replaces *all* of
+///   them, silently losing every line but the first. Hence `get_all` at the
+///   call site and the join here.
+/// * **Repeat itself.** A handler that already set `Vary: Cookie` would
+///   otherwise get `Vary: Cookie, Cookie`. Harmless to a cache, which reads
+///   `Vary` as a set, but it is noise in every response we touch.
+/// * **Narrow `*`.** `Vary: *` already means "never serve this from a shared
+///   cache without revalidating"; rewriting it to `*, Cookie` says nothing
+///   new, so it is left alone.
+fn merged_vary(existing: &[HeaderValue]) -> Option<HeaderValue> {
+    if existing.is_empty() {
+        return Some(HeaderValue::from_static("Cookie"));
     }
+
+    let mut parts: Vec<&str> = Vec::new();
+    for value in existing {
+        // A `Vary` we cannot even read is not one we can safely rewrite;
+        // leaving it intact beats replacing it with a guess.
+        let value = value.to_str().ok()?;
+        parts.extend(value.split(',').map(str::trim).filter(|p| !p.is_empty()));
+    }
+
+    if parts
+        .iter()
+        .any(|p| *p == "*" || p.eq_ignore_ascii_case("cookie"))
+    {
+        return None;
+    }
+
+    parts.push("Cookie");
+    HeaderValue::from_str(&parts.join(", ")).ok()
 }
 
 #[cfg(test)]
@@ -200,6 +237,66 @@ mod tests {
             response.headers().get(header::VARY).unwrap(),
             "Accept-Encoding, Cookie"
         );
+    }
+
+    #[test]
+    fn does_not_repeat_an_existing_cookie_vary() {
+        let response = response_with_header(header::VARY, "Accept-Encoding, Cookie");
+
+        let response = apply(true, response);
+
+        assert_eq!(
+            response.headers().get(header::VARY).unwrap(),
+            "Accept-Encoding, Cookie",
+            "Cookie is already covered; appending it again is pure noise"
+        );
+    }
+
+    #[test]
+    fn matches_an_existing_cookie_vary_case_insensitively() {
+        // Field values are compared case-insensitively by caches, so `cookie`
+        // must count as already covered.
+        let response = response_with_header(header::VARY, "cookie");
+
+        let response = apply(true, response);
+
+        assert_eq!(response.headers().get(header::VARY).unwrap(), "cookie");
+    }
+
+    #[test]
+    fn leaves_a_wildcard_vary_alone() {
+        // `Vary: *` is already the strongest possible statement; narrowing it
+        // to `*, Cookie` adds nothing.
+        let response = response_with_header(header::VARY, "*");
+
+        let response = apply(true, response);
+
+        assert_eq!(response.headers().get(header::VARY).unwrap(), "*");
+    }
+
+    #[test]
+    fn merges_multiple_vary_header_lines() {
+        // Regression: reading only the first `Vary` with `HeaderMap::get` and
+        // then `insert`ing the result replaced *all* of them, so a response
+        // carrying two `Vary` lines silently lost one — a shared cache would
+        // then key on the wrong set of request headers.
+        let mut response = plain_response();
+        response
+            .headers_mut()
+            .append(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+        response
+            .headers_mut()
+            .append(header::VARY, HeaderValue::from_static("Accept-Language"));
+
+        let response = apply(true, response);
+
+        let values: Vec<_> = response
+            .headers()
+            .get_all(header::VARY)
+            .iter()
+            .map(|v| v.to_str().unwrap())
+            .collect();
+        assert_eq!(values, vec!["Accept-Encoding, Accept-Language, Cookie"]);
     }
 
     #[test]

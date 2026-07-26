@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde_json::json;
@@ -116,8 +116,12 @@ pub enum AppError {
     /// deliberately generic: it must read identically whether the username
     /// does not exist, the password was wrong, or the account is disabled,
     /// so a throttled attacker learns nothing about which of those is true.
+    ///
+    /// `retry_after_secs` is what remains of the limiter's current fixed
+    /// window, echoed back as a `Retry-After` header so a well-behaved client
+    /// can wait exactly that long instead of guessing — or hammering.
     #[error("Too many requests")]
-    TooManyRequests,
+    TooManyRequests { retry_after_secs: u64 },
 }
 
 impl IntoResponse for AppError {
@@ -165,7 +169,17 @@ impl IntoResponse for AppError {
                 return (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response();
             }
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"),
-            AppError::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, "Too many requests"),
+            AppError::TooManyRequests { retry_after_secs } => {
+                // RFC 6585 §4: a 429 "SHOULD" say when to come back. Returned
+                // early rather than through the shared tail below, which has
+                // no way to attach a header.
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [(header::RETRY_AFTER, retry_after_secs.to_string())],
+                    Json(json!({ "error": "Too many requests" })),
+                )
+                    .into_response();
+            }
         };
 
         (status, Json(json!({ "error": message }))).into_response()
@@ -439,9 +453,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_too_many_requests_response() {
-        let err = AppError::TooManyRequests;
+        let err = AppError::TooManyRequests {
+            retry_after_secs: 42,
+        };
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        // RFC 6585 §4: the client must be told when to come back.
+        assert_eq!(
+            response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .expect("a 429 must carry Retry-After"),
+            "42"
+        );
         let body = get_response_body(response).await;
         assert!(body.contains("Too many requests"));
     }

@@ -2939,6 +2939,64 @@ async fn test_password_change_revokes_api_tokens() {
 }
 
 #[tokio::test]
+async fn test_password_change_is_rate_limited() {
+    // Changing a password verifies the *current* one with Argon2. The caller
+    // already holds a session, so this is not a way in from outside — but
+    // unthrottled it lets a hijacked session brute-force the original
+    // password, and lets any logged-in user spend server CPU at will.
+    //
+    // Asserted the strong way: once the budget is spent, even the CORRECT
+    // current password is refused. That can only hold if the limiter runs
+    // *before* `verify_password`.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    for _ in 0..5 {
+        app.server
+            .post("/user-settings/password")
+            .form(&json!({
+                "current_password": "wrongpassword",
+                "new_password": "newpassword456",
+                "confirm_password": "newpassword456",
+            }))
+            .await;
+    }
+
+    app.server
+        .post("/user-settings/password")
+        .form(&json!({
+            "current_password": "password123",
+            "new_password": "newpassword456",
+            "confirm_password": "newpassword456",
+        }))
+        .await;
+
+    // The throttled attempt must not have changed anything: the original
+    // password still verifies, the new one does not exist.
+    let user = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .expect("user must exist");
+    assert!(
+        rdrs::auth::verify_password("password123", &user.password_hash),
+        "a throttled request must not have changed the password"
+    );
+
+    // And the change-password budget is its own: exhausting it above must not
+    // have locked this client out of logging in.
+    let login = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "testuser", "password": "password123" }))
+        .await;
+    assert_ne!(
+        login.status_code(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "the password-change bucket must not spend the login budget"
+    );
+}
+
+#[tokio::test]
 async fn test_revoke_others_does_not_touch_api_tokens() {
     // "Sign out other sessions" means browser sessions specifically — see the
     // comment on `revoke_other_sessions_form`. A GReader client's token must

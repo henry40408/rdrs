@@ -154,9 +154,10 @@ pub async fn start_authentication(
     // first thing, before any database query.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
-    if !state
+    if let Some(retry_after_secs) = state
         .login_rate_limiter
         .try_acquire(Bucket::PasskeyProbe, ip)
+        .retry_after_secs()
     {
         tracing::warn!(%ip, bucket = ?Bucket::PasskeyProbe, endpoint = "POST /api/passkey/auth/start", "credential attempt rate limited");
         audit::login_rate_limited(
@@ -164,7 +165,7 @@ pub async fn start_authentication(
             "passkey_probe",
             &ip.to_string(),
         );
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
     let all_passkeys = passkey::get_all_passkeys(&state.db).await?;
@@ -233,10 +234,14 @@ pub async fn finish_authentication(
     // must run before any work an attacker's guess could otherwise spend.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
-    if !state.login_rate_limiter.try_acquire(Bucket::Login, ip) {
+    if let Some(retry_after_secs) = state
+        .login_rate_limiter
+        .try_acquire(Bucket::Login, ip)
+        .retry_after_secs()
+    {
         tracing::warn!(%ip, bucket = ?Bucket::Login, endpoint = "POST /api/passkey/auth/finish", "credential attempt rate limited");
         audit::login_rate_limited("POST /api/passkey/auth/finish", "login", &ip.to_string());
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
     // Find and consume the challenge

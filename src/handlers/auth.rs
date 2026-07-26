@@ -57,13 +57,16 @@ pub async fn register(
     // the budget back.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
-    if !state.login_rate_limiter.try_acquire(Bucket::Register, ip) {
+    if let Some(retry_after_secs) = state
+        .login_rate_limiter
+        .try_acquire(Bucket::Register, ip)
+        .retry_after_secs()
+    {
         tracing::warn!(%ip, bucket = ?Bucket::Register, endpoint = "POST /api/register", "credential attempt rate limited");
         audit::login_rate_limited("POST /api/register", "register", &ip.to_string());
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
-    let can_register = state.config.can_register(0); // We check count below
     let config = state.config.clone();
     let password_hash = hash_password(&req.password)?;
 
@@ -85,9 +88,6 @@ pub async fn register(
     // without first creating a category. Matches the "Uncategorized"
     // convention used by OPML import and the GReader subscription API.
     category::create_category(&state.db, user.id, "Uncategorized").await?;
-
-    // Suppress unused variable warning
-    let _ = can_register;
 
     Ok((
         StatusCode::CREATED,
@@ -129,10 +129,14 @@ pub async fn login(
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
     let user_agent = request_user_agent(&headers);
-    if !state.login_rate_limiter.try_acquire(Bucket::Login, ip) {
+    if let Some(retry_after_secs) = state
+        .login_rate_limiter
+        .try_acquire(Bucket::Login, ip)
+        .retry_after_secs()
+    {
         tracing::warn!(%ip, bucket = ?Bucket::Login, endpoint = "POST /api/session", "credential attempt rate limited");
         audit::login_rate_limited("POST /api/session", "login", &ip.to_string());
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
     let Some(user) = user::find_by_username(&state.db, &req.username).await? else {

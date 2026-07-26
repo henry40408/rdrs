@@ -46,33 +46,46 @@ pub fn start_cleanup_worker(
                     break;
                 }
                 _ = interval.tick() => {
-                    tracing::debug!("Running cleanup sweep...");
-
-                    // Independent `match`es (not the previous `continue`-on-error
-                    // shape): a failure in one sweep must not skip the other.
-                    match entry_summary::delete_expired(&db, ttl_hours).await {
-                        Ok(n) if n > 0 => tracing::info!("Cleaned up {n} expired summaries"),
-                        Ok(_) => {}
-                        Err(e) => tracing::error!("Failed to cleanup expired summaries: {e}"),
-                    }
-
-                    match session::delete_expired(&db).await {
-                        Ok(n) if n > 0 => tracing::info!("Swept {n} expired sessions"),
-                        Ok(_) => {}
-                        Err(e) => tracing::error!("Failed to sweep expired sessions: {e}"),
-                    }
-
-                    match api_token::delete_expired(&db).await {
-                        Ok(n) if n > 0 => tracing::info!("Swept {n} expired API tokens"),
-                        Ok(_) => {}
-                        Err(e) => tracing::error!("Failed to sweep expired API tokens: {e}"),
-                    }
+                    run_sweeps(&db, ttl_hours).await;
                 }
             }
         }
 
         tracing::info!("Summary cleanup worker stopped");
     })
+}
+
+/// One cleanup pass: expired summaries, expired sessions, expired API tokens.
+///
+/// Extracted from the worker's `select!` arm so it can be driven directly by a
+/// test — the independence property below is otherwise unobservable, since a
+/// test that calls each `delete_expired` itself would pass just as happily
+/// against a `continue`-on-error chain.
+///
+/// Each sweep gets its own `match` rather than a `?` or a `continue`: a
+/// failure in one must not skip the others. A broken `entry_summary` table
+/// silently halting session and token expiry would turn one bug into an
+/// unbounded credential lifetime.
+async fn run_sweeps(db: &Db, ttl_hours: i64) {
+    tracing::debug!("Running cleanup sweep...");
+
+    match entry_summary::delete_expired(db, ttl_hours).await {
+        Ok(n) if n > 0 => tracing::info!("Cleaned up {n} expired summaries"),
+        Ok(_) => {}
+        Err(e) => tracing::error!("Failed to cleanup expired summaries: {e}"),
+    }
+
+    match session::delete_expired(db).await {
+        Ok(n) if n > 0 => tracing::info!("Swept {n} expired sessions"),
+        Ok(_) => {}
+        Err(e) => tracing::error!("Failed to sweep expired sessions: {e}"),
+    }
+
+    match api_token::delete_expired(db).await {
+        Ok(n) if n > 0 => tracing::info!("Swept {n} expired API tokens"),
+        Ok(_) => {}
+        Err(e) => tracing::error!("Failed to sweep expired API tokens: {e}"),
+    }
 }
 
 #[cfg(test)]
@@ -330,6 +343,62 @@ mod tests {
                 .await
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_a_failing_sweep_does_not_skip_the_others() {
+        // The property the three separate `match`es exist for. Every other
+        // test in this file calls `delete_expired` directly, so all of them
+        // would pass unchanged against a `continue`-on-error chain; this one
+        // drives the real per-tick body with one sweep guaranteed to fail.
+        let db = setup_db().await;
+        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap()
+            .id;
+
+        let expired_session = session::create_session(&db, user_id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+        db_execute!(
+            &db,
+            "UPDATE session SET expires_at = datetime('now', '-1 hours') WHERE id = $1",
+            expired_session.id,
+        )
+        .unwrap();
+
+        let expired_token =
+            api_token::create_api_token(&db, user_id, "greader", "", "test-agent", "127.0.0.1")
+                .await
+                .unwrap();
+        db_execute!(
+            &db,
+            "UPDATE api_token SET expires_at = datetime('now', '-1 hours') WHERE id = $1",
+            expired_token.id,
+        )
+        .unwrap();
+
+        // Break the *first* sweep specifically: it runs before the other two,
+        // so if an error propagated instead of being logged and swallowed,
+        // neither of the assertions below could hold.
+        db_execute!(&db, "DROP TABLE entry_summary").unwrap();
+
+        run_sweeps(&db, 24).await;
+
+        assert!(
+            session::find_by_token(&db, &expired_session.session_token)
+                .await
+                .unwrap()
+                .is_none(),
+            "the session sweep must still run after the summary sweep failed"
+        );
+        assert!(
+            api_token::find_by_token(&db, &expired_token.token)
+                .await
+                .unwrap()
+                .is_none(),
+            "the api_token sweep must still run after the summary sweep failed"
         );
     }
 }

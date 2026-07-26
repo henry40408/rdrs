@@ -56,6 +56,40 @@ pub enum Bucket {
     /// Passkey ceremony *start*: cheap, unauthenticated, and enumerable, so it
     /// gets its own budget rather than spending the login one.
     PasskeyProbe,
+    /// "Change password", which verifies the *current* password. The caller
+    /// already holds a session for the account, so this is not a way in from
+    /// outside — but an unthrottled Argon2 verify still lets a hijacked
+    /// session brute-force the original password (valuable for credential
+    /// reuse elsewhere) and lets any logged-in user spend server CPU at will.
+    PasswordChange,
+}
+
+/// The outcome of [`RateLimiter::try_acquire`].
+///
+/// Deliberately not a `bool`: the caller needs the remaining window length to
+/// put in a `Retry-After` header, and computing that in a second call would
+/// both take the lock twice and race with a window that resets in between.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    /// The attempt was reserved and may proceed.
+    Allowed,
+    /// The budget is spent. `retry_after_secs` is how long the current fixed
+    /// window still has to run.
+    Throttled { retry_after_secs: u64 },
+}
+
+impl Decision {
+    /// How long to wait before retrying, or `None` when the attempt was
+    /// allowed. Shaped as an `Option` so a caller can write
+    /// `if let Some(secs) = ...try_acquire(...).retry_after_secs()`, which
+    /// keeps the reject path and the number it needs in one place.
+    #[must_use]
+    pub fn retry_after_secs(self) -> Option<u64> {
+        match self {
+            Self::Allowed => None,
+            Self::Throttled { retry_after_secs } => Some(retry_after_secs),
+        }
+    }
 }
 
 /// A fixed-window rate limiter keyed by `(Bucket, IpAddr)`.
@@ -136,16 +170,16 @@ impl RateLimiter {
     ///
     /// Call this *before* any database query or password verification for
     /// the request; that ordering is the entire point of the limiter. On
-    /// `true`, the caller has spent one of `(bucket, ip)`'s attempts for this
-    /// window — if the credential check goes on to succeed, call
-    /// [`RateLimiter::release`] to hand it back.
-    pub fn try_acquire(&self, bucket: Bucket, ip: IpAddr) -> bool {
+    /// [`Decision::Allowed`], the caller has spent one of `(bucket, ip)`'s
+    /// attempts for this window — if the credential check goes on to succeed,
+    /// call [`RateLimiter::release`] to hand it back.
+    pub fn try_acquire(&self, bucket: Bucket, ip: IpAddr) -> Decision {
         // Disabled: every request proceeds. Without this early return the
         // generic `slot.0 >= self.max_attempts` comparison below would block
         // every single request once `max_attempts` is 0, the opposite of
         // "disabled".
         if self.max_attempts == 0 {
-            return true;
+            return Decision::Allowed;
         }
 
         let idx = self.slot_index(bucket, ip);
@@ -157,19 +191,25 @@ impl RateLimiter {
         let mut slots = self.guard();
         let slot = &mut slots[idx];
 
-        if slot.1.elapsed().as_secs() >= self.window_secs {
+        let elapsed = slot.1.elapsed().as_secs();
+        if elapsed >= self.window_secs {
             // The window has elapsed: start a fresh one with this attempt as
             // the first count in it, regardless of what the stale count was.
             *slot = (1, Instant::now());
-            return true;
+            return Decision::Allowed;
         }
 
         if slot.0 >= self.max_attempts {
-            return false;
+            // What is left of the current fixed window. Floored at 1: a
+            // `Retry-After: 0` invites an immediate retry that is certain to
+            // be rejected again, which is worse than no header at all.
+            return Decision::Throttled {
+                retry_after_secs: self.window_secs.saturating_sub(elapsed).max(1),
+            };
         }
 
         slot.0 += 1;
-        true
+        Decision::Allowed
     }
 
     /// Hand back the attempt reserved by [`RateLimiter::try_acquire`], after
@@ -206,14 +246,21 @@ mod tests {
         IpAddr::V4(Ipv4Addr::new(203, 0, 113, last))
     }
 
+    /// Most of these tests only care whether the attempt got through, not how
+    /// long the caller was told to wait; the `Retry-After` value itself is
+    /// asserted separately in `throttling_reports_the_remaining_window`.
+    fn allowed(decision: Decision) -> bool {
+        decision == Decision::Allowed
+    }
+
     #[test]
     fn allows_up_to_max_then_blocks() {
         let limiter = RateLimiter::new(5, 60);
         let ip = ipv4(1);
         for _ in 0..5 {
-            assert!(limiter.try_acquire(Bucket::Login, ip));
+            assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
         }
-        assert!(!limiter.try_acquire(Bucket::Login, ip));
+        assert!(!allowed(limiter.try_acquire(Bucket::Login, ip)));
     }
 
     #[test]
@@ -225,8 +272,8 @@ mod tests {
         // reachable here, exercising the limiter directly.
         let limiter = RateLimiter::new(1, 0);
         let ip = ipv4(2);
-        assert!(limiter.try_acquire(Bucket::Login, ip));
-        assert!(limiter.try_acquire(Bucket::Login, ip));
+        assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
+        assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
     }
 
     #[test]
@@ -235,12 +282,12 @@ mod tests {
         let v4: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 3));
         let v6: IpAddr = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 3));
 
-        assert!(limiter.try_acquire(Bucket::Login, v4));
-        assert!(!limiter.try_acquire(Bucket::Login, v4));
+        assert!(allowed(limiter.try_acquire(Bucket::Login, v4)));
+        assert!(!allowed(limiter.try_acquire(Bucket::Login, v4)));
 
         // A different address (even a different family) gets its own budget.
-        assert!(limiter.try_acquire(Bucket::Login, v6));
-        assert!(!limiter.try_acquire(Bucket::Login, v6));
+        assert!(allowed(limiter.try_acquire(Bucket::Login, v6)));
+        assert!(!allowed(limiter.try_acquire(Bucket::Login, v6)));
     }
 
     #[test]
@@ -248,12 +295,12 @@ mod tests {
         let limiter = RateLimiter::new(2, 60);
         let ip = ipv4(4);
         for _ in 0..10 {
-            assert!(limiter.try_acquire(Bucket::Login, ip));
+            assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
             limiter.release(Bucket::Login, ip);
         }
         // Every reservation was released, so ten cycles through a budget of 2
         // never exhaust it — a further attempt must still be admitted.
-        assert!(limiter.try_acquire(Bucket::Login, ip));
+        assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
     }
 
     #[test]
@@ -261,7 +308,7 @@ mod tests {
         let limiter = RateLimiter::new(0, 60);
         let ip = ipv4(5);
         for _ in 0..1000 {
-            assert!(limiter.try_acquire(Bucket::Login, ip));
+            assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
         }
     }
 
@@ -277,10 +324,10 @@ mod tests {
         let limiter = RateLimiter::new(2, 60);
 
         let victim = ipv4(200);
-        assert!(limiter.try_acquire(Bucket::Login, victim));
-        assert!(limiter.try_acquire(Bucket::Login, victim));
+        assert!(allowed(limiter.try_acquire(Bucket::Login, victim)));
+        assert!(allowed(limiter.try_acquire(Bucket::Login, victim)));
         assert!(
-            !limiter.try_acquire(Bucket::Login, victim),
+            !allowed(limiter.try_acquire(Bucket::Login, victim)),
             "victim should be throttled"
         );
 
@@ -289,12 +336,12 @@ mod tests {
         for i in 0..25_000u32 {
             let v4 = IpAddr::V4(std::net::Ipv4Addr::from(i.to_be_bytes()));
             let v6 = IpAddr::V6(std::net::Ipv6Addr::from(u128::from(i)));
-            limiter.try_acquire(Bucket::Login, v4);
-            limiter.try_acquire(Bucket::Login, v6);
+            allowed(limiter.try_acquire(Bucket::Login, v4));
+            allowed(limiter.try_acquire(Bucket::Login, v6));
         }
 
         assert!(
-            !limiter.try_acquire(Bucket::Login, victim),
+            !allowed(limiter.try_acquire(Bucket::Login, victim)),
             "victim must remain throttled after an unrelated spray"
         );
 
@@ -307,12 +354,73 @@ mod tests {
         // thing this asserts is that it is throttled at all within a few
         // attempts, never indefinitely admitted.
         let fresh = ipv4(201);
-        let throttled = (0..5).any(|_| !limiter.try_acquire(Bucket::Login, fresh));
+        let throttled = (0..5).any(|_| !allowed(limiter.try_acquire(Bucket::Login, fresh)));
         assert!(
             throttled,
             "a fresh IP arriving after a wide spray must still be throttled eventually, \
              not admitted forever the way the old capped-HashMap design admitted it"
         );
+    }
+
+    #[test]
+    fn throttling_reports_the_remaining_window() {
+        let limiter = RateLimiter::new(1, 60);
+        let ip = ipv4(10);
+
+        assert_eq!(limiter.try_acquire(Bucket::Login, ip), Decision::Allowed);
+
+        // The window opened moments ago, so essentially all 60s remain. The
+        // exact value depends on how long this test took to reach here, hence
+        // a range rather than an equality.
+        let secs = limiter
+            .try_acquire(Bucket::Login, ip)
+            .retry_after_secs()
+            .expect("a throttled attempt must carry a retry-after");
+        assert!(
+            (1..=60).contains(&secs),
+            "retry-after must be within the window, got {secs}"
+        );
+    }
+
+    #[test]
+    fn retry_after_is_never_zero() {
+        // A 1-second window observed just before it elapses would otherwise
+        // compute `1 - 1 = 0`, telling the client to retry immediately into a
+        // rejection. The floor keeps the advice honest.
+        let limiter = RateLimiter::new(1, 1);
+        let ip = ipv4(11);
+        assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
+
+        if let Some(secs) = limiter.try_acquire(Bucket::Login, ip).retry_after_secs() {
+            assert!(secs >= 1, "retry-after must never be zero, got {secs}");
+        }
+        // If the window already elapsed the attempt is allowed instead, which
+        // is equally correct — there is nothing to assert in that case.
+    }
+
+    #[test]
+    fn allowed_attempts_carry_no_retry_after() {
+        let limiter = RateLimiter::new(5, 60);
+        assert_eq!(
+            limiter
+                .try_acquire(Bucket::Login, ipv4(12))
+                .retry_after_secs(),
+            None
+        );
+    }
+
+    #[test]
+    fn password_change_has_its_own_budget() {
+        // Exhausting the change-password budget must not stop the same client
+        // from logging in, and vice versa — the whole point of a separate
+        // bucket.
+        let limiter = RateLimiter::new(1, 60);
+        let ip = ipv4(13);
+
+        assert!(allowed(limiter.try_acquire(Bucket::PasswordChange, ip)));
+        assert!(!allowed(limiter.try_acquire(Bucket::PasswordChange, ip)));
+
+        assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
     }
 
     #[test]
@@ -323,12 +431,12 @@ mod tests {
         let ip = ipv4(6);
 
         for _ in 0..5 {
-            assert!(limiter.try_acquire(Bucket::Register, ip));
+            assert!(allowed(limiter.try_acquire(Bucket::Register, ip)));
         }
-        assert!(!limiter.try_acquire(Bucket::Register, ip));
+        assert!(!allowed(limiter.try_acquire(Bucket::Register, ip)));
 
         // Login for the same IP is untouched.
-        assert!(limiter.try_acquire(Bucket::Login, ip));
+        assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
     }
 
     #[test]
@@ -336,16 +444,16 @@ mod tests {
         let limiter = RateLimiter::new(1, 60);
         let ip = ipv4(7);
 
-        assert!(limiter.try_acquire(Bucket::Login, ip));
+        assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
         limiter.release(Bucket::Login, ip);
         // Login is refunded and admits another attempt...
-        assert!(limiter.try_acquire(Bucket::Login, ip));
+        assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
 
         // ...but Register for the same IP was never touched, so it is
         // exhausted by its own single attempt, independent of the Login
         // release above.
-        assert!(limiter.try_acquire(Bucket::Register, ip));
-        assert!(!limiter.try_acquire(Bucket::Register, ip));
+        assert!(allowed(limiter.try_acquire(Bucket::Register, ip)));
+        assert!(!allowed(limiter.try_acquire(Bucket::Register, ip)));
     }
 
     #[test]
@@ -364,7 +472,7 @@ mod tests {
                 let barrier = Arc::clone(&barrier);
                 thread::spawn(move || {
                     barrier.wait();
-                    limiter.try_acquire(Bucket::Login, ip)
+                    allowed(limiter.try_acquire(Bucket::Login, ip))
                 })
             })
             .collect();

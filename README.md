@@ -108,6 +108,12 @@ All configuration is done via environment variables.
 > old tokens would in practice be left on forever, which is the same as not
 > having made the change.
 >
+> Each account keeps at most 20 of these tokens; a new one past that evicts
+> the oldest. `ClientLogin` mints a row per call, so a client that
+> re-authenticates every sync instead of caching its `Auth=` token would
+> otherwise grow the table without bound. Twenty is well beyond the handful of
+> devices a real user syncs from.
+>
 > `DATABASE_URL` is the exception and keeps its bare name: it is a genuine
 > cross-tool convention. The rest only looked generic — `USER_AGENT` and
 > `SERVER_BIND` were rdrs's own names all along, which is exactly what made them
@@ -126,7 +132,7 @@ All configuration is done via environment variables.
 | `RDRS_HSTS` | Derived from `RDRS_PUBLIC_BASE_URL` | Send `Strict-Transport-Security` on every response. Defaults to on when `RDRS_PUBLIC_BASE_URL` starts with `https://`, off otherwise, mirroring `RDRS_COOKIE_SECURE`. Only `true`/`false`/`1`/`0` are accepted — anything else fails startup rather than silently guessing. HSTS is sticky: once a browser sees it, that browser refuses plain HTTP to this host for the whole `RDRS_HSTS_MAX_AGE`, and the server has no way to retract it instantly. Leave this unset (or `false`) for a plain-HTTP internal deployment — turning it on by accident can lock users out with no server-side fix. |
 | `RDRS_HSTS_MAX_AGE` | `31536000` (1 year) | HSTS `max-age` in seconds. `0` is the documented recovery path for a mis-set HSTS declaration: it tells a browser that already cached the header to forget it, which is how you undo `RDRS_HSTS` having been on by mistake — plain omission does not do this, since a browser that already saw the header keeps enforcing HTTPS until `max-age` naturally expires. |
 | `RDRS_HSTS_INCLUDE_SUBDOMAINS` | `true` | Append `; includeSubDomains` to the HSTS header. **Warning:** if `RDRS_PUBLIC_BASE_URL` is an apex domain (`example.com`) rather than a subdomain (`rdrs.example.com`), this forces HTTPS on *every* subdomain of that registrable domain, not just the one rdrs serves. Set `false` to scope the declaration to rdrs's own host. The header never includes `preload`: joining the browser preload list is effectively irreversible, so that opt-in is left to your reverse proxy. |
-| `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS` | `5` | Attempts allowed per client IP per window for each credential-endpoint class (password login, registration, passkey ceremonies) — each class has its own budget. `0` disables the limiter. |
+| `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS` | `5` | Attempts allowed per client IP per window for each credential-endpoint class (password login, registration, passkey ceremonies, and changing a password) — each class has its own budget, so exhausting one never locks you out of another. A throttled request answers `429` with a `Retry-After` giving the seconds left in the window. `0` disables the limiter. |
 | `RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS` | `60` | Fixed window length in seconds. Must be ≥ 1. |
 | `RDRS_USER_AGENT` | `RDRS/...` | Custom user agent for feed fetching |
 | `RDRS_WEBAUTHN_RP_ID` | `localhost` | WebAuthn Relying Party ID for passkey authentication |
