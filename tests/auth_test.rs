@@ -289,6 +289,40 @@ async fn test_login_rate_limited_after_five_failures() {
 }
 
 #[tokio::test]
+async fn test_throttled_response_carries_retry_after() {
+    // RFC 6585 §4: a 429 must tell the client when to come back, so a
+    // well-behaved one waits instead of hammering. The value is what remains
+    // of the limiter's current fixed window, so it can only be bounded here,
+    // not pinned to an exact number.
+    let (server, db) = build_server(default_test_config()).await;
+    create_user_directly(&db, "admin", "password123").await;
+
+    for _ in 0..5 {
+        server
+            .post("/api/session")
+            .json(&json!({ "username": "admin", "password": "wrongpassword" }))
+            .await;
+    }
+
+    let response = server
+        .post("/api/session")
+        .json(&json!({ "username": "admin", "password": "wrongpassword" }))
+        .await;
+    response.assert_status(StatusCode::TOO_MANY_REQUESTS);
+
+    let retry_after: u64 = response
+        .header(header::RETRY_AFTER)
+        .to_str()
+        .expect("Retry-After must be printable")
+        .parse()
+        .expect("Retry-After must be a delay in seconds");
+    assert!(
+        (1..=60).contains(&retry_after),
+        "Retry-After must fall inside the 60s window and never be 0, got {retry_after}"
+    );
+}
+
+#[tokio::test]
 async fn test_login_rate_limit_does_not_leak_valid_credentials() {
     // Proves the rate-limit check runs before `verify_password`: once the
     // budget is exhausted, even the CORRECT password gets 429, not 200 or

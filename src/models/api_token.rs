@@ -23,6 +23,19 @@ pub const API_TOKEN_IDLE_DAYS: i64 = 90;
 /// and can never be confused with a session token.
 pub const API_TOKEN_PREFIX: &str = "rdrs_gr_";
 
+/// Most tokens one account may hold at once.
+///
+/// `ClientLogin` mints a fresh row on every successful call, and the limiter
+/// refunds its reservation on success (so legitimate repeat logins are not
+/// punished) — which together mean *successful* `ClientLogin` is effectively
+/// unthrottled. Without a cap, a client that re-authenticates every sync cycle
+/// instead of caching its `Auth=` token grows this table without bound, each
+/// row surviving up to [`API_TOKEN_IDLE_DAYS`], and takes the unpaginated list
+/// on `/user-settings` with it. Twenty is far more than the handful of devices
+/// a real user syncs from, so the cap is invisible in normal use and only
+/// bites the runaway case.
+pub const MAX_TOKENS_PER_USER: i64 = 20;
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ApiToken {
     pub id: i64,
@@ -74,7 +87,7 @@ pub async fn create_api_token(
     let now = Utc::now();
     let expires_at = now + Duration::days(API_TOKEN_IDLE_DAYS);
 
-    query_one!(
+    let created = query_one!(
         db,
         ApiToken,
         "INSERT INTO api_token (user_id, token, kind, label, expires_at, last_seen_at, user_agent, ip_address) \
@@ -89,7 +102,37 @@ pub async fn create_api_token(
         user_agent,
         ip_address
     )
-    .map_err(AppError::Database)
+    .map_err(AppError::Database)?;
+
+    // Enforced here rather than by the caller so the invariant cannot be
+    // forgotten at a future call site, and *after* the insert so the row just
+    // minted is always among the survivors — it is the one the caller is
+    // about to hand out.
+    prune_user_tokens(db, user_id).await?;
+
+    Ok(created)
+}
+
+/// Delete everything past [`MAX_TOKENS_PER_USER`] for `user_id`, oldest first.
+///
+/// Ordered the same way [`list_user_tokens`] presents them, with `id` breaking
+/// ties: two `ClientLogin` calls landing in the same clock tick would
+/// otherwise have no deterministic order, and on `SQLite` (second-resolution
+/// `created_at` text) that is not a rare edge — it is what a client
+/// re-authenticating in a loop actually produces.
+async fn prune_user_tokens(db: &Db, user_id: i64) -> AppResult<()> {
+    db_execute!(
+        db,
+        "DELETE FROM api_token WHERE user_id = $1 AND id NOT IN (\
+           SELECT id FROM api_token WHERE user_id = $2 \
+           ORDER BY created_at DESC, id DESC LIMIT $3\
+         )",
+        user_id,
+        user_id,
+        MAX_TOKENS_PER_USER
+    )
+    .map_err(AppError::Database)?;
+    Ok(())
 }
 
 pub async fn find_by_token(db: &Db, token: &str) -> AppResult<Option<ApiToken>> {
@@ -327,5 +370,78 @@ mod tests {
             .compute_refreshed_expiry(now)
             .expect("a 400-day-old token must still be extended");
         assert_eq!(new_expires, now + Duration::days(API_TOKEN_IDLE_DAYS));
+    }
+
+    async fn mint(db: &Db, user_id: i64, label: &str) -> ApiToken {
+        create_api_token(db, user_id, "greader", label, "test-agent", "127.0.0.1")
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_create_prunes_past_the_per_user_cap() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "capuser", "hash", Role::User)
+            .await
+            .unwrap();
+
+        let overshoot = 5;
+        let mut minted = Vec::new();
+        for i in 0..(MAX_TOKENS_PER_USER + overshoot) {
+            minted.push(mint(&db, user.id, &format!("client-{i}")).await);
+        }
+
+        let listed = list_user_tokens(&db, user.id).await.unwrap();
+        assert_eq!(
+            listed.len(),
+            usize::try_from(MAX_TOKENS_PER_USER).unwrap(),
+            "the table must be capped, not grow with every ClientLogin"
+        );
+
+        // The token just minted is the one the caller is about to use, so it
+        // must never be the one evicted.
+        let newest = minted.last().unwrap();
+        assert!(
+            find_by_token(&db, &newest.token).await.unwrap().is_some(),
+            "the newest token must survive its own pruning pass"
+        );
+
+        // Eviction takes the oldest. These rows are all created within the
+        // same second on SQLite, so this also exercises the `id DESC`
+        // tiebreaker — without it the survivors would be arbitrary.
+        for old in minted.iter().take(usize::try_from(overshoot).unwrap()) {
+            assert!(
+                find_by_token(&db, &old.token).await.unwrap().is_none(),
+                "the oldest tokens must be evicted first"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pruning_never_touches_another_user() {
+        // The prune is a bulk DELETE driven by a subquery; getting its
+        // `user_id` scoping wrong would silently revoke a bystander's tokens.
+        let db = setup_db().await;
+        let victim = user::create_user(&db, "victim", "hash", Role::User)
+            .await
+            .unwrap();
+        let noisy = user::create_user(&db, "noisy", "hash", Role::User)
+            .await
+            .unwrap();
+
+        let victim_token = mint(&db, victim.id, "victim-client").await;
+
+        for i in 0..(MAX_TOKENS_PER_USER + 5) {
+            mint(&db, noisy.id, &format!("noisy-{i}")).await;
+        }
+
+        assert!(
+            find_by_token(&db, &victim_token.token)
+                .await
+                .unwrap()
+                .is_some(),
+            "another user blowing through the cap must not revoke this user's token"
+        );
+        assert_eq!(list_user_tokens(&db, victim.id).await.unwrap().len(), 1);
     }
 }

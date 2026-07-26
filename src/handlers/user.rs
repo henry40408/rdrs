@@ -1,7 +1,9 @@
+use std::net::SocketAddr;
+
 use axum::{
     Form, Json,
-    extract::{Path, State},
-    http::StatusCode,
+    extract::{ConnectInfo, Extension, Path, State},
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
@@ -10,8 +12,8 @@ use url::Url;
 use crate::AppState;
 use crate::auth::{hash_password, verify_password};
 use crate::error::{AppError, AppResult};
-use crate::middleware::AuthUser;
 use crate::middleware::flash::FlashRedirect;
+use crate::middleware::{AuthUser, Bucket};
 use crate::models::api_token;
 use crate::models::session;
 use crate::models::user;
@@ -376,6 +378,8 @@ pub struct ChangePasswordForm {
 pub async fn change_password_form(
     State(state): State<AppState>,
     auth_user: AuthUser,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Form(req): Form<ChangePasswordForm>,
 ) -> impl IntoResponse {
     if req.new_password != req.confirm_password {
@@ -389,9 +393,43 @@ pub async fn change_password_form(
         );
     }
 
+    // Reserved here rather than at the top of the handler: the two checks
+    // above are pure string comparisons, and a user fumbling "new passwords
+    // do not match" should not spend a credential-attempt budget. What needs
+    // guarding is the Argon2 `verify_password` immediately below — the caller
+    // already holds a session for this account, so this is not a way in from
+    // outside, but leaving it unthrottled would let a hijacked session
+    // brute-force the *original* password (useful for credential reuse
+    // elsewhere) and let any logged-in user spend server CPU at will.
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let ip = state.config.client_ip(peer, &headers);
+    if let Some(retry_after_secs) = state
+        .login_rate_limiter
+        .try_acquire(Bucket::PasswordChange, ip)
+        .retry_after_secs()
+    {
+        tracing::warn!(%ip, bucket = ?Bucket::PasswordChange, endpoint = "POST /user-settings/password", "credential attempt rate limited");
+        audit::login_rate_limited(
+            "POST /user-settings/password",
+            "password_change",
+            &ip.to_string(),
+        );
+        // An HTML form flow, so this reports through the flash rather than a
+        // 429 + `Retry-After`; the number is the same one that header carries.
+        return FlashRedirect::error(
+            "/user-settings",
+            format!("Too many attempts. Please try again in {retry_after_secs} seconds."),
+        );
+    }
+
     if !verify_password(&req.current_password, &auth_user.user.password_hash) {
         return FlashRedirect::error("/user-settings", "Current password is incorrect.");
     }
+
+    // Correct password: hand the reservation back, so a user who mistypes
+    // once and then succeeds is not left throttled — same rationale as the
+    // login endpoint.
+    state.login_rate_limiter.release(Bucket::PasswordChange, ip);
 
     let Ok(new_hash) = hash_password(&req.new_password) else {
         return FlashRedirect::error("/user-settings", "Failed to hash password.");

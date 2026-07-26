@@ -201,10 +201,14 @@ pub async fn client_login(
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
     let user_agent = request_user_agent(&headers);
-    if !state.login_rate_limiter.try_acquire(Bucket::Login, ip) {
+    if let Some(retry_after_secs) = state
+        .login_rate_limiter
+        .try_acquire(Bucket::Login, ip)
+        .retry_after_secs()
+    {
         tracing::warn!(%ip, bucket = ?Bucket::Login, endpoint = "POST /accounts/ClientLogin", "credential attempt rate limited");
         audit::login_rate_limited("POST /accounts/ClientLogin", "login", &ip.to_string());
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
     let Some(user) = user::find_by_username(&state.db, &username).await? else {
