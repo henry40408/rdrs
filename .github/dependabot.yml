@@ -1,5 +1,16 @@
 version: 2
 updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
@@ -8,7 +19,15 @@ updates:
       default-days: 7
     groups:
       cargo:
-        patterns: ["*"]
+        patterns:
+          - "*"
+
+  - package-ecosystem: "rust-toolchain"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: "docker"
     directory: "/"
@@ -18,17 +37,8 @@ updates:
       default-days: 7
     groups:
       docker:
-        patterns: ["*"]
-
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
-    groups:
-      actions:
-        patterns: ["*"]
+        patterns:
+          - "*"
 
   - package-ecosystem: "npm"
     directory: "/e2e"
@@ -38,4 +48,5 @@ updates:
       default-days: 7
     groups:
       npm:
-        patterns: ["*"]
+        patterns:
+          - "*"
