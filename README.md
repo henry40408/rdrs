@@ -104,9 +104,9 @@ All configuration is done via environment variables.
 > client's stored token stops working once and the client must run
 > `ClientLogin` again — mainstream clients (FeedMe, Read You) store your
 > username/password and do this automatically, so real-world impact is small.
-> Set `RDRS_GREADER_LEGACY_SESSION_TOKENS=true` to keep accepting old tokens
-> during a migration window (each use logs a deprecation warning); the flag is
-> slated for removal in the next release, so do not build on it long-term.
+> There is deliberately no opt-out: a migration flag that keeps honouring the
+> old tokens would in practice be left on forever, which is the same as not
+> having made the change.
 >
 > `DATABASE_URL` is the exception and keeps its bare name: it is a genuine
 > cross-tool convention. The rest only looked generic — `USER_AGENT` and
@@ -128,7 +128,6 @@ All configuration is done via environment variables.
 | `RDRS_HSTS_INCLUDE_SUBDOMAINS` | `true` | Append `; includeSubDomains` to the HSTS header. **Warning:** if `RDRS_PUBLIC_BASE_URL` is an apex domain (`example.com`) rather than a subdomain (`rdrs.example.com`), this forces HTTPS on *every* subdomain of that registrable domain, not just the one rdrs serves. Set `false` to scope the declaration to rdrs's own host. The header never includes `preload`: joining the browser preload list is effectively irreversible, so that opt-in is left to your reverse proxy. |
 | `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS` | `5` | Attempts allowed per client IP per window for each credential-endpoint class (password login, registration, passkey ceremonies) — each class has its own budget. `0` disables the limiter. |
 | `RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS` | `60` | Fixed window length in seconds. Must be ≥ 1. |
-| `RDRS_GREADER_LEGACY_SESSION_TOKENS` | `false` | **Breaking-change escape hatch, slated for removal.** When `true`, a GReader `Authorization` header token not found in `api_token` falls back to a raw (unsigned) lookup in `session` — the pre-upgrade behavior — and logs a deprecation warning on every fallback hit. Only `true`/`false`/`1`/`0` are accepted; a typo fails startup rather than silently leaving old clients locked out. See the upgrade note above. |
 | `RDRS_USER_AGENT` | `RDRS/...` | Custom user agent for feed fetching |
 | `RDRS_WEBAUTHN_RP_ID` | `localhost` | WebAuthn Relying Party ID for passkey authentication |
 | `RDRS_WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin URL |

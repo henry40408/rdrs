@@ -43,7 +43,6 @@ async fn create_test_app(_name: &str) -> TestApp {
         hsts: false,
         hsts_max_age: 31_536_000,
         hsts_include_subdomains: true,
-        greader_legacy_session_tokens: false,
     };
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);

@@ -285,6 +285,63 @@ async fn test_client_login_token_is_not_a_web_session() {
     assert!(sessions_after.is_empty());
 }
 
+/// The mirror image of the test above, and the invariant that removing the
+/// `RDRS_GREADER_LEGACY_SESSION_TOKENS` escape hatch makes unconditional: a
+/// real web session token presented in the `Authorization` header is never
+/// matched against `session`. Only the cookie path may carry a web session.
+#[tokio::test]
+async fn test_web_session_token_is_rejected_in_the_authorization_header() {
+    let app = create_test_app(default_test_config()).await;
+    create_user_directly(&app.db, "testuser", "password123").await;
+    let user_id = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+
+    // A genuine, unexpired web session — the exact value a pre-cutover
+    // GReader client would have had stored.
+    let session =
+        rdrs::models::session::create_session(&app.db, user_id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+
+    // Sent bare, the way ClientLogin used to hand it out.
+    let bare = app
+        .server
+        .get("/reader/api/0/subscription/list")
+        .add_header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("GoogleLogin auth={}", session.session_token)).unwrap(),
+        )
+        .await;
+    assert_eq!(bare.status_code(), StatusCode::UNAUTHORIZED);
+
+    // And signed, so this cannot pass merely because the raw value failed a
+    // signature check somewhere.
+    let config = default_test_config();
+    let signed = rdrs::secret::sign_session(&config.secret, &session.session_token);
+    let signed_response = app
+        .server
+        .get("/reader/api/0/subscription/list")
+        .add_header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("GoogleLogin auth={signed}")).unwrap(),
+        )
+        .await;
+    assert_eq!(signed_response.status_code(), StatusCode::UNAUTHORIZED);
+
+    // The session itself is still valid — the header path rejected it, not
+    // an expiry or a cleanup sweep.
+    let still_there = rdrs::models::session::find_by_token(&app.db, &session.session_token)
+        .await
+        .unwrap();
+    assert!(
+        still_there.is_some(),
+        "the session must survive: it was rejected as a header credential, not deleted"
+    );
+}
+
 #[tokio::test]
 async fn test_web_session_cookie_still_works_for_greader() {
     let app = create_test_app(default_test_config()).await;

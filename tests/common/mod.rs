@@ -67,6 +67,5 @@ pub fn default_test_config() -> Config {
         hsts: false,
         hsts_max_age: 31_536_000,
         hsts_include_subdomains: true,
-        greader_legacy_session_tokens: false,
     }
 }

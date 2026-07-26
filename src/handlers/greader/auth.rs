@@ -33,10 +33,9 @@ const POST_TOKEN_VALIDITY_SECS: i64 = 30 * 60;
 #[derive(Debug, Clone)]
 pub enum GReaderCredential {
     /// Web UI cookie path — the signature was already verified by
-    /// `session_token_from_jar`. Also backs the `RDRS_GREADER_LEGACY_SESSION_TOKENS`
-    /// escape hatch: a client still presenting a raw pre-upgrade session token
-    /// in the `Authorization` header resolves to this same variant, since it
-    /// really is a full session — see `validate_api_token`.
+    /// `session_token_from_jar`. This is the *only* way a `GReader` request
+    /// can carry a full web session: an `Authorization` header token is never
+    /// matched against `session`.
     Cookie(Session),
     /// Native client `ClientLogin` path — an independent `api_token` row.
     ApiToken(ApiToken),
@@ -90,23 +89,11 @@ impl FromRequestParts<AppState> for GReaderUser {
                         via_cookie: false,
                     });
                 }
-                // The escape hatch: an old client still holding a raw,
-                // pre-upgrade session token. Only tried when no api_token row
-                // matched — `AppError::UserDisabled` from a genuine api_token
-                // hit must not fall through to a second lookup.
-                Err(AppError::Unauthorized) if state.config.greader_legacy_session_tokens => {
-                    tracing::warn!(
-                        "GReader client authenticated with a legacy raw session token \
-                         (RDRS_GREADER_LEGACY_SESSION_TOKENS=true); run ClientLogin again \
-                         to mint an api_token and disable this flag once no client needs it"
-                    );
-                    let (session, user) = validate_token(state, &token).await?;
-                    return Ok(GReaderUser {
-                        user,
-                        credential: GReaderCredential::Cookie(session),
-                        via_cookie: false,
-                    });
-                }
+                // A header token that is not an `api_token` row is simply
+                // rejected. It is deliberately *not* retried against
+                // `session`: that coupling is what this table exists to
+                // remove, and a migration window for it would in practice
+                // just be left switched on forever.
                 Err(e) => return Err(e),
             }
         }
@@ -153,9 +140,8 @@ async fn validate_token(state: &AppState, token: &str) -> AppResult<(Session, Us
 /// Validate an `Authorization: GoogleLogin auth=<token>` value as an
 /// independent `api_token` row (not the raw `session.session_token` — that
 /// coupling is exactly what this table exists to remove). Returns
-/// `AppError::Unauthorized` when no row matches, which is also the signal the
-/// caller uses to decide whether to try the `RDRS_GREADER_LEGACY_SESSION_TOKENS`
-/// fallback.
+/// `AppError::Unauthorized` when no row matches; there is no fallback to
+/// `session`, so a pre-cutover client must re-run `ClientLogin`.
 async fn validate_api_token(state: &AppState, token: &str) -> AppResult<(ApiToken, User)> {
     let api_token = api_token::find_by_token(&state.db, token)
         .await?
