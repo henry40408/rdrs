@@ -343,23 +343,6 @@ pub fn create_router(state: AppState) -> Router {
             middleware::cache_control::no_store_for_authenticated,
         ));
 
-    // Strict-Transport-Security (OWASP Session Management Cheat Sheet,
-    // Transport Layer Security): only added when `Config` says the deployment
-    // is HTTPS (see `Config::hsts_header_value` for the derivation rule). The
-    // header value is built once here, where `config` is already in scope,
-    // rather than per response — and when it's `None` (the default), no layer
-    // is added at all, so a plain-HTTP deployment pays nothing for this.
-    let core = if let Some(header_value) = state.config.hsts_header_value() {
-        let value = axum::http::HeaderValue::from_str(&header_value)
-            .expect("hsts_header_value only ever produces a valid header value");
-        core.layer(axum::middleware::from_fn_with_state(
-            middleware::HstsState::new(value),
-            middleware::set_hsts,
-        ))
-    } else {
-        core
-    };
-
     let core = core
         .layer(middleware::ETagLayer::new())
         .layer(middleware::DateHeaderLayer::new())
@@ -407,10 +390,35 @@ pub fn create_router(state: AppState) -> Router {
             middleware::csrf::csrf_origin_guard,
         ));
 
-    Router::new()
+    let router = Router::new()
         // SSE lives outside the layers above. It still gets `state` via the
         // shared `.with_state` below.
         .route("/events", get(handlers::events::events_stream))
-        .merge(core)
-        .with_state(state)
+        .merge(core);
+
+    // Strict-Transport-Security (OWASP Session Management Cheat Sheet,
+    // Transport Layer Security): only added when `Config` says the deployment
+    // is HTTPS (see `Config::hsts_header_value` for the derivation rule). The
+    // header value is built once here, where `config` is already in scope,
+    // rather than per response — and when it's `None` (the default), no layer
+    // is added at all, so a plain-HTTP deployment pays nothing for this.
+    // Applied last — i.e. outermost, over both `core` and `/events` — because
+    // `forward_auth` and the CSRF guards short-circuit with a response
+    // without calling `next` on several paths (the forward-auth redirect that
+    // mints the session cookie, its "not authorized" redirect, and both
+    // guards' 403 rejections), so a layer nested inside them would never see
+    // those responses; `/events` sits outside `core` entirely and needs the
+    // same outermost coverage.
+    let router = if let Some(header_value) = state.config.hsts_header_value() {
+        let value = axum::http::HeaderValue::from_str(&header_value)
+            .expect("hsts_header_value only ever produces a valid header value");
+        router.layer(axum::middleware::from_fn_with_state(
+            middleware::HstsState::new(value),
+            middleware::set_hsts,
+        ))
+    } else {
+        router
+    };
+
+    router.with_state(state)
 }

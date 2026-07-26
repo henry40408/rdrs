@@ -117,6 +117,11 @@ pub fn session_token_from_jar(jar: &CookieJar, secret: &[u8]) -> Option<String> 
 /// `ANON_SKIP_PREFIXES` in `csrf.rs` — `/api` and `/reader` are *not* skipped
 /// here, since a pure-API or `GReader` client must still get its cookie's
 /// `Max-Age` renewed.
+///
+/// This prefix list is not the whole defence: two `/api` routes (the image
+/// proxy and the feed icon) are deliberately publicly cacheable and are
+/// *not* listed here, since `/api` at large must still be slid. Those are
+/// instead caught on the way out — see [`response_is_publicly_cacheable`].
 const SLIDE_SKIP_PREFIXES: &[&str] = &["/static", "/favicon", "/health"];
 
 /// Reissue the session and CSRF cookies on every authenticated request so
@@ -173,6 +178,17 @@ pub async fn slide_session_cookie(
     let secure = state.config.cookie_secure;
     let mut resp = next.run(req).await;
 
+    // A live session cookie must never ride on a response a shared cache is
+    // allowed to store — that cache would then hand this user's session to
+    // the next visitor it serves. `handlers::proxy::proxy_image` and
+    // `handlers::feed::get_feed_icon` deliberately mark their responses
+    // `public, max-age=...` (the image proxy also passes through whatever
+    // `Cache-Control` the upstream image server sent); skip the reissue
+    // entirely for those instead of trying to enumerate their paths.
+    if response_is_publicly_cacheable(&resp) {
+        return resp;
+    }
+
     if !response_has_set_cookie_for_any(&resp, &[SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST]) {
         append_set_cookie(&mut resp, &build_session_cookie(&token, secret, secure));
     }
@@ -216,6 +232,33 @@ fn response_has_set_cookie_for_any(resp: &Response, names: &[&str]) -> bool {
     names
         .iter()
         .any(|name| response_has_set_cookie_for(resp, name))
+}
+
+/// Whether `resp` declares itself storable by a *shared* cache, in which
+/// case a `Set-Cookie` must not be stapled to it. `no_store_for_authenticated`
+/// (`middleware::cache_control`) is layered *inside* this middleware (see
+/// `create_router`), so it has already run by the time a response reaches
+/// here: an ordinary authenticated response already carries `Cache-Control:
+/// no-store` from that inner layer, while the three deliberate
+/// public-caching call sites (`handlers::proxy::proxy_image`,
+/// `handlers::feed::get_feed_icon`) carry their own `public, max-age=...` —
+/// or, for the proxy, whatever the upstream sent — untouched by that layer.
+/// A response is "shared-cacheable" here whenever it carries a
+/// `Cache-Control` header whose directives include neither `no-store` nor
+/// `private`; an absent or non-UTF-8 header is treated as not cacheable, so
+/// the default is to still slide the cookie.
+fn response_is_publicly_cacheable(resp: &Response) -> bool {
+    let Some(value) = resp.headers().get(header::CACHE_CONTROL) else {
+        return false;
+    };
+    let Ok(value) = value.to_str() else {
+        return false;
+    };
+    value.split(',').all(|directive| {
+        let name = directive.split_once('=').map_or(directive, |(n, _)| n);
+        let name = name.trim();
+        !name.eq_ignore_ascii_case("no-store") && !name.eq_ignore_ascii_case("private")
+    })
 }
 
 /// Append `cookie` as a `Set-Cookie` header on `resp`.
@@ -532,6 +575,57 @@ mod tests {
             &resp,
             &[crate::middleware::CSRF_COOKIE_NAME, "__Host-csrf_token"]
         ));
+    }
+
+    fn resp_with_cache_control(value: &str) -> Response {
+        HttpResponse::builder()
+            .header(header::CACHE_CONTROL, value)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[test]
+    fn response_is_publicly_cacheable_false_when_no_cache_control_header() {
+        let resp = HttpResponse::builder().body(Body::empty()).unwrap();
+        assert!(!response_is_publicly_cacheable(&resp));
+    }
+
+    #[test]
+    fn response_is_publicly_cacheable_false_for_no_store() {
+        assert!(!response_is_publicly_cacheable(&resp_with_cache_control(
+            "no-store"
+        )));
+    }
+
+    #[test]
+    fn response_is_publicly_cacheable_false_for_private() {
+        assert!(!response_is_publicly_cacheable(&resp_with_cache_control(
+            "private, max-age=0"
+        )));
+    }
+
+    #[test]
+    fn response_is_publicly_cacheable_true_for_public_max_age() {
+        // The proxy's and feed icon's actual directive.
+        assert!(response_is_publicly_cacheable(&resp_with_cache_control(
+            "public, max-age=86400"
+        )));
+    }
+
+    #[test]
+    fn response_is_publicly_cacheable_true_when_neither_no_store_nor_private() {
+        // No `public` either — the rule only excludes no-store/private, it
+        // does not require an explicit `public`.
+        assert!(response_is_publicly_cacheable(&resp_with_cache_control(
+            "max-age=600"
+        )));
+    }
+
+    #[test]
+    fn response_is_publicly_cacheable_directive_match_is_case_insensitive() {
+        assert!(!response_is_publicly_cacheable(&resp_with_cache_control(
+            "No-Store"
+        )));
     }
 
     #[test]

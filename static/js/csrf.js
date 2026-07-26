@@ -22,8 +22,11 @@ function csrfToken() {
   // NOT match `__Host-csrf_token=` (the character before `csrf_token` is
   // `-`, which fails the `(?:^|;\s*)` anchor), so on a Secure deployment
   // every JS-driven POST would silently send no token and get 403'd by the
-  // synchronizer-token guard. The prefixed form is tried first in case both
-  // are somehow present.
+  // synchronizer-token guard. The regex matches either name and returns
+  // whichever occurs first in document.cookie — it does not prefer the
+  // __Host- form. That's safe only because both names always carry the same
+  // derive_csrf value (see slide_session_cookie on the Rust side), so it
+  // never matters which one wins.
   const m = document.cookie.match(/(?:^|;\s*)(?:__Host-)?csrf_token=([^;]*)/);
   return m ? decodeURIComponent(m[1]) : "";
 }

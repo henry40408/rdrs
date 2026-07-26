@@ -12,6 +12,13 @@
 //! list, and there must not be one: a browser that never saw the header on
 //! `/health` would have no reason to upgrade a plain-HTTP request to it.
 //!
+//! That "no skip list" guarantee is exactly why, in [`crate::create_router`],
+//! this layer is applied **outermost** — around the whole router, over both
+//! `core` and `/events` — rather than alongside the other response layers.
+//! `forward_auth` and the CSRF guards return a response without calling
+//! `next` on several paths (a redirect, a rejection); nested any further in,
+//! this middleware would silently miss those responses.
+//!
 //! **Whether the layer exists at all is decided once**, in
 //! [`crate::create_router`], from [`crate::Config::hsts_header_value`] — a
 //! plain-HTTP deployment (the default; see that method and

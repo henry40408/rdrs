@@ -42,6 +42,16 @@
 //!   only thing given up is a few KB of conditional-request savings on the
 //!   wire — far cheaper than a logged-in page leaking on a shared machine.
 //!   Do not read the resulting dead `ETag` header as a bug to clean up.
+//!
+//! This middleware is layered *inside* `ETagLayer` deliberately, so it
+//! observes the handler's own `Cache-Control` (if any) before `ETag`
+//! processing runs. One consequence: it never sees a response returned by
+//! one of the outer layers that short-circuits without calling `next` — the
+//! `forward_auth` redirects or the CSRF-guard 403s — nor `/events`, which
+//! sits outside this stack entirely. That's acceptable here: those are
+//! 302/403 responses, and neither is heuristically cacheable without
+//! explicit freshness information, so there is nothing for this middleware
+//! to correct.
 
 use axum::{
     extract::Request,

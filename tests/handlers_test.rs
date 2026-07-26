@@ -5268,6 +5268,39 @@ async fn test_image_proxy_keeps_upstream_cache_control() {
     );
 }
 
+// Regression test for session-cookie cache poisoning: a shared cache that
+// stores this authenticated, publicly-cacheable response must never also
+// receive a live session/CSRF cookie riding along on it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn authenticated_cacheable_response_carries_no_set_cookie() {
+    let mut app = create_test_app_named(
+        default_test_config(),
+        "authenticated_cacheable_response_carries_no_set_cookie",
+    )
+    .await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let response = app
+        .server
+        .get("/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=sometoken")
+        .add_header(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_static("\"sometoken\""),
+        )
+        .await;
+
+    response.assert_status(StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .count(),
+        0,
+        "a publicly-cacheable authenticated response must not carry Set-Cookie"
+    );
+}
+
 #[tokio::test]
 async fn test_health_endpoint_stays_cacheable() {
     let server = create_test_server(default_test_config()).await;
@@ -5384,5 +5417,31 @@ async fn test_existing_hsts_header_is_not_overwritten() {
     assert_eq!(
         response.header(header::STRICT_TRANSPORT_SECURITY),
         "max-age=1"
+    );
+}
+
+#[tokio::test]
+async fn hsts_is_sent_on_a_csrf_rejected_response() {
+    // Regression test: HSTS must be the outermost layer, because
+    // `csrf_origin_guard` short-circuits with a 403 without calling `next`,
+    // so a layer nested inside it (as HSTS used to be) would never run.
+    let config = Config::from_map(|k| {
+        (k == "RDRS_PUBLIC_BASE_URL").then(|| "https://rdrs.example.com".to_string())
+    })
+    .expect("from_map should succeed");
+    let server = create_test_server(config).await;
+
+    let response = server
+        .post("/api/session")
+        .add_header(
+            HeaderName::from_static("sec-fetch-site"),
+            HeaderValue::from_static("cross-site"),
+        )
+        .await;
+
+    response.assert_status_forbidden();
+    assert_eq!(
+        response.header(header::STRICT_TRANSPORT_SECURITY),
+        "max-age=31536000; includeSubDomains"
     );
 }
