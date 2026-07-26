@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod background;
 pub mod content_text_backfill;
 pub mod entry_retention;

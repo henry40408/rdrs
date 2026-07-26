@@ -4,9 +4,18 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::db::Db;
-use crate::models::entry_summary;
+use crate::models::{api_token, entry_summary, session};
 
-/// Start the summary cleanup worker that periodically removes expired summaries
+/// Start the cleanup worker that periodically removes expired summaries,
+/// expired session rows, *and* expired `api_token` rows.
+///
+/// The session sweep is the backstop for the lazy per-request deletes in
+/// `middleware/auth.rs` / `handlers/greader/auth.rs`: those only fire when a
+/// row is touched, so a session abandoned on an old device would otherwise
+/// live forever (see `session::delete_expired`). The `api_token` sweep is the
+/// same backstop for `handlers/greader/auth.rs`'s `validate_api_token` (see
+/// `api_token::delete_expired`). All three sweeps run on the same tick but
+/// fail independently — one sweep's error must not skip another's.
 ///
 /// # Arguments
 /// * `db` - Database connection
@@ -37,18 +46,26 @@ pub fn start_cleanup_worker(
                     break;
                 }
                 _ = interval.tick() => {
-                    tracing::debug!("Running summary cleanup...");
+                    tracing::debug!("Running cleanup sweep...");
 
-                    let deleted = match entry_summary::delete_expired(&db, ttl_hours).await {
-                        Ok(count) => count,
-                        Err(e) => {
-                            tracing::error!("Failed to cleanup expired summaries: {}", e);
-                            continue;
-                        }
-                    };
+                    // Independent `match`es (not the previous `continue`-on-error
+                    // shape): a failure in one sweep must not skip the other.
+                    match entry_summary::delete_expired(&db, ttl_hours).await {
+                        Ok(n) if n > 0 => tracing::info!("Cleaned up {n} expired summaries"),
+                        Ok(_) => {}
+                        Err(e) => tracing::error!("Failed to cleanup expired summaries: {e}"),
+                    }
 
-                    if deleted > 0 {
-                        tracing::info!("Cleaned up {} expired summaries", deleted);
+                    match session::delete_expired(&db).await {
+                        Ok(n) if n > 0 => tracing::info!("Swept {n} expired sessions"),
+                        Ok(_) => {}
+                        Err(e) => tracing::error!("Failed to sweep expired sessions: {e}"),
+                    }
+
+                    match api_token::delete_expired(&db).await {
+                        Ok(n) if n > 0 => tracing::info!("Swept {n} expired API tokens"),
+                        Ok(_) => {}
+                        Err(e) => tracing::error!("Failed to sweep expired API tokens: {e}"),
                     }
                 }
             }
@@ -229,5 +246,90 @@ mod tests {
         // Verify summary was deleted
         let exists_after = entry_summary::exists(&db, 1, 1).await.unwrap();
         assert!(!exists_after);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_worker_sweeps_expired_sessions() {
+        let db = setup_db().await;
+        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap()
+            .id;
+
+        let expired = session::create_session(&db, user_id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+        db_execute!(
+            &db,
+            "UPDATE session SET expires_at = datetime('now', '-1 hours') WHERE id = $1",
+            expired.id,
+        )
+        .unwrap();
+
+        let fresh = session::create_session(&db, user_id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+
+        // Run the session sweep directly (simulating what the worker does on
+        // each tick, same as `test_cleanup_worker_runs_cleanup_on_interval`
+        // does for the summary sweep above).
+        let swept = session::delete_expired(&db).await.unwrap();
+        assert_eq!(swept, 1);
+
+        assert!(
+            session::find_by_token(&db, &expired.session_token)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            session::find_by_token(&db, &fresh.session_token)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_worker_sweeps_expired_api_tokens() {
+        let db = setup_db().await;
+        let user_id = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap()
+            .id;
+
+        let expired =
+            api_token::create_api_token(&db, user_id, "greader", "", "test-agent", "127.0.0.1")
+                .await
+                .unwrap();
+        db_execute!(
+            &db,
+            "UPDATE api_token SET expires_at = datetime('now', '-1 hours') WHERE id = $1",
+            expired.id,
+        )
+        .unwrap();
+
+        let fresh =
+            api_token::create_api_token(&db, user_id, "greader", "", "test-agent", "127.0.0.1")
+                .await
+                .unwrap();
+
+        // Run the api_token sweep directly (simulating what the worker does on
+        // each tick), same shape as the session sweep test above.
+        let swept = api_token::delete_expired(&db).await.unwrap();
+        assert_eq!(swept, 1);
+
+        assert!(
+            api_token::find_by_token(&db, &expired.token)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            api_token::find_by_token(&db, &fresh.token)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 }

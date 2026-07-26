@@ -24,7 +24,7 @@ pub mod version;
 
 pub use config::Config;
 pub use db::Db;
-pub use middleware::auth::SESSION_COOKIE_NAME;
+pub use middleware::auth::{SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST};
 pub use models::{Role, User};
 pub use version::GIT_VERSION;
 
@@ -60,6 +60,11 @@ pub struct AppState {
     pub summarizer_inflight: handlers::summarizer::InFlightRegistry,
     pub events: services::EventBus,
     pub shutdown: tokio_util::sync::CancellationToken,
+    /// Per-client-IP throttle shared by every credential-accepting endpoint
+    /// (login, register, passkey authentication, `GReader` `ClientLogin`).
+    /// See [`middleware::RateLimiter`] for why the check-and-count is a
+    /// single locked operation rather than a separate check/record pair.
+    pub login_rate_limiter: Arc<crate::middleware::RateLimiter>,
 }
 
 pub fn create_router(state: AppState) -> Router {
@@ -116,6 +121,14 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/user-settings/sessions/revoke-others",
             post(handlers::user::revoke_other_sessions_form),
+        )
+        .route(
+            "/user-settings/api-tokens/{id}/revoke",
+            post(handlers::user::revoke_api_token_form),
+        )
+        .route(
+            "/user-settings/api-tokens/revoke-all",
+            post(handlers::user::revoke_all_api_tokens_form),
         )
         .route(
             "/api/admin/unmasquerade",
@@ -319,6 +332,18 @@ pub fn create_router(state: AppState) -> Router {
         .nest("/api/greader.php", handlers::greader::greader_routes())
         .route("/static/{*path}", get(handlers::static_assets::serve))
         .fallback(handlers::pages::not_found_page)
+        // Mark session-bearing responses `no-store` (OWASP Session Management
+        // Cheat Sheet, Web Content Caching) so a browser disk cache or shared
+        // proxy cannot replay a logged-in page. Layered inside `ETagLayer` so
+        // it observes the handler's own `Cache-Control` (if any) — the three
+        // deliberate public-caching call sites (static assets, feed, image
+        // proxy) — before ETag processing runs; see cache_control.rs for why
+        // `no-store` also makes ETag a no-op for the responses it does touch.
+        .layer(axum::middleware::from_fn(
+            middleware::cache_control::no_store_for_authenticated,
+        ));
+
+    let core = core
         .layer(middleware::ETagLayer::new())
         .layer(middleware::DateHeaderLayer::new())
         .layer(CompressionLayer::new().gzip(true).br(true))
@@ -341,6 +366,19 @@ pub fn create_router(state: AppState) -> Router {
             state.clone(),
             middleware::csrf::anonymous_session,
         ))
+        // Reissue the session + CSRF cookies' Max-Age (never their value) on
+        // every authenticated request, so a still-in-use browser session keeps
+        // tracking the sliding server-side TTL instead of expiring on a fixed
+        // schedule. Layered outside `anonymous_session` so it sees — and can
+        // correctly skip re-setting — the Set-Cookie's that layer and every
+        // handler beneath it emit (most importantly `logout`'s removal
+        // cookies), and inside `forward_auth`, which short-circuits with its
+        // own redirect without calling `next` on every path that mints a
+        // cookie, so this layer never doubles up with it.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::auth::slide_session_cookie,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::forward_auth::forward_auth,
@@ -352,10 +390,35 @@ pub fn create_router(state: AppState) -> Router {
             middleware::csrf::csrf_origin_guard,
         ));
 
-    Router::new()
+    let router = Router::new()
         // SSE lives outside the layers above. It still gets `state` via the
         // shared `.with_state` below.
         .route("/events", get(handlers::events::events_stream))
-        .merge(core)
-        .with_state(state)
+        .merge(core);
+
+    // Strict-Transport-Security (OWASP Session Management Cheat Sheet,
+    // Transport Layer Security): only added when `Config` says the deployment
+    // is HTTPS (see `Config::hsts_header_value` for the derivation rule). The
+    // header value is built once here, where `config` is already in scope,
+    // rather than per response — and when it's `None` (the default), no layer
+    // is added at all, so a plain-HTTP deployment pays nothing for this.
+    // Applied last — i.e. outermost, over both `core` and `/events` — because
+    // `forward_auth` and the CSRF guards short-circuit with a response
+    // without calling `next` on several paths (the forward-auth redirect that
+    // mints the session cookie, its "not authorized" redirect, and both
+    // guards' 403 rejections), so a layer nested inside them would never see
+    // those responses; `/events` sits outside `core` entirely and needs the
+    // same outermost coverage.
+    let router = if let Some(header_value) = state.config.hsts_header_value() {
+        let value = axum::http::HeaderValue::from_str(&header_value)
+            .expect("hsts_header_value only ever produces a valid header value");
+        router.layer(axum::middleware::from_fn_with_state(
+            middleware::HstsState::new(value),
+            middleware::set_hsts,
+        ))
+    } else {
+        router
+    };
+
+    router.with_state(state)
 }

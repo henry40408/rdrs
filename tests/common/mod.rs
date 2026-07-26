@@ -8,6 +8,21 @@
 use axum_test::{TestResponse, TestServer};
 use rdrs::Config;
 
+/// A fresh, default-configured [`rdrs::middleware::RateLimiter`] for an
+/// `AppState` literal.
+///
+/// Integration tests drive the router without `ConnectInfo`, so
+/// `Config::client_ip` resolves every request in a test to `127.0.0.1` — all
+/// requests within one test share a single bucket. That is safe only because
+/// a successful credential check releases its reservation; a test that
+/// performs more than five *failed* attempts against one `AppState` needs its
+/// own disabled limiter (`RateLimiter::new(0, 60)`) instead of sharing this
+/// one.
+#[allow(dead_code)]
+pub fn test_rate_limiter() -> std::sync::Arc<rdrs::middleware::RateLimiter> {
+    std::sync::Arc::new(rdrs::middleware::RateLimiter::default())
+}
+
 /// Echo the server-set `csrf_token` cookie back as a default `X-CSRF-Token`
 /// header on every later request from `server` — exactly what the browser's
 /// `csrf.js` does once a session exists.
@@ -47,5 +62,10 @@ pub fn default_test_config() -> Config {
         auth_proxy_groups_header: String::new(),
         auth_proxy_admin_group: String::new(),
         auth_proxy_logout_url: None,
+        login_rate_limit_attempts: rdrs::middleware::rate_limit::LOGIN_MAX_ATTEMPTS,
+        login_rate_limit_window_secs: rdrs::middleware::rate_limit::LOGIN_WINDOW_SECS,
+        hsts: false,
+        hsts_max_age: 31_536_000,
+        hsts_include_subdomains: true,
     }
 }

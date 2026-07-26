@@ -1,7 +1,9 @@
+use std::net::SocketAddr;
+
 use axum::{
     Form,
-    extract::{Path, State},
-    http::StatusCode,
+    extract::{ConnectInfo, Extension, Path, State},
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use serde::Deserialize;
@@ -10,8 +12,11 @@ use crate::AppState;
 use crate::error::{AppError, AppResult};
 use crate::middleware::AdminUser;
 use crate::middleware::flash::FlashRedirect;
+use crate::models::api_token;
 use crate::models::session;
 use crate::models::user::{self, Role};
+use crate::services::audit;
+use crate::utils::http::request_user_agent;
 
 pub async fn stop_masquerade(
     State(state): State<AppState>,
@@ -22,7 +27,17 @@ pub async fn stop_masquerade(
     }
 
     let session_token = admin.session.session_token.clone();
+    // While masquerading, `admin.user` is the impersonated target and
+    // `original_user_id` is the real admin — the one both acting here and
+    // being restored to the session.
+    let admin_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
     session::stop_masquerade(&state.db, &session_token).await?;
+    audit::masquerade_stopped(
+        &state.config.secret,
+        &session_token,
+        admin_user_id,
+        admin_user_id,
+    );
 
     Ok(StatusCode::OK)
 }
@@ -92,6 +107,11 @@ pub async fn update_status_form(
         if disabled && !target.is_disabled() {
             user::disable_user(&state.db, user_id).await?;
             session::delete_user_sessions(&state.db, user_id).await?;
+            audit::sessions_destroyed_bulk(user_id, "admin_disable", None);
+            // Disabling an account must also cut off any GReader client still
+            // holding an API token — otherwise a disabled user's RSS app keeps
+            // syncing indefinitely, since its token never touches `session`.
+            api_token::delete_user_tokens(&state.db, user_id).await?;
         } else if !disabled && target.is_disabled() {
             user::enable_user(&state.db, user_id).await?;
         }
@@ -115,6 +135,8 @@ pub async fn update_status_form(
 pub async fn start_masquerade_form(
     State(state): State<AppState>,
     admin: AdminUser,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(target_user_id): Path<i64>,
 ) -> impl IntoResponse {
     if admin.session.is_masquerading() {
@@ -122,6 +144,10 @@ pub async fn start_masquerade_form(
     }
 
     let session_token = admin.session.session_token.clone();
+    // Not masquerading yet (checked above), so `original_user_id` is `None`
+    // and this is just the current admin — the actor about to start acting as
+    // `target_user_id`.
+    let actor_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
     let result: AppResult<()> = async {
         let target = user::find_by_id(&state.db, target_user_id)
             .await?
@@ -135,7 +161,20 @@ pub async fn start_masquerade_form(
     .await;
 
     match result {
-        Ok(()) => FlashRedirect::info("/", "You are now masquerading as another user."),
+        Ok(()) => {
+            let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+            let ip = state.config.client_ip(peer, &headers).to_string();
+            let user_agent = request_user_agent(&headers);
+            audit::masquerade_started(
+                &state.config.secret,
+                &session_token,
+                actor_user_id,
+                target_user_id,
+                &ip,
+                &user_agent,
+            );
+            FlashRedirect::info("/", "You are now masquerading as another user.")
+        }
         _ => FlashRedirect::error("/admin", "Failed to start masquerade."),
     }
 }

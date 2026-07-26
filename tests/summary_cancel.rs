@@ -39,6 +39,7 @@ async fn create_test_app(config: Config, _db_name: &str) -> TestApp {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
 
     let app = create_router(state.clone());

@@ -29,6 +29,7 @@ async fn create_test_server(config: Config) -> TestServer {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
 
     TestServer::builder().build(create_router(state))
@@ -104,5 +105,30 @@ async fn non_matching_if_none_match_returns_full_body() {
     assert!(
         !response.as_bytes().is_empty(),
         "non-matching If-None-Match should return full body"
+    );
+}
+
+#[tokio::test]
+async fn test_etag_still_emitted_under_no_store() {
+    // ETagLayer is registered outside (so it runs "after", on the response
+    // path) middleware::cache_control::no_store_for_authenticated — see
+    // lib.rs. Anonymous HTML still gets a session cookie from
+    // `anonymous_session`, so `/login` is a no-store response even before
+    // any real login. Both middlewares must coexist without panicking, and
+    // both headers must show up together, even though — per
+    // cache_control.rs's module docs — the ETag is now dead weight the
+    // browser will never send back as If-None-Match.
+    let server = create_test_server(default_test_config()).await;
+
+    let response = server.get("/login").await;
+
+    response.assert_status_ok();
+    assert!(
+        response.headers().get(header::ETAG).is_some(),
+        "ETagLayer must still tag the HTML response"
+    );
+    assert_eq!(
+        response.headers().get(header::CACHE_CONTROL),
+        Some(&HeaderValue::from_static("no-store"))
     );
 }

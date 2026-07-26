@@ -29,7 +29,7 @@ Privacy-focused, lightweight, and designed for personal use.
 - **External Services** - Save entries to Linkding bookmark manager
 - **Google Reader API** - Compatible with GReader clients (FeedMe, Read You, etc.)
 - **Multi-User Support** - Role-based access control with admin panel
-- **Session Management** - View active sessions (device, IP, last active) and sign out other devices from Settings
+- **Session Management** - View active sessions (device, IP, last active) and sign out other devices from Settings; GReader API tokens are tracked and revocable separately from browser sessions
 - **Docker Ready** - Single-binary deployment with all assets embedded, multi-platform container images
 
 ## Quick Start
@@ -95,6 +95,19 @@ All configuration is done via environment variables.
 > **drops and recreates the `session` table** — every signed-in user,
 > including you, is logged out once and must sign back in after the upgrade.
 >
+> **Upgrading to a version with independent GReader API tokens?** `POST
+> /accounts/ClientLogin` used to hand a GReader client the raw web
+> `session.session_token` — a token leaked from an RSS reader app was a full
+> session takeover. It now mints its own row in a new `api_token` table
+> (prefixed `rdrs_gr_`, revocable from `/user-settings` independently of your
+> browser sessions). This is a **breaking change**: every existing GReader
+> client's stored token stops working once and the client must run
+> `ClientLogin` again — mainstream clients (FeedMe, Read You) store your
+> username/password and do this automatically, so real-world impact is small.
+> There is deliberately no opt-out: a migration flag that keeps honouring the
+> old tokens would in practice be left on forever, which is the same as not
+> having made the change.
+>
 > `DATABASE_URL` is the exception and keeps its bare name: it is a genuine
 > cross-tool convention. The rest only looked generic — `USER_AGENT` and
 > `SERVER_BIND` were rdrs's own names all along, which is exactly what made them
@@ -110,6 +123,11 @@ All configuration is done via environment variables.
 | `RDRS_SECRET` | Auto-generated | Root HMAC key backing every signature rdrs produces — session cookies, image-proxy URLs, and the GReader post token — each domain-separated so a value minted for one use cannot be replayed as another. Set a persistent value (`openssl rand -base64 32`); a generated one changes on every restart, ending all sessions and breaking cached image-proxy URLs. |
 | `RDRS_PUBLIC_BASE_URL` | - | Public base URL for generating absolute image proxy URLs in API responses (e.g., `https://rdrs.example.com`). If not set, relative paths are used (backward compatible). |
 | `RDRS_COOKIE_SECURE` | Derived from `RDRS_PUBLIC_BASE_URL` | Send the session cookie with the `Secure` attribute (HTTPS only). Defaults to on when `RDRS_PUBLIC_BASE_URL` starts with `https://`, off otherwise — so an HTTPS deployment is secure without a second setting, while a plain-HTTP dev run keeps working. Set `true`/`1` to force it on when TLS terminates upstream and `RDRS_PUBLIC_BASE_URL` is unset; set `false`/`0` to force it off. Only those four values are accepted — anything else fails startup rather than silently disabling `Secure`. |
+| `RDRS_HSTS` | Derived from `RDRS_PUBLIC_BASE_URL` | Send `Strict-Transport-Security` on every response. Defaults to on when `RDRS_PUBLIC_BASE_URL` starts with `https://`, off otherwise, mirroring `RDRS_COOKIE_SECURE`. Only `true`/`false`/`1`/`0` are accepted — anything else fails startup rather than silently guessing. HSTS is sticky: once a browser sees it, that browser refuses plain HTTP to this host for the whole `RDRS_HSTS_MAX_AGE`, and the server has no way to retract it instantly. Leave this unset (or `false`) for a plain-HTTP internal deployment — turning it on by accident can lock users out with no server-side fix. |
+| `RDRS_HSTS_MAX_AGE` | `31536000` (1 year) | HSTS `max-age` in seconds. `0` is the documented recovery path for a mis-set HSTS declaration: it tells a browser that already cached the header to forget it, which is how you undo `RDRS_HSTS` having been on by mistake — plain omission does not do this, since a browser that already saw the header keeps enforcing HTTPS until `max-age` naturally expires. |
+| `RDRS_HSTS_INCLUDE_SUBDOMAINS` | `true` | Append `; includeSubDomains` to the HSTS header. **Warning:** if `RDRS_PUBLIC_BASE_URL` is an apex domain (`example.com`) rather than a subdomain (`rdrs.example.com`), this forces HTTPS on *every* subdomain of that registrable domain, not just the one rdrs serves. Set `false` to scope the declaration to rdrs's own host. The header never includes `preload`: joining the browser preload list is effectively irreversible, so that opt-in is left to your reverse proxy. |
+| `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS` | `5` | Attempts allowed per client IP per window for each credential-endpoint class (password login, registration, passkey ceremonies) — each class has its own budget. `0` disables the limiter. |
+| `RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS` | `60` | Fixed window length in seconds. Must be ≥ 1. |
 | `RDRS_USER_AGENT` | `RDRS/...` | Custom user agent for feed fetching |
 | `RDRS_WEBAUTHN_RP_ID` | `localhost` | WebAuthn Relying Party ID for passkey authentication |
 | `RDRS_WEBAUTHN_RP_ORIGIN` | `http://localhost:{port}` | WebAuthn Relying Party origin URL |
@@ -117,7 +135,7 @@ All configuration is done via environment variables.
 | `RUST_LOG` | - | Log level filter (e.g., `info`, `debug`, `rdrs=debug`). When unset, defaults to `error,rdrs=info` (rdrs' own INFO logs are visible; other crates stay at ERROR). |
 | `RDRS_LOG_FORMAT` | `full` | Log output format: `full`, `compact`, `pretty`, or `json`. Can also be set via `--log-format`. |
 | `RDRS_AUTH_PROXY_HEADER` | - | Header carrying the username from a forward-auth proxy (e.g. `Remote-User`, `X-Forwarded-User`). Empty disables the feature. |
-| `RDRS_TRUSTED_PROXY_NETWORKS` | - | Comma-separated CIDRs or bare IPs (e.g. `10.0.0.0/8, 192.168.1.5`). The TCP peer IP must fall within one of these for the identity header to be trusted. Required when `RDRS_AUTH_PROXY_HEADER` is set. |
+| `RDRS_TRUSTED_PROXY_NETWORKS` | - | Comma-separated CIDRs or bare IPs (e.g. `10.0.0.0/8, 192.168.1.5`). The TCP peer IP must fall within one of these for the identity header to be trusted. Required when `RDRS_AUTH_PROXY_HEADER` is set. Also determines how the credential rate limiter identifies clients, so it should be set whenever rdrs runs behind a reverse proxy — not only when `RDRS_AUTH_PROXY_HEADER` is set. Without it, all requests appear to come from the proxy and share one rate-limit bucket. |
 | `RDRS_AUTH_PROXY_USER_CREATION` | `false` | When `true`, JIT-create a local account for an unknown proxy-provided username instead of redirecting to `/login`. |
 | `RDRS_AUTH_PROXY_GROUPS_HEADER` | - | Header carrying comma-separated group names from the proxy (e.g. `Remote-Groups`). |
 | `RDRS_AUTH_PROXY_ADMIN_GROUP` | - | Membership in this group grants the admin role, synced on every forward-auth login. Active only when `RDRS_AUTH_PROXY_GROUPS_HEADER` is also set. |
@@ -130,6 +148,23 @@ All configuration is done via environment variables.
 > `RDRS_WEBAUTHN_RP_ORIGIN=https://rdrs.example.com`), otherwise the browser rejects
 > passkeys. rdrs logs a startup warning while the RP origin still points at
 > `localhost`, and the active values are shown on the Settings page.
+
+### Audit Logging
+
+Session creation, renewal, and destruction; API-token issuance and revocation;
+failed logins; rate-limited credential attempts; and masquerade start/stop are
+logged as structured events under the `rdrs::audit` tracing target. Isolate
+just that stream with `RUST_LOG=rdrs::audit=info` (combine with the default
+`rdrs=info` via `RUST_LOG=rdrs=info,rdrs::audit=info`), or set
+`RDRS_LOG_FORMAT=json` to ship the events to a SIEM.
+
+Each event that identifies a session carries an `sid` field — a salted
+HMAC-SHA256 hash of the session token, truncated to 16 hex characters, never
+the token itself, so the log can never disclose an active session ID. The
+salt is `RDRS_SECRET`, so rotating that key (including the implicit rotation
+of a restart with no `RDRS_SECRET` set) breaks `sid` correlation with older
+log lines — consistent with the fact that rotating that key already ends
+every session.
 
 ## Authentication & SSO
 

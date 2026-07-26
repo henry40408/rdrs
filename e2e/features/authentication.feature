@@ -25,3 +25,11 @@ Feature: Authentication
     Then the sidebar does not offer the app settings link
     When I am on the settings page
     Then I am not shown the app settings page
+
+  Scenario: Logging out clears the session, the sidebar cache, and shows a flash
+    Given I am signed in
+    When I log out
+    Then I see the logged-out flash message
+    And the sidebar's cached data no longer survives in session storage
+    When I visit the home page
+    Then I am redirected to the login page

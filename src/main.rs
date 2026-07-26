@@ -83,6 +83,10 @@ async fn main() {
         tracing::warn!("{warning}");
     }
 
+    if let Some(warning) = config.rate_limit_proxy_warning() {
+        tracing::warn!("{warning}");
+    }
+
     // Open the pool for the configured backend and run its migrations. The
     // backend is fixed for the process lifetime (see `Config::backend`).
     let db = Db::connect(&config.database_url, config.backend())
@@ -158,6 +162,10 @@ async fn main() {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: events.clone(),
         shutdown: cancel_token.clone(),
+        login_rate_limiter: Arc::new(rdrs::middleware::RateLimiter::new(
+            config.login_rate_limit_attempts,
+            config.login_rate_limit_window_secs,
+        )),
     };
 
     // Start background sync task

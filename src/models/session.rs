@@ -195,6 +195,22 @@ pub async fn delete_user_sessions_except(db: &Db, user_id: i64, keep_token: &str
     Ok(())
 }
 
+/// Delete every expired session row.
+///
+/// Called periodically by the cleanup worker (`services::summary_cleanup`).
+/// This is the backstop for the lazy deletes in `middleware/auth.rs`'s
+/// `AuthUser`/`PageAuthUser` and `handlers/greader/auth.rs`'s `GReaderUser`,
+/// which only fire when a row is actually touched — a session abandoned on a
+/// device the user never returns to is never touched again and would
+/// otherwise live forever. Covered by `idx_session_expires_at`. The bound
+/// `now` (rather than SQL `datetime('now')`) keeps this a plain `db_execute!`
+/// call that behaves identically on both dialects without needing the
+/// `pg_rewrite` shim.
+pub async fn delete_expired(db: &Db) -> AppResult<u64> {
+    let now = Utc::now();
+    db_execute!(db, "DELETE FROM session WHERE expires_at <= $1", now).map_err(AppError::Database)
+}
+
 pub async fn start_masquerade(db: &Db, token: &str, target_user_id: i64) -> AppResult<()> {
     let session = find_by_token(db, token)
         .await?
@@ -602,5 +618,99 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(after.last_seen_at, session.last_seen_at);
+    }
+
+    #[tokio::test]
+    async fn delete_expired_removes_only_expired() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+
+        let expired = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+        let past = Utc::now() - Duration::days(1);
+        db_execute!(
+            &db,
+            "UPDATE session SET expires_at = $1 WHERE id = $2",
+            past,
+            expired.id
+        )
+        .unwrap();
+
+        let fresh_a = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+        let fresh_b = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+
+        let deleted = delete_expired(&db).await.unwrap();
+        assert_eq!(deleted, 1);
+
+        assert!(
+            find_by_token(&db, &expired.session_token)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            find_by_token(&db, &fresh_a.session_token)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            find_by_token(&db, &fresh_b.session_token)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_expired_is_noop_when_nothing_expired() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+        create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+
+        let deleted = delete_expired(&db).await.unwrap();
+        assert_eq!(deleted, 0);
+    }
+
+    #[tokio::test]
+    async fn delete_expired_boundary_is_inclusive() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+        let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+
+        // The predicate is `<=`, so a row whose `expires_at` is exactly `now`
+        // must be deleted, not just rows strictly in the past.
+        let now = Utc::now();
+        db_execute!(
+            &db,
+            "UPDATE session SET expires_at = $1 WHERE id = $2",
+            now,
+            session.id
+        )
+        .unwrap();
+
+        let deleted = delete_expired(&db).await.unwrap();
+        assert_eq!(deleted, 1);
+        assert!(
+            find_by_token(&db, &session.session_token)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

@@ -52,6 +52,7 @@ async fn create_test_server(config: Config) -> TestServer {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
 
     let app = create_router(state);
@@ -75,6 +76,7 @@ async fn create_test_app(config: Config) -> TestApp {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
 
     let app = create_router(state);
@@ -2896,6 +2898,84 @@ async fn test_revoke_other_sessions_form_blocked_while_masquerading() {
     );
 }
 
+#[tokio::test]
+async fn test_password_change_revokes_api_tokens() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let user = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .expect("user must exist");
+    let token = rdrs::models::api_token::create_api_token(
+        &app.db,
+        user.id,
+        "greader",
+        "test-client",
+        "test-agent",
+        "127.0.0.1",
+    )
+    .await
+    .unwrap();
+
+    let response = app
+        .server
+        .post("/user-settings/password")
+        .form(&json!({
+            "current_password": "password123",
+            "new_password": "newpassword456",
+            "confirm_password": "newpassword456",
+        }))
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+
+    let found = rdrs::models::api_token::find_by_token(&app.db, &token.token)
+        .await
+        .unwrap();
+    assert!(
+        found.is_none(),
+        "a password change must revoke API tokens too, not just browser sessions"
+    );
+}
+
+#[tokio::test]
+async fn test_revoke_others_does_not_touch_api_tokens() {
+    // "Sign out other sessions" means browser sessions specifically — see the
+    // comment on `revoke_other_sessions_form`. A GReader client's token must
+    // survive this action; revoking it is a separate, explicit control.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let user = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .expect("user must exist");
+    let token = rdrs::models::api_token::create_api_token(
+        &app.db,
+        user.id,
+        "greader",
+        "test-client",
+        "test-agent",
+        "127.0.0.1",
+    )
+    .await
+    .unwrap();
+
+    let response = app
+        .server
+        .post("/user-settings/sessions/revoke-others")
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+
+    let found = rdrs::models::api_token::find_by_token(&app.db, &token.token)
+        .await
+        .unwrap();
+    assert!(
+        found.is_some(),
+        "revoke-other-sessions must not touch API tokens"
+    );
+}
+
 // ============================================================================
 // Form-action admin endpoint tests (PR-5 T1)
 // ============================================================================
@@ -3529,6 +3609,7 @@ async fn create_test_app_named(config: Config, _name: &str) -> TestApp {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
 
     let app = create_router(state);
@@ -5100,4 +5181,267 @@ async fn events_endpoint_requires_auth() {
     let response = server.get("/events").await;
     // PageAuthUser always redirects unauthenticated requests to /login (303).
     response.assert_status(StatusCode::SEE_OTHER);
+}
+
+// ============================================================================
+// middleware/cache_control.rs — no-store wiring through the real router
+// ============================================================================
+
+#[tokio::test]
+async fn test_authenticated_page_is_no_store() {
+    let mut app = create_test_app_named(default_test_config(), "test_authenticated_no_store").await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let response = app.server.get("/").await;
+
+    response.assert_status_ok();
+    assert_eq!(
+        response.header(header::CACHE_CONTROL),
+        "no-store",
+        "an authenticated page must never be retained by a disk cache or shared proxy"
+    );
+    assert_eq!(
+        response.header(header::VARY),
+        "Cookie",
+        "Vary: Cookie must accompany no-store so a proxy can't conflate the anonymous and authenticated variants"
+    );
+}
+
+#[tokio::test]
+async fn test_static_asset_keeps_its_cache_control() {
+    // Regression guard: the cache_control middleware only fills in a header
+    // when the response has none, so the long-lived static-asset directive
+    // set by handlers/static_assets.rs must survive byte-for-byte.
+    let server = create_test_server(default_test_config()).await;
+
+    let response = server.get("/static/css/app.css").await;
+
+    response.assert_status_ok();
+    assert_eq!(
+        response.header(header::CACHE_CONTROL),
+        expected_static_cache_control()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_image_proxy_keeps_upstream_cache_control() {
+    // A genuine upstream fetch can't be exercised here: `utils/url_validation`
+    // (the shared SSRF guard the proxy runs every origin URL through) rejects
+    // loopback/private addresses unconditionally and has no test escape
+    // hatch, and every mock HTTP server available to this suite (wiremock
+    // included) binds to one. `choose_cache_control`'s upstream-forwarding
+    // logic itself is exercised directly in handlers/proxy.rs's own unit
+    // tests (`test_choose_cache_control_mirrors_origin`). What this test adds
+    // is the piece those unit tests can't cover: that the cache_control
+    // *middleware* — which runs after the handler, on every response — does
+    // not clobber whatever `Cache-Control` the proxy handler already set,
+    // even on an authenticated request where rule 3 ("has a session cookie")
+    // would otherwise apply. The proxy's ETag/If-None-Match short-circuit
+    // (see `test_proxy_image_304_on_if_none_match`) is a real, SSRF-free
+    // response path that carries the handler's own `Cache-Control`
+    // (`DEFAULT_CACHE_CONTROL`, the same constant `choose_cache_control`
+    // falls back to when upstream sends none) and is reachable through the
+    // full router, so it stands in for "the proxy already set a
+    // Cache-Control" here.
+    let mut app =
+        create_test_app_named(default_test_config(), "test_proxy_keeps_upstream_cc").await;
+    // Authenticated on purpose: this is the case where the cache_control
+    // middleware could plausibly override the proxy's own header (rule 1 —
+    // "response already has Cache-Control" — must win over rule 3 — "request
+    // has a session cookie").
+    setup_authenticated_user(&mut app.server).await;
+
+    let response = app
+        .server
+        .get("/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=sometoken")
+        .add_header(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_static("\"sometoken\""),
+        )
+        .await;
+
+    response.assert_status(StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        response.header(header::CACHE_CONTROL),
+        "public, max-age=86400",
+        "the proxy's own Cache-Control must pass through untouched even on an authenticated request"
+    );
+}
+
+// Regression test for session-cookie cache poisoning: a shared cache that
+// stores this authenticated, publicly-cacheable response must never also
+// receive a live session/CSRF cookie riding along on it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn authenticated_cacheable_response_carries_no_set_cookie() {
+    let mut app = create_test_app_named(
+        default_test_config(),
+        "authenticated_cacheable_response_carries_no_set_cookie",
+    )
+    .await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let response = app
+        .server
+        .get("/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=sometoken")
+        .add_header(
+            header::IF_NONE_MATCH,
+            HeaderValue::from_static("\"sometoken\""),
+        )
+        .await;
+
+    response.assert_status(StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .count(),
+        0,
+        "a publicly-cacheable authenticated response must not carry Set-Cookie"
+    );
+}
+
+#[tokio::test]
+async fn test_health_endpoint_stays_cacheable() {
+    let server = create_test_server(default_test_config()).await;
+
+    // No session cookie on this request, so the cache_control middleware
+    // must leave it alone entirely (rule 2).
+    let response = server.get("/health").await;
+
+    response.assert_status_ok();
+    assert!(
+        response.maybe_header(header::CACHE_CONTROL).is_none(),
+        "an unauthenticated request must not get a forced no-store"
+    );
+}
+
+// ============================================================================
+// Strict-Transport-Security (HSTS) tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_hsts_header_present_when_public_base_url_is_https() {
+    // Go through Config::from_map (not a hand-built literal) so this exercises
+    // the real derivation path: RDRS_PUBLIC_BASE_URL's scheme -> parse_hsts ->
+    // Config::hsts -> Config::hsts_header_value -> the router layer.
+    let config = Config::from_map(|k| {
+        (k == "RDRS_PUBLIC_BASE_URL").then(|| "https://rdrs.example.com".to_string())
+    })
+    .expect("from_map should succeed");
+    let server = create_test_server(config).await;
+
+    let response = server.get("/health").await;
+
+    assert_eq!(
+        response.header(header::STRICT_TRANSPORT_SECURITY),
+        "max-age=31536000; includeSubDomains"
+    );
+}
+
+#[tokio::test]
+async fn test_hsts_header_absent_by_default() {
+    // The most important test in this task: a plain-HTTP deployment (the
+    // default — no RDRS_PUBLIC_BASE_URL, no RDRS_HSTS override) must never be
+    // told to enforce HTTPS. HSTS is sticky and cannot be retracted quickly,
+    // so sending it here by accident would lock browsers out of a working
+    // plain-HTTP install.
+    let server = create_test_server(default_test_config()).await;
+
+    let response = server.get("/health").await;
+
+    response.assert_status_ok();
+    assert!(
+        response
+            .maybe_header(header::STRICT_TRANSPORT_SECURITY)
+            .is_none(),
+        "a plain-HTTP deployment must never receive Strict-Transport-Security"
+    );
+}
+
+#[tokio::test]
+async fn test_hsts_header_on_static_and_health() {
+    // HSTS is a declaration about the host, not any one response, so there is
+    // no skip list: /static and /health must carry it exactly like every
+    // other path when the deployment is HTTPS.
+    let config = Config::from_map(|k| {
+        (k == "RDRS_PUBLIC_BASE_URL").then(|| "https://rdrs.example.com".to_string())
+    })
+    .expect("from_map should succeed");
+    let server = create_test_server(config).await;
+
+    let health = server.get("/health").await;
+    assert_eq!(
+        health.header(header::STRICT_TRANSPORT_SECURITY),
+        "max-age=31536000; includeSubDomains"
+    );
+
+    let static_asset = server.get("/static/css/app.css").await;
+    static_asset.assert_status_ok();
+    assert_eq!(
+        static_asset.header(header::STRICT_TRANSPORT_SECURITY),
+        "max-age=31536000; includeSubDomains"
+    );
+}
+
+#[tokio::test]
+async fn test_existing_hsts_header_is_not_overwritten() {
+    // No handler in the real app sets Strict-Transport-Security itself — the
+    // realistic source of a pre-existing header is a TLS-terminating reverse
+    // proxy in front of rdrs, which this suite has no way to stand up. This
+    // test instead wires the exact same exported `set_hsts` middleware
+    // `create_router` uses around a bare handler that stands in for the
+    // proxy by setting the header itself, and confirms the middleware leaves
+    // it alone rather than overwriting it with its own value.
+    async fn proxy_set_header() -> impl axum::response::IntoResponse {
+        (
+            [(
+                header::STRICT_TRANSPORT_SECURITY,
+                HeaderValue::from_static("max-age=1"),
+            )],
+            "ok",
+        )
+    }
+
+    let value = HeaderValue::from_static("max-age=31536000; includeSubDomains");
+    let router = axum::Router::new()
+        .route("/probe", axum::routing::get(proxy_set_header))
+        .layer(axum::middleware::from_fn_with_state(
+            rdrs::middleware::HstsState::new(value),
+            rdrs::middleware::set_hsts,
+        ));
+    let server = TestServer::new(router);
+
+    let response = server.get("/probe").await;
+
+    assert_eq!(
+        response.header(header::STRICT_TRANSPORT_SECURITY),
+        "max-age=1"
+    );
+}
+
+#[tokio::test]
+async fn hsts_is_sent_on_a_csrf_rejected_response() {
+    // Regression test: HSTS must be the outermost layer, because
+    // `csrf_origin_guard` short-circuits with a 403 without calling `next`,
+    // so a layer nested inside it (as HSTS used to be) would never run.
+    let config = Config::from_map(|k| {
+        (k == "RDRS_PUBLIC_BASE_URL").then(|| "https://rdrs.example.com".to_string())
+    })
+    .expect("from_map should succeed");
+    let server = create_test_server(config).await;
+
+    let response = server
+        .post("/api/session")
+        .add_header(
+            HeaderName::from_static("sec-fetch-site"),
+            HeaderValue::from_static("cross-site"),
+        )
+        .await;
+
+    response.assert_status_forbidden();
+    assert_eq!(
+        response.header(header::STRICT_TRANSPORT_SECURITY),
+        "max-age=31536000; includeSubDomains"
+    );
 }

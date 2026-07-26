@@ -36,7 +36,7 @@ use time::Duration;
 
 use crate::AppState;
 use crate::middleware::auth::{build_session_cookie, session_token_from_jar};
-use crate::models::session::{SESSION_ABSOLUTE_MAX_DAYS, generate_token};
+use crate::models::session::{self, generate_token};
 use crate::secret::{derive_csrf, verify_csrf};
 
 /// Readable (non-`HttpOnly`) cookie carrying the CSRF token, so page JavaScript
@@ -45,6 +45,26 @@ use crate::secret::{derive_csrf, verify_csrf};
 /// expected token from the signed session cookie — so exposing it to script is
 /// safe: a cross-origin page can neither read this cookie nor compute its value.
 pub const CSRF_COOKIE_NAME: &str = "csrf_token";
+
+/// `__Host-`-prefixed CSRF cookie name, used only when `Secure` is in effect
+/// (see [`csrf_cookie_name`]). Mirrors [`crate::middleware::auth::SESSION_COOKIE_NAME_HOST`]
+/// for the same OWASP *Cookies* reasoning — see that constant's doc comment
+/// for why this is defence in depth rather than a fix for an exploitable gap,
+/// and why the prefix cannot be used unconditionally.
+///
+/// `__Host-` does not require `HttpOnly`, so prefixing this cookie does not
+/// conflict with it needing to stay script-readable.
+pub const CSRF_COOKIE_NAME_HOST: &str = "__Host-csrf_token";
+
+/// Which cookie name to *write* for the CSRF cookie, given whether `Secure`
+/// is in effect. See [`CSRF_COOKIE_NAME_HOST`].
+pub fn csrf_cookie_name(secure: bool) -> &'static str {
+    if secure {
+        CSRF_COOKIE_NAME_HOST
+    } else {
+        CSRF_COOKIE_NAME
+    }
+}
 
 /// Header a browser echoes the token back in for `fetch`-driven mutations.
 pub const CSRF_HEADER: &str = "x-csrf-token";
@@ -80,12 +100,12 @@ const CSRF_MAX_BODY_BYTES: usize = 1 << 20;
 /// cookie's `Path`, `SameSite`, `Secure`, and `Max-Age` so the two travel
 /// together, but is deliberately **not** `HttpOnly` — script must read it.
 pub fn build_csrf_cookie(session_token: &str, secret: &[u8], secure: bool) -> Cookie<'static> {
-    Cookie::build((CSRF_COOKIE_NAME, derive_csrf(secret, session_token)))
+    Cookie::build((csrf_cookie_name(secure), derive_csrf(secret, session_token)))
         .path("/")
         .http_only(false)
         .secure(secure)
         .same_site(SameSite::Lax)
-        .max_age(Duration::days(SESSION_ABSOLUTE_MAX_DAYS))
+        .max_age(Duration::days(session::SESSION_EXPIRY_DAYS))
         .build()
 }
 
@@ -199,7 +219,13 @@ pub async fn anonymous_session(
         // A real (or already-anonymous) session: leave it untouched, but mint
         // the readable CSRF cookie if it is missing — e.g. a session cookie that
         // predates this feature, which must not have its POSTs start 403ing.
-        if jar.get(CSRF_COOKIE_NAME).is_none() {
+        //
+        // Both cookie names are checked: on a Secure deployment the CSRF
+        // cookie the visitor already holds is __Host-csrf_token, not
+        // csrf_token, and checking only the unprefixed name here would mint
+        // (and re-mint, on every single request) a second, unnecessary CSRF
+        // cookie under the other name.
+        if jar.get(CSRF_COOKIE_NAME_HOST).is_none() && jar.get(CSRF_COOKIE_NAME).is_none() {
             let csrf = build_csrf_cookie(&token, secret, secure);
             set_request_cookie(&mut req, &csrf);
             return with_set_cookies(next.run(req).await, &[csrf]);

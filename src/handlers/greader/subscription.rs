@@ -483,7 +483,7 @@ fn verify_post_token_if_needed(
     if let Some(post_token) = token {
         super::auth::verify_post_token(
             &state.config.secret,
-            &auth.session.session_token,
+            auth.credential.post_token_subject(),
             post_token,
         )?;
     }

@@ -12,6 +12,7 @@ use crate::error::AppError;
 use crate::middleware::auth::{LoginRedirect, PageAdminUser, PageAuthUser};
 use crate::middleware::flash::{Flash, FlashMessage, FlashRedirect};
 use crate::models::SummaryStatus;
+use crate::models::api_token;
 use crate::models::session;
 use crate::models::user_settings;
 use crate::models::{category, entry, entry_summary, feed};
@@ -828,6 +829,32 @@ pub async fn user_settings_page(
             .collect()
     };
 
+    // While masquerading, the effective identity is the target user's — same
+    // reasoning as `sessions` above, so this stays an empty Vec rather than
+    // exposing (or risking revocation of) the target's real GReader tokens.
+    let api_tokens: Vec<ApiTokenRow> = if is_masquerading {
+        Vec::new()
+    } else {
+        api_token::list_user_tokens(&state.db, user_id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|t| !t.is_expired())
+            .map(|t| ApiTokenRow {
+                id: t.id,
+                label: t.label.clone(),
+                created_at: t.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                created_at_iso: t.created_at.to_rfc3339(),
+                last_seen: t.last_seen_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                last_seen_iso: t.last_seen_at.to_rfc3339(),
+                expires_at: t.expires_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                expires_at_iso: t.expires_at.to_rfc3339(),
+                user_agent: t.user_agent.clone(),
+                ip_address: t.ip_address.clone(),
+            })
+            .collect()
+    };
+
     (
         flash,
         UserSettingsTemplate {
@@ -842,6 +869,7 @@ pub async fn user_settings_page(
             session_created_at_iso,
             sessions,
             show_sessions: !is_masquerading,
+            api_tokens,
             public_base_url,
             theme,
             entries_per_page,
@@ -2383,6 +2411,24 @@ pub struct SessionRow {
     pub last_seen_iso: String,
 }
 
+/// A single row in the "`GReader` API Tokens" table on `/user-settings`. Unlike
+/// `SessionRow`, this exposes `id` — the revoke-one form posts it in the URL
+/// path, and `revoke_api_token_form` re-checks ownership server-side via
+/// `api_token::delete_token`'s `user_id` scoping, so leaking the id here is
+/// not itself a privilege grant.
+pub struct ApiTokenRow {
+    pub id: i64,
+    pub label: String,
+    pub created_at: String,
+    pub created_at_iso: String,
+    pub last_seen: String,
+    pub last_seen_iso: String,
+    pub expires_at: String,
+    pub expires_at_iso: String,
+    pub user_agent: String,
+    pub ip_address: String,
+}
+
 /// Per-route template for `/user-settings`. Renders the full page server-side
 /// (account info, `GReader` URLs, password / preferences / linkding / kagi
 /// forms, and a `<rdrs-passkeys>` mount). Form actions target the
@@ -2404,6 +2450,10 @@ pub struct UserSettingsTemplate {
     /// the effective session is the target's — listing/revoking it would
     /// silently sign the victim out of their own real sessions.
     pub show_sessions: bool,
+    /// `GReader` `ClientLogin` API tokens (see `models::api_token`), newest
+    /// first, unexpired. Empty while masquerading — see `api_tokens`'s
+    /// population above `user_settings_page`.
+    pub api_tokens: Vec<ApiTokenRow>,
     pub public_base_url: String,
     pub theme: Option<String>,
     pub entries_per_page: i64,

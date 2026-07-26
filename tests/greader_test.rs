@@ -45,6 +45,7 @@ async fn create_test_app(config: Config) -> TestApp {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
 
     let app = create_router(state);
@@ -149,6 +150,17 @@ async fn test_client_login_success() {
     assert!(body.contains("SID="));
     assert!(body.contains("LSID="));
     assert!(body.contains("Auth="));
+
+    // The Auth token is an independent api_token, not the raw session_token —
+    // recognisable by its rdrs_gr_ prefix.
+    let token = body
+        .lines()
+        .find_map(|line| line.strip_prefix("Auth="))
+        .unwrap();
+    assert!(
+        token.starts_with(rdrs::models::api_token::API_TOKEN_PREFIX),
+        "Auth token must be an api_token, got {token:?}"
+    );
 }
 
 #[tokio::test]
@@ -203,6 +215,331 @@ async fn test_client_login_token_used_for_api() {
         )
         .await;
     response.assert_status_ok();
+}
+
+/// This is the core regression test of the whole `api_token` decoupling task:
+/// a `ClientLogin` token must not be usable as a web session under any
+/// disguise, even a correctly-signed one.
+#[tokio::test]
+async fn test_client_login_token_is_not_a_web_session() {
+    let app = create_test_app(default_test_config()).await;
+    // Created directly in the DB rather than through `/api/session`, so the
+    // TestServer's cookie jar never picks up a real session cookie — the only
+    // cookies sent in this test are the ones this test adds explicitly.
+    create_user_directly(&app.db, "testuser", "password123").await;
+    let user_id = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+
+    let form = vec![
+        ("Email", "testuser".to_string()),
+        ("Passwd", "password123".to_string()),
+    ];
+    let response = app.server.post("/accounts/ClientLogin").form(&form).await;
+    response.assert_status_ok();
+    let body = response.text();
+    let token = body
+        .lines()
+        .find_map(|line| line.strip_prefix("Auth="))
+        .unwrap()
+        .to_string();
+
+    let sessions_before = rdrs::models::session::list_user_sessions(&app.db, user_id)
+        .await
+        .unwrap();
+    assert!(
+        sessions_before.is_empty(),
+        "no web session was ever created"
+    );
+
+    // (a) sent bare as a cookie value → 401 (fails signature verification
+    // before any database lookup, same as any malformed cookie).
+    let bare = app
+        .server
+        .get("/reader/api/0/subscription/list")
+        .add_cookie(cookie::Cookie::new("session_token", token.clone()))
+        .await;
+    assert_eq!(bare.status_code(), StatusCode::UNAUTHORIZED);
+
+    // (b) signed correctly with secret::sign_session and sent as a cookie →
+    // still 401, because no such row exists in `session` (only in
+    // `api_token`). This is the actual decoupling assertion — (a) alone would
+    // pass even if the token secretly still worked as a signed session.
+    let config = default_test_config();
+    let signed = rdrs::secret::sign_session(&config.secret, &token);
+    let signed_response = app
+        .server
+        .get("/reader/api/0/subscription/list")
+        .add_cookie(cookie::Cookie::new("session_token", signed))
+        .await;
+    assert_eq!(signed_response.status_code(), StatusCode::UNAUTHORIZED);
+
+    // (c) the `session` table row count did not increase — ClientLogin must
+    // never have written a session row for this token.
+    let sessions_after = rdrs::models::session::list_user_sessions(&app.db, user_id)
+        .await
+        .unwrap();
+    assert_eq!(sessions_before.len(), sessions_after.len());
+    assert!(sessions_after.is_empty());
+}
+
+/// The mirror image of the test above, and the invariant that removing the
+/// `RDRS_GREADER_LEGACY_SESSION_TOKENS` escape hatch makes unconditional: a
+/// real web session token presented in the `Authorization` header is never
+/// matched against `session`. Only the cookie path may carry a web session.
+#[tokio::test]
+async fn test_web_session_token_is_rejected_in_the_authorization_header() {
+    let app = create_test_app(default_test_config()).await;
+    create_user_directly(&app.db, "testuser", "password123").await;
+    let user_id = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+
+    // A genuine, unexpired web session — the exact value a pre-cutover
+    // GReader client would have had stored.
+    let session =
+        rdrs::models::session::create_session(&app.db, user_id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+
+    // Sent bare, the way ClientLogin used to hand it out.
+    let bare = app
+        .server
+        .get("/reader/api/0/subscription/list")
+        .add_header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("GoogleLogin auth={}", session.session_token)).unwrap(),
+        )
+        .await;
+    assert_eq!(bare.status_code(), StatusCode::UNAUTHORIZED);
+
+    // And signed, so this cannot pass merely because the raw value failed a
+    // signature check somewhere.
+    let config = default_test_config();
+    let signed = rdrs::secret::sign_session(&config.secret, &session.session_token);
+    let signed_response = app
+        .server
+        .get("/reader/api/0/subscription/list")
+        .add_header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("GoogleLogin auth={signed}")).unwrap(),
+        )
+        .await;
+    assert_eq!(signed_response.status_code(), StatusCode::UNAUTHORIZED);
+
+    // The session itself is still valid — the header path rejected it, not
+    // an expiry or a cleanup sweep.
+    let still_there = rdrs::models::session::find_by_token(&app.db, &session.session_token)
+        .await
+        .unwrap();
+    assert!(
+        still_there.is_some(),
+        "the session must survive: it was rejected as a header credential, not deleted"
+    );
+}
+
+#[tokio::test]
+async fn test_web_session_cookie_still_works_for_greader() {
+    let app = create_test_app(default_test_config()).await;
+    // setup_authenticated_user logs in via POST /api/session; the TestServer's
+    // cookie jar (save_cookies) picks up the resulting session cookie
+    // automatically, so no Authorization header is sent below.
+    setup_authenticated_user(&app).await;
+
+    let response = app.server.get("/reader/api/0/subscription/list").await;
+    response.assert_status_ok();
+}
+
+#[tokio::test]
+async fn test_post_token_works_for_both_credential_kinds() {
+    let app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&app).await;
+
+    // Cookie credential.
+    let cookie_token_resp = app.server.get("/reader/api/0/token").await;
+    cookie_token_resp.assert_status_ok();
+    let cookie_post_token = cookie_token_resp.text();
+
+    // ApiToken credential (same underlying user).
+    let form = vec![
+        ("Email", "testuser".to_string()),
+        ("Passwd", "password123".to_string()),
+    ];
+    let cl_response = app.server.post("/accounts/ClientLogin").form(&form).await;
+    let cl_body = cl_response.text();
+    let api_token = cl_body
+        .lines()
+        .find_map(|line| line.strip_prefix("Auth="))
+        .unwrap()
+        .to_string();
+
+    let api_token_resp = app
+        .server
+        .get("/reader/api/0/token")
+        .add_header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("GoogleLogin auth={api_token}")).unwrap(),
+        )
+        .await;
+    api_token_resp.assert_status_ok();
+    let api_post_token = api_token_resp.text();
+
+    assert_ne!(
+        cookie_post_token, api_post_token,
+        "post tokens for different credentials must not collide"
+    );
+
+    // A post token minted under one credential is not accepted under the
+    // other. Cookie-authenticated requests skip the POST-token check entirely
+    // (SameSite already protects them — see `verify_post_token_if_needed`),
+    // so the only way to observe a rejection is through a header-authenticated
+    // (ApiToken) mutation request, submitting the mismatched token as `T`.
+    let unknown_feed_form_wrong_token = vec![
+        ("ac", "edit".to_string()),
+        (
+            "s",
+            "feed/https://does-not-exist.example.com/rss".to_string(),
+        ),
+        ("T", cookie_post_token),
+    ];
+    let wrong_token_resp = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        .add_header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("GoogleLogin auth={api_token}")).unwrap(),
+        )
+        .form(&unknown_feed_form_wrong_token)
+        .await;
+    assert_eq!(
+        wrong_token_resp.status_code(),
+        StatusCode::UNAUTHORIZED,
+        "a cookie-credential post token must not be accepted under an ApiToken credential"
+    );
+
+    // The matching token passes the check and the request proceeds past it
+    // (into "feed not found" territory, not "unauthorized").
+    let unknown_feed_form_right_token = vec![
+        ("ac", "edit".to_string()),
+        (
+            "s",
+            "feed/https://does-not-exist.example.com/rss".to_string(),
+        ),
+        ("T", api_post_token),
+    ];
+    let right_token_resp = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        .add_header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("GoogleLogin auth={api_token}")).unwrap(),
+        )
+        .form(&unknown_feed_form_right_token)
+        .await;
+    assert_eq!(right_token_resp.status_code(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_expired_api_token_is_lazily_deleted() {
+    let app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&app).await;
+
+    let form = vec![
+        ("Email", "testuser".to_string()),
+        ("Passwd", "password123".to_string()),
+    ];
+    let response = app.server.post("/accounts/ClientLogin").form(&form).await;
+    let body = response.text();
+    let token = body
+        .lines()
+        .find_map(|line| line.strip_prefix("Auth="))
+        .unwrap()
+        .to_string();
+
+    rdrs::db_execute!(
+        &app.db,
+        "UPDATE api_token SET expires_at = datetime('now', '-1 hours') WHERE token = $1",
+        &token,
+    )
+    .unwrap();
+
+    let response = app
+        .server
+        .get("/reader/api/0/subscription/list")
+        .add_header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("GoogleLogin auth={token}")).unwrap(),
+        )
+        .await;
+    assert_eq!(response.status_code(), StatusCode::UNAUTHORIZED);
+
+    let found = rdrs::models::api_token::find_by_token(&app.db, &token)
+        .await
+        .unwrap();
+    assert!(found.is_none(), "expired api_token must be lazily deleted");
+}
+
+/// Create a user directly in the database, bypassing `POST /api/register` —
+/// so setup does not itself consume a slot from the client's rate-limit
+/// budget (registration is a guarded, never-released endpoint; going through
+/// it here would leave fewer than 5 attempts free for the test itself).
+async fn create_user_directly(db: &Db, username: &str, password: &str) {
+    let hash = auth::hash_password(password).unwrap();
+    rdrs::models::user::create_user(db, username, &hash, rdrs::Role::User)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_client_login_rate_limited() {
+    let app = create_test_app(default_test_config()).await;
+    create_user_directly(&app.db, "testuser", "password123").await;
+
+    let form = vec![
+        ("Email", "testuser".to_string()),
+        ("Passwd", "wrongpassword".to_string()),
+    ];
+    for _ in 0..5 {
+        let response = app.server.post("/accounts/ClientLogin").form(&form).await;
+        assert_eq!(response.status_code(), StatusCode::UNAUTHORIZED);
+    }
+
+    // The 6th failed attempt is throttled rather than evaluated.
+    let response = app.server.post("/accounts/ClientLogin").form(&form).await;
+    assert_eq!(response.status_code(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn test_client_login_rate_limit_applies_to_greader_php_prefix() {
+    // The router `.nest()`s the same handler under /api/greader.php (see
+    // src/lib.rs), so the two paths must share the same rate-limit bucket —
+    // an attacker cannot dodge the limiter by switching prefixes mid-attack.
+    let app = create_test_app(default_test_config()).await;
+    create_user_directly(&app.db, "testuser", "password123").await;
+
+    let form = vec![
+        ("Email", "testuser".to_string()),
+        ("Passwd", "wrongpassword".to_string()),
+    ];
+    for _ in 0..5 {
+        let response = app
+            .server
+            .post("/api/greader.php/accounts/ClientLogin")
+            .form(&form)
+            .await;
+        assert_eq!(response.status_code(), StatusCode::UNAUTHORIZED);
+    }
+
+    let response = app
+        .server
+        .post("/api/greader.php/accounts/ClientLogin")
+        .form(&form)
+        .await;
+    assert_eq!(response.status_code(), StatusCode::TOO_MANY_REQUESTS);
 }
 
 // ============================================================================
@@ -762,6 +1099,7 @@ async fn test_unauthenticated_access_denied() {
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: rdrs::services::EventBus::new(16),
         shutdown: tokio_util::sync::CancellationToken::new(),
+        login_rate_limiter: common::test_rate_limiter(),
     };
 
     let app = create_router(state);
