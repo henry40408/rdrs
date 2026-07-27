@@ -1,4 +1,5 @@
 {%- import "_icons.html" as icons -%}
+{%- import "macros.html" as macros -%}
 {# Single entry row — "wire log" v2. Grid: marker(dot=read toggle) | content
    (title + feed meta) | timerow(summary + relative time). The star + open-
    original actions sit in col3/row2, vertically centred against the meta line
@@ -11,9 +12,7 @@
    summary cluster (SSE renderSummaryBadge), and .entry-read/.selected hooks. #}
 <div id="entry-row-{{ r.id }}" class="entry-item{% if r.is_read %} entry-read{% endif %}" data-entry-row data-entry-id="{{ r.id }}" data-category-id="{{ r.category_id }}"{% if let Some(link) = r.link.as_ref() %} data-entry-link="{{ link }}"{% endif %} data-testid="entry-item">
     {# Marker: dot = idempotent read/unread toggle (mirrors the star form). #}
-    <form class="entry-marker" method="post" action="/entries/{{ r.id }}/{% if r.is_read %}unread{% else %}read{% endif %}" data-swap="#entry-row-{{ r.id }}">
-        <button type="submit" class="unread-toggle" data-testid="entry-read-toggle" aria-label="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %}" title="{% if r.is_read %}Mark unread{% else %}Mark read{% endif %} (m)"></button>
-    </form>
+    {% call macros::row_marker_form(r.id, r.is_read) %}{% endcall %}
 
     <a href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" title="{{ r.title }}" class="entry-item-title" data-testid="entry-title-link">{{ r.title }}</a>
 
@@ -47,9 +46,7 @@
     </div>
 
     <div class="rail-actions">
-        <form class="entry-star-form" method="post" action="/entries/{{ r.id }}/{% if r.is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ r.id }}">
-            <button type="submit" class="entry-star{% if r.is_starred %} starred{% endif %}" data-testid="entry-star-action" aria-label="{% if r.is_starred %}Unstar{% else %}Star{% endif %}" title="{% if r.is_starred %}Unstar{% else %}Star{% endif %} (f)">{% call icons::star(r.is_starred) %}{% endcall %}</button>
-        </form>
+        {% call macros::row_star_form(r.id, r.is_starred) %}{% endcall %}
         {% if let Some(link) = r.link.as_ref() %}
         <a class="entry-open-ext" href="{{ link }}" target="_blank" rel="noopener noreferrer" data-testid="entry-open-original" aria-label="Open original" title="Open original (v)">{% call icons::external() %}{% endcall %}</a>
         {% endif %}

@@ -1,5 +1,19 @@
 {%- import "macros.html" as macros -%}
-<template data-swap-target="#entry-row-{{ r.id }}">{% include "_entry_row.html" %}</template>
+{# Multi-target response for the four idempotent row actions (read / unread /
+   star / unstar). Only the two stateful controls change, so only those are
+   re-rendered — the surrounding row (title, meta, favicon, time, summary badge,
+   open-original link) is untouched markup the client already has. The row's own
+   `entry-read` modifier can't ride along in a sub-element swap, so it travels as
+   a class directive instead of forcing a whole-row replacement.
+
+   Both forms ship on every action rather than only the one that moved: they
+   render current state either way, they're small, and it keeps this response
+   action-agnostic. Selectors resolving to nothing (row not on the page — e.g.
+   acting from the reading pane on a filtered list) are skipped by the swap
+   helper, same as before. #}
+<template data-swap-target="#entry-row-{{ r.id }} .entry-marker">{% call macros::row_marker_form(r.id, r.is_read) %}{% endcall %}</template>
+<template data-swap-target="#entry-row-{{ r.id }} .entry-star-form">{% call macros::row_star_form(r.id, r.is_starred) %}{% endcall %}</template>
+<template data-class-target="#entry-row-{{ r.id }}" data-class-{% if r.is_read %}add{% else %}remove{% endif %}="entry-read"></template>
 {% if let Some(f) = flash.as_ref() %}
 <template data-flash data-level="{{ f.level }}">{{ f.message }}</template>
 {% endif %}

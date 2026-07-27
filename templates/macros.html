@@ -3,6 +3,15 @@
 {# Reading-pane star button + its form. Shared by _reading_pane.html and the
    swap-twin fragment in _entry_actions_multi.html so the two cannot drift
    (starred `is-on` modifier + `<kbd>f</kbd>` hint stay in lockstep). #}
+{# The two stateful controls inside an entry row. Shared by _entry_row.html and
+   by the sub-element swap blocks in _entry_actions_multi.html /
+   _open_entry_multi.html: an action response re-renders just these forms (plus
+   a class directive for the row's own `entry-read`) instead of the whole row,
+   so the swap twins cannot drift from how the list renders them. Both carry
+   `data-swap="#entry-row-{id}"` only as the no-template fallback — the real
+   responses always ship `data-swap-target` blocks that override it. #}
+{% macro row_marker_form(id, is_read) %}<form class="entry-marker" method="post" action="/entries/{{ id }}/{% if is_read %}unread{% else %}read{% endif %}" data-swap="#entry-row-{{ id }}"><button type="submit" class="unread-toggle" data-testid="entry-read-toggle" aria-label="{% if is_read %}Mark unread{% else %}Mark read{% endif %}" title="{% if is_read %}Mark unread{% else %}Mark read{% endif %} (m)"></button></form>{% endmacro %}
+{% macro row_star_form(id, is_starred) %}<form class="entry-star-form" method="post" action="/entries/{{ id }}/{% if is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ id }}"><button type="submit" class="entry-star{% if is_starred %} starred{% endif %}" data-testid="entry-star-action" aria-label="{% if is_starred %}Unstar{% else %}Star{% endif %}" title="{% if is_starred %}Unstar{% else %}Star{% endif %} (f)">{% call icons::star(is_starred) %}{% endcall %}</button></form>{% endmacro %}
 {% macro pane_star_form(id, is_starred) %}<form id="reading-pane-star-form-{{ id }}" method="post" action="/entries/{{ id }}/{% if is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ id }}"><button type="submit" class="rp-action{% if is_starred %} is-on{% endif %}" aria-label="{% if is_starred %}Unstar{% else %}Star{% endif %}"><span class="action-icon" aria-hidden="true">{% call icons::star(is_starred) %}{% endcall %}</span><span class="action-label">{% if is_starred %}Starred{% else %}Star{% endif %}</span><kbd>f</kbd></button></form>{% endmacro %}
 {% macro flash(messages) %}
 {% if !messages.is_empty() %}

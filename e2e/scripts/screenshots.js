@@ -203,9 +203,17 @@ test.describe("Screenshots", () => {
       test(`unread list with reading pane (${theme})`, async ({ page }) => {
         // `j` moves the list cursor to the first row; `o` opens it in the
         // reading pane (j/k navigate the pane only once it's open).
+        const unreadBadge = page.locator("#unread-count").first();
+        const before = Number((await unreadBadge.textContent())?.trim());
         await page.keyboard.press("j");
         await page.keyboard.press("o");
         await expect(page.locator(".reading-pane-title")).toBeVisible();
+        // The pane swap and the sidebar count are two independent round trips:
+        // opening marks the entry read, the new count arrives over SSE and then
+        // through <rdrs-sidebar>'s coalescing debounce. Waiting only on the pane
+        // captures the row already showing its read dot while the badge still
+        // shows the pre-read total — an internally inconsistent screenshot.
+        await expect(unreadBadge).toHaveText(String(before - 1));
 
         await page.screenshot({
           path: path.join(SCREENSHOT_DIR, `unread-list${suffix}.png`),
