@@ -8,7 +8,7 @@
 # zig cc. OpenSSL's build driver (perl + make) and the favicon renderer (resvg,
 # pure Rust) need no extra system packages: perl and make already ship in the
 # rust:bookworm (buildpack-deps) base, so only zig has to be fetched.
-FROM --platform=$BUILDPLATFORM rust:1.96-bookworm AS build
+FROM --platform=$BUILDPLATFORM rust:1.97-bookworm AS build
 
 # curl + xz fetch zig; that is the only build-time system dependency.
 RUN apt-get update \
