@@ -22,6 +22,10 @@
     {% block head %}{% endblock %}
 </head>
 <body>
+    {# Outside `block body` on purpose: app_layout.html overrides that block, and
+       the sprite has to reach every page. Swap fragments reference these symbols
+       by id, so it must exist in the live document, not in the fragment. #}
+    {% include "_icon_sprite.html" %}
     {% block body %}
     {% block flash %}{% endblock %}
     {% block content %}{% endblock %}

@@ -1,6 +1,5 @@
 {%- import "macros.html" as macros -%}
 <template data-swap-target="#entry-row-{{ r.id }}">{% include "_entry_row.html" %}</template>
-<template data-swap-target="#sidebar-unread"><div id="sidebar-unread" data-payload='{{ sidebar_unread_payload_json|safe }}' hidden></div></template>
 {% if let Some(f) = flash.as_ref() %}
 <template data-flash data-level="{{ f.level }}">{{ f.message }}</template>
 {% endif %}

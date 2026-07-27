@@ -1170,33 +1170,6 @@ pub async fn set_read_for_user(
         .map(|ewf| (ewf, changed)))
 }
 
-/// Unread count per feed for a user.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct UnreadCount {
-    pub feed_id: i64,
-    pub unread: i64,
-}
-
-/// Return the unread entry count grouped by feed for the given user.
-pub async fn unread_counts_per_feed(db: &Db, user_id: i64) -> AppResult<Vec<UnreadCount>> {
-    let hint = Dialect::from_db(db).index_hint(" INDEXED BY idx_entry_unread_feed");
-    let sql = format!(
-        "SELECT e.feed_id, COUNT(*) AS unread \
-         FROM entry e{hint} \
-         INNER JOIN feed f ON f.id = e.feed_id \
-         INNER JOIN category c ON c.id = f.category_id \
-         WHERE c.user_id = $1 AND e.read_at IS NULL \
-         GROUP BY e.feed_id"
-    );
-    let rows = fetch_id_ts_rows(db, sql, vec![Bind::Int(user_id)])
-        .await
-        .map_err(AppError::Database)?;
-    Ok(rows
-        .into_iter()
-        .map(|(feed_id, unread)| UnreadCount { feed_id, unread })
-        .collect())
-}
-
 /// Batch query entries by IDs with feed info, verifying user ownership.
 pub async fn find_by_ids_with_feed(
     db: &Db,

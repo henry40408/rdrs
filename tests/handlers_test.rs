@@ -3766,14 +3766,17 @@ async fn test_entry_fragment_renders_reading_pane() {
         html.contains(r#"aria-label="Mark Unread""#),
         "Mark Unread action must keep its accessible name"
     );
-    // Auto-mark-as-read: response carries the updated row + sidebar blocks.
+    // Auto-mark-as-read: response carries the updated row block.
     assert!(
         html.contains(&format!(r##"data-swap-target="#entry-row-{entry_id}""##)),
         "response must include a multi-target row block to clear unread state"
     );
+    // The sidebar's counts travel over SSE, not in this response. Nothing ever
+    // rendered a `#sidebar-unread` element for the payload that used to ride
+    // along here, so the browser discarded it — guard against it coming back.
     assert!(
-        html.contains(r##"data-swap-target="#sidebar-unread""##),
-        "response must include a multi-target sidebar block"
+        !html.contains("sidebar-unread"),
+        "the unconsumed sidebar-unread payload must not be reintroduced"
     );
     // The mark-as-read write is dispatched off the critical path via a detached
     // `tokio::spawn` (fire-and-forget), so it may not have committed by the time
@@ -4089,8 +4092,8 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
         "multi-target row block must be present"
     );
     assert!(
-        html.contains("data-swap-target=\"#sidebar-unread\""),
-        "multi-target sidebar block must be present"
+        !html.contains("sidebar-unread"),
+        "the unconsumed sidebar-unread payload must not be reintroduced"
     );
     assert!(
         html.contains("aria-label=\"Unstar\""),
@@ -4272,8 +4275,8 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
         "multi-target row block must be present"
     );
     assert!(
-        html.contains("data-swap-target=\"#sidebar-unread\""),
-        "multi-target sidebar block must be present"
+        !html.contains("sidebar-unread"),
+        "the unconsumed sidebar-unread payload must not be reintroduced"
     );
     assert!(
         html.contains(r#"class="entry-item entry-read""#),

@@ -2,8 +2,7 @@
    click in `_entry_row.html` carries `data-swap="#reading-pane"`, but the
    `<template>` blocks below override that default — the swap helper
    iterates each block and replaces by its `data-swap-target` selector.
-   This lets one round trip update the reading pane, mark the row as read,
-   and refresh the sidebar unread count. #}
+   This lets one round trip update the reading pane and mark the row as read.
+   The sidebar's own unread counts arrive over SSE (`emit_sidebar`), not here. #}
 <template data-swap-target="#reading-pane">{% include "_reading_pane.html" %}</template>
 <template data-swap-target="#entry-row-{{ r.id }}">{% include "_entry_row.html" %}</template>
-<template data-swap-target="#sidebar-unread"><div id="sidebar-unread" data-payload='{{ sidebar_unread_payload_json|safe }}' hidden></div></template>

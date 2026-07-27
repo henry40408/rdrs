@@ -1,0 +1,35 @@
+{# Icon sprite, emitted once per document by base.html. The macros in
+   _icons.html reference these symbols with <use>, so an icon costs ~40 bytes at
+   each call site instead of repeating its path data — which matters most in the
+   swap fragments, where the same handful of icons was re-sent on every entry
+   open, and in list pages that render two icons per row.
+
+   Presentation attributes are deliberately absent here: `.ico` in app.css sets
+   fill/stroke/stroke-width/stroke-linecap/stroke-linejoin on the referencing
+   <svg>, and those are inherited SVG properties, so they cross into the <use>
+   shadow tree. Styling therefore stays exactly where it was.
+
+   The size/position style is load-bearing and inline on purpose. `hidden` does
+   NOT work here: the HTML UA stylesheet declares `@namespace` for XHTML, so its
+   `[hidden] { display: none }` rule never matches an element in the SVG
+   namespace. Left unstyled the sprite renders as an empty replaced element at
+   the default 300x150 and pushes the whole page down. Inline rather than in
+   app.css so it still holds if the stylesheet is slow or fails to load. #}
+<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" data-icon-sprite
+     style="position:absolute;width:0;height:0;overflow:hidden">
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></symbol>
+<symbol id="i-unread" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/></symbol>
+<symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.5l2.7 5.5 6 .9-4.3 4.2 1 6L12 17.3 6.6 20l1-6L3.3 9.9l6-.9z"/></symbol>
+<symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/><path d="M19 14v5H5V5h5"/></symbol>
+<symbol id="i-document" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><path d="M9.5 12h6M9.5 16h6"/></symbol>
+<symbol id="i-revert" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/></symbol>
+<symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-4.9L6 9.3l4.3-1.7z"/><path d="M18 15l.7 1.8L20.5 17.5l-1.8.7L18 20l-.7-1.8L15.5 17.5l1.8-.7z"/></symbol>
+<symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 4h12v17l-6-4-6 4z"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+<symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+<symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+<symbol id="i-summary-filled" viewBox="0 0 24 24"><path d="M12 3L14 10L21 12L14 14L12 21L10 14L3 12L10 10Z"/></symbol>
+<symbol id="i-summary" viewBox="0 0 24 24"><g transform="translate(1.2 1.2) scale(0.9)"><path d="M12 3L14 10L21 12L14 14L12 21L10 14L3 12L10 10Z"/></g></symbol>
+</svg>
