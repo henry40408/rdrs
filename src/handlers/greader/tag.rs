@@ -153,6 +153,10 @@ pub async fn edit_tag(
     }
 
     state.sidebar_cache.bust(user_id);
+    // Busting alone only helps the next request that renders chrome. A GReader
+    // client's write never passes through the browser, so without this an open
+    // tab keeps showing the pre-change counts until something else reloads it.
+    state.events.emit_sidebar(user_id);
     Ok("OK".to_string())
 }
 
@@ -215,6 +219,10 @@ pub async fn mark_all_as_read(
     }
 
     state.sidebar_cache.bust(user_id);
+    // Busting alone only helps the next request that renders chrome. A GReader
+    // client's write never passes through the browser, so without this an open
+    // tab keeps showing the pre-change counts until something else reloads it.
+    state.events.emit_sidebar(user_id);
     Ok("OK".to_string())
 }
 
@@ -254,6 +262,10 @@ pub async fn disable_tag(
     category::delete_category(&state.db, cat.id, user_id).await?;
 
     state.sidebar_cache.bust(user_id);
+    // Busting alone only helps the next request that renders chrome. A GReader
+    // client's write never passes through the browser, so without this an open
+    // tab keeps showing the pre-change counts until something else reloads it.
+    state.events.emit_sidebar(user_id);
     Ok("OK".to_string())
 }
 
@@ -316,5 +328,9 @@ pub async fn rename_tag(
     }
 
     state.sidebar_cache.bust(user_id);
+    // Busting alone only helps the next request that renders chrome. A GReader
+    // client's write never passes through the browser, so without this an open
+    // tab keeps showing the pre-change counts until something else reloads it.
+    state.events.emit_sidebar(user_id);
     Ok("OK".to_string())
 }

@@ -26,6 +26,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 struct TestApp {
     server: TestServer,
     db: Db,
+    state: AppState,
 }
 
 async fn create_test_app(config: Config) -> TestApp {
@@ -48,10 +49,10 @@ async fn create_test_app(config: Config) -> TestApp {
         login_rate_limiter: common::test_rate_limiter(),
     };
 
-    let app = create_router(state);
+    let app = create_router(state.clone());
     let server = TestServer::builder().save_cookies().build(app);
 
-    TestApp { server, db }
+    TestApp { server, db, state }
 }
 
 /// Register and login a user via session cookie. Returns `user_id`.
@@ -1382,4 +1383,112 @@ async fn test_quickadd_success() {
         body["streamId"].as_str().unwrap(),
         format!("feed/{feed_url}")
     );
+}
+
+// ============================================================================
+// SSE: GReader writes must announce sidebar changes
+//
+// These mutations arrive from an external client (FeedMe, Read You, ...), so no
+// browser swap happens that a page could hang a refresh off. Without an
+// `emit_sidebar` an open tab keeps rendering the pre-change counts until it is
+// reloaded — busting the cache alone only helps the *next* request.
+// ============================================================================
+
+/// Assert the next event on `sub` is a Sidebar event for `user_id`.
+async fn expect_sidebar_event(
+    sub: &mut tokio::sync::broadcast::Receiver<rdrs::services::UserEvent>,
+    user_id: i64,
+    what: &str,
+) {
+    let ev = tokio::time::timeout(std::time::Duration::from_secs(1), sub.recv())
+        .await
+        .unwrap_or_else(|_| panic!("{what} must emit a sidebar event"))
+        .unwrap();
+    assert_eq!(ev.user_id, user_id);
+    assert!(
+        matches!(ev.kind, rdrs::services::EventKind::Sidebar),
+        "{what} must emit Sidebar, got {:?}",
+        ev.kind
+    );
+}
+
+#[tokio::test]
+async fn test_edit_tag_emits_sidebar_event() {
+    let app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&app).await;
+    let (_cat_id, feed_id) =
+        create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
+    let entry_ids = create_test_entries(&app.db, feed_id, 1).await;
+    let mut sub = app.state.events.subscribe();
+
+    let form = vec![
+        (
+            "i",
+            format!("tag:google.com,2005:reader/item/{:016x}", entry_ids[0]),
+        ),
+        ("a", "user/-/state/com.google/read".to_string()),
+    ];
+    app.server
+        .post("/reader/api/0/edit-tag")
+        .form(&form)
+        .await
+        .assert_status_ok();
+
+    expect_sidebar_event(&mut sub, user_id, "edit-tag").await;
+}
+
+#[tokio::test]
+async fn test_mark_all_as_read_emits_sidebar_event() {
+    let app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&app).await;
+    let (_cat_id, feed_id) =
+        create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
+    create_test_entries(&app.db, feed_id, 3).await;
+    let mut sub = app.state.events.subscribe();
+
+    let form = vec![("s", "user/-/state/com.google/reading-list".to_string())];
+    app.server
+        .post("/reader/api/0/mark-all-as-read")
+        .form(&form)
+        .await
+        .assert_status_ok();
+
+    expect_sidebar_event(&mut sub, user_id, "mark-all-as-read").await;
+}
+
+#[tokio::test]
+async fn test_rename_tag_emits_sidebar_event() {
+    let app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&app).await;
+    create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
+    let mut sub = app.state.events.subscribe();
+
+    let form = vec![
+        ("s", "user/-/label/Tech".to_string()),
+        ("dest", "user/-/label/Technology".to_string()),
+    ];
+    app.server
+        .post("/reader/api/0/rename-tag")
+        .form(&form)
+        .await
+        .assert_status_ok();
+
+    expect_sidebar_event(&mut sub, user_id, "rename-tag").await;
+}
+
+#[tokio::test]
+async fn test_disable_tag_emits_sidebar_event() {
+    let app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&app).await;
+    create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
+    let mut sub = app.state.events.subscribe();
+
+    let form = vec![("s", "user/-/label/Tech".to_string())];
+    app.server
+        .post("/reader/api/0/disable-tag")
+        .form(&form)
+        .await
+        .assert_status_ok();
+
+    expect_sidebar_event(&mut sub, user_id, "disable-tag").await;
 }
