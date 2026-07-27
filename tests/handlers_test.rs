@@ -3766,10 +3766,24 @@ async fn test_entry_fragment_renders_reading_pane() {
         html.contains(r#"aria-label="Mark Unread""#),
         "Mark Unread action must keep its accessible name"
     );
-    // Auto-mark-as-read: response carries the updated row block.
+    // Auto-mark-as-read: the row update rides along as a marker-form swap plus
+    // an `entry-read` class directive, not a whole-row re-render — opening an
+    // entry changes nothing else about the row, so nothing else is shipped.
     assert!(
-        html.contains(&format!(r##"data-swap-target="#entry-row-{entry_id}""##)),
-        "response must include a multi-target row block to clear unread state"
+        html.contains(&format!(
+            r##"data-swap-target="#entry-row-{entry_id} .entry-marker""##
+        )),
+        "response must swap the row's marker form to clear unread state"
+    );
+    assert!(
+        html.contains(&format!(
+            r##"<template data-class-target="#entry-row-{entry_id}" data-class-add="entry-read">"##
+        )),
+        "response must mark the row read via the class directive"
+    );
+    assert!(
+        !html.contains(&format!(r#"<div id="entry-row-{entry_id}""#)),
+        "the whole row must not be re-sent — only the sub-elements that changed"
     );
     // The sidebar's counts travel over SSE, not in this response. Nothing ever
     // rendered a `#sidebar-unread` element for the payload that used to ride
@@ -4278,9 +4292,16 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
         !html.contains("sidebar-unread"),
         "the unconsumed sidebar-unread payload must not be reintroduced"
     );
+    // The row's read state now travels as a class directive: the response swaps
+    // only the marker/star forms, so `entry-read` has to be applied to the row
+    // element the client already has rather than shipped inside a new one.
     assert!(
-        html.contains(r#"class="entry-item entry-read""#),
-        "row must reflect read state via the .entry-read class after first call"
+        html.contains(r#"data-class-add="entry-read""#),
+        "row must be marked read via the class directive after first call"
+    );
+    assert!(
+        html.contains(r#"action="/entries/"#) && html.contains("/unread\""),
+        "the swapped marker form must now offer the inverse (unread) action"
     );
 
     // Second POST — idempotent, entry stays read (no toggle back).
@@ -4288,8 +4309,12 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
     assert!(
-        html2.contains(r#"class="entry-item entry-read""#),
-        "second /read call must be a no-op — row must still carry .entry-read"
+        html2.contains(r#"data-class-add="entry-read""#),
+        "second /read call must be a no-op — row must still be marked read"
+    );
+    assert!(
+        !html2.contains(r#"data-class-remove="entry-read""#),
+        "second /read call must not flip the row back to unread"
     );
 }
 
@@ -4356,9 +4381,12 @@ async fn test_unread_entry_form_is_idempotent_mark_unread() {
         .await;
     assert_eq!(resp.status_code(), StatusCode::OK);
     let html = resp.text();
+    // Positive assertion, not just the absence of the read marker: the class
+    // directive has to actively *remove* `entry-read` from the row the client
+    // already has, since no replacement row is sent to overwrite it.
     assert!(
-        !html.contains(r#"class="entry-item entry-read""#),
-        "row must drop .entry-read after /unread"
+        html.contains(r#"data-class-remove="entry-read""#),
+        "row must be told to drop .entry-read after /unread"
     );
     assert!(
         html.contains("Marked as unread."),
@@ -4374,7 +4402,7 @@ async fn test_unread_entry_form_is_idempotent_mark_unread() {
     assert_eq!(resp2.status_code(), StatusCode::OK);
     let html2 = resp2.text();
     assert!(
-        !html2.contains(r#"class="entry-item entry-read""#),
+        html2.contains(r#"data-class-remove="entry-read""#),
         "second /unread call must be a no-op — row must still be unread"
     );
     assert!(

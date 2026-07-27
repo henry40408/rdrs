@@ -19,6 +19,10 @@ import { debounce } from './utils.js?v=__RDRS_ASSET_VERSION__';
  *   - Multi-target: response containing one or more
  *     `<template data-swap-target="<selector>">…</template>` blocks.
  *     Each template's content replaces its target via outerHTML.
+ *   - Class directive: `<template data-class-target="<selector>"
+ *     data-class-add|data-class-remove="a b"></template>` toggles classes on
+ *     an element that is *not* being replaced. Lets a response update a
+ *     container's state class while swapping only its sub-elements.
  *
  * On a non-2xx response the helper falls back to native form submit /
  * link navigation so the user always sees a real page.
@@ -363,6 +367,7 @@ async function performSwap(url, init, defaultTarget, options) {
             window.flash?.clear?.();
         }
         if (swappedReadingPane && !skipHistory) syncEntryParamFromSwapUrl(url, { push: paneWasEmpty });
+        applyClassTemplates(parsed);
         applyFlashTemplates(parsed);
         document.dispatchEvent(new CustomEvent('rdrs:swap-complete'));
         return;
@@ -377,6 +382,7 @@ async function performSwap(url, init, defaultTarget, options) {
         window.flash?.clear?.();
     }
     if (defaultTarget === '#reading-pane' && !skipHistory) syncEntryParamFromSwapUrl(url, { push: paneWasEmpty });
+    applyClassTemplates(parsed);
     applyFlashTemplates(parsed);
     document.dispatchEvent(new CustomEvent('rdrs:swap-complete'));
 }
@@ -654,6 +660,26 @@ function applyFlashTemplates(parsed) {
         if (window.flash && typeof window.flash.show === 'function') {
             window.flash.show(level, message);
         }
+    }
+}
+
+// Apply `<template data-class-target="<selector>" data-class-add|remove="a b">`
+// directives from a swap response. This exists so an action response can update
+// a *container's* state class without shipping the whole container back: the
+// entry-row actions re-render only the marker/star forms, but the row itself
+// still has to gain or lose `entry-read`.
+//
+// Deliberately add/remove rather than setting `class` wholesale — the list
+// keeps client-only classes on the same element (`.selected` from j/k
+// navigation), and a full overwrite would silently drop them.
+function applyClassTemplates(parsed) {
+    for (const tpl of parsed.querySelectorAll('template[data-class-target]')) {
+        const dst = document.querySelector(tpl.getAttribute('data-class-target'));
+        if (!dst) continue;
+        const add = tpl.getAttribute('data-class-add');
+        const remove = tpl.getAttribute('data-class-remove');
+        if (add) dst.classList.add(...add.split(/\s+/).filter(Boolean));
+        if (remove) dst.classList.remove(...remove.split(/\s+/).filter(Boolean));
     }
 }
 
