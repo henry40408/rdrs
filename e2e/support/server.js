@@ -77,6 +77,16 @@ export async function spawnRdrs({ extraEnv = {} } = {}) {
       // with "Register failed (429)". The limiter has its own unit and
       // integration coverage; the browser suite is not where it is exercised.
       RDRS_LOGIN_RATE_LIMIT_ATTEMPTS: "0",
+      // Scenarios seed straight into SQLite (support/seed.js), which never runs
+      // the handlers carrying the sidebar cache's bust hooks. A page render
+      // that overlaps the seeding — e.g. the /api/sidebar the signed-in shell
+      // fires on mount, still in flight while the Background steps write — then
+      // caches a half-seeded world for the full 60 s TTL, and every later
+      // assertion about categories or unread counts in that scenario reads it.
+      // That is what made the sidebar-dependent scenarios flaky under load.
+      // Never set in production: the cache is what keeps chrome off the hot
+      // read path.
+      RDRS_DISABLE_SIDEBAR_CACHE: "1",
       ...extraEnv,
     },
     stdio: "pipe",
