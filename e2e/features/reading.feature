@@ -219,6 +219,7 @@ Feature: Reading entries
   @mobile
   Scenario: Reading-pane navigation survives Fetch Full Content on mobile
     Given I am viewing on a mobile screen
+    And the entry titled "Test Entry 3" cannot have its full content fetched
     When I open the all entries page
     And I click the entry titled "Test Entry 3"
     And I click the "Fetch Full Content" button
