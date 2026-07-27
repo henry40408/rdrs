@@ -159,6 +159,15 @@ export class SeedHelper {
     }
   }
 
+  setEntryLink(entryId, link) {
+    const db = new Database(this.dbPath);
+    try {
+      db.prepare("UPDATE entry SET link = ? WHERE id = ?").run(link, entryId);
+    } finally {
+      db.close();
+    }
+  }
+
   configureKagi(userId, sessionToken = "e2e-test-token") {
     // Seeds a fake Kagi config so the reading-pane Summarize button is rendered.
     // The token is bogus — actual Kagi calls will fail at request time, which

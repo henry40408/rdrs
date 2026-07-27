@@ -28,6 +28,19 @@ Given("the {string} feed has a favicon", async ({ seed, currentUser }, feedTitle
   seed.insertIcon(feedId, png, "image/png", "https://example.com/icon.png");
 });
 
+// Point an entry at a link the readability fetcher rejects outright. The SSRF
+// guard in utils/url_validation.rs blocks loopback before any network I/O, so
+// Fetch Full Content answers immediately with its error flash instead of
+// waiting on DNS — which is what a scenario about the *round trip* needs, and
+// what the seeded https://example.com links cannot give: they resolve (or hang)
+// depending on whether the machine has internet, and the fetch fails either way
+// once the extractor sees a 404.
+Given("the entry titled {string} cannot have its full content fetched",
+  async ({ seed, currentUser }, title) => {
+    const userId = seed.getUserId(currentUser.username);
+    seed.setEntryLink(seed.findEntryIdByTitle(userId, title), "http://127.0.0.1/blocked");
+  });
+
 Given("the entry titled {string} is marked read", async ({ seed, currentUser }, title) => {
   const userId = seed.getUserId(currentUser.username);
   seed.markRead(seed.findEntryIdByTitle(userId, title));
