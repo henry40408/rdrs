@@ -414,7 +414,7 @@ pub async fn change_password_form(
         .try_acquire(Bucket::PasswordChange, ip)
         .retry_after_secs()
     {
-        tracing::warn!(%ip, bucket = ?Bucket::PasswordChange, endpoint = "POST /user-settings/password", "credential attempt rate limited");
+        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::PasswordChange, endpoint = "POST /user-settings/password", "credential attempt rate limited");
         audit::login_rate_limited(
             "POST /user-settings/password",
             "password_change",

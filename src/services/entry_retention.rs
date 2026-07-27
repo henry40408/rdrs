@@ -28,13 +28,17 @@ pub fn start_retention_worker(
     tokio::spawn(async move {
         // Background priority: DB operations yield to interactive work on SQLite.
         let db = db.background();
-        tracing::info!("Retention worker started: interval={}h", interval_hours);
+        tracing::info!(
+            event = "retention.worker_started",
+            interval_hours,
+            "retention worker started"
+        );
         let mut interval = tokio::time::interval(Duration::from_secs(interval_hours * 3600));
 
         loop {
             tokio::select! {
                 () = cancel_token.cancelled() => {
-                    tracing::info!("Retention worker stopping...");
+                    tracing::info!(event = "retention.worker_stopping", "retention worker stopping");
                     break;
                 }
                 _ = interval.tick() => {
@@ -45,7 +49,10 @@ pub fn start_retention_worker(
                         }
                         let deleted = match entry::prune_read_retention_batch(&db, BATCH_SIZE).await {
                             Ok(n) => n,
-                            Err(e) => { tracing::error!("Retention prune failed: {}", e); break; }
+                            Err(e) => {
+                                tracing::error!(event = "retention.prune_failed", error = %e, "retention prune failed");
+                                break;
+                            }
                         };
                         total += deleted;
                         if deleted < BATCH_SIZE as u64 {
@@ -54,18 +61,21 @@ pub fn start_retention_worker(
                     }
 
                     if total > 0 {
-                        tracing::info!("Retention pruned {} read entries", total);
+                        tracing::info!(event = "retention.pruned", count = total, "retention pruned read entries");
                         match run_maintenance(&db).await {
-                            Ok(true) => tracing::info!("Retention maintenance: VACUUM ran"),
+                            Ok(true) => tracing::info!(event = "retention.vacuumed", "retention maintenance ran VACUUM"),
                             Ok(false) => {}
-                            Err(e) => tracing::error!("Retention maintenance failed: {}", e),
+                            Err(e) => tracing::error!(event = "retention.maintenance_failed", error = %e, "retention maintenance failed"),
                         }
                     }
                 }
             }
         }
 
-        tracing::info!("Retention worker stopped");
+        tracing::info!(
+            event = "retention.worker_stopped",
+            "retention worker stopped"
+        );
     })
 }
 

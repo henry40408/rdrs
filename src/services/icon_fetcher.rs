@@ -23,7 +23,12 @@ pub async fn fetch_feed_icon(
     if let Some(url) = icon_url
         && let Ok(Some(img)) = fetch_image(url, user_agent).await
     {
-        debug!("Fetched icon from feed icon_url: {}", url);
+        debug!(
+            event = "icon.fetched",
+            source = "icon_url",
+            url,
+            "fetched feed icon"
+        );
         return Ok(Some(img));
     }
 
@@ -31,7 +36,12 @@ pub async fn fetch_feed_icon(
     if let Some(url) = logo_url
         && let Ok(Some(img)) = fetch_image(url, user_agent).await
     {
-        debug!("Fetched icon from feed logo_url: {}", url);
+        debug!(
+            event = "icon.fetched",
+            source = "logo_url",
+            url,
+            "fetched feed icon"
+        );
         return Ok(Some(img));
     }
 
@@ -59,13 +69,13 @@ async fn fetch_image(url: &str, user_agent: &str) -> AppResult<Option<FetchedIma
     {
         Ok(r) => r,
         Err(e) => {
-            debug!("Failed to fetch image from {}: {}", url, e);
+            debug!(event = "icon.fetch_failed", url, error = %e, "failed to fetch image");
             return Ok(None);
         }
     };
 
     if !response.status().is_success() {
-        debug!("Non-success status {} for {}", response.status(), url);
+        debug!(event = "icon.rejected", reason = "status", status = %response.status(), url, "image request returned a non-success status");
         return Ok(None);
     }
 
@@ -78,25 +88,42 @@ async fn fetch_image(url: &str, user_agent: &str) -> AppResult<Option<FetchedIma
 
     // Validate content type is an image
     if !content_type.starts_with("image/") {
-        debug!("Invalid content type {} for {}", content_type, url);
+        debug!(
+            event = "icon.rejected",
+            reason = "content_type",
+            content_type,
+            url,
+            "image has a non-image content type"
+        );
         return Ok(None);
     }
 
     let bytes = match response.bytes().await {
         Ok(b) => b,
         Err(e) => {
-            debug!("Failed to read bytes from {}: {}", url, e);
+            debug!(event = "icon.fetch_failed", url, error = %e, "failed to read image body");
             return Ok(None);
         }
     };
 
     if bytes.len() > MAX_ICON_SIZE {
-        debug!("Image too large ({} bytes) from {}", bytes.len(), url);
+        debug!(
+            event = "icon.rejected",
+            reason = "too_large",
+            bytes = bytes.len(),
+            url,
+            "image exceeds the size limit"
+        );
         return Ok(None);
     }
 
     if bytes.is_empty() {
-        debug!("Empty image from {}", url);
+        debug!(
+            event = "icon.rejected",
+            reason = "empty",
+            url,
+            "image body is empty"
+        );
         return Ok(None);
     }
 
@@ -117,7 +144,7 @@ async fn fetch_favicon(site_url: &str, user_agent: &str) -> AppResult<Option<Fet
         return Ok(None);
     };
     if let Ok(Some(img)) = fetch_image(favicon_url.as_str(), user_agent).await {
-        debug!("Fetched favicon from {}", favicon_url);
+        debug!(event = "icon.fetched", source = "favicon_ico", url = %favicon_url, "fetched favicon");
         return Ok(Some(img));
     }
 
@@ -143,7 +170,12 @@ async fn fetch_favicon(site_url: &str, user_agent: &str) -> AppResult<Option<Fet
     if let Some(icon_url) = extract_favicon_from_html(&html, &base_url)
         && let Ok(Some(img)) = fetch_image(&icon_url, user_agent).await
     {
-        debug!("Fetched favicon from HTML link: {}", icon_url);
+        debug!(
+            event = "icon.fetched",
+            source = "html_link",
+            url = icon_url,
+            "fetched favicon"
+        );
         return Ok(Some(img));
     }
 

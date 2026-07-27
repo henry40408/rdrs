@@ -22,14 +22,17 @@ pub fn start_background_sync(
     tokio::spawn(async move {
         // Background priority: DB operations yield to interactive work on SQLite.
         let db = db.background();
-        info!("Background sync task started");
+        info!(
+            event = "sync.worker_started",
+            "background sync task started"
+        );
 
         let mut ticker = interval(Duration::from_secs(60));
 
         loop {
             tokio::select! {
                 () = cancel_token.cancelled() => {
-                    info!("Background sync stopping...");
+                    info!(event = "sync.worker_stopping", "background sync stopping");
                     break;
                 }
                 _ = ticker.tick() => {
@@ -40,7 +43,7 @@ pub fn start_background_sync(
                     )]
                     let bucket = (now.timestamp() / 60 % 60) as u8;
 
-                    debug!("Running background sync for bucket {}", bucket);
+                    debug!(event = "sync.tick", bucket, "running background sync for bucket");
 
                     let results = feed_sync::refresh_bucket(db.clone(), bucket, &user_agent).await;
 
@@ -49,14 +52,17 @@ pub fn start_background_sync(
 
                     if !results.is_empty() {
                         info!(
-                            "Background sync bucket {}: {} succeeded, {} failed",
-                            bucket, success_count, fail_count
+                            event = "sync.bucket_finished",
+                            bucket,
+                            succeeded = success_count,
+                            failed = fail_count,
+                            "background sync bucket finished"
                         );
                     }
 
                     for (feed_id, result) in &results {
                         if let Err(e) = result {
-                            error!("Background sync feed {} failed: {}", feed_id, e);
+                            error!(event = "feed.sync_failed", feed_id, error = %e, "background sync failed for feed");
                         }
                     }
 
@@ -75,14 +81,14 @@ pub fn start_background_sync(
                                     events.emit_sidebar(uid);
                                 }
                             }
-                            Err(e) => error!("sidebar owner lookup failed: {e}"),
+                            Err(e) => error!(event = "sync.owner_lookup_failed", error = %e, "sidebar owner lookup failed"),
                         }
                     }
                 }
             }
         }
 
-        info!("Background sync stopped");
+        info!(event = "sync.worker_stopped", "background sync stopped");
     })
 }
 

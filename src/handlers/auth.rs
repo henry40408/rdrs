@@ -62,7 +62,7 @@ pub async fn register(
         .try_acquire(Bucket::Register, ip)
         .retry_after_secs()
     {
-        tracing::warn!(%ip, bucket = ?Bucket::Register, endpoint = "POST /api/register", "credential attempt rate limited");
+        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Register, endpoint = "POST /api/register", "credential attempt rate limited");
         audit::login_rate_limited("POST /api/register", "register", &ip.to_string());
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
@@ -134,7 +134,7 @@ pub async fn login(
         .try_acquire(Bucket::Login, ip)
         .retry_after_secs()
     {
-        tracing::warn!(%ip, bucket = ?Bucket::Login, endpoint = "POST /api/session", "credential attempt rate limited");
+        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Login, endpoint = "POST /api/session", "credential attempt rate limited");
         audit::login_rate_limited("POST /api/session", "login", &ip.to_string());
         return Err(AppError::TooManyRequests { retry_after_secs });
     }

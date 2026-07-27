@@ -155,6 +155,30 @@ All configuration is done via environment variables.
 > passkeys. rdrs logs a startup warning while the RP origin still points at
 > `localhost`, and the active values are shown on the Settings page.
 
+### Structured Logging
+
+Every log line rdrs emits carries an `event` field naming what happened, in
+`domain.verb` form — `feed.sync_failed`, `retention.pruned`,
+`summary.worker_started`, `shutdown.signal`. Values travel as their own typed
+fields (`feed_id`, `entry_id`, `user_id`, `bucket`, `count`, `error`, …) rather
+than being formatted into the message, so under `RDRS_LOG_FORMAT=json` they
+arrive as real JSON values you can filter and aggregate on:
+
+```json
+{"timestamp":"…","level":"WARN","target":"rdrs::services::feed_sync",
+ "fields":{"message":"feed sync failed","event":"feed.sync_failed",
+           "feed_id":42,"error":"connection timed out"}}
+```
+
+The message itself stays static, which is what makes `event` worth having —
+grouping by `feed.sync_failed` works, substring-matching a message that
+interpolates a different feed id every time does not. The tracing `target` is
+the module path, so `RUST_LOG=rdrs::services::feed_sync=debug` narrows to one
+subsystem.
+
+Two source-level tests (`tests/logging_test.rs`) enforce both halves of this:
+every log call must set `event`, and no message may interpolate values.
+
 ### Audit Logging
 
 Session creation, renewal, and destruction; API-token issuance and revocation;

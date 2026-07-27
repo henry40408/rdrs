@@ -234,7 +234,7 @@ pub async fn entry_fragment(
         let db = state.db.clone();
         tokio::spawn(async move {
             if let Err(e) = entry::mark_as_read(&db, entry_id).await {
-                tracing::warn!("async mark_as_read failed for entry {entry_id}: {e}");
+                tracing::warn!(event = "entry.mark_read_failed", entry_id, error = %e, "async mark_as_read failed");
             }
         });
         state.sidebar_cache.bust(user_id);
@@ -494,7 +494,7 @@ async fn set_starred_state(
             if let Err(e) =
                 entry::set_starred_for_user(&db, user_id, entry_id, desired_starred).await
             {
-                tracing::warn!("async set_starred failed for entry {entry_id}: {e}");
+                tracing::warn!(event = "entry.set_starred_failed", entry_id, error = %e, "async set_starred failed");
             }
         });
         // No sidebar_cache.bust here: starring does not change unread counts.
@@ -568,7 +568,7 @@ async fn set_read_state(
         let db = state.db.clone();
         tokio::spawn(async move {
             if let Err(e) = entry::set_read_for_user(&db, user_id, entry_id, desired_read).await {
-                tracing::warn!("async set_read failed for entry {entry_id}: {e}");
+                tracing::warn!(event = "entry.set_read_failed", entry_id, error = %e, "async set_read failed");
             }
         });
         state.sidebar_cache.bust(user_id);

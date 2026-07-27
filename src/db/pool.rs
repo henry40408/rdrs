@@ -285,12 +285,15 @@ impl Db {
     /// `-wal`/`-shm` sidecars linger after shutdown.
     pub async fn shutdown(&self) {
         if let DbInner::Sqlite(pool) = &self.inner {
-            info!("Executing WAL checkpoint before shutdown...");
+            info!(
+                event = "db.checkpoint_started",
+                "executing WAL checkpoint before shutdown"
+            );
             if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE);")
                 .execute(pool)
                 .await
             {
-                tracing::error!("WAL checkpoint failed: {e}");
+                tracing::error!(event = "db.checkpoint_failed", error = %e, "WAL checkpoint failed");
             }
         }
         match &self.inner {
