@@ -219,7 +219,6 @@ pub async fn entry_fragment(
         .copied();
 
     let was_unread = ewf.entry.read_at.is_none();
-    let feed_id = ewf.entry.feed_id;
 
     // Optimistically reflect the read state in the rendered row + pane.
     if was_unread {
@@ -229,9 +228,6 @@ pub async fn entry_fragment(
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
     let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
     let row = row_view_from(&ewf, status);
-    let sidebar_unread_payload_json =
-        build_sidebar_unread_with_delta(&state, user_id, feed_id, if was_unread { -1 } else { 0 })
-            .await?;
 
     // Enqueue the real write off the critical path (only when it changes state).
     if was_unread {
@@ -245,12 +241,7 @@ pub async fn entry_fragment(
         state.events.emit_sidebar(user_id);
     }
 
-    Ok(OpenEntryMulti {
-        pane,
-        r: row,
-        sidebar_unread_payload_json,
-    }
-    .into_response())
+    Ok(OpenEntryMulti { pane, r: row }.into_response())
 }
 
 /// `GET /entries/{id}/summary/fragment` — returns the summary container swap
@@ -401,16 +392,15 @@ pub struct PaneStarFormView {
     pub is_starred: bool,
 }
 
-/// Multi-target action response template. Renders the updated entry row, the
-/// sidebar-unread payload, (optionally) a `<template data-flash>` block for
-/// actions that want toast feedback (e.g. Mark Unread), and (optionally) a
-/// pane-star-form swap block (Star / Unstar — keeps the pane button label in
-/// sync with the new starred state).
+/// Multi-target action response template. Renders the updated entry row,
+/// (optionally) a `<template data-flash>` block for actions that want toast
+/// feedback (e.g. Mark Unread), and (optionally) a pane-star-form swap block
+/// (Star / Unstar — keeps the pane button label in sync with the new starred
+/// state).
 #[derive(Template)]
 #[template(path = "_entry_actions_multi.html")]
 pub struct EntryActionMulti {
     pub r: EntryRowView,
-    pub sidebar_unread_payload_json: String,
     pub flash: Option<FlashPayload>,
     pub pane_star_form: Option<PaneStarFormView>,
 }
@@ -424,17 +414,16 @@ impl IntoResponse for EntryActionMulti {
     }
 }
 
-/// Multi-target response for opening an entry. Renders three `<template
-/// data-swap-target>` blocks: the reading pane, the (now-read) entry row,
-/// and the sidebar-unread payload. Returned by `GET /entries/{id}/fragment`
-/// so the title-link click both shows the entry AND clears its unread
-/// state from the list + sidebar in one round trip.
+/// Multi-target response for opening an entry. Renders two `<template
+/// data-swap-target>` blocks: the reading pane and the (now-read) entry row.
+/// Returned by `GET /entries/{id}/fragment` so the title-link click both shows
+/// the entry AND clears its unread state from the list in one round trip. The
+/// sidebar's counts follow over SSE via `emit_sidebar`.
 #[derive(Template)]
 #[template(path = "_open_entry_multi.html")]
 pub struct OpenEntryMulti {
     pub pane: ReadingPaneView,
     pub r: EntryRowView,
-    pub sidebar_unread_payload_json: String,
 }
 
 impl IntoResponse for OpenEntryMulti {
@@ -444,32 +433,6 @@ impl IntoResponse for OpenEntryMulti {
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         }
     }
-}
-
-/// Builds the sidebar-unread JSON payload, applying an in-memory `delta` to
-/// one feed's unread count so an optimistic response (whose DB write hasn't
-/// landed yet) shows the correct number. `delta` is `-1` (marked read),
-/// `+1` (marked unread), or `0` (no change, e.g. star/unstar). Mirrors
-/// `unread_counts_per_feed`'s "positive counts only" shape.
-pub(crate) async fn build_sidebar_unread_with_delta(
-    state: &AppState,
-    user_id: i64,
-    feed_id: i64,
-    delta: i64,
-) -> AppResult<String> {
-    let mut counts = entry::unread_counts_per_feed(&state.db, user_id).await?;
-    if delta != 0 {
-        match counts.iter_mut().find(|c| c.feed_id == feed_id) {
-            Some(c) => c.unread = (c.unread + delta).max(0),
-            None if delta > 0 => counts.push(entry::UnreadCount {
-                feed_id,
-                unread: delta,
-            }),
-            None => {}
-        }
-        counts.retain(|c| c.unread > 0);
-    }
-    Ok(serde_json::to_string(&counts).unwrap_or_else(|_| "[]".to_string()))
 }
 
 /// `POST /entries/{id}/star` — idempotently mark the entry as starred.
@@ -520,9 +483,6 @@ async fn set_starred_state(
         None
     };
 
-    // Starring does not affect unread counts (delta = 0).
-    let payload_json =
-        build_sidebar_unread_with_delta(&state, user_id, ewf.entry.feed_id, 0).await?;
     let pane_star_form = Some(PaneStarFormView {
         id: ewf.entry.id,
         is_starred: ewf.entry.starred_at.is_some(),
@@ -542,7 +502,6 @@ async fn set_starred_state(
 
     Ok(EntryActionMulti {
         r: row_view_from(&ewf, status),
-        sidebar_unread_payload_json: payload_json,
         flash: None,
         pane_star_form,
     })
@@ -588,7 +547,6 @@ async fn set_read_state(
         .copied();
 
     let changed = ewf.entry.read_at.is_some() != desired_read;
-    let feed_id = ewf.entry.feed_id;
 
     // Optimistically reflect the new read state in the row.
     ewf.entry.read_at = if desired_read {
@@ -596,14 +554,6 @@ async fn set_read_state(
     } else {
         None
     };
-
-    // Unread count: -1 when newly read, +1 when newly unread, else unchanged.
-    let delta = if changed {
-        if desired_read { -1 } else { 1 }
-    } else {
-        0
-    };
-    let payload_json = build_sidebar_unread_with_delta(&state, user_id, feed_id, delta).await?;
 
     let flash = if !desired_read && changed {
         Some(FlashPayload {
@@ -627,7 +577,6 @@ async fn set_read_state(
 
     Ok(EntryActionMulti {
         r: row_view_from(&ewf, status),
-        sidebar_unread_payload_json: payload_json,
         flash,
         pane_star_form: None,
     })
