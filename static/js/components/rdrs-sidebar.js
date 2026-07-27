@@ -13,9 +13,11 @@
 //      patch the unread badges (full-rerender only if identity / category set
 //      changed).
 //
-// Action paths that mutate unread/category state should call
-// `document.querySelector('rdrs-sidebar')?.refresh()` so the bootstrap, the
-// sessionStorage mirror, and the visible badges all advance together.
+// Action paths that mutate unread/category state announce it with
+// `document.dispatchEvent(new CustomEvent('rdrs:sidebar-stale'))` — the element
+// subscribes while connected and refetches, so the bootstrap, the
+// sessionStorage mirror, and the visible badges all advance together. Callers
+// don't need to know whether a sidebar is mounted.
 
 // `?v=` is substituted at serve time (see handlers/static_assets.rs) so this
 // nested import is cache-busted like the top-level <script> tags.
@@ -81,6 +83,13 @@ function isStructuralChange(prev, next) {
 class RdrsSidebar extends HTMLElement {
     static get observedAttributes() { return ['active', 'active-category-id']; }
 
+    constructor() {
+        super();
+        // Bound once so connect/disconnect add and remove the *same* reference.
+        this._onDocumentClick = this._onDocumentClick.bind(this);
+        this._onStale = this._onStale.bind(this);
+    }
+
     connectedCallback() {
         const initial = readBootstrap() || readCachedSidebar();
         if (initial) {
@@ -90,20 +99,51 @@ class RdrsSidebar extends HTMLElement {
         }
         // No initial render on cold start — first paint waits for fetch.
         this.fetchData();
+
+        // Tap-outside-to-close for the mobile drawer. The scrim is a CSS
+        // pseudo-element (no clickable element of its own), so the listener has
+        // to live on the document rather than on a real overlay node.
+        document.addEventListener('click', this._onDocumentClick);
+        // Action paths that mutate state the sidebar reflects announce it with
+        // `rdrs:sidebar-stale` instead of reaching in for `.refresh()`.
+        document.addEventListener('rdrs:sidebar-stale', this._onStale);
+    }
+
+    disconnectedCallback() {
+        document.removeEventListener('click', this._onDocumentClick);
+        document.removeEventListener('rdrs:sidebar-stale', this._onStale);
+        this._abort?.abort();
+        this._abort = null;
     }
 
     attributeChangedCallback() {
         if (this._data) this.render(this._data);
     }
 
-    /// Public refresh hook for action paths that mutate state the sidebar
-    /// reflects (mark-as-read, mark-unread, mark-all-as-read, etc). Re-fetches
-    /// /api/sidebar so sessionStorage and the live badges both update.
+    /// Latest category list from /api/sidebar, or [] before the first payload
+    /// lands. Read by app.js's `[` / `]` category navigation, which must not
+    /// reach into the private `_data` field.
+    get categories() { return this._data?.categories || []; }
+
+    /// Imperative escape hatch for a caller that already holds the element and
+    /// wants to await the refetch. The `rdrs:sidebar-stale` event is the normal
+    /// path — prefer it, since it doesn't require finding the element first.
     refresh() { return this.fetchData(); }
 
+    _onStale() { this.fetchData(); }
+
     async fetchData() {
+        // A newer request supersedes whatever is still in flight: without this,
+        // two overlapping /api/sidebar responses can land out of order and the
+        // staler payload wins.
+        this._abort?.abort();
+        const controller = new AbortController();
+        this._abort = controller;
         try {
-            const resp = await fetch('/api/sidebar', { credentials: 'same-origin' });
+            const resp = await fetch('/api/sidebar', {
+                credentials: 'same-origin',
+                signal: controller.signal,
+            });
             if (!resp.ok) return;
             const data = await resp.json();
             const prev = this._data;
@@ -114,7 +154,38 @@ class RdrsSidebar extends HTMLElement {
             } else {
                 this._updateBadges(data);
             }
-        } catch (e) { /* silent */ }
+        } catch (e) { /* silent — includes the AbortError from being superseded */ }
+        finally {
+            if (this._abort === controller) this._abort = null;
+        }
+    }
+
+    /// Mobile drawer open/close. The hamburger is hidden while the drawer is
+    /// open so it doesn't sit on top of the panel.
+    toggleDrawer() {
+        const sidebar = this.querySelector('#sidebar');
+        if (!sidebar) return;
+        const toggle = this.querySelector('.sidebar-toggle');
+        sidebar.classList.toggle('open');
+        if (toggle) toggle.style.display = sidebar.classList.contains('open') ? 'none' : '';
+    }
+
+    closeDrawer() {
+        const sidebar = this.querySelector('#sidebar');
+        const toggle = this.querySelector('.sidebar-toggle');
+        if (sidebar) sidebar.classList.remove('open');
+        if (toggle) toggle.style.display = '';
+    }
+
+    _onDocumentClick(e) {
+        const sidebar = this.querySelector('#sidebar');
+        if (!sidebar || !sidebar.classList.contains('open')) return;
+        if (!(e.target instanceof Element)) return;
+        // `closest()` rather than `sidebar.contains()`: render() rebuilds the
+        // whole subtree, so a click can land on a node that has already been
+        // detached. closest() still walks that node's own ancestor chain.
+        if (e.target.closest('#sidebar') || e.target.closest('.sidebar-toggle')) return;
+        this.closeDrawer();
     }
 
     /// Surgical badge update — used when only unread counts changed. Avoids a
@@ -198,13 +269,13 @@ class RdrsSidebar extends HTMLElement {
             </a>` : '';
 
         this.innerHTML = `
-<button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Open menu">${ICON.menu}</button>
+<button class="sidebar-toggle" type="button" aria-label="Open menu">${ICON.menu}</button>
 
 <aside class="sidebar" id="sidebar" data-testid="main-nav">
     ${masqBanner}
     <div class="sidebar-header">
         <a href="/" class="sidebar-logo">rdrs</a>
-        <button class="sidebar-close" onclick="closeSidebar()" aria-label="Close menu">${ICON.close}</button>
+        <button class="sidebar-close" type="button" aria-label="Close menu">${ICON.close}</button>
     </div>
     <nav class="sidebar-nav">
         <div class="sidebar-section">
@@ -268,6 +339,11 @@ class RdrsSidebar extends HTMLElement {
     </div>
 </aside>`;
 
+        // innerHTML above discards the previous subtree along with its
+        // listeners, so every render re-binds from scratch.
+        this.querySelector('.sidebar-toggle')?.addEventListener('click', () => this.toggleDrawer());
+        this.querySelector('.sidebar-close')?.addEventListener('click', () => this.closeDrawer());
+
         this.querySelector('[data-rdrs-logout]')?.addEventListener('click', async (e) => {
             e.preventDefault();
             // Once we've told a forward-auth user to log out at their proxy, the
@@ -319,12 +395,3 @@ class RdrsSidebar extends HTMLElement {
 }
 
 customElements.define('rdrs-sidebar', RdrsSidebar);
-
-document.addEventListener('click', (e) => {
-    const sidebar = document.getElementById('sidebar');
-    const toggle = document.querySelector('.sidebar-toggle');
-    if (sidebar && sidebar.classList.contains('open') &&
-        !sidebar.contains(e.target) && (!toggle || !toggle.contains(e.target))) {
-        if (typeof closeSidebar === 'function') closeSidebar();
-    }
-});

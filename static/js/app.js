@@ -657,37 +657,9 @@ function applyFlashTemplates(parsed) {
     }
 }
 
-// Sidebar mobile-toggle helpers. <rdrs-sidebar>'s render emits
-// inline `onclick="toggleSidebar()"` / `onclick="closeSidebar()"`,
-// which require global functions — assign to `window` because
-// module-scope declarations are not visible to inline event
-// attributes.
-window.toggleSidebar = function() {
-    const sidebar = document.getElementById('sidebar');
-    const toggle = document.querySelector('.sidebar-toggle');
-    if (sidebar) {
-        sidebar.classList.toggle('open');
-        if (toggle) toggle.style.display = sidebar.classList.contains('open') ? 'none' : '';
-    }
-};
-
-window.closeSidebar = function() {
-    const sidebar = document.getElementById('sidebar');
-    const toggle = document.querySelector('.sidebar-toggle');
-    if (sidebar) sidebar.classList.remove('open');
-    if (toggle) toggle.style.display = '';
-};
-
-// Tap-outside-to-close for the mobile drawer. The scrim is a CSS
-// pseudo-element (no clickable element of its own), so we listen on the
-// document: a click that lands outside the open sidebar and isn't the
-// hamburger toggle closes the drawer.
-document.addEventListener('click', function(e) {
-    const sidebar = document.getElementById('sidebar');
-    if (!sidebar || !sidebar.classList.contains('open')) return;
-    if (e.target.closest('#sidebar') || e.target.closest('.sidebar-toggle')) return;
-    window.closeSidebar();
-});
+// The mobile drawer (hamburger, close button, tap-outside-to-close) lives
+// entirely inside <rdrs-sidebar> — it owns the markup, so it owns the
+// behaviour and the listener lifecycle.
 
 installSwap();
 
@@ -733,8 +705,11 @@ function renderSummaryBadge(row, status) {
     else statusCluster?.appendChild(span);
 }
 
+// Announce that sidebar-backed state (unread counts, categories) may have
+// moved. <rdrs-sidebar> subscribes while connected and refetches /api/sidebar;
+// pages without a sidebar simply have no listener.
 function refreshSidebar() {
-    document.querySelector('rdrs-sidebar')?.refresh();
+    document.dispatchEvent(new CustomEvent('rdrs:sidebar-stale'));
 }
 
 function onSummaryEvent(data) {
@@ -775,7 +750,7 @@ installSse();
 // roughly nothing on a hit, so a single broad hook beats a fragile
 // per-action allowlist.
 document.addEventListener('rdrs:swap-complete', () => {
-    document.querySelector('rdrs-sidebar')?.refresh();
+    refreshSidebar();
 });
 
 // Decorate every <time datetime="..."> with a `title` attribute showing
@@ -1162,7 +1137,7 @@ function installEntriesKeyboard() {
                 // `[`/`{` at the last. Wrapping always stays inside the
                 // category list — it never cycles back out to Unread/All.
                 const sb = document.querySelector('rdrs-sidebar');
-                const cats = sb?._data?.categories || [];
+                const cats = sb?.categories || [];
                 if (cats.length === 0) return;
                 const catPage = window.location.pathname.match(/^\/categories\/(\d+)\/entries/);
                 const parentCatId = parseInt(sb?.getAttribute('active-category-id') || '0', 10);
