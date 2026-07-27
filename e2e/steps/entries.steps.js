@@ -462,16 +462,34 @@ Then("I am on the Read filter for feed {string}", async ({ page, seed, currentUs
 });
 
 Then("pressing the {string} key opens a new tab at {string}", async ({ page }, key, urlSubstring) => {
+  const context = page.context();
+  // Seeded entry links point at https://example.com/… (support/seed.js). What
+  // this scenario asserts is *which URL* the shortcut targets, not that the
+  // page loads — so stub the origin rather than depend on the outbound network.
+  // Without the stub the popup's navigation fails DNS resolution and
+  // popup.url() collapses to chrome-error://chromewebdata/, which fails the
+  // assertion on any machine (or sandbox) without internet access. Routes
+  // registered on the context also cover pages opened later, so this applies
+  // to the popup even though it doesn't exist yet.
+  await context.route("https://example.com/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><title>stubbed external page</title>",
+    })
+  );
   // Popup capture must be armed BEFORE the keystroke that triggers it —
   // waitForEvent is a one-shot listener that misses already-fired events.
   await page.click("body");
-  const popupPromise = page.context().waitForEvent("page", { timeout: 5000 });
+  const popupPromise = context.waitForEvent("page", { timeout: 5000 });
   await page.keyboard.press(key);
   const popup = await popupPromise;
-  // popup.url() reflects the navigation target as soon as the popup event
-  // fires; no need to wait for the (external) URL to actually load.
+  // A popup can surface as about:blank before its navigation commits, so
+  // settle it first instead of racing the assertion against the navigation.
+  await popup.waitForLoadState("domcontentloaded").catch(() => {});
   expect(popup.url()).toContain(urlSubstring);
   await popup.close().catch(() => {});
+  await context.unroute("https://example.com/**");
 });
 
 Then("I am on the entries page for category {string}", async ({ page, seed, currentUser, serverUrl }, name) => {
