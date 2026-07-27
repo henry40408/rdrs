@@ -266,6 +266,14 @@ Feature: Reading entries
     And I press the "?" key
     Then the help overlay descriptions are aligned
 
+  # The overlay's Shadow DOM stylesheet references design tokens with no
+  # fallback values, so a token renamed in app.css would silently render it
+  # unstyled — every other help assertion here would still pass.
+  Scenario: Help overlay picks up the document's design tokens
+    When I open the inbox
+    And I press the "?" key
+    Then the help overlay resolves its design tokens
+
   Scenario: All Entries stays highlighted across the /entries pages
     When I open the read entries page
     Then the sidebar highlights All Entries

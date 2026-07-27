@@ -603,6 +603,42 @@ Then("the help overlay descriptions are aligned", async ({ page }) => {
   }
 });
 
+Then("the help overlay resolves its design tokens", async ({ page }) => {
+  // The shadow stylesheet references tokens with no `var(--x, fallback)`
+  // defaults, so a token renamed in app.css would leave the modal unstyled —
+  // transparent panel, default text colour — while every other help-overlay
+  // assertion (visible / hidden / aligned) still passed. Compare what the
+  // shadow DOM actually computed against the same tokens resolved on :root,
+  // which stays correct under either theme.
+  const probe = await page.evaluate(() => {
+    const modal = document.querySelector("rdrs-kb-help").shadowRoot.querySelector(".modal");
+    // Resolve each token through a throwaway element in the light DOM and read
+    // it back as a *computed* value, so both sides of the comparison go through
+    // the same normalisation (the browser rewrites colours to rgb() and strips
+    // quotes from font stacks — comparing against the raw token text fails on
+    // formatting alone).
+    const probeValue = (property, token) => {
+      const el = document.createElement("span");
+      el.style[property] = `var(${token})`;
+      document.body.appendChild(el);
+      const value = getComputedStyle(el)[property];
+      el.remove();
+      return value;
+    };
+    return {
+      background: getComputedStyle(modal).backgroundColor,
+      expectedBackground: probeValue("backgroundColor", "--color-panel"),
+      color: getComputedStyle(modal).color,
+      expectedColor: probeValue("color", "--color-text"),
+      fontFamily: getComputedStyle(modal).fontFamily,
+      expectedFontFamily: probeValue("fontFamily", "--font-ui"),
+    };
+  });
+  expect(probe.background).toBe(probe.expectedBackground);
+  expect(probe.color).toBe(probe.expectedColor);
+  expect(probe.fontFamily).toBe(probe.expectedFontFamily);
+});
+
 Then("I see the summary error banner", async ({ page }) => {
   await expect(page.locator("[data-summary-error]")).toBeVisible();
 });
