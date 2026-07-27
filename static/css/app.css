@@ -293,6 +293,15 @@ code {
 }
 
 /* ===== Sidebar ===== */
+/* No `rdrs-sidebar:not(:defined)` placeholder here, and none is needed:
+   `--color-bg-sidebar` and the `--color-paper` that `body` already paints are
+   the same value in both themes, so the column an empty <rdrs-sidebar> leaves
+   behind is already the right colour. Confirmed by sampling the pixel at
+   (60, 500) on screencast frames actually presented while the element was in
+   the DOM but still empty — `rgb(242, 241, 237)` on every run under a
+   6x-CPU / Slow-3G profile with a cold cache. Only the 1px right border and
+   the nav items are missing, for the 1-2 frames that window lasts. Keep the two
+   tokens equal or that stops being true. */
 .sidebar {
     width: var(--sidebar-width);
     min-width: var(--sidebar-width);

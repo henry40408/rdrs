@@ -1,6 +1,16 @@
 // <rdrs-sidebar active="statistics"> — CSR sidebar with category unread counts.
-// Mirrors the SSR `macros.html::sidebar` macro DOM structure so existing CSS
-// (sidebar-*, nav-* selectors) keeps working unchanged.
+//
+// `render()` below is the *only* definition of the sidebar's markup; there is
+// no Askama counterpart. (An earlier `macros.html::sidebar` macro is gone — the
+// comment claiming this file mirrors it outlived the macro by some margin.) The
+// class names it emits are what `static/css/app.css` styles, so the two move
+// together: a rename here without one there silently unstyles the sidebar.
+//
+// Server-rendering it instead was measured and rejected — the bootstrap JSON is
+// 180 B brotli against 653 B for equivalent markup, and logged-in responses are
+// `no-store`, so that difference is paid on every page load rather than once.
+// Badge-only updates would also regress from patching textContent to refetching
+// a fragment. See the sidebar-SSR notes if this comes up again.
 //
 // Anti-flicker strategy:
 //   1. The shell embeds the initial /api/sidebar payload as a JSON
