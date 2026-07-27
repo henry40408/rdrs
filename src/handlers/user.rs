@@ -182,6 +182,10 @@ pub async fn read_chrome_data(
         None => None,
     };
 
+    // Snapshot before the first DB read below, so a bust landing while we are
+    // reading is detected when we try to publish.
+    let generation = state.sidebar_cache.begin_read(user_id);
+
     if let Some(cached) = state.sidebar_cache.get(user_id) {
         return ChromeData {
             theme: cached.theme,
@@ -235,7 +239,9 @@ pub async fn read_chrome_data(
     // tests that seed straight into SQLite) would otherwise be hidden behind a
     // stale cache for up to the 60 s TTL.
     if has_feeds || fresh.total_unread > 0 {
-        state.sidebar_cache.insert(user_id, fresh.clone());
+        state
+            .sidebar_cache
+            .insert_if_current(user_id, generation, fresh.clone());
     }
 
     ChromeData {
