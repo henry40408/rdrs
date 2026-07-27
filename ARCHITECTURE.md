@@ -370,6 +370,15 @@ In-memory, per-user caches reduce repeated work on hot read paths:
   so one entry serves every request from the same `user_id`. It is bounded by
   capacity and a TTL, and is explicitly busted by handlers, background sync, and
   the summary worker whenever they change a user's feeds, entries, or counts.
+  Because population is read-through — several `await`s against the DB before
+  the value is stored — a bust landing inside that window would otherwise be
+  overwritten by the older snapshot and hidden for the whole TTL. Each slot
+  therefore carries a generation that `bust` bumps (leaving a tombstone rather
+  than removing the slot); `read_chrome_data` takes the generation before its
+  first read and publishes via `insert_if_current`, which drops the value if the
+  generation moved. `RDRS_DISABLE_SIDEBAR_CACHE` turns the cache off entirely —
+  set only by the E2E harness, which seeds straight into SQLite and so never
+  runs the handlers carrying those bust hooks.
 - **Page cache** (`page_cache.rs`) — a thin helper around `moka::sync::Cache`
   giving page handlers per-user, TTL-bounded caches for their rendered payloads.
 
