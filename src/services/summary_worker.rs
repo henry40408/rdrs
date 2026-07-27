@@ -76,12 +76,12 @@ pub fn start_summary_worker(
     tokio::spawn(async move {
         // Background priority: DB operations yield to interactive work on SQLite.
         let db = db.background();
-        tracing::info!("Summary worker started");
+        tracing::info!(event = "summary.worker_started", "summary worker started");
 
         loop {
             let job = tokio::select! {
                 () = cancel_token.cancelled() => {
-                    tracing::info!("Summary worker stopping, draining remaining jobs...");
+                    tracing::info!(event = "summary.worker_stopping", "summary worker stopping, draining remaining jobs");
                     // Drain remaining jobs before exiting
                     while let Ok(job) = rx.try_recv() {
                         process_summary_job(&job, &cache, &sidebar_cache, &db, &cancels, &events).await;
@@ -99,7 +99,7 @@ pub fn start_summary_worker(
             process_summary_job(&job, &cache, &sidebar_cache, &db, &cancels, &events).await;
         }
 
-        tracing::info!("Summary worker stopped");
+        tracing::info!(event = "summary.worker_stopped", "summary worker stopped");
     })
 }
 
@@ -141,10 +141,11 @@ async fn run_summary_job_body(
     events: &EventBus,
 ) {
     tracing::debug!(
-        "Processing summary job: user={}, entry={}, link={}",
-        job.user_id,
-        job.entry_id,
-        job.entry_link
+        event = "summary.processing",
+        user_id = job.user_id,
+        entry_id = job.entry_id,
+        link = job.entry_link,
+        "processing summary job"
     );
 
     // Mark as processing in the DB first. If the row no longer exists, the job
@@ -170,7 +171,7 @@ async fn run_summary_job_body(
     let kagi_config = match user_settings::get_save_services_config(db, user_id).await {
         Ok(config) => config.kagi,
         Err(e) => {
-            tracing::error!("Failed to get user settings: {}", e);
+            tracing::error!(event = "summary.settings_load_failed", user_id, entry_id, error = %e, "failed to load user settings");
             let error_msg = "Failed to load Kagi settings".to_string();
             cache.set_failed(job.user_id, job.entry_id, error_msg.clone());
             let _ = entry_summary::set_failed(db, user_id, entry_id, &error_msg).await;
@@ -202,9 +203,11 @@ async fn run_summary_job_body(
     {
         SummaryOutcome::Completed(summary_text) => {
             tracing::debug!(
-                "Summary completed for entry {}: {} chars",
-                job.entry_id,
-                summary_text.len()
+                event = "summary.completed",
+                user_id = job.user_id,
+                entry_id = job.entry_id,
+                chars = summary_text.len(),
+                "summary completed"
             );
             let user_id = job.user_id;
             let entry_id = job.entry_id;
@@ -222,7 +225,13 @@ async fn run_summary_job_body(
             }
         }
         SummaryOutcome::Failed(error) => {
-            tracing::warn!("Summary failed for entry {}: {}", job.entry_id, error);
+            tracing::warn!(
+                event = "summary.failed",
+                user_id = job.user_id,
+                entry_id = job.entry_id,
+                error,
+                "summary failed"
+            );
             let user_id = job.user_id;
             let entry_id = job.entry_id;
             let err = error.clone();
@@ -238,7 +247,12 @@ async fn run_summary_job_body(
         SummaryOutcome::Cancelled => {
             // The cancel handler owns cleanup (delete + cache remove + sidebar
             // bust). Write nothing back.
-            tracing::debug!("Summary cancelled for entry {}", job.entry_id);
+            tracing::debug!(
+                event = "summary.cancelled",
+                user_id = job.user_id,
+                entry_id = job.entry_id,
+                "summary cancelled"
+            );
         }
     }
 }
@@ -278,14 +292,18 @@ pub async fn recover_incomplete_jobs(
     let incomplete = match entry_summary::find_incomplete(&db).await {
         Ok(jobs) => jobs,
         Err(e) => {
-            tracing::error!("Failed to find incomplete jobs: {}", e);
+            tracing::error!(event = "summary.recovery_failed", error = %e, "failed to find incomplete summary jobs");
             return 0;
         }
     };
 
     let count = incomplete.len();
     if count > 0 {
-        tracing::info!("Recovering {} incomplete summary jobs", count);
+        tracing::info!(
+            event = "summary.recovering",
+            count,
+            "recovering incomplete summary jobs"
+        );
     }
 
     for (user_id, entry_id, entry_link) in incomplete {
@@ -299,7 +317,7 @@ pub async fn recover_incomplete_jobs(
         };
 
         if let Err(e) = tx.send(job).await {
-            tracing::error!("Failed to re-queue job: {}", e);
+            tracing::error!(event = "summary.requeue_failed", user_id, entry_id, error = %e, "failed to re-queue summary job");
         }
     }
 

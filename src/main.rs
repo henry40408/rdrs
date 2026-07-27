@@ -72,6 +72,8 @@ async fn main() {
 
     if config.secret_generated {
         tracing::warn!(
+            event = "config.warning",
+            kind = "ephemeral_secret",
             "RDRS_SECRET is not set or too short; using a key generated for this process only. \
              Every signed-in browser session ends on restart, and image-proxy URLs already cached \
              by Google Reader clients break until the next sync. Set RDRS_SECRET (e.g. \
@@ -80,11 +82,15 @@ async fn main() {
     }
 
     if let Some(warning) = config.webauthn_rp_warning() {
-        tracing::warn!("{warning}");
+        tracing::warn!(event = "config.warning", kind = "webauthn_rp", "{warning}");
     }
 
     if let Some(warning) = config.rate_limit_proxy_warning() {
-        tracing::warn!("{warning}");
+        tracing::warn!(
+            event = "config.warning",
+            kind = "rate_limit_proxy",
+            "{warning}"
+        );
     }
 
     // Open the pool for the configured backend and run its migrations. The
@@ -132,7 +138,11 @@ async fn main() {
         services::recover_incomplete_jobs(db.clone(), summary_tx.clone(), summary_cache.clone())
             .await;
     if recovered > 0 {
-        tracing::info!("Recovered {} incomplete summary jobs", recovered);
+        tracing::info!(
+            event = "summary.recovered",
+            count = recovered,
+            "recovered incomplete summary jobs"
+        );
     }
 
     // Start summary cleanup worker (every 1 hour, delete summaries older than 24 hours)
@@ -180,7 +190,7 @@ async fn main() {
     let app = create_router(state);
 
     let addr = config.server_bind;
-    tracing::info!("Starting server on {}", addr);
+    tracing::info!(event = "server.starting", addr = %addr, "starting server");
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -201,13 +211,20 @@ async fn main() {
     .await
     .expect("Server failed");
 
-    tracing::info!("Server stopped, initiating graceful shutdown...");
+    tracing::info!(
+        event = "server.stopped",
+        "server stopped, initiating graceful shutdown"
+    );
 
     // Cancel background tasks (idempotent — already cancelled above).
     cancel_token.cancel();
 
     // Wait for background tasks to complete (with timeout)
-    tracing::info!("Waiting for background tasks to complete...");
+    tracing::info!(
+        event = "shutdown.waiting",
+        timeout_s = 30,
+        "waiting for background tasks to complete"
+    );
     let shutdown_timeout = tokio::time::timeout(Duration::from_secs(30), async {
         let _ = tokio::join!(
             background_handle,
@@ -219,15 +236,22 @@ async fn main() {
     });
 
     if shutdown_timeout.await.is_err() {
-        tracing::warn!("Background tasks did not complete within 30 seconds");
+        tracing::warn!(
+            event = "shutdown.timeout",
+            timeout_s = 30,
+            "background tasks did not complete in time"
+        );
     } else {
-        tracing::info!("All background tasks completed");
+        tracing::info!(
+            event = "shutdown.tasks_completed",
+            "all background tasks completed"
+        );
     }
 
     // Shutdown database: checkpoint the WAL (SQLite) and close the pool.
     db.shutdown().await;
 
-    tracing::info!("Graceful shutdown complete");
+    tracing::info!(event = "shutdown.complete", "graceful shutdown complete");
 }
 
 async fn shutdown_signal() {
@@ -250,10 +274,10 @@ async fn shutdown_signal() {
 
     tokio::select! {
         () = ctrl_c => {
-            tracing::info!("Received Ctrl+C, shutting down...");
+            tracing::info!(event = "shutdown.signal", signal = "SIGINT", "received Ctrl+C, shutting down");
         }
         () = terminate => {
-            tracing::info!("Received SIGTERM, shutting down...");
+            tracing::info!(event = "shutdown.signal", signal = "SIGTERM", "received SIGTERM, shutting down");
         }
     }
 }

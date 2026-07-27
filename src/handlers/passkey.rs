@@ -159,7 +159,7 @@ pub async fn start_authentication(
         .try_acquire(Bucket::PasskeyProbe, ip)
         .retry_after_secs()
     {
-        tracing::warn!(%ip, bucket = ?Bucket::PasskeyProbe, endpoint = "POST /api/passkey/auth/start", "credential attempt rate limited");
+        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::PasskeyProbe, endpoint = "POST /api/passkey/auth/start", "credential attempt rate limited");
         audit::login_rate_limited(
             "POST /api/passkey/auth/start",
             "passkey_probe",
@@ -239,7 +239,7 @@ pub async fn finish_authentication(
         .try_acquire(Bucket::Login, ip)
         .retry_after_secs()
     {
-        tracing::warn!(%ip, bucket = ?Bucket::Login, endpoint = "POST /api/passkey/auth/finish", "credential attempt rate limited");
+        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Login, endpoint = "POST /api/passkey/auth/finish", "credential attempt rate limited");
         audit::login_rate_limited("POST /api/passkey/auth/finish", "login", &ip.to_string());
         return Err(AppError::TooManyRequests { retry_after_secs });
     }

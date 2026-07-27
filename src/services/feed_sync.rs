@@ -103,7 +103,10 @@ pub async fn refresh_feed(db: Db, feed_id: i64, default_user_agent: &str) -> App
 
     // Handle 304 Not Modified
     if status == reqwest::StatusCode::NOT_MODIFIED {
-        debug!("Feed {} not modified (304)", feed_id);
+        debug!(
+            event = "feed.not_modified",
+            feed_id, "feed not modified (304)"
+        );
         feed::update_fetch_result(
             &db,
             feed_id,
@@ -215,18 +218,26 @@ pub async fn refresh_feed(db: Db, feed_id: i64, default_user_agent: &str) -> App
                 .await;
                 match save_result {
                     Ok(()) => {
-                        debug!("Saved icon for feed {} from {}", feed_id, source_url);
+                        debug!(
+                            event = "feed.icon_saved",
+                            feed_id,
+                            url = source_url,
+                            "saved feed icon"
+                        );
                     }
                     Err(e) => {
-                        warn!("Failed to save icon for feed {}: {}", feed_id, e);
+                        warn!(event = "feed.icon_save_failed", feed_id, error = %e, "failed to save feed icon");
                     }
                 }
             }
             Ok(None) => {
-                debug!("No icon found for feed {}", feed_id);
+                debug!(
+                    event = "feed.icon_missing",
+                    feed_id, "no icon found for feed"
+                );
             }
             Err(e) => {
-                warn!("Failed to fetch icon for feed {}: {}", feed_id, e);
+                warn!(event = "feed.icon_fetch_failed", feed_id, error = %e, "failed to fetch feed icon");
             }
         }
     }
@@ -334,8 +345,8 @@ pub async fn refresh_feed(db: Db, feed_id: i64, default_user_agent: &str) -> App
     };
 
     info!(
-        "Feed {} refreshed: {} new, {} updated, {} unchanged, {} skipped (tombstoned)",
-        feed_id, new_entries, updated_entries, unchanged_entries, skipped_entries
+        event = "feed.refreshed",
+        feed_id, new_entries, updated_entries, unchanged_entries, skipped_entries, "feed refreshed"
     );
 
     Ok(SyncResult {
@@ -352,17 +363,22 @@ pub async fn refresh_bucket(
     let feeds = match feed::list_by_bucket(&db, bucket).await {
         Ok(f) => f,
         Err(e) => {
-            error!("Failed to list feeds for bucket {}: {}", bucket, e);
+            error!(event = "sync.bucket_list_failed", bucket, error = %e, "failed to list feeds for bucket");
             return vec![];
         }
     };
 
     if feeds.is_empty() {
-        debug!("No feeds in bucket {}", bucket);
+        debug!(event = "sync.bucket_empty", bucket, "no feeds in bucket");
         return vec![];
     }
 
-    info!("Refreshing {} feeds in bucket {}", feeds.len(), bucket);
+    info!(
+        event = "sync.bucket_started",
+        bucket,
+        count = feeds.len(),
+        "refreshing feeds in bucket"
+    );
 
     let mut results = Vec::new();
     let concurrency_limit = 4;
@@ -387,20 +403,25 @@ pub async fn refresh_bucket(
                     match &inner {
                         Ok(sync) => {
                             debug!(
-                                "Feed {} synced: {} new, {} updated",
-                                feed_id, sync.new_entries, sync.updated_entries
+                                event = "feed.synced",
+                                feed_id,
+                                new_entries = sync.new_entries,
+                                updated_entries = sync.updated_entries,
+                                "feed synced"
                             );
                         }
                         Err(e) => {
-                            warn!("Feed {} sync failed: {}", feed_id, e);
+                            warn!(event = "feed.sync_failed", feed_id, error = %e, "feed sync failed");
                         }
                     }
                     results.push((feed_id, inner.map_err(|e| e.to_string())));
                 }
                 Ok((feed_id, Err(_))) => {
                     warn!(
-                        "Feed {} sync timed out after {:?}",
-                        feed_id, FEED_SYNC_TIMEOUT
+                        event = "feed.sync_timeout",
+                        feed_id,
+                        timeout_s = FEED_SYNC_TIMEOUT.as_secs(),
+                        "feed sync timed out"
                     );
                     results.push((
                         feed_id,
@@ -411,7 +432,7 @@ pub async fn refresh_bucket(
                     ));
                 }
                 Err(e) => {
-                    error!("Feed sync task panicked: {}", e);
+                    error!(event = "sync.task_panicked", error = %e, "feed sync task panicked");
                 }
             }
         }

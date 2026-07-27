@@ -124,10 +124,12 @@ where
                     return Err(err);
                 }
                 warn!(
-                    "Transient error on attempt {}/{}, retrying in {:?}",
-                    attempt + 1,
-                    config.max_retries + 1,
-                    backoff
+                    event = "http.retry",
+                    reason = "error",
+                    attempt = attempt + 1,
+                    attempts = config.max_retries + 1,
+                    backoff_ms = backoff.as_millis(),
+                    "transient error, retrying"
                 );
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(config.max_backoff);
@@ -200,11 +202,13 @@ where
             Ok(response) => {
                 if is_transient_status(response.status()) && attempt < config.max_retries {
                     warn!(
-                        "Transient status {} on attempt {}/{}, retrying in {:?}",
-                        response.status(),
-                        attempt + 1,
-                        config.max_retries + 1,
-                        backoff
+                        event = "http.retry",
+                        reason = "status",
+                        status = %response.status(),
+                        attempt = attempt + 1,
+                        attempts = config.max_retries + 1,
+                        backoff_ms = backoff.as_millis(),
+                        "transient status, retrying"
                     );
                     tokio::time::sleep(backoff).await;
                     backoff = (backoff * 2).min(config.max_backoff);
@@ -215,10 +219,12 @@ where
             Err(err) => {
                 if is_transient_error(&err) && attempt < config.max_retries {
                     warn!(
-                        "Transient error on attempt {}/{}, retrying in {:?}",
-                        attempt + 1,
-                        config.max_retries + 1,
-                        backoff
+                        event = "http.retry",
+                        reason = "error",
+                        attempt = attempt + 1,
+                        attempts = config.max_retries + 1,
+                        backoff_ms = backoff.as_millis(),
+                        "transient error, retrying"
                     );
                     tokio::time::sleep(backoff).await;
                     backoff = (backoff * 2).min(config.max_backoff);

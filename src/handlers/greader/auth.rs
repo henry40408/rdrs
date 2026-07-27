@@ -206,7 +206,7 @@ pub async fn client_login(
         .try_acquire(Bucket::Login, ip)
         .retry_after_secs()
     {
-        tracing::warn!(%ip, bucket = ?Bucket::Login, endpoint = "POST /accounts/ClientLogin", "credential attempt rate limited");
+        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Login, endpoint = "POST /accounts/ClientLogin", "credential attempt rate limited");
         audit::login_rate_limited("POST /accounts/ClientLogin", "login", &ip.to_string());
         return Err(AppError::TooManyRequests { retry_after_secs });
     }

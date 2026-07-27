@@ -2211,8 +2211,12 @@ async fn mark_read_scoped(
         Ok(n) => Some(n),
         Err(e) => {
             tracing::warn!(
-                "mark_read_scoped: mark_read_by_filter failed for user {user_id} \
-                 (category_id={category_id:?}, feed_id={feed_id:?}): {e}"
+                event = "entry.mark_read_scoped_failed",
+                user_id,
+                category_id = ?category_id,
+                feed_id = ?feed_id,
+                error = %e,
+                "mark_read_by_filter failed"
             );
             None
         }

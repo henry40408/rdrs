@@ -32,9 +32,10 @@ pub fn start_cleanup_worker(
         // Background priority: DB operations yield to interactive work on SQLite.
         let db = db.background();
         tracing::info!(
-            "Summary cleanup worker started: interval={}h, ttl={}h",
+            event = "cleanup.worker_started",
             interval_hours,
-            ttl_hours
+            ttl_hours,
+            "summary cleanup worker started"
         );
 
         let mut interval = tokio::time::interval(Duration::from_secs(interval_hours * 3600));
@@ -42,7 +43,7 @@ pub fn start_cleanup_worker(
         loop {
             tokio::select! {
                 () = cancel_token.cancelled() => {
-                    tracing::info!("Summary cleanup worker stopping...");
+                    tracing::info!(event = "cleanup.worker_stopping", "summary cleanup worker stopping");
                     break;
                 }
                 _ = interval.tick() => {
@@ -51,7 +52,10 @@ pub fn start_cleanup_worker(
             }
         }
 
-        tracing::info!("Summary cleanup worker stopped");
+        tracing::info!(
+            event = "cleanup.worker_stopped",
+            "summary cleanup worker stopped"
+        );
     })
 }
 
@@ -67,24 +71,51 @@ pub fn start_cleanup_worker(
 /// silently halting session and token expiry would turn one bug into an
 /// unbounded credential lifetime.
 async fn run_sweeps(db: &Db, ttl_hours: i64) {
-    tracing::debug!("Running cleanup sweep...");
+    tracing::debug!(event = "cleanup.sweep_started", "running cleanup sweep");
 
     match entry_summary::delete_expired(db, ttl_hours).await {
-        Ok(n) if n > 0 => tracing::info!("Cleaned up {n} expired summaries"),
+        Ok(n) if n > 0 => {
+            tracing::info!(
+                event = "cleanup.swept",
+                kind = "summary",
+                count = n,
+                "cleaned up expired summaries"
+            );
+        }
         Ok(_) => {}
-        Err(e) => tracing::error!("Failed to cleanup expired summaries: {e}"),
+        Err(e) => {
+            tracing::error!(event = "cleanup.sweep_failed", kind = "summary", error = %e, "failed to clean up expired summaries");
+        }
     }
 
     match session::delete_expired(db).await {
-        Ok(n) if n > 0 => tracing::info!("Swept {n} expired sessions"),
+        Ok(n) if n > 0 => {
+            tracing::info!(
+                event = "cleanup.swept",
+                kind = "session",
+                count = n,
+                "swept expired sessions"
+            );
+        }
         Ok(_) => {}
-        Err(e) => tracing::error!("Failed to sweep expired sessions: {e}"),
+        Err(e) => {
+            tracing::error!(event = "cleanup.sweep_failed", kind = "session", error = %e, "failed to sweep expired sessions");
+        }
     }
 
     match api_token::delete_expired(db).await {
-        Ok(n) if n > 0 => tracing::info!("Swept {n} expired API tokens"),
+        Ok(n) if n > 0 => {
+            tracing::info!(
+                event = "cleanup.swept",
+                kind = "api_token",
+                count = n,
+                "swept expired API tokens"
+            );
+        }
         Ok(_) => {}
-        Err(e) => tracing::error!("Failed to sweep expired API tokens: {e}"),
+        Err(e) => {
+            tracing::error!(event = "cleanup.sweep_failed", kind = "api_token", error = %e, "failed to sweep expired API tokens");
+        }
     }
 }
 

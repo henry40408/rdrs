@@ -71,7 +71,7 @@ pub fn start_content_text_backfill(db: Db, cancel_token: CancellationToken) -> J
         ) {
             Ok(n) => n,
             Err(e) => {
-                tracing::error!("content_text backfill: count failed: {}", e);
+                tracing::error!(event = "backfill.count_failed", error = %e, "content_text backfill could not count legacy entries");
                 return;
             }
         };
@@ -79,25 +79,27 @@ pub fn start_content_text_backfill(db: Db, cancel_token: CancellationToken) -> J
             return;
         }
         tracing::info!(
-            "content_text backfill started in background for {} legacy entries. \
-             Body search over not-yet-filled rows is degraded until it completes.",
-            total
+            event = "backfill.started",
+            total,
+            "content_text backfill started in background; body search over \
+             not-yet-filled rows is degraded until it completes"
         );
 
         let mut backfilled: i64 = 0;
         loop {
             if cancel_token.is_cancelled() {
                 tracing::info!(
-                    "content_text backfill interrupted at {}/{} entries; resumes on next start",
+                    event = "backfill.interrupted",
                     backfilled,
-                    total
+                    total,
+                    "content_text backfill interrupted; resumes on next start"
                 );
                 return;
             }
             let n = match backfill_content_text_batch(&db, BATCH_SIZE).await {
                 Ok(n) => n,
                 Err(e) => {
-                    tracing::error!("content_text backfill batch failed: {}", e);
+                    tracing::error!(event = "backfill.batch_failed", error = %e, "content_text backfill batch failed");
                     return;
                 }
             };
@@ -106,12 +108,17 @@ pub fn start_content_text_backfill(db: Db, cancel_token: CancellationToken) -> J
             }
             backfilled += n as i64;
             tracing::info!(
-                "content_text backfill progress {}/{} entries",
+                event = "backfill.progress",
                 backfilled,
-                total
+                total,
+                "content_text backfill progress"
             );
         }
-        tracing::info!("content_text backfill complete ({} entries)", backfilled);
+        tracing::info!(
+            event = "backfill.complete",
+            backfilled,
+            "content_text backfill complete"
+        );
     })
 }
 
