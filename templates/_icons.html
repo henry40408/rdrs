@@ -1,14 +1,17 @@
-{% macro check() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>{% endmacro %}
-{% macro unread() %}<svg class="ico is-filled" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6"/></svg>{% endmacro %}
-{% macro star(filled) %}<svg class="ico{% if filled %} is-filled{% endif %}" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.7 5.5 6 .9-4.3 4.2 1 6L12 17.3 6.6 20l1-6L3.3 9.9l6-.9z"/></svg>{% endmacro %}
-{% macro external() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/><path d="M19 14v5H5V5h5"/></svg>{% endmacro %}
-{% macro document() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><path d="M9.5 12h6M9.5 16h6"/></svg>{% endmacro %}
-{% macro revert() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></svg>{% endmacro %}
-{% macro refresh() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/></svg>{% endmacro %}
-{% macro sparkle() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-4.9L6 9.3l4.3-1.7z"/><path d="M18 15l.7 1.8L20.5 17.5l-1.8.7L18 20l-.7-1.8L15.5 17.5l1.8-.7z"/></svg>{% endmacro %}
-{% macro bookmark() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v17l-6-4-6 4z"/></svg>{% endmacro %}
-{% macro copy() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg>{% endmacro %}
-{% macro close() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>{% endmacro %}
-{% macro chevron_left() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>{% endmacro %}
-{% macro chevron_right() %}<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>{% endmacro %}
-{% macro summary(filled) %}<svg class="ico{% if filled %} is-filled{% endif %}" viewBox="0 0 24 24" aria-hidden="true">{% if filled %}<path d="M12 3L14 10L21 12L14 14L12 21L10 14L3 12L10 10Z"/>{% else %}<g transform="translate(1.2 1.2) scale(0.9)"><path d="M12 3L14 10L21 12L14 14L12 21L10 14L3 12L10 10Z"/></g>{% endif %}</svg>{% endmacro %}
+{# Icon call sites. Each renders a <use> reference into the sprite emitted once
+   per document by _icon_sprite.html; see that file for why no presentation
+   attributes appear here. Keep the ids in sync with the sprite's <symbol>s. #}
+{% macro check() %}<svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>{% endmacro %}
+{% macro unread() %}<svg class="ico is-filled" aria-hidden="true"><use href="#i-unread"/></svg>{% endmacro %}
+{% macro star(filled) %}<svg class="ico{% if filled %} is-filled{% endif %}" aria-hidden="true"><use href="#i-star"/></svg>{% endmacro %}
+{% macro external() %}<svg class="ico" aria-hidden="true"><use href="#i-external"/></svg>{% endmacro %}
+{% macro document() %}<svg class="ico" aria-hidden="true"><use href="#i-document"/></svg>{% endmacro %}
+{% macro revert() %}<svg class="ico" aria-hidden="true"><use href="#i-revert"/></svg>{% endmacro %}
+{% macro refresh() %}<svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg>{% endmacro %}
+{% macro sparkle() %}<svg class="ico" aria-hidden="true"><use href="#i-sparkle"/></svg>{% endmacro %}
+{% macro bookmark() %}<svg class="ico" aria-hidden="true"><use href="#i-bookmark"/></svg>{% endmacro %}
+{% macro copy() %}<svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg>{% endmacro %}
+{% macro close() %}<svg class="ico" aria-hidden="true"><use href="#i-close"/></svg>{% endmacro %}
+{% macro chevron_left() %}<svg class="ico" aria-hidden="true"><use href="#i-chevron-left"/></svg>{% endmacro %}
+{% macro chevron_right() %}<svg class="ico" aria-hidden="true"><use href="#i-chevron-right"/></svg>{% endmacro %}
+{% macro summary(filled) %}<svg class="ico{% if filled %} is-filled{% endif %}" aria-hidden="true"><use href="#i-summary{% if filled %}-filled{% endif %}"/></svg>{% endmacro %}
