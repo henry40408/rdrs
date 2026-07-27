@@ -42,6 +42,12 @@ const ICON = {
 
 const SIDEBAR_CACHE_KEY = 'rdrs.sidebar.v1';
 
+/// Window over which repeated `rdrs:sidebar-stale` signals collapse into a
+/// single fetch. Long enough to absorb the two that one entry-open produces
+/// (measured ~4 ms apart), short enough that the badges still settle within a
+/// frame or two of the click.
+const STALE_COALESCE_MS = 50;
+
 function readBootstrap() {
     const node = document.getElementById('rdrs-sidebar-bootstrap');
     if (!node || !node.textContent) return null;
@@ -112,6 +118,8 @@ class RdrsSidebar extends HTMLElement {
     disconnectedCallback() {
         document.removeEventListener('click', this._onDocumentClick);
         document.removeEventListener('rdrs:sidebar-stale', this._onStale);
+        clearTimeout(this._staleTimer);
+        this._staleTimer = null;
         this._abort?.abort();
         this._abort = null;
     }
@@ -130,7 +138,22 @@ class RdrsSidebar extends HTMLElement {
     /// path — prefer it, since it doesn't require finding the element first.
     refresh() { return this.fetchData(); }
 
-    _onStale() { this.fetchData(); }
+    /// Coalesced: one interaction routinely raises `rdrs:sidebar-stale` more
+    /// than once. Opening an entry fires it twice a few ms apart — once from
+    /// app.js's `rdrs:swap-complete` hook, once from the server's SSE `sidebar`
+    /// event after the auto-mark-as-read — and both mean the same thing.
+    ///
+    /// Trailing edge, so the fetch runs after the last signal in a burst and
+    /// therefore reads state with every write in that burst applied. The delay
+    /// is invisible in practice: the row and pane have already been swapped by
+    /// this point, and this only revalidates the counts beside them.
+    _onStale() {
+        clearTimeout(this._staleTimer);
+        this._staleTimer = setTimeout(() => {
+            this._staleTimer = null;
+            this.fetchData();
+        }, STALE_COALESCE_MS);
+    }
 
     async fetchData() {
         // A newer request supersedes whatever is still in flight: without this,

@@ -732,7 +732,15 @@ function installSse() {
     } catch {
         return; // EventSource unavailable — no live updates, page still works.
     }
-    es.addEventListener('open', () => refreshSidebar());
+    // `open` fires on the first connect too, where <rdrs-sidebar> has already
+    // fetched from its own connectedCallback — refreshing there is pure
+    // duplication. Every later `open` is a reconnect, and those do need a
+    // resync to pick up whatever changed while the stream was down.
+    let sseHasConnected = false;
+    es.addEventListener('open', () => {
+        if (sseHasConnected) refreshSidebar();
+        sseHasConnected = true;
+    });
     es.addEventListener('sidebar', () => refreshSidebar());
     es.addEventListener('summary', (e) => {
         try { onSummaryEvent(JSON.parse(e.data)); } catch {}
