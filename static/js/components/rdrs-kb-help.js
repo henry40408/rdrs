@@ -1,4 +1,14 @@
 // <rdrs-kb-help> — Keyboard shortcut help overlay (Shadow DOM)
+//
+// The shadow stylesheet references design tokens with no `var(--x, fallback)`
+// defaults, on purpose. Custom properties inherit across the shadow boundary,
+// and app.css is a render-blocking <link> in <head> that defines every token
+// used here — so a fallback can only ever fire in a scenario where the whole
+// app is already unstyled. Meanwhile each fallback is a second copy of a token
+// that nothing keeps in sync, and it silently freezes the *light* half of a
+// `light-dark()` pair. Four of them had already drifted from app.css before
+// they were removed (--color-overlay, --font-ui, --font-display, --font-mono).
+// Don't reintroduce them: add the token to app.css instead.
 
 class RdrsKbHelp extends HTMLElement {
     constructor() {
@@ -13,18 +23,18 @@ class RdrsKbHelp extends HTMLElement {
                     left: 0;
                     right: 0;
                     bottom: 0;
-                    background: var(--color-overlay, rgba(0, 0, 0, 0.5));
+                    background: var(--color-overlay);
                     z-index: 1000;
                     justify-content: center;
                     align-items: center;
-                    padding: var(--space-4, 1rem);
+                    padding: var(--space-4);
                 }
                 :host(.visible) {
                     display: flex;
                 }
                 .modal {
-                    background: var(--color-panel, #FBFAF7);
-                    border: 1px solid var(--color-border-light, #E2E1DB);
+                    background: var(--color-panel);
+                    border: 1px solid var(--color-border-light);
                     border-radius: 12px;
                     padding: 28px 32px 32px;
                     width: 100%;
@@ -32,9 +42,9 @@ class RdrsKbHelp extends HTMLElement {
                     max-height: 85vh;
                     overflow-y: auto;
                     font-size: 0.9375rem;
-                    color: var(--color-text, #1B1C1E);
-                    font-family: var(--font-ui, 'Archivo', sans-serif);
-                    box-shadow: var(--shadow-lg, 0 24px 64px rgba(27,28,30,0.18));
+                    color: var(--color-text);
+                    font-family: var(--font-ui);
+                    box-shadow: var(--shadow-lg);
                 }
                 .header {
                     display: flex;
@@ -43,50 +53,50 @@ class RdrsKbHelp extends HTMLElement {
                     margin-bottom: 22px;
                 }
                 h2 {
-                    font-family: var(--font-display, 'Newsreader', serif);
+                    font-family: var(--font-display);
                     font-size: 22px;
                     font-weight: 600;
                     margin: 0;
                 }
                 .close-btn {
                     appearance: none;
-                    background: var(--color-kbd-bg, #ECEBE6);
-                    border: 1px solid var(--color-border, #CBCAC3);
+                    background: var(--color-kbd-bg);
+                    border: 1px solid var(--color-border);
                     border-bottom-width: 2px;
                     border-radius: 4px;
-                    color: var(--color-text-secondary, #55544F);
-                    font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+                    color: var(--color-text-secondary);
+                    font-family: var(--font-mono);
                     font-size: 0.75rem;
                     padding: 0.15rem 0.5rem;
                     cursor: pointer;
                     line-height: 1;
                 }
                 .close-btn:hover {
-                    color: var(--color-text, #1B1C1E);
+                    color: var(--color-text);
                 }
                 #content {
                     columns: 2;
-                    column-gap: var(--space-8, 2rem);
+                    column-gap: var(--space-8);
                 }
                 .shortcut-group {
                     break-inside: avoid;
-                    margin-bottom: var(--space-4, 1rem);
+                    margin-bottom: var(--space-4);
                 }
                 .shortcut-group h3 {
-                    font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+                    font-family: var(--font-mono);
                     font-size: 11px;
                     font-weight: 600;
                     text-transform: uppercase;
                     letter-spacing: 0.16em;
-                    color: var(--color-accent-text, #B8430A);
-                    border-bottom: 1px solid var(--color-border-light, #E2E1DB);
+                    color: var(--color-accent-text);
+                    border-bottom: 1px solid var(--color-border-light);
                     padding-bottom: 6px;
                     margin: 0 0 8px;
                 }
                 .shortcut-row {
                     display: flex;
                     align-items: baseline;
-                    gap: var(--space-3, 0.75rem);
+                    gap: var(--space-3);
                     padding: 3.5px 0;
                 }
                 .shortcut-key {
@@ -96,19 +106,19 @@ class RdrsKbHelp extends HTMLElement {
                 }
                 .shortcut-key kbd {
                     display: inline-block;
-                    font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+                    font-family: var(--font-mono);
                     font-size: 0.75rem;
                     line-height: 1;
                     padding: 0.2rem 0.4rem;
-                    background: var(--color-kbd-bg, #ECEBE6);
-                    border: 1px solid var(--color-border, #CBCAC3);
+                    background: var(--color-kbd-bg);
+                    border: 1px solid var(--color-border);
                     border-bottom-width: 2px;
                     border-radius: 4px;
-                    color: var(--color-text-secondary, #55544F);
+                    color: var(--color-text-secondary);
                     white-space: nowrap;
                 }
                 .shortcut-desc {
-                    color: var(--color-text-secondary, #55544F);
+                    color: var(--color-text-secondary);
                     font-size: 0.875rem;
                     line-height: 1.4;
                 }
@@ -116,7 +126,7 @@ class RdrsKbHelp extends HTMLElement {
                 /* Single-column on narrow screens */
                 @media (max-width: 520px) {
                     .modal {
-                        padding: var(--space-4, 1rem) var(--space-5, 1.25rem);
+                        padding: var(--space-4) var(--space-5);
                         max-height: 85vh;
                     }
                     #content {
