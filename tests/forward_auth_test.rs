@@ -513,3 +513,33 @@ async fn test_forward_auth_session_is_exempt_from_reauthentication() {
         .await;
     res.assert_status_ok();
 }
+
+/// A forward-auth session that calls `/api/session/reauth` anyway gets a
+/// coherent answer — the window is refreshed against the proxy's assertion
+/// rather than a password check it could never pass.
+#[tokio::test]
+async fn test_reauth_on_forward_auth_session_refreshes_without_a_password() {
+    let (mut server, db) = create_server(|c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    })
+    .await;
+    seed_user(&db, "xavier", rdrs::models::user::Role::User).await;
+
+    let login = server.get("/").add_header("Remote-User", "xavier").await;
+    apply_csrf(&mut server, &login);
+
+    rdrs::db_execute!(
+        &db,
+        "UPDATE session SET last_authenticated_at = $1",
+        chrono::Utc::now() - chrono::Duration::hours(1)
+    )
+    .unwrap();
+
+    // No password in the body: the account holds an unverifiable hash.
+    let res = server
+        .post("/api/session/reauth")
+        .add_header("Remote-User", "xavier")
+        .json(&json!({}))
+        .await;
+    res.assert_status(StatusCode::NO_CONTENT);
+}

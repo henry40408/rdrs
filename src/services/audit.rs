@@ -315,6 +315,11 @@ mod tests {
         api_tokens_destroyed(1, "revoke_all", Some(2));
         masquerade_started(SECRET, "tok", "tok2", 1, 2, "127.0.0.1", "test-agent");
         masquerade_stopped(SECRET, "tok2", "tok3", 1, 1);
+        session_token_rotated(SECRET, "tok3", "tok4");
+        session_reauthenticated(SECRET, "tok4", 1, "password");
+        session_reauthenticated(SECRET, "tok4", 1, "forward_auth");
+        passkey_registered(SECRET, "tok4", 1, 7, "MacBook", "127.0.0.1", "test-agent");
+        passkey_removed(SECRET, "tok4", 1, 7);
         login_rate_limited("POST /api/session", "login", "127.0.0.1");
     }
 

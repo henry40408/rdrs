@@ -1515,6 +1515,22 @@ async fn test_get_feed_icon_no_icon() {
 // Passkey Handler Tests
 // ============================================================================
 
+/// Attach a session created straight in the database as this server's default
+/// cookie, plus the CSRF header derived from it.
+///
+/// Needed where the login endpoint is unavailable — `disable_local_auth` — so
+/// the test can still exercise an authenticated path. The signing key is
+/// `default_test_config`'s all-zero secret.
+fn apply_session_cookie(server: &mut TestServer, token: &str) {
+    let secret = vec![0u8; 32];
+    server.add_cookie(cookie::Cookie::new(
+        "session_token",
+        rdrs::secret::sign_session(&secret, token),
+    ));
+    server.clear_headers();
+    server.add_header("x-csrf-token", rdrs::secret::derive_csrf(&secret, token));
+}
+
 /// Push every session's `last_authenticated_at` out of the re-authentication
 /// window, standing in for "this browser logged in a while ago" without a test
 /// having to wait out `REAUTH_WINDOW_MINUTES`.
@@ -1759,6 +1775,64 @@ async fn test_delete_passkey_not_found() {
 
     let response = server.delete("/api/passkeys/9999").await;
     response.assert_status_not_found();
+}
+
+/// The success path: a fresh session deletes its own passkey, which is also
+/// what reaches the `passkey.removed` audit call.
+#[tokio::test]
+async fn test_delete_passkey_succeeds_within_the_window() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES ($1, $2, $3, $4, $5)",
+        1_i64,
+        vec![1_u8, 2, 3],
+        b"{}".to_vec(),
+        0_i64,
+        "MacBook"
+    )
+    .unwrap();
+
+    app.server
+        .delete("/api/passkeys/1")
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+
+    // And it is gone, not merely reported as deleted.
+    app.server
+        .delete("/api/passkeys/1")
+        .await
+        .assert_status_not_found();
+}
+
+/// `disable_local_auth` leaves no password to check, so re-authentication has
+/// to refuse rather than fall through to a verify against a hash that can
+/// never match.
+#[tokio::test]
+async fn test_reauth_refused_when_local_auth_disabled() {
+    let mut config = default_test_config();
+    config.disable_local_auth = true;
+    let mut app = create_test_app(config).await;
+
+    // Build the session directly: with local auth disabled there is no login
+    // endpoint to go through.
+    let password_hash = auth::hash_password("password123").unwrap();
+    let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
+        .await
+        .unwrap();
+    let session =
+        rdrs::models::session::create_session(&app.db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+    apply_session_cookie(&mut app.server, &session.session_token);
+
+    app.server
+        .post("/api/session/reauth")
+        .json(&json!({ "password": "password123" }))
+        .await
+        .assert_status_forbidden();
 }
 
 #[tokio::test]
