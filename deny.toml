@@ -31,15 +31,6 @@ ignore = [
     # now resolved).
     "RUSTSEC-2026-0192",
     "RUSTSEC-2026-0206",
-    # ammonia XSS via the SVG `animate` / `set` animation tags: their `to`,
-    # `from` and `values` attributes were not filtered as URLs, so they could
-    # carry a `javascript:` scheme. Not reachable here — `sanitize.rs` replaces
-    # ammonia's default tag set with an explicit 27-tag allowlist that contains
-    # neither `animate` nor `set` (nor `svg` itself), and `url_schemes` is
-    # narrowed to http/https. Fixed in 4.1.4, published 2026-07-22, inside the
-    # 7-day dependency cooldown — bump and drop this entry after 2026-07-29.
-    # Tracked in issue #403.
-    "RUSTSEC-2026-0213",
 ]
 
 [licenses]
