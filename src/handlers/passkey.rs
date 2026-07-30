@@ -93,6 +93,8 @@ pub struct FinishRegistrationResponse {
 pub async fn finish_registration(
     State(state): State<AppState>,
     auth_user: AuthUser,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(req): Json<FinishRegistrationRequest>,
 ) -> AppResult<(StatusCode, Json<FinishRegistrationResponse>)> {
     if req.name.is_empty() {
@@ -143,6 +145,17 @@ pub async fn finish_registration(
         transports.as_deref(),
     )
     .await?;
+
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    audit::passkey_registered(
+        &state.config.secret,
+        &auth_user.session.session_token,
+        user_id,
+        new_passkey.id,
+        &new_passkey.name,
+        &state.config.client_ip(peer, &headers).to_string(),
+        &request_user_agent(&headers),
+    );
 
     Ok((
         StatusCode::CREATED,
