@@ -10,7 +10,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.0.1",
     "nanoid": "^6.0.0",
     "playwright-bdd": "^9.2.0"
   }
