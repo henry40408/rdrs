@@ -196,6 +196,64 @@ pub fn masquerade_stopped(
     );
 }
 
+/// A passkey was registered — a new, independently usable credential for the
+/// account, and the highest-consequence self-service change rdrs offers: it
+/// survives a password change, which revokes every session and API token but
+/// does not touch passkeys.
+///
+/// Logged with the `ip`/`user_agent` of the request that added it, so a
+/// credential planted from a session the owner did not recognise can be traced
+/// back to when and from where.
+pub fn passkey_registered(
+    secret: &[u8],
+    token: &str,
+    user_id: i64,
+    passkey_id: i64,
+    name: &str,
+    ip: &str,
+    ua: &str,
+) {
+    tracing::info!(
+        target: AUDIT_TARGET,
+        event = "passkey.registered",
+        sid = %audit_id(secret, token),
+        user_id,
+        passkey_id,
+        passkey_name = %name,
+        ip = %ip,
+        user_agent = %ua,
+        "passkey registered"
+    );
+}
+
+/// A passkey was removed. Logged for the same reason as
+/// [`passkey_registered`]: without the pair, the credential set could change
+/// in either direction with no trace.
+pub fn passkey_removed(secret: &[u8], token: &str, user_id: i64, passkey_id: i64) {
+    tracing::info!(
+        target: AUDIT_TARGET,
+        event = "passkey.removed",
+        sid = %audit_id(secret, token),
+        user_id,
+        passkey_id,
+        "passkey removed"
+    );
+}
+
+/// A session re-proved its credentials for a sensitive operation, refreshing
+/// the window `middleware::auth::RecentlyAuthenticated` enforces. `method` is
+/// `"password"` or `"forward_auth"`.
+pub fn session_reauthenticated(secret: &[u8], token: &str, user_id: i64, method: &str) {
+    tracing::info!(
+        target: AUDIT_TARGET,
+        event = "session.reauthenticated",
+        sid = %audit_id(secret, token),
+        user_id,
+        method,
+        "session reauthenticated"
+    );
+}
+
 /// A login attempt failed. `username_len` is deliberately the *length* of the
 /// attempted username, never the username itself: a very common user error is
 /// typing a password into the username field, and accepting only a `usize`
@@ -257,6 +315,11 @@ mod tests {
         api_tokens_destroyed(1, "revoke_all", Some(2));
         masquerade_started(SECRET, "tok", "tok2", 1, 2, "127.0.0.1", "test-agent");
         masquerade_stopped(SECRET, "tok2", "tok3", 1, 1);
+        session_token_rotated(SECRET, "tok3", "tok4");
+        session_reauthenticated(SECRET, "tok4", 1, "password");
+        session_reauthenticated(SECRET, "tok4", 1, "forward_auth");
+        passkey_registered(SECRET, "tok4", 1, 7, "MacBook", "127.0.0.1", "test-agent");
+        passkey_removed(SECRET, "tok4", 1, 7);
         login_rate_limited("POST /api/session", "login", "127.0.0.1");
     }
 

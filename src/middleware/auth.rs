@@ -8,6 +8,7 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
+use chrono::Utc;
 use time::Duration;
 
 use crate::AppState;
@@ -343,6 +344,52 @@ pub struct AuthUser {
     pub user: User,
     pub session: Session,
     pub via_forward_auth: bool,
+}
+
+/// An [`AuthUser`] whose session proved its credentials within
+/// [`session::REAUTH_WINDOW_MINUTES`] — OWASP's "Reauthentication After Risk
+/// Events", applied to the operations that change which credentials can open
+/// the account.
+///
+/// It guards passkey registration and removal. Registering a passkey adds an
+/// independently usable credential that a later password change will *not*
+/// revoke (a password change ends every session and API token, but leaves
+/// passkeys standing), so a session someone else picked up — an unlocked
+/// laptop, a borrowed browser — must not be able to mint one silently.
+///
+/// Forward-auth sessions are exempt, and the exemption is not a gap: their
+/// identity is asserted by the reverse proxy on every request, so rdrs has no
+/// credential of its own to re-check, and the account may hold no usable
+/// password at all (`forward_auth` writes a deliberately unverifiable hash for
+/// accounts it creates). Requiring a password there would lock those users out
+/// of passkey registration permanently rather than protecting them. Their
+/// trust boundary is the proxy, and that is where a re-authentication policy
+/// for them belongs.
+///
+/// Rejects with [`AppError::ReauthenticationRequired`], which the browser
+/// turns into a password prompt and a retry.
+#[derive(Debug, Clone)]
+pub struct RecentlyAuthenticated {
+    pub user: User,
+    pub session: Session,
+}
+
+impl FromRequestParts<AppState> for RecentlyAuthenticated {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let auth_user = AuthUser::from_request_parts(parts, state).await?;
+        if !auth_user.via_forward_auth && !auth_user.session.authenticated_recently(Utc::now()) {
+            return Err(AppError::ReauthenticationRequired);
+        }
+        Ok(Self {
+            user: auth_user.user,
+            session: auth_user.session,
+        })
+    }
 }
 
 impl FromRequestParts<AppState> for AuthUser {

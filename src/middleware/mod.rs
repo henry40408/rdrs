@@ -9,7 +9,7 @@ pub mod rate_limit;
 pub mod security_headers;
 
 pub use auth::{
-    AdminUser, AuthUser, PageAdminUser, PageAuthUser, SESSION_COOKIE_NAME,
+    AdminUser, AuthUser, PageAdminUser, PageAuthUser, RecentlyAuthenticated, SESSION_COOKIE_NAME,
     SESSION_COOKIE_NAME_HOST, build_session_cookie, session_cookie_name, slide_session_cookie,
 };
 pub use cache_control::no_store_for_authenticated;

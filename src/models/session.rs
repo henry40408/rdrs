@@ -20,6 +20,15 @@ const TOKEN_LENGTH: usize = 32;
 /// predecessor.
 pub const ROTATION_GRACE_SECONDS: i64 = 60;
 
+/// How long after proving its credentials a session may perform a sensitive
+/// operation without proving them again.
+///
+/// Five minutes is long enough that the common path — log in, go to settings,
+/// add a passkey — is never interrupted, and short enough that a session
+/// picked up later (an unlocked laptop, a borrowed browser) cannot quietly
+/// mint a new credential. See [`Session::authenticated_recently`].
+pub const REAUTH_WINDOW_MINUTES: i64 = 5;
+
 /// The full column list of `session`, expanded at compile time into each
 /// statement that needs it (via `concat!`) so the four of them cannot drift
 /// apart from the struct below — the failure mode a plain `const` could not
@@ -27,7 +36,8 @@ pub const ROTATION_GRACE_SECONDS: i64 = 60;
 macro_rules! session_columns {
     () => {
         "id, user_id, session_token, original_user_id, created_at, expires_at, \
-         user_agent, ip_address, last_seen_at, previous_token, previous_token_expires_at"
+         user_agent, ip_address, last_seen_at, previous_token, previous_token_expires_at, \
+         last_authenticated_at"
     };
 }
 
@@ -47,6 +57,10 @@ pub struct Session {
     /// [`find_by_token`] until `previous_token_expires_at`.
     pub previous_token: Option<String>,
     pub previous_token_expires_at: Option<DateTime<Utc>>,
+    /// When this session last *proved* its credentials rather than merely
+    /// presenting a cookie: set at login, refreshed by a re-authentication.
+    /// `None` only for a row predating the column's backfill.
+    pub last_authenticated_at: Option<DateTime<Utc>>,
 }
 
 impl Session {
@@ -56,6 +70,18 @@ impl Session {
 
     pub fn is_expired(&self) -> bool {
         Utc::now() > self.expires_at
+    }
+
+    /// Whether the session proved its credentials recently enough for a
+    /// sensitive operation — OWASP's reauthentication-for-risk-events rule,
+    /// enforced by `middleware::auth::RecentlyAuthenticated`.
+    ///
+    /// A missing `last_authenticated_at` counts as stale rather than fresh:
+    /// the only rows without one predate the column, and asking such a session
+    /// to re-authenticate is the failure direction that cannot do harm.
+    pub fn authenticated_recently(&self, now: DateTime<Utc>) -> bool {
+        self.last_authenticated_at
+            .is_some_and(|at| now - at < Duration::minutes(REAUTH_WINDOW_MINUTES))
     }
 
     /// Compute a new `expires_at` if the session should be slid forward.
@@ -126,8 +152,10 @@ pub async fn create_session(
         db,
         Session,
         concat!(
-            "INSERT INTO session (user_id, session_token, expires_at, user_agent, ip_address, last_seen_at) \
-             VALUES ($1, $2, $3, $4, $5, $6) \
+            "INSERT INTO session \
+                 (user_id, session_token, expires_at, user_agent, ip_address, last_seen_at, \
+                  last_authenticated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
              RETURNING ",
             session_columns!()
         ),
@@ -136,9 +164,26 @@ pub async fn create_session(
         expires_at,
         user_agent,
         ip_address,
+        now,
+        // A session exists because a login just succeeded, so it starts inside
+        // the re-authentication window.
         now
     )
     .map_err(AppError::Database)
+}
+
+/// Record that this session has just re-proved its credentials, restarting the
+/// window [`Session::authenticated_recently`] measures.
+pub async fn mark_authenticated(db: &Db, session_id: i64) -> AppResult<DateTime<Utc>> {
+    let now = Utc::now();
+    db_execute!(
+        db,
+        "UPDATE session SET last_authenticated_at = $1 WHERE id = $2",
+        now,
+        session_id
+    )
+    .map_err(AppError::Database)?;
+    Ok(now)
 }
 
 /// Look up a session by the token a client presented.
@@ -658,7 +703,78 @@ mod tests {
             last_seen_at: created_at,
             previous_token: None,
             previous_token_expires_at: None,
+            last_authenticated_at: Some(created_at),
         }
+    }
+
+    #[test]
+    fn authenticated_recently_inside_and_outside_the_window() {
+        let now = Utc::now();
+        let mut session = make_session(now, now + Duration::days(SESSION_EXPIRY_DAYS));
+
+        session.last_authenticated_at = Some(now);
+        assert!(session.authenticated_recently(now));
+
+        session.last_authenticated_at =
+            Some(now - Duration::minutes(REAUTH_WINDOW_MINUTES) + Duration::seconds(1));
+        assert!(session.authenticated_recently(now));
+
+        session.last_authenticated_at = Some(now - Duration::minutes(REAUTH_WINDOW_MINUTES));
+        assert!(!session.authenticated_recently(now));
+    }
+
+    #[test]
+    fn authenticated_recently_treats_a_missing_timestamp_as_stale() {
+        // Rows predating the column's backfill must be asked to
+        // re-authenticate, never waved through.
+        let now = Utc::now();
+        let mut session = make_session(now, now + Duration::days(SESSION_EXPIRY_DAYS));
+        session.last_authenticated_at = None;
+        assert!(!session.authenticated_recently(now));
+    }
+
+    #[tokio::test]
+    async fn mark_authenticated_reopens_the_window() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+        let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+
+        db_execute!(
+            &db,
+            "UPDATE session SET last_authenticated_at = $1 WHERE id = $2",
+            Utc::now() - Duration::hours(1),
+            session.id
+        )
+        .unwrap();
+        let stale = find_by_token(&db, &session.session_token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!stale.authenticated_recently(Utc::now()));
+
+        mark_authenticated(&db, session.id).await.unwrap();
+
+        let fresh = find_by_token(&db, &session.session_token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fresh.authenticated_recently(Utc::now()));
+    }
+
+    #[tokio::test]
+    async fn create_session_starts_inside_the_reauth_window() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+        let session = create_session(&db, user.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+        assert!(session.authenticated_recently(Utc::now()));
     }
 
     #[test]

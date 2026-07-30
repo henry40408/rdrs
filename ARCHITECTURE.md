@@ -161,7 +161,7 @@ The schema has 11 tables:
 | Table | Purpose |
 |-------|---------|
 | `user` | User accounts with role (admin/user) |
-| `session` | Session tokens with masquerade support, the `previous_token`/`previous_token_expires_at` rotation grace pair, plus per-session `user_agent`/`ip_address`/`last_seen_at` metadata |
+| `session` | Session tokens with masquerade support, the `previous_token`/`previous_token_expires_at` rotation grace pair, `last_authenticated_at` for the re-authentication window, plus per-session `user_agent`/`ip_address`/`last_seen_at` metadata |
 | `category` | Feed categories per user |
 | `feed` | Feed metadata with etag caching and bucket assignment |
 | `entry` | Feed items with read/starred status |
@@ -513,6 +513,22 @@ Uses Argon2id with:
   scheme and overridable via `RDRS_COOKIE_SECURE`. Every login path (password,
   passkey, forward-auth) builds its cookie through
   `middleware::auth::build_session_cookie` so the attributes cannot drift apart
+- **Re-authentication for credential changes** (OWASP "Reauthentication After
+  Risk Events"). `session.last_authenticated_at` records when the session last
+  *proved* itself rather than merely presented a cookie; the
+  `middleware::auth::RecentlyAuthenticated` extractor requires it to be within
+  `REAUTH_WINDOW_MINUTES` (5) and guards passkey registration and removal.
+  A passkey is the one credential a password change does **not** revoke, so a
+  picked-up session must not be able to add one silently.
+  `POST /api/session/reauth` re-opens the window against the account password
+  and shares the `PasswordChange` rate-limit budget, so it cannot be used to
+  sidestep that limit. The check sits on the *start* of the registration
+  ceremony because the challenge is single-use — a refusal at the finish would
+  consume it and leave the retry with nothing to complete. Forward-auth
+  sessions are exempt: the proxy re-asserts their identity every request, and
+  accounts it creates hold a deliberately unverifiable password hash, so the
+  window could never be reopened for them. A missing `last_authenticated_at`
+  counts as stale, never fresh
 - Masquerade feature for admin testing. Both transitions (start and stop) rotate
   the session token in the same `UPDATE` that swaps `user_id`, since entering or
   leaving a masquerade is a privilege-level change and OWASP's Session

@@ -32,6 +32,14 @@ pub enum AppError {
     #[error("Forbidden")]
     Forbidden,
 
+    /// The session is authenticated but has not proved its credentials
+    /// recently enough for a sensitive operation. Distinct from
+    /// [`AppError::Forbidden`] on purpose: the client is *not* being told to
+    /// give up, it is being told to re-authenticate and retry, and the browser
+    /// keys its password prompt off this exact response.
+    #[error("Reauthentication required")]
+    ReauthenticationRequired,
+
     #[error("Cannot modify self")]
     CannotModifySelf,
 
@@ -135,6 +143,12 @@ impl IntoResponse for AppError {
             AppError::UserDisabled => (StatusCode::FORBIDDEN, "User is disabled"),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized"),
             AppError::Forbidden => (StatusCode::FORBIDDEN, "Forbidden"),
+            // 403 rather than 401: the session is valid, so re-running the
+            // login flow is the wrong response. The message is what
+            // `passkey.js` matches on to raise its password prompt.
+            AppError::ReauthenticationRequired => {
+                (StatusCode::FORBIDDEN, "Reauthentication required")
+            }
             AppError::CannotModifySelf => (StatusCode::BAD_REQUEST, "Cannot modify self"),
             AppError::AlreadyMasquerading => (StatusCode::BAD_REQUEST, "Already masquerading"),
             AppError::NotMasquerading => (StatusCode::BAD_REQUEST, "Not masquerading"),

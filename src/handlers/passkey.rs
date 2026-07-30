@@ -12,7 +12,7 @@ use webauthn_rs::prelude::*;
 
 use crate::AppState;
 use crate::error::{AppError, AppResult};
-use crate::middleware::{AuthUser, Bucket, build_session_cookie};
+use crate::middleware::{AuthUser, Bucket, RecentlyAuthenticated, build_session_cookie};
 use crate::models::{passkey, session, user, webauthn_challenge};
 use crate::services::audit;
 use crate::utils::http::request_user_agent;
@@ -24,9 +24,22 @@ pub struct StartRegistrationResponse {
     pub options: CreationChallengeResponse,
 }
 
+/// The re-authentication check lives here, on the *start* of the ceremony,
+/// not on its finish.
+///
+/// Two reasons, and the first is fatal to the alternative: the challenge is
+/// single-use (`find_and_delete_challenge`), so a 403 at the finish step would
+/// consume it and leave the retry — after the user has typed their password —
+/// with nothing to complete. The user would also have already touched their
+/// authenticator, only to be asked for a password afterwards.
+///
+/// Checking only here is sufficient: a credential cannot be registered without
+/// a challenge, a challenge only exists because this handler issued one, and
+/// this handler will not issue one to a session that has not authenticated
+/// recently.
 pub async fn start_registration(
     State(state): State<AppState>,
-    auth_user: AuthUser,
+    auth_user: RecentlyAuthenticated,
 ) -> AppResult<Json<StartRegistrationResponse>> {
     let user_id = auth_user.user.id;
     let username = auth_user.user.username.clone();
@@ -73,9 +86,15 @@ pub struct FinishRegistrationResponse {
     pub name: String,
 }
 
+/// Deliberately takes a plain [`AuthUser`]: the freshness check happened at
+/// `start_registration`, and repeating it here would fail a ceremony that
+/// merely straddled the window boundary — after the challenge was already
+/// spent. See that handler for why the start is the right place.
 pub async fn finish_registration(
     State(state): State<AppState>,
     auth_user: AuthUser,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(req): Json<FinishRegistrationRequest>,
 ) -> AppResult<(StatusCode, Json<FinishRegistrationResponse>)> {
     if req.name.is_empty() {
@@ -126,6 +145,17 @@ pub async fn finish_registration(
         transports.as_deref(),
     )
     .await?;
+
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    audit::passkey_registered(
+        &state.config.secret,
+        &auth_user.session.session_token,
+        user_id,
+        new_passkey.id,
+        &new_passkey.name,
+        &state.config.client_ip(peer, &headers).to_string(),
+        &request_user_agent(&headers),
+    );
 
     Ok((
         StatusCode::CREATED,
@@ -387,11 +417,10 @@ pub async fn rename_passkey(
 
 pub async fn delete_passkey(
     State(state): State<AppState>,
-    auth_user: AuthUser,
+    auth_user: RecentlyAuthenticated,
     Path(id): Path<i64>,
 ) -> AppResult<StatusCode> {
     let user_id = auth_user.user.id;
     passkey::delete_passkey(&state.db, id, user_id).await?;
-
     Ok(StatusCode::NO_CONTENT)
 }
