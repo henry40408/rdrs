@@ -211,7 +211,22 @@ pub async fn delete_expired(db: &Db) -> AppResult<u64> {
     db_execute!(db, "DELETE FROM session WHERE expires_at <= $1", now).map_err(AppError::Database)
 }
 
-pub async fn start_masquerade(db: &Db, token: &str, target_user_id: i64) -> AppResult<()> {
+/// Start masquerading as `target_user_id`, returning the session's **new**
+/// token.
+///
+/// The token is rotated in the same `UPDATE` that changes `user_id`, because
+/// entering a masquerade is a privilege-level change and OWASP's Session
+/// Management Cheat Sheet requires the session ID to be renewed across one
+/// ("switching from a regular user role to an administrator role"). Doing it
+/// as a single statement keeps the identity swap and the credential swap
+/// atomic: there is no window in which the session already acts as the target
+/// user while still answering to the old token.
+///
+/// Callers must reissue the session cookie — and the CSRF cookie, whose value
+/// is derived from the session token (`secret::derive_csrf`) — from the
+/// returned token, or the client is left holding credentials for a row that no
+/// longer exists.
+pub async fn start_masquerade(db: &Db, token: &str, target_user_id: i64) -> AppResult<String> {
     let session = find_by_token(db, token)
         .await?
         .ok_or(AppError::Unauthorized)?;
@@ -220,18 +235,28 @@ pub async fn start_masquerade(db: &Db, token: &str, target_user_id: i64) -> AppR
         return Err(AppError::AlreadyMasquerading);
     }
 
+    let new_token = generate_token();
     db_execute!(
         db,
-        "UPDATE session SET original_user_id = user_id, user_id = $1 WHERE session_token = $2",
+        "UPDATE session SET original_user_id = user_id, user_id = $1, session_token = $2 WHERE session_token = $3",
         target_user_id,
+        &new_token,
         token
     )
     .map_err(AppError::Database)?;
 
-    Ok(())
+    Ok(new_token)
 }
 
-pub async fn stop_masquerade(db: &Db, token: &str) -> AppResult<()> {
+/// Stop masquerading, restoring the original user, and return the session's
+/// **new** token.
+///
+/// Rotated for the same reason as [`start_masquerade`], and this is the
+/// direction that actually matters: the token that was in use while acting as
+/// someone else — potentially observed on the impersonated user's screen, in a
+/// support recording, or in a debug log — must not survive as a credential for
+/// the restored admin session.
+pub async fn stop_masquerade(db: &Db, token: &str) -> AppResult<String> {
     let session = find_by_token(db, token)
         .await?
         .ok_or(AppError::Unauthorized)?;
@@ -240,14 +265,16 @@ pub async fn stop_masquerade(db: &Db, token: &str) -> AppResult<()> {
         return Err(AppError::NotMasquerading);
     }
 
+    let new_token = generate_token();
     db_execute!(
         db,
-        "UPDATE session SET user_id = original_user_id, original_user_id = NULL WHERE session_token = $1",
+        "UPDATE session SET user_id = original_user_id, original_user_id = NULL, session_token = $1 WHERE session_token = $2",
+        &new_token,
         token
     )
     .map_err(AppError::Database)?;
 
-    Ok(())
+    Ok(new_token)
 }
 
 #[cfg(test)]
@@ -390,26 +417,60 @@ mod tests {
             .unwrap();
         assert!(!session.is_masquerading());
 
-        start_masquerade(&db, &session.session_token, target.id)
+        let masq_token = start_masquerade(&db, &session.session_token, target.id)
             .await
             .unwrap();
 
-        let masq = find_by_token(&db, &session.session_token)
-            .await
-            .unwrap()
-            .unwrap();
+        // The privilege change rotates the token: the old one must no longer
+        // resolve, and the returned one must carry the masquerading state.
+        assert_ne!(masq_token, session.session_token);
+        assert!(
+            find_by_token(&db, &session.session_token)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let masq = find_by_token(&db, &masq_token).await.unwrap().unwrap();
+        assert_eq!(masq.id, session.id);
         assert!(masq.is_masquerading());
         assert_eq!(masq.user_id, target.id);
         assert_eq!(masq.original_user_id, Some(admin.id));
 
-        stop_masquerade(&db, &session.session_token).await.unwrap();
+        let restored_token = stop_masquerade(&db, &masq_token).await.unwrap();
+        assert_ne!(restored_token, masq_token);
+        assert_ne!(restored_token, session.session_token);
+        assert!(find_by_token(&db, &masq_token).await.unwrap().is_none());
 
-        let restored = find_by_token(&db, &session.session_token)
-            .await
-            .unwrap()
-            .unwrap();
+        let restored = find_by_token(&db, &restored_token).await.unwrap().unwrap();
+        assert_eq!(restored.id, session.id);
         assert!(!restored.is_masquerading());
         assert_eq!(restored.user_id, admin.id);
+    }
+
+    #[tokio::test]
+    async fn test_masquerade_rotation_preserves_session_lifetime() {
+        // Rotation replaces the credential, not the session: `created_at` and
+        // `expires_at` must survive it, or entering a masquerade would silently
+        // reset the absolute cap that `compute_refreshed_expiry` enforces.
+        let db = setup_db().await;
+        let admin = user::create_user(&db, "admin", "hash", Role::Admin)
+            .await
+            .unwrap();
+        let target = user::create_user(&db, "target", "hash", Role::User)
+            .await
+            .unwrap();
+
+        let session = create_session(&db, admin.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+        let masq_token = start_masquerade(&db, &session.session_token, target.id)
+            .await
+            .unwrap();
+
+        let masq = find_by_token(&db, &masq_token).await.unwrap().unwrap();
+        assert_eq!(masq.created_at, session.created_at);
+        assert_eq!(masq.expires_at, session.expires_at);
     }
 
     #[tokio::test]
@@ -425,11 +486,13 @@ mod tests {
         let session = create_session(&db, admin.id, "test-agent", "127.0.0.1")
             .await
             .unwrap();
-        start_masquerade(&db, &session.session_token, target.id)
+        let masq_token = start_masquerade(&db, &session.session_token, target.id)
             .await
             .unwrap();
 
-        let result = start_masquerade(&db, &session.session_token, target.id).await;
+        // Retried against the rotated token, so the rejection is the
+        // already-masquerading guard and not a stale-token lookup miss.
+        let result = start_masquerade(&db, &masq_token, target.id).await;
         assert!(matches!(result, Err(AppError::AlreadyMasquerading)));
     }
 
