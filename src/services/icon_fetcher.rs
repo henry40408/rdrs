@@ -86,7 +86,6 @@ async fn fetch_image(url: &str, user_agent: &str) -> AppResult<Option<FetchedIma
         .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
         .unwrap_or_default();
 
-    // Validate content type is an image
     if !content_type.starts_with("image/") {
         debug!(
             event = "icon.rejected",

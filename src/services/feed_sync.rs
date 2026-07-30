@@ -101,7 +101,6 @@ pub async fn refresh_feed(db: Db, feed_id: i64, default_user_agent: &str) -> App
 
     let status = response.status();
 
-    // Handle 304 Not Modified
     if status == reqwest::StatusCode::NOT_MODIFIED {
         debug!(
             event = "feed.not_modified",
@@ -130,7 +129,7 @@ pub async fn refresh_feed(db: Db, feed_id: i64, default_user_agent: &str) -> App
         return Err(AppError::FetchError(error_msg));
     }
 
-    // Extract headers before consuming response
+    // Before `response` is consumed by the body read below.
     let new_etag = response
         .headers()
         .get("etag")
@@ -188,7 +187,7 @@ pub async fn refresh_feed(db: Db, feed_id: i64, default_user_agent: &str) -> App
         }
     };
 
-    // Extract icon URLs before consuming parsed_feed
+    // Before `parsed_feed` is consumed below.
     let icon_url = parsed_feed.icon.as_ref().map(|i| i.uri.clone());
     let logo_url = parsed_feed.logo.as_ref().map(|l| l.uri.clone());
 

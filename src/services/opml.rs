@@ -163,7 +163,6 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                     continue;
                 }
 
-                // Parse attributes
                 let mut text: Option<String> = None;
                 let mut title: Option<String> = None;
                 let mut xml_url: Option<String> = None;

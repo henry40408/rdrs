@@ -62,7 +62,6 @@ pub struct EntrySummary {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Find a summary by user and entry
 pub async fn find_by_user_and_entry(
     db: &Db,
     user_id: i64,
@@ -79,7 +78,8 @@ pub async fn find_by_user_and_entry(
     .map_err(AppError::Database)
 }
 
-/// Create or update a summary with pending status
+/// Resets an existing row to pending, so a retry after a failure reuses the
+/// same record instead of accumulating one per attempt.
 pub async fn upsert_pending(db: &Db, user_id: i64, entry_id: i64) -> AppResult<EntrySummary> {
     db_execute!(
         db,
@@ -101,7 +101,6 @@ pub async fn upsert_pending(db: &Db, user_id: i64, entry_id: i64) -> AppResult<E
         .ok_or(AppError::NotFound("Entry summary not found".to_string()))
 }
 
-/// Update status to processing
 pub async fn set_processing(db: &Db, user_id: i64, entry_id: i64) -> AppResult<()> {
     let rows = db_execute!(
         db,
@@ -121,7 +120,6 @@ pub async fn set_processing(db: &Db, user_id: i64, entry_id: i64) -> AppResult<(
     Ok(())
 }
 
-/// Set summary as completed with the summary text
 pub async fn set_completed(
     db: &Db,
     user_id: i64,
@@ -149,7 +147,6 @@ pub async fn set_completed(
         .ok_or(AppError::NotFound("Entry summary not found".to_string()))
 }
 
-/// Set summary as failed with error message
 pub async fn set_failed(
     db: &Db,
     user_id: i64,
@@ -177,7 +174,7 @@ pub async fn set_failed(
         .ok_or(AppError::NotFound("Entry summary not found".to_string()))
 }
 
-/// Delete a summary
+/// `true` when a row was actually removed, `false` when there was none.
 pub async fn delete(db: &Db, user_id: i64, entry_id: i64) -> AppResult<bool> {
     let rows = db_execute!(
         db,
@@ -190,7 +187,7 @@ pub async fn delete(db: &Db, user_id: i64, entry_id: i64) -> AppResult<bool> {
     Ok(rows > 0)
 }
 
-/// Get summary statuses for multiple entries (batch query for list display)
+/// One query for a whole list page, rather than one per rendered row.
 pub async fn get_statuses_for_entries(
     db: &Db,
     user_id: i64,
@@ -222,8 +219,8 @@ pub async fn get_statuses_for_entries(
     Ok(map)
 }
 
-/// Find incomplete summaries (pending or processing) for recovery on startup
-/// Returns (`user_id`, `entry_id`, `entry_link`) tuples
+/// Pending or processing rows left behind by a shutdown mid-job, for the
+/// worker to re-queue at startup.
 pub async fn find_incomplete(db: &Db) -> AppResult<Vec<(i64, i64, String)>> {
     query_all!(
         db,
@@ -236,7 +233,6 @@ pub async fn find_incomplete(db: &Db) -> AppResult<Vec<(i64, i64, String)>> {
     .map_err(AppError::Database)
 }
 
-/// Delete expired summaries (older than specified hours)
 pub async fn delete_expired(db: &Db, hours: i64) -> AppResult<usize> {
     let cutoff = Utc::now() - chrono::Duration::hours(hours);
     let rows = db_execute!(

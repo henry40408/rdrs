@@ -163,12 +163,15 @@ const SLIDE_SKIP_PREFIXES: &[&str] = &["/static", "/favicon", "/health"];
 /// `expires_at` does, instead of logging out a browser that is still
 /// actively in use.
 ///
-/// This layer never touches the database: sliding the row's own
-/// `expires_at` remains `session::refresh_if_needed`'s job, called from the
-/// `AuthUser`/`PageAuthUser` extractors. Here, an absent or HMAC-invalid
-/// session cookie is passed through untouched — `session_token_from_jar`
-/// already does the signature check, so no unverified value is ever echoed
-/// back. A verified but row-less *anonymous* session cookie (minted by
+/// Sliding the row's own `expires_at` remains `session::refresh_if_needed`'s
+/// job, called from the `AuthUser`/`PageAuthUser` extractors. The one database
+/// write this layer does perform is the token rotation those extractors ask
+/// for (see [`RotationSlot`]), which has to happen here because only here is
+/// the response — and therefore whether a new cookie can be delivered at all —
+/// known. Otherwise, an absent or HMAC-invalid session cookie is passed
+/// through untouched: `session_token_from_jar` already does the signature
+/// check, so no unverified value is ever echoed back. A verified but row-less
+/// *anonymous* session cookie (minted by
 /// `anonymous_session` for a logged-out visitor) is slid the same way; that
 /// is harmless and intentional, not a bug to "fix" later — it still expires
 /// on its own schedule regardless of this middleware, and there is no
@@ -181,9 +184,9 @@ const SLIDE_SKIP_PREFIXES: &[&str] = &["/static", "/favicon", "/health"];
 /// each of the two *cookie purposes* (session, CSRF) — each of which may be
 /// carried under either its unprefixed or `__Host-`-prefixed name — a
 /// `Set-Cookie` already present under *either* name is left alone, and only
-/// the absence of both causes a fresh one (same value, refreshed `Max-Age`,
-/// token never rotated, written under whichever name `secure` selects) to be
-/// appended. Checking both names matters most for `logout`: it emits removal
+/// the absence of both causes a fresh one (refreshed `Max-Age`, and the same
+/// value unless this request rotated the token, written under whichever name
+/// `secure` selects) to be appended. Checking both names matters most for `logout`: it emits removal
 /// cookies under all four names (see `handlers::auth::logout`), and if this
 /// check only recognised the name it would itself write, it would happily
 /// append a *live* cookie under the other name right next to a removal —

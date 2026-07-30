@@ -18,15 +18,13 @@ pub fn sign_url(url: &str, secret: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(&t[..SIG_BYTES])
 }
 
-/// Verifies a signature for a given URL.
 pub fn verify_signature(url: &str, signature: &str, secret: &[u8]) -> bool {
     let expected = sign_url(url, secret);
-    // Use constant-time comparison to prevent timing attacks
     constant_time_eq(expected.as_bytes(), signature.as_bytes())
 }
 
-/// Creates a proxy URL with signature for an image URL.
-/// If `base_url` is provided, returns an absolute URL; otherwise returns a relative path.
+/// Absolute when `base_url` is given, relative otherwise — absolute is what
+/// feeds served to external readers need, relative is enough in-page.
 pub fn create_proxy_url(original_url: &str, secret: &[u8], base_url: Option<&str>) -> String {
     let encoded = URL_SAFE_NO_PAD.encode(original_url);
     let signature = sign_url(original_url, secret);
@@ -38,15 +36,14 @@ pub fn create_proxy_url(original_url: &str, secret: &[u8], base_url: Option<&str
     }
 }
 
-/// Signs a URL combined with a referrer using HMAC-SHA256.
-/// The message is `url|referrer` to bind both values together.
+/// Signs `url|referrer` as one message, so a signature minted for one referrer
+/// cannot be replayed with another.
 pub fn sign_url_with_referrer(url: &str, referrer: &str, secret: &[u8]) -> String {
     let message = format!("{url}|{referrer}");
     let t = tag(secret, DOMAIN_IMAGE, &[message.as_bytes()]);
     URL_SAFE_NO_PAD.encode(&t[..SIG_BYTES])
 }
 
-/// Verifies a signature for a given URL and referrer pair.
 pub fn verify_signature_with_referrer(
     url: &str,
     referrer: &str,
@@ -57,8 +54,8 @@ pub fn verify_signature_with_referrer(
     constant_time_eq(expected.as_bytes(), signature.as_bytes())
 }
 
-/// Creates a proxy URL with signature for an image URL, including a referrer parameter.
-/// If `base_url` is provided, returns an absolute URL; otherwise returns a relative path.
+/// As [`create_proxy_url`], but carries the referrer the upstream image server
+/// needs to serve hotlink-protected images.
 pub fn create_proxy_url_with_referrer(
     original_url: &str,
     referrer: &str,

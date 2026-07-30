@@ -6,7 +6,6 @@ pub use linkding::LinkdingConfig;
 
 use super::summarize::KagiConfig;
 
-/// Bookmark data to save to external services
 #[derive(Debug, Clone)]
 pub struct BookmarkData {
     pub url: String,
@@ -15,7 +14,7 @@ pub struct BookmarkData {
     pub tags: Vec<String>,
 }
 
-/// Result of saving to a single service
+/// The outcome of one service's save, rendered per-service in the UI.
 #[derive(Debug, Clone, Serialize)]
 pub struct SaveResult {
     pub success: bool,
@@ -37,17 +36,16 @@ pub struct SaveServicesConfig {
 }
 
 impl SaveServicesConfig {
-    /// Parse JSON string into `SaveServicesConfig`
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
 
-    /// Serialize to JSON string
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
 
-    /// Get list of configured service names
+    /// Only services whose credentials are actually filled in — a present but
+    /// half-configured entry does not count.
     pub fn configured_services(&self) -> Vec<&'static str> {
         let mut services = Vec::new();
         if self
@@ -61,7 +59,6 @@ impl SaveServicesConfig {
         services
     }
 
-    /// Check if any service is configured
     pub fn has_any_service(&self) -> bool {
         !self.configured_services().is_empty()
     }

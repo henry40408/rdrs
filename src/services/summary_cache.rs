@@ -7,7 +7,6 @@ use std::time::Duration;
 // Re-export SummaryStatus from models for backward compatibility
 pub use crate::models::entry_summary::SummaryStatus;
 
-/// A cached summary entry
 #[derive(Debug, Clone, Serialize)]
 pub struct SummaryCacheEntry {
     pub status: SummaryStatus,
@@ -54,21 +53,15 @@ impl SummaryCacheEntry {
     }
 }
 
-/// Cache key: (`user_id`, `entry_id`)
 type CacheKey = (i64, i64);
 
-/// LRU cache for summaries with TTL support
 #[derive(Clone)]
 pub struct SummaryCache {
     cache: Cache<CacheKey, SummaryCacheEntry>,
 }
 
 impl SummaryCache {
-    /// Create a new summary cache
-    ///
-    /// # Arguments
-    /// * `max_capacity` - Maximum number of entries to store
-    /// * `ttl_hours` - Time-to-live in hours for each entry
+    /// `ttl_hours` is the time-to-live applied to every entry.
     pub fn new(max_capacity: u64, ttl_hours: u64) -> Self {
         let cache = Cache::builder()
             .max_capacity(max_capacity)
@@ -78,47 +71,39 @@ impl SummaryCache {
         Self { cache }
     }
 
-    /// Get a summary from the cache
     pub fn get(&self, user_id: i64, entry_id: i64) -> Option<SummaryCacheEntry> {
         self.cache.get(&(user_id, entry_id))
     }
 
-    /// Set a pending status for an entry
     pub fn set_pending(&self, user_id: i64, entry_id: i64) {
         self.cache
             .insert((user_id, entry_id), SummaryCacheEntry::new_pending());
     }
 
-    /// Set a processing status for an entry
     pub fn set_processing(&self, user_id: i64, entry_id: i64) {
         self.cache
             .insert((user_id, entry_id), SummaryCacheEntry::new_processing());
     }
 
-    /// Set a completed summary
     pub fn set_completed(&self, user_id: i64, entry_id: i64, text: String) {
         self.cache
             .insert((user_id, entry_id), SummaryCacheEntry::new_completed(text));
     }
 
-    /// Set a failed status with error message
     pub fn set_failed(&self, user_id: i64, entry_id: i64, error: String) {
         self.cache
             .insert((user_id, entry_id), SummaryCacheEntry::new_failed(error));
     }
 
-    /// Remove a summary from the cache
     pub fn remove(&self, user_id: i64, entry_id: i64) {
         self.cache.invalidate(&(user_id, entry_id));
     }
 
-    /// Get the status of a summary if it exists in cache
     pub fn get_status(&self, user_id: i64, entry_id: i64) -> Option<SummaryStatus> {
         self.cache.get(&(user_id, entry_id)).map(|e| e.status)
     }
 }
 
-/// Create an Arc-wrapped `SummaryCache` for sharing across threads
 pub fn create_summary_cache(max_capacity: u64, ttl_hours: u64) -> Arc<SummaryCache> {
     Arc::new(SummaryCache::new(max_capacity, ttl_hours))
 }
@@ -134,17 +119,14 @@ mod tests {
         // Initially empty
         assert!(cache.get(1, 100).is_none());
 
-        // Set pending
         cache.set_pending(1, 100);
         let entry = cache.get(1, 100).unwrap();
         assert_eq!(entry.status, SummaryStatus::Pending);
 
-        // Set processing
         cache.set_processing(1, 100);
         let entry = cache.get(1, 100).unwrap();
         assert_eq!(entry.status, SummaryStatus::Processing);
 
-        // Set completed
         cache.set_completed(1, 100, "Test summary".to_string());
         let entry = cache.get(1, 100).unwrap();
         assert_eq!(entry.status, SummaryStatus::Completed);
