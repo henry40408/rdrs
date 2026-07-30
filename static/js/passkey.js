@@ -46,8 +46,8 @@ function promptForPassword() {
                 <label class="reauth-dialog__label" for="reauth-password">Password</label>
                 <input type="password" id="reauth-password" autocomplete="current-password" required>
                 <div class="reauth-dialog__actions">
-                    <button value="cancel" formnovalidate>Cancel</button>
-                    <button value="confirm" class="btn-primary">Confirm</button>
+                    <button value="cancel" class="btn-secondary" formnovalidate>Cancel</button>
+                    <button value="confirm">Confirm</button>
                 </div>
             </form>`;
         document.body.appendChild(dialog);

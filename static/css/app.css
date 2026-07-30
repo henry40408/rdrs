@@ -1706,6 +1706,14 @@ td input[type="text"] {
    again before a passkey is added or removed. A native <dialog>, so the
    backdrop, focus trap and Esc-to-close come from the platform. */
 .reauth-dialog {
+    /* `position: fixed; inset: 0; margin: auto` is what centres a modal
+       <dialog>, and all three have to be stated here: the UA stylesheet
+       supplies `margin: auto` for exactly this purpose, but the global
+       `* { margin: 0 }` reset above wipes it, which pins the dialog to the
+       top-left corner instead. */
+    position: fixed;
+    inset: 0;
+    margin: auto;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     background: var(--color-bg);
@@ -1713,6 +1721,7 @@ td input[type="text"] {
     padding: var(--space-6);
     max-width: 22rem;
     width: calc(100% - var(--space-6));
+    max-height: calc(100dvh - var(--space-6));
 }
 
 .reauth-dialog::backdrop {
