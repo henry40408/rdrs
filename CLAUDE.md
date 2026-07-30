@@ -72,6 +72,9 @@ The cross-cutting rules most easily violated:
   work while SQLite's single writer is contended (no-op on PostgreSQL).
 - **`RDRS_SECRET` is the one root key**: the session cookie, image proxy, GReader
   post token and CSRF token all derive from it with domain separation in
-  `secret.rs`. Session lifecycle events (creation, renewal, destruction,
-  masquerade start/stop) are audited under the `rdrs::audit` tracing target,
-  identifying sessions only by a salted `secret::audit_id` hash.
+  `secret.rs`. Session and credential lifecycle events (creation, renewal,
+  token rotation, destruction, masquerade start/stop, re-authentication,
+  passkey added/removed) are audited under the `rdrs::audit` tracing target,
+  identifying sessions only by a salted `secret::audit_id` hash. A new
+  credential path must emit one — that log is the only record of a credential
+  being added.
