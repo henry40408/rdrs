@@ -5,7 +5,6 @@ use super::{BookmarkData, SaveResult};
 use crate::error::{AppError, AppResult};
 use crate::services::http::{EXTERNAL_API_TIMEOUT, RetryConfig, send_with_retry_on_error};
 
-/// Linkding service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkdingConfig {
     pub api_url: String,
@@ -13,13 +12,12 @@ pub struct LinkdingConfig {
 }
 
 impl LinkdingConfig {
-    /// Check if the configuration is valid (both fields non-empty)
+    /// Both fields must be non-empty; a half-filled form is not "configured".
     pub fn is_configured(&self) -> bool {
         !self.api_url.is_empty() && !self.api_token.is_empty()
     }
 }
 
-/// Request body for Linkding API
 #[derive(Debug, Clone, Serialize)]
 struct LinkdingBookmarkRequest {
     url: String,
@@ -31,13 +29,15 @@ struct LinkdingBookmarkRequest {
     tag_names: Vec<String>,
 }
 
-/// Response from Linkding API
 #[derive(Debug, Deserialize)]
 struct LinkdingBookmarkResponse {
     id: i64,
 }
 
-/// Save a bookmark to Linkding
+/// Never fails the request for a Linkding-side problem: an unconfigured
+/// service, a rejected token or a duplicate URL all come back as a
+/// `SaveResult` with `success: false`, so one broken integration cannot fail
+/// the user's save to the others.
 pub async fn save_to_linkding(
     config: &LinkdingConfig,
     bookmark: &BookmarkData,
@@ -56,7 +56,6 @@ pub async fn save_to_linkding(
         .build()
         .map_err(|e| AppError::Internal(format!("Failed to build HTTP client: {e}")))?;
 
-    // Normalize API URL - ensure it ends with /api/bookmarks/
     let api_url = normalize_api_url(&config.api_url);
 
     let request_body = LinkdingBookmarkRequest {
@@ -85,7 +84,6 @@ pub async fn save_to_linkding(
             .await
             .map_err(|e| AppError::Internal(format!("Failed to parse Linkding response: {e}")))?;
 
-        // Construct bookmark URL for the user to view
         let bookmark_url = construct_bookmark_url(&config.api_url, body.id);
 
         Ok(SaveResult {
@@ -100,10 +98,12 @@ pub async fn save_to_linkding(
             .await
             .unwrap_or_else(|_| "Unknown error".to_string());
 
-        // Handle specific error codes
+        // Translated to something a reader can act on; the raw body is only
+        // surfaced for statuses with no specific meaning.
         let message = match status.as_u16() {
             400 => {
-                // Check if it's a duplicate URL error
+                // Linkding answers 400 for a URL already bookmarked, which is a
+                // success as far as the user is concerned, not an error.
                 if error_text.contains("already exists") || error_text.contains("unique") {
                     "Bookmark already exists in Linkding".to_string()
                 } else {
@@ -125,22 +125,21 @@ pub async fn save_to_linkding(
     }
 }
 
-/// Normalize the API URL to ensure it points to the bookmarks endpoint
+/// Accept whatever shape of URL the user pasted — instance root,
+/// `…/api`, or the full `…/api/bookmarks/` — and produce the bookmarks
+/// endpoint. Linkding needs the trailing slash; without it the API redirects
+/// and the POST body is dropped.
 fn normalize_api_url(base_url: &str) -> String {
     let mut url = base_url.trim_end_matches('/').to_string();
 
-    // Check if URL already contains /api
     if url.contains("/api") {
-        // URL contains /api - add /bookmarks if it ends with /api
         if !url.ends_with("/bookmarks") && url.ends_with("/api") {
             url.push_str("/bookmarks");
         }
     } else {
-        // URL doesn't contain /api, add /api/bookmarks
         url.push_str("/api/bookmarks");
     }
 
-    // Ensure trailing slash
     if !url.ends_with('/') {
         url.push('/');
     }
@@ -148,9 +147,9 @@ fn normalize_api_url(base_url: &str) -> String {
     url
 }
 
-/// Construct the URL to view the bookmark in Linkding UI
+/// The human-facing bookmark page, derived from the same setting as the API
+/// URL by cutting everything from `/api` onwards.
 fn construct_bookmark_url(base_url: &str, bookmark_id: i64) -> String {
-    // Extract base URL (remove /api/... suffix)
     let base = if let Some(pos) = base_url.find("/api") {
         &base_url[..pos]
     } else {

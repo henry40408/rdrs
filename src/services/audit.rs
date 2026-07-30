@@ -82,6 +82,21 @@ pub fn session_renewed(secret: &[u8], token: &str, user_id: i64, new_expires_at:
     );
 }
 
+/// A session's token was replaced by the periodic rotation (OWASP's "Renewal
+/// Timeout"). The session itself continues; only the credential naming it
+/// changed, so `sid` and `new_sid` bracket the swap the same way the
+/// masquerade events do — without the pair, every rotation would look like an
+/// unrelated session appearing in the log.
+pub fn session_token_rotated(secret: &[u8], token: &str, new_token: &str) {
+    tracing::info!(
+        target: AUDIT_TARGET,
+        event = "session.token_rotated",
+        sid = %audit_id(secret, token),
+        new_sid = %audit_id(secret, new_token),
+        "session token rotated"
+    );
+}
+
 /// A single session was deleted — logout, or a lazy expiry-driven cleanup.
 /// `reason` is `"logout"` or `"expired"`.
 pub fn session_destroyed(secret: &[u8], token: &str, user_id: i64, reason: &str) {

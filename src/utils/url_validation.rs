@@ -29,14 +29,12 @@ impl fmt::Display for UrlValidationError {
 
 impl std::error::Error for UrlValidationError {}
 
-/// Validates a URL to prevent SSRF attacks.
-///
-/// Checks that the URL:
-/// - Uses http or https scheme
-/// - Does not point to localhost, loopback, or .local/.internal domains
-/// - Does not point to private/reserved IP ranges
+/// The shared SSRF guard, in front of both the readability fetcher and the
+/// image proxy: http(s) only, and never a host that resolves inward —
+/// localhost, loopback, `.local`/`.internal`, or any private or reserved range.
+/// Both callers take a URL the *user* supplied, so anything reachable only from
+/// the server is out of bounds.
 pub fn validate_url(url: &Url) -> Result<(), UrlValidationError> {
-    // Only allow http/https schemes
     match url.scheme() {
         "http" | "https" => {}
         _ => return Err(UrlValidationError::InvalidScheme),

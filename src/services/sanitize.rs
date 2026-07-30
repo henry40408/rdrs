@@ -71,7 +71,8 @@ const TRACKING_PARAMS: &[&str] = &[
 /// Tracking query parameter prefixes
 const TRACKING_PARAM_PREFIXES: &[&str] = &["utm_", "mtm_"];
 
-/// Check if a parameter name is a tracking parameter
+/// Matched case-insensitively, and by prefix for the `utm_`/`mtm_` families,
+/// whose suffixes are open-ended.
 fn is_tracking_param(name: &str) -> bool {
     let name_lower = name.to_lowercase();
     TRACKING_PARAMS.iter().any(|&p| name_lower == p)

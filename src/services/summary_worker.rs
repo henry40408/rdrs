@@ -63,7 +63,8 @@ pub struct SummaryJob {
 /// worker creates one on dequeue (if absent) and removes it when the job ends.
 pub type CancelRegistry = Arc<Mutex<HashMap<(i64, i64), CancellationToken>>>;
 
-/// Start the summary worker that processes jobs from the queue
+/// Drains the queue one job at a time — Kagi is rate-limited per key, so
+/// concurrency here would buy nothing but 429s.
 pub fn start_summary_worker(
     mut rx: mpsc::Receiver<SummaryJob>,
     cache: Arc<SummaryCache>,
@@ -165,7 +166,6 @@ async fn run_summary_job_body(
     cache.set_processing(job.user_id, job.entry_id);
     events.emit_summary(job.user_id, job.entry_id, Some(SummaryStatus::Processing));
 
-    // Get Kagi config for the user
     let user_id = job.user_id;
     let entry_id = job.entry_id;
     let kagi_config = match user_settings::get_save_services_config(db, user_id).await {
@@ -273,7 +273,9 @@ async fn summarize_with_kagi(config: &KagiConfig, url: &str) -> Result<String, S
     }
 }
 
-/// Create a summary job queue channel
+/// `buffer_size` bounds the queue: a full channel makes the enqueue fail fast
+/// rather than growing without limit, and the caller falls back to the pending
+/// record already written to the database.
 pub fn create_summary_channel(
     buffer_size: usize,
 ) -> (mpsc::Sender<SummaryJob>, mpsc::Receiver<SummaryJob>) {

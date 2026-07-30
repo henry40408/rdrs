@@ -71,7 +71,8 @@ impl Default for RetryConfig {
 }
 
 impl RetryConfig {
-    /// Reduced retry config suitable for icon fetching
+    /// Fewer, shorter retries: a missing favicon is cosmetic, so it must not
+    /// hold a sync open the way an article fetch legitimately can.
     pub fn icon() -> Self {
         Self {
             max_retries: 2,
@@ -91,12 +92,13 @@ pub enum RetryOutcome<T, E> {
     Permanent(E),
 }
 
-/// Check if a reqwest error is transient (safe to retry).
+/// Transient meaning safe to retry: the request never reached a decision, so
+/// replaying it cannot double an effect.
 pub fn is_transient_error(err: &reqwest::Error) -> bool {
     err.is_timeout() || err.is_connect() || err.is_request()
 }
 
-/// Check if an HTTP status code is transient (safe to retry).
+/// Transient meaning safe to retry — see [`is_transient_error`].
 pub fn is_transient_status(status: StatusCode) -> bool {
     status.is_server_error()
         || status == StatusCode::TOO_MANY_REQUESTS

@@ -304,7 +304,6 @@ impl Db {
 }
 
 impl Tx<'_> {
-    /// Commit the transaction.
     pub async fn commit(self) -> Result<(), sqlx::Error> {
         match self {
             Tx::Sqlite { tx, .. } => tx.commit().await,

@@ -15,7 +15,8 @@ pub struct KagiConfig {
 }
 
 impl KagiConfig {
-    /// Check if the configuration is valid
+    /// The session token is the only required field; everything else has a
+    /// working default.
     pub fn is_configured(&self) -> bool {
         !self.session_token.is_empty()
     }

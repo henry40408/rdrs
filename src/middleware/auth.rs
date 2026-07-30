@@ -111,6 +111,38 @@ pub fn session_token_from_jar(jar: &CookieJar, secret: &[u8]) -> Option<String> 
     crate::secret::verify_session(secret, &value)
 }
 
+/// The channel by which an extractor asks [`slide_session_cookie`] to rotate
+/// the session token.
+///
+/// The decision is made deep inside the request — in `AuthUser` /
+/// `PageAuthUser`, where the sliding refresh already computes "this session is
+/// due" — but the rotation itself must not happen there. An extractor sees
+/// only request parts: it cannot know whether the response will be one a
+/// cookie may ride on, and a rotation whose new token never reaches the client
+/// would sign that client out as soon as the grace interval lapsed. So the
+/// extractor raises the flag, and the middleware performs the rotation once it
+/// has the finished response in hand and has ruled out the publicly cacheable
+/// ones (`/api/feeds/{id}/icon` authenticates like any other route but is
+/// served `public, max-age=…`).
+#[derive(Clone, Default)]
+pub struct RotationSlot(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl RotationSlot {
+    /// Ask for the session token to be rotated on the way out. A no-op when the
+    /// request carries no slot — i.e. on a route mounted outside this
+    /// middleware, such as the SSE stream at `/events`, where nothing could
+    /// deliver the new token anyway.
+    pub fn request(parts: &Parts) {
+        if let Some(slot) = parts.extensions.get::<Self>() {
+            slot.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    fn requested(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// Path prefixes skipped entirely: static assets, favicons, and the health
 /// check must stay cacheable, and a `Set-Cookie` on any of them would poison
 /// a shared cache sitting in front of the app. Deliberately narrower than
@@ -131,12 +163,15 @@ const SLIDE_SKIP_PREFIXES: &[&str] = &["/static", "/favicon", "/health"];
 /// `expires_at` does, instead of logging out a browser that is still
 /// actively in use.
 ///
-/// This layer never touches the database: sliding the row's own
-/// `expires_at` remains `session::refresh_if_needed`'s job, called from the
-/// `AuthUser`/`PageAuthUser` extractors. Here, an absent or HMAC-invalid
-/// session cookie is passed through untouched — `session_token_from_jar`
-/// already does the signature check, so no unverified value is ever echoed
-/// back. A verified but row-less *anonymous* session cookie (minted by
+/// Sliding the row's own `expires_at` remains `session::refresh_if_needed`'s
+/// job, called from the `AuthUser`/`PageAuthUser` extractors. The one database
+/// write this layer does perform is the token rotation those extractors ask
+/// for (see [`RotationSlot`]), which has to happen here because only here is
+/// the response — and therefore whether a new cookie can be delivered at all —
+/// known. Otherwise, an absent or HMAC-invalid session cookie is passed
+/// through untouched: `session_token_from_jar` already does the signature
+/// check, so no unverified value is ever echoed back. A verified but row-less
+/// *anonymous* session cookie (minted by
 /// `anonymous_session` for a logged-out visitor) is slid the same way; that
 /// is harmless and intentional, not a bug to "fix" later — it still expires
 /// on its own schedule regardless of this middleware, and there is no
@@ -149,9 +184,9 @@ const SLIDE_SKIP_PREFIXES: &[&str] = &["/static", "/favicon", "/health"];
 /// each of the two *cookie purposes* (session, CSRF) — each of which may be
 /// carried under either its unprefixed or `__Host-`-prefixed name — a
 /// `Set-Cookie` already present under *either* name is left alone, and only
-/// the absence of both causes a fresh one (same value, refreshed `Max-Age`,
-/// token never rotated, written under whichever name `secure` selects) to be
-/// appended. Checking both names matters most for `logout`: it emits removal
+/// the absence of both causes a fresh one (refreshed `Max-Age`, and the same
+/// value unless this request rotated the token, written under whichever name
+/// `secure` selects) to be appended. Checking both names matters most for `logout`: it emits removal
 /// cookies under all four names (see `handlers::auth::logout`), and if this
 /// check only recognised the name it would itself write, it would happily
 /// append a *live* cookie under the other name right next to a removal —
@@ -159,7 +194,7 @@ const SLIDE_SKIP_PREFIXES: &[&str] = &["/static", "/favicon", "/health"];
 /// the exact matching rule.
 pub async fn slide_session_cookie(
     State(state): State<AppState>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Response {
     if SLIDE_SKIP_PREFIXES
@@ -176,6 +211,12 @@ pub async fn slide_session_cookie(
 
     let secret = &state.config.secret;
     let secure = state.config.cookie_secure;
+
+    // Offer the extractors below a way to ask for a rotation, and keep our own
+    // handle on the answer — see [`RotationSlot`].
+    let slot = RotationSlot::default();
+    req.extensions_mut().insert(slot.clone());
+
     let mut resp = next.run(req).await;
 
     // A live session cookie must never ride on a response a shared cache is
@@ -185,9 +226,38 @@ pub async fn slide_session_cookie(
     // `public, max-age=...` (the image proxy also passes through whatever
     // `Cache-Control` the upstream image server sent); skip the reissue
     // entirely for those instead of trying to enumerate their paths.
+    //
+    // Checked *before* the rotation below, not just before the reissue: a
+    // rotation this response cannot carry would rename the session behind the
+    // client's back and sign it out once the grace interval lapsed.
     if response_is_publicly_cacheable(&resp) {
         return resp;
     }
+
+    // The rotation happens here rather than in the extractor that asked for it,
+    // because only here is it known that the new token can reach the client.
+    // `rotate_token` matches on the old token, so if a concurrent request beat
+    // us to it we get `None` and keep using the token we have — still valid,
+    // because the winner left it behind as the grace token.
+    let token = if slot.requested() {
+        match session::rotate_token(&state.db, &token).await {
+            Ok(Some(rotated)) => {
+                audit::session_token_rotated(secret, &token, &rotated);
+                rotated
+            }
+            Ok(None) => token,
+            Err(e) => {
+                tracing::warn!(
+                    event = "session.rotation_failed",
+                    error = %e,
+                    "session token rotation failed; keeping current token"
+                );
+                token
+            }
+        }
+    } else {
+        token
+    };
 
     if !response_has_set_cookie_for_any(&resp, &[SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST]) {
         append_set_cookie(&mut resp, &build_session_cookie(&token, secret, secure));
@@ -305,6 +375,10 @@ impl FromRequestParts<AppState> for AuthUser {
                     new_expires_at,
                 );
                 session.expires_at = new_expires_at;
+                // Same trigger, second effect: the session is due for a new
+                // token as well. `slide_session_cookie` performs it on the way
+                // out, where the response is known to be able to carry it.
+                RotationSlot::request(parts);
             }
             let _ = session::touch_last_seen(&state.db, &session).await;
             false
@@ -388,6 +462,7 @@ impl FromRequestParts<AppState> for PageAuthUser {
                 new_expires_at,
             );
             session.expires_at = new_expires_at;
+            RotationSlot::request(parts);
         }
         let _ = session::touch_last_seen(&state.db, &session).await;
         let Ok(Some(user)) = user::find_by_id(&state.db, session.user_id).await else {

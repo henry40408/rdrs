@@ -162,8 +162,6 @@ pub struct AdminDatabaseStats {
     pub tombstone_count: i64,
 }
 
-/// Get personal overview metrics for a user within a date range.
-///
 /// `from` and `to` are date strings in `YYYY-MM-DD` format. The range is
 /// `[from, to)` — i.e. `from` is inclusive and `to` is exclusive.
 pub async fn get_personal_overview(
@@ -260,10 +258,8 @@ pub async fn get_personal_overview(
     })
 }
 
-/// Get daily read counts for a user within a date range, including zero-count days.
-///
-/// `from` and `to` are date strings in `YYYY-MM-DD` format. The range is
-/// `[from, to)`.
+/// Days with no reads are included as zeros, so the chart has no gaps.
+/// `from` and `to` are `YYYY-MM-DD`; the range is `[from, to)`.
 pub async fn get_daily_read_counts(
     db: &Db,
     user_id: i64,
@@ -338,8 +334,6 @@ pub async fn get_daily_read_counts(
     Ok(result)
 }
 
-/// Get entry counts grouped by category for a user within a date range.
-///
 /// Only categories with at least one entry are returned, ordered by count DESC.
 pub async fn get_entries_by_category(
     db: &Db,
@@ -372,8 +366,6 @@ pub async fn get_entries_by_category(
     .map_err(AppError::Database)
 }
 
-/// Get top feeds by entry count for a user within a date range.
-///
 /// `limit` caps the number of results. Only feeds with at least one entry are
 /// returned, ordered by count DESC.
 pub async fn get_top_feeds(
@@ -410,7 +402,7 @@ pub async fn get_top_feeds(
     .map_err(AppError::Database)
 }
 
-/// Get site-wide admin counts (period-independent).
+/// Period-independent, unlike the other admin stats.
 pub async fn get_admin_counts(db: &Db) -> AppResult<AdminCounts> {
     let total_users: i64 =
         query_scalar!(db, i64, "SELECT COUNT(*) FROM \"user\"").map_err(AppError::Database)?;
@@ -424,7 +416,6 @@ pub async fn get_admin_counts(db: &Db) -> AppResult<AdminCounts> {
     })
 }
 
-/// Get site-wide admin entry stats within a date range.
 pub async fn get_admin_entry_stats(db: &Db, from: &str, to: &str) -> AppResult<AdminEntryStats> {
     let (from, to) = (parse_ymd(from), parse_ymd(to));
     let total_entries: i64 = query_scalar!(
@@ -464,7 +455,7 @@ pub async fn get_admin_entry_stats(db: &Db, from: &str, to: &str) -> AppResult<A
     })
 }
 
-/// Get site-wide database storage + record stats (period-independent).
+/// Period-independent. Storage figures are dialect-specific — see below.
 pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> {
     // Storage stats dialect-fork. SQLite exposes page-level accounting via
     // PRAGMAs (total size = page_count * page_size; reclaimable = freelist *
