@@ -27,6 +27,69 @@ function bufferToBase64url(buffer) {
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
+// Adding or removing a passkey changes which credentials can open the account,
+// so the server requires the session to have proved itself within the last few
+// minutes (middleware::auth::RecentlyAuthenticated) and answers 403 with this
+// exact message otherwise.
+const REAUTH_MESSAGE = 'Reauthentication required';
+
+// A <dialog> rather than prompt(): prompt() shows the password in clear text
+// and cannot be styled to match the rest of the page.
+function promptForPassword() {
+    return new Promise((resolve) => {
+        const dialog = document.createElement('dialog');
+        dialog.className = 'reauth-dialog';
+        dialog.innerHTML = `
+            <form method="dialog">
+                <h2 class="reauth-dialog__title">Confirm it's you</h2>
+                <p class="reauth-dialog__body">Changing your passkeys needs your password again.</p>
+                <label class="reauth-dialog__label" for="reauth-password">Password</label>
+                <input type="password" id="reauth-password" autocomplete="current-password" required>
+                <div class="reauth-dialog__actions">
+                    <button value="cancel" formnovalidate>Cancel</button>
+                    <button value="confirm" class="btn-primary">Confirm</button>
+                </div>
+            </form>`;
+        document.body.appendChild(dialog);
+        const input = dialog.querySelector('#reauth-password');
+        dialog.addEventListener('close', () => {
+            const value = dialog.returnValue === 'confirm' ? input.value : null;
+            dialog.remove();
+            resolve(value);
+        });
+        dialog.showModal();
+        input.focus();
+    });
+}
+
+// Run `send`, and if the server asks for re-authentication, collect the
+// password, re-authenticate, and run it again — exactly once. `send` must be
+// replayable, which is why the caller passes a thunk rather than a Response:
+// the retry re-issues the request from scratch.
+async function withReauth(send) {
+    let response = await send();
+    if (response.status !== 403) return response;
+
+    // Read the body via a clone; the caller still needs the original if this
+    // turns out to be an ordinary 403.
+    const data = await response.clone().json().catch(() => ({}));
+    if (data.error !== REAUTH_MESSAGE) return response;
+
+    const password = await promptForPassword();
+    if (password === null) return response;
+
+    const reauth = await fetch('/api/session/reauth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+    });
+    if (!reauth.ok) {
+        const err = await reauth.json().catch(() => ({}));
+        throw new Error(err.error || 'Re-authentication failed');
+    }
+    return send();
+}
+
 class RdrsPasskeys extends HTMLElement {
     connectedCallback() {
         if (window.PublicKeyCredential === undefined) {
@@ -110,7 +173,7 @@ class RdrsPasskeys extends HTMLElement {
     async _delete(id) {
         if (!confirm('Are you sure you want to delete this passkey?')) return;
         try {
-            const r = await fetch(`/api/passkeys/${id}`, { method: 'DELETE' });
+            const r = await withReauth(() => fetch(`/api/passkeys/${id}`, { method: 'DELETE' }));
             if (r.ok) {
                 window.flash.success('Passkey deleted successfully.');
                 this._loadList();
@@ -138,9 +201,12 @@ class RdrsPasskeys extends HTMLElement {
         try {
             btn.disabled = true;
             btn.textContent = 'Registering...';
-            const startR = await fetch('/api/passkey/register/start', {
+            // Only the start of the ceremony can ask for re-authentication —
+            // the server checks there so the password prompt lands before the
+            // authenticator prompt, and so a retry still has its challenge.
+            const startR = await withReauth(() => fetch('/api/passkey/register/start', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-            });
+            }));
             if (!startR.ok) {
                 const data = await startR.json().catch(() => ({}));
                 throw new Error(data.error || 'Failed to start registration');

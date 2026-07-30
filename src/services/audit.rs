@@ -196,6 +196,20 @@ pub fn masquerade_stopped(
     );
 }
 
+/// A session re-proved its credentials for a sensitive operation, refreshing
+/// the window `middleware::auth::RecentlyAuthenticated` enforces. `method` is
+/// `"password"` or `"forward_auth"`.
+pub fn session_reauthenticated(secret: &[u8], token: &str, user_id: i64, method: &str) {
+    tracing::info!(
+        target: AUDIT_TARGET,
+        event = "session.reauthenticated",
+        sid = %audit_id(secret, token),
+        user_id,
+        method,
+        "session reauthenticated"
+    );
+}
+
 /// A login attempt failed. `username_len` is deliberately the *length* of the
 /// attempted username, never the username itself: a very common user error is
 /// typing a password into the username field, and accepting only a `usize`

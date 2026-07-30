@@ -1701,6 +1701,50 @@ td input[type="text"] {
     margin-top: var(--space-6);
 }
 
+/* ===== Re-authentication dialog =====
+   Raised by passkey.js when the server asks the session to prove itself
+   again before a passkey is added or removed. A native <dialog>, so the
+   backdrop, focus trap and Esc-to-close come from the platform. */
+.reauth-dialog {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    color: var(--color-text);
+    padding: var(--space-6);
+    max-width: 22rem;
+    width: calc(100% - var(--space-6));
+}
+
+.reauth-dialog::backdrop {
+    background: rgb(0 0 0 / 45%);
+}
+
+.reauth-dialog__title {
+    margin: 0 0 var(--space-2);
+    font-size: var(--font-lg);
+}
+
+.reauth-dialog__body {
+    margin: 0 0 var(--space-4);
+    color: var(--color-text-secondary);
+}
+
+.reauth-dialog__label {
+    display: block;
+    margin-bottom: var(--space-1);
+}
+
+.reauth-dialog input[type="password"] {
+    width: 100%;
+}
+
+.reauth-dialog__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    margin-top: var(--space-5);
+}
+
 /* ===== Filter Bar ===== */
 .filter-bar {
     display: flex;

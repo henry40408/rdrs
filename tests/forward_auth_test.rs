@@ -478,3 +478,38 @@ async fn test_logout_password_session_reports_via_forward_auth_false() {
     assert_eq!(body["redirect_to"], "/login");
     assert_eq!(body["logout_url_configured"], false);
 }
+
+/// Forward-auth sessions are exempt from the re-authentication window that
+/// guards passkey registration.
+///
+/// Not a loophole: the proxy re-asserts the identity on every request, so rdrs
+/// has no credential of its own to re-check, and accounts it created hold a
+/// deliberately unverifiable password hash. Enforcing the window here would
+/// lock these users out of passkey registration permanently, since there is no
+/// password they could ever supply to reopen it.
+#[tokio::test]
+async fn test_forward_auth_session_is_exempt_from_reauthentication() {
+    let (mut server, db) = create_server(|c| {
+        c.trusted_proxy_networks = parse_trusted_networks("127.0.0.0/8").unwrap();
+    })
+    .await;
+    seed_user(&db, "wendy", rdrs::models::user::Role::User).await;
+
+    let login = server.get("/").add_header("Remote-User", "wendy").await;
+    apply_csrf(&mut server, &login);
+
+    // Age the session well past the window; a password-backed session would be
+    // refused at this point.
+    rdrs::db_execute!(
+        &db,
+        "UPDATE session SET last_authenticated_at = $1",
+        chrono::Utc::now() - chrono::Duration::hours(1)
+    )
+    .unwrap();
+
+    let res = server
+        .post("/api/passkey/register/start")
+        .add_header("Remote-User", "wendy")
+        .await;
+    res.assert_status_ok();
+}

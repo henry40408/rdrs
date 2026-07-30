@@ -234,13 +234,85 @@ pub struct LogoutResponse {
 /// that fights the client's own redirect.
 const LOGOUT_CLEAR_SITE_DATA: &str = "\"cache\", \"storage\"";
 
+#[derive(Debug, Deserialize)]
+pub struct ReauthRequest {
+    /// Absent for a forward-auth session, which has no rdrs password to give.
+    #[serde(default)]
+    pub password: String,
+}
+
+/// Re-prove the current session's credentials, restarting the window
+/// [`crate::middleware::RecentlyAuthenticated`] enforces.
+///
+/// Creates nothing and rotates nothing: the session is already valid, and the
+/// only thing that changes is `last_authenticated_at`. That keeps this
+/// endpoint uninteresting to an attacker who already holds the session — it
+/// grants no new access, it only re-opens a window they still have to spend on
+/// an operation that is itself audited.
+///
+/// Shares the `PasswordChange` rate-limit budget rather than taking one of its
+/// own, for the reason that bucket exists: an unthrottled Argon2 verify lets a
+/// hijacked session brute-force the account's real password, which is valuable
+/// for credential reuse elsewhere. Sharing also stops this endpoint from being
+/// used to sidestep the limit on "change password".
+pub async fn reauthenticate(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Json(req): Json<ReauthRequest>,
+) -> AppResult<StatusCode> {
+    let user_id = auth_user.user.id;
+    let token = auth_user.session.session_token.clone();
+
+    // A forward-auth session's identity is re-asserted by the proxy on every
+    // request, so there is nothing for rdrs to re-check — and the account may
+    // hold no usable password at all. It never sees a
+    // `ReauthenticationRequired` in the first place; this arm exists so a
+    // client that calls here anyway gets a coherent answer instead of a
+    // password check it can never pass.
+    if auth_user.via_forward_auth {
+        session::mark_authenticated(&state.db, auth_user.session.id).await?;
+        audit::session_reauthenticated(&state.config.secret, &token, user_id, "forward_auth");
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    if state.config.disable_local_auth {
+        return Err(AppError::Forbidden);
+    }
+
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let ip = state.config.client_ip(peer, &headers);
+    if let Some(retry_after_secs) = state
+        .login_rate_limiter
+        .try_acquire(Bucket::PasswordChange, ip)
+        .retry_after_secs()
+    {
+        audit::login_rate_limited("POST /api/session/reauth", "reauth", &ip.to_string());
+        return Err(AppError::TooManyRequests { retry_after_secs });
+    }
+
+    if !verify_password(&req.password, &auth_user.user.password_hash) {
+        return Err(AppError::InvalidCredentials);
+    }
+    // Correct password: hand the reservation back, so re-authenticating
+    // legitimately never eats into the budget — same rationale as login and
+    // change-password.
+    state.login_rate_limiter.release(Bucket::PasswordChange, ip);
+
+    session::mark_authenticated(&state.db, auth_user.session.id).await?;
+    audit::session_reauthenticated(&state.config.secret, &token, user_id, "password");
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Clears the local session and reports where the client should go next.
 ///
 /// `redirect_to` is the configured `auth_proxy_logout_url`, or `/login` if
-/// none is set. `via_forward_auth` reports whether the trusted proxy identity header is
-/// present on this request. `logout_url_configured` explicitly indicates whether an
-/// `auth_proxy_logout_url` is configured, so the client can decide whether to
-/// navigate to `redirect_to`.
+/// none is set. `via_forward_auth` reports whether the trusted proxy identity
+/// header is present on this request. `logout_url_configured` explicitly
+/// indicates whether an `auth_proxy_logout_url` is configured, so the client
+/// can decide whether to navigate to `redirect_to`.
 pub async fn logout(
     State(state): State<AppState>,
     jar: CookieJar,

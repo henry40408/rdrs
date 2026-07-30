@@ -16,6 +16,7 @@ use std::sync::Arc;
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum_test::TestServer;
 use axum_test::multipart::{MultipartForm, Part};
+use chrono::{Duration, Utc};
 use rdrs::{AppState, Config, Db, Role, auth, create_router, services};
 use serde_json::json;
 
@@ -1513,6 +1514,109 @@ async fn test_get_feed_icon_no_icon() {
 // ============================================================================
 // Passkey Handler Tests
 // ============================================================================
+
+/// Push every session's `last_authenticated_at` out of the re-authentication
+/// window, standing in for "this browser logged in a while ago" without a test
+/// having to wait out `REAUTH_WINDOW_MINUTES`.
+async fn stale_authentication(db: &Db) {
+    rdrs::db_execute!(
+        db,
+        "UPDATE session SET last_authenticated_at = $1",
+        Utc::now() - Duration::hours(1)
+    )
+    .unwrap();
+}
+
+/// Adding a passkey from a session that has not proved itself recently must be
+/// refused — that credential outlives a password change, so a picked-up
+/// session must not be able to mint one silently.
+#[tokio::test]
+async fn test_passkey_register_start_requires_recent_authentication() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    // Fresh login is inside the window.
+    app.server
+        .post("/api/passkey/register/start")
+        .await
+        .assert_status_ok();
+
+    stale_authentication(&app.db).await;
+
+    let refused = app.server.post("/api/passkey/register/start").await;
+    refused.assert_status_forbidden();
+    let body: serde_json::Value = refused.json();
+    assert_eq!(body["error"], "Reauthentication required");
+}
+
+#[tokio::test]
+async fn test_passkey_delete_requires_recent_authentication() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+    stale_authentication(&app.db).await;
+
+    // Refused before the passkey is even looked up, so a non-existent id still
+    // reports the re-authentication requirement rather than 404.
+    let refused = app.server.delete("/api/passkeys/1").await;
+    refused.assert_status_forbidden();
+    let body: serde_json::Value = refused.json();
+    assert_eq!(body["error"], "Reauthentication required");
+}
+
+/// The whole point of the window: re-authenticating re-opens it, and the
+/// operation that was refused now goes through.
+#[tokio::test]
+async fn test_reauth_with_correct_password_reopens_the_window() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+    stale_authentication(&app.db).await;
+
+    app.server
+        .post("/api/passkey/register/start")
+        .await
+        .assert_status_forbidden();
+
+    app.server
+        .post("/api/session/reauth")
+        .json(&json!({ "password": "password123" }))
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+
+    app.server
+        .post("/api/passkey/register/start")
+        .await
+        .assert_status_ok();
+}
+
+#[tokio::test]
+async fn test_reauth_with_wrong_password_is_rejected() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+    stale_authentication(&app.db).await;
+
+    app.server
+        .post("/api/session/reauth")
+        .json(&json!({ "password": "not-my-password" }))
+        .await
+        .assert_status_unauthorized();
+
+    // Still refused: a failed re-authentication must not open the window.
+    app.server
+        .post("/api/passkey/register/start")
+        .await
+        .assert_status_forbidden();
+}
+
+#[tokio::test]
+async fn test_reauth_requires_a_session() {
+    let server = create_test_server(default_test_config()).await;
+
+    server
+        .post("/api/session/reauth")
+        .json(&json!({ "password": "password123" }))
+        .await
+        .assert_status_unauthorized();
+}
 
 #[tokio::test]
 async fn test_passkey_register_start_unauthorized() {
