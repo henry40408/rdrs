@@ -496,7 +496,14 @@ Uses Argon2id with:
   scheme and overridable via `RDRS_COOKIE_SECURE`. Every login path (password,
   passkey, forward-auth) builds its cookie through
   `middleware::auth::build_session_cookie` so the attributes cannot drift apart
-- Masquerade feature for admin testing
+- Masquerade feature for admin testing. Both transitions (start and stop) rotate
+  the session token in the same `UPDATE` that swaps `user_id`, since entering or
+  leaving a masquerade is a privilege-level change and OWASP's Session
+  Management Cheat Sheet requires the session ID to be renewed across one. The
+  handlers reissue **both** the session cookie and the CSRF cookie from the new
+  token — the latter's value is derived from the former (`secret::derive_csrf`),
+  so a client left holding the old CSRF token would fail every subsequent
+  state-changing request
 
 ### Input Sanitization
 

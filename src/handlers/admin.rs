@@ -4,14 +4,15 @@ use axum::{
     Form,
     extract::{ConnectInfo, Extension, Path, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
+use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 
 use crate::AppState;
 use crate::error::{AppError, AppResult};
-use crate::middleware::AdminUser;
 use crate::middleware::flash::FlashRedirect;
+use crate::middleware::{AdminUser, build_csrf_cookie, build_session_cookie};
 use crate::models::api_token;
 use crate::models::session;
 use crate::models::user::{self, Role};
@@ -21,7 +22,7 @@ use crate::utils::http::request_user_agent;
 pub async fn stop_masquerade(
     State(state): State<AppState>,
     admin: AdminUser,
-) -> AppResult<StatusCode> {
+) -> AppResult<impl IntoResponse> {
     if !admin.session.is_masquerading() {
         return Err(AppError::NotMasquerading);
     }
@@ -31,15 +32,36 @@ pub async fn stop_masquerade(
     // `original_user_id` is the real admin — the one both acting here and
     // being restored to the session.
     let admin_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
-    session::stop_masquerade(&state.db, &session_token).await?;
+    let new_token = session::stop_masquerade(&state.db, &session_token).await?;
     audit::masquerade_stopped(
         &state.config.secret,
         &session_token,
+        &new_token,
         admin_user_id,
         admin_user_id,
     );
 
-    Ok(StatusCode::OK)
+    Ok((rotated_cookies(&state, &new_token), StatusCode::OK))
+}
+
+/// The pair of cookies a session-token rotation has to reissue, as a jar the
+/// handler can return alongside its own response.
+///
+/// Both are rebuilt from `new_token`: the session cookie carries the token
+/// itself (signed), and the CSRF cookie carries a value *derived* from it
+/// (`secret::derive_csrf`), so reissuing only the first would leave the client
+/// holding a CSRF token that no longer matches the session and every
+/// subsequent state-changing request would fail `csrf_guard`.
+///
+/// `slide_session_cookie` leaves a response alone once it carries a
+/// `Set-Cookie` for these purposes under either the plain or `__Host-` name,
+/// so the cookies added here reach the browser unmodified.
+fn rotated_cookies(state: &AppState, new_token: &str) -> CookieJar {
+    let secret = &state.config.secret;
+    let secure = state.config.cookie_secure;
+    CookieJar::new()
+        .add(build_session_cookie(new_token, secret, secure))
+        .add(build_csrf_cookie(new_token, secret, secure))
 }
 
 // ============================================================================
@@ -138,9 +160,10 @@ pub async fn start_masquerade_form(
     headers: HeaderMap,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(target_user_id): Path<i64>,
-) -> impl IntoResponse {
+) -> Response {
     if admin.session.is_masquerading() {
-        return FlashRedirect::error("/admin", "You are already masquerading as another user.");
+        return FlashRedirect::error("/admin", "You are already masquerading as another user.")
+            .into_response();
     }
 
     let session_token = admin.session.session_token.clone();
@@ -148,34 +171,38 @@ pub async fn start_masquerade_form(
     // and this is just the current admin — the actor about to start acting as
     // `target_user_id`.
     let actor_user_id = admin.session.original_user_id.unwrap_or(admin.user.id);
-    let result: AppResult<()> = async {
+    let result: AppResult<String> = async {
         let target = user::find_by_id(&state.db, target_user_id)
             .await?
             .ok_or(AppError::UserNotFound)?;
         if target.is_disabled() {
             return Err(AppError::UserDisabled);
         }
-        session::start_masquerade(&state.db, &session_token, target_user_id).await?;
-        Ok(())
+        session::start_masquerade(&state.db, &session_token, target_user_id).await
     }
     .await;
 
     match result {
-        Ok(()) => {
+        Ok(new_token) => {
             let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
             let ip = state.config.client_ip(peer, &headers).to_string();
             let user_agent = request_user_agent(&headers);
             audit::masquerade_started(
                 &state.config.secret,
                 &session_token,
+                &new_token,
                 actor_user_id,
                 target_user_id,
                 &ip,
                 &user_agent,
             );
-            FlashRedirect::info("/", "You are now masquerading as another user.")
+            (
+                rotated_cookies(&state, &new_token),
+                FlashRedirect::info("/", "You are now masquerading as another user."),
+            )
+                .into_response()
         }
-        _ => FlashRedirect::error("/admin", "Failed to start masquerade."),
+        _ => FlashRedirect::error("/admin", "Failed to start masquerade.").into_response(),
     }
 }
 

@@ -33,9 +33,18 @@ pub fn test_rate_limiter() -> std::sync::Arc<rdrs::middleware::RateLimiter> {
 /// test server stores the CSRF cookie but never turns it into a header on its
 /// own. A request with no session cookie needs none of this — the guard lets it
 /// through to the handler's own auth check.
+///
+/// Safe to call again whenever the session token rotates (masquerade start and
+/// stop both rotate it, and the CSRF token is derived from it): the default
+/// headers are cleared first, because [`TestServer::add_header`] *appends*, and
+/// a stale `X-CSRF-Token` left ahead of the fresh one is the header the guard
+/// reads. Clearing is safe for every suite here — no test sets a
+/// server-default header other than this one; the `Remote-User` and
+/// `Accept-Encoding` cases are all per-request.
 #[allow(dead_code)] // not every test binary performs authenticated mutations
 pub fn apply_csrf(server: &mut TestServer, login_response: &TestResponse) {
     let token = login_response.cookie("csrf_token").value().to_string();
+    server.clear_headers();
     server.add_header("x-csrf-token", token);
 }
 

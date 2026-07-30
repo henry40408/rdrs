@@ -578,25 +578,83 @@ async fn test_masquerade() {
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
 
-    server
-        .post("/admin/users/2/masquerade")
-        .await
-        .assert_status(StatusCode::SEE_OTHER);
+    let started = server.post("/admin/users/2/masquerade").await;
+    started.assert_status(StatusCode::SEE_OTHER);
+    // Entering the masquerade rotates the session token, so the CSRF token
+    // derived from it changes too — a browser re-reads both from the cookies
+    // this response sets; the test server needs the header refreshed by hand.
+    common::apply_csrf(&mut server, &started);
 
     let response = server.get("/api/user").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(body["username"], "user1");
 
-    server
-        .post("/api/admin/unmasquerade")
-        .await
-        .assert_status_ok();
+    let stopped = server.post("/api/admin/unmasquerade").await;
+    stopped.assert_status_ok();
+    common::apply_csrf(&mut server, &stopped);
 
     let response = server.get("/api/user").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(body["username"], "admin");
+}
+
+/// Both masquerade transitions must hand the client a *new* session cookie and
+/// a matching CSRF cookie — the privilege-change renewal OWASP's Session
+/// Management Cheat Sheet requires. Asserted on the wire rather than in the
+/// model layer, because a rotation the handler forgets to reissue would leave
+/// the browser authenticated against a row that no longer exists.
+#[tokio::test]
+async fn test_masquerade_rotates_session_and_csrf_cookies() {
+    let mut server = create_test_server(default_test_config()).await;
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "user1",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    let __login = server
+        .post("/api/session")
+        .json(&json!({
+            "username": "admin",
+            "password": "password123"
+        }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut server, &__login);
+
+    let logged_in_session = __login.cookie("session_token").value().to_string();
+    let logged_in_csrf = __login.cookie("csrf_token").value().to_string();
+
+    let started = server.post("/admin/users/2/masquerade").await;
+    started.assert_status(StatusCode::SEE_OTHER);
+    let masq_session = started.cookie("session_token").value().to_string();
+    let masq_csrf = started.cookie("csrf_token").value().to_string();
+    assert_ne!(masq_session, logged_in_session);
+    assert_ne!(masq_csrf, logged_in_csrf);
+    common::apply_csrf(&mut server, &started);
+
+    let stopped = server.post("/api/admin/unmasquerade").await;
+    stopped.assert_status_ok();
+    let restored_session = stopped.cookie("session_token").value().to_string();
+    let restored_csrf = stopped.cookie("csrf_token").value().to_string();
+    assert_ne!(restored_session, masq_session);
+    assert_ne!(restored_session, logged_in_session);
+    assert_ne!(restored_csrf, masq_csrf);
 }
 
 #[tokio::test]
@@ -635,6 +693,10 @@ async fn test_masquerade_already_masquerading() {
     let response = server.post("/admin/users/2/masquerade").await;
     response.assert_status(StatusCode::SEE_OTHER);
     assert_eq!(response.header(header::LOCATION), "/");
+    // Refresh the CSRF header against the rotated session, so the second
+    // attempt below is rejected by the already-masquerading guard rather than
+    // by the synchronizer-token check.
+    common::apply_csrf(&mut server, &response);
 
     // Second masquerade attempt redirects back to /admin with an error flash
     // (FlashRedirect::error) — never a 4xx because form endpoints always

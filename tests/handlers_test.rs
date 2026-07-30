@@ -2853,7 +2853,7 @@ async fn test_revoke_other_sessions_form_unauthenticated_rejected() {
 #[tokio::test]
 async fn test_revoke_other_sessions_form_blocked_while_masquerading() {
     // `start_masquerade` mutates the admin's own session row in place
-    // (user_id -> target, original_user_id -> admin, same token/cookie), so
+    // (user_id -> target, original_user_id -> admin, rotated token/cookie), so
     // while masquerading, the effective session belongs to the target. The
     // revoke-others action must refuse to run in that state — otherwise an
     // admin masquerading as a user would silently delete that user's real
@@ -2869,13 +2869,13 @@ async fn test_revoke_other_sessions_form_blocked_while_masquerading() {
             .await
             .unwrap();
 
-    // Admin starts masquerading as target (id=2). This reuses the admin's
-    // existing session cookie/CSRF token (apply_csrf already wired it up in
-    // setup_admin_user), since start_masquerade keeps the same token.
-    app.server
-        .post("/admin/users/2/masquerade")
-        .await
-        .assert_status(StatusCode::SEE_OTHER);
+    // Admin starts masquerading as target (id=2). The privilege change rotates
+    // the session token, so the CSRF token derived from it changes too and the
+    // header wired up by `setup_admin_user` has to be refreshed from the
+    // cookies this response sets — a browser does the same thing on its own.
+    let started = app.server.post("/admin/users/2/masquerade").await;
+    started.assert_status(StatusCode::SEE_OTHER);
+    common::apply_csrf(&mut app.server, &started);
 
     // Attempt to revoke other sessions while masquerading — must be refused.
     let response = app

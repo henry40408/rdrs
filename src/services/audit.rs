@@ -130,9 +130,17 @@ pub fn api_tokens_destroyed(user_id: i64, reason: &str, count: Option<u64>) {
 /// within the existing session. OWASP's "privilege level changes within the
 /// session" bullet, and the least skippable event in this module: before it,
 /// an admin acting as another user left no trace at all.
+///
+/// Entering a masquerade rotates the session token (see
+/// [`crate::models::session::start_masquerade`]), so this event names both
+/// sides of the swap: `sid` is the session as it was known up to this point,
+/// `new_sid` the identifier every later event on the same session will carry.
+/// Without the pair, rotation would silently break the log's session
+/// correlation exactly where an auditor most needs it to hold.
 pub fn masquerade_started(
     secret: &[u8],
     token: &str,
+    new_token: &str,
     actor_user_id: i64,
     target_user_id: i64,
     ip: &str,
@@ -142,6 +150,7 @@ pub fn masquerade_started(
         target: AUDIT_TARGET,
         event = "masquerade.started",
         sid = %audit_id(secret, token),
+        new_sid = %audit_id(secret, new_token),
         actor_user_id,
         target_user_id,
         ip = %ip,
@@ -153,11 +162,19 @@ pub fn masquerade_started(
 /// An admin stopped masquerading, restoring their own identity on the
 /// session. `actor_user_id` and `restored_user_id` are the same admin — the
 /// event still names both explicitly, matching `masquerade_started`'s shape.
-pub fn masquerade_stopped(secret: &[u8], token: &str, actor_user_id: i64, restored_user_id: i64) {
+/// `sid` / `new_sid` bracket the token rotation, as in [`masquerade_started`].
+pub fn masquerade_stopped(
+    secret: &[u8],
+    token: &str,
+    new_token: &str,
+    actor_user_id: i64,
+    restored_user_id: i64,
+) {
     tracing::info!(
         target: AUDIT_TARGET,
         event = "masquerade.stopped",
         sid = %audit_id(secret, token),
+        new_sid = %audit_id(secret, new_token),
         actor_user_id,
         restored_user_id,
         "masquerade stopped"
@@ -223,8 +240,8 @@ mod tests {
         sessions_destroyed_bulk(1, "admin_disable", None);
         api_tokens_destroyed(1, "revoke_token", None);
         api_tokens_destroyed(1, "revoke_all", Some(2));
-        masquerade_started(SECRET, "tok", 1, 2, "127.0.0.1", "test-agent");
-        masquerade_stopped(SECRET, "tok", 1, 1);
+        masquerade_started(SECRET, "tok", "tok2", 1, 2, "127.0.0.1", "test-agent");
+        masquerade_stopped(SECRET, "tok2", "tok3", 1, 1);
         login_rate_limited("POST /api/session", "login", "127.0.0.1");
     }
 
