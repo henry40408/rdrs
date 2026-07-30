@@ -51,6 +51,31 @@ async fn create_test_server(config: Config) -> TestServer {
     build_server(config).await.0
 }
 
+/// Age a session by `age`, so it lands inside the sliding-refresh window
+/// without a test having to wait days for it. The cookie the client holds is
+/// unaffected — only the row moves — which is exactly the state a long-lived
+/// browser session reaches on its own.
+///
+/// Takes the raw *cookie value*, which is `<token>.<hmac>` (see
+/// `secret::sign_session`); the database stores only the token, so the
+/// signature is stripped here rather than at every call site.
+async fn backdate_session(db: &Db, session_cookie_value: &str, age: Duration) {
+    let token = session_cookie_value
+        .rsplit_once('.')
+        .expect("session cookie value is <token>.<hmac>")
+        .0;
+    let now = Utc::now();
+    let affected = rdrs::db_execute!(
+        db,
+        "UPDATE session SET created_at = $1, expires_at = $2 WHERE session_token = $3",
+        now - age,
+        now - age + Duration::days(7),
+        token
+    )
+    .unwrap();
+    assert_eq!(affected, 1, "backdate matched no session row");
+}
+
 /// Create a user directly in the database, bypassing `POST /api/register` —
 /// so setup does not itself consume a slot from the client's rate-limit
 /// budget (registration is a guarded, never-released endpoint; going through
@@ -598,6 +623,110 @@ async fn test_masquerade() {
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     assert_eq!(body["username"], "admin");
+}
+
+/// The periodic renewal (OWASP "Renewal Timeout"): once a session crosses the
+/// sliding-refresh threshold, the next authenticated request must come back
+/// with a *new* session token, and the client must stay signed in across the
+/// swap.
+#[tokio::test]
+async fn test_session_token_rotates_once_past_the_refresh_window() {
+    let (mut server, db) = build_server(default_test_config()).await;
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "alice",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    let login = server
+        .post("/api/session")
+        .json(&json!({
+            "username": "alice",
+            "password": "password123"
+        }))
+        .await;
+    login.assert_status_ok();
+    common::apply_csrf(&mut server, &login);
+    let original = login.cookie("session_token").value().to_string();
+
+    // A fresh session is nowhere near the refresh window, so nothing rotates.
+    let quiet = server.get("/api/user").await;
+    quiet.assert_status_ok();
+    assert_eq!(quiet.cookie("session_token").value(), original);
+
+    // Age the session past half its TTL, which is what arms both the sliding
+    // refresh and the rotation that rides on it.
+    backdate_session(&db, &original, Duration::days(6)).await;
+
+    let rotated_response = server.get("/api/user").await;
+    rotated_response.assert_status_ok();
+    let rotated = rotated_response.cookie("session_token").value().to_string();
+    assert_ne!(rotated, original, "session token should have rotated");
+    // The CSRF cookie is derived from the session token, so it has to move with
+    // it or every later mutation would fail the synchronizer check.
+    assert_ne!(rotated_response.cookie("csrf_token").value(), "");
+    common::apply_csrf(&mut server, &rotated_response);
+
+    // Still signed in, now under the new token, and settled: a second request
+    // does not rotate again.
+    let after = server.get("/api/user").await;
+    after.assert_status_ok();
+    let body: serde_json::Value = after.json();
+    assert_eq!(body["username"], "alice");
+    assert_eq!(after.cookie("session_token").value(), rotated);
+}
+
+/// The pre-rotation token has to keep working for the grace interval, or every
+/// request already in flight when a rotation lands would be signed out.
+#[tokio::test]
+async fn test_pre_rotation_token_still_authenticates_during_grace() {
+    let (server, db) = build_server_no_save_cookies(default_test_config()).await;
+
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "bob",
+            "password": "password123"
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    let login = server
+        .post("/api/session")
+        .json(&json!({
+            "username": "bob",
+            "password": "password123"
+        }))
+        .await;
+    login.assert_status_ok();
+    let original_cookie = login.cookie("session_token");
+
+    backdate_session(&db, original_cookie.value(), Duration::days(6)).await;
+
+    // Rotate by making one request with the original cookie...
+    let rotated_response = server
+        .get("/api/user")
+        .add_cookie(original_cookie.clone())
+        .await;
+    rotated_response.assert_status_ok();
+    assert_ne!(
+        rotated_response.cookie("session_token").value(),
+        original_cookie.value()
+    );
+
+    // ...then replay the *old* cookie, standing in for a request that was
+    // already in flight. It must still authenticate.
+    let in_flight = server
+        .get("/api/user")
+        .add_cookie(original_cookie.clone())
+        .await;
+    in_flight.assert_status_ok();
+    let body: serde_json::Value = in_flight.json();
+    assert_eq!(body["username"], "bob");
 }
 
 /// Both masquerade transitions must hand the client a *new* session cookie and

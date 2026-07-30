@@ -161,7 +161,7 @@ The schema has 11 tables:
 | Table | Purpose |
 |-------|---------|
 | `user` | User accounts with role (admin/user) |
-| `session` | Session tokens with masquerade support, plus per-session `user_agent`/`ip_address`/`last_seen_at` metadata |
+| `session` | Session tokens with masquerade support, the `previous_token`/`previous_token_expires_at` rotation grace pair, plus per-session `user_agent`/`ip_address`/`last_seen_at` metadata |
 | `category` | Feed categories per user |
 | `feed` | Feed metadata with etag caching and bucket assignment |
 | `entry` | Feed items with read/starred status |
@@ -490,6 +490,23 @@ Uses Argon2id with:
 - Sliding session expiry: 7-day TTL, extended on each authenticated
   request when less than half the TTL remains
 - Absolute cap of 90 days from session creation to bound session lifetime
+- Periodic token rotation (OWASP "Renewal Timeout") rides on that same
+  trigger, so a token lives ~3.5 days instead of the up-to-90 the absolute cap
+  would otherwise allow, with no extra column or timer to pace it. The
+  extractor only *requests* the rotation (`middleware::auth::RotationSlot`);
+  `slide_session_cookie` performs it on the way out, once it knows the response
+  is one a cookie may ride on — a publicly cacheable response (the feed-icon
+  route authenticates like any other but is served `public, max-age=…`) skips
+  both the rotation and the reissue, since renaming a session whose new name
+  never reaches the client would sign that client out. `rotate_token` matches
+  on the old token, so concurrent requests cannot chain rotations: the first
+  wins, the rest get `None` and keep the token they hold
+- The replaced token stays valid for `ROTATION_GRACE_SECONDS` (60s) via
+  `session.previous_token`, so requests already in flight when a rotation lands
+  are not signed out. The grace arm lives in `find_by_token`, so every
+  authenticated path inherits it; `delete_session` and
+  `delete_user_sessions_except` match it too, or a logout arriving on the
+  pre-rotation cookie would delete nothing
 - Secure cookie settings (`HttpOnly`, `SameSite=Lax`); cookie `Max-Age`
   matches the absolute cap so the browser retains it across slides
 - `Secure` is set from `Config::cookie_secure`, derived from `RDRS_PUBLIC_BASE_URL`'s
