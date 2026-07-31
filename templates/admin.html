@@ -39,7 +39,7 @@
                                     <form method="post" action="/admin/users/{{ u.id }}/masquerade" style="display:inline">
                                         <button type="submit" class="action-link">view as</button>
                                     </form>
-                                    <form method="post" action="/admin/users/{{ u.id }}/delete" style="display:inline" onsubmit="return confirm('Delete user? This cannot be undone.')">
+                                    <form method="post" action="/admin/users/{{ u.id }}/delete" style="display:inline" data-confirm="Delete user? This cannot be undone.">
                                         <button type="submit" class="action-link action-link-danger">delete</button>
                                     </form>
                                 {% endif %}

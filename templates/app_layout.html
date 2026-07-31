@@ -11,6 +11,10 @@
     <script type="module" src="/static/js/components/rdrs-kb-help.js?v={{ layout.git_version }}"></script>
     <script type="module" src="/static/js/components/rdrs-sidebar.js?v={{ layout.git_version }}"></script>
     <script type="module" src="/static/js/app.js?v={{ layout.git_version }}"></script>
+    {# Delegated handlers for the `data-confirm` / `data-submit-on-change` /
+       `data-hide-on-error` attributes that replaced inline `on*` handlers when
+       the strict CSP landed. #}
+    <script type="module" src="/static/js/behaviors.js?v={{ layout.git_version }}"></script>
     {% block page_script %}{% endblock %}
 {% endblock %}
 

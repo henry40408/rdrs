@@ -38,7 +38,7 @@
                                 <a href="/feeds?category={{ c.id }}">feeds</a>
                                 <a href="/categories/{{ c.id }}/entries">entries</a>
                                 <label for="cat-{{ c.id }}-name" class="action-link">rename</label>
-                                <form method="post" action="/categories/{{ c.id }}/delete" style="display:inline" onsubmit="return confirm('Delete category? This cannot be undone.')">
+                                <form method="post" action="/categories/{{ c.id }}/delete" style="display:inline" data-confirm="Delete category? This cannot be undone.">
                                     <button type="submit" class="action-link action-link-danger">delete</button>
                                 </form>
                             </td>

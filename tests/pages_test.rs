@@ -581,12 +581,23 @@ async fn test_register_page_shows_disabled_message() {
     };
     let app = create_test_app(config).await;
 
+    // `Config::can_register` bootstraps the very first account regardless of
+    // `signup_enabled` (`user_count == 0 || …`), so with an empty database this
+    // page still renders the open signup form. Seed accounts first, or the
+    // assertion below is checking the wrong page.
+    setup_users(&app.db).await;
+
     let response = app.server.get("/register").await;
     response.assert_status_ok();
     let body = response.text();
 
-    // Should show registration disabled message
-    assert!(body.contains("disabled") || body.contains("Registration"));
+    // Assert on the message itself, not a loose substring: this test used to
+    // pass on the word "Registration" appearing in an inline <script>'s error
+    // strings, which the strict-CSP refactor moved out to static/js/register.js.
+    assert!(
+        body.contains("Registration is currently disabled"),
+        "expected the disabled notice, got: {body}"
+    );
 }
 
 #[tokio::test]
@@ -613,8 +624,12 @@ async fn test_register_page_shows_disabled_after_first_user_in_single_mode() {
     response.assert_status_ok();
     let body = response.text();
 
-    // Should indicate registration is disabled
-    assert!(body.contains("disabled") || body.contains("Registration"));
+    // Assert on the message itself — see the sibling test above for why the
+    // looser substring check was not actually testing anything.
+    assert!(
+        body.contains("Registration is currently disabled"),
+        "expected the disabled notice, got: {body}"
+    );
 }
 
 // ============================================================================

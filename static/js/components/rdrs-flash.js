@@ -133,6 +133,22 @@ class RdrsFlash extends HTMLElement {
 
 customElements.define('rdrs-flash', RdrsFlash);
 
+// Server-rendered banners (the `flash` macro in macros.html) are plain markup
+// that never passes through `show()`, so their dismiss button gets no listener
+// above. It used to carry `onclick="this.closest('.banner').remove()"`, which a
+// strict `script-src 'self'` blocks — leaving an inert close button. One
+// delegated listener covers every such banner, on every page, including the
+// ones re-rendered into a swapped fragment.
+//
+// Scoped to `[data-flash-dismiss]`, which only the macro emits: the buttons
+// `show()` builds carry their own listener (with focus-return), and matching on
+// `.banner-dismiss` here would double-handle them.
+document.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-flash-dismiss]');
+    if (!button) return;
+    button.closest('.banner')?.remove();
+});
+
 window.flash = {
     get _el() {
         let el = document.querySelector('rdrs-flash');

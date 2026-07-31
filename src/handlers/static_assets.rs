@@ -8,8 +8,18 @@ use axum::{
 const FILES: &[(&str, &str)] = &[
     ("css/app.css", include_str!("../../static/css/app.css")),
     ("js/app.js", include_str!("../../static/js/app.js")),
+    (
+        "js/behaviors.js",
+        include_str!("../../static/js/behaviors.js"),
+    ),
     ("js/csrf.js", include_str!("../../static/js/csrf.js")),
+    ("js/login.js", include_str!("../../static/js/login.js")),
     ("js/passkey.js", include_str!("../../static/js/passkey.js")),
+    (
+        "js/register.js",
+        include_str!("../../static/js/register.js"),
+    ),
+    ("js/search.js", include_str!("../../static/js/search.js")),
     (
         "js/statistics.js",
         include_str!("../../static/js/statistics.js"),

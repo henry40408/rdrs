@@ -352,6 +352,16 @@ size and attack surface. The build-stage design is described in
   session and breaking cached image-proxy URLs).
 - Mount the `/data` volume so the SQLite database persists.
 - Put RDRS behind a reverse proxy for TLS termination.
+- RDRS sends its own security headers on every response — `Content-Security-Policy`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`,
+  `X-Frame-Options: DENY` and `Cross-Origin-Opener-Policy: same-origin`. These are
+  fixed and have no environment variables; a header your reverse proxy already sets
+  is never overwritten, so that is where to override one. `Strict-Transport-Security`
+  is the exception, configured via the `RDRS_HSTS*` variables above.
+- The CSP is strict (`script-src 'self'`, no `'unsafe-inline'`) and `img-src 'self'`
+  assumes `RDRS_PUBLIC_BASE_URL` names the origin browsers actually use — the same
+  assumption the `Secure` cookie flag and HSTS already make. Point it at a different
+  host and article images, which are proxied through that URL, will be blocked.
 
 ## Development
 
