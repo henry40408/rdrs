@@ -442,6 +442,26 @@ async fn test_api_token_revoke_is_user_scoped() {
 }
 
 #[tokio::test]
+async fn test_favicon_links_carry_the_build_stamp() {
+    // Without ?v=, the long-lived header on the icons would have no URL left to
+    // change across an upgrade — the same trap the ES-module imports hit. This
+    // asserts the template side of the pair; the handler side (version-gated
+    // Cache-Control) is covered in handlers_test.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_users(&app.db).await;
+    login(&mut app.server, "admin").await;
+
+    let body = app.server.get("/user-settings").await.text();
+
+    for icon in ["/favicon.ico", "/favicon.svg", "/apple-touch-icon.png"] {
+        assert!(
+            body.contains(&format!("{icon}?v={}", rdrs::GIT_VERSION)),
+            "{icon} must be version-stamped"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_session_revoke_is_user_scoped() {
     // Sibling of `test_api_token_revoke_is_user_scoped`: the session id now
     // travels to the browser so the revoke-one form can name it, which is only

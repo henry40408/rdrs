@@ -95,7 +95,9 @@ fn content_type_for(path: &str) -> &'static str {
     }
 }
 
-fn cache_control_for() -> &'static str {
+/// Shared with `handlers::favicon`, which embeds its images the same way and
+/// so has exactly the same invalidation problem across an upgrade.
+pub(crate) fn cache_control_for() -> &'static str {
     // `?v=…-dirty` URLs are emitted from a working tree with uncommitted
     // changes; the suffix is identical across consecutive dev edits, so
     // browsers would serve a stale cached copy under the long-lived immutable

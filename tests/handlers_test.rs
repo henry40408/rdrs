@@ -1511,6 +1511,64 @@ async fn test_get_feed_icon_no_icon() {
     assert_eq!(subscriptions[0]["iconUrl"], "");
 }
 
+#[tokio::test]
+async fn test_favicon_cache_control_is_version_gated() {
+    // The icons are `include_bytes!`d into the binary, so they change with the
+    // build. `base.html` stamps its <link>s with ?v=, and only those may be
+    // pinned long-term — a bare /favicon.ico (browser probe, crawler, iOS
+    // fetching apple-touch-icon.png with no <link>) has no URL left to change
+    // on upgrade and must stay short-lived.
+    let server = create_test_server(default_test_config()).await;
+
+    let bare = server.get("/favicon.ico").await;
+    bare.assert_status_ok();
+    assert_eq!(bare.header(header::CACHE_CONTROL), "public, max-age=3600");
+
+    let stamped = server
+        .get(&format!("/favicon.ico?v={}", rdrs::GIT_VERSION))
+        .await;
+    stamped.assert_status_ok();
+    let expected = if rdrs::GIT_VERSION.ends_with("-dirty") {
+        "no-cache"
+    } else {
+        "public, max-age=31536000, immutable"
+    };
+    assert_eq!(stamped.header(header::CACHE_CONTROL), expected);
+}
+
+#[tokio::test]
+async fn test_get_feed_icon_is_privately_cached() {
+    // The handler sets its own `Cache-Control`, which makes
+    // `no_store_for_authenticated` step aside — no `Vary: Cookie` is added. So
+    // the directive itself has to keep this auth-scoped response out of shared
+    // storage, or a proxy keyed on the URL alone could serve feed N's icon to
+    // someone with no access to it. `private` still allows the day-long browser
+    // cache this header exists for.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let (_cat_id, feed_id) =
+        insert_test_feed(&app, "IconCacheCat", "https://icon.example.com/feed.xml").await;
+    rdrs::models::image::upsert(
+        &app.db,
+        rdrs::models::image::ENTITY_FEED,
+        feed_id,
+        b"\x89PNG\r\n\x1a\n",
+        "image/png",
+        None,
+    )
+    .await
+    .unwrap();
+
+    let response = app.server.get(&format!("/api/feeds/{feed_id}/icon")).await;
+
+    response.assert_status_ok();
+    assert_eq!(
+        response.header(header::CACHE_CONTROL),
+        "private, max-age=86400"
+    );
+}
+
 // ============================================================================
 // Passkey Handler Tests
 // ============================================================================

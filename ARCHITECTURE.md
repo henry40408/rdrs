@@ -127,6 +127,20 @@ Defines all HTTP routes and builds the Axum application with:
 - Cookie layer for sessions
 - Database connection pool as state
 
+**Asset cache invalidation.** Everything embedded at compile time — CSS, JS,
+fonts and the favicons — changes with the build, so anything cached under a
+long-lived header must have a URL that changes too. The templates stamp every
+reference with `?v={{ git_version }}`, and the handlers only serve
+`public, max-age=31536000, immutable` to a request that arrives with that stamp
+(`static_assets::cache_control_for`, shared with `handlers/favicon.rs`, which
+version-gates it in `cache_control_for_request`). Requests without it — a
+browser probing `/favicon.ico`, a crawler, iOS fetching `/apple-touch-icon.png`
+with no `<link>` to follow, or an ES-module import written as a bare path — have
+no URL left to change on upgrade and get a short TTL instead. Nested JS imports
+side-step this by substituting `__RDRS_ASSET_VERSION__` at serve time so they
+too request a stamped URL. A `-dirty` build serves `no-cache` throughout, since
+the version string does not change between working-tree edits.
+
 ### Configuration (`config.rs`)
 
 Loads settings from environment variables:
@@ -341,6 +355,15 @@ Uses HMAC-SHA256 signatures to prevent abuse:
 `If-None-Match` is answered `304 Not Modified` without re-fetching the origin
 (the image is immutable per URL), keeping refreshes / post-TTL revisits cheap
 instead of re-downloading every image.
+
+The other image-serving endpoint, `GET /api/feeds/{id}/icon`, caches for the
+same day but as `private, max-age=86400`. It sits behind `AuthUser` and is
+scoped to the caller's categories, and because it sets its own `Cache-Control`,
+`no_store_for_authenticated` steps aside and adds no `Vary: Cookie` — so
+`public` would let a shared cache store it under the URL alone and hand one
+user's feed icon to another. `private` keeps the browser cache and bars shared
+storage. The proxy keeps `public` deliberately: its URLs are signature-bound to
+a public image and carry no per-user meaning.
 
 **URL Format:**
 - **Relative paths** (default): `/api/proxy/image?url=...&s=...`
