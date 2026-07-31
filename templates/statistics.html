@@ -62,7 +62,7 @@
                             {% for d in daily_read_counts %}
                                 <div class="stats-bar-col" tabindex="0" aria-label="{{ d.date_label }}: {{ d.count }} read">
                                     <div class="stats-bar-tip" role="tooltip">{{ d.date_label }}: <strong>{{ d.count }}</strong></div>
-                                    <div class="stats-bar" style="height: {{ d.height_percent }}%">
+                                    <div class="stats-bar pct-{{ d.height_percent }}">
                                         {% if d.is_max %}<span class="stats-bar-value">{{ d.count }}</span>{% endif %}
                                     </div>
                                     <div class="stats-bar-label">{{ d.short_label }}</div>
@@ -85,7 +85,7 @@
                                         <span class="muted">{{ c.count }}</span>
                                     </div>
                                     <div class="stats-progress">
-                                        <div class="stats-progress-fill" style="width: {{ c.width_percent }}%"></div>
+                                        <div class="stats-progress-fill pct-{{ c.width_percent }}"></div>
                                     </div>
                                 </div>
                             {% endfor %}
@@ -103,7 +103,7 @@
                                         <span class="muted">{{ f.count }}</span>
                                     </div>
                                     <div class="stats-progress">
-                                        <div class="stats-progress-fill" style="width: {{ f.width_percent }}%"></div>
+                                        <div class="stats-progress-fill pct-{{ f.width_percent }}"></div>
                                     </div>
                                 </div>
                             {% endfor %}

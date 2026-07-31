@@ -97,7 +97,7 @@ class RdrsPasskeys extends HTMLElement {
             return;
         }
         this.innerHTML = `
-            <div id="passkey-error" class="error" style="display:none"></div>
+            <div id="passkey-error" class="error" hidden></div>
             <h3>Registered Passkeys</h3>
             <div id="passkeys-list"><p class="muted">Loading...</p></div>
             <h3>Register New Passkey</h3>
@@ -191,11 +191,11 @@ class RdrsPasskeys extends HTMLElement {
         const errorDiv = this.querySelector('#passkey-error');
         const btn = this.querySelector('#register-passkey-btn');
         const nameInput = this.querySelector('#passkey-name');
-        errorDiv.style.display = 'none';
+        errorDiv.hidden = true;
         const name = nameInput.value.trim();
         if (!name) {
             errorDiv.textContent = 'Passkey name is required';
-            errorDiv.style.display = 'block';
+            errorDiv.hidden = false;
             return;
         }
         try {
@@ -254,7 +254,7 @@ class RdrsPasskeys extends HTMLElement {
             } else {
                 errorDiv.textContent = err.message || 'An error occurred. Please try again.';
             }
-            errorDiv.style.display = 'block';
+            errorDiv.hidden = false;
         } finally {
             btn.disabled = false;
             btn.textContent = 'Register Passkey';

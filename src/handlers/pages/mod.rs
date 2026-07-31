@@ -2516,7 +2516,11 @@ impl IntoResponse for AdminTemplate {
 pub struct DailyReadView {
     pub date_label: String,
     pub count: i64,
-    pub height_percent: f64,
+    /// Bar height as a whole percentage of the tallest bucket. Whole numbers
+    /// because the template turns this into a `pct-N` class rather than an
+    /// inline `style` attribute, which the Content-Security-Policy forbids;
+    /// see [`bar_percent`].
+    pub height_percent: u8,
     pub short_label: String,
     /// True for the single busiest bucket only (first one reaching
     /// `daily_max`), so its count is direct-labeled above the bar without
@@ -2528,14 +2532,33 @@ pub struct DailyReadView {
 pub struct CategoryStatsView {
     pub name: String,
     pub count: i64,
-    pub width_percent: f64,
+    pub width_percent: u8,
 }
 
 /// One row in the "Top Feeds" list, with pre-computed bar width.
 pub struct FeedStatsView {
     pub title: String,
     pub count: i64,
-    pub width_percent: f64,
+    pub width_percent: u8,
+}
+
+/// `count` as a whole percentage of `max`, for the statistics bar charts.
+///
+/// Whole numbers because the template selects a `pct-N` utility class instead
+/// of writing an inline `style` attribute — `style-src 'self'` rejects those.
+/// A hundred and one buckets is finer than a bar chart can show anyway.
+///
+/// Any non-zero count floors at 1% so a rare-but-present bucket stays visible
+/// instead of rounding away to nothing.
+fn bar_percent(count: i64, max: i64) -> u8 {
+    if max <= 0 || count <= 0 {
+        return 0;
+    }
+    // Rounded integer division — no float, so no lossy cast to justify.
+    let pct = count.saturating_mul(100).saturating_add(max / 2) / max;
+    // Clamped before the conversion, so the result is always a class that
+    // exists in the 0-100 scale.
+    u8::try_from(pct.clamp(1, 100)).unwrap_or(100)
 }
 
 /// Format a byte count for display (binary units, one decimal above 1 KB).
@@ -3064,15 +3087,10 @@ pub async fn statistics_page(
                 // Multi-day bucket: full start date, compact end date.
                 format!("{} – {}", b.start.format("%Y-%m-%d"), b.end.format("%m/%d"))
             };
-            let height_percent = if daily_max > 0 {
-                (b.count as f64 * 100.0) / daily_max as f64
-            } else {
-                0.0
-            };
             DailyReadView {
                 date_label,
                 count: b.count,
-                height_percent,
+                height_percent: bar_percent(b.count, daily_max),
                 short_label,
                 is_max: Some(i) == max_idx,
             }
@@ -3083,11 +3101,7 @@ pub async fn statistics_page(
         .into_iter()
         .map(|c| CategoryStatsView {
             count: c.count,
-            width_percent: if cat_max > 0 {
-                (c.count as f64 * 100.0) / cat_max as f64
-            } else {
-                0.0
-            },
+            width_percent: bar_percent(c.count, cat_max),
             name: c.name,
         })
         .collect();
@@ -3096,11 +3110,7 @@ pub async fn statistics_page(
         .into_iter()
         .map(|f| FeedStatsView {
             count: f.count,
-            width_percent: if feed_max > 0 {
-                (f.count as f64 * 100.0) / feed_max as f64
-            } else {
-                0.0
-            },
+            width_percent: bar_percent(f.count, feed_max),
             title: f.title,
         })
         .collect();

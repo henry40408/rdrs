@@ -358,7 +358,8 @@ size and attack surface. The build-stage design is described in
   fixed and have no environment variables; a header your reverse proxy already sets
   is never overwritten, so that is where to override one. `Strict-Transport-Security`
   is the exception, configured via the `RDRS_HSTS*` variables above.
-- The CSP is strict (`script-src 'self'`, no `'unsafe-inline'`) and `img-src 'self'`
+- The CSP is strict on both scripts and styles (`script-src 'self'`, `style-src 'self'`,
+  no `'unsafe-inline'` in either) and `img-src 'self'`
   assumes `RDRS_PUBLIC_BASE_URL` names the origin browsers actually use — the same
   assumption the `Secure` cookie flag and HSTS already make. Point it at a different
   host and article images, which are proxied through that URL, will be blocked.

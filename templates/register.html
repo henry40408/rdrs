@@ -15,7 +15,7 @@
         {% if let Some(err) = error %}
         <div class="error">{{ err }}</div>
         {% else %}
-        <div id="error" class="error" style="display: none;" data-testid="register-error"></div>
+        <div id="error" class="error" hidden data-testid="register-error"></div>
         <form id="register-form" data-testid="register-form">
             <div class="form-group">
                 <label for="username">Username</label>

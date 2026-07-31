@@ -10,7 +10,7 @@ if (form) {
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const errorDiv = document.getElementById('error');
-        errorDiv.style.display = 'none';
+        errorDiv.hidden = true;
 
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
@@ -18,7 +18,7 @@ if (form) {
 
         if (password !== confirmPassword) {
             errorDiv.textContent = 'Passwords do not match';
-            errorDiv.style.display = 'block';
+            errorDiv.hidden = false;
             return;
         }
 
@@ -34,11 +34,11 @@ if (form) {
             } else {
                 const data = await response.json();
                 errorDiv.textContent = data.error || 'Registration failed';
-                errorDiv.style.display = 'block';
+                errorDiv.hidden = false;
             }
         } catch (err) {
             errorDiv.textContent = 'An error occurred. Please try again.';
-            errorDiv.style.display = 'block';
+            errorDiv.hidden = false;
         }
     });
 }

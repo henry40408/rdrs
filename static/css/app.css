@@ -2997,7 +2997,9 @@ summary {
     /* Rounded top only — the flat bottom seats the bar on the baseline. */
     border-radius: 3px 3px 0 0;
     transition: height 0.2s, opacity 0.2s;
-    /* Zero-read days come through as height:0% and render nothing. */
+    /* Geometry arrives as a .pct-N class; see the scale near the end of this
+       file. Zero-read days come through as 0% and render nothing. */
+    height: var(--pct, 0%);
 }
 .stats-bar-col:focus-visible .stats-bar,
 .stats-bar-col:hover .stats-bar {
@@ -3109,6 +3111,7 @@ summary {
     border-radius: var(--radius-control);
     min-width: 4px;
     transition: width 0.2s;
+    width: var(--pct, 0%);
 }
 
 .stats-admin-section {
@@ -3439,4 +3442,339 @@ summary {
     border-radius: var(--radius-md);
     background: light-dark(rgba(185, 28, 28, 0.06), rgba(248, 113, 113, 0.08));
     color: var(--color-error);
+}
+
+/* ===== Layout helpers ===== */
+
+/* Inline form wrappers around a single button, so a row of actions sits on one
+   line. Replaces `style="display:inline"`, which `style-src 'self'` rejects. */
+.form-inline {
+    display: inline;
+}
+.form-inline-block {
+    display: inline-block;
+    margin-top: var(--space-2);
+}
+.text-xs {
+    font-size: var(--font-xs);
+}
+
+/* The icon sprite in _icon_sprite.html. It already carries width/height/overflow
+   as SVG presentation attributes so it collapses even without this file; taking
+   it out of flow here means it cannot contribute a stray inline box either. */
+.icon-sprite {
+    position: absolute;
+    overflow: hidden;
+}
+
+/* ===== Percentage scale =====
+   Bar geometry for the statistics charts. The values are data, but a
+   Content-Security-Policy of `style-src 'self'` forbids the inline `style`
+   attribute that used to carry them, and no CSS function can read an arbitrary
+   number out of an attribute. So the server rounds to a whole percent (see
+   `bar_percent` in handlers/pages) and picks a class from this scale.
+   `--pct` is consumed as `height` by .stats-bar and as `width` by
+   .stats-progress-fill, so one scale serves both charts. */
+.pct-0 {
+    --pct: 0%;
+}
+.pct-1 {
+    --pct: 1%;
+}
+.pct-2 {
+    --pct: 2%;
+}
+.pct-3 {
+    --pct: 3%;
+}
+.pct-4 {
+    --pct: 4%;
+}
+.pct-5 {
+    --pct: 5%;
+}
+.pct-6 {
+    --pct: 6%;
+}
+.pct-7 {
+    --pct: 7%;
+}
+.pct-8 {
+    --pct: 8%;
+}
+.pct-9 {
+    --pct: 9%;
+}
+.pct-10 {
+    --pct: 10%;
+}
+.pct-11 {
+    --pct: 11%;
+}
+.pct-12 {
+    --pct: 12%;
+}
+.pct-13 {
+    --pct: 13%;
+}
+.pct-14 {
+    --pct: 14%;
+}
+.pct-15 {
+    --pct: 15%;
+}
+.pct-16 {
+    --pct: 16%;
+}
+.pct-17 {
+    --pct: 17%;
+}
+.pct-18 {
+    --pct: 18%;
+}
+.pct-19 {
+    --pct: 19%;
+}
+.pct-20 {
+    --pct: 20%;
+}
+.pct-21 {
+    --pct: 21%;
+}
+.pct-22 {
+    --pct: 22%;
+}
+.pct-23 {
+    --pct: 23%;
+}
+.pct-24 {
+    --pct: 24%;
+}
+.pct-25 {
+    --pct: 25%;
+}
+.pct-26 {
+    --pct: 26%;
+}
+.pct-27 {
+    --pct: 27%;
+}
+.pct-28 {
+    --pct: 28%;
+}
+.pct-29 {
+    --pct: 29%;
+}
+.pct-30 {
+    --pct: 30%;
+}
+.pct-31 {
+    --pct: 31%;
+}
+.pct-32 {
+    --pct: 32%;
+}
+.pct-33 {
+    --pct: 33%;
+}
+.pct-34 {
+    --pct: 34%;
+}
+.pct-35 {
+    --pct: 35%;
+}
+.pct-36 {
+    --pct: 36%;
+}
+.pct-37 {
+    --pct: 37%;
+}
+.pct-38 {
+    --pct: 38%;
+}
+.pct-39 {
+    --pct: 39%;
+}
+.pct-40 {
+    --pct: 40%;
+}
+.pct-41 {
+    --pct: 41%;
+}
+.pct-42 {
+    --pct: 42%;
+}
+.pct-43 {
+    --pct: 43%;
+}
+.pct-44 {
+    --pct: 44%;
+}
+.pct-45 {
+    --pct: 45%;
+}
+.pct-46 {
+    --pct: 46%;
+}
+.pct-47 {
+    --pct: 47%;
+}
+.pct-48 {
+    --pct: 48%;
+}
+.pct-49 {
+    --pct: 49%;
+}
+.pct-50 {
+    --pct: 50%;
+}
+.pct-51 {
+    --pct: 51%;
+}
+.pct-52 {
+    --pct: 52%;
+}
+.pct-53 {
+    --pct: 53%;
+}
+.pct-54 {
+    --pct: 54%;
+}
+.pct-55 {
+    --pct: 55%;
+}
+.pct-56 {
+    --pct: 56%;
+}
+.pct-57 {
+    --pct: 57%;
+}
+.pct-58 {
+    --pct: 58%;
+}
+.pct-59 {
+    --pct: 59%;
+}
+.pct-60 {
+    --pct: 60%;
+}
+.pct-61 {
+    --pct: 61%;
+}
+.pct-62 {
+    --pct: 62%;
+}
+.pct-63 {
+    --pct: 63%;
+}
+.pct-64 {
+    --pct: 64%;
+}
+.pct-65 {
+    --pct: 65%;
+}
+.pct-66 {
+    --pct: 66%;
+}
+.pct-67 {
+    --pct: 67%;
+}
+.pct-68 {
+    --pct: 68%;
+}
+.pct-69 {
+    --pct: 69%;
+}
+.pct-70 {
+    --pct: 70%;
+}
+.pct-71 {
+    --pct: 71%;
+}
+.pct-72 {
+    --pct: 72%;
+}
+.pct-73 {
+    --pct: 73%;
+}
+.pct-74 {
+    --pct: 74%;
+}
+.pct-75 {
+    --pct: 75%;
+}
+.pct-76 {
+    --pct: 76%;
+}
+.pct-77 {
+    --pct: 77%;
+}
+.pct-78 {
+    --pct: 78%;
+}
+.pct-79 {
+    --pct: 79%;
+}
+.pct-80 {
+    --pct: 80%;
+}
+.pct-81 {
+    --pct: 81%;
+}
+.pct-82 {
+    --pct: 82%;
+}
+.pct-83 {
+    --pct: 83%;
+}
+.pct-84 {
+    --pct: 84%;
+}
+.pct-85 {
+    --pct: 85%;
+}
+.pct-86 {
+    --pct: 86%;
+}
+.pct-87 {
+    --pct: 87%;
+}
+.pct-88 {
+    --pct: 88%;
+}
+.pct-89 {
+    --pct: 89%;
+}
+.pct-90 {
+    --pct: 90%;
+}
+.pct-91 {
+    --pct: 91%;
+}
+.pct-92 {
+    --pct: 92%;
+}
+.pct-93 {
+    --pct: 93%;
+}
+.pct-94 {
+    --pct: 94%;
+}
+.pct-95 {
+    --pct: 95%;
+}
+.pct-96 {
+    --pct: 96%;
+}
+.pct-97 {
+    --pct: 97%;
+}
+.pct-98 {
+    --pct: 98%;
+}
+.pct-99 {
+    --pct: 99%;
+}
+.pct-100 {
+    --pct: 100%;
 }

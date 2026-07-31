@@ -28,18 +28,18 @@
                                 {% if u.is_self %}
                                     <span class="muted">(you)</span>
                                 {% else %}
-                                    <form method="post" action="/admin/users/{{ u.id }}/role" style="display:inline">
+                                    <form method="post" action="/admin/users/{{ u.id }}/role" class="form-inline">
                                         <input type="hidden" name="role" value="{% if u.role == "admin" %}user{% else %}admin{% endif %}">
                                         <button type="submit" class="action-link">{% if u.role == "admin" %}demote{% else %}promote{% endif %}</button>
                                     </form>
-                                    <form method="post" action="/admin/users/{{ u.id }}/status" style="display:inline">
+                                    <form method="post" action="/admin/users/{{ u.id }}/status" class="form-inline">
                                         <input type="hidden" name="disabled" value="{% if u.disabled %}false{% else %}true{% endif %}">
                                         <button type="submit" class="action-link" data-testid="admin-disable-btn">{% if u.disabled %}enable{% else %}disable{% endif %}</button>
                                     </form>
-                                    <form method="post" action="/admin/users/{{ u.id }}/masquerade" style="display:inline">
+                                    <form method="post" action="/admin/users/{{ u.id }}/masquerade" class="form-inline">
                                         <button type="submit" class="action-link">view as</button>
                                     </form>
-                                    <form method="post" action="/admin/users/{{ u.id }}/delete" style="display:inline" data-confirm="Delete user? This cannot be undone.">
+                                    <form method="post" action="/admin/users/{{ u.id }}/delete" class="form-inline" data-confirm="Delete user? This cannot be undone.">
                                         <button type="submit" class="action-link action-link-danger">delete</button>
                                     </form>
                                 {% endif %}

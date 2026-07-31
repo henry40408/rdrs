@@ -10,133 +10,142 @@
 // they were removed (--color-overlay, --font-ui, --font-display, --font-mono).
 // Don't reintroduce them: add the token to app.css instead.
 
+// The shadow styles are adopted as a constructable stylesheet rather than
+// injected as an inline style element. Markup parsed into a shadow root is
+// policed by `style-src` exactly like markup in the document, and the app's
+// Content-Security-Policy is `style-src 'self'` — an inline style element
+// here would simply not apply. The CSSOM route is not markup, so it is
+// unaffected; see src/middleware/security_headers.rs.
+const HELP_STYLES = new CSSStyleSheet();
+HELP_STYLES.replaceSync(`
+:host {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--color-overlay);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+    padding: var(--space-4);
+}
+:host(.visible) {
+    display: flex;
+}
+.modal {
+    background: var(--color-panel);
+    border: 1px solid var(--color-border-light);
+    border-radius: 12px;
+    padding: 28px 32px 32px;
+    width: 100%;
+    max-width: 720px;
+    max-height: 85vh;
+    overflow-y: auto;
+    font-size: 0.9375rem;
+    color: var(--color-text);
+    font-family: var(--font-ui);
+    box-shadow: var(--shadow-lg);
+}
+.header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 22px;
+}
+h2 {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0;
+}
+.close-btn {
+    appearance: none;
+    background: var(--color-kbd-bg);
+    border: 1px solid var(--color-border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    color: var(--color-text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    cursor: pointer;
+    line-height: 1;
+}
+.close-btn:hover {
+    color: var(--color-text);
+}
+#content {
+    columns: 2;
+    column-gap: var(--space-8);
+}
+.shortcut-group {
+    break-inside: avoid;
+    margin-bottom: var(--space-4);
+}
+.shortcut-group h3 {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--color-accent-text);
+    border-bottom: 1px solid var(--color-border-light);
+    padding-bottom: 6px;
+    margin: 0 0 8px;
+}
+.shortcut-row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    padding: 3.5px 0;
+}
+.shortcut-key {
+    flex-shrink: 0;
+    width: 7rem;
+    text-align: right;
+}
+.shortcut-key kbd {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    line-height: 1;
+    padding: 0.2rem 0.4rem;
+    background: var(--color-kbd-bg);
+    border: 1px solid var(--color-border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+}
+.shortcut-desc {
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+    line-height: 1.4;
+}
+
+/* Single-column on narrow screens */
+@media (max-width: 520px) {
+    .modal {
+        padding: var(--space-4) var(--space-5);
+        max-height: 85vh;
+    }
+    #content {
+        columns: 1;
+    }
+    .shortcut-key {
+        width: 7rem;
+    }
+}
+`);
+
 class RdrsKbHelp extends HTMLElement {
     constructor() {
         super();
         const shadow = this.attachShadow({ mode: 'open' });
+        shadow.adoptedStyleSheets = [HELP_STYLES];
         shadow.innerHTML = `
-            <style>
-                :host {
-                    display: none;
-                    position: fixed;
-                    top: 0;
-                    left: 0;
-                    right: 0;
-                    bottom: 0;
-                    background: var(--color-overlay);
-                    z-index: 1000;
-                    justify-content: center;
-                    align-items: center;
-                    padding: var(--space-4);
-                }
-                :host(.visible) {
-                    display: flex;
-                }
-                .modal {
-                    background: var(--color-panel);
-                    border: 1px solid var(--color-border-light);
-                    border-radius: 12px;
-                    padding: 28px 32px 32px;
-                    width: 100%;
-                    max-width: 720px;
-                    max-height: 85vh;
-                    overflow-y: auto;
-                    font-size: 0.9375rem;
-                    color: var(--color-text);
-                    font-family: var(--font-ui);
-                    box-shadow: var(--shadow-lg);
-                }
-                .header {
-                    display: flex;
-                    align-items: baseline;
-                    justify-content: space-between;
-                    margin-bottom: 22px;
-                }
-                h2 {
-                    font-family: var(--font-display);
-                    font-size: 22px;
-                    font-weight: 600;
-                    margin: 0;
-                }
-                .close-btn {
-                    appearance: none;
-                    background: var(--color-kbd-bg);
-                    border: 1px solid var(--color-border);
-                    border-bottom-width: 2px;
-                    border-radius: 4px;
-                    color: var(--color-text-secondary);
-                    font-family: var(--font-mono);
-                    font-size: 0.75rem;
-                    padding: 0.15rem 0.5rem;
-                    cursor: pointer;
-                    line-height: 1;
-                }
-                .close-btn:hover {
-                    color: var(--color-text);
-                }
-                #content {
-                    columns: 2;
-                    column-gap: var(--space-8);
-                }
-                .shortcut-group {
-                    break-inside: avoid;
-                    margin-bottom: var(--space-4);
-                }
-                .shortcut-group h3 {
-                    font-family: var(--font-mono);
-                    font-size: 11px;
-                    font-weight: 600;
-                    text-transform: uppercase;
-                    letter-spacing: 0.16em;
-                    color: var(--color-accent-text);
-                    border-bottom: 1px solid var(--color-border-light);
-                    padding-bottom: 6px;
-                    margin: 0 0 8px;
-                }
-                .shortcut-row {
-                    display: flex;
-                    align-items: baseline;
-                    gap: var(--space-3);
-                    padding: 3.5px 0;
-                }
-                .shortcut-key {
-                    flex-shrink: 0;
-                    width: 7rem;
-                    text-align: right;
-                }
-                .shortcut-key kbd {
-                    display: inline-block;
-                    font-family: var(--font-mono);
-                    font-size: 0.75rem;
-                    line-height: 1;
-                    padding: 0.2rem 0.4rem;
-                    background: var(--color-kbd-bg);
-                    border: 1px solid var(--color-border);
-                    border-bottom-width: 2px;
-                    border-radius: 4px;
-                    color: var(--color-text-secondary);
-                    white-space: nowrap;
-                }
-                .shortcut-desc {
-                    color: var(--color-text-secondary);
-                    font-size: 0.875rem;
-                    line-height: 1.4;
-                }
-
-                /* Single-column on narrow screens */
-                @media (max-width: 520px) {
-                    .modal {
-                        padding: var(--space-4) var(--space-5);
-                        max-height: 85vh;
-                    }
-                    #content {
-                        columns: 1;
-                    }
-                    .shortcut-key {
-                        width: 7rem;
-                    }
-                }
-            </style>
             <div class="modal">
                 <div class="header">
                     <h2>Keyboard Shortcuts</h2>

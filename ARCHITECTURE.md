@@ -499,19 +499,24 @@ never see those responses. There is likewise no path skip list — `/static`,
 `/health` and the image proxy all carry the headers, and `nosniff` on a proxied
 image is exactly where it earns its keep.
 
-**The CSP is strict on scripts**, which constrains how the frontend may be
-written:
+**The CSP is strict on both scripts and styles**, which constrains how the
+frontend may be written:
 
 ```
-default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+default-src 'self'; script-src 'self'; style-src 'self';
 img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none';
 base-uri 'self'; form-action 'self'; frame-ancestors 'none'
 ```
 
-`script-src 'self'` carries no `'unsafe-inline'`, so **no template may ship an
-inline `<script>` or an `on*=` handler attribute.** Neither is a build error —
-both simply stop working in the browser — so a unit test walks the whole
-template tree and fails on either. The replacements to use:
+Neither directive carries `'unsafe-inline'`, so **no markup may ship an inline
+`<script>`, an `on*=` handler attribute, a `style=` attribute or an inline
+`<style>` element.** None of those is a build error — they simply stop working
+in the browser — so a unit test walks every template *and* every file under
+`static/js/` and fails on any of them. The JS half matters because markup a
+script assigns to `innerHTML` is parsed and policed exactly like markup from the
+server, shadow roots included.
+
+Script replacements:
 
 - Page-specific script → a module under `static/js/`, registered in
   `handlers::static_assets::FILES` and referenced with `src`.
@@ -526,12 +531,25 @@ so `/login` and `/register` get it too. `<script type="application/json">`
 bootstrap blocks are unaffected — the browser never executes them, so CSP does
 not police them.
 
-`style-src` keeps `'unsafe-inline'`, because two `style` attributes cannot become
-classes: /statistics' per-datum bar geometry (an `f64` percentage) and
-`_icon_sprite.html`'s sprite-hiding rule (the UA stylesheet's `[hidden]` rule is
-XHTML-namespaced and never matches an SVG element). With `default-src 'self'`
-and `img-src 'self' data:` there is no external origin for injected CSS to
-exfiltrate to.
+Style replacements:
+
+- A static declaration → a class in `static/css/app.css` (`.form-inline`,
+  `.text-xs`, …).
+- `style="display:none"` on something JS later reveals → the `hidden` attribute,
+  toggled through the `.hidden` property.
+- Per-datum geometry on /statistics → a `pct-N` class off the 0–100 scale at the
+  end of `app.css`, picked by `bar_percent` in `handlers::pages`. CSS cannot read
+  a number out of an attribute, so the server rounds to a whole percent and
+  selects from a finite set. `--pct` is read as `height` by `.stats-bar` and as
+  `width` by `.stats-progress-fill`, so one scale drives both charts.
+- Shadow-DOM component styles → a constructable stylesheet adopted via
+  `adoptedStyleSheets`, as `components/rdrs-kb-help.js` does.
+- `_icon_sprite.html` → SVG presentation attributes (`width`/`height`/
+  `overflow`), which are not `style` attributes and so are not policed. It needs
+  to collapse even with no stylesheet, since a bare `<svg>` renders at 300×150.
+
+Writing to `element.style` **from script** stays legal throughout — CSP polices
+markup, not the CSSOM.
 
 Two omissions are deliberate and documented in the module: **no
 `Cross-Origin-Resource-Policy`** (it would block the absolute `/api/proxy/image`
