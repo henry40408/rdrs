@@ -24,6 +24,11 @@ set it in production.
   `--shard=1/3` etc. and `--grep-invert "@skip"`). One feature:
   `npx playwright test --grep "<scenario or tag>"`.
 - Regenerate README screenshots: `npm run screenshots` (writes to `../screenshots/`).
+- CSP audit (CI gate): `npm run test:csp` — walks the app in a browser and fails
+  on any Content Security Policy violation. Run it after touching `templates/`,
+  `static/css/` or `static/js/`; the Rust-side scan in
+  `src/middleware/security_headers.rs` only greps sources and cannot see
+  runtime-injected markup or shadow DOM.
 
 **After editing a `.feature` file, run `npx bddgen`.** The generated
 `.features-gen/` is git-ignored and the project's custom `globalSetup` shadows
