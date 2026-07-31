@@ -4,9 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}RDRS{% endblock %}</title>
-    <link rel="icon" href="/favicon.ico" sizes="32x32">
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    {# Stamped like every other build asset: the icons are `include_bytes!`d into
+       the binary, so they change with the build and a bare URL would let a
+       cached copy outlive the upgrade that replaced it. #}
+    <link rel="icon" href="/favicon.ico?v={{ git_version }}" sizes="32x32">
+    <link rel="icon" href="/favicon.svg?v={{ git_version }}" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v={{ git_version }}">
     {# "Wire Room" type system, self-hosted (see @font-face in app.css and the
        vendored woff2 under static/fonts/). Newsreader = variable optical-size
        serif (display + reading); Archivo = UI sans; IBM Plex Mono = data / mono

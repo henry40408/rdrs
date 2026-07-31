@@ -27,11 +27,18 @@ pub async fn get_feed_icon(
         return Err(AppError::NotFound("Icon not found".into()));
     };
 
+    // `private`, not `public`: this endpoint is behind `AuthUser` and scoped to
+    // the caller's categories, and because the handler sets `Cache-Control`
+    // itself, `no_store_for_authenticated` steps aside and adds no
+    // `Vary: Cookie`. A `public` response would therefore be storable by a
+    // shared cache keyed on the URL alone, which could then hand feed 42's icon
+    // to someone who is not subscribed to it. `private` keeps the day-long
+    // browser cache — the point of the header — while barring shared storage.
     Ok((
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, img.content_type),
-            (header::CACHE_CONTROL, "public, max-age=86400".to_string()),
+            (header::CACHE_CONTROL, "private, max-age=86400".to_string()),
         ],
         img.data,
     )
