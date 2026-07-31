@@ -158,10 +158,30 @@ Then("the flash banner shows a timestamp", async ({ page }) => {
   // HH:MM:SS — server-rendered for SSR cookie/inline-template paths,
   // client-rendered for window.flash.show() emits. Both paths must
   // produce a same-shape `<time>` element so the visual is consistent.
-  await expect(page.getByTestId("flash-time").first()).toHaveText(
-    /^\d{2}:\d{2}:\d{2}$/
+  const time = page.getByTestId("flash-time").first();
+  await expect(time).toHaveText(/^\d{2}:\d{2}:\d{2}$/);
+  await expect(time).toHaveAttribute("datetime", /.+/);
+
+  // …and both must read the *viewer's* clock. The server emits UTC text it
+  // cannot localize, so rdrs-flash.js rewrites it from `datetime`; comparing
+  // against a formatter run inside the page catches a banner left on UTC in
+  // any timezone the suite happens to run under.
+  await expect(time).toHaveAttribute("data-localized", "");
+  const [text, datetime] = await Promise.all([
+    time.textContent(),
+    time.getAttribute("datetime"),
+  ]);
+  const expected = await page.evaluate(
+    (iso) =>
+      new Date(iso).toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }),
+    datetime
   );
-  await expect(page.getByTestId("flash-time").first()).toHaveAttribute("datetime", /.+/);
+  expect(text).toBe(expected);
 });
 
 Then("the feeds table contains {string}", async ({ page }, text) => {

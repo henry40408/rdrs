@@ -87,13 +87,17 @@ impl FlashMessage {
         }
     }
 
+    /// UTC HH:MM:SS — the no-JS fallback only. The server cannot know the
+    /// viewer's timezone, so `rdrs-flash.js` rewrites this text from
+    /// `timestamp_iso()` into local time on load, matching the banners it
+    /// builds itself. Do not add a timezone-dependent format here.
     pub fn formatted_time(&self) -> String {
         self.timestamp.format("%H:%M:%S").to_string()
     }
 
     /// ISO-8601 form used for the `<time datetime="…">` attribute so
-    /// assistive tech and `Date.parse()` consumers get an unambiguous
-    /// instant; the visible text stays HH:MM:SS via `formatted_time()`.
+    /// assistive tech, `Date.parse()` consumers and the client-side
+    /// localization above get an unambiguous instant.
     pub fn timestamp_iso(&self) -> String {
         self.timestamp.to_rfc3339()
     }
