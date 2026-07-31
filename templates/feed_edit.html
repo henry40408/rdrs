@@ -38,11 +38,11 @@
                         <div class="feed-http-settings-body">
                             <div class="form-group">
                                 <label for="custom_user_agent">Custom User Agent</label>
-                                <input type="text" id="custom_user_agent" name="custom_user_agent" placeholder="Leave empty to keep current value" value="{{ feed.custom_user_agent }}">
+                                <input type="text" id="custom_user_agent" name="custom_user_agent" value="{{ feed.custom_user_agent }}">
                             </div>
                             <div class="form-group">
                                 <label for="custom_referrer">Custom Referrer</label>
-                                <input type="text" id="custom_referrer" name="custom_referrer" placeholder="Leave empty to keep current value" value="{{ feed.custom_referrer }}">
+                                <input type="text" id="custom_referrer" name="custom_referrer" value="{{ feed.custom_referrer }}">
                                 <div class="feed-http-hint">Some image servers require a specific Referer header to serve images</div>
                             </div>
                             <div class="form-group">
@@ -59,34 +59,6 @@
                         <a href="/feeds" class="btn btn-secondary">Cancel</a>
                     </div>
                 </form>
-
-                {% if !feed.custom_user_agent.is_empty() %}
-                <form method="post" action="/feeds/{{ feed.id }}/edit" class="feed-clear-form" data-confirm="Clear custom User Agent?">
-                    <input type="hidden" name="url" value="{{ feed.url }}">
-                    <input type="hidden" name="title" value="{{ feed.title }}">
-                    <input type="hidden" name="description" value="{{ feed.description }}">
-                    <input type="hidden" name="site_url" value="{{ feed.site_url }}">
-                    <input type="hidden" name="category_id" value="{{ feed.category_id }}">
-                    <input type="hidden" name="custom_referrer" value="{{ feed.custom_referrer }}">
-                    {% if feed.http2_disabled %}<input type="hidden" name="http2_disabled" value="on">{% endif %}
-                    <input type="hidden" name="_clear_user_agent" value="1">
-                    <button type="submit" class="action-link">Clear custom User Agent</button>
-                </form>
-                {% endif %}
-
-                {% if !feed.custom_referrer.is_empty() %}
-                <form method="post" action="/feeds/{{ feed.id }}/edit" class="feed-clear-form" data-confirm="Clear custom Referrer?">
-                    <input type="hidden" name="url" value="{{ feed.url }}">
-                    <input type="hidden" name="title" value="{{ feed.title }}">
-                    <input type="hidden" name="description" value="{{ feed.description }}">
-                    <input type="hidden" name="site_url" value="{{ feed.site_url }}">
-                    <input type="hidden" name="category_id" value="{{ feed.category_id }}">
-                    <input type="hidden" name="custom_user_agent" value="{{ feed.custom_user_agent }}">
-                    {% if feed.http2_disabled %}<input type="hidden" name="http2_disabled" value="on">{% endif %}
-                    <input type="hidden" name="_clear_referrer" value="1">
-                    <button type="submit" class="action-link">Clear custom Referrer</button>
-                </form>
-                {% endif %}
 
                 <hr>
 

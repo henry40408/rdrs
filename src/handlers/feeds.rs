@@ -95,6 +95,11 @@ pub async fn create_feed_form(
     }
 }
 
+/// An empty text field means "clear this value" for every optional field —
+/// `description`, `site_url`, `custom_user_agent` and `custom_referrer` all
+/// round-trip their current value into the form, so submitting a blank one is
+/// a deliberate erase. `title` is the sole exception: a feed without a title
+/// has nothing to render in the sidebar, so a blank title keeps the old one.
 #[derive(Debug, Deserialize)]
 pub struct EditFeedForm {
     pub url: String,
@@ -111,10 +116,6 @@ pub struct EditFeedForm {
     pub custom_referrer: String,
     #[serde(default)]
     pub http2_disabled: Option<String>,
-    #[serde(default, rename = "_clear_referrer")]
-    pub clear_referrer: Option<String>,
-    #[serde(default, rename = "_clear_user_agent")]
-    pub clear_user_agent: Option<String>,
 }
 
 pub async fn edit_feed_form(
@@ -163,26 +164,18 @@ pub async fn edit_feed_form(
             Some(trimmed_site.to_string())
         };
 
-        let custom_user_agent: Option<String> = if req.clear_user_agent.is_some() {
+        let trimmed_ua = req.custom_user_agent.trim();
+        let custom_user_agent: Option<String> = if trimmed_ua.is_empty() {
             None
         } else {
-            let trimmed = req.custom_user_agent.trim();
-            if trimmed.is_empty() {
-                f.custom_user_agent.clone()
-            } else {
-                Some(trimmed.to_string())
-            }
+            Some(trimmed_ua.to_string())
         };
 
-        let custom_referrer: Option<String> = if req.clear_referrer.is_some() {
+        let trimmed_referrer = req.custom_referrer.trim();
+        let custom_referrer: Option<String> = if trimmed_referrer.is_empty() {
             None
         } else {
-            let trimmed = req.custom_referrer.trim();
-            if trimmed.is_empty() {
-                f.custom_referrer.clone()
-            } else {
-                Some(trimmed.to_string())
-            }
+            Some(trimmed_referrer.to_string())
         };
 
         let http2_disabled = req.http2_disabled.is_some();
