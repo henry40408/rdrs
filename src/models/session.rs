@@ -343,6 +343,26 @@ pub async fn delete_user_sessions_except(db: &Db, user_id: i64, keep_token: &str
     Ok(())
 }
 
+/// Delete one session by row id, scoped to `user_id` so a guessed or tampered
+/// id can never revoke another user's session — the same guarantee, and the
+/// same shape, as `api_token::delete_token`.
+///
+/// Returns the number of rows deleted so the caller can tell "revoked" from
+/// "there was nothing to revoke" (the session expired, or was already signed
+/// out from another device between the page render and the click). Unlike
+/// [`delete_session`], this deliberately does **not** match `previous_token`:
+/// the id identifies the row directly, so there is no grace-token ambiguity
+/// to resolve.
+pub async fn delete_user_session_by_id(db: &Db, id: i64, user_id: i64) -> AppResult<u64> {
+    db_execute!(
+        db,
+        "DELETE FROM session WHERE id = $1 AND user_id = $2",
+        id,
+        user_id
+    )
+    .map_err(AppError::Database)
+}
+
 /// Delete every expired session row.
 ///
 /// Called periodically by the cleanup worker (`services::summary_cleanup`).
@@ -556,6 +576,64 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    #[tokio::test]
+    async fn delete_user_session_by_id_is_user_scoped() {
+        let db = setup_db().await;
+        let user_a = user::create_user(&db, "usera", "hash", Role::User)
+            .await
+            .unwrap();
+        let user_b = user::create_user(&db, "userb", "hash", Role::User)
+            .await
+            .unwrap();
+
+        let a_session = create_session(&db, user_a.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+        let a_other = create_session(&db, user_a.id, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+
+        // User B aims at user A's session id — must delete nothing. Getting the
+        // scoping wrong here hands anyone who can guess an id the ability to
+        // sign another user out.
+        let deleted = delete_user_session_by_id(&db, a_session.id, user_b.id)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 0, "cross-user revoke must be a no-op");
+        assert!(
+            find_by_token(&db, &a_session.session_token)
+                .await
+                .unwrap()
+                .is_some(),
+            "user A's session must survive user B's revoke attempt"
+        );
+
+        let deleted = delete_user_session_by_id(&db, a_session.id, user_a.id)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert!(
+            find_by_token(&db, &a_session.session_token)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            find_by_token(&db, &a_other.session_token)
+                .await
+                .unwrap()
+                .is_some(),
+            "revoking one session must leave the user's other sessions alone"
+        );
+
+        // Revoking the same id twice reports zero rows — the handler turns this
+        // into "already gone" rather than a success message for a no-op.
+        let deleted = delete_user_session_by_id(&db, a_session.id, user_a.id)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 0);
     }
 
     #[tokio::test]

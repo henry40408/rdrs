@@ -442,6 +442,66 @@ async fn test_api_token_revoke_is_user_scoped() {
 }
 
 #[tokio::test]
+async fn test_session_revoke_is_user_scoped() {
+    // Sibling of `test_api_token_revoke_is_user_scoped`: the session id now
+    // travels to the browser so the revoke-one form can name it, which is only
+    // safe because `delete_user_session_by_id` re-checks ownership.
+    let mut app = create_test_app(default_test_config()).await;
+    let (admin_id, _user_id) = setup_users(&app.db).await;
+
+    let victim = rdrs::models::session::create_session(&app.db, admin_id, "test-agent", "10.0.0.1")
+        .await
+        .unwrap();
+
+    // User B (the regular user) tries to revoke admin's session by its id.
+    login(&mut app.server, "user").await;
+    let response = app
+        .server
+        .post(&format!("/user-settings/sessions/{}/revoke", victim.id))
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+
+    let found = rdrs::models::session::find_by_token(&app.db, &victim.session_token)
+        .await
+        .unwrap();
+    assert!(
+        found.is_some(),
+        "user B must not be able to revoke user A's (admin's) session"
+    );
+}
+
+#[tokio::test]
+async fn test_user_settings_renders_session_cards() {
+    let mut app = create_test_app(default_test_config()).await;
+    let (admin_id, _user_id) = setup_users(&app.db).await;
+    login(&mut app.server, "admin").await;
+
+    let other = rdrs::models::session::create_session(
+        &app.db,
+        admin_id,
+        "Mozilla/5.0 (X11; Linux x86_64) OtherDevice/1.0",
+        "198.51.100.7",
+    )
+    .await
+    .unwrap();
+
+    let response = app.server.get("/user-settings").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    // The full User-Agent is rendered, not a truncated or tooltip-only copy.
+    assert!(body.contains("Mozilla/5.0 (X11; Linux x86_64) OtherDevice/1.0"));
+    assert!(body.contains("198.51.100.7"));
+    // Every non-current session gets its own revoke form...
+    assert!(body.contains(&format!(
+        "action=\"/user-settings/sessions/{}/revoke\"",
+        other.id
+    )));
+    // ...and the session doing the asking gets the note instead of a button.
+    assert!(body.contains("This device"));
+}
+
+#[tokio::test]
 async fn test_settings_page_renders_ssr_content() {
     let mut app = create_test_app(default_test_config()).await;
     setup_users(&app.db).await;

@@ -3077,6 +3077,124 @@ async fn test_revoke_other_sessions_form_blocked_while_masquerading() {
 }
 
 #[tokio::test]
+async fn test_revoke_session_form_deletes_only_the_named_session() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let user = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .expect("user must exist");
+
+    let doomed = rdrs::models::session::create_session(&app.db, user.id, "phone", "127.0.0.1")
+        .await
+        .unwrap();
+    let bystander = rdrs::models::session::create_session(&app.db, user.id, "laptop", "127.0.0.1")
+        .await
+        .unwrap();
+
+    let response = app
+        .server
+        .post(&format!("/user-settings/sessions/{}/revoke", doomed.id))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/user-settings");
+
+    assert!(
+        rdrs::models::session::find_by_token(&app.db, &doomed.session_token)
+            .await
+            .unwrap()
+            .is_none(),
+        "the named session should be deleted"
+    );
+    assert!(
+        rdrs::models::session::find_by_token(&app.db, &bystander.session_token)
+            .await
+            .unwrap()
+            .is_some(),
+        "revoking one session must not touch the user's other sessions"
+    );
+    // The caller's own session still authenticates.
+    app.server.get("/api/me").await.assert_status_ok();
+}
+
+#[tokio::test]
+async fn test_revoke_session_form_refuses_the_current_session() {
+    // The settings page renders no Revoke control for the caller's own session,
+    // but that is a UI affordance and not a guarantee — a hand-crafted POST
+    // naming it must still be refused, or the user signs themselves out through
+    // a path whose success message and redirect both assume they are still in.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let user = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .expect("user must exist");
+
+    let sessions = rdrs::models::session::list_user_sessions(&app.db, user.id)
+        .await
+        .unwrap();
+    let current = sessions
+        .first()
+        .expect("the authenticated caller has a session");
+
+    let response = app
+        .server
+        .post(&format!("/user-settings/sessions/{}/revoke", current.id))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert!(
+        rdrs::models::session::find_by_token(&app.db, &current.session_token)
+            .await
+            .unwrap()
+            .is_some(),
+        "the caller's own session must survive"
+    );
+    app.server.get("/api/me").await.assert_status_ok();
+}
+
+#[tokio::test]
+async fn test_revoke_session_form_blocked_while_masquerading() {
+    // Same reasoning as `test_revoke_other_sessions_form_blocked_while_
+    // masquerading`, one session at a time: while masquerading, the effective
+    // session belongs to the target, so an unguarded revoke would let an admin
+    // sign the target out of their own devices.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    register_target_user(&app.server).await;
+
+    let target_session =
+        rdrs::models::session::create_session(&app.db, 2, "test-agent", "127.0.0.1")
+            .await
+            .unwrap();
+
+    let started = app.server.post("/admin/users/2/masquerade").await;
+    started.assert_status(StatusCode::SEE_OTHER);
+    common::apply_csrf(&mut app.server, &started);
+
+    let response = app
+        .server
+        .post(&format!(
+            "/user-settings/sessions/{}/revoke",
+            target_session.id
+        ))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/user-settings");
+    assert!(
+        rdrs::models::session::find_by_token(&app.db, &target_session.session_token)
+            .await
+            .unwrap()
+            .is_some(),
+        "masquerade must not delete the target's real sessions"
+    );
+}
+
+#[tokio::test]
 async fn test_password_change_revokes_api_tokens() {
     let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;

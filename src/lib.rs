@@ -124,6 +124,10 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::user::revoke_other_sessions_form),
         )
         .route(
+            "/user-settings/sessions/{id}/revoke",
+            post(handlers::user::revoke_session_form),
+        )
+        .route(
             "/user-settings/api-tokens/{id}/revoke",
             post(handlers::user::revoke_api_token_form),
         )

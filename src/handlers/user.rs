@@ -493,6 +493,46 @@ pub async fn revoke_other_sessions_form(
     }
 }
 
+/// Revoke a single browser session. `delete_user_session_by_id` is
+/// `user_id`-scoped, so this cannot revoke another user's session even if `id`
+/// is guessed.
+///
+/// The caller's own session is not reachable here: the settings page renders no
+/// Revoke control for it. That is a UI affordance, not a guarantee, so the
+/// check is repeated server-side — a hand-crafted POST that names the current
+/// session would otherwise sign the user out through a path that reports
+/// "Session revoked." and redirects to a page they can no longer load.
+/// "Sign out" is the deliberate way to do that.
+pub async fn revoke_session_form(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    if auth_user.session.is_masquerading() {
+        return FlashRedirect::error(
+            "/user-settings",
+            "Session management is unavailable while masquerading.",
+        );
+    }
+
+    if id == auth_user.session.id {
+        return FlashRedirect::error(
+            "/user-settings",
+            "That is the session you are using — sign out instead.",
+        );
+    }
+
+    let user_id = auth_user.user.id;
+    match session::delete_user_session_by_id(&state.db, id, user_id).await {
+        Ok(0) => FlashRedirect::error("/user-settings", "That session is no longer active."),
+        Ok(count) => {
+            audit::sessions_destroyed_bulk(user_id, "revoke_session", Some(count));
+            FlashRedirect::success("/user-settings", "Session revoked.")
+        }
+        Err(_) => FlashRedirect::error("/user-settings", "Failed to revoke session."),
+    }
+}
+
 /// Revoke a single `GReader` API token. `delete_token` is `user_id`-scoped, so
 /// this cannot revoke another user's token even if `id` is guessed.
 pub async fn revoke_api_token_form(

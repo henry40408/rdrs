@@ -816,6 +816,7 @@ pub async fn user_settings_page(
             .into_iter()
             .filter(|s| !s.is_expired())
             .map(|s| SessionRow {
+                id: s.id,
                 created_at: s.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
                 created_at_iso: s.created_at.to_rfc3339(),
                 expires_at: s.expires_at.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -2401,9 +2402,14 @@ impl IntoResponse for SettingsTemplate {
     }
 }
 
-/// A single row in the "Active Sessions" table on `/user-settings`. Deliberately
-/// exposes no `session_token`/`id` to the template — those stay server-side.
+/// A single card in the "Active Sessions" list on `/user-settings`. `id` is
+/// exposed because the revoke-one form posts it in the URL path, on the same
+/// reasoning as [`ApiTokenRow`]: `session::delete_user_session_by_id` re-checks
+/// ownership server-side via its `user_id` scoping, so the id is an addressing
+/// handle, not a capability. `session_token` stays server-side — that one *is*
+/// a bearer credential.
 pub struct SessionRow {
+    pub id: i64,
     pub created_at: String,
     pub created_at_iso: String,
     pub expires_at: String,
