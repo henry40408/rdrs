@@ -95,27 +95,53 @@ pub async fn create_feed_form(
     }
 }
 
-/// An empty text field means "clear this value" for every optional field —
-/// `description`, `site_url`, `custom_user_agent` and `custom_referrer` all
-/// round-trip their current value into the form, so submitting a blank one is
-/// a deliberate erase. `title` is the sole exception: a feed without a title
-/// has nothing to render in the sidebar, so a blank title keeps the old one.
+/// The optional text fields are `Option<String>` so that "the request omitted
+/// this field" and "the request sent it blank" stay distinguishable:
+///
+/// - absent (`None`) — leave the stored value alone. A partial update that
+///   only touches, say, the category cannot wipe the rest by accident.
+/// - present and blank (`Some("")`) — a deliberate erase. The edit form
+///   round-trips the current value into every input, so a blank one that
+///   reaches the server was blanked by the user.
+/// - present and non-blank — trimmed and stored.
+///
+/// `title` is the exception: a feed with no title has nothing to render in the
+/// sidebar, so a blank title keeps the old one and `None` is unreachable in
+/// practice. It stays `Option<String>` only for symmetry with the rest.
 #[derive(Debug, Deserialize)]
 pub struct EditFeedForm {
     pub url: String,
     #[serde(default)]
-    pub title: String,
+    pub title: Option<String>,
     #[serde(default)]
-    pub description: String,
+    pub description: Option<String>,
     #[serde(default)]
-    pub site_url: String,
+    pub site_url: Option<String>,
     pub category_id: i64,
     #[serde(default)]
-    pub custom_user_agent: String,
+    pub custom_user_agent: Option<String>,
     #[serde(default)]
-    pub custom_referrer: String,
+    pub custom_referrer: Option<String>,
     #[serde(default)]
     pub http2_disabled: Option<String>,
+}
+
+/// Resolves one optional text field against the value already stored.
+///
+/// `submitted` is what the request carried, `stored` what the feed holds today.
+/// Absent keeps `stored`; blank clears; anything else wins after trimming.
+fn resolve_optional_field(submitted: Option<&str>, stored: Option<&str>) -> Option<String> {
+    match submitted {
+        None => stored.map(str::to_string),
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+    }
 }
 
 pub async fn edit_feed_form(
@@ -143,40 +169,22 @@ pub async fn edit_feed_form(
             .await?
             .ok_or(AppError::CategoryNotFound)?;
 
-        let trimmed_title = req.title.trim();
-        let title: Option<String> = if trimmed_title.is_empty() {
-            f.title.clone()
-        } else {
-            Some(trimmed_title.to_string())
+        // A blank title would leave the feed nameless, so it keeps the old one
+        // rather than clearing.
+        let title: Option<String> = match req.title.as_deref().map(str::trim) {
+            Some(t) if !t.is_empty() => Some(t.to_string()),
+            _ => f.title.clone(),
         };
 
-        let trimmed_desc = req.description.trim();
-        let description: Option<String> = if trimmed_desc.is_empty() {
-            None
-        } else {
-            Some(trimmed_desc.to_string())
-        };
-
-        let trimmed_site = req.site_url.trim();
-        let site_url: Option<String> = if trimmed_site.is_empty() {
-            None
-        } else {
-            Some(trimmed_site.to_string())
-        };
-
-        let trimmed_ua = req.custom_user_agent.trim();
-        let custom_user_agent: Option<String> = if trimmed_ua.is_empty() {
-            None
-        } else {
-            Some(trimmed_ua.to_string())
-        };
-
-        let trimmed_referrer = req.custom_referrer.trim();
-        let custom_referrer: Option<String> = if trimmed_referrer.is_empty() {
-            None
-        } else {
-            Some(trimmed_referrer.to_string())
-        };
+        let description =
+            resolve_optional_field(req.description.as_deref(), f.description.as_deref());
+        let site_url = resolve_optional_field(req.site_url.as_deref(), f.site_url.as_deref());
+        let custom_user_agent = resolve_optional_field(
+            req.custom_user_agent.as_deref(),
+            f.custom_user_agent.as_deref(),
+        );
+        let custom_referrer =
+            resolve_optional_field(req.custom_referrer.as_deref(), f.custom_referrer.as_deref());
 
         let http2_disabled = req.http2_disabled.is_some();
 

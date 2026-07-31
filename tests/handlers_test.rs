@@ -5228,6 +5228,94 @@ async fn test_edit_feed_form_keeps_resubmitted_http_settings() {
     assert_eq!(referrer.as_deref(), Some("https://ref.example.com"));
 }
 
+/// Omitting an optional field is not the same as sending it blank: a partial
+/// POST that carries only the fields it means to change must leave everything
+/// else alone. The rendered form always sends all of them, but nothing stops a
+/// future handler, a script, or a narrower form from posting a subset.
+#[tokio::test]
+async fn test_edit_feed_form_omitted_fields_are_left_alone() {
+    let mut app = create_test_app_named(default_test_config(), "test_edit_feed_omitted").await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let (_cat_a, feed_id) =
+        insert_test_feed(&app, "Tech", "https://omitted.example.com/feed.xml").await;
+    rdrs::db_execute!(
+        &app.db,
+        "UPDATE feed SET description = 'Kept description', site_url = 'https://site.example.com', custom_user_agent = 'MyBot/1.0', custom_referrer = 'https://ref.example.com' WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
+
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat_b_id = rdrs::models::category::create_category(&app.db, user_id, "Other")
+        .await
+        .unwrap()
+        .id;
+
+    // Only the two required fields plus the category — everything optional is
+    // absent from the body entirely.
+    let response = app
+        .server
+        .post(&format!("/feeds/{feed_id}/edit"))
+        .form(&json!({
+            "url": "https://omitted.example.com/feed.xml",
+            "category_id": cat_b_id,
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+
+    let row: (
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = (
+        rdrs::query_scalar!(
+            &app.db,
+            i64,
+            "SELECT category_id FROM feed WHERE id = $1",
+            feed_id
+        )
+        .unwrap(),
+        rdrs::query_scalar!(
+            &app.db,
+            Option<String>,
+            "SELECT description FROM feed WHERE id = $1",
+            feed_id
+        )
+        .unwrap(),
+        rdrs::query_scalar!(
+            &app.db,
+            Option<String>,
+            "SELECT site_url FROM feed WHERE id = $1",
+            feed_id
+        )
+        .unwrap(),
+        rdrs::query_scalar!(
+            &app.db,
+            Option<String>,
+            "SELECT custom_user_agent FROM feed WHERE id = $1",
+            feed_id
+        )
+        .unwrap(),
+        rdrs::query_scalar!(
+            &app.db,
+            Option<String>,
+            "SELECT custom_referrer FROM feed WHERE id = $1",
+            feed_id
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(row.0, cat_b_id, "the category change should have applied");
+    assert_eq!(row.1.as_deref(), Some("Kept description"));
+    assert_eq!(row.2.as_deref(), Some("https://site.example.com"));
+    assert_eq!(row.3.as_deref(), Some("MyBot/1.0"));
+    assert_eq!(row.4.as_deref(), Some("https://ref.example.com"));
+}
+
 #[tokio::test]
 async fn test_delete_feed_form_not_found() {
     let mut app = create_test_app_named(default_test_config(), "test_delete_feed_not_found").await;
