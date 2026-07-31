@@ -36,7 +36,7 @@
                 <form method="get" action="/feeds" class="filter-bar">
                     <div class="form-group form-group-inline">
                         <label for="filter-category">Category</label>
-                        <select id="filter-category" name="category" class="select-auto" onchange="this.form.submit()">
+                        <select id="filter-category" name="category" class="select-auto" data-submit-on-change>
                             <option value="">All Categories ({{ total_feed_count }})</option>
                             {% for c in categories %}
                                 <option value="{{ c.id }}"{% if let Some(cid) = active_category_id %}{% if c.id == *cid %} selected{% endif %}{% endif %}>{{ c.name }} ({{ c.feed_count }})</option>
@@ -45,7 +45,7 @@
                     </div>
                     <div class="form-group form-group-inline">
                         <label for="sort-by">Sort</label>
-                        <select id="sort-by" name="sort" class="select-auto" onchange="this.form.submit()">
+                        <select id="sort-by" name="sort" class="select-auto" data-submit-on-change>
                             <option value="title"{% if active_sort == "title" %} selected{% endif %}>Title</option>
                             <option value="unread"{% if active_sort == "unread" %} selected{% endif %}>Unread Count</option>
                             <option value="category"{% if active_sort == "category" %} selected{% endif %}>Category</option>
@@ -75,7 +75,7 @@
                                     <div class="feed-title-cell">
                                         <div class="feed-title-line">
                                             {% if feed.has_icon %}
-                                                <img src="/api/feeds/{{ feed.id }}/icon" alt="" class="feed-icon" onerror="this.style.display='none'">
+                                                <img src="/api/feeds/{{ feed.id }}/icon" alt="" class="feed-icon" data-hide-on-error>
                                             {% endif %}
                                             <span title="{{ feed.url }}">{{ feed.title }}</span>
                                         </div>
@@ -96,7 +96,7 @@
                                         <button type="submit" class="action-link">refresh</button>
                                     </form>
                                     <a href="/feeds/{{ feed.id }}/edit">edit</a>
-                                    <form method="post" action="/feeds/{{ feed.id }}/delete" style="display:inline" onsubmit="return confirm('Delete this feed? This cannot be undone.')">
+                                    <form method="post" action="/feeds/{{ feed.id }}/delete" style="display:inline" data-confirm="Delete this feed? This cannot be undone.">
                                         <button type="submit" class="action-link action-link-danger">delete</button>
                                     </form>
                                 </td>

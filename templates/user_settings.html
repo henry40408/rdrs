@@ -77,8 +77,8 @@
                         {% endfor %}
                     </tbody>
                 </table>
-                <form method="post" action="/user-settings/api-tokens/revoke-all">
-                    <button type="submit" class="btn btn-secondary" onclick="return confirm('Revoke all API tokens? Every connected GReader client will need to sign in again.')">Revoke all API tokens</button>
+                <form method="post" action="/user-settings/api-tokens/revoke-all" data-confirm="Revoke all API tokens? Every connected GReader client will need to sign in again.">
+                    <button type="submit" class="btn btn-secondary">Revoke all API tokens</button>
                 </form>
                 {% endif %}
                 {% endif %}
@@ -170,9 +170,9 @@
                     <button type="submit">Save Linkding Settings</button>
                 </form>
                 {% if linkding_configured %}
-                <form method="post" action="/user-settings/linkding" style="display:inline-block;margin-top:0.5rem;">
+                <form method="post" action="/user-settings/linkding" style="display:inline-block;margin-top:0.5rem;" data-confirm="Clear Linkding settings?">
                     <input type="hidden" name="_clear" value="1">
-                    <button type="submit" class="btn btn-secondary" onclick="return confirm('Clear Linkding settings?')">Clear Linkding</button>
+                    <button type="submit" class="btn btn-secondary">Clear Linkding</button>
                 </form>
                 {% endif %}
 
@@ -205,9 +205,9 @@
                     <button type="submit">Save Kagi Settings</button>
                 </form>
                 {% if kagi_configured %}
-                <form method="post" action="/user-settings/kagi" style="display:inline-block;margin-top:0.5rem;">
+                <form method="post" action="/user-settings/kagi" style="display:inline-block;margin-top:0.5rem;" data-confirm="Clear Kagi settings?">
                     <input type="hidden" name="_clear" value="1">
-                    <button type="submit" class="btn btn-secondary" onclick="return confirm('Clear Kagi settings?')">Clear Kagi</button>
+                    <button type="submit" class="btn btn-secondary">Clear Kagi</button>
                 </form>
                 {% endif %}
             </div>

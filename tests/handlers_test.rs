@@ -5712,3 +5712,121 @@ async fn hsts_is_sent_on_a_csrf_rejected_response() {
         "max-age=31536000; includeSubDomains"
     );
 }
+
+// ============================================================================
+// Fixed security headers (CSP, nosniff, Referrer-Policy, Permissions-Policy,
+// X-Frame-Options, COOP)
+// ============================================================================
+
+/// Every header the fixed layer is responsible for, paired with the exact value
+/// it must carry. Kept as one list so each test below asserts on the whole set
+/// rather than whichever header the author happened to remember.
+const EXPECTED_SECURITY_HEADERS: &[(&str, &str)] = &[
+    (
+        "content-security-policy",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; \
+         base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    ),
+    ("x-content-type-options", "nosniff"),
+    ("referrer-policy", "strict-origin-when-cross-origin"),
+    (
+        "permissions-policy",
+        "accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), \
+         geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), \
+         usb=(), xr-spatial-tracking=()",
+    ),
+    ("x-frame-options", "DENY"),
+    ("cross-origin-opener-policy", "same-origin"),
+];
+
+fn assert_security_headers(response: &axum_test::TestResponse, context: &str) {
+    for (name, expected) in EXPECTED_SECURITY_HEADERS {
+        assert_eq!(
+            response.header(HeaderName::from_static(name)),
+            *expected,
+            "{context}: wrong or missing {name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_security_headers_present_on_the_default_config() {
+    // Unlike HSTS these are unconditional: a plain-HTTP deployment (the
+    // default) still gets the full set, because none of them depends on the
+    // transport.
+    let server = create_test_server(default_test_config()).await;
+
+    let response = server.get("/health").await;
+
+    response.assert_status_ok();
+    assert_security_headers(&response, "/health");
+}
+
+#[tokio::test]
+async fn test_security_headers_on_static_and_a_page() {
+    // No skip list, for the same reason HSTS has none — and `nosniff` on a
+    // static asset is precisely where it matters.
+    let server = create_test_server(default_test_config()).await;
+
+    let static_asset = server.get("/static/css/app.css").await;
+    static_asset.assert_status_ok();
+    assert_security_headers(&static_asset, "/static/css/app.css");
+
+    let login = server.get("/login").await;
+    login.assert_status_ok();
+    assert_security_headers(&login, "/login");
+}
+
+#[tokio::test]
+async fn security_headers_are_sent_on_a_csrf_rejected_response() {
+    // Same regression the HSTS test above guards: `csrf_origin_guard`
+    // short-circuits with a 403 without calling `next`, so a layer nested
+    // inside it would never run. A rejected response is exactly the one an
+    // attacker sees, so it must carry the policy too.
+    let server = create_test_server(default_test_config()).await;
+
+    let response = server
+        .post("/api/session")
+        .add_header(
+            HeaderName::from_static("sec-fetch-site"),
+            HeaderValue::from_static("cross-site"),
+        )
+        .await;
+
+    response.assert_status_forbidden();
+    assert_security_headers(&response, "csrf-rejected /api/session");
+}
+
+#[tokio::test]
+async fn test_existing_security_header_is_not_overwritten() {
+    // As with HSTS, the realistic source of a pre-existing header is a reverse
+    // proxy in front of rdrs, which this suite cannot stand up. Wire the same
+    // exported middleware around a handler that stands in for the proxy and
+    // confirm its value survives — while the headers it did not set are still
+    // filled in.
+    async fn proxy_set_header() -> impl axum::response::IntoResponse {
+        (
+            [(
+                header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static("default-src 'none'"),
+            )],
+            "ok",
+        )
+    }
+
+    let router = axum::Router::new()
+        .route("/probe", axum::routing::get(proxy_set_header))
+        .layer(axum::middleware::from_fn(
+            rdrs::middleware::set_security_headers,
+        ));
+    let server = TestServer::new(router);
+
+    let response = server.get("/probe").await;
+
+    assert_eq!(
+        response.header(header::CONTENT_SECURITY_POLICY),
+        "default-src 'none'"
+    );
+    assert_eq!(response.header(header::X_CONTENT_TYPE_OPTIONS), "nosniff");
+}

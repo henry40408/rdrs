@@ -478,6 +478,70 @@ Two independent lines, so a bypass of one is not a bypass of both.
   session's `Set-Cookie` wins; skipped for `/api`, `/static`, `/favicon`,
   `/health`, and the GReader prefixes so shared caches are never cookie-poisoned.
 
+### Response security headers
+
+`middleware::security_headers` ships two layers, both applied **outermost** in
+`create_router` and both leaving a header the response already carries
+untouched (so a reverse proxy's value wins):
+
+- **`set_security_headers`** — unconditional. `Content-Security-Policy`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`,
+  `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`. Values are
+  fixed in the source; nothing is configurable.
+- **`set_hsts`** — `Strict-Transport-Security`, and only when `Config` says the
+  deployment is HTTPS. See `Config::hsts_header_value`.
+
+Outermost placement is load-bearing rather than stylistic: `forward_auth` and
+both CSRF guards return a response *without* calling `next` on several paths (the
+forward-auth redirect that mints the session cookie, its "not authorized"
+redirect, and the guards' 403 rejections), so a layer nested inside them would
+never see those responses. There is likewise no path skip list — `/static`,
+`/health` and the image proxy all carry the headers, and `nosniff` on a proxied
+image is exactly where it earns its keep.
+
+**The CSP is strict on scripts**, which constrains how the frontend may be
+written:
+
+```
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none';
+base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+```
+
+`script-src 'self'` carries no `'unsafe-inline'`, so **no template may ship an
+inline `<script>` or an `on*=` handler attribute.** Neither is a build error —
+both simply stop working in the browser — so a unit test walks the whole
+template tree and fails on either. The replacements to use:
+
+- Page-specific script → a module under `static/js/`, registered in
+  `handlers::static_assets::FILES` and referenced with `src`.
+- `onsubmit="return confirm(…)"` → `data-confirm="…"` on the `<form>`.
+- `onchange="this.form.submit()"` → `data-submit-on-change` on the `<select>`.
+- `onerror="this.style.display='none'"` → `data-hide-on-error` on the `<img>`.
+
+The delegated listeners behind those `data-` attributes live in
+`static/js/behaviors.js` (loaded from `app_layout.html`); the flash banner's
+dismiss button is handled in `components/rdrs-flash.js`, which `base.html` loads
+so `/login` and `/register` get it too. `<script type="application/json">`
+bootstrap blocks are unaffected — the browser never executes them, so CSP does
+not police them.
+
+`style-src` keeps `'unsafe-inline'`, because two `style` attributes cannot become
+classes: /statistics' per-datum bar geometry (an `f64` percentage) and
+`_icon_sprite.html`'s sprite-hiding rule (the UA stylesheet's `[hidden]` rule is
+XHTML-namespaced and never matches an SVG element). With `default-src 'self'`
+and `img-src 'self' data:` there is no external origin for injected CSS to
+exfiltrate to.
+
+Two omissions are deliberate and documented in the module: **no
+`Cross-Origin-Resource-Policy`** (it would block the absolute `/api/proxy/image`
+URLs the GReader item feed hands to native clients rendering in a webview), and
+**no `publickey-credentials-*` entry in `Permissions-Policy`** (unlisted features
+keep their `self` default, which is what passkeys need). `Referrer-Policy` is
+`strict-origin-when-cross-origin` rather than `no-referrer` because the
+entry-action redirect recovers the originating list from the same-origin
+`Referer`.
+
 ### Password Hashing
 
 Uses Argon2id with:

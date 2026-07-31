@@ -61,7 +61,7 @@
                 </form>
 
                 {% if !feed.custom_user_agent.is_empty() %}
-                <form method="post" action="/feeds/{{ feed.id }}/edit" class="feed-clear-form" onsubmit="return confirm('Clear custom User Agent?')">
+                <form method="post" action="/feeds/{{ feed.id }}/edit" class="feed-clear-form" data-confirm="Clear custom User Agent?">
                     <input type="hidden" name="url" value="{{ feed.url }}">
                     <input type="hidden" name="title" value="{{ feed.title }}">
                     <input type="hidden" name="description" value="{{ feed.description }}">
@@ -75,7 +75,7 @@
                 {% endif %}
 
                 {% if !feed.custom_referrer.is_empty() %}
-                <form method="post" action="/feeds/{{ feed.id }}/edit" class="feed-clear-form" onsubmit="return confirm('Clear custom Referrer?')">
+                <form method="post" action="/feeds/{{ feed.id }}/edit" class="feed-clear-form" data-confirm="Clear custom Referrer?">
                     <input type="hidden" name="url" value="{{ feed.url }}">
                     <input type="hidden" name="title" value="{{ feed.title }}">
                     <input type="hidden" name="description" value="{{ feed.description }}">
@@ -90,7 +90,7 @@
 
                 <hr>
 
-                <form method="post" action="/feeds/{{ feed.id }}/fetch-metadata" onsubmit="return confirm('Re-fetch metadata from the feed URL? This will overwrite current title/description/site URL.')">
+                <form method="post" action="/feeds/{{ feed.id }}/fetch-metadata" data-confirm="Re-fetch metadata from the feed URL? This will overwrite current title/description/site URL.">
                     <button type="submit" class="btn-secondary">Re-fetch Metadata</button>
                 </form>
             </div>

@@ -399,6 +399,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/events", get(handlers::events::events_stream))
         .merge(core);
 
+    // The fixed security headers (CSP, nosniff, Referrer-Policy,
+    // Permissions-Policy, X-Frame-Options, COOP). Unconditional, and outermost
+    // for the same reason HSTS is below — see middleware::security_headers for
+    // what each directive is doing and what is deliberately absent.
+    let router = router.layer(axum::middleware::from_fn(middleware::set_security_headers));
+
     // Strict-Transport-Security (OWASP Session Management Cheat Sheet,
     // Transport Layer Security): only added when `Config` says the deployment
     // is HTTPS (see `Config::hsts_header_value` for the derivation rule). The
