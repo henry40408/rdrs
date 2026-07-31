@@ -31,6 +31,18 @@ ignore = [
     # now resolved).
     "RUSTSEC-2026-0192",
     "RUSTSEC-2026-0206",
+    # event-listener 5.4.1 (transitive, via sqlx 0.9.0) lets a `!Send` tag set
+    # through `Event::with_tag` cross a thread boundary via `StackSlot`. The fix
+    # is event-listener 5.4.2 — published 2026-07-27, inside our 7-day
+    # dependency cooldown, which is the *only* reason this is ignored rather
+    # than upgraded. This is a time-boxed entry, not an accepted risk: drop it
+    # and run `cargo update -p event-listener` on or after 2026-08-03. Tracked
+    # in issue #452.
+    #
+    # Exposure here is nil in the meantime: the unsoundness needs
+    # `Event::with_tag` with a `!Send` tag, and nothing in this tree calls it —
+    # sqlx uses the untagged `Event`.
+    "RUSTSEC-2026-0221",
 ]
 
 [licenses]
