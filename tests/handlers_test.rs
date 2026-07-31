@@ -5114,22 +5114,24 @@ async fn test_edit_feed_form_category_not_owned() {
     assert_eq!(actual_cat, cat_id);
 }
 
+/// A blank `custom_user_agent` / `custom_referrer` erases the stored value,
+/// the same way a blank `description` or `site_url` does. The form renders the
+/// current value into the input, so a blank submission is deliberate.
 #[tokio::test]
-async fn test_edit_feed_form_clear_user_agent() {
+async fn test_edit_feed_form_blank_http_settings_clear_them() {
     let mut app = create_test_app_named(default_test_config(), "test_edit_feed_clear_ua").await;
     setup_authenticated_user(&mut app.server).await;
 
-    // Seed a feed and set a custom_user_agent on it directly.
+    // Seed a feed and set both HTTP overrides on it directly.
     let (cat_id, feed_id) =
         insert_test_feed(&app, "Tech", "https://clear-ua.example.com/feed.xml").await;
     rdrs::db_execute!(
         &app.db,
-        "UPDATE feed SET custom_user_agent = 'MyBot/1.0' WHERE id = $1",
+        "UPDATE feed SET custom_user_agent = 'MyBot/1.0', custom_referrer = 'https://ref.example.com' WHERE id = $1",
         feed_id
     )
     .unwrap();
 
-    // POST edit with _clear_user_agent=on
     let response = app
         .server
         .post(&format!("/feeds/{feed_id}/edit"))
@@ -5140,8 +5142,7 @@ async fn test_edit_feed_form_clear_user_agent() {
             "site_url": "",
             "category_id": cat_id,
             "custom_user_agent": "",
-            "custom_referrer": "",
-            "_clear_user_agent": "on",
+            "custom_referrer": "   ",
         }))
         .await;
 
@@ -5151,7 +5152,6 @@ async fn test_edit_feed_form_clear_user_agent() {
         format!("/feeds/{feed_id}/edit")
     );
 
-    // custom_user_agent must now be NULL.
     let ua: Option<String> = rdrs::query_scalar!(
         &app.db,
         Option<String>,
@@ -5161,8 +5161,71 @@ async fn test_edit_feed_form_clear_user_agent() {
     .unwrap();
     assert!(
         ua.is_none(),
-        "custom_user_agent should be NULL after _clear_user_agent=on, got: {ua:?}"
+        "custom_user_agent should be NULL after submitting a blank field, got: {ua:?}"
     );
+
+    // Whitespace-only counts as blank, matching the trim() the other fields use.
+    let referrer: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT custom_referrer FROM feed WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
+    assert!(
+        referrer.is_none(),
+        "custom_referrer should be NULL after submitting whitespace, got: {referrer:?}"
+    );
+}
+
+/// The counterpart to the test above: a non-empty submission still round-trips
+/// unchanged, so an ordinary "save" from the form never disturbs the overrides.
+#[tokio::test]
+async fn test_edit_feed_form_keeps_resubmitted_http_settings() {
+    let mut app = create_test_app_named(default_test_config(), "test_edit_feed_keep_ua").await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let (cat_id, feed_id) =
+        insert_test_feed(&app, "Tech", "https://keep-ua.example.com/feed.xml").await;
+    rdrs::db_execute!(
+        &app.db,
+        "UPDATE feed SET custom_user_agent = 'MyBot/1.0', custom_referrer = 'https://ref.example.com' WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
+
+    let response = app
+        .server
+        .post(&format!("/feeds/{feed_id}/edit"))
+        .form(&json!({
+            "url": "https://keep-ua.example.com/feed.xml",
+            "title": "Renamed Feed",
+            "description": "",
+            "site_url": "",
+            "category_id": cat_id,
+            "custom_user_agent": "MyBot/1.0",
+            "custom_referrer": "https://ref.example.com",
+        }))
+        .await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+
+    let ua: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT custom_user_agent FROM feed WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
+    let referrer: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT custom_referrer FROM feed WHERE id = $1",
+        feed_id
+    )
+    .unwrap();
+    assert_eq!(ua.as_deref(), Some("MyBot/1.0"));
+    assert_eq!(referrer.as_deref(), Some("https://ref.example.com"));
 }
 
 #[tokio::test]
