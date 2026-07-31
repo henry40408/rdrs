@@ -189,6 +189,23 @@ jobs:
         working-directory: e2e
         run: npx playwright test --shard=${{ matrix.shard }} --grep-invert "@skip"
 
+      # Browser-level CSP check. It lives here rather than in its own job so it
+      # inherits the Rust build, npm install and Playwright browsers this job has
+      # already paid for; a standalone job would repeat all three to run a single
+      # ~10s spec. Pinned to one shard because the audit walks the whole app
+      # itself — running it three times would only triple the cost.
+      #
+      # This complements, not duplicates, the static scan in
+      # `src/middleware/security_headers.rs`: that one greps the sources for
+      # inline styles and handlers, while this one enforces the policy the
+      # browser actually applies (runtime-injected markup, shadow DOM, webfonts,
+      # cross-origin @import). The spec carries its own positive control, so a
+      # pass means the collector was demonstrably live.
+      - name: CSP audit
+        if: matrix.shard == '1/3'
+        working-directory: e2e
+        run: npm run test:csp
+
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
