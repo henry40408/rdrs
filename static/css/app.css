@@ -1321,6 +1321,98 @@ td input[type="text"] {
     vertical-align: middle;
 }
 
+/* ===== Credential cards (Active Sessions / GReader API Tokens) =====
+   These two lists were tables, and the User-Agent column made them unreadable:
+   one long client string set the height of the whole row, leaving IP and the
+   three timestamps stranded in tall, mostly empty cells. As cards, a long value
+   only grows its own card. One column at every width — desktop, tablet and
+   phone all stack top to bottom; the width cap keeps the metadata row from
+   spreading across a full-width page. */
+.cred-list {
+    list-style: none;
+    margin: var(--space-4) 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    max-width: var(--form-max-width);
+}
+
+.cred-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-card);
+    background: var(--color-bg-secondary);
+}
+
+/* Current browser session: accent left rule, same idiom as .stats-card-admin */
+.cred-card--current {
+    border-left: var(--border-accent-width) solid var(--color-accent);
+    padding-left: calc(var(--space-4) - var(--border-accent-width) + 1px);
+}
+
+/* Identification of the viewer's own session is split in two, because it
+   answers two different questions. The accent left rule above says "this one
+   is you" at a glance. This note sits in the action slot — exactly where every
+   other card puts its Revoke button — and so explains the missing button in
+   place, without the reader having to infer it. Deliberately quiet: a filled
+   accent chip in a button's position reads as clickable, and in this stylesheet
+   --color-accent-subtle already means "selected / active" (.entry-item.selected,
+   .feed-filter-link.active, focus rings). */
+.cred-card-current {
+    align-self: center;
+    font-family: var(--font-ui);
+    font-size: var(--font-xs);
+    color: var(--color-text-muted);
+}
+
+.cred-card-meta {
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: var(--space-3);
+}
+
+.cred-card-meta dt {
+    font-family: var(--font-ui);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.cred-card-meta dd {
+    margin: 0;
+    font-size: var(--font-xs);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+/* The User-Agent takes the full grid width — it is prose-length, not a short
+   scalar like the four fields beside it. `anywhere` (inherited from dd) lets a
+   break land inside an unbroken token so a long string never forces horizontal
+   overflow; the value is shown in full, never truncated. */
+.cred-card-meta-wide { grid-column: 1 / -1; }
+
+.cred-card-ua {
+    font-family: var(--font-mono);
+    line-height: 1.4;
+}
+
+.cred-card-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    margin-top: auto;
+    padding-top: var(--space-1);
+}
+
+.cred-card-actions form { margin: 0; }
+
 /* ===== Banner Stack (accessible flash messages) =====
    Inline, persistent notifications anchored to the top of `<main>`.
    Replaces the prior floating-toast pattern to satisfy Primer / WCAG
@@ -2814,6 +2906,19 @@ summary {
 
     .page-content table.mobile-cards-settings .grouphdr td {
         display: block;
+        width: 100%;
+    }
+
+    /* Credential cards already stack at every width; on a phone the lone
+       action button also goes full-bleed for a comfortable tap target. The
+       form has to stretch first — a width:100% button inside a content-sized
+       flex item is still only as wide as its own label. */
+    .cred-card-actions form {
+        flex: 1;
+    }
+
+    .cred-card-actions button,
+    .cred-card-actions .btn {
         width: 100%;
     }
 
