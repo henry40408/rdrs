@@ -8,7 +8,7 @@
 const isWebAuthnSupported = window.PublicKeyCredential !== undefined;
 
 if (isWebAuthnSupported) {
-    document.getElementById('passkey-section').style.display = 'block';
+    document.getElementById('passkey-section').hidden = false;
 }
 
 function base64urlToBuffer(base64url) {
@@ -35,7 +35,7 @@ const loginForm = document.getElementById('login-form');
 if (loginForm) loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const errorDiv = document.getElementById('error');
-    errorDiv.style.display = 'none';
+    errorDiv.hidden = true;
 
     const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
@@ -52,18 +52,18 @@ if (loginForm) loginForm.addEventListener('submit', async (e) => {
         } else {
             const data = await response.json();
             errorDiv.textContent = data.error || 'Login failed';
-            errorDiv.style.display = 'block';
+            errorDiv.hidden = false;
         }
     } catch (err) {
         errorDiv.textContent = 'An error occurred. Please try again.';
-        errorDiv.style.display = 'block';
+        errorDiv.hidden = false;
     }
 });
 
 document.getElementById('passkey-login-btn')?.addEventListener('click', async () => {
     const errorDiv = document.getElementById('error');
     const btn = document.getElementById('passkey-login-btn');
-    errorDiv.style.display = 'none';
+    errorDiv.hidden = true;
 
     try {
         btn.disabled = true;
@@ -122,7 +122,7 @@ document.getElementById('passkey-login-btn')?.addEventListener('click', async ()
         } else {
             errorDiv.textContent = err.message || 'An error occurred. Please try again.';
         }
-        errorDiv.style.display = 'block';
+        errorDiv.hidden = false;
     } finally {
         btn.disabled = false;
         btn.textContent = 'Login with Passkey';

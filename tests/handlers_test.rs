@@ -5875,7 +5875,7 @@ async fn hsts_is_sent_on_a_csrf_rejected_response() {
 const EXPECTED_SECURITY_HEADERS: &[(&str, &str)] = &[
     (
         "content-security-policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+        "default-src 'self'; script-src 'self'; style-src 'self'; \
          img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; \
          base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
     ),

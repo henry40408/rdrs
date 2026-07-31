@@ -34,14 +34,24 @@
 //! `components/rdrs-flash.js`). Reintroducing either would not fail a build —
 //! it would silently stop working in the browser, so don't.
 //!
-//! `style-src` keeps `'unsafe-inline'` on purpose. Two `style` attributes are
-//! load-bearing and cannot become classes: the per-datum bar geometry on
-//! /statistics (`height: {percent}%` over an `f64`, so not a finite class set)
-//! and the sprite-hiding rule in `_icon_sprite.html` (the UA stylesheet's
-//! `[hidden]` rule is XHTML-namespaced and never matches an SVG element — see
-//! that file's comment). The concession is narrow: with `default-src 'self'`
-//! and `img-src 'self' data:` there is no external origin for injected CSS to
-//! exfiltrate to.
+//! `style-src 'self'` is equally strict, which means **no markup anywhere may
+//! carry a `style` attribute** — not templates, and not HTML that JavaScript
+//! builds and assigns to `innerHTML`, since the parser checks those the same
+//! way. Three patterns replaced the ones that used to:
+//!
+//! - static declarations (`display:inline`, a font size) became classes in
+//!   `app.css`;
+//! - `style="display:none"` on an element JavaScript later reveals became the
+//!   `hidden` attribute, toggled through the `.hidden` property;
+//! - the per-datum bar geometry on /statistics became a `pct-N` class off a
+//!   0–100 scale in `app.css`, chosen by `bar_percent` in `handlers::pages`.
+//!
+//! Writing to `element.style` **from script** is untouched by this — CSP polices
+//! markup, not the CSSOM — so the sidebar's show/hide logic still does that.
+//!
+//! `_icon_sprite.html` is the one place that needs collapsing without CSS (a
+//! bare `<svg>` renders at 300x150); it uses SVG presentation attributes, which
+//! are not `style` attributes and not covered by the policy.
 //!
 //! `img-src 'self' data:` covers the three real sources — same-origin feed
 //! icons, remote article images rewritten to the same-origin `/api/proxy/image`
@@ -81,7 +91,7 @@ use axum::{
 /// See the module docs for why each directive reads the way it does.
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
      script-src 'self'; \
-     style-src 'self' 'unsafe-inline'; \
+     style-src 'self'; \
      img-src 'self' data:; \
      font-src 'self'; \
      connect-src 'self'; \
@@ -340,49 +350,90 @@ mod tests {
         !tag.contains("src=") && !tag.contains("application/json")
     }
 
-    /// `script-src 'self'` is only a real defence while the templates hold up
-    /// their end: an inline `<script>` or an `on*=` attribute is not a build
-    /// error, it just silently stops working in the browser. This walks every
-    /// template and fails on either, so the CSP and the markup cannot drift.
-    #[test]
-    fn no_template_ships_inline_script_or_handler_attributes() {
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/templates");
-        let mut stack = vec![std::path::PathBuf::from(root)];
-        let mut scanned = 0usize;
-
+    /// Every file under `dir`, recursively, whose extension is in `extensions`.
+    fn source_files(dir: &str, extensions: &[&str]) -> Vec<std::path::PathBuf> {
+        let mut stack = vec![std::path::PathBuf::from(dir)];
+        let mut files = Vec::new();
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     stack.push(path);
-                    continue;
-                }
-                let html = std::fs::read_to_string(&path).unwrap();
-                scanned += 1;
-
-                let handlers = inline_handler_attributes(&html);
-                assert!(
-                    handlers.is_empty(),
-                    "{}: inline handler attribute(s) {handlers:?} — CSP blocks these. \
-                     Use a `data-` attribute plus a delegated listener in \
-                     static/js/behaviors.js instead.",
-                    path.display()
-                );
-
-                for (i, _) in html.match_indices("<script") {
-                    let tag = &html[i..];
-                    let end = tag.find('>').unwrap_or(tag.len());
-                    assert!(
-                        !is_inline_script_tag(&tag[..end]),
-                        "{}: inline <script> block — CSP blocks these. Move it to a \
-                         module under static/js/ and reference it with `src`.",
-                        path.display()
-                    );
+                } else if path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| extensions.contains(&e))
+                {
+                    files.push(path);
                 }
             }
         }
+        files
+    }
 
-        assert!(scanned > 10, "sanity: expected to scan the template tree");
+    /// `script-src 'self'` and `style-src 'self'` are only a real defence while
+    /// the markup holds up its end: an inline `<script>`, an `on*=` attribute or
+    /// a `style=` attribute is not a build error, it just silently stops working
+    /// in the browser. This walks every template and every file that builds
+    /// markup for `innerHTML`, so the policy and the markup cannot drift.
+    ///
+    /// Note the JS half: markup a script assigns to `innerHTML` is parsed by the
+    /// same parser and policed the same way, including inside a shadow root.
+    /// Writing to `element.style` from script is a CSSOM operation and stays
+    /// allowed, which is why this looks for `style="` and not `style`.
+    #[test]
+    fn no_markup_ships_inline_script_handler_or_style() {
+        let templates = source_files(concat!(env!("CARGO_MANIFEST_DIR"), "/templates"), &["html"]);
+        let scripts = source_files(concat!(env!("CARGO_MANIFEST_DIR"), "/static/js"), &["js"]);
+        let scanned = templates.len() + scripts.len();
+
+        for path in templates.iter().chain(scripts.iter()) {
+            let source = std::fs::read_to_string(path).unwrap();
+
+            assert!(
+                !source.contains("style=\""),
+                "{}: inline style attribute — `style-src 'self'` blocks these. Use a \
+                 class in static/css/app.css, the `hidden` attribute, or assign to \
+                 `element.style` from script (the CSSOM is not policed).",
+                path.display()
+            );
+
+            assert!(
+                !source.contains("<style"),
+                "{}: inline <style> element — `style-src 'self'` blocks these, even \
+                 inside a shadow root. Adopt a constructable stylesheet instead, as \
+                 components/rdrs-kb-help.js does.",
+                path.display()
+            );
+
+            // The remaining two only apply to markup, and every .js file here is
+            // an ES module served with `src`, not an inline block.
+            if path.extension().and_then(|e| e.to_str()) != Some("html") {
+                continue;
+            }
+
+            let handlers = inline_handler_attributes(&source);
+            assert!(
+                handlers.is_empty(),
+                "{}: inline handler attribute(s) {handlers:?} — CSP blocks these. \
+                 Use a `data-` attribute plus a delegated listener in \
+                 static/js/behaviors.js instead.",
+                path.display()
+            );
+
+            for (i, _) in source.match_indices("<script") {
+                let tag = &source[i..];
+                let end = tag.find('>').unwrap_or(tag.len());
+                assert!(
+                    !is_inline_script_tag(&tag[..end]),
+                    "{}: inline <script> block — CSP blocks these. Move it to a \
+                     module under static/js/ and reference it with `src`.",
+                    path.display()
+                );
+            }
+        }
+
+        assert!(scanned > 10, "sanity: expected to scan the source tree");
     }
 
     #[test]

@@ -92,11 +92,11 @@
                                 </td>
                                 <td class="actions{% if feed.fetch_error.is_some() %} feed-error-no-border{% endif %}">
                                     <a href="/feeds/{{ feed.id }}/entries">entries</a>
-                                    <form method="post" action="/feeds/{{ feed.id }}/refresh" style="display:inline">
+                                    <form method="post" action="/feeds/{{ feed.id }}/refresh" class="form-inline">
                                         <button type="submit" class="action-link">refresh</button>
                                     </form>
                                     <a href="/feeds/{{ feed.id }}/edit">edit</a>
-                                    <form method="post" action="/feeds/{{ feed.id }}/delete" style="display:inline" data-confirm="Delete this feed? This cannot be undone.">
+                                    <form method="post" action="/feeds/{{ feed.id }}/delete" class="form-inline" data-confirm="Delete this feed? This cannot be undone.">
                                         <button type="submit" class="action-link action-link-danger">delete</button>
                                     </form>
                                 </td>

@@ -12,9 +12,9 @@
     <div class="auth-card">
         {% call macros::flash(flash_messages) %}{% endcall %}
         <h1>rdrs</h1>
-        <div id="error" class="error" style="display: none;" data-testid="login-error"></div>
+        <div id="error" class="error" hidden data-testid="login-error"></div>
 
-        <div id="passkey-section" style="display: none;">
+        <div id="passkey-section" hidden>
             <button type="button" id="passkey-login-btn" class="auth-passkey-btn">
                 Login with Passkey
             </button>
