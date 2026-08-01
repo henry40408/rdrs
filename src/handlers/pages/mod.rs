@@ -543,6 +543,12 @@ pub struct RegisterTemplate {
     pub error: Option<String>,
     pub flash_messages: Vec<FlashMessage>,
     pub git_version: &'static str,
+    /// Rendered into the field's `minlength`/`maxlength` so the browser's own
+    /// hint cannot drift from what `auth::validate_password_strength` will
+    /// actually accept. Carried through the template rather than written into
+    /// the HTML by hand for that reason alone.
+    pub password_min_length: usize,
+    pub password_max_length: usize,
 }
 
 impl IntoResponse for RegisterTemplate {
@@ -573,6 +579,8 @@ pub async fn register_page(
             },
             flash_messages: flash.messages,
             git_version: crate::GIT_VERSION,
+            password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
+            password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
         },
     )
 }
@@ -717,6 +725,13 @@ pub async fn admin_page(
         })
         .collect();
 
+    // Mirrors `handlers::admin::require_recent_authentication` exactly: a
+    // forward-auth session has no rdrs password to confirm, and a session
+    // inside the window has already confirmed one.
+    let needs_reauth = !admin.via_forward_auth
+        && !admin.session.authenticated_recently(chrono::Utc::now())
+        && !state.config.disable_local_auth;
+
     (
         flash,
         AdminTemplate {
@@ -724,6 +739,7 @@ pub async fn admin_page(
             git_version: crate::GIT_VERSION,
             layout,
             users,
+            needs_reauth,
         },
     )
 }
@@ -875,6 +891,8 @@ pub async fn user_settings_page(
             theme,
             entries_per_page,
             retention_read_days,
+            password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
+            password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
             linkding_configured,
             linkding_api_url,
             kagi_configured,
@@ -2468,6 +2486,10 @@ pub struct UserSettingsTemplate {
     pub theme: Option<String>,
     pub entries_per_page: i64,
     pub retention_read_days: i64,
+    /// Same purpose as on [`RegisterTemplate`]: the "Change Password" field's
+    /// browser-side hint is generated from the server's own policy constants.
+    pub password_min_length: usize,
+    pub password_max_length: usize,
     pub linkding_configured: bool,
     pub linkding_api_url: String,
     pub kagi_configured: bool,
@@ -2502,6 +2524,12 @@ pub struct AdminTemplate {
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
     pub users: Vec<AdminUserView>,
+    /// Whether this session has to confirm its password before it can change
+    /// accounts (see `handlers::admin::require_recent_authentication`).
+    /// Rendered as an inline confirmation form rather than left for the POST
+    /// to discover, so an admin learns the window has lapsed *before* clicking
+    /// a destructive button rather than after.
+    pub needs_reauth: bool,
 }
 
 impl IntoResponse for AdminTemplate {

@@ -202,6 +202,32 @@ RDRS supports three authentication methods that all work simultaneously by
 default: local password, WebAuthn/passkeys, and **forward-auth (trusted-header)
 SSO**. `RDRS_DISABLE_LOCAL_AUTH` is the only knob that narrows this set.
 
+### Passwords
+
+New passwords must be **15–128 characters**. Nothing else is required — no
+mixture of cases, digits or symbols; spaces, punctuation and any script are all
+fine, and a passphrase such as `correct horse battery staple` is a better
+answer than a short scramble. The minimum follows NIST SP800-63B for accounts
+without a second factor, which is what a password-protected rdrs account is
+(passkeys here replace the password rather than supplement it). The maximum is
+declared rather than discovered, and an over-long password is rejected outright
+instead of being silently truncated.
+
+Existing passwords keep working at whatever length they were set; rdrs never
+forces a rotation. Changing one signs out every other browser session **and**
+revokes every GReader API token, so connected RSS clients must sign in again.
+
+### Admin actions ask for your password
+
+Promoting, demoting, disabling, deleting, or viewing as another user all
+require the admin to have confirmed their password in the last 5 minutes. Past
+that, `/admin` shows a confirmation box; enter your password once and the
+window re-opens for the whole panel. Ending a "view as" session never asks —
+the password it would demand belongs to the account being impersonated.
+Forward-auth (SSO) sessions are exempt throughout, since their identity is
+re-asserted by the proxy on every request and their local account may hold no
+usable password at all.
+
 ### Passkeys
 
 "Login with Passkey" asks for no username: the sign-in challenge names no

@@ -92,7 +92,7 @@ async fn setup_authenticated_user(server: &mut TestServer) {
         .post("/api/register")
         .json(&json!({
             "username": "testuser",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -101,7 +101,7 @@ async fn setup_authenticated_user(server: &mut TestServer) {
         .post("/api/session")
         .json(&json!({
             "username": "testuser",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     login.assert_status_ok();
@@ -464,7 +464,7 @@ async fn test_update_feed_to_other_user_category() {
         .post("/api/register")
         .json(&json!({
             "username": "movefeeduser1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -473,7 +473,7 @@ async fn test_update_feed_to_other_user_category() {
         .post("/api/session")
         .json(&json!({
             "username": "movefeeduser1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -490,7 +490,7 @@ async fn test_update_feed_to_other_user_category() {
         .post("/api/register")
         .json(&json!({
             "username": "movefeeduser2",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -499,7 +499,7 @@ async fn test_update_feed_to_other_user_category() {
         .post("/api/session")
         .json(&json!({
             "username": "movefeeduser2",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -545,7 +545,7 @@ async fn test_delete_feed_other_user() {
         .post("/api/register")
         .json(&json!({
             "username": "feeddeluser1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -555,7 +555,7 @@ async fn test_delete_feed_other_user() {
         .post("/api/session")
         .json(&json!({
             "username": "feeddeluser1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -583,7 +583,7 @@ async fn test_delete_feed_other_user() {
         .post("/api/register")
         .json(&json!({
             "username": "feeddeluser2",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -593,7 +593,7 @@ async fn test_delete_feed_other_user() {
         .post("/api/session")
         .json(&json!({
             "username": "feeddeluser2",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -1333,7 +1333,7 @@ async fn test_category_isolation_between_users() {
         .post("/api/register")
         .json(&json!({
             "username": "user1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1342,7 +1342,7 @@ async fn test_category_isolation_between_users() {
         .post("/api/session")
         .json(&json!({
             "username": "user1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -1358,7 +1358,7 @@ async fn test_category_isolation_between_users() {
         .post("/api/register")
         .json(&json!({
             "username": "user2",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1367,7 +1367,7 @@ async fn test_category_isolation_between_users() {
         .post("/api/session")
         .json(&json!({
             "username": "user2",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -1455,7 +1455,7 @@ async fn test_get_feed_icon_no_icon() {
     let mut app = create_test_app(default_test_config()).await;
 
     // Create user and a feed (via OPML import) that has no icon
-    let hash = auth::hash_password("password123").unwrap();
+    let hash = auth::hash_password("password123456789").unwrap();
     rdrs::models::user::create_user(&app.db, "iconuser", &hash, Role::User)
         .await
         .unwrap();
@@ -1465,7 +1465,7 @@ async fn test_get_feed_icon_no_icon() {
         .post("/api/session")
         .json(&json!({
             "username": "iconuser",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -1652,7 +1652,7 @@ async fn test_reauth_with_correct_password_reopens_the_window() {
 
     app.server
         .post("/api/session/reauth")
-        .json(&json!({ "password": "password123" }))
+        .json(&json!({ "password": "password123456789" }))
         .await
         .assert_status(StatusCode::NO_CONTENT);
 
@@ -1687,7 +1687,7 @@ async fn test_reauth_requires_a_session() {
 
     server
         .post("/api/session/reauth")
-        .json(&json!({ "password": "password123" }))
+        .json(&json!({ "password": "password123456789" }))
         .await
         .assert_status_unauthorized();
 }
@@ -1884,7 +1884,7 @@ async fn test_reauth_refused_when_local_auth_disabled() {
 
     // Build the session directly: with local auth disabled there is no login
     // endpoint to go through.
-    let password_hash = auth::hash_password("password123").unwrap();
+    let password_hash = auth::hash_password("password123456789").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
@@ -1896,7 +1896,7 @@ async fn test_reauth_refused_when_local_auth_disabled() {
 
     app.server
         .post("/api/session/reauth")
-        .json(&json!({ "password": "password123" }))
+        .json(&json!({ "password": "password123456789" }))
         .await
         .assert_status_forbidden();
 }
@@ -1906,7 +1906,7 @@ async fn test_passkey_auth_start_with_invalid_passkey_data() {
     let app = create_test_app(default_test_config()).await;
 
     // Create user and passkey with invalid public_key JSON
-    let password_hash = auth::hash_password("password123").unwrap();
+    let password_hash = auth::hash_password("password123456789").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
@@ -1994,7 +1994,7 @@ async fn test_list_passkeys_with_data() {
     let mut app = create_test_app(default_test_config()).await;
 
     // Create user and passkey
-    let password_hash = auth::hash_password("password123").unwrap();
+    let password_hash = auth::hash_password("password123456789").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
@@ -2016,7 +2016,7 @@ async fn test_list_passkeys_with_data() {
         .post("/api/session")
         .json(&json!({
             "username": "testuser",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -2036,7 +2036,7 @@ async fn test_rename_passkey_success() {
     let mut app = create_test_app(default_test_config()).await;
 
     // Create user and passkey
-    let password_hash = auth::hash_password("password123").unwrap();
+    let password_hash = auth::hash_password("password123456789").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
@@ -2058,7 +2058,7 @@ async fn test_rename_passkey_success() {
         .post("/api/session")
         .json(&json!({
             "username": "testuser",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -2082,7 +2082,7 @@ async fn test_delete_passkey_success() {
     let mut app = create_test_app(default_test_config()).await;
 
     // Create user and passkey
-    let password_hash = auth::hash_password("password123").unwrap();
+    let password_hash = auth::hash_password("password123456789").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
@@ -2104,7 +2104,7 @@ async fn test_delete_passkey_success() {
         .post("/api/session")
         .json(&json!({
             "username": "testuser",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -2131,7 +2131,7 @@ async fn test_passkey_rename_other_user() {
     let mut app = create_test_app(default_test_config()).await;
 
     // Create two users, each with a passkey
-    let hash1 = auth::hash_password("password123").unwrap();
+    let hash1 = auth::hash_password("password123456789").unwrap();
     let user1 = rdrs::models::user::create_user(&app.db, "pkuser1", &hash1, Role::User)
         .await
         .unwrap();
@@ -2146,7 +2146,7 @@ async fn test_passkey_rename_other_user() {
         "User1 Passkey"
     )
     .unwrap();
-    let hash2 = auth::hash_password("password123").unwrap();
+    let hash2 = auth::hash_password("password123456789").unwrap();
     rdrs::models::user::create_user(&app.db, "pkuser2", &hash2, Role::User)
         .await
         .unwrap();
@@ -2157,7 +2157,7 @@ async fn test_passkey_rename_other_user() {
         .post("/api/session")
         .json(&json!({
             "username": "pkuser2",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -2177,7 +2177,7 @@ async fn test_passkey_delete_other_user() {
     let mut app = create_test_app(default_test_config()).await;
 
     // Create two users, user1 has a passkey
-    let hash1 = auth::hash_password("password123").unwrap();
+    let hash1 = auth::hash_password("password123456789").unwrap();
     let user1 = rdrs::models::user::create_user(&app.db, "pkdeluser1", &hash1, Role::User)
         .await
         .unwrap();
@@ -2192,7 +2192,7 @@ async fn test_passkey_delete_other_user() {
         "User1 Key"
     )
     .unwrap();
-    let hash2 = auth::hash_password("password123").unwrap();
+    let hash2 = auth::hash_password("password123456789").unwrap();
     rdrs::models::user::create_user(&app.db, "pkdeluser2", &hash2, Role::User)
         .await
         .unwrap();
@@ -2203,7 +2203,7 @@ async fn test_passkey_delete_other_user() {
         .post("/api/session")
         .json(&json!({
             "username": "pkdeluser2",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -2757,13 +2757,13 @@ async fn test_client_login_success() {
         .post("/api/register")
         .json(&json!({
             "username": "testuser",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
 
     // ClientLogin with correct credentials
-    let form: Vec<(&str, &str)> = vec![("Email", "testuser"), ("Passwd", "password123")];
+    let form: Vec<(&str, &str)> = vec![("Email", "testuser"), ("Passwd", "password123456789")];
     let response = server.post("/accounts/ClientLogin").form(&form).await;
     response.assert_status_ok();
 
@@ -2791,7 +2791,7 @@ async fn test_client_login_wrong_password() {
         .post("/api/register")
         .json(&json!({
             "username": "testuser",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -2807,7 +2807,7 @@ async fn test_client_login_nonexistent_user() {
     let server = create_test_server(default_test_config()).await;
 
     // ClientLogin with non-existent user → 401
-    let form: Vec<(&str, &str)> = vec![("Email", "nouser"), ("Passwd", "password123")];
+    let form: Vec<(&str, &str)> = vec![("Email", "nouser"), ("Passwd", "password123456789")];
     let response = server.post("/accounts/ClientLogin").form(&form).await;
     response.assert_status_unauthorized();
 }
@@ -2821,13 +2821,13 @@ async fn test_greader_auth_header() {
         .post("/api/register")
         .json(&json!({
             "username": "testuser",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
 
     // Get auth token via ClientLogin
-    let form: Vec<(&str, &str)> = vec![("Email", "testuser"), ("Passwd", "password123")];
+    let form: Vec<(&str, &str)> = vec![("Email", "testuser"), ("Passwd", "password123456789")];
     let response = server.post("/accounts/ClientLogin").form(&form).await;
     response.assert_status_ok();
 
@@ -2936,9 +2936,9 @@ async fn test_change_password_form_success() {
     let response = server
         .post("/user-settings/password")
         .form(&json!({
-            "current_password": "password123",
-            "new_password": "newpassword456",
-            "confirm_password": "newpassword456",
+            "current_password": "password123456789",
+            "new_password": "newpassword456789",
+            "confirm_password": "newpassword456789",
         }))
         .await;
 
@@ -2955,8 +2955,8 @@ async fn test_change_password_form_mismatch() {
     let response = server
         .post("/user-settings/password")
         .form(&json!({
-            "current_password": "password123",
-            "new_password": "newpassword456",
+            "current_password": "password123456789",
+            "new_password": "newpassword456789",
             "confirm_password": "differentvalue",
         }))
         .await;
@@ -3282,9 +3282,9 @@ async fn test_password_change_revokes_api_tokens() {
         .server
         .post("/user-settings/password")
         .form(&json!({
-            "current_password": "password123",
-            "new_password": "newpassword456",
-            "confirm_password": "newpassword456",
+            "current_password": "password123456789",
+            "new_password": "newpassword456789",
+            "confirm_password": "newpassword456789",
         }))
         .await;
     response.assert_status(StatusCode::SEE_OTHER);
@@ -3316,8 +3316,8 @@ async fn test_password_change_is_rate_limited() {
             .post("/user-settings/password")
             .form(&json!({
                 "current_password": "wrongpassword",
-                "new_password": "newpassword456",
-                "confirm_password": "newpassword456",
+                "new_password": "newpassword456789",
+                "confirm_password": "newpassword456789",
             }))
             .await;
     }
@@ -3325,9 +3325,9 @@ async fn test_password_change_is_rate_limited() {
     app.server
         .post("/user-settings/password")
         .form(&json!({
-            "current_password": "password123",
-            "new_password": "newpassword456",
-            "confirm_password": "newpassword456",
+            "current_password": "password123456789",
+            "new_password": "newpassword456789",
+            "confirm_password": "newpassword456789",
         }))
         .await;
 
@@ -3338,7 +3338,7 @@ async fn test_password_change_is_rate_limited() {
         .unwrap()
         .expect("user must exist");
     assert!(
-        rdrs::auth::verify_password("password123", &user.password_hash),
+        rdrs::auth::verify_password("password123456789", &user.password_hash),
         "a throttled request must not have changed the password"
     );
 
@@ -3347,7 +3347,7 @@ async fn test_password_change_is_rate_limited() {
     let login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "testuser", "password": "password123" }))
+        .json(&json!({ "username": "testuser", "password": "password123456789" }))
         .await;
     assert_ne!(
         login.status_code(),
@@ -3404,7 +3404,7 @@ async fn setup_admin_user(server: &mut TestServer) {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -3413,7 +3413,7 @@ async fn setup_admin_user(server: &mut TestServer) {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     login.assert_status_ok();
@@ -3426,7 +3426,7 @@ async fn register_target_user(server: &TestServer) {
         .post("/api/register")
         .json(&json!({
             "username": "target",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -3480,7 +3480,7 @@ async fn test_update_status_form_disables_user() {
         .post("/api/session")
         .json(&json!({
             "username": "target",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     login_resp.assert_status_forbidden();
@@ -4043,13 +4043,13 @@ async fn test_entry_fragment_renders_reading_pane() {
     // Register and log in as alice.
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_frag", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_frag", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_frag", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_frag", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4183,13 +4183,13 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "doc_nav", "password": "pw123456" }))
+        .json(&json!({ "username": "doc_nav", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "doc_nav", "password": "pw123456" }))
+        .json(&json!({ "username": "doc_nav", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4273,13 +4273,13 @@ async fn test_entry_fragment_document_nav_preserves_referer_scope() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "ref_scope", "password": "pw123456" }))
+        .json(&json!({ "username": "ref_scope", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "ref_scope", "password": "pw123456" }))
+        .json(&json!({ "username": "ref_scope", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4338,13 +4338,13 @@ async fn test_entry_fragment_404_for_other_user() {
     // Register alice (will be logged in).
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_404", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_404", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_404", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_404", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4411,13 +4411,13 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
     // Register and log in as alice.
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_star", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_star", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_star", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_star", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4504,13 +4504,13 @@ async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_unstar", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_unstar", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_unstar", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_unstar", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4594,13 +4594,13 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
     // Register and log in as alice.
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_read", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_read", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_read", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_read", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4684,13 +4684,13 @@ async fn test_unread_entry_form_is_idempotent_mark_unread() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_unr", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_unr", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_unr", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_unr", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4782,13 +4782,13 @@ async fn test_star_entry_form_404_for_other_user() {
     // Register + login alice (session cookie is now alice's).
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_s404", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_s404", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_s404", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_s404", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4865,13 +4865,13 @@ async fn test_read_entry_form_404_for_other_user() {
     // Register + login alice (session cookie is now alice's).
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_r404", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_r404", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_r404", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_r404", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4949,13 +4949,13 @@ async fn test_summarize_entry_form_renders_summary_pending_fragment() {
     // Register and log in as alice.
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_sum", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_sum", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_sum", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_sum", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -5030,13 +5030,13 @@ async fn test_entries_load_more_returns_row_fragments() {
     // Register and log in as alice.
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_lm", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_lm", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_lm", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_lm", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -6162,4 +6162,198 @@ async fn test_existing_security_header_is_not_overwritten() {
         "default-src 'none'"
     );
     assert_eq!(response.header(header::X_CONTENT_TYPE_OPTIONS), "nosniff");
+}
+
+// ============================================================================
+// Admin re-authentication (OWASP: require re-authentication for sensitive
+// features). Every route that changes another account is behind the same
+// `REAUTH_WINDOW_MINUTES` window that already guards passkey enrolment.
+// ============================================================================
+
+/// The four account-changing admin actions must all refuse a session whose
+/// confirmation window has lapsed — and refuse it *before* touching the
+/// account, so a picked-up session cannot promote, disable, delete or take
+/// over anyone while the real admin is away from the keyboard.
+#[tokio::test]
+async fn admin_account_changes_require_recent_authentication() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    register_target_user(&app.server).await;
+
+    stale_authentication(&app.db).await;
+
+    for (path, form) in [
+        ("/admin/users/2/role", Some(json!({ "role": "admin" }))),
+        ("/admin/users/2/status", Some(json!({ "disabled": "true" }))),
+        ("/admin/users/2/masquerade", None),
+        ("/admin/users/2/delete", None),
+    ] {
+        let request = app.server.post(path);
+        let response = match form {
+            Some(body) => request.form(&body).await,
+            None => request.await,
+        };
+        response.assert_status(StatusCode::SEE_OTHER);
+        assert_eq!(response.header(header::LOCATION), "/admin", "for {path}");
+    }
+
+    // Nothing happened: still a plain user, still enabled, still there.
+    let target = rdrs::models::user::find_by_id(&app.db, 2)
+        .await
+        .unwrap()
+        .expect("the target account must survive a refused delete");
+    assert_eq!(target.role, rdrs::Role::User);
+    assert!(!target.is_disabled());
+
+    // And the admin was not dragged into a masquerade on the way.
+    let admin = rdrs::models::user::find_by_id(&app.db, 1).await.unwrap();
+    assert!(admin.is_some_and(|u| u.is_admin()));
+}
+
+#[tokio::test]
+async fn confirming_the_password_reopens_the_admin_window() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    register_target_user(&app.server).await;
+    stale_authentication(&app.db).await;
+
+    let confirmed = app
+        .server
+        .post("/admin/reauth")
+        .form(&json!({ "password": "password123456789" }))
+        .await;
+    confirmed.assert_status(StatusCode::SEE_OTHER);
+
+    // The action that would have been refused a moment ago now lands.
+    app.server
+        .post("/admin/users/2/role")
+        .form(&json!({ "role": "admin" }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    let target = rdrs::models::user::find_by_id(&app.db, 2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(target.role, rdrs::Role::Admin);
+}
+
+#[tokio::test]
+async fn a_wrong_password_does_not_reopen_the_admin_window() {
+    // The confirmation is a real credential check, not a click-through: a
+    // session that cannot produce the password stays locked out of account
+    // changes. Both responses are the same 303 to /admin (the flash cookie
+    // carries the difference), so the assertion that matters is the account
+    // state afterwards.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    register_target_user(&app.server).await;
+    stale_authentication(&app.db).await;
+
+    app.server
+        .post("/admin/reauth")
+        .form(&json!({ "password": "not-the-password" }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    app.server
+        .post("/admin/users/2/role")
+        .form(&json!({ "role": "admin" }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    let target = rdrs::models::user::find_by_id(&app.db, 2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        target.role,
+        rdrs::Role::User,
+        "a failed confirmation must not let the change through"
+    );
+}
+
+/// Ending a masquerade must never need a password. While masquerading, the
+/// password that would be asked for belongs to the *impersonated* account, so
+/// requiring one would strand the admin inside the impersonation — and
+/// stepping back down is a de-escalation, not a privileged act.
+#[tokio::test]
+async fn stopping_a_masquerade_never_requires_reauthentication() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    register_target_user(&app.server).await;
+
+    let started = app.server.post("/admin/users/2/masquerade").await;
+    started.assert_status(StatusCode::SEE_OTHER);
+    common::apply_csrf(&mut app.server, &started);
+
+    stale_authentication(&app.db).await;
+
+    app.server
+        .post("/api/admin/unmasquerade")
+        .await
+        .assert_status_ok();
+}
+
+#[tokio::test]
+async fn the_admin_page_asks_for_confirmation_only_once_the_window_lapses() {
+    // The form is rendered ahead of time rather than left for the POST to
+    // discover, so an admin is told the window lapsed *before* clicking
+    // "delete" rather than after.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+
+    let fresh = app.server.get("/admin").await;
+    fresh.assert_status_ok();
+    assert!(
+        !fresh.text().contains("admin-reauth-form"),
+        "a session inside the window has nothing to confirm"
+    );
+
+    stale_authentication(&app.db).await;
+
+    let stale = app.server.get("/admin").await;
+    stale.assert_status_ok();
+    assert!(
+        stale.text().contains("admin-reauth-form"),
+        "a lapsed window must surface the confirmation form"
+    );
+}
+
+#[tokio::test]
+async fn password_fields_advertise_the_server_side_policy() {
+    // The browser's own `minlength`/`maxlength` hints are generated from the
+    // same constants the handler validates against, so the two cannot drift
+    // into a form that submits only to be rejected (or vice versa).
+    // Two servers on purpose: loading a page first mints an anonymous CSRF
+    // cookie, and the synchronizer-token guard then expects a matching header
+    // on the registration POST that `setup_admin_user` sends. Keeping the page
+    // read and the sign-up on separate jars keeps this test about the form
+    // attributes rather than about CSRF.
+    let register_only = create_test_app(default_test_config()).await;
+    let register = register_only.server.get("/register").await;
+    register.assert_status_ok();
+    let body = register.text();
+    assert!(body.contains(&format!(
+        "minlength=\"{}\"",
+        rdrs::auth::PASSWORD_MIN_LENGTH
+    )));
+    assert!(body.contains(&format!(
+        "maxlength=\"{}\"",
+        rdrs::auth::PASSWORD_MAX_LENGTH
+    )));
+
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    let settings = app.server.get("/user-settings").await;
+    settings.assert_status_ok();
+    let body = settings.text();
+    assert!(body.contains(&format!(
+        "minlength=\"{}\"",
+        rdrs::auth::PASSWORD_MIN_LENGTH
+    )));
+    assert!(body.contains(&format!(
+        "maxlength=\"{}\"",
+        rdrs::auth::PASSWORD_MAX_LENGTH
+    )));
 }

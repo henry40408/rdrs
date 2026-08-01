@@ -461,12 +461,12 @@ async fn test_logout_password_session_reports_via_forward_auth_false() {
 
     server
         .post("/api/register")
-        .json(&json!({ "username": "judy", "password": "password123" }))
+        .json(&json!({ "username": "judy", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let login = server
         .post("/api/session")
-        .json(&json!({ "username": "judy", "password": "password123" }))
+        .json(&json!({ "username": "judy", "password": "password123456789" }))
         .await;
     login.assert_status_ok();
     apply_csrf(&mut server, &login);

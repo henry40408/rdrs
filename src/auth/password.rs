@@ -46,6 +46,61 @@ static DUMMY_HASH: LazyLock<String> = LazyLock::new(|| {
     hash_password(filler.as_str()).expect("hashing with valid params cannot fail")
 });
 
+/// Shortest password rdrs will accept for a *new* credential.
+///
+/// NIST SP800-63B, which OWASP's Authentication Cheat Sheet follows, calls
+/// anything under 15 characters weak when the account has no second factor.
+/// rdrs is in exactly that case: passkeys here *replace* the password rather
+/// than supplement it, so an account protected by a password is protected by
+/// the password alone.
+///
+/// Only new credentials are measured. Existing passwords keep working at
+/// whatever length they were set — the same cheat sheet is explicit that
+/// verifiers should not force rotation without a reason to believe a
+/// credential is compromised, and "we raised the minimum" is not one.
+pub const PASSWORD_MIN_LENGTH: usize = 15;
+
+/// Longest password rdrs will accept.
+///
+/// The cheat sheet asks for a documented maximum of at least 64 so passphrases
+/// fit, and warns against long-password denial of service. Argon2's cost is
+/// dominated by its memory parameters rather than input length, so this is a
+/// generous bound rather than a tight one — but an explicit limit is still
+/// better than the request-body limit deciding it by accident.
+pub const PASSWORD_MAX_LENGTH: usize = 128;
+
+/// Check a proposed password against the length policy.
+///
+/// Deliberately the *whole* policy: no composition rules, no required
+/// character classes, no rejected symbols. The cheat sheet is explicit that
+/// length and blocklists are what help, and that composition rules mostly
+/// push users toward predictable substitutions. Unicode and whitespace are
+/// welcome.
+///
+/// Lengths are counted in characters, not bytes. A byte count would let a
+/// 5-character CJK passphrase satisfy a 15-byte minimum while a 15-character
+/// ASCII one barely passed — the same rule producing very different strength
+/// depending on the writing system.
+pub fn validate_password_strength(password: &str) -> AppResult<()> {
+    let length = password.chars().count();
+
+    if length < PASSWORD_MIN_LENGTH {
+        return Err(AppError::Validation(format!(
+            "Password must be at least {PASSWORD_MIN_LENGTH} characters"
+        )));
+    }
+    if length > PASSWORD_MAX_LENGTH {
+        // Rejected, never truncated: silently cutting a password would make
+        // the stored credential differ from the one the user believes they
+        // chose, and would quietly weaken a long passphrase.
+        return Err(AppError::Validation(format!(
+            "Password must be at most {PASSWORD_MAX_LENGTH} characters"
+        )));
+    }
+
+    Ok(())
+}
+
 pub fn hash_password(password: &str) -> AppResult<String> {
     let salt = SaltString::generate(&mut OsRng);
 
@@ -113,6 +168,57 @@ mod tests {
     #[test]
     fn test_invalid_hash() {
         assert!(!verify_password("password", "invalid_hash"));
+    }
+
+    #[test]
+    fn password_policy_measures_length_and_nothing_else() {
+        assert!(validate_password_strength(&"a".repeat(PASSWORD_MIN_LENGTH)).is_ok());
+        assert!(validate_password_strength(&"a".repeat(PASSWORD_MIN_LENGTH - 1)).is_err());
+        assert!(validate_password_strength(&"a".repeat(PASSWORD_MAX_LENGTH)).is_ok());
+        assert!(validate_password_strength(&"a".repeat(PASSWORD_MAX_LENGTH + 1)).is_err());
+
+        // No composition rules: a long run of one character, spaces, symbols
+        // and emoji are all acceptable. The cheat sheet asks for exactly this
+        // — length and blocklists, not character-class requirements.
+        assert!(validate_password_strength("correct horse battery staple").is_ok());
+        assert!(validate_password_strength("            ␣␣␣ tabs and spaces").is_ok());
+        assert!(validate_password_strength("🔐🔐🔐🔐🔐🔐🔐🔐🔐🔐🔐🔐🔐🔐🔐").is_ok());
+    }
+
+    #[test]
+    fn password_length_is_counted_in_characters_not_bytes() {
+        // 15 CJK characters are 45 bytes; 14 are 42 — comfortably over a
+        // byte-based minimum despite being shorter than the policy allows.
+        // Counting characters is what makes the rule mean the same thing in
+        // every script.
+        let fourteen = "密".repeat(PASSWORD_MIN_LENGTH - 1);
+        assert!(
+            fourteen.len() > PASSWORD_MIN_LENGTH,
+            "premise: bytes exceed"
+        );
+        assert!(validate_password_strength(&fourteen).is_err());
+
+        assert!(validate_password_strength(&"密".repeat(PASSWORD_MIN_LENGTH)).is_ok());
+        // ...and the maximum must not punish them for the same reason.
+        assert!(validate_password_strength(&"密".repeat(PASSWORD_MAX_LENGTH)).is_ok());
+    }
+
+    #[test]
+    fn an_over_long_password_is_rejected_not_truncated() {
+        // Truncating would store a credential the user never chose, and would
+        // silently discard the strength of a long passphrase.
+        let long = "a".repeat(PASSWORD_MAX_LENGTH + 100);
+        assert!(validate_password_strength(&long).is_err());
+
+        // Nothing in the hashing path truncates either: two passphrases that
+        // share their first PASSWORD_MAX_LENGTH characters must not verify
+        // against each other's hash.
+        let hash = hash_password(&long).unwrap();
+        assert!(verify_password(&long, &hash));
+        assert!(!verify_password(
+            &"a".repeat(PASSWORD_MAX_LENGTH + 99),
+            &hash
+        ));
     }
 
     #[test]

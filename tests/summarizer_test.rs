@@ -41,14 +41,14 @@ async fn create_test_app(config: Config) -> TestApp {
 }
 
 async fn login(app: &mut TestApp, username: &str) -> i64 {
-    let hash = auth::hash_password("password123").unwrap();
+    let hash = auth::hash_password("password123456789").unwrap();
     let u = user::create_user(&app.db, username, &hash, Role::User)
         .await
         .unwrap();
     let login = app
         .server
         .post("/api/session")
-        .json(&serde_json::json!({"username": username, "password": "password123"}))
+        .json(&serde_json::json!({"username": username, "password": "password123456789"}))
         .await;
     common::apply_csrf(&mut app.server, &login);
     u.id

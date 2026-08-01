@@ -57,7 +57,7 @@ async fn cross_site_post_is_rejected_before_the_handler() {
     let res = server
         .post("/api/register")
         .add_header("sec-fetch-site", "cross-site")
-        .json(&serde_json::json!({ "username": "u", "password": "password123" }))
+        .json(&serde_json::json!({ "username": "u", "password": "password123456789" }))
         .await;
     res.assert_status(StatusCode::FORBIDDEN);
 }
@@ -69,7 +69,7 @@ async fn cross_origin_via_origin_header_is_rejected() {
         .post("/api/register")
         .add_header("origin", "https://evil.example.com")
         .add_header("host", "app.example.com")
-        .json(&serde_json::json!({ "username": "u", "password": "password123" }))
+        .json(&serde_json::json!({ "username": "u", "password": "password123456789" }))
         .await;
     res.assert_status(StatusCode::FORBIDDEN);
 }
@@ -82,7 +82,7 @@ async fn same_origin_post_reaches_the_handler() {
     let res = server
         .post("/api/register")
         .add_header("sec-fetch-site", "same-origin")
-        .json(&serde_json::json!({ "username": "u", "password": "password123" }))
+        .json(&serde_json::json!({ "username": "u", "password": "password123456789" }))
         .await;
     res.assert_status(StatusCode::CREATED);
 }
@@ -106,7 +106,7 @@ async fn non_browser_client_without_headers_reaches_the_handler() {
     // CSRF-exposed). The guard lets it through; registration succeeds.
     let res = server
         .post("/api/register")
-        .json(&serde_json::json!({ "username": "u", "password": "password123" }))
+        .json(&serde_json::json!({ "username": "u", "password": "password123456789" }))
         .await;
     res.assert_status(StatusCode::CREATED);
 }
@@ -189,7 +189,7 @@ async fn secure_anonymous_session_round_trips_and_does_not_remint_csrf_cookie() 
         .post("/api/register")
         .add_header("sec-fetch-site", "same-origin")
         .add_header("x-csrf-token", csrf.value())
-        .json(&serde_json::json!({ "username": "u", "password": "password123" }))
+        .json(&serde_json::json!({ "username": "u", "password": "password123456789" }))
         .await;
     register.assert_status(StatusCode::CREATED);
 

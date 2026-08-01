@@ -140,6 +140,10 @@ pub fn create_router(state: AppState) -> Router {
             post(handlers::admin::stop_masquerade),
         )
         // Form-action POST endpoints for the SSR /admin page (PR-5 T1).
+        // `/admin/reauth` re-opens the confirmation window the four
+        // account-changing routes below require; it is the form-encoded twin
+        // of `POST /api/session/reauth`, which only `passkey.js` can drive.
+        .route("/admin/reauth", post(handlers::admin::reauth_form))
         .route(
             "/admin/users/{id}/role",
             post(handlers::admin::update_role_form),

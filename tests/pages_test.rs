@@ -53,12 +53,12 @@ async fn create_test_app(config: Config) -> TestApp {
 
 /// Setup admin and regular user
 async fn setup_users(db: &Db) -> (i64, i64) {
-    let password_hash = rdrs::auth::hash_password("password123").unwrap();
+    let password_hash = rdrs::auth::hash_password("password123456789").unwrap();
     let admin = rdrs::models::user::create_user(db, "admin", &password_hash, Role::Admin)
         .await
         .unwrap();
 
-    let password_hash = rdrs::auth::hash_password("password123").unwrap();
+    let password_hash = rdrs::auth::hash_password("password123456789").unwrap();
     let user = rdrs::models::user::create_user(db, "user", &password_hash, Role::User)
         .await
         .unwrap();
@@ -71,7 +71,7 @@ async fn login(server: &mut TestServer, username: &str) {
         .post("/api/session")
         .json(&json!({
             "username": username,
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     login.assert_status_ok();
@@ -694,7 +694,7 @@ async fn test_register_page_shows_disabled_after_first_user_in_single_mode() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1134,13 +1134,13 @@ async fn test_category_entries_page() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_ce", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_ce", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_ce", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_ce", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -1290,13 +1290,13 @@ async fn test_category_entries_page_not_found() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_cnf", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_cnf", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_cnf", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_cnf", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -1325,14 +1325,14 @@ async fn test_category_entries_page_other_user() {
     // Register alice (owner of the category)
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_cou", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_cou", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
 
     // Register bob (the cross-tenant user)
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "bob_cou", "password": "pw123456" }))
+        .json(&json!({ "username": "bob_cou", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
 
@@ -1352,7 +1352,7 @@ async fn test_category_entries_page_other_user() {
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "bob_cou", "password": "pw123456" }))
+        .json(&json!({ "username": "bob_cou", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -1376,13 +1376,13 @@ async fn test_category_entries_page_load_more_fragment() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_cl", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_cl", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_cl", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_cl", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -1453,13 +1453,13 @@ async fn test_category_mark_read_scoped_search() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_mr", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_mr", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_mr", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_mr", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -1561,13 +1561,13 @@ async fn test_feed_mark_read_scoped_search() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_fmr", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_fmr", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_fmr", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_fmr", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -1674,13 +1674,13 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_mc", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_mc", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_mc", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_mc", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -1790,13 +1790,13 @@ async fn test_feed_entries_page() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_fe", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_fe", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_fe", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_fe", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -1941,13 +1941,13 @@ async fn test_feed_entries_page_status_filter() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_fst", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_fst", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_fst", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_fst", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -2122,13 +2122,13 @@ async fn test_feed_entries_page_not_found() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_fnf", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_fnf", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_fnf", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_fnf", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -2154,14 +2154,14 @@ async fn test_feed_entries_page_other_user() {
     // Register alice (owner of the feed)
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_fou", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_fou", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
 
     // Register bob (the cross-tenant user)
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "bob_fou", "password": "pw123456" }))
+        .json(&json!({ "username": "bob_fou", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
 
@@ -2196,7 +2196,7 @@ async fn test_feed_entries_page_other_user() {
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "bob_fou", "password": "pw123456" }))
+        .json(&json!({ "username": "bob_fou", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -2216,13 +2216,13 @@ async fn test_feed_entries_page_load_more_fragment() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_fl", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_fl", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_fl", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_fl", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -2713,13 +2713,13 @@ async fn test_unread_page_renders_entry_rows() {
     // Register and login as alice
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_unread", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_unread", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_unread", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_unread", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -2837,13 +2837,13 @@ async fn test_entries_page_renders_ssr_rows() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_entries", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_entries", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_entries", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_entries", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -2936,13 +2936,13 @@ async fn test_read_entries_page_renders_ssr_rows() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_read", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_read", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_read", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_read", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -3047,13 +3047,13 @@ async fn test_starred_entries_page_renders_ssr_rows() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_starred", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_starred", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_starred", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_starred", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -3160,13 +3160,13 @@ async fn test_summarized_entries_page_renders_ssr_rows() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_summarized", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_summarized", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_summarized", "password": "pw123456" }))
+        .json(&json!({ "username": "alice_summarized", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -3286,13 +3286,13 @@ async fn test_unread_load_more_uses_keyset_cursor() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "kuser", "password": "pw123456" }))
+        .json(&json!({ "username": "kuser", "password": "pw123456789012345" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "kuser", "password": "pw123456" }))
+        .json(&json!({ "username": "kuser", "password": "pw123456789012345" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -3397,13 +3397,13 @@ async fn test_settings_page_groups_and_forward_auth() {
 
     app.server
         .post("/api/register")
-        .json(&serde_json::json!({ "username": "admin", "password": "password123" }))
+        .json(&serde_json::json!({ "username": "admin", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&serde_json::json!({ "username": "admin", "password": "password123" }))
+        .json(&serde_json::json!({ "username": "admin", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
