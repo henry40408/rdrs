@@ -2476,6 +2476,33 @@ async fn test_admin_page_renders_ssr_content() {
     assert!(body.contains("<th>Username</th>"));
     // The admin user themselves shows the (you) marker.
     assert!(body.contains("(you)"));
+
+    // Multi-user (the test default), so the create form is the section's body.
+    assert!(body.contains("data-testid=\"admin-create-user-form\""));
+    assert!(!body.contains("data-testid=\"admin-create-user-unavailable\""));
+}
+
+#[tokio::test]
+async fn test_admin_page_explains_why_account_creation_is_unavailable() {
+    // Single-user instances used to hide the section outright, which left an
+    // admin looking for a button that was never rendered. The heading stays and
+    // the body says which variable turns it on.
+    let mut app = create_test_app(Config {
+        multi_user_enabled: false,
+        ..default_test_config()
+    })
+    .await;
+    setup_users(&app.db).await;
+    login(&mut app.server, "admin").await;
+
+    let response = app.server.get("/admin").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(body.contains("<h2>Add an account</h2>"));
+    assert!(body.contains("data-testid=\"admin-create-user-unavailable\""));
+    assert!(body.contains("RDRS_MULTI_USER_ENABLED=true"));
+    assert!(!body.contains("data-testid=\"admin-create-user-form\""));
 }
 
 // ============================================================================

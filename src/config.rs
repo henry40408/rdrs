@@ -342,7 +342,8 @@ fn flag(get: &impl Fn(&str) -> Option<String>, key: &str) -> bool {
 /// exactly what makes them collide in a shared compose file.
 pub const RENAMED_VARS: &[(&str, &str)] = &[
     ("SERVER_BIND", "RDRS_SERVER_BIND"),
-    ("SIGNUP_ENABLED", "RDRS_SIGNUP_ENABLED"),
+    // `SIGNUP_ENABLED` is deliberately absent — see `RETIRED_VARS`. Renaming it
+    // here would only route the operator to a name that is then refused too.
     ("MULTI_USER_ENABLED", "RDRS_MULTI_USER_ENABLED"),
     ("IMAGE_PROXY_SECRET", "RDRS_SECRET"),
     ("USER_AGENT", "RDRS_USER_AGENT"),
@@ -374,12 +375,21 @@ pub const RENAMED_VARS: &[(&str, &str)] = &[
 /// believing a public registration form exists when the endpoint has been
 /// removed. Failing once, loudly, is the only outcome that cannot be
 /// misunderstood.
-pub const RETIRED_VARS: &[(&str, &str)] = &[(
-    "RDRS_SIGNUP_ENABLED",
-    "self-service registration was removed; an admin now creates accounts from \
+///
+/// The pre-prefix `SIGNUP_ENABLED` is listed here rather than in
+/// [`RENAMED_VARS`], even though it *was* also renamed: [`reject_legacy_vars`]
+/// runs first, so a rename entry would send the operator to
+/// `RDRS_SIGNUP_ENABLED` only for the next boot to refuse that too. One
+/// refusal, naming the feature that went away, is the whole point.
+pub const RETIRED_VARS: &[(&str, &str)] = &[
+    ("RDRS_SIGNUP_ENABLED", SIGNUP_RETIRED),
+    ("SIGNUP_ENABLED", SIGNUP_RETIRED),
+];
+
+/// Why both spellings of the signup flag no longer configure anything.
+const SIGNUP_RETIRED: &str = "self-service registration was removed; an admin now creates accounts from \
      /admin and hands out a one-time link. The first account is still created \
-     at /setup on a fresh install",
-)];
+     at /setup on a fresh install";
 
 /// Refuse to start when a retired variable still carries a value.
 ///
@@ -611,12 +621,6 @@ impl Config {
         Ok(())
     }
 
-    /// Whether a new account may be registered given the current user count.
-    ///
-    /// The very first account is always allowed so a fresh install (including a
-    /// source build that never set `RDRS_SIGNUP_ENABLED`) can always create its
-    /// initial admin. Every subsequent account requires both `RDRS_SIGNUP_ENABLED`
-    /// and `RDRS_MULTI_USER_ENABLED`.
     /// Whether the one-time first-run setup page is still open.
     ///
     /// True only while the instance has no accounts at all. There is nothing
@@ -1199,6 +1203,24 @@ mod tests {
 
         // Blank is not "set": an empty value configured nothing before either.
         assert!(Config::from_map(|k| (k == "RDRS_SIGNUP_ENABLED").then(String::new)).is_ok());
+    }
+
+    #[test]
+    fn the_pre_prefix_signup_flag_is_refused_once() {
+        // An operator upgrading from the pre-prefix era must not be told to
+        // rename SIGNUP_ENABLED to a variable that the next boot then rejects.
+        // The single refusal names the feature that went away.
+        let err = Config::from_map(|k| (k == "SIGNUP_ENABLED").then(|| "true".to_string()))
+            .expect_err("the pre-prefix signup flag must refuse startup");
+        assert!(
+            err.contains("no longer configure anything"),
+            "it must be refused as retired, not as renamed: {err}"
+        );
+        assert!(
+            !err.contains("-> RDRS_SIGNUP_ENABLED"),
+            "it must not point at a name that is refused too: {err}"
+        );
+        assert!(err.contains("/admin"), "{err}");
     }
 
     #[test]

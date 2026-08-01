@@ -148,7 +148,7 @@ the version string does not change between working-tree edits.
 Loads settings from environment variables:
 - `DATABASE_URL` - Database backend: a file path or `sqlite://` URL (SQLite, the zero-config default) or a `postgres://` URL (PostgreSQL); chosen once at startup
 - `SERVER_PORT` - HTTP port
-- `RDRS_SIGNUP_ENABLED` / `RDRS_MULTI_USER_ENABLED` - Registration settings
+- `RDRS_MULTI_USER_ENABLED` - Whether an admin may create accounts beyond the first; there is no self-service sign-up, and `RDRS_SIGNUP_ENABLED` is retired and refuses startup
 - `RDRS_SECRET` - Root HMAC key for every signature rdrs produces (session cookies, image-proxy URLs, GReader post token), each domain-separated in `secret.rs`
 - `RDRS_AUTH_PROXY_HEADER` - Header name carrying the username from a forward-auth proxy; empty disables the feature
 - `RDRS_TRUSTED_PROXY_NETWORKS` - Comma-separated CIDRs/IPs whose TCP peer is allowed to supply the identity header; required when `RDRS_AUTH_PROXY_HEADER` is set

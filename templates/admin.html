@@ -39,9 +39,16 @@
                 </section>
                 {% endif %}
 
-                {% if can_create_account %}
                 <section class="admin-create-account">
                     <h2>Add an account</h2>
+                    {% if !can_create_account %}
+                    {# Kept rather than hidden. `can_create_account` is false for
+                       exactly one reason once an account exists — a single-user
+                       instance — so the section can say so instead of leaving an
+                       admin hunting for a button that was never rendered. The
+                       wording matches what POST /admin/users answers. #}
+                    <p class="muted" data-testid="admin-create-user-unavailable">This instance is single-user. Set <code>RDRS_MULTI_USER_ENABLED=true</code> to add accounts.</p>
+                    {% else %}
                     {# There is no public sign-up. The account is created here and
                        the person it belongs to sets their own password through a
                        one-time link, which is shown once on the flash below. #}
@@ -60,8 +67,8 @@
                         </div>
                         <button type="submit" data-testid="admin-create-user-submit">Create account</button>
                     </form>
+                    {% endif %}
                 </section>
-                {% endif %}
 
                 <table class="mobile-cards admin-users-table" data-testid="admin-users-table">
                     <thead>
