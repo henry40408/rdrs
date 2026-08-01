@@ -1877,12 +1877,19 @@ td input[type="text"] {
 .invite-callout__row {
     display: flex;
     gap: var(--space-3);
-    align-items: center;
+    /* `stretch` (the flex default) rather than `center`: it makes the field and
+       the button share the row's height *by construction*, whichever of them
+       is taller. Relying on the two computing the same intrinsic height
+       instead — same padding, same min-height — holds only as long as every
+       engine agrees on how an <input> and a <button> lay their content out,
+       and they do not. The min-height below is then a floor for the row, not
+       the thing that aligns it. */
+    align-items: stretch;
     flex-wrap: wrap;
 }
 
-/* Matches the create-account strip: the button carries its own height, so the
-   field has to be told to match rather than sizing itself from its font. */
+/* WCAG 2.5.5 tap-target floor, same as the create-account strip. With
+   `stretch` above, whichever control is taller lifts the other to match. */
 .invite-callout__row input[type="text"],
 .invite-callout__row button {
     min-height: var(--touch-min);
