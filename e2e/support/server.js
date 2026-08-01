@@ -64,18 +64,17 @@ export async function spawnRdrs({ extraEnv = {} } = {}) {
       ...process.env,
       DATABASE_URL: dbPath,
       RDRS_SERVER_BIND: `127.0.0.1:${port}`,
-      RDRS_SIGNUP_ENABLED: "true",
       RDRS_MULTI_USER_ENABLED: "true",
       RUST_LOG: "warn",
       // This is always a throwaway test server. Use minimal Argon2 cost so the
       // register/login each scenario performs costs microseconds instead of
       // hundreds of ms — roughly halves the suite. Never set in production.
       RDRS_FAST_HASH: "1",
-      // Each scenario registers and signs in a fresh user, and every worker's
+      // Each scenario creates and signs in a fresh account, and every worker's
       // server sees them all arrive from 127.0.0.1 — one shared rate-limit
       // bucket. Leaving the limiter on makes the 6th scenario in a worker fail
-      // with "Register failed (429)". The limiter has its own unit and
-      // integration coverage; the browser suite is not where it is exercised.
+      // with a 429. The limiter has its own unit and integration coverage; the
+      // browser suite is not where it is exercised.
       RDRS_LOGIN_RATE_LIMIT_ATTEMPTS: "0",
       // Scenarios seed straight into SQLite (support/seed.js), which never runs
       // the handlers carrying the sidebar cache's bust hooks. A page render

@@ -22,23 +22,27 @@ Given("I am signed in", async ({ page, api, currentUser, serverUrl }) => {
   await page.waitForURL(`${serverUrl}/`);
 });
 
-When("I register with matching passwords", async ({ page, currentUser, serverUrl }) => {
-  await page.goto(`${serverUrl}/register`);
-  await page.getByTestId("register-username").fill(currentUser.username);
-  await page.getByTestId("register-password").fill(currentUser.password);
-  await page.getByTestId("register-confirm-password").fill(currentUser.password);
-  await page.getByTestId("register-submit").click();
+// The account exists but has no password yet; `invitePath` is the one-time
+// link an admin would copy off the page and send.
+Given("an admin has created an account for me", async ({ api, currentUser }) => {
+  currentUser.invitePath = await api.inviteAccount(currentUser.username);
 });
 
-When("I register with mismatched passwords", async ({ page, currentUser, serverUrl }) => {
-  await page.goto(`${serverUrl}/register`);
-  await page.getByTestId("register-username").fill(currentUser.username);
-  await page.getByTestId("register-password").fill(currentUser.password);
-  // Long enough to clear the field's own minlength, so the browser submits and
-  // the page's mismatch check is what rejects it — a short value would be
-  // stopped by constraint validation first and never exercise this scenario.
-  await page.getByTestId("register-confirm-password").fill("badger-kestrel-19-plume");
-  await page.getByTestId("register-submit").click();
+When("I open my one-time link and choose a password", async ({ page, currentUser, serverUrl }) => {
+  await page.goto(`${serverUrl}${currentUser.invitePath}`);
+  await page.getByTestId("invite-password").fill(currentUser.password);
+  await page.getByTestId("invite-confirm-password").fill(currentUser.password);
+  await page.getByTestId("invite-submit").click();
+});
+
+When("I open my one-time link and mistype the confirmation", async ({ page, currentUser, serverUrl }) => {
+  await page.goto(`${serverUrl}${currentUser.invitePath}`);
+  await page.getByTestId("invite-password").fill(currentUser.password);
+  // Long enough to clear the field's own minlength, so the form submits and the
+  // server's mismatch check is what rejects it — a short value would be stopped
+  // by constraint validation first and never exercise this scenario.
+  await page.getByTestId("invite-confirm-password").fill("badger-kestrel-19-plume");
+  await page.getByTestId("invite-submit").click();
 });
 
 When("I sign in with my credentials", async ({ page, currentUser }) => {
@@ -57,7 +61,7 @@ When("I sign in with the wrong password", async ({ page, currentUser, serverUrl 
 Then("I am redirected to the login page with a success message", async ({ page, serverUrl }) => {
   await page.waitForURL(`${serverUrl}/login`);
   await expect(page.getByTestId("flash-message")).toBeVisible();
-  await expect(page.getByTestId("flash-message")).toContainText("Registration successful");
+  await expect(page.getByTestId("flash-message")).toContainText("Password set");
 });
 
 Then("I land on the unread inbox", async ({ page, serverUrl }) => {
@@ -69,12 +73,8 @@ Then("I see a login error", async ({ page }) => {
   await expect(page.getByTestId("login-error")).toBeVisible();
 });
 
-Then("I see {string} on the register page", async ({ page }, message) => {
-  await expect(page.getByTestId("register-error")).toContainText(message);
-});
-
-Then("I am still on the register page", async ({ page }) => {
-  expect(page.url()).toContain("/register");
+Then("I see {string} on the invite page", async ({ page }, message) => {
+  await expect(page.getByTestId("invite-error")).toContainText(message);
 });
 
 Then("the sidebar does not offer the app settings link", async ({ page }) => {

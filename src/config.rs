@@ -15,7 +15,6 @@ pub const DEFAULT_USER_AGENT: &str = concat!(
 pub struct Config {
     pub database_url: String,
     pub server_bind: SocketAddr,
-    pub signup_enabled: bool,
     pub multi_user_enabled: bool,
     /// Process-wide root key backing every signature rdrs produces (session
     /// cookies, image-proxy URLs, the `GReader` post token). See [`crate::secret`]
@@ -366,6 +365,41 @@ pub const RENAMED_VARS: &[(&str, &str)] = &[
     ("LOG_FORMAT", "RDRS_LOG_FORMAT"),
 ];
 
+/// Variables that no longer configure anything, with what replaced them.
+///
+/// Distinct from [`RENAMED_VARS`]: there is no new name to move the value to,
+/// the feature itself is gone. Still a startup refusal rather than a shrug,
+/// and for a sharper reason than a rename — `RDRS_SIGNUP_ENABLED=true` reads
+/// as "anyone may sign up", and silently ignoring it would leave an operator
+/// believing a public registration form exists when the endpoint has been
+/// removed. Failing once, loudly, is the only outcome that cannot be
+/// misunderstood.
+pub const RETIRED_VARS: &[(&str, &str)] = &[(
+    "RDRS_SIGNUP_ENABLED",
+    "self-service registration was removed; an admin now creates accounts from \
+     /admin and hands out a one-time link. The first account is still created \
+     at /setup on a fresh install",
+)];
+
+/// Refuse to start when a retired variable still carries a value.
+///
+/// See [`RETIRED_VARS`] for why this is a refusal and not a warning.
+pub fn reject_retired_vars(get: &impl Fn(&str) -> Option<String>) -> Result<(), String> {
+    let stale: Vec<String> = RETIRED_VARS
+        .iter()
+        .filter(|(name, _)| nonblank(get, name).is_some())
+        .map(|(name, why)| format!("  {name}: {why}"))
+        .collect();
+    if stale.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "these environment variables no longer configure anything. Remove them and \
+         restart:\n{}",
+        stale.join("\n")
+    ))
+}
+
 /// Refuse to start when a pre-prefix variable name still carries a value.
 ///
 /// Ignoring the old name would be the worst of the three options: an operator
@@ -410,6 +444,7 @@ impl Config {
     /// than of the code being tested.
     pub fn from_map(get: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
         reject_legacy_vars(&get)?;
+        reject_retired_vars(&get)?;
 
         let (secret, secret_generated) = load_secret(get("RDRS_SECRET"));
         let server_bind = parse_server_bind(nonblank(&get, "RDRS_SERVER_BIND").as_deref())?;
@@ -455,7 +490,6 @@ impl Config {
             database_url: nonblank(&get, "DATABASE_URL")
                 .unwrap_or_else(|| "rdrs.sqlite3".to_string()),
             server_bind,
-            signup_enabled: flag(&get, "RDRS_SIGNUP_ENABLED"),
             multi_user_enabled: flag(&get, "RDRS_MULTI_USER_ENABLED"),
             secret,
             secret_generated,
@@ -583,8 +617,24 @@ impl Config {
     /// source build that never set `RDRS_SIGNUP_ENABLED`) can always create its
     /// initial admin. Every subsequent account requires both `RDRS_SIGNUP_ENABLED`
     /// and `RDRS_MULTI_USER_ENABLED`.
-    pub fn can_register(&self, user_count: i64) -> bool {
-        user_count == 0 || (self.signup_enabled && self.multi_user_enabled)
+    /// Whether the one-time first-run setup page is still open.
+    ///
+    /// True only while the instance has no accounts at all. There is nothing
+    /// to enumerate at that point — no username exists — which is what makes
+    /// an anonymous account-creating endpoint acceptable here and nowhere
+    /// else. The moment the first account exists this closes for good, and
+    /// every later account is created by an admin.
+    pub fn can_setup(&self, user_count: i64) -> bool {
+        user_count == 0
+    }
+
+    /// Whether an admin may create *another* account.
+    ///
+    /// `RDRS_MULTI_USER_ENABLED` keeps its meaning from the self-service era —
+    /// "is this a single-user deployment?" — it just governs the admin's
+    /// button now instead of a public form.
+    pub fn can_create_account(&self, user_count: i64) -> bool {
+        user_count == 0 || self.multi_user_enabled
     }
 
     /// A startup warning about `WebAuthn` relying-party config that would silently
@@ -660,7 +710,6 @@ mod tests {
         Config {
             database_url: "test.db".to_string(),
             server_bind: "127.0.0.1:8080".parse().unwrap(),
-            signup_enabled: true,
             multi_user_enabled: false,
             secret: vec![0u8; 32],
             secret_generated: false,
@@ -770,7 +819,6 @@ mod tests {
         assert_eq!(config.user_agent, DEFAULT_USER_AGENT);
         assert_eq!(config.webauthn_rp_id, "localhost");
         assert_eq!(config.webauthn_rp_name, "rdrs");
-        assert!(!config.signup_enabled);
         assert!(!config.multi_user_enabled);
         assert!(!config.cookie_secure);
         assert!(config.public_base_url.is_none());
@@ -828,7 +876,7 @@ mod tests {
     fn test_boolean_flags() {
         for raw in ["true", "TRUE", "True", "1", " true "] {
             assert!(
-                from_vars(&[("RDRS_SIGNUP_ENABLED", raw)]).signup_enabled,
+                from_vars(&[("RDRS_MULTI_USER_ENABLED", raw)]).multi_user_enabled,
                 "{raw} should enable"
             );
         }
@@ -836,7 +884,7 @@ mod tests {
         // rather than a silent downgrade (unlike RDRS_COOKIE_SECURE, which rejects).
         for raw in ["false", "0", "yes", "on", "", "  "] {
             assert!(
-                !from_vars(&[("RDRS_SIGNUP_ENABLED", raw)]).signup_enabled,
+                !from_vars(&[("RDRS_MULTI_USER_ENABLED", raw)]).multi_user_enabled,
                 "{raw} should not enable"
             );
         }
@@ -1104,28 +1152,53 @@ mod tests {
     }
 
     #[test]
-    fn test_can_register() {
-        // Single-user (signup on, multi-user off): only the first account.
+    fn setup_is_open_only_on_an_empty_instance() {
+        // The one anonymous account-creating path, and the only reason it is
+        // acceptable: with zero accounts there is no username to enumerate.
         let config = test_config();
-        assert!(config.can_register(0));
-        assert!(!config.can_register(1));
+        assert!(config.can_setup(0));
+        assert!(!config.can_setup(1));
 
-        // Multi-user: every account is allowed.
-        let config_multi = Config {
+        // Not a switch an operator can flip back on — multi-user governs the
+        // admin's create button, not this.
+        let multi = Config {
             multi_user_enabled: true,
-            ..config.clone()
-        };
-        assert!(config_multi.can_register(0));
-        assert!(config_multi.can_register(5));
-
-        // Signup disabled: the first account still works (fresh-install bootstrap),
-        // but no further accounts may register.
-        let config_disabled = Config {
-            signup_enabled: false,
             ..config
         };
-        assert!(config_disabled.can_register(0));
-        assert!(!config_disabled.can_register(1));
+        assert!(!multi.can_setup(1));
+    }
+
+    #[test]
+    fn admin_account_creation_follows_multi_user() {
+        // Single-user: the instance gets exactly the one account.
+        let config = test_config();
+        assert!(config.can_create_account(0));
+        assert!(!config.can_create_account(1));
+
+        // Multi-user: an admin may keep adding.
+        let multi = Config {
+            multi_user_enabled: true,
+            ..config
+        };
+        assert!(multi.can_create_account(0));
+        assert!(multi.can_create_account(5));
+    }
+
+    #[test]
+    fn a_retired_variable_refuses_startup() {
+        // Silently ignoring RDRS_SIGNUP_ENABLED=true would leave an operator
+        // believing a public registration form exists when the endpoint is
+        // gone. See RETIRED_VARS.
+        let err = Config::from_map(|k| (k == "RDRS_SIGNUP_ENABLED").then(|| "true".to_string()))
+            .expect_err("a retired variable must refuse startup");
+        assert!(err.contains("RDRS_SIGNUP_ENABLED"), "{err}");
+        assert!(
+            err.contains("/admin"),
+            "the message must say what replaced it: {err}"
+        );
+
+        // Blank is not "set": an empty value configured nothing before either.
+        assert!(Config::from_map(|k| (k == "RDRS_SIGNUP_ENABLED").then(String::new)).is_ok());
     }
 
     #[test]

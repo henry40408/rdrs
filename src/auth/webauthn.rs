@@ -25,7 +25,6 @@ mod tests {
         Config {
             database_url: "test.db".to_string(),
             server_bind: "127.0.0.1:8080".parse().unwrap(),
-            signup_enabled: true,
             multi_user_enabled: false,
             secret: vec![0u8; 32],
             secret_generated: false,

@@ -1846,6 +1846,36 @@ td input[type="text"] {
     margin-top: var(--space-5);
 }
 
+/* ===== Admin: add an account =====
+   Sits above the user table. There is no public sign-up, so this form is the
+   only way an account comes into being after the first one. */
+.admin-create-account {
+    margin-bottom: var(--space-6);
+}
+
+.admin-create-account h2 {
+    margin-bottom: var(--space-2);
+}
+
+.admin-create-account__form {
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    align-items: flex-end;
+    margin-top: var(--space-3);
+}
+
+.admin-create-account__form .form-group {
+    margin-bottom: 0;
+    min-width: 0;
+}
+
+/* Secondary line under a user's status, noting when their outstanding
+   one-time link runs out. */
+.admin-invite-note {
+    font-size: var(--font-sm);
+}
+
 /* A one-line note under a field explaining what will be accepted, so the
    first rejection is not the user's first sight of the rule. Sits tight to
    the input it belongs to rather than floating as its own paragraph. */

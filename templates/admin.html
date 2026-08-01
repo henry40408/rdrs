@@ -9,7 +9,7 @@
                 <h1>Admin Panel</h1>
                 {% if needs_reauth %}
                 <form method="post" action="/admin/reauth" class="reauth-banner" data-testid="admin-reauth-form">
-                    <p class="reauth-banner__body">Confirm your password to change accounts. Promoting, disabling, deleting and viewing as another user all need it.</p>
+                    <p class="reauth-banner__body">Confirm your password to change accounts. Creating, promoting, disabling, deleting and viewing as another user all need it.</p>
                     <div class="reauth-banner__row">
                         <label class="sr-only" for="admin-reauth-password">Password</label>
                         <input type="password" id="admin-reauth-password" name="password" required autocomplete="current-password" placeholder="Your password" data-testid="admin-reauth-password">
@@ -17,6 +17,31 @@
                     </div>
                 </form>
                 {% endif %}
+
+                {% if can_create_account %}
+                <section class="admin-create-account">
+                    <h2>Add an account</h2>
+                    {# There is no public sign-up. The account is created here and
+                       the person it belongs to sets their own password through a
+                       one-time link, which is shown once on the flash below. #}
+                    <p class="muted">Creating an account issues a one-time link. Send it to the person it belongs to — they choose their own password. The link is shown once and expires in a week.</p>
+                    <form method="post" action="/admin/users" class="admin-create-account__form" data-testid="admin-create-user-form">
+                        <div class="form-group">
+                            <label for="new-username">Username</label>
+                            <input type="text" id="new-username" name="username" required autocomplete="off" data-testid="admin-new-username">
+                        </div>
+                        <div class="form-group">
+                            <label for="new-role">Role</label>
+                            <select id="new-role" name="role" data-testid="admin-new-role">
+                                <option value="user" selected>user</option>
+                                <option value="admin">admin</option>
+                            </select>
+                        </div>
+                        <button type="submit" data-testid="admin-create-user-submit">Create account</button>
+                    </form>
+                </section>
+                {% endif %}
+
                 <table class="mobile-cards admin-users-table" data-testid="admin-users-table">
                     <thead>
                         <tr>
@@ -31,7 +56,11 @@
                             <td data-label="Role">{{ u.role }}</td>
                             <td data-label="Status">
                                 {% if u.disabled %}<span class="error-text" data-testid="admin-user-disabled">disabled</span>
+                                {% else if u.awaiting_password %}<span class="muted" data-testid="admin-user-pending">awaiting password</span>
                                 {% else %}<span class="success-text">active</span>{% endif %}
+                                {% if let Some(expires) = u.invite_expires_at %}
+                                <br><span class="muted admin-invite-note" data-testid="admin-user-invite">link expires {{ expires }}</span>
+                                {% endif %}
                             </td>
                             <td data-label="Created"><time datetime="{{ u.created_at_iso }}" data-local-text>{{ u.created_at }}</time></td>
                             <td class="actions">
@@ -46,6 +75,14 @@
                                         <input type="hidden" name="disabled" value="{% if u.disabled %}false{% else %}true{% endif %}">
                                         <button type="submit" class="action-link" data-testid="admin-disable-btn">{% if u.disabled %}enable{% else %}disable{% endif %}</button>
                                     </form>
+                                    <form method="post" action="/admin/users/{{ u.id }}/invite" class="form-inline" data-confirm="Issue a new link? Any existing one stops working. The account's current password keeps working until the new link is used.">
+                                        <button type="submit" class="action-link" data-testid="admin-invite-btn">{% if u.awaiting_password %}new link{% else %}reset password{% endif %}</button>
+                                    </form>
+                                    {% if u.invite_expires_at.is_some() %}
+                                    <form method="post" action="/admin/users/{{ u.id }}/invite/revoke" class="form-inline">
+                                        <button type="submit" class="action-link" data-testid="admin-invite-revoke-btn">revoke link</button>
+                                    </form>
+                                    {% endif %}
                                     <form method="post" action="/admin/users/{{ u.id }}/masquerade" class="form-inline">
                                         <button type="submit" class="action-link">view as</button>
                                     </form>

@@ -89,7 +89,7 @@ async fn create_test_app(config: Config) -> TestApp {
 /// Helper to register and login a user
 async fn setup_authenticated_user(server: &mut TestServer) {
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "testuser",
             "password": "vulture-mango-77-quilt"
@@ -457,11 +457,12 @@ async fn test_move_feed_to_different_category() {
 
 #[tokio::test]
 async fn test_update_feed_to_other_user_category() {
-    let mut server = create_test_server(default_test_config()).await;
+    let app = create_test_app(default_test_config()).await;
+    let (mut server, db) = (app.server, app.db);
 
     // User 1 registers
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "movefeeduser1",
             "password": "vulture-mango-77-quilt"
@@ -485,15 +486,14 @@ async fn test_update_feed_to_other_user_category() {
     // Logout user1
     server.delete("/api/session").await.assert_status_ok();
 
-    // User 2 registers
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "movefeeduser2",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
+    // User 2 exists
+    common::seed_account(
+        &db,
+        "movefeeduser2",
+        "vulture-mango-77-quilt",
+        rdrs::Role::User,
+    )
+    .await;
 
     let __login = server
         .post("/api/session")
@@ -542,7 +542,7 @@ async fn test_delete_feed_other_user() {
 
     // User1 registers and imports a feed
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "feeddeluser1",
             "password": "vulture-mango-77-quilt"
@@ -579,14 +579,13 @@ async fn test_delete_feed_other_user() {
     app.server.delete("/api/session").await.assert_status_ok();
 
     // User2 registers and logs in
-    app.server
-        .post("/api/register")
-        .json(&json!({
-            "username": "feeddeluser2",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
+    common::seed_account(
+        &app.db,
+        "feeddeluser2",
+        "vulture-mango-77-quilt",
+        rdrs::Role::User,
+    )
+    .await;
 
     let __login = app
         .server
@@ -1326,11 +1325,12 @@ async fn test_settings_page_unauthorized() {
 
 #[tokio::test]
 async fn test_category_isolation_between_users() {
-    let mut server = create_test_server(default_test_config()).await;
+    let app = create_test_app(default_test_config()).await;
+    let (mut server, db) = (app.server, app.db);
 
     // User 1 creates a category
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "user1",
             "password": "vulture-mango-77-quilt"
@@ -1354,14 +1354,7 @@ async fn test_category_isolation_between_users() {
     server.delete("/api/session").await.assert_status_ok();
 
     // User 2 should not see User 1's category
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "user2",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
+    common::seed_account(&db, "user2", "vulture-mango-77-quilt", rdrs::Role::User).await;
 
     let __login = server
         .post("/api/session")
@@ -2754,7 +2747,7 @@ async fn test_client_login_success() {
 
     // Register a user first
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "testuser",
             "password": "vulture-mango-77-quilt"
@@ -2788,7 +2781,7 @@ async fn test_client_login_wrong_password() {
 
     // Register a user
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "testuser",
             "password": "vulture-mango-77-quilt"
@@ -2818,7 +2811,7 @@ async fn test_greader_auth_header() {
 
     // Register user
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "testuser",
             "password": "vulture-mango-77-quilt"
@@ -3102,7 +3095,7 @@ async fn test_revoke_other_sessions_form_blocked_while_masquerading() {
     // sessions on their own devices.
     let mut app = create_test_app(default_test_config()).await;
     setup_admin_user(&mut app.server).await;
-    register_target_user(&app.server).await;
+    register_target_user(&app.db).await;
 
     // Seed a second, real session for the target user (id=2) — e.g. a
     // session from the target's own phone, unrelated to the masquerade.
@@ -3228,7 +3221,7 @@ async fn test_revoke_session_form_blocked_while_masquerading() {
     // sign the target out of their own devices.
     let mut app = create_test_app(default_test_config()).await;
     setup_admin_user(&mut app.server).await;
-    register_target_user(&app.server).await;
+    register_target_user(&app.db).await;
 
     let target_session =
         rdrs::models::session::create_session(&app.db, 2, "test-agent", "127.0.0.1")
@@ -3401,7 +3394,7 @@ async fn test_revoke_others_does_not_touch_api_tokens() {
 /// Helper to register the first user (becomes admin) and login.
 async fn setup_admin_user(server: &mut TestServer) {
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -3421,22 +3414,21 @@ async fn setup_admin_user(server: &mut TestServer) {
 }
 
 /// Helper to register a second (regular) user without logging in.
-async fn register_target_user(server: &TestServer) {
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "target",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
+/// Seed the second account these tests act on.
+///
+/// Straight into the database rather than through the admin create + invite
+/// redeem pair: those endpoints have their own tests, and every caller here
+/// only needs the account to exist.
+async fn register_target_user(db: &Db) {
+    common::seed_account(db, "target", "vulture-mango-77-quilt", rdrs::Role::User).await;
 }
 
 #[tokio::test]
 async fn test_update_role_form_promotes_user() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_admin_user(&mut server).await;
-    register_target_user(&server).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    register_target_user(&app.db).await;
+    let server = app.server;
 
     // Promote target (id=2) to admin role
     let response = server
@@ -3461,9 +3453,10 @@ async fn test_update_role_form_promotes_user() {
 
 #[tokio::test]
 async fn test_update_status_form_disables_user() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_admin_user(&mut server).await;
-    register_target_user(&server).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    register_target_user(&app.db).await;
+    let server = app.server;
 
     // Disable target (id=2)
     let response = server
@@ -3488,9 +3481,10 @@ async fn test_update_status_form_disables_user() {
 
 #[tokio::test]
 async fn test_start_masquerade_form_redirects_to_root() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_admin_user(&mut server).await;
-    register_target_user(&server).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    register_target_user(&app.db).await;
+    let server = app.server;
 
     // Start masquerade as target (id=2)
     let response = server.post("/admin/users/2/masquerade").await;
@@ -3502,9 +3496,10 @@ async fn test_start_masquerade_form_redirects_to_root() {
 
 #[tokio::test]
 async fn test_delete_user_form_succeeds() {
-    let mut server = create_test_server(default_test_config()).await;
-    setup_admin_user(&mut server).await;
-    register_target_user(&server).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    register_target_user(&app.db).await;
+    let server = app.server;
 
     // Delete target (id=2)
     let response = server.post("/admin/users/2/delete").await;
@@ -4042,7 +4037,7 @@ async fn test_entry_fragment_renders_reading_pane() {
 
     // Register and log in as alice.
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_frag", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -4182,7 +4177,7 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
     let mut app = create_test_app_named(default_test_config(), "test_entry_fragment_doc_nav").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "doc_nav", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -4272,7 +4267,7 @@ async fn test_entry_fragment_document_nav_preserves_referer_scope() {
         create_test_app_named(default_test_config(), "test_entry_fragment_referer_scope").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "ref_scope", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -4337,7 +4332,7 @@ async fn test_entry_fragment_404_for_other_user() {
 
     // Register alice (will be logged in).
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_404", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -4410,7 +4405,7 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
 
     // Register and log in as alice.
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_star", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -4503,7 +4498,7 @@ async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
     let mut app = create_test_app_named(default_test_config(), "test_unstar_entry_form").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_unstar", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -4593,7 +4588,7 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
 
     // Register and log in as alice.
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_read", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -4683,7 +4678,7 @@ async fn test_unread_entry_form_is_idempotent_mark_unread() {
     let mut app = create_test_app_named(default_test_config(), "test_unread_entry_form").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_unr", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -4781,7 +4776,7 @@ async fn test_star_entry_form_404_for_other_user() {
 
     // Register + login alice (session cookie is now alice's).
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_s404", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -4864,7 +4859,7 @@ async fn test_read_entry_form_404_for_other_user() {
 
     // Register + login alice (session cookie is now alice's).
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_r404", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -4948,7 +4943,7 @@ async fn test_summarize_entry_form_renders_summary_pending_fragment() {
 
     // Register and log in as alice.
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_sum", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -5029,7 +5024,7 @@ async fn test_entries_load_more_returns_row_fragments() {
 
     // Register and log in as alice.
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_lm", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -6178,7 +6173,7 @@ async fn test_existing_security_header_is_not_overwritten() {
 async fn admin_account_changes_require_recent_authentication() {
     let mut app = create_test_app(default_test_config()).await;
     setup_admin_user(&mut app.server).await;
-    register_target_user(&app.server).await;
+    register_target_user(&app.db).await;
 
     stale_authentication(&app.db).await;
 
@@ -6214,7 +6209,7 @@ async fn admin_account_changes_require_recent_authentication() {
 async fn confirming_the_password_reopens_the_admin_window() {
     let mut app = create_test_app(default_test_config()).await;
     setup_admin_user(&mut app.server).await;
-    register_target_user(&app.server).await;
+    register_target_user(&app.db).await;
     stale_authentication(&app.db).await;
 
     let confirmed = app
@@ -6247,7 +6242,7 @@ async fn a_wrong_password_does_not_reopen_the_admin_window() {
     // state afterwards.
     let mut app = create_test_app(default_test_config()).await;
     setup_admin_user(&mut app.server).await;
-    register_target_user(&app.server).await;
+    register_target_user(&app.db).await;
     stale_authentication(&app.db).await;
 
     app.server
@@ -6281,7 +6276,7 @@ async fn a_wrong_password_does_not_reopen_the_admin_window() {
 async fn stopping_a_masquerade_never_requires_reauthentication() {
     let mut app = create_test_app(default_test_config()).await;
     setup_admin_user(&mut app.server).await;
-    register_target_user(&app.server).await;
+    register_target_user(&app.db).await;
 
     let started = app.server.post("/admin/users/2/masquerade").await;
     started.assert_status(StatusCode::SEE_OTHER);
@@ -6325,15 +6320,15 @@ async fn password_fields_advertise_the_server_side_policy() {
     // The browser's own `minlength`/`maxlength` hints are generated from the
     // same constants the handler validates against, so the two cannot drift
     // into a form that submits only to be rejected (or vice versa).
-    // Two servers on purpose: loading a page first mints an anonymous CSRF
-    // cookie, and the synchronizer-token guard then expects a matching header
-    // on the registration POST that `setup_admin_user` sends. Keeping the page
-    // read and the sign-up on separate jars keeps this test about the form
-    // attributes rather than about CSRF.
-    let register_only = create_test_app(default_test_config()).await;
-    let register = register_only.server.get("/register").await;
-    register.assert_status_ok();
-    let body = register.text();
+    // Two servers on purpose: /setup is only served while the instance has no
+    // accounts, and loading any page first mints an anonymous CSRF cookie that
+    // the synchronizer-token guard would then expect on the POST
+    // `setup_admin_user` sends. Separate jars keep this test about the form
+    // attributes.
+    let setup_only = create_test_app(default_test_config()).await;
+    let setup = setup_only.server.get("/setup").await;
+    setup.assert_status_ok();
+    let body = setup.text();
     assert!(body.contains(&format!(
         "minlength=\"{}\"",
         rdrs::auth::PASSWORD_MIN_LENGTH
@@ -6356,4 +6351,319 @@ async fn password_fields_advertise_the_server_side_policy() {
         "maxlength=\"{}\"",
         rdrs::auth::PASSWORD_MAX_LENGTH
     )));
+}
+
+// ============================================================================
+// Admin-created accounts and the one-time link that activates them.
+//
+// This replaces self-service registration outright: there is no anonymous
+// endpoint that accepts a username any more, so there is nothing to ask about
+// who has an account.
+// ============================================================================
+
+/// Pull the `/invite/{token}` path out of the flash cookie the create-account
+/// redirect sets. The link is shown once and never stored in recoverable form,
+/// so this is exactly what an admin has to do — read it off the screen.
+fn invite_path_from(response: &axum_test::TestResponse) -> String {
+    let flash = response.cookie("flash");
+    // The value is the flash JSON, but a cookie value cannot carry spaces or
+    // quotes unescaped, so what arrives here is percent-encoded. Searching the
+    // decoded text is enough — the path itself is URL-safe base64 and survives
+    // encoding untouched.
+    let raw = flash.value().replace("%2F", "/");
+    let start = raw
+        .find("/invite/")
+        .unwrap_or_else(|| panic!("expected a link in the flash, got {raw:?}"));
+
+    // The token is base64url (`A-Za-z0-9-_`), so the path ends at the first
+    // character outside that alphabet — which is where the percent-encoded
+    // remainder of the JSON begins.
+    let tail: String = raw[start + "/invite/".len()..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    format!("/invite/{tail}")
+}
+
+#[tokio::test]
+async fn an_admin_created_account_is_activated_through_its_link() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+
+    let created = app
+        .server
+        .post("/admin/users")
+        .form(&json!({ "username": "newcomer", "role": "user" }))
+        .await;
+    created.assert_status(StatusCode::SEE_OTHER);
+    let invite = invite_path_from(&created);
+
+    // The account exists but cannot be signed into: no password has been set,
+    // so `verify_password` has nothing that can match.
+    let refused = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "newcomer", "password": "vulture-mango-77-quilt" }))
+        .await;
+    refused.assert_status_unauthorized();
+
+    // The link names the account it opens...
+    let page = app.server.get(&invite).await;
+    page.assert_status_ok();
+    assert!(page.text().contains("newcomer"));
+
+    // ...and redeeming it sets the password.
+    let redeemed = app
+        .server
+        .post(&invite)
+        .form(&json!({
+            "password": "heron-lantern-53-drift",
+            "confirm_password": "heron-lantern-53-drift"
+        }))
+        .await;
+    redeemed.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(redeemed.header(header::LOCATION), "/login");
+
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "newcomer", "password": "heron-lantern-53-drift" }))
+        .await
+        .assert_status_ok();
+}
+
+#[tokio::test]
+async fn a_link_works_exactly_once() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+
+    let created = app
+        .server
+        .post("/admin/users")
+        .form(&json!({ "username": "newcomer", "role": "user" }))
+        .await;
+    let invite = invite_path_from(&created);
+
+    app.server
+        .post(&invite)
+        .form(&json!({
+            "password": "heron-lantern-53-drift",
+            "confirm_password": "heron-lantern-53-drift"
+        }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    // A second submission must not be able to replace the password the first
+    // person just chose.
+    let replayed = app
+        .server
+        .post(&invite)
+        .form(&json!({
+            "password": "badger-kestrel-19-plume",
+            "confirm_password": "badger-kestrel-19-plume"
+        }))
+        .await;
+    replayed.assert_status_ok();
+    assert!(replayed.text().contains("not valid"));
+
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "newcomer", "password": "heron-lantern-53-drift" }))
+        .await
+        .assert_status_ok();
+}
+
+#[tokio::test]
+async fn every_bad_token_gets_the_same_answer() {
+    // Unknown, revoked and already-spent links must be indistinguishable, and
+    // none of them may name an account — otherwise the page becomes the
+    // enumeration oracle that removing registration was meant to close.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+
+    let created = app
+        .server
+        .post("/admin/users")
+        .form(&json!({ "username": "newcomer", "role": "user" }))
+        .await;
+    let invite = invite_path_from(&created);
+
+    let unknown = app.server.get("/invite/completely-made-up-token").await;
+    unknown.assert_status_ok();
+
+    // Revoke the real one, then compare.
+    app.server
+        .post("/admin/users/2/invite/revoke")
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+    let revoked = app.server.get(&invite).await;
+    revoked.assert_status_ok();
+
+    assert_eq!(unknown.text(), revoked.text());
+    assert!(!revoked.text().contains("newcomer"));
+}
+
+#[tokio::test]
+async fn a_pending_account_cannot_sign_in_by_any_path() {
+    // The unusable hash has to hold for the GReader client protocol too, not
+    // just the browser form — otherwise an account could be reached before
+    // anyone chose its password.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+
+    app.server
+        .post("/admin/users")
+        .form(&json!({ "username": "newcomer", "role": "user" }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "newcomer", "password": "!" }))
+        .await
+        .assert_status_unauthorized();
+
+    let client_login = app
+        .server
+        .post("/accounts/ClientLogin")
+        .form(&json!({ "Email": "newcomer", "Passwd": "!" }))
+        .await;
+    client_login.assert_status_unauthorized();
+}
+
+#[tokio::test]
+async fn redemption_enforces_the_password_policy() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+
+    let created = app
+        .server
+        .post("/admin/users")
+        .form(&json!({ "username": "newcomer", "role": "user" }))
+        .await;
+    let invite = invite_path_from(&created);
+
+    // Too short, and the link survives so the person can try again.
+    let short = app
+        .server
+        .post(&invite)
+        .form(&json!({ "password": "short", "confirm_password": "short" }))
+        .await;
+    short.assert_status_ok();
+    assert!(short.text().contains("at least"));
+
+    // Built out of the username, which only the estimator can catch.
+    let derived = app
+        .server
+        .post(&invite)
+        .form(&json!({ "password": "newcomernewcomer", "confirm_password": "newcomernewcomer" }))
+        .await;
+    derived.assert_status_ok();
+    assert!(derived.text().contains("invite-error"));
+
+    // The link still works afterwards.
+    app.server
+        .post(&invite)
+        .form(&json!({
+            "password": "heron-lantern-53-drift",
+            "confirm_password": "heron-lantern-53-drift"
+        }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn an_admin_issued_reset_leaves_the_old_password_working_until_redeemed() {
+    // rdrs has no self-service recovery — with no email there is nowhere to
+    // send it — so this is the reset path. Issuing one must not lock the
+    // account's owner out on its own.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    common::seed_account(
+        &app.db,
+        "forgetful",
+        "vulture-mango-77-quilt",
+        rdrs::Role::User,
+    )
+    .await;
+
+    let issued = app.server.post("/admin/users/2/invite").await;
+    issued.assert_status(StatusCode::SEE_OTHER);
+    let invite = invite_path_from(&issued);
+
+    // Still the old password until someone uses the link. Signing in as the
+    // target replaces the session cookie in this jar, so the CSRF header has
+    // to be refreshed from the response before the next POST — exactly what a
+    // browser does on its own.
+    let signed_in = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "forgetful", "password": "vulture-mango-77-quilt" }))
+        .await;
+    signed_in.assert_status_ok();
+    common::apply_csrf(&mut app.server, &signed_in);
+
+    app.server
+        .post(&invite)
+        .form(&json!({
+            "password": "heron-lantern-53-drift",
+            "confirm_password": "heron-lantern-53-drift"
+        }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    // ...and afterwards only the new one.
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "forgetful", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status_unauthorized();
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "forgetful", "password": "heron-lantern-53-drift" }))
+        .await
+        .assert_status_ok();
+}
+
+#[tokio::test]
+async fn creating_an_account_requires_recent_authentication() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+    stale_authentication(&app.db).await;
+
+    app.server
+        .post("/admin/users")
+        .form(&json!({ "username": "newcomer", "role": "user" }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    assert!(
+        rdrs::models::user::find_by_username(&app.db, "newcomer")
+            .await
+            .unwrap()
+            .is_none(),
+        "a stale session must not be able to create an account"
+    );
+}
+
+#[tokio::test]
+async fn a_single_user_instance_refuses_a_second_account() {
+    let config = Config {
+        multi_user_enabled: false,
+        ..default_test_config()
+    };
+    let mut app = create_test_app(config).await;
+    setup_admin_user(&mut app.server).await;
+
+    app.server
+        .post("/admin/users")
+        .form(&json!({ "username": "newcomer", "role": "user" }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    assert!(
+        rdrs::models::user::find_by_username(&app.db, "newcomer")
+            .await
+            .unwrap()
+            .is_none()
+    );
 }

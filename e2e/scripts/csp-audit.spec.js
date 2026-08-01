@@ -68,7 +68,7 @@ test("no CSP violations across the app", async ({ page, api, seed, serverUrl, cu
 
   // ---- logged-out surfaces ----
   await visit("Login", "/login");
-  await visit("Register", "/register");
+  await visit("Setup", "/setup");
 
   // ---- seed an account with something to render ----
   await api.register(currentUser.username, currentUser.password);

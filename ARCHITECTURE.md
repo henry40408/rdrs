@@ -43,6 +43,7 @@ src/
 │   ├── image.rs         # Image storage
 │   ├── statistics.rs    # Statistics/analytics queries
 │   ├── passkey.rs       # WebAuthn credentials
+│   ├── user_invite.rs   # One-time account-activation / password-reset links
 │   ├── webauthn_challenge.rs # WebAuthn challenge state
 │   └── user_settings.rs # User preferences
 │
@@ -50,6 +51,7 @@ src/
 │   ├── pages/           # HTML page rendering (mod.rs + script_json/search_text/time_format helpers)
 │   ├── auth.rs          # Authentication endpoints
 │   ├── passkey.rs       # Passkey/WebAuthn endpoints
+│   ├── invite.rs        # Anonymous redemption of a one-time account link
 │   ├── admin.rs         # Admin operations
 │   ├── user.rs          # User operations + sidebar payload
 │   ├── categories.rs    # Category form actions (SSR)
@@ -184,6 +186,7 @@ The schema has 11 tables:
 | `image` | Polymorphic image storage |
 | `user_settings` | User preferences and service configs |
 | `passkey` | WebAuthn credential storage |
+| `user_invite` | One-time links that set an account's password (HMAC-stored) |
 | `webauthn_challenge` | WebAuthn challenge state |
 
 ### Connection Pool (`db/pool.rs`)
@@ -226,6 +229,44 @@ Request handlers are organized by resource:
 
 - **auth.rs** - Extracts `AuthUser` from session cookie, provides `AdminUser` for admin-only routes
 - **flash.rs** - Stores flash messages in cookies for UI feedback
+
+### Account Creation
+
+There is no self-service registration. An anonymous endpoint that accepts a
+username inevitably answers whether that username exists, and with no email
+channel there is no way to make the answer ambiguous — a caller can simply try
+to sign in with the password they just submitted. So the endpoint is gone, and
+with it the question.
+
+1. **`POST /api/setup`** creates the *first* account (always an admin) and is
+   refused the moment `user::count() > 0` (`Config::can_setup`). With zero
+   accounts there is no username to enumerate, which is what makes an anonymous
+   endpoint acceptable here and nowhere else. `GET /setup` redirects to
+   `/login` once it has been used.
+2. **`POST /admin/users`** is how every later account comes into being. The row
+   is written with `password_hash = "!"` — an unparseable PHC string, the same
+   convention `forward_auth` uses — so no path can sign into it: `verify_password`
+   returns false for every input, on the browser form and `GReader`
+   `ClientLogin` alike.
+3. **`user_invite`** holds a one-time link for that account. The token is
+   generated like a session token and stored as an HMAC under
+   `secret::DOMAIN_INVITE`, so a database copy alone cannot mint a working
+   link, and the raw value exists only in the flash message shown to the admin
+   once. Links expire after `INVITE_TTL_DAYS` (7) and re-issuing revokes the
+   previous one — two live links for one account would mean revoking the one
+   you know about still leaves a way in.
+4. **`GET`/`POST /invite/{token}`** is anonymous: the token is the whole
+   authority. Every failing case — unknown, expired, already spent — renders
+   one identical page that names no account. Redemption spends the invite with
+   `UPDATE … WHERE consumed_at IS NULL` *before* writing the password, so two
+   submissions racing on one link cannot both succeed with the later silently
+   overwriting the earlier's choice. It then clears the account's sessions and
+   API tokens, because an admin-issued reset means "whatever came before stops
+   working".
+
+The same machinery is rdrs's only password-reset path: issuing a link for an
+account that already has a password leaves the old one working until the link
+is redeemed, so a reset cannot lock its owner out on its own.
 
 ### Authentication Flow
 

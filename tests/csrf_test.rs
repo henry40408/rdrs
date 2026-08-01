@@ -52,10 +52,10 @@ async fn build_router(config: Config) -> axum::Router {
 async fn cross_site_post_is_rejected_before_the_handler() {
     let server = test_server().await;
     // `Sec-Fetch-Site: cross-site` is a browser telling us this POST came from
-    // another origin. It is rejected with 403 before `POST /api/register` runs,
+    // another origin. It is rejected with 403 before `POST /api/setup` runs,
     // so the body never matters.
     let res = server
-        .post("/api/register")
+        .post("/api/setup")
         .add_header("sec-fetch-site", "cross-site")
         .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await;
@@ -66,7 +66,7 @@ async fn cross_site_post_is_rejected_before_the_handler() {
 async fn cross_origin_via_origin_header_is_rejected() {
     let server = test_server().await;
     let res = server
-        .post("/api/register")
+        .post("/api/setup")
         .add_header("origin", "https://evil.example.com")
         .add_header("host", "app.example.com")
         .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
@@ -77,10 +77,10 @@ async fn cross_origin_via_origin_header_is_rejected() {
 #[tokio::test]
 async fn same_origin_post_reaches_the_handler() {
     let server = test_server().await;
-    // Same-origin: the guard passes it through, so `POST /api/register` runs and
+    // Same-origin: the guard passes it through, so `POST /api/setup` runs and
     // creates the first user (201) rather than the guard's 403.
     let res = server
-        .post("/api/register")
+        .post("/api/setup")
         .add_header("sec-fetch-site", "same-origin")
         .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await;
@@ -105,7 +105,7 @@ async fn non_browser_client_without_headers_reaches_the_handler() {
     // No Sec-Fetch-Site, no Origin → a native client (bearer-authenticated, not
     // CSRF-exposed). The guard lets it through; registration succeeds.
     let res = server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await;
     res.assert_status(StatusCode::CREATED);
@@ -186,7 +186,7 @@ async fn secure_anonymous_session_round_trips_and_does_not_remint_csrf_cookie() 
     // session cookie (via the saved jar) and the matching CSRF header must
     // reach the handler.
     let register = server
-        .post("/api/register")
+        .post("/api/setup")
         .add_header("sec-fetch-site", "same-origin")
         .add_header("x-csrf-token", csrf.value())
         .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))

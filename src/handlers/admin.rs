@@ -14,8 +14,10 @@ use crate::error::{AppError, AppResult};
 use crate::middleware::flash::FlashRedirect;
 use crate::middleware::{AdminUser, Bucket, build_csrf_cookie, build_session_cookie};
 use crate::models::api_token;
+use crate::models::category;
 use crate::models::session;
 use crate::models::user::{self, Role};
+use crate::models::user_invite;
 use crate::services::audit;
 use crate::utils::http::request_user_agent;
 
@@ -180,6 +182,183 @@ pub async fn reauth_form(
     );
 
     FlashRedirect::success("/admin", "Confirmed. You can now change accounts.")
+}
+
+/// Mint a link for `user_id` and return the path the recipient should open.
+///
+/// The raw token exists only in this function's return value and in whatever
+/// the admin does with it next — the table keeps an HMAC, so nothing can
+/// reproduce it afterwards. That is deliberate: a link recoverable from the
+/// database would be a standing credential for every account with an
+/// outstanding invite.
+async fn issue_invite(
+    state: &AppState,
+    user_id: i64,
+    actor_user_id: i64,
+    reason: &str,
+) -> AppResult<String> {
+    let token = session::generate_token();
+    let invite = user_invite::issue(&state.db, &state.config.secret, user_id, &token).await?;
+
+    audit::invite_issued(
+        &state.config.secret,
+        &token,
+        user_id,
+        actor_user_id,
+        reason,
+        invite.expires_at,
+    );
+
+    Ok(format!("/invite/{token}"))
+}
+
+/// Absolute URL for a link when `RDRS_PUBLIC_BASE_URL` is configured, so the
+/// admin can copy something sendable rather than a bare path. Falls back to
+/// the path, which is still correct — just not pasteable into a chat window.
+fn invite_url(state: &AppState, path: &str) -> String {
+    match &state.config.public_base_url {
+        Some(base) => format!("{}{}", base.trim_end_matches('/'), path),
+        None => path.to_string(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateUserForm {
+    pub username: String,
+    pub role: Role,
+}
+
+/// `POST /admin/users` — create an account and issue its first invite.
+///
+/// The account exists immediately but holds an unusable password hash (`"!"`,
+/// the same convention forward-auth uses for accounts it creates), so it
+/// cannot be signed into by any path — password or `GReader` — until someone
+/// redeems the link. That is what makes creating an account safe to do ahead
+/// of the person actually arriving.
+pub async fn create_user_form(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Form(req): Form<CreateUserForm>,
+) -> impl IntoResponse {
+    if let Some(redirect) = require_recent_authentication(&admin) {
+        return redirect;
+    }
+
+    let username = req.username.trim().to_string();
+    if username.is_empty() {
+        return FlashRedirect::error("/admin", "Username is required.");
+    }
+
+    let actor_id = admin.session.original_user_id.unwrap_or(admin.user.id);
+    let result: AppResult<String> = async {
+        let user_count = user::count(&state.db).await?;
+        if !state.config.can_create_account(user_count) {
+            return Err(AppError::RegistrationNotAllowed);
+        }
+
+        // `"!"` never parses as a PHC string, so `verify_password` returns
+        // false for every input — the account is unreachable until the invite
+        // is redeemed and a real hash replaces it.
+        let created = user::create_user(&state.db, &username, "!", req.role).await?;
+        audit::account_created(
+            created.id,
+            actor_id,
+            username.chars().count(),
+            req.role.as_str(),
+        );
+
+        // Same seeding as the setup path, so a new account can add its first
+        // feed without creating a category first.
+        category::create_category(&state.db, created.id, "Uncategorized").await?;
+
+        issue_invite(&state, created.id, actor_id, "account_created").await
+    }
+    .await;
+
+    match result {
+        Ok(path) => FlashRedirect::success(
+            "/admin",
+            format!(
+                "Account created. Send this one-time link — it is shown once and expires in {} days: {}",
+                user_invite::INVITE_TTL_DAYS,
+                invite_url(&state, &path)
+            ),
+        ),
+        Err(AppError::UsernameExists) => {
+            FlashRedirect::error("/admin", "That username is already taken.")
+        }
+        Err(AppError::RegistrationNotAllowed) => FlashRedirect::error(
+            "/admin",
+            "This instance is single-user. Set RDRS_MULTI_USER_ENABLED=true to add accounts.",
+        ),
+        _ => FlashRedirect::error("/admin", "Failed to create the account."),
+    }
+}
+
+/// `POST /admin/users/{id}/invite` — issue a fresh link, revoking any current
+/// one.
+///
+/// Serves two jobs that are the same mechanism: handing a pending account a
+/// replacement when the first link expired, and resetting the password of an
+/// account that already has one. rdrs has no self-service password recovery —
+/// with no email there is nowhere to send it — so this is the recovery path,
+/// and it deliberately leaves the existing password working until the link is
+/// redeemed. Issuing one must not be able to lock someone out.
+pub async fn reissue_invite_form(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(user_id): Path<i64>,
+) -> impl IntoResponse {
+    if let Some(redirect) = require_recent_authentication(&admin) {
+        return redirect;
+    }
+
+    let actor_id = admin.session.original_user_id.unwrap_or(admin.user.id);
+    let result: AppResult<String> = async {
+        let target = user::find_by_id(&state.db, user_id)
+            .await?
+            .ok_or(AppError::UserNotFound)?;
+        let reason = if target.password_hash == "!" {
+            "account_created"
+        } else {
+            "password_reset"
+        };
+        issue_invite(&state, user_id, actor_id, reason).await
+    }
+    .await;
+
+    match result {
+        Ok(path) => FlashRedirect::success(
+            "/admin",
+            format!(
+                "New one-time link — shown once, expires in {} days: {}",
+                user_invite::INVITE_TTL_DAYS,
+                invite_url(&state, &path)
+            ),
+        ),
+        _ => FlashRedirect::error("/admin", "Failed to issue a link."),
+    }
+}
+
+/// `POST /admin/users/{id}/invite/revoke` — cancel an outstanding link.
+pub async fn revoke_invite_form(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(user_id): Path<i64>,
+) -> impl IntoResponse {
+    if let Some(redirect) = require_recent_authentication(&admin) {
+        return redirect;
+    }
+
+    let actor_id = admin.session.original_user_id.unwrap_or(admin.user.id);
+    match user_invite::revoke_for_user(&state.db, user_id).await {
+        Ok(0) => FlashRedirect::error("/admin", "There is no outstanding link for that account."),
+        Ok(_) => {
+            audit::invite_revoked(user_id, actor_id);
+            FlashRedirect::success("/admin", "Link revoked.")
+        }
+        Err(_) => FlashRedirect::error("/admin", "Failed to revoke the link."),
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -41,12 +41,12 @@ docker run -d \
   --name rdrs \
   -p 8080:8080 \
   -v rdrs_data:/data \
-  -e RDRS_SIGNUP_ENABLED=true \
   -e RDRS_SECRET="$(openssl rand -base64 32)" \
   ghcr.io/henry40408/rdrs:latest
 ```
 
-Visit `http://localhost:8080` and create your account.
+Visit `http://localhost:8080`, which opens the one-time setup page, and create
+the administrator account.
 
 > **`RDRS_SECRET`** — the one key rdrs signs everything with: session cookies,
 > image-proxy URLs, and the Google Reader post token. If left unset, a random
@@ -69,11 +69,11 @@ cargo build --release
 ./target/release/rdrs
 ```
 
-Visit `http://localhost:8080` and create your account. The **first account is
-always allowed** even when `RDRS_SIGNUP_ENABLED=false` (the default), so a source
-build works out of the box. `RDRS_SIGNUP_ENABLED` (together with
-`RDRS_MULTI_USER_ENABLED`) only governs *additional* registrations after the first
-account exists.
+Visit `http://localhost:8080`. With an empty database this serves `/setup`,
+the one-time page that creates the administrator account. It closes for good the
+moment that account exists — **there is no public sign-up**. Everyone else is
+added by an admin from `/admin`, who hands out a one-time link; see
+[Adding people](#adding-people).
 
 ## Configuration
 
@@ -88,6 +88,16 @@ All configuration is done via environment variables.
 > healthy server on defaults — against an empty `rdrs.sqlite3` rather than your
 > database, with signup off and a regenerated secret. Failing once, loudly, is
 > the cheaper outcome.
+>
+> **Upgrading to a version without self-service registration?**
+> `RDRS_SIGNUP_ENABLED` no longer configures anything and rdrs **refuses to
+> start** while it is set — silently ignoring it would leave you believing a
+> public sign-up form exists when the endpoint is gone. Remove it. Accounts are
+> now created by an admin from `/admin`, who hands the new user a one-time link
+> to choose their own password (see [Adding people](#adding-people)); the very
+> first account is still created at `/setup` on an empty instance.
+> `RDRS_MULTI_USER_ENABLED` keeps its meaning and now governs the admin's
+> create-account form.
 >
 > **Upgrading to a version with session device/IP tracking?** The `session`
 > table gained mandatory `user_agent`, `ip_address`, and `last_seen_at`
@@ -124,8 +134,7 @@ All configuration is done via environment variables.
 |----------|---------|-------------|
 | `DATABASE_URL` | `rdrs.sqlite3` | Database location. A file path or `sqlite://` URL selects SQLite (zero-config default); a `postgres://` URL selects PostgreSQL. The backend is chosen once at startup. |
 | `RDRS_SERVER_BIND` | `127.0.0.1:8080` | HTTP server bind address (`host:port`). Defaults to loopback so a bare-metal run is not exposed on all interfaces without opting in; the container image sets `0.0.0.0:8080` so a reverse proxy can reach it. |
-| `RDRS_SIGNUP_ENABLED` | `false` | Allow new user registration |
-| `RDRS_MULTI_USER_ENABLED` | `false` | Allow multiple users (requires signup enabled) |
+| `RDRS_MULTI_USER_ENABLED` | `false` | Allow more than one account. Governs the admin's "Add an account" form; there is no public sign-up either way. |
 | `RDRS_SECRET` | Auto-generated | Root HMAC key backing every signature rdrs produces — session cookies, image-proxy URLs, and the GReader post token — each domain-separated so a value minted for one use cannot be replayed as another. Set a persistent value (`openssl rand -base64 32`); a generated one changes on every restart, ending all sessions and breaking cached image-proxy URLs. |
 | `RDRS_PUBLIC_BASE_URL` | - | Public base URL for generating absolute image proxy URLs in API responses (e.g., `https://rdrs.example.com`). If not set, relative paths are used (backward compatible). |
 | `RDRS_COOKIE_SECURE` | Derived from `RDRS_PUBLIC_BASE_URL` | Send the session cookie with the `Secure` attribute (HTTPS only). Defaults to on when `RDRS_PUBLIC_BASE_URL` starts with `https://`, off otherwise — so an HTTPS deployment is secure without a second setting, while a plain-HTTP dev run keeps working. Set `true`/`1` to force it on when TLS terminates upstream and `RDRS_PUBLIC_BASE_URL` is unset; set `false`/`0` to force it off. Only those four values are accepted — anything else fails startup rather than silently disabling `Secure`. |
@@ -201,6 +210,33 @@ every session.
 RDRS supports three authentication methods that all work simultaneously by
 default: local password, WebAuthn/passkeys, and **forward-auth (trusted-header)
 SSO**. `RDRS_DISABLE_LOCAL_AUTH` is the only knob that narrows this set.
+
+### Adding people
+
+There is no registration form. The first account is created once at `/setup` on
+an empty instance; after that, an admin adds accounts from `/admin`:
+
+1. **Admin** enters a username and picks a role. The account is created but has
+   no password, so nobody can sign into it yet.
+2. **rdrs** returns a one-time link (`/invite/<token>`). It is displayed once
+   and cannot be recovered afterwards — only a keyed hash of it is stored — so
+   copy it there and then.
+3. **The new user** opens the link, chooses their own password, and is sent to
+   the sign-in page. The link is single-use and expires after **7 days**.
+
+If a link expires or goes astray, issue another from `/admin` — that revokes the
+previous one. The same button on an account that already has a password acts as
+a **password reset**: rdrs has no self-service recovery (there is no email to
+send it to), so an admin-issued link is the way back in. The old password keeps
+working until the new link is redeemed, so issuing one cannot lock anybody out.
+Redeeming any link signs that account out everywhere and revokes its GReader
+API tokens.
+
+Why not a sign-up form? Because an anonymous endpoint that accepts a username
+inevitably answers whether that username is taken, and with no email to make
+the answer ambiguous there is no way to hide it — whoever asks can simply try
+to sign in with the password they just submitted. Removing the form removes the
+question.
 
 ### Passwords
 
@@ -382,7 +418,6 @@ services:
     volumes:
       - rdrs_data:/data
     environment:
-      - RDRS_SIGNUP_ENABLED=true
       - RDRS_SECRET=your-secret-here
     restart: unless-stopped
 

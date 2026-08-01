@@ -460,7 +460,7 @@ async fn test_logout_password_session_reports_via_forward_auth_false() {
     .await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "judy", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);

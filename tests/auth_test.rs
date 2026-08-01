@@ -77,7 +77,7 @@ async fn backdate_session(db: &Db, session_cookie_value: &str, age: Duration) {
     assert_eq!(affected, 1, "backdate matched no session row");
 }
 
-/// Create a user directly in the database, bypassing `POST /api/register` —
+/// Create a user directly in the database, bypassing `POST /api/setup` —
 /// so setup does not itself consume a slot from the client's rate-limit
 /// budget (registration is a guarded, never-released endpoint; going through
 /// it here would leave fewer than 5 attempts free for a test that means to
@@ -96,7 +96,7 @@ async fn test_register_first_user_becomes_admin() {
     let server = create_test_server(default_test_config()).await;
 
     let response = server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -110,11 +110,15 @@ async fn test_register_first_user_becomes_admin() {
 }
 
 #[tokio::test]
-async fn test_register_second_user_becomes_user() {
+async fn setup_closes_permanently_after_the_first_account() {
+    // The endpoint that used to be self-service registration now exists only
+    // to bootstrap an empty instance. Once one account exists it refuses
+    // everything — that is what removes the account-enumeration surface, since
+    // there is no longer any anonymous endpoint that accepts a username.
     let server = create_test_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -122,42 +126,47 @@ async fn test_register_second_user_becomes_user() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    let response = server
-        .post("/api/register")
+    // A different username, a valid password, multi-user enabled — still no.
+    server
+        .post("/api/setup")
         .json(&json!({
             "username": "user1",
             "password": "vulture-mango-77-quilt"
         }))
-        .await;
+        .await
+        .assert_status(StatusCode::FORBIDDEN);
 
-    response.assert_status(StatusCode::CREATED);
-    let body: serde_json::Value = response.json();
-    assert_eq!(body["username"], "user1");
-    assert_eq!(body["role"], "user");
-}
-
-#[tokio::test]
-async fn test_register_duplicate_username() {
-    let server = create_test_server(default_test_config()).await;
-
+    // ...and the refusal is identical for a name that *does* exist, so the
+    // endpoint cannot be used to test whether an account is there.
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
         }))
         .await
-        .assert_status(StatusCode::CREATED);
+        .assert_status(StatusCode::FORBIDDEN);
+}
 
-    let response = server
-        .post("/api/register")
-        .json(&json!({
-            "username": "admin",
-            "password": "badger-kestrel-19-plume"
-        }))
+#[tokio::test]
+async fn a_closed_setup_endpoint_answers_the_same_for_any_username() {
+    // Covered separately from the test above because this is the property
+    // that matters: whatever an anonymous caller sends once the instance has
+    // an account, the answer carries no information about who is registered.
+    let (server, db) = build_server(default_test_config()).await;
+    create_user_directly(&db, "admin", "vulture-mango-77-quilt").await;
+
+    let existing = server
+        .post("/api/setup")
+        .json(&json!({ "username": "admin", "password": "vulture-mango-77-quilt" }))
+        .await;
+    let absent = server
+        .post("/api/setup")
+        .json(&json!({ "username": "nobody-here", "password": "vulture-mango-77-quilt" }))
         .await;
 
-    response.assert_status(StatusCode::CONFLICT);
+    assert_eq!(existing.status_code(), absent.status_code());
+    assert_eq!(existing.text(), absent.text());
 }
 
 #[tokio::test]
@@ -166,13 +175,12 @@ async fn test_register_disabled_still_allows_first_account() {
     // first (admin) account — otherwise a source build is unusable. Subsequent
     // registrations stay blocked.
     let config = Config {
-        signup_enabled: false,
         ..default_test_config()
     };
     let server = create_test_server(config).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -181,7 +189,7 @@ async fn test_register_disabled_still_allows_first_account() {
         .assert_status(StatusCode::CREATED);
 
     let response = server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "user",
             "password": "vulture-mango-77-quilt"
@@ -194,14 +202,13 @@ async fn test_register_disabled_still_allows_first_account() {
 #[tokio::test]
 async fn test_register_multi_user_disabled() {
     let config = Config {
-        signup_enabled: true,
         multi_user_enabled: false,
         ..default_test_config()
     };
     let server = create_test_server(config).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -210,7 +217,7 @@ async fn test_register_multi_user_disabled() {
         .assert_status(StatusCode::CREATED);
 
     let response = server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "user1",
             "password": "vulture-mango-77-quilt"
@@ -225,7 +232,7 @@ async fn test_login_success() {
     let mut server = create_test_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -252,7 +259,7 @@ async fn test_login_wrong_password() {
     let server = create_test_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -409,25 +416,27 @@ async fn test_successful_login_does_not_consume_the_budget() {
 }
 
 #[tokio::test]
-async fn test_register_is_rate_limited() {
-    // A successful registration never releases its reservation — account
-    // creation is exactly the abuse this limiter targets — so five
-    // registrations exhaust the budget and the sixth is throttled outright.
-    let server = create_test_server(default_test_config()).await;
+async fn test_setup_is_rate_limited() {
+    // The reservation is never released — scripted account creation is exactly
+    // the abuse this limiter targets — and it is charged before the
+    // "is setup still open?" check, so hammering a closed endpoint runs the
+    // budget down just the same. Five attempts, then a 429.
+    let (server, db) = build_server(default_test_config()).await;
+    create_user_directly(&db, "admin", "vulture-mango-77-quilt").await;
 
     for i in 0..5 {
         let response = server
-            .post("/api/register")
+            .post("/api/setup")
             .json(&json!({
                 "username": format!("user{i}"),
                 "password": "vulture-mango-77-quilt"
             }))
             .await;
-        response.assert_status(StatusCode::CREATED);
+        response.assert_status(StatusCode::FORBIDDEN);
     }
 
     let response = server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "user5",
             "password": "vulture-mango-77-quilt"
@@ -444,24 +453,24 @@ async fn test_registration_budget_exhaustion_does_not_lock_out_login() {
     // registrations from one IP left zero budget behind — a subsequent
     // login with the CORRECT password then got 429 instead of 200,
     // indistinguishable from a real lockout. Register and login must draw
-    // from independent buckets (`Bucket::Register` / `Bucket::Login`) so a
+    // from independent buckets (`Bucket::AccountSetup` / `Bucket::Login`) so a
     // registration spree can never deny a legitimate login.
     let (server, db) = build_server(default_test_config()).await;
     create_user_directly(&db, "admin", "vulture-mango-77-quilt").await;
 
     for i in 0..5 {
         server
-            .post("/api/register")
+            .post("/api/setup")
             .json(&json!({
                 "username": format!("user{i}"),
                 "password": "vulture-mango-77-quilt"
             }))
             .await
-            .assert_status(StatusCode::CREATED);
+            .assert_status(StatusCode::FORBIDDEN);
     }
-    // Confirm the registration budget for this IP is now exhausted.
+    // Confirm the account-setup budget for this IP is now exhausted.
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "user5",
             "password": "vulture-mango-77-quilt"
@@ -584,7 +593,7 @@ async fn test_get_current_user() {
     let mut server = create_test_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -622,7 +631,7 @@ async fn test_logout() {
     let mut server = create_test_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -656,10 +665,10 @@ async fn test_logout() {
 
 #[tokio::test]
 async fn test_masquerade() {
-    let mut server = create_test_server(default_test_config()).await;
+    let (mut server, db) = build_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -667,14 +676,7 @@ async fn test_masquerade() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "user1",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
+    common::seed_account(&db, "user1", "vulture-mango-77-quilt", rdrs::Role::User).await;
 
     let __login = server
         .post("/api/session")
@@ -717,7 +719,7 @@ async fn test_session_token_rotates_once_past_the_refresh_window() {
     let (mut server, db) = build_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "alice",
             "password": "vulture-mango-77-quilt"
@@ -770,7 +772,7 @@ async fn test_pre_rotation_token_still_authenticates_during_grace() {
     let (server, db) = build_server_no_save_cookies(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "bob",
             "password": "vulture-mango-77-quilt"
@@ -819,10 +821,10 @@ async fn test_pre_rotation_token_still_authenticates_during_grace() {
 /// the browser authenticated against a row that no longer exists.
 #[tokio::test]
 async fn test_masquerade_rotates_session_and_csrf_cookies() {
-    let mut server = create_test_server(default_test_config()).await;
+    let (mut server, db) = build_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -830,14 +832,7 @@ async fn test_masquerade_rotates_session_and_csrf_cookies() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "user1",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
+    common::seed_account(&db, "user1", "vulture-mango-77-quilt", rdrs::Role::User).await;
 
     let __login = server
         .post("/api/session")
@@ -871,10 +866,10 @@ async fn test_masquerade_rotates_session_and_csrf_cookies() {
 
 #[tokio::test]
 async fn test_masquerade_already_masquerading() {
-    let mut server = create_test_server(default_test_config()).await;
+    let (mut server, db) = build_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -882,14 +877,7 @@ async fn test_masquerade_already_masquerading() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "user1",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
+    common::seed_account(&db, "user1", "vulture-mango-77-quilt", rdrs::Role::User).await;
 
     let __login = server
         .post("/api/session")
@@ -923,7 +911,7 @@ async fn test_unmasquerade_not_masquerading() {
     let mut server = create_test_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -956,13 +944,20 @@ async fn test_login_page() {
 }
 
 #[tokio::test]
-async fn test_register_page() {
-    let server = create_test_server(default_test_config()).await;
+async fn test_setup_page_is_served_only_while_the_instance_is_empty() {
+    let (server, db) = build_server(default_test_config()).await;
 
-    let response = server.get("/register").await;
+    let response = server.get("/setup").await;
     response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("Register"));
+    assert!(response.text().contains("setup-form"));
+
+    // Once an account exists the page has no purpose, and leaving it
+    // reachable would invite the "is registration open?" question this
+    // design removes. It redirects rather than rendering a disabled form.
+    create_user_directly(&db, "admin", "vulture-mango-77-quilt").await;
+    let closed = server.get("/setup").await;
+    closed.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(closed.header(header::LOCATION), "/login");
 }
 
 #[tokio::test]
@@ -970,7 +965,7 @@ async fn test_validation_short_password() {
     let server = create_test_server(default_test_config()).await;
 
     let response = server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "short"
@@ -981,46 +976,40 @@ async fn test_validation_short_password() {
 }
 
 #[tokio::test]
-async fn registration_enforces_the_password_length_policy() {
+async fn setup_enforces_the_password_policy() {
     // The boundaries themselves, read from the constants so this test cannot
-    // drift from the policy it is guarding.
+    // drift from the policy it is guarding. Each rejection reuses the same
+    // empty instance — a refused attempt creates nothing, so setup stays open.
     let server = create_test_server(default_test_config()).await;
 
     let one_short = "a".repeat(rdrs::auth::PASSWORD_MIN_LENGTH - 1);
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "shorty", "password": one_short }))
         .await
         .assert_status_bad_request();
 
     let one_long = "a".repeat(rdrs::auth::PASSWORD_MAX_LENGTH + 1);
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "longy", "password": one_long }))
         .await
         .assert_status_bad_request();
 
-    // Exactly at the minimum is accepted, provided it is not guessable — a
-    // 15-character run of one letter clears the length gate and is refused by
-    // the estimator instead, which is the point of having both.
-    let at_min = "vT7q!mLp2zXc9Rw";
-    assert_eq!(at_min.chars().count(), rdrs::auth::PASSWORD_MIN_LENGTH);
+    // A 15-character run of one letter clears the length gate and is refused
+    // by the estimator instead, which is the point of having both.
     server
-        .post("/api/register")
-        .json(&json!({ "username": "atmin", "password": at_min }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "repeater", "password": "a".repeat(rdrs::auth::PASSWORD_MIN_LENGTH) }))
         .await
         .assert_status_bad_request();
 
-    // A passphrase of ordinary lower-case words is fine: no composition rules.
+    // Exactly at the minimum is accepted, provided it is not guessable.
+    let at_min = "vT7q!mLp2zXc9Rw";
+    assert_eq!(at_min.chars().count(), rdrs::auth::PASSWORD_MIN_LENGTH);
     server
-        .post("/api/register")
-        .json(&json!({ "username": "passphrase", "password": "correct horse battery staple" }))
+        .post("/api/setup")
+        .json(&json!({ "username": "atmin", "password": at_min }))
         .await
         .assert_status(StatusCode::CREATED);
 }
@@ -1034,7 +1023,7 @@ async fn registration_refuses_a_password_built_from_the_username() {
     let server = create_test_server(default_test_config()).await;
 
     let response = server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "marigoldbadger",
             "password": "marigoldbadger1"
@@ -1060,7 +1049,7 @@ async fn an_over_long_password_is_refused_before_it_is_hashed() {
     let server = create_test_server(default_test_config()).await;
 
     let response = server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "verbose",
             "password": "a".repeat(100_000)
@@ -1079,20 +1068,17 @@ async fn an_over_long_password_is_refused_before_it_is_hashed() {
 }
 
 #[tokio::test]
-async fn a_refused_registration_does_not_hash_the_password() {
-    // With signups closed, `can_register` must decide before `hash_password`
+async fn a_refused_setup_does_not_hash_the_password() {
+    // Once an account exists, `can_setup` must decide before `hash_password`
     // runs: Argon2 is deliberately expensive, and paying it for a request that
     // was never going to succeed is free CPU for whoever sends it. Asserted
     // through the response the ordering produces — a refusal, not a
     // validation error — plus the account genuinely not existing afterwards.
-    let mut config = default_test_config();
-    config.signup_enabled = false;
-    config.multi_user_enabled = false;
-    let (server, db) = build_server(config).await;
+    let (server, db) = build_server(default_test_config()).await;
     create_user_directly(&db, "owner", "vulture-mango-77-quilt").await;
 
     let response = server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "intruder",
             "password": "vulture-mango-77-quilt"
@@ -1113,7 +1099,7 @@ async fn test_validation_empty_username() {
     let server = create_test_server(default_test_config()).await;
 
     let response = server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "",
             "password": "vulture-mango-77-quilt"
@@ -1128,7 +1114,7 @@ async fn test_unread_page() {
     let mut server = create_test_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -1172,7 +1158,7 @@ async fn test_admin_page_accessible_by_admin() {
     let mut server = create_test_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -1198,10 +1184,10 @@ async fn test_admin_page_accessible_by_admin() {
 
 #[tokio::test]
 async fn test_admin_page_forbidden_for_regular_user() {
-    let mut server = create_test_server(default_test_config()).await;
+    let (mut server, db) = build_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -1209,14 +1195,7 @@ async fn test_admin_page_forbidden_for_regular_user() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "user1",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
+    common::seed_account(&db, "user1", "vulture-mango-77-quilt", rdrs::Role::User).await;
 
     let __login = server
         .post("/api/session")
@@ -1247,7 +1226,7 @@ async fn test_unread_page_shows_admin_link_for_admin() {
     let mut server = create_test_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -1275,10 +1254,10 @@ async fn test_unread_page_shows_admin_link_for_admin() {
 
 #[tokio::test]
 async fn test_unread_page_hides_admin_link_for_regular_user() {
-    let mut server = create_test_server(default_test_config()).await;
+    let (mut server, db) = build_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -1286,14 +1265,7 @@ async fn test_unread_page_hides_admin_link_for_regular_user() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    server
-        .post("/api/register")
-        .json(&json!({
-            "username": "user1",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
+    common::seed_account(&db, "user1", "vulture-mango-77-quilt", rdrs::Role::User).await;
 
     let __login = server
         .post("/api/session")
@@ -1361,7 +1333,7 @@ async fn test_flash_message_on_unread_page() {
     let mut server = create_test_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "admin",
             "password": "vulture-mango-77-quilt"
@@ -1422,7 +1394,7 @@ async fn test_api_request_slides_session_expiry_forward() {
     let (mut server, db) = build_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "admin", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1456,7 +1428,7 @@ async fn test_page_request_slides_session_expiry_forward() {
     let (mut server, db) = build_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "admin", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1489,7 +1461,7 @@ async fn test_disable_local_auth_blocks_password_login() {
 
     // Seed a normal password user.
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1516,7 +1488,7 @@ fn set_cookie_headers(res: &axum_test::TestResponse) -> Vec<String> {
 /// `cookie_secure` config selects.
 async fn login_session_cookie(server: &TestServer) -> String {
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1616,7 +1588,7 @@ async fn test_unprefixed_cookie_still_authenticates_when_secure_enabled() {
 async fn test_prefixed_cookie_is_never_emitted_without_secure() {
     let server = create_test_server(default_test_config()).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1655,7 +1627,7 @@ async fn test_session_cookie_max_age_matches_sliding_ttl() {
 async fn test_csrf_cookie_max_age_matches_session_cookie() {
     let server = create_test_server(default_test_config()).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1683,7 +1655,7 @@ async fn test_csrf_cookie_max_age_matches_session_cookie() {
 async fn test_logout_clears_cookie_with_path() {
     let mut server = create_test_server(default_test_config()).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1746,7 +1718,7 @@ async fn test_logout_clears_cookie_with_path() {
 async fn test_logout_removal_cookie_is_not_overwritten_by_slide() {
     let mut server = create_test_server(default_test_config()).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1820,7 +1792,7 @@ async fn test_logout_clears_prefixed_cookies_when_secure_enabled() {
     };
     let mut server = create_test_server(config).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1867,7 +1839,7 @@ async fn test_tampered_session_cookie_is_rejected() {
     // `save_cookies` lets us replay a hand-edited cookie.
     let (mut server, _db) = build_server_no_save_cookies(default_test_config()).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1918,7 +1890,7 @@ async fn test_tampered_session_cookie_is_rejected() {
 async fn test_logout_redirect_default_is_login() {
     let mut server = create_test_server(default_test_config()).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1941,7 +1913,7 @@ async fn test_logout_redirect_uses_configured_url() {
     config.auth_proxy_logout_url = Some("https://auth.example.com/logout".to_string());
     let mut server = create_test_server(config).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1969,7 +1941,7 @@ async fn test_logout_redirect_uses_relative_configured_url() {
     config.auth_proxy_logout_url = Some("/logout".to_string());
     let mut server = create_test_server(config).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1997,7 +1969,7 @@ async fn test_logout_redirect_uses_relative_configured_url() {
 async fn test_logout_sends_clear_site_data() {
     let mut server = create_test_server(default_test_config()).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -2033,7 +2005,7 @@ async fn test_logout_sends_clear_site_data() {
 async fn test_logout_clear_site_data_omits_cookies() {
     let mut server = create_test_server(default_test_config()).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -2067,7 +2039,7 @@ async fn test_logout_clear_site_data_omits_cookies() {
 async fn test_login_page_redirects_authenticated_to_root() {
     let mut server = create_test_server(default_test_config()).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -2096,7 +2068,7 @@ async fn test_fresh_session_is_not_refreshed() {
     let (mut server, db) = build_server(default_test_config()).await;
 
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "admin", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -2123,7 +2095,7 @@ async fn test_fresh_session_is_not_refreshed() {
 async fn test_authenticated_request_reissues_session_cookie() {
     let mut server = create_test_server(default_test_config()).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -2176,7 +2148,7 @@ async fn test_authenticated_request_reissues_session_cookie() {
 async fn test_static_asset_response_has_no_set_cookie() {
     let mut server = create_test_server(default_test_config()).await;
     server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);

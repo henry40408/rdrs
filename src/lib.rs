@@ -85,11 +85,17 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/", get(handlers::pages::unread_page))
         .route("/login", get(handlers::pages::login_page))
-        .route("/register", get(handlers::pages::register_page))
+        .route("/setup", get(handlers::pages::setup_page))
+        // The one-time link an admin hands out. Anonymous by design: the token
+        // in the path is the only authority, so nothing here reads a session.
+        .route(
+            "/invite/{token}",
+            get(handlers::invite::invite_page).post(handlers::invite::redeem_form),
+        )
         .route("/user-settings", get(handlers::pages::user_settings_page))
         .route("/admin", get(handlers::pages::admin_page))
         .route("/settings", get(handlers::pages::settings_page))
-        .route("/api/register", post(handlers::auth::register))
+        .route("/api/setup", post(handlers::auth::setup))
         .route("/api/session", post(handlers::auth::login))
         .route("/api/session", delete(handlers::auth::logout))
         .route("/api/session/reauth", post(handlers::auth::reauthenticate))
@@ -144,6 +150,15 @@ pub fn create_router(state: AppState) -> Router {
         // account-changing routes below require; it is the form-encoded twin
         // of `POST /api/session/reauth`, which only `passkey.js` can drive.
         .route("/admin/reauth", post(handlers::admin::reauth_form))
+        .route("/admin/users", post(handlers::admin::create_user_form))
+        .route(
+            "/admin/users/{id}/invite",
+            post(handlers::admin::reissue_invite_form),
+        )
+        .route(
+            "/admin/users/{id}/invite/revoke",
+            post(handlers::admin::revoke_invite_form),
+        )
         .route(
             "/admin/users/{id}/role",
             post(handlers::admin::update_role_form),

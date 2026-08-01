@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Set your password - RDRS{% endblock %}
+
+{% block body %}
+<div class="auth-layout">
+    <div class="auth-card">
+        <h1>rdrs</h1>
+        {% if let Some(name) = username %}
+        {% if let Some(err) = error %}
+        <div class="error" data-testid="invite-error">{{ err }}</div>
+        {% endif %}
+        <p class="muted">Choose a password for <strong>{{ name }}</strong>.</p>
+        {# A plain form POST — no fetch, no JSON. The link in the address bar is
+           the only authority this page has; the CSRF token rides along the way
+           it does on every other form here, injected by csrf.js from the
+           readable cookie the anonymous-session middleware mints on the GET. #}
+        <form method="post" action="/invite/{{ token }}" data-testid="invite-form">
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required minlength="{{ password_min_length }}" maxlength="{{ password_max_length }}" autocomplete="new-password" data-testid="invite-password">
+                <p class="muted form-hint">At least {{ password_min_length }} characters. A phrase of a few unrelated words works well — no mixture of cases or symbols is required.</p>
+            </div>
+            <div class="form-group">
+                <label for="confirm-password">Confirm Password</label>
+                <input type="password" id="confirm-password" name="confirm_password" required minlength="{{ password_min_length }}" maxlength="{{ password_max_length }}" autocomplete="new-password" data-testid="invite-confirm-password">
+            </div>
+            <button type="submit" class="btn-block" data-testid="invite-submit">Set Password</button>
+        </form>
+        {% else %}
+        {# The single dead end every failing token reaches — unknown, expired,
+           or already used. It names no account and gives no reason, because
+           any of those would turn this page into the account oracle that
+           removing self-service registration was meant to close. #}
+        {% if let Some(err) = error %}
+        <div class="error" data-testid="invite-error">{{ err }}</div>
+        {% else %}
+        <div class="error" data-testid="invite-invalid">This link is not valid. It may have expired or already been used.</div>
+        <p class="muted">Ask whoever set up your account for a new one.</p>
+        {% endif %}
+        {% endif %}
+        <div class="link">
+            <a href="/login">Back to sign in</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

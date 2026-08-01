@@ -542,7 +542,7 @@ async fn test_settings_page_renders_ssr_content() {
     assert!(body.contains("Configuration"));
     assert!(body.contains("DATABASE_URL"));
     assert!(body.contains("RDRS_USER_AGENT"));
-    assert!(body.contains("RDRS_SIGNUP_ENABLED"));
+    assert!(body.contains("RDRS_MULTI_USER_ENABLED"));
     assert!(body.contains("RDRS_SECRET"));
     // The "Current" column header surfaces the running instance's values.
     assert!(body.contains("Current"));
@@ -556,7 +556,6 @@ async fn test_settings_page_reflects_custom_config() {
         database_url: "/data/custom.sqlite3".to_string(),
         server_bind: "0.0.0.0:9090".parse().unwrap(),
         user_agent: "Custom-Agent/2.0".to_string(),
-        signup_enabled: true,
         multi_user_enabled: true,
         secret_generated: false,
         ..default_test_config()
@@ -577,11 +576,12 @@ async fn test_settings_page_reflects_custom_config() {
     // Image proxy secret is configured (not auto-generated).
     assert!(body.contains("Configured"));
     assert!(!body.contains(">Auto-generated<"));
-    // Both Yes flags rendered for signup + multi-user.
+    // The multi-user flag renders as a Yes badge. (There used to be two:
+    // RDRS_SIGNUP_ENABLED was retired along with self-service registration.)
     let yes_count = body
         .matches("<span class=\"success-text\">Yes</span>")
         .count();
-    assert!(yes_count >= 2, "expected >=2 Yes badges, got {yes_count}");
+    assert!(yes_count >= 1, "expected a Yes badge, got {yes_count}");
 }
 
 #[tokio::test]
@@ -639,7 +639,6 @@ async fn test_settings_page_forbidden_for_non_admin() {
 #[tokio::test]
 async fn test_login_page_hides_signup_when_disabled() {
     let config = Config {
-        signup_enabled: false,
         ..default_test_config()
     };
     let app = create_test_app(config).await;
@@ -654,67 +653,23 @@ async fn test_login_page_hides_signup_when_disabled() {
 }
 
 #[tokio::test]
-async fn test_register_page_shows_disabled_message() {
+async fn setup_page_redirects_once_the_instance_has_an_account() {
     let config = Config {
-        signup_enabled: false,
         ..default_test_config()
     };
     let app = create_test_app(config).await;
 
-    // `Config::can_register` bootstraps the very first account regardless of
-    // `signup_enabled` (`user_count == 0 || …`), so with an empty database this
-    // page still renders the open signup form. Seed accounts first, or the
-    // assertion below is checking the wrong page.
+    // With an empty database /setup renders the bootstrap form, so accounts
+    // have to exist before this asserts anything.
     setup_users(&app.db).await;
 
-    let response = app.server.get("/register").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let response = app.server.get("/setup").await;
 
-    // Assert on the message itself, not a loose substring: this test used to
-    // pass on the word "Registration" appearing in an inline <script>'s error
-    // strings, which the strict-CSP refactor moved out to static/js/register.js.
-    assert!(
-        body.contains("Registration is currently disabled"),
-        "expected the disabled notice, got: {body}"
-    );
+    // A redirect, not a disabled form: the page has exactly one purpose and it
+    // is spent. Nothing about the accounts that exist is disclosed.
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/login");
 }
-
-#[tokio::test]
-async fn test_register_page_shows_disabled_after_first_user_in_single_mode() {
-    let config = Config {
-        signup_enabled: true,
-        multi_user_enabled: false,
-        ..default_test_config()
-    };
-    let app = create_test_app(config).await;
-
-    // Register first user
-    app.server
-        .post("/api/register")
-        .json(&json!({
-            "username": "admin",
-            "password": "vulture-mango-77-quilt"
-        }))
-        .await
-        .assert_status(StatusCode::CREATED);
-
-    // Check register page
-    let response = app.server.get("/register").await;
-    response.assert_status_ok();
-    let body = response.text();
-
-    // Assert on the message itself — see the sibling test above for why the
-    // looser substring check was not actually testing anything.
-    assert!(
-        body.contains("Registration is currently disabled"),
-        "expected the disabled notice, got: {body}"
-    );
-}
-
-// ============================================================================
-// Flash Message Tests for Pages
-// ============================================================================
 
 #[tokio::test]
 async fn test_categories_page_with_flash() {
@@ -1133,7 +1088,7 @@ async fn test_category_entries_page() {
     let mut app = create_test_app_named(default_test_config(), "test_category_entries_page").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_ce", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1289,7 +1244,7 @@ async fn test_category_entries_page_not_found() {
     .await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_cnf", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1324,17 +1279,19 @@ async fn test_category_entries_page_other_user() {
 
     // Register alice (owner of the category)
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_cou", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
 
     // Register bob (the cross-tenant user)
-    app.server
-        .post("/api/register")
-        .json(&json!({ "username": "bob_cou", "password": "vulture-mango-77-quilt" }))
-        .await
-        .assert_status(StatusCode::CREATED);
+    common::seed_account(
+        &app.db,
+        "bob_cou",
+        "vulture-mango-77-quilt",
+        rdrs::Role::User,
+    )
+    .await;
 
     // Get alice's user_id and create her category
     let alice_id: i64 = rdrs::query_scalar!(
@@ -1375,7 +1332,7 @@ async fn test_category_entries_page_load_more_fragment() {
         create_test_app_named(default_test_config(), "test_category_entries_page_lm").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_cl", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1452,7 +1409,7 @@ async fn test_category_mark_read_scoped_search() {
         create_test_app_named(default_test_config(), "test_category_mark_read_scoped").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_mr", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1560,7 +1517,7 @@ async fn test_feed_mark_read_scoped_search() {
     let mut app = create_test_app_named(default_test_config(), "test_feed_mark_read_scoped").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_fmr", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1673,7 +1630,7 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
     .await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_mc", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1789,7 +1746,7 @@ async fn test_feed_entries_page() {
     let mut app = create_test_app_named(default_test_config(), "test_feed_entries_page").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_fe", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1940,7 +1897,7 @@ async fn test_feed_entries_page_status_filter() {
         create_test_app_named(default_test_config(), "test_feed_entries_page_status").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_fst", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -2121,7 +2078,7 @@ async fn test_feed_entries_page_not_found() {
         create_test_app_named(default_test_config(), "test_feed_entries_page_not_found").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_fnf", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -2153,17 +2110,19 @@ async fn test_feed_entries_page_other_user() {
 
     // Register alice (owner of the feed)
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_fou", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
 
     // Register bob (the cross-tenant user)
-    app.server
-        .post("/api/register")
-        .json(&json!({ "username": "bob_fou", "password": "vulture-mango-77-quilt" }))
-        .await
-        .assert_status(StatusCode::CREATED);
+    common::seed_account(
+        &app.db,
+        "bob_fou",
+        "vulture-mango-77-quilt",
+        rdrs::Role::User,
+    )
+    .await;
 
     // Get alice's user_id and create her feed
     let alice_id: i64 = rdrs::query_scalar!(
@@ -2215,7 +2174,7 @@ async fn test_feed_entries_page_load_more_fragment() {
     let mut app = create_test_app_named(default_test_config(), "test_feed_entries_page_lm").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_fl", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -2661,9 +2620,9 @@ async fn test_login_page_does_not_load_logged_in_chrome() {
 }
 
 #[tokio::test]
-async fn test_register_page_does_not_load_logged_in_chrome() {
+async fn test_setup_page_does_not_load_logged_in_chrome() {
     let app = create_test_app(default_test_config()).await;
-    let response = app.server.get("/register").await;
+    let response = app.server.get("/setup").await;
     response.assert_status_ok();
     let body = response.text();
 
@@ -2712,7 +2671,7 @@ async fn test_unread_page_renders_entry_rows() {
 
     // Register and login as alice
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_unread", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -2836,7 +2795,7 @@ async fn test_entries_page_renders_ssr_rows() {
     let mut app = create_test_app_named(default_test_config(), "test_pages_entries_ssr").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_entries", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -2935,7 +2894,7 @@ async fn test_read_entries_page_renders_ssr_rows() {
     let mut app = create_test_app_named(default_test_config(), "test_pages_read_ssr").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_read", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -3046,7 +3005,7 @@ async fn test_starred_entries_page_renders_ssr_rows() {
     let mut app = create_test_app_named(default_test_config(), "test_pages_starred_ssr").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_starred", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -3159,7 +3118,7 @@ async fn test_summarized_entries_page_renders_ssr_rows() {
     let mut app = create_test_app_named(default_test_config(), "test_pages_summarized_ssr").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "alice_summarized", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -3285,7 +3244,7 @@ async fn test_unread_load_more_uses_keyset_cursor() {
     let mut app = create_test_app_named(default_test_config(), "test_unread_keyset").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({ "username": "kuser", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -3396,7 +3355,7 @@ async fn test_settings_page_groups_and_forward_auth() {
     let mut app = create_test_app_named(config, "test_settings_groups_fa").await;
 
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&serde_json::json!({ "username": "admin", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
