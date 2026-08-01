@@ -43,6 +43,14 @@ pub const DOMAIN_SESSION: &[u8] = b"session:";
 pub const DOMAIN_CSRF: &[u8] = b"csrf:";
 /// Domain-separation prefix for audit-log session identifiers.
 pub const DOMAIN_AUDIT: &[u8] = b"audit:";
+/// Domain-separation prefix for account-invite tokens.
+///
+/// Used to *store* an invite rather than to sign one: `user_invite.token_hash`
+/// holds the tag, and redemption re-derives it from the token in the URL. That
+/// keeps a database copy on its own useless for minting links — an attacker
+/// would need `RDRS_SECRET` too — and it means the column can be compared with
+/// an ordinary indexed lookup instead of scanning and verifying row by row.
+pub const DOMAIN_INVITE: &[u8] = b"invite:";
 
 /// Separates the session token from its signature in the cookie value.
 ///

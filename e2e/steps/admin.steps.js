@@ -15,10 +15,14 @@ Given("I am signed in as an admin", async ({ page, api, currentUser, seed, serve
   await page.waitForURL(`${serverUrl}/`);
 });
 
-// Register a second user so there is a non-self row in the admin table.
+// Create a second account so there is a non-self row in the admin table. The
+// name is remembered because the disable step has to act on *this* row: the
+// table also lists the worker's bootstrap admin (the account that claimed
+// /setup, which every later account is created by), and disabling that would
+// break every scenario that runs after this one on the same server.
 Given("there is another registered user", async ({ api, currentUser }) => {
-  const otherUsername = `other-${currentUser.username}`;
-  await api.register(otherUsername, "vulture-mango-77-quilt");
+  currentUser.otherUsername = `other-${currentUser.username}`;
+  await api.register(currentUser.otherUsername, "vulture-mango-77-quilt");
 });
 
 When("I open the admin page", async ({ page, serverUrl }) => {
@@ -29,10 +33,9 @@ When("I open the statistics page", async ({ page, serverUrl }) => {
   await page.goto(`${serverUrl}/statistics`);
 });
 
-// Click the disable button on the first row that has one (non-self rows only).
-When("I disable the first non-self user", async ({ page }) => {
-  const disableBtn = page.getByTestId("admin-disable-btn").first();
-  await disableBtn.click();
+When("I disable the other user", async ({ page, currentUser }) => {
+  const row = page.locator("tr", { hasText: currentUser.otherUsername });
+  await row.getByTestId("admin-disable-btn").click();
   // Wait for the page to reload after the form POST redirect.
   await page.waitForURL(/\/admin/);
 });
@@ -41,8 +44,9 @@ Then("I see my username in the users table", async ({ page, currentUser }) => {
   await expect(page.getByTestId("admin-users-table")).toContainText(currentUser.username);
 });
 
-Then("a user is shown as disabled in the table", async ({ page }) => {
-  await expect(page.getByTestId("admin-user-disabled").first()).toBeVisible();
+Then("the other user is shown as disabled in the table", async ({ page, currentUser }) => {
+  const row = page.locator("tr", { hasText: currentUser.otherUsername });
+  await expect(row.getByTestId("admin-user-disabled")).toBeVisible();
 });
 
 Then("the statistics show at least {int} feed", async ({ page }, n) => {

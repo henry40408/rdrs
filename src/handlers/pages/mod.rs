@@ -496,7 +496,9 @@ pub fn resolve_statistics_period(query: &StatisticsQuery) -> (String, String, St
 #[derive(Template)]
 #[template(path = "login.html")]
 pub struct LoginTemplate {
-    pub signup_enabled: bool,
+    /// Whether to offer the first-run setup link. True only on an instance
+    /// with no accounts at all — after that, accounts come from an admin.
+    pub setup_available: bool,
     pub flash_messages: Vec<FlashMessage>,
     pub git_version: &'static str,
     pub local_auth_enabled: bool,
@@ -520,15 +522,15 @@ pub async fn login_page(
         return Redirect::to("/").into_response();
     }
 
-    let signup_enabled = crate::models::user::count(&state.db)
+    let setup_available = crate::models::user::count(&state.db)
         .await
         .ok()
-        .is_some_and(|count| state.config.can_register(count));
+        .is_some_and(|count| state.config.can_setup(count));
 
     (
         flash.clone(),
         LoginTemplate {
-            signup_enabled,
+            setup_available,
             flash_messages: flash.messages,
             git_version: crate::GIT_VERSION,
             local_auth_enabled: !state.config.disable_local_auth,
@@ -538,8 +540,8 @@ pub async fn login_page(
 }
 
 #[derive(Template)]
-#[template(path = "register.html")]
-pub struct RegisterTemplate {
+#[template(path = "setup.html")]
+pub struct SetupTemplate {
     pub error: Option<String>,
     pub flash_messages: Vec<FlashMessage>,
     pub git_version: &'static str,
@@ -551,7 +553,7 @@ pub struct RegisterTemplate {
     pub password_max_length: usize,
 }
 
-impl IntoResponse for RegisterTemplate {
+impl IntoResponse for SetupTemplate {
     fn into_response(self) -> Response {
         match self.render() {
             Ok(html) => Html(html).into_response(),
@@ -560,29 +562,107 @@ impl IntoResponse for RegisterTemplate {
     }
 }
 
-pub async fn register_page(
-    State(state): State<AppState>,
-    flash: Flash,
-) -> (Flash, RegisterTemplate) {
-    let can_register = crate::models::user::count(&state.db)
+/// `GET /setup` — the first-run form, and only that.
+///
+/// Once any account exists this redirects to `/login` rather than rendering a
+/// disabled form: the page has no second purpose, and leaving it reachable
+/// would invite the "is registration open?" question the invite flow exists to
+/// retire.
+pub async fn setup_page(State(state): State<AppState>, flash: Flash) -> Response {
+    let can_setup = crate::models::user::count(&state.db)
         .await
         .ok()
-        .is_some_and(|count| state.config.can_register(count));
+        .is_some_and(|count| state.config.can_setup(count));
+
+    if !can_setup {
+        return Redirect::to("/login").into_response();
+    }
 
     (
         flash.clone(),
-        RegisterTemplate {
-            error: if can_register {
-                None
-            } else {
-                Some("Registration is currently disabled".to_string())
-            },
+        SetupTemplate {
+            error: None,
             flash_messages: flash.messages,
             git_version: crate::GIT_VERSION,
             password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
             password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
         },
     )
+        .into_response()
+}
+
+/// The anonymous "set your password" page behind an invite link.
+///
+/// One template with three shapes, deliberately: a form, a dead end, and a
+/// throttled notice. Keeping them in one type is what makes it hard to give
+/// the dead end an accidentally distinguishing detail — there is a single
+/// place where "invalid" is rendered, and it carries no username, no reason,
+/// and no hint at which of unknown / expired / already-used applies.
+#[derive(Template)]
+#[template(path = "invite.html")]
+pub struct InviteTemplate {
+    pub git_version: &'static str,
+    /// `None` renders the dead end; `Some` renders the form for that account.
+    pub username: Option<String>,
+    /// Echoed into the form action so the POST lands on the same link.
+    pub token: String,
+    pub error: Option<String>,
+    pub password_min_length: usize,
+    pub password_max_length: usize,
+}
+
+impl InviteTemplate {
+    pub fn form(token: &str, username: String) -> Self {
+        Self {
+            git_version: crate::GIT_VERSION,
+            username: Some(username),
+            token: token.to_string(),
+            error: None,
+            password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
+            password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
+        }
+    }
+
+    pub fn error(token: &str, username: String, message: &str) -> Self {
+        Self {
+            error: Some(message.to_string()),
+            ..Self::form(token, username)
+        }
+    }
+
+    /// The one response every failing token gets, whatever the reason.
+    pub fn invalid() -> Self {
+        Self {
+            git_version: crate::GIT_VERSION,
+            username: None,
+            token: String::new(),
+            error: None,
+            password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
+            password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
+        }
+    }
+
+    /// Rate-limited. Distinct from [`InviteTemplate::invalid`] on purpose:
+    /// the caller may well hold a perfectly good link and needs to be told to
+    /// come back rather than that their link is dead. It reveals nothing about
+    /// the token, only about this client's own request rate.
+    pub fn throttled(retry_after_secs: u64) -> Self {
+        Self {
+            error: Some(format!(
+                "Too many attempts. Please try again in {retry_after_secs} seconds."
+            )),
+            ..Self::invalid()
+        }
+    }
+}
+
+impl IntoResponse for InviteTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
 }
 
 /// Serves `/` (unread) rendered fully server-side. Unread entries are fetched
@@ -691,11 +771,34 @@ pub async fn unread_page(
 /// effective admin or the original admin (under masquerade). Each row's
 /// action buttons are `<form>` elements posting to the `/admin/users/{id}/*`
 /// form-action endpoints added in PR-5 T1.
+/// Pull a one-time invite link out of the flash, if the last action left one.
+///
+/// `handlers::admin` puts the bare URL in the flash and nothing else, so this
+/// recognises it by shape rather than by parsing a sentence. The message is
+/// then *replaced* rather than dropped: the link belongs in its own block on
+/// the page (it is long, it is copied, and it is shown exactly once), not in a
+/// banner that fades — but `Flash`'s response hook only clears the cookie when
+/// messages remain, so removing the last one outright would leave the link in
+/// the jar to reappear on the next page load.
+fn extract_invite_link(flash: &mut Flash) -> Option<String> {
+    let link = flash
+        .messages
+        .iter()
+        .find(|m| m.message.contains("/invite/"))
+        .map(|m| m.message.clone())?;
+
+    flash.messages = vec![crate::middleware::flash::FlashMessage::success(
+        "Account link ready.",
+    )];
+    Some(link)
+}
+
 pub async fn admin_page(
     admin: PageAdminUser,
     State(state): State<AppState>,
-    flash: Flash,
+    mut flash: Flash,
 ) -> (Flash, AdminTemplate) {
+    let invite_link = extract_invite_link(&mut flash);
     let auth_user = PageAuthUser {
         user: admin.user.clone(),
         session: admin.session.clone(),
@@ -721,9 +824,30 @@ pub async fn admin_page(
                 created_at: u.created_at.format("%Y-%m-%d").to_string(),
                 created_at_iso: u.created_at.to_rfc3339(),
                 is_self: u.id == effective_admin_id || u.id == original_admin_id,
+                // `"!"` is the unusable hash both this panel and forward-auth
+                // write for an account that has never chosen a password.
+                awaiting_password: u.password_hash == "!",
+                invite_expires_at: None,
             }
         })
         .collect();
+
+    // One lookup per row rather than a join: the list is small (a self-hosted
+    // reader has a handful of accounts), and keeping it out of `list_all`
+    // avoids teaching the user query about invites.
+    let mut users: Vec<AdminUserView> = users;
+    for row in &mut users {
+        row.invite_expires_at = crate::models::user_invite::find_live_for_user(&state.db, row.id)
+            .await
+            .ok()
+            .flatten()
+            .map(|invite| invite.expires_at.format("%Y-%m-%d %H:%M").to_string());
+    }
+
+    let can_create_account = crate::models::user::count(&state.db)
+        .await
+        .ok()
+        .is_some_and(|count| state.config.can_create_account(count));
 
     // Mirrors `handlers::admin::require_recent_authentication` exactly: a
     // forward-auth session has no rdrs password to confirm, and a session
@@ -739,7 +863,9 @@ pub async fn admin_page(
             git_version: crate::GIT_VERSION,
             layout,
             users,
+            can_create_account,
             needs_reauth,
+            invite_link,
         },
     )
 }
@@ -1331,7 +1457,6 @@ pub async fn settings_page(
             server_bind: state.config.server_bind,
             user_agent: state.config.user_agent.clone(),
             user_agent_is_default,
-            signup_enabled: state.config.signup_enabled,
             multi_user_enabled: state.config.multi_user_enabled,
             secret_generated: state.config.secret_generated,
             webauthn_rp_id: state.config.webauthn_rp_id.clone(),
@@ -2396,7 +2521,6 @@ pub struct SettingsTemplate {
     pub server_bind: std::net::SocketAddr,
     pub user_agent: String,
     pub user_agent_is_default: bool,
-    pub signup_enabled: bool,
     pub multi_user_enabled: bool,
     pub secret_generated: bool,
     pub webauthn_rp_id: String,
@@ -2486,7 +2610,7 @@ pub struct UserSettingsTemplate {
     pub theme: Option<String>,
     pub entries_per_page: i64,
     pub retention_read_days: i64,
-    /// Same purpose as on [`RegisterTemplate`]: the "Change Password" field's
+    /// Same purpose as on [`SetupTemplate`]: the "Change Password" field's
     /// browser-side hint is generated from the server's own policy constants.
     pub password_min_length: usize,
     pub password_max_length: usize,
@@ -2514,6 +2638,13 @@ pub struct AdminUserView {
     pub created_at: String,
     pub created_at_iso: String,
     pub is_self: bool,
+    /// The account has never had a password set — created by an admin, invite
+    /// not yet redeemed. It cannot be signed into in this state.
+    pub awaiting_password: bool,
+    /// When the outstanding one-time link expires, if there is one. The link
+    /// itself is unrecoverable (only its HMAC is stored), so this is the whole
+    /// of what the panel can say about it.
+    pub invite_expires_at: Option<String>,
 }
 
 /// Per-route template for `/admin`.
@@ -2524,6 +2655,14 @@ pub struct AdminTemplate {
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
     pub users: Vec<AdminUserView>,
+    /// The one-time link the last create-or-reissue produced, rendered in its
+    /// own block. `None` on an ordinary page load — it is shown once, and
+    /// nothing can reproduce it afterwards.
+    pub invite_link: Option<String>,
+    /// Whether `RDRS_MULTI_USER_ENABLED` allows another account at all. False
+    /// hides the create form rather than letting it be submitted into a
+    /// refusal.
+    pub can_create_account: bool,
     /// Whether this session has to confirm its password before it can change
     /// accounts (see `handlers::admin::require_recent_authentication`).
     /// Rendered as an inline confirmation form rather than left for the POST

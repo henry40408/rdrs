@@ -48,13 +48,39 @@ pub fn apply_csrf(server: &mut TestServer, login_response: &TestResponse) {
     server.add_header("x-csrf-token", token);
 }
 
+/// Create an account straight in the database, ready to sign in with.
+///
+/// `POST /api/setup` only ever creates the *first* account — every later one
+/// comes from an admin plus a redeemed invite, which is three requests of
+/// ceremony for a test that just needs a second user to exist. Tests that are
+/// actually about the invite flow drive the real endpoints; everything else
+/// uses this.
+///
+/// Seeds the same default category the real paths do, so a freshly seeded
+/// account behaves like one created through the UI.
+#[allow(dead_code)] // not every suite needs a second account
+pub async fn seed_account(
+    db: &rdrs::Db,
+    username: &str,
+    password: &str,
+    role: rdrs::Role,
+) -> rdrs::User {
+    let hash = rdrs::auth::hash_password(password).unwrap();
+    let user = rdrs::models::user::create_user(db, username, &hash, role)
+        .await
+        .unwrap();
+    rdrs::models::category::create_category(db, user.id, "Uncategorized")
+        .await
+        .unwrap();
+    user
+}
+
 /// Default in-memory `Config` shared across the integration test suites.
 #[allow(dead_code)] // a few suites build their own Config inline
 pub fn default_test_config() -> Config {
     Config {
         database_url: ":memory:".to_string(),
         server_bind: "127.0.0.1:8080".parse().unwrap(),
-        signup_enabled: true,
         multi_user_enabled: true,
         secret: vec![0u8; 32],
         secret_generated: false,

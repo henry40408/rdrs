@@ -9,6 +9,7 @@ pub mod feed;
 pub mod feeds;
 pub mod greader;
 pub mod health;
+pub mod invite;
 pub mod pages;
 pub mod passkey;
 pub mod proxy;

@@ -285,6 +285,80 @@ pub fn login_rate_limited(endpoint: &str, bucket: &str, ip: &str) {
     );
 }
 
+/// An admin issued a one-time link that can set an account's password.
+///
+/// This is a credential-granting act — whoever holds the link can take the
+/// account — so it is audited like one. The token appears only as its salted
+/// `audit_id`, never in the clear: an audit log that leaked working invite
+/// links would be worse than no log. `reason` distinguishes a new account
+/// (`"account_created"`) from an admin-issued reset of an existing one
+/// (`"password_reset"`), which are the same mechanism aimed at different
+/// states.
+pub fn invite_issued(
+    secret: &[u8],
+    token: &str,
+    user_id: i64,
+    actor_user_id: i64,
+    reason: &str,
+    expires_at: DateTime<Utc>,
+) {
+    tracing::info!(
+        target: AUDIT_TARGET,
+        event = "invite.issued",
+        iid = %audit_id(secret, token),
+        user_id,
+        actor_user_id,
+        reason,
+        expires_at = %expires_at.to_rfc3339(),
+        "account invite issued"
+    );
+}
+
+/// A link was redeemed and the account now has a password it did not have
+/// before (or has a different one). The other half of [`invite_issued`]:
+/// without the pair, a credential could appear with no trace of who enabled
+/// it.
+pub fn invite_consumed(secret: &[u8], token: &str, user_id: i64, ip: &str, ua: &str) {
+    tracing::info!(
+        target: AUDIT_TARGET,
+        event = "invite.consumed",
+        iid = %audit_id(secret, token),
+        user_id,
+        ip = %ip,
+        user_agent = %ua,
+        "account invite redeemed"
+    );
+}
+
+/// An outstanding link was cancelled before anyone used it.
+///
+/// Identified by account rather than by token: revocation deletes the row, so
+/// by the time this is written there is no token left to identify.
+pub fn invite_revoked(user_id: i64, actor_user_id: i64) {
+    tracing::info!(
+        target: AUDIT_TARGET,
+        event = "invite.revoked",
+        user_id,
+        actor_user_id,
+        "account invite revoked"
+    );
+}
+
+/// An admin created an account. The account cannot be signed into until the
+/// invite recorded by [`invite_issued`] is redeemed, but the row exists from
+/// here on and shows up in every listing.
+pub fn account_created(user_id: i64, actor_user_id: i64, username_len: usize, role: &str) {
+    tracing::info!(
+        target: AUDIT_TARGET,
+        event = "account.created",
+        user_id,
+        actor_user_id,
+        username_len,
+        role,
+        "account created by admin"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,6 +395,10 @@ mod tests {
         passkey_registered(SECRET, "tok4", 1, 7, "MacBook", "127.0.0.1", "test-agent");
         passkey_removed(SECRET, "tok4", 1, 7);
         login_rate_limited("POST /api/session", "login", "127.0.0.1");
+        invite_issued(SECRET, "tok5", 2, 1, "account_created", Utc::now());
+        invite_consumed(SECRET, "tok5", 2, "127.0.0.1", "test-agent");
+        invite_revoked(2, 1);
+        account_created(2, 1, 5, "user");
     }
 
     #[test]

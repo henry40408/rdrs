@@ -1,8 +1,9 @@
 @parallel
 Feature: Authentication
 
-  Scenario: New user can register, sign in, and reach the unread inbox
-    When I register with matching passwords
+  Scenario: An invited user sets their own password and signs in
+    Given an admin has created an account for me
+    When I open my one-time link and choose a password
     Then I am redirected to the login page with a success message
     And the flash banner shows a timestamp
     When I sign in with my credentials
@@ -13,10 +14,10 @@ Feature: Authentication
     When I sign in with the wrong password
     Then I see a login error
 
-  Scenario: Mismatched passwords on registration show a client-side error
-    When I register with mismatched passwords
-    Then I see "Passwords do not match" on the register page
-    And I am still on the register page
+  Scenario: Mismatched passwords on the invite form are refused
+    Given an admin has created an account for me
+    When I open my one-time link and mistype the confirmation
+    Then I see "Passwords do not match" on the invite page
 
 
   Scenario: A non-admin account is not offered the app settings page

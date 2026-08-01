@@ -138,7 +138,7 @@ test.use({ viewport: { width: 1920, height: 1080 } });
 
 test.describe("Screenshots", () => {
   test.beforeAll(async ({ api, seed }) => {
-    await api.register("demouser", "vulture-mango-77-quilt");
+    await api.setupFirstAccount("demouser", "vulture-mango-77-quilt");
     const userId = seed.getUserId("demouser");
 
     // Fetch all favicons in parallel

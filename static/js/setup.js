@@ -1,11 +1,15 @@
-// static/js/register.js — the /register form.
+// static/js/setup.js — the one-time /setup form.
 //
-// Extracted verbatim from an inline <script> in register.html so the page
-// survives a strict `script-src 'self'` (see middleware::security_headers).
-// `window.flash` comes from components/rdrs-flash.js, which base.html loads
-// ahead of this module.
+// Extracted from an inline <script> so the page survives a strict
+// `script-src 'self'` (see middleware::security_headers). `window.flash` comes
+// from components/rdrs-flash.js, which base.html loads ahead of this module.
+//
+// This page exists only while the instance has no accounts. Every later
+// account is created by an admin and given its password through
+// /invite/{token}, which is a plain server-rendered form and needs no
+// JavaScript at all.
 
-const form = document.getElementById('register-form');
+const form = document.getElementById('setup-form');
 if (form) {
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -23,17 +27,17 @@ if (form) {
         }
 
         try {
-            const response = await fetch('/api/register', {
+            const response = await fetch('/api/setup', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })
             });
 
             if (response.ok) {
-                flash.redirect('/login', 'success', 'Registration successful! Please login.');
+                flash.redirect('/login', 'success', 'Account created. Please sign in.');
             } else {
                 const data = await response.json();
-                errorDiv.textContent = data.error || 'Registration failed';
+                errorDiv.textContent = data.error || 'Could not create the account';
                 errorDiv.hidden = false;
             }
         } catch (err) {

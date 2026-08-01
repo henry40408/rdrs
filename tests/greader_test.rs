@@ -58,7 +58,7 @@ async fn create_test_app(config: Config) -> TestApp {
 /// Register and login a user via session cookie. Returns `user_id`.
 async fn setup_authenticated_user(app: &TestApp) -> i64 {
     app.server
-        .post("/api/register")
+        .post("/api/setup")
         .json(&json!({
             "username": "testuser",
             "password": "vulture-mango-77-quilt"
@@ -484,7 +484,7 @@ async fn test_expired_api_token_is_lazily_deleted() {
     assert!(found.is_none(), "expired api_token must be lazily deleted");
 }
 
-/// Create a user directly in the database, bypassing `POST /api/register` —
+/// Create a user directly in the database, bypassing `POST /api/setup` —
 /// so setup does not itself consume a slot from the client's rate-limit
 /// budget (registration is a guarded, never-released endpoint; going through
 /// it here would leave fewer than 5 attempts free for the test itself).

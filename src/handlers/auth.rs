@@ -25,82 +25,90 @@ use crate::services::audit;
 use crate::utils::http::request_user_agent;
 
 #[derive(Debug, Deserialize)]
-pub struct RegisterRequest {
+pub struct SetupRequest {
     pub username: String,
     pub password: String,
 }
 
 #[derive(Debug, Serialize)]
-pub struct RegisterResponse {
+pub struct SetupResponse {
     pub id: i64,
     pub username: String,
     pub role: Role,
 }
 
-pub async fn register(
+/// `POST /api/setup` — create the instance's first account.
+///
+/// The only anonymous account-creating endpoint rdrs has, and it exists solely
+/// because a fresh install has no admin to create one. It refuses outright as
+/// soon as any account exists (`Config::can_setup`), which is what keeps it
+/// from being the self-service registration this replaced: with zero accounts
+/// there is no username to enumerate, so the usual objection to an anonymous
+/// endpoint that accepts a username does not apply. Every later account is
+/// created by an admin and activated through `handlers::invite`.
+///
+/// The account is an admin, because someone has to be.
+pub async fn setup(
     State(state): State<AppState>,
     headers: HeaderMap,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
-    Json(req): Json<RegisterRequest>,
-) -> AppResult<(StatusCode, Json<RegisterResponse>)> {
+    Json(req): Json<SetupRequest>,
+) -> AppResult<(StatusCode, Json<SetupResponse>)> {
     if req.username.is_empty() {
         return Err(AppError::Validation("Username is required".to_string()));
     }
 
     // Reserve an attempt before any DB query, strength estimation or password
-    // hashing. Never released: a successful registration is exactly the abuse
-    // this limiter exists to slow down (an attacker scripting account
-    // creation), so unlike login there is no "correct credential" outcome that
-    // should hand the budget back.
+    // hashing. Never released: scripted account creation is exactly the abuse
+    // this limiter exists to slow down, so unlike login there is no "correct
+    // credential" outcome that should hand the budget back.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
     if let Some(retry_after_secs) = state
         .login_rate_limiter
-        .try_acquire(Bucket::Register, ip)
+        .try_acquire(Bucket::AccountSetup, ip)
         .retry_after_secs()
     {
-        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Register, endpoint = "POST /api/register", "credential attempt rate limited");
-        audit::login_rate_limited("POST /api/register", "register", &ip.to_string());
+        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::AccountSetup, endpoint = "POST /api/setup", "credential attempt rate limited");
+        audit::login_rate_limited("POST /api/setup", "setup", &ip.to_string());
         return Err(AppError::TooManyRequests { retry_after_secs });
+    }
+
+    // Checked before the expensive work below, so a closed setup endpoint
+    // costs a single indexed count rather than an estimate plus a hash.
+    let config = state.config.clone();
+    let user_count = user::count(&state.db).await?;
+    if !config.can_setup(user_count) {
+        return Err(AppError::RegistrationNotAllowed);
     }
 
     // Behind the limiter, not in front of it: zxcvbn costs ~86µs on a typical
     // password but ~79ms on a 128-character worst case (measured in release),
     // which is Argon2 territory. Validating first would have let anyone choose
-    // how much CPU each rejected registration costs — the exact shape the
-    // limiter's module docs warn about. The username is handed to the
-    // estimator so a password built out of it is scored for what it is.
+    // how much CPU each rejected attempt costs — the exact shape the limiter's
+    // module docs warn about. The username is handed to the estimator so a
+    // password built out of it is scored for what it is.
     validate_password_strength(&req.password, &[&req.username])?;
 
-    let config = state.config.clone();
-    let user_count = user::count(&state.db).await?;
-
-    if !config.can_register(user_count) {
-        return Err(AppError::RegistrationNotAllowed);
-    }
-
-    // Hashed only once the request is known to be one we will act on. Argon2 is
-    // deliberately expensive, and a deployment with signups closed would
-    // otherwise pay that cost for every refused attempt — an attacker's cheapest
-    // way to spend the server's CPU here, and pure waste even without one.
     let password_hash = hash_password(&req.password)?;
 
-    let role = if user_count == 0 {
-        Role::Admin
-    } else {
-        Role::User
-    };
-
-    let user = user::create_user(&state.db, &req.username, &password_hash, role).await?;
+    let user = user::create_user(&state.db, &req.username, &password_hash, Role::Admin).await?;
 
     // Seed a default category so the account can add its first feed
     // without first creating a category. Matches the "Uncategorized"
     // convention used by OPML import and the GReader subscription API.
     category::create_category(&state.db, user.id, "Uncategorized").await?;
 
+    audit::account_created(
+        user.id,
+        user.id,
+        user.username.chars().count(),
+        user.role.as_str(),
+    );
+
     Ok((
         StatusCode::CREATED,
-        Json(RegisterResponse {
+        Json(SetupResponse {
             id: user.id,
             username: user.username,
             role: user.role,

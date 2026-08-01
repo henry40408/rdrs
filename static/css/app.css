@@ -1846,6 +1846,130 @@ td input[type="text"] {
     margin-top: var(--space-5);
 }
 
+/* The lead line on /invite/{token} sits directly above the first field's
+   label, which the base <p> reset leaves flush against it. */
+.invite-lead {
+    margin-bottom: var(--space-4);
+}
+
+/* An admin row carries up to six actions. Left alone the cell grows to fit
+   them on a single line and starves every other column — which is what the
+   ACTIONS header did to CREATED and STATUS. Capping the width makes them wrap
+   into two or three short lines instead, and the cap lives on a wrapper
+   because `max-width` on a <td> is ignored under auto table layout.
+   The row gap is tighter than the column gap so wrapped lines sit close
+   together rather than turning the cell into a tall stack. */
+.admin-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+    /* Both bounds, not just the cap: with only a max-width the auto table
+       layout hands this cell its *minimum* width instead — every action on its
+       own line, a six-line cell, and the column starved to nothing. The min is
+       what reserves room for three actions per line. */
+    min-width: 17rem;
+    max-width: 19rem;
+}
+
+/* Keep a two-word action ("new link") on one line; breaking inside a label
+   makes the wrapped lines unreadable. */
+.admin-actions > form {
+    white-space: nowrap;
+}
+
+/* ===== Admin: the one-time account link =====
+   Shown once, after creating an account or issuing a reset. Styled as a
+   callout rather than a form so it reads as "act on this now" — the string is
+   unrecoverable afterwards. */
+.invite-callout {
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-md);
+    background: var(--color-accent-subtle);
+    padding: var(--space-4);
+    margin-bottom: var(--space-5);
+}
+
+.invite-callout__title {
+    margin: 0 0 var(--space-2);
+    font-size: var(--font-lg);
+}
+
+.invite-callout__body {
+    margin: 0 0 var(--space-3);
+    color: var(--color-text-secondary);
+}
+
+.invite-callout__row {
+    display: flex;
+    gap: var(--space-3);
+    /* `stretch` (the flex default) rather than `center`: it makes the field and
+       the button share the row's height *by construction*, whichever of them
+       is taller. Relying on the two computing the same intrinsic height
+       instead — same padding, same min-height — holds only as long as every
+       engine agrees on how an <input> and a <button> lay their content out,
+       and they do not. The min-height below is then a floor for the row, not
+       the thing that aligns it. */
+    align-items: stretch;
+    flex-wrap: wrap;
+}
+
+/* WCAG 2.5.5 tap-target floor, same as the create-account strip. With
+   `stretch` above, whichever control is taller lifts the other to match. */
+.invite-callout__row input[type="text"],
+.invite-callout__row button {
+    min-height: var(--touch-min);
+}
+
+.invite-callout__input {
+    flex: 1 1 22rem;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-sm);
+}
+
+/* ===== Admin: add an account =====
+   Sits above the user table. There is no public sign-up, so this form is the
+   only way an account comes into being after the first one. */
+.admin-create-account {
+    margin-bottom: var(--space-6);
+}
+
+.admin-create-account h2 {
+    margin-bottom: var(--space-2);
+}
+
+.admin-create-account__form {
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    align-items: flex-end;
+    margin-top: var(--space-3);
+}
+
+.admin-create-account__form .form-group {
+    margin-bottom: 0;
+    min-width: 0;
+}
+
+/* One control strip, so the three boxes have to be the same height. They are
+   not by default: the base <select> carries a 44px minimum tap target
+   (--touch-min), while a text input and a button each size themselves from
+   their own padding, font-size and line-height and land a few pixels short of
+   it. Matching the tallest rather than the shortest is deliberate — it puts
+   every control at or above the WCAG 2.5.5 floor instead of pulling the select
+   below it. */
+.admin-create-account__form input[type="text"],
+.admin-create-account__form select,
+.admin-create-account__form button {
+    min-height: var(--touch-min);
+}
+
+/* Secondary line under a user's status, noting when their outstanding
+   one-time link runs out. */
+.admin-invite-note {
+    font-size: var(--font-sm);
+}
+
 /* A one-line note under a field explaining what will be accepted, so the
    first rejection is not the user's first sight of the rule. Sits tight to
    the input it belongs to rather than floating as its own paragraph. */

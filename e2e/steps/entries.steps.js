@@ -324,6 +324,14 @@ Then(
   }
 );
 
+// The category shortcuts (`[`, `]`, `{`, `}`) read the sidebar's category list
+// and do nothing at all when it is empty (see the early return in app.js), so a
+// keypress that races the sidebar's fetch silently no-ops and the assertion
+// that follows fails for reasons that have nothing to do with the shortcut.
+When("the sidebar has loaded its categories", async ({ page }) => {
+  await expect(page.locator("#sidebar-categories a").first()).toBeVisible();
+});
+
 When("I press the {string} key", async ({ page }, key) => {
   await page.click("body");
   await page.keyboard.press(key);

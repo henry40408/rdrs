@@ -82,8 +82,11 @@ const SLOTS: usize = 16_384;
 pub enum Bucket {
     /// Password and passkey *completion* — anything that verifies a credential.
     Login,
-    /// Account creation.
-    Register,
+    /// The two anonymous paths that can create a usable credential: the
+    /// first-run `/setup` form and redeeming an account invite. Both run the
+    /// strength estimator and Argon2, so both are throttled before doing
+    /// either.
+    AccountSetup,
     /// Passkey ceremony *start*: cheap, unauthenticated, and enumerable, so it
     /// gets its own budget rather than spending the login one.
     PasskeyProbe,
@@ -525,9 +528,9 @@ mod tests {
         let ip = ipv4(6);
 
         for _ in 0..5 {
-            assert!(allowed(limiter.try_acquire(Bucket::Register, ip)));
+            assert!(allowed(limiter.try_acquire(Bucket::AccountSetup, ip)));
         }
-        assert!(!allowed(limiter.try_acquire(Bucket::Register, ip)));
+        assert!(!allowed(limiter.try_acquire(Bucket::AccountSetup, ip)));
 
         // Login for the same IP is untouched.
         assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
@@ -546,8 +549,8 @@ mod tests {
         // ...but Register for the same IP was never touched, so it is
         // exhausted by its own single attempt, independent of the Login
         // release above.
-        assert!(allowed(limiter.try_acquire(Bucket::Register, ip)));
-        assert!(!allowed(limiter.try_acquire(Bucket::Register, ip)));
+        assert!(allowed(limiter.try_acquire(Bucket::AccountSetup, ip)));
+        assert!(!allowed(limiter.try_acquire(Bucket::AccountSetup, ip)));
     }
 
     #[test]
