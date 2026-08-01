@@ -10,7 +10,7 @@
         {% if let Some(err) = error %}
         <div class="error" data-testid="invite-error">{{ err }}</div>
         {% endif %}
-        <p class="muted">Choose a password for <strong>{{ name }}</strong>.</p>
+        <p class="muted invite-lead">Choose a password for <strong>{{ name }}</strong>.</p>
         {# A plain form POST — no fetch, no JSON. The link in the address bar is
            the only authority this page has; the CSRF token rides along the way
            it does on every other form here, injected by csrf.js from the

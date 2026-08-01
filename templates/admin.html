@@ -1,5 +1,9 @@
 {% extends "app_layout.html" %}
 
+{% block page_script %}
+    <script type="module" src="/static/js/admin.js?v={{ layout.git_version }}"></script>
+{% endblock %}
+
 {% block page %}
     <div class="app-layout">
         <rdrs-sidebar active="admin"></rdrs-sidebar>
@@ -16,6 +20,23 @@
                         <button type="submit" data-testid="admin-reauth-submit">Confirm</button>
                     </div>
                 </form>
+                {% endif %}
+
+                {% if let Some(link) = invite_link %}
+                {# Its own block rather than a flash banner: this string is the
+                   only copy that will ever exist (the table stores an HMAC of
+                   it), it is long enough to wrap, and it has to survive long
+                   enough to be copied — none of which a banner that fades is
+                   good at. #}
+                <section class="invite-callout" data-testid="admin-invite-link">
+                    <h2 class="invite-callout__title">One-time link</h2>
+                    <p class="invite-callout__body">Send this to the person the account belongs to. It is shown <strong>once</strong>, works <strong>once</strong>, and expires in 7 days.</p>
+                    <div class="invite-callout__row">
+                        <label class="sr-only" for="invite-link">One-time link</label>
+                        <input type="text" id="invite-link" class="invite-callout__input" value="{{ link }}" readonly data-testid="admin-invite-link-value">
+                        <button type="button" data-copy-target="#invite-link" data-testid="admin-invite-copy"><span class="action-label">Copy</span></button>
+                    </div>
+                </section>
                 {% endif %}
 
                 {% if can_create_account %}

@@ -6667,3 +6667,66 @@ async fn a_single_user_instance_refuses_a_second_account() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn the_one_time_link_is_shown_in_its_own_block_not_a_banner() {
+    // The link is the only copy that will ever exist — the table stores an
+    // HMAC of it — so it belongs somewhere it can be read and copied, not in a
+    // banner that fades. It must also appear exactly once on the page: leaving
+    // it in the flash bootstrap as well would render it twice.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_admin_user(&mut app.server).await;
+
+    let created = app
+        .server
+        .post("/admin/users")
+        .form(&json!({ "username": "newcomer", "role": "user" }))
+        .await;
+    created.assert_status(StatusCode::SEE_OTHER);
+    let invite = invite_path_from(&created);
+
+    let page = app.server.get("/admin").await;
+    page.assert_status_ok();
+    let body = page.text();
+
+    assert!(
+        body.contains("admin-invite-link"),
+        "the link should render in its own block"
+    );
+    assert_eq!(
+        body.matches(&invite).count(),
+        1,
+        "the link must appear exactly once, not in the block *and* the banner"
+    );
+
+    // The banner still says something happened; it just does not repeat the
+    // link. Asserted because dropping the message entirely would leave the
+    // flash cookie uncleared, and the link would come back on the next load.
+    assert!(body.contains("Account link ready."));
+}
+
+#[tokio::test]
+async fn the_one_time_link_is_absolute_when_a_public_base_url_is_configured() {
+    // An admin has to paste this into a chat window, so a bare path is close
+    // to useless. It follows the same rule as every other absolute URL rdrs
+    // generates: `RDRS_PUBLIC_BASE_URL` when set, relative otherwise — never
+    // the client-supplied Host header.
+    let config = Config {
+        public_base_url: Some("https://reader.example.com".to_string()),
+        ..default_test_config()
+    };
+    let mut app = create_test_app(config).await;
+    setup_admin_user(&mut app.server).await;
+
+    app.server
+        .post("/admin/users")
+        .form(&json!({ "username": "newcomer", "role": "user" }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    let body = app.server.get("/admin").await.text();
+    assert!(
+        body.contains("https://reader.example.com/invite/"),
+        "expected an absolute link, got: {body}"
+    );
+}

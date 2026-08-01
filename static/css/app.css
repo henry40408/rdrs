@@ -1846,6 +1846,55 @@ td input[type="text"] {
     margin-top: var(--space-5);
 }
 
+/* The lead line on /invite/{token} sits directly above the first field's
+   label, which the base <p> reset leaves flush against it. */
+.invite-lead {
+    margin-bottom: var(--space-4);
+}
+
+/* ===== Admin: the one-time account link =====
+   Shown once, after creating an account or issuing a reset. Styled as a
+   callout rather than a form so it reads as "act on this now" — the string is
+   unrecoverable afterwards. */
+.invite-callout {
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-md);
+    background: var(--color-accent-subtle);
+    padding: var(--space-4);
+    margin-bottom: var(--space-5);
+}
+
+.invite-callout__title {
+    margin: 0 0 var(--space-2);
+    font-size: var(--font-lg);
+}
+
+.invite-callout__body {
+    margin: 0 0 var(--space-3);
+    color: var(--color-text-secondary);
+}
+
+.invite-callout__row {
+    display: flex;
+    gap: var(--space-3);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* Matches the create-account strip: the button carries its own height, so the
+   field has to be told to match rather than sizing itself from its font. */
+.invite-callout__row input[type="text"],
+.invite-callout__row button {
+    min-height: var(--touch-min);
+}
+
+.invite-callout__input {
+    flex: 1 1 22rem;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-sm);
+}
+
 /* ===== Admin: add an account =====
    Sits above the user table. There is no public sign-up, so this form is the
    only way an account comes into being after the first one. */

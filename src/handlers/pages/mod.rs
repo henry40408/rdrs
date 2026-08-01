@@ -771,11 +771,34 @@ pub async fn unread_page(
 /// effective admin or the original admin (under masquerade). Each row's
 /// action buttons are `<form>` elements posting to the `/admin/users/{id}/*`
 /// form-action endpoints added in PR-5 T1.
+/// Pull a one-time invite link out of the flash, if the last action left one.
+///
+/// `handlers::admin` puts the bare URL in the flash and nothing else, so this
+/// recognises it by shape rather than by parsing a sentence. The message is
+/// then *replaced* rather than dropped: the link belongs in its own block on
+/// the page (it is long, it is copied, and it is shown exactly once), not in a
+/// banner that fades — but `Flash`'s response hook only clears the cookie when
+/// messages remain, so removing the last one outright would leave the link in
+/// the jar to reappear on the next page load.
+fn extract_invite_link(flash: &mut Flash) -> Option<String> {
+    let link = flash
+        .messages
+        .iter()
+        .find(|m| m.message.contains("/invite/"))
+        .map(|m| m.message.clone())?;
+
+    flash.messages = vec![crate::middleware::flash::FlashMessage::success(
+        "Account link ready.",
+    )];
+    Some(link)
+}
+
 pub async fn admin_page(
     admin: PageAdminUser,
     State(state): State<AppState>,
-    flash: Flash,
+    mut flash: Flash,
 ) -> (Flash, AdminTemplate) {
+    let invite_link = extract_invite_link(&mut flash);
     let auth_user = PageAuthUser {
         user: admin.user.clone(),
         session: admin.session.clone(),
@@ -842,6 +865,7 @@ pub async fn admin_page(
             users,
             can_create_account,
             needs_reauth,
+            invite_link,
         },
     )
 }
@@ -2631,6 +2655,10 @@ pub struct AdminTemplate {
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
     pub users: Vec<AdminUserView>,
+    /// The one-time link the last create-or-reissue produced, rendered in its
+    /// own block. `None` on an ordinary page load — it is shown once, and
+    /// nothing can reproduce it afterwards.
+    pub invite_link: Option<String>,
     /// Whether `RDRS_MULTI_USER_ENABLED` allows another account at all. False
     /// hides the create form rather than letting it be submitted into a
     /// refusal.

@@ -276,14 +276,11 @@ pub async fn create_user_form(
     .await;
 
     match result {
-        Ok(path) => FlashRedirect::success(
-            "/admin",
-            format!(
-                "Account created. Send this one-time link — it is shown once and expires in {} days: {}",
-                user_invite::INVITE_TTL_DAYS,
-                invite_url(&state, &path)
-            ),
-        ),
+        // The message is the bare URL and nothing else: `/admin` recognises it
+        // by shape and renders it in its own block (see
+        // `pages::extract_invite_link`), which beats trying to pick a link back
+        // out of a sentence.
+        Ok(path) => FlashRedirect::success("/admin", invite_url(&state, &path)),
         Err(AppError::UsernameExists) => {
             FlashRedirect::error("/admin", "That username is already taken.")
         }
@@ -328,14 +325,7 @@ pub async fn reissue_invite_form(
     .await;
 
     match result {
-        Ok(path) => FlashRedirect::success(
-            "/admin",
-            format!(
-                "New one-time link — shown once, expires in {} days: {}",
-                user_invite::INVITE_TTL_DAYS,
-                invite_url(&state, &path)
-            ),
-        ),
+        Ok(path) => FlashRedirect::success("/admin", invite_url(&state, &path)),
         _ => FlashRedirect::error("/admin", "Failed to issue a link."),
     }
 }

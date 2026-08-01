@@ -12,6 +12,7 @@ const FILES: &[(&str, &str)] = &[
         "js/behaviors.js",
         include_str!("../../static/js/behaviors.js"),
     ),
+    ("js/admin.js", include_str!("../../static/js/admin.js")),
     ("js/csrf.js", include_str!("../../static/js/csrf.js")),
     ("js/login.js", include_str!("../../static/js/login.js")),
     ("js/passkey.js", include_str!("../../static/js/passkey.js")),
