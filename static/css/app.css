@@ -1870,6 +1870,19 @@ td input[type="text"] {
     min-width: 0;
 }
 
+/* One control strip, so the three boxes have to be the same height. They are
+   not by default: the base <select> carries a 44px minimum tap target
+   (--touch-min), while a text input and a button each size themselves from
+   their own padding, font-size and line-height and land a few pixels short of
+   it. Matching the tallest rather than the shortest is deliberate — it puts
+   every control at or above the WCAG 2.5.5 floor instead of pulling the select
+   below it. */
+.admin-create-account__form input[type="text"],
+.admin-create-account__form select,
+.admin-create-account__form button {
+    min-height: var(--touch-min);
+}
+
 /* Secondary line under a user's status, noting when their outstanding
    one-time link runs out. */
 .admin-invite-note {
