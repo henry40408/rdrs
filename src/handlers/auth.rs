@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use time::Duration;
 
 use crate::AppState;
-use crate::auth::{hash_password, verify_password};
+use crate::auth::{hash_password, verify_dummy_password, verify_password};
 use crate::error::{AppError, AppResult};
 use crate::middleware::{
     AuthUser, Bucket, CSRF_COOKIE_NAME_HOST, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST,
@@ -139,7 +139,27 @@ pub async fn login(
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
+    // Second dimension: the account being aimed at, regardless of where the
+    // attempt came from. The per-IP budget above is worthless against a
+    // spray that rotates addresses — each one arrives with a full budget —
+    // so the account carries a (deliberately wider) budget of its own.
+    // Charged here, before the lookup, for the same reason as the IP check.
+    if let Some(retry_after_secs) = state
+        .login_rate_limiter
+        .try_acquire_account(Bucket::Login, &req.username)
+        .retry_after_secs()
+    {
+        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Login, subject = "account", endpoint = "POST /api/session", "credential attempt rate limited");
+        audit::login_rate_limited("POST /api/session", "login_account", &ip.to_string());
+        return Err(AppError::TooManyRequests { retry_after_secs });
+    }
+
     let Some(user) = user::find_by_username(&state.db, &req.username).await? else {
+        // Spend a verification against a hash nothing matches before
+        // answering. Returning here directly would make "no such account"
+        // measurably faster than "wrong password" — the generic error message
+        // below says nothing, but the clock would.
+        verify_dummy_password(&req.password);
         audit::login_failed(
             req.username.len(),
             "unknown_user",
@@ -159,11 +179,14 @@ pub async fn login(
         return Err(AppError::InvalidCredentials);
     }
 
-    // The password was correct: hand the reservation back so a legitimate
+    // The password was correct: hand both reservations back so a legitimate
     // user is never locked out by their own successful logins. Done before
     // the disabled-account check below so a correct password never leaks
     // information via a rate-limit side channel either.
     state.login_rate_limiter.release(Bucket::Login, ip);
+    state
+        .login_rate_limiter
+        .release_account(Bucket::Login, &req.username);
 
     if user.is_disabled() {
         audit::login_failed(req.username.len(), "disabled", &ip.to_string(), &user_agent);

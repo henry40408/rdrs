@@ -69,7 +69,15 @@ ipnet = "2.12"
 sha2 = "0.11"
 webauthn-rs = { version = "0.5", features = [
   "danger-allow-state-serialisation",
+  # Passkey sign-in is usernameless: the challenge carries no
+  # `allowCredentials`, so the browser must discover the credential itself.
+  # This feature is what exposes that flow (`start_discoverable_authentication`
+  # and friends) — see `handlers::passkey`.
+  "conditional-ui",
 ] }
+# Already in the tree under webauthn-rs; named directly only to reach
+# `ResidentKeyRequirement`, which `webauthn_rs::prelude` does not re-export.
+webauthn-rs-proto = "0.5"
 uuid = { version = "1", features = ["v4", "serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
 moka = { version = "0.12", features = ["sync"] }
