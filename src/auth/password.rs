@@ -31,6 +31,21 @@ static HASHER: LazyLock<Argon2<'static>> = LazyLock::new(|| {
     }
 });
 
+/// A hash of a value nothing can supply, used to give the "no such user"
+/// login path the same cost as a real password check.
+///
+/// Produced by [`hash_password`], so it carries whatever cost parameters this
+/// process runs with — including the `RDRS_FAST_HASH` test setting, which
+/// keeps the equalising verify exactly as cheap as the real one it mirrors.
+///
+/// Both the input and the salt are freshly random per process: no string a
+/// caller could send verifies against it, and the digest is not a constant an
+/// attacker could fingerprint across deployments.
+static DUMMY_HASH: LazyLock<String> = LazyLock::new(|| {
+    let filler = SaltString::generate(&mut OsRng);
+    hash_password(filler.as_str()).expect("hashing with valid params cannot fail")
+});
+
 pub fn hash_password(password: &str) -> AppResult<String> {
     let salt = SaltString::generate(&mut OsRng);
 
@@ -38,6 +53,27 @@ pub fn hash_password(password: &str) -> AppResult<String> {
         .hash_password(password.as_bytes(), &salt)
         .map(|hash| hash.to_string())
         .map_err(|e| AppError::Internal(format!("Password hashing failed: {e}")))
+}
+
+/// Spend one password verification against [`DUMMY_HASH`], discarding the
+/// (always negative) result.
+///
+/// Call this on the branch where the *username* did not resolve to an account.
+/// Without it, login answers "no such user" after a single indexed `SELECT`
+/// but answers "wrong password" only after a deliberately slow Argon2 verify —
+/// a delta of tens of milliseconds that is trivially measurable over the
+/// network and turns the deliberately generic `Invalid credentials` message
+/// into an account-existence oracle. This is the "quick exit" reject pattern
+/// OWASP's Authentication Cheat Sheet names under *Authentication and Error
+/// Messages*; running the hash on both paths is its remedy.
+///
+/// Returns nothing on purpose: the work *is* the return value, and a `bool`
+/// would invite a caller to branch on a result that is false by construction.
+pub fn verify_dummy_password(password: &str) {
+    // `black_box` stops the optimiser from observing that the result is unused
+    // and eliding the hash — which would silently restore the timing gap this
+    // function exists to close.
+    std::hint::black_box(verify_password(password, &DUMMY_HASH));
 }
 
 pub fn verify_password(password: &str, hash: &str) -> bool {
@@ -77,6 +113,34 @@ mod tests {
     #[test]
     fn test_invalid_hash() {
         assert!(!verify_password("password", "invalid_hash"));
+    }
+
+    #[test]
+    fn dummy_verify_costs_the_same_as_a_real_one() {
+        // The equalising verify is only worth anything if it does the same
+        // work as the check it stands in for. Compare the cost parameters
+        // encoded in the dummy hash against those of a freshly minted one:
+        // if they ever diverge (e.g. someone builds the dummy with
+        // `Argon2::default()` while `HASHER` is running fast-hash params),
+        // the "no such user" path becomes distinguishable again by timing.
+        let real = hash_password("whatever").unwrap();
+        let real = PasswordHash::new(&real).unwrap();
+        let dummy = PasswordHash::new(&DUMMY_HASH).unwrap();
+
+        assert_eq!(dummy.algorithm, real.algorithm);
+        assert_eq!(dummy.params, real.params);
+        // A per-process salt, not a constant an attacker could fingerprint.
+        assert_ne!(dummy.salt, real.salt);
+    }
+
+    #[test]
+    fn dummy_verify_accepts_any_input_and_returns_nothing() {
+        // Callers pass attacker-controlled bytes straight in, including the
+        // degenerate ones. Nothing here may panic, and there is no result to
+        // branch on — the guarantee is that it only ever burns time.
+        verify_dummy_password("");
+        verify_dummy_password("password123");
+        verify_dummy_password(&"x".repeat(4096));
     }
 
     #[test]

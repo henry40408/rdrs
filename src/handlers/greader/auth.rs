@@ -9,7 +9,7 @@ use axum_extra::extract::CookieJar;
 use chrono::Utc;
 
 use crate::AppState;
-use crate::auth::verify_password;
+use crate::auth::{verify_dummy_password, verify_password};
 use crate::error::{AppError, AppResult};
 use crate::middleware::Bucket;
 use crate::models::api_token::{self, ApiToken};
@@ -211,7 +211,28 @@ pub async fn client_login(
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
+    // Per-account budget as well, mirroring the web login endpoint — a
+    // distributed spray would otherwise simply pick whichever of the two
+    // login protocols was not watching the account.
+    if let Some(retry_after_secs) = state
+        .login_rate_limiter
+        .try_acquire_account(Bucket::Login, &username)
+        .retry_after_secs()
+    {
+        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Login, subject = "account", endpoint = "POST /accounts/ClientLogin", "credential attempt rate limited");
+        audit::login_rate_limited(
+            "POST /accounts/ClientLogin",
+            "login_account",
+            &ip.to_string(),
+        );
+        return Err(AppError::TooManyRequests { retry_after_secs });
+    }
+
     let Some(user) = user::find_by_username(&state.db, &username).await? else {
+        // Equalise the "no such account" path with the "wrong password" one;
+        // see the web login handler for why the clock, not the message, is
+        // what leaks here.
+        verify_dummy_password(&password);
         audit::login_failed(username.len(), "unknown_user", &ip.to_string(), &user_agent);
         return Err(AppError::InvalidCredentials);
     };
@@ -221,9 +242,12 @@ pub async fn client_login(
         return Err(AppError::InvalidCredentials);
     }
 
-    // Correct password: hand the reservation back before the disabled-account
-    // check, same as the web login endpoint.
+    // Correct password: hand both reservations back before the
+    // disabled-account check, same as the web login endpoint.
     state.login_rate_limiter.release(Bucket::Login, ip);
+    state
+        .login_rate_limiter
+        .release_account(Bucket::Login, &username);
 
     if user.is_disabled() {
         audit::login_failed(username.len(), "disabled", &ip.to_string(), &user_agent);

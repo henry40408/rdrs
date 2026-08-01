@@ -1729,13 +1729,21 @@ async fn test_passkey_register_finish_unauthorized() {
 
 #[tokio::test]
 async fn test_passkey_auth_start_no_passkeys() {
+    // An instance with nothing enrolled must answer exactly like one that has
+    // passkeys: a challenge. The handler used to reject with "No passkeys
+    // registered", which told any unauthenticated caller whether this
+    // deployment had accounts using them. The ceremony simply finds nothing
+    // to sign with on the client side instead.
     let server = create_test_server(default_test_config()).await;
 
     let response = server.post("/api/passkey/auth/start").await;
-    response.assert_status_unauthorized();
+    response.assert_status_ok();
 
     let body: serde_json::Value = response.json();
-    assert!(body["error"].as_str().unwrap().contains("No passkeys"));
+    assert!(
+        body["options"]["publicKey"]["challenge"].is_string(),
+        "a challenge must be issued regardless of what is enrolled"
+    );
 }
 
 #[tokio::test]
@@ -1914,16 +1922,14 @@ async fn test_passkey_auth_start_with_invalid_passkey_data() {
     )
     .unwrap();
 
+    // Starting the ceremony no longer reads stored credentials at all, so an
+    // unparseable row cannot take the sign-in page down with it — it can only
+    // fail at the finish step, for that one credential.
     let response = app.server.post("/api/passkey/auth/start").await;
-    response.assert_status_unauthorized();
+    response.assert_status_ok();
 
     let body: serde_json::Value = response.json();
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap()
-            .contains("No valid passkeys")
-    );
+    assert!(body["options"]["publicKey"]["challenge"].is_string());
 }
 
 #[tokio::test]

@@ -132,7 +132,7 @@ All configuration is done via environment variables.
 | `RDRS_HSTS` | Derived from `RDRS_PUBLIC_BASE_URL` | Send `Strict-Transport-Security` on every response. Defaults to on when `RDRS_PUBLIC_BASE_URL` starts with `https://`, off otherwise, mirroring `RDRS_COOKIE_SECURE`. Only `true`/`false`/`1`/`0` are accepted — anything else fails startup rather than silently guessing. HSTS is sticky: once a browser sees it, that browser refuses plain HTTP to this host for the whole `RDRS_HSTS_MAX_AGE`, and the server has no way to retract it instantly. Leave this unset (or `false`) for a plain-HTTP internal deployment — turning it on by accident can lock users out with no server-side fix. |
 | `RDRS_HSTS_MAX_AGE` | `31536000` (1 year) | HSTS `max-age` in seconds. `0` is the documented recovery path for a mis-set HSTS declaration: it tells a browser that already cached the header to forget it, which is how you undo `RDRS_HSTS` having been on by mistake — plain omission does not do this, since a browser that already saw the header keeps enforcing HTTPS until `max-age` naturally expires. |
 | `RDRS_HSTS_INCLUDE_SUBDOMAINS` | `true` | Append `; includeSubDomains` to the HSTS header. **Warning:** if `RDRS_PUBLIC_BASE_URL` is an apex domain (`example.com`) rather than a subdomain (`rdrs.example.com`), this forces HTTPS on *every* subdomain of that registrable domain, not just the one rdrs serves. Set `false` to scope the declaration to rdrs's own host. The header never includes `preload`: joining the browser preload list is effectively irreversible, so that opt-in is left to your reverse proxy. |
-| `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS` | `5` | Attempts allowed per client IP per window for each credential-endpoint class (password login, registration, passkey ceremonies, and changing a password) — each class has its own budget, so exhausting one never locks you out of another. A throttled request answers `429` with a `Retry-After` giving the seconds left in the window. `0` disables the limiter. |
+| `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS` | `5` | Attempts allowed per client IP per window for each credential-endpoint class (password login, registration, passkey ceremonies, and changing a password) — each class has its own budget, so exhausting one never locks you out of another. Password login additionally charges a per-**account** budget of 4× this value over the same window, so a spray that rotates through addresses is still capped; it is deliberately wide enough that normal use never reaches it. A throttled request answers `429` with a `Retry-After` giving the seconds left in the window. `0` disables the limiter. |
 | `RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS` | `60` | Fixed window length in seconds. Must be ≥ 1. |
 | `RDRS_USER_AGENT` | `RDRS/...` | Custom user agent for feed fetching |
 | `RDRS_WEBAUTHN_RP_ID` | `localhost` | WebAuthn Relying Party ID for passkey authentication |
@@ -201,6 +201,25 @@ every session.
 RDRS supports three authentication methods that all work simultaneously by
 default: local password, WebAuthn/passkeys, and **forward-auth (trusted-header)
 SSO**. `RDRS_DISABLE_LOCAL_AUTH` is the only knob that narrows this set.
+
+### Passkeys
+
+"Login with Passkey" asks for no username: the sign-in challenge names no
+credential, so your authenticator must be able to find its own passkey for this
+site. Newly registered passkeys are always created that way.
+
+> **Upgrading from a release before this changed?** Passkeys enrolled earlier
+> were requested in a mode that lets an authenticator store them without making
+> them findable. Where that happened — most security keys, some Windows Hello
+> setups, and password managers that honour the request, Bitwarden among them —
+> the passkey will no longer be offered at sign-in, and the browser just times
+> out with "Authentication was cancelled or timed out." Passkeys held in iCloud
+> Keychain or Google Password Manager are unaffected.
+>
+> To fix one, sign in with your password, **delete the old passkey** under
+> Settings first, then register a new one. Registering before deleting fails:
+> the site still lists the old credential as one to exclude, so your
+> authenticator refuses to add a second passkey for the same account.
 
 ### Forward-Auth (SSO)
 

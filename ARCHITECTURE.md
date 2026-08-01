@@ -230,7 +230,10 @@ Request handlers are organized by resource:
 ### Authentication Flow
 
 1. User submits credentials to `POST /api/session`
-2. Server validates password with Argon2
+2. Server validates password with Argon2. An unknown username still runs one
+   Argon2 verification against a throwaway hash (`auth::verify_dummy_password`)
+   before answering, so "no such account" and "wrong password" cost the same —
+   the response message is generic, and the clock must be too
 3. Creates session record in database
 4. Sets the signed session cookie (`<token>.<hmac>`, see [Signing & the root key](#signing--the-root-key-secretrs))
 5. Subsequent requests extract user from `AuthUser` extractor, which verifies the signature before the DB lookup
@@ -241,17 +244,57 @@ RDRS supports passwordless authentication via WebAuthn/Passkey:
 
 **Registration Flow:**
 1. User initiates passkey registration from settings
-2. Server generates challenge and stores in `webauthn_challenge` table
+2. Server generates challenge and stores in `webauthn_challenge` table, asking
+   for a **discoverable** credential (`residentKey: required`) — sign-in below
+   is usernameless, so a credential the authenticator cannot find on its own
+   would be registered and then never usable
 3. Browser prompts user to create passkey (biometric/security key)
 4. Client sends attestation to server
 5. Server validates and stores credential in `passkey` table
 
 **Authentication Flow:**
 1. User clicks "Login with Passkey"
-2. Server generates authentication challenge
+2. Server generates a discoverable-credential challenge with an **empty
+   `allowCredentials`** and reads nothing from the `passkey` table. This is
+   load-bearing: filling `allowCredentials` from stored rows (as an earlier
+   version did, with every row on the instance) hands each caller a set of
+   stable per-user credential IDs, and answering differently for an empty table
+   turns the endpoint into an account-existence oracle. The response is now
+   identical for every caller and every instance state
 3. Browser prompts user to verify passkey
 4. Client sends assertion to server
-5. Server validates signature and creates session
+5. Server resolves the credential by its ID, verifies the signature against
+   that one stored key (`finish_discoverable_authentication` installs it as the
+   allow-list), and creates a session
+
+> **Passkeys enrolled before this change may need re-registering.** They were
+> requested as `residentKey: discouraged`, and an authenticator that honoured
+> that literally holds a credential the browser cannot discover — with no
+> `allowCredentials` to name it, it can no longer be offered at sign-in. Which
+> authenticators are affected depends on whether they obey the hint or ignore
+> it:
+>
+> - **Affected**: most security keys, some Windows Hello configurations, and
+>   password managers that respect the RP's request — including Bitwarden,
+>   whose browser extension records a `discoverable` flag per passkey at
+>   creation time and will only answer an empty `allowCredentials` when that
+>   flag is true.
+> - **Unaffected**: platform passkeys in iCloud Keychain and Google Password
+>   Manager, which are stored discoverable regardless of what was asked for.
+>
+> Nobody is locked out — password sign-in is untouched — but the recovery has
+> an ordering trap. `start_registration` puts the account's existing credential
+> IDs in `excludeCredentials`, so an authenticator still holding the old
+> credential refuses to enrol a second one for the same account
+> (`InvalidStateError`, surfaced to the user as a generic failure). The working
+> order is: sign in with a password, **delete the old passkey** in
+> `/user-settings`, then register a new one.
+>
+> The failure itself is silent by nature: an authenticator with nothing
+> discoverable to offer simply never returns, so the browser times out and
+> `login.js` reports "Authentication was cancelled or timed out." There is no
+> server-side signal to improve on — the request never reaches rdrs — which is
+> why this is written down rather than detected.
 
 ### Forward-Auth (Trusted-Header) Login
 

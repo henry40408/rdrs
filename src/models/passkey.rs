@@ -75,14 +75,12 @@ pub async fn list_by_user(db: &Db, user_id: i64) -> AppResult<Vec<Passkey>> {
     .map_err(AppError::Database)
 }
 
-pub async fn get_all_passkeys(db: &Db) -> AppResult<Vec<Passkey>> {
-    query_all!(
-        db,
-        Passkey,
-        "SELECT id, user_id, credential_id, public_key, counter, name, transports, created_at, last_used_at FROM passkey ORDER BY user_id, created_at DESC"
-    )
-    .map_err(AppError::Database)
-}
+// There is deliberately no "every passkey on the instance" query. The one
+// caller that wanted it was the sign-in challenge, which used the result to
+// fill `allowCredentials` and thereby handed every account's credential ID to
+// any unauthenticated caller. That flow is discoverable now (see
+// `handlers::passkey::start_authentication`) and needs no such read; leaving
+// the helper behind would only invite the leak back.
 
 pub async fn update_counter(db: &Db, id: i64, counter: i64) -> AppResult<()> {
     db_execute!(
@@ -261,7 +259,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_all_passkeys() {
+    async fn passkeys_are_only_ever_listed_per_user() {
+        // Replaces a test for a cross-user `get_all_passkeys`. Each user's
+        // listing must show only their own credentials — the sign-in flow no
+        // longer has any reason to read another account's, and nothing else
+        // ever did.
         let db = setup_db().await;
         let user1 = user::create_user(&db, "user1", "hash", Role::User)
             .await
@@ -277,8 +279,9 @@ mod tests {
             .await
             .unwrap();
 
-        let all_passkeys = get_all_passkeys(&db).await.unwrap();
-        assert_eq!(all_passkeys.len(), 2);
+        let mine = list_by_user(&db, user1.id).await.unwrap();
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].name, "User1 Passkey");
     }
 
     #[tokio::test]

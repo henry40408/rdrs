@@ -9,6 +9,7 @@ use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use webauthn_rs::prelude::*;
+use webauthn_rs_proto::ResidentKeyRequirement;
 
 use crate::AppState;
 use crate::error::{AppError, AppResult};
@@ -52,10 +53,26 @@ pub async fn start_registration(
         .collect();
 
     let user_uuid = Uuid::new_v4();
-    let (ccr, reg_state) = state
+    let (mut ccr, reg_state) = state
         .webauthn
         .start_passkey_registration(user_uuid, &username, &username, Some(exclude_credentials))
         .map_err(|e| AppError::PasskeyRegistrationFailed(e.to_string()))?;
+
+    // webauthn-rs asks for `residentKey: discouraged` here, which is wrong for
+    // this app: sign-in is usernameless (`start_authentication` sends an empty
+    // `allowCredentials`), so a credential the authenticator cannot discover on
+    // its own could be registered and then never be usable to log in. Ask for a
+    // discoverable credential instead, which is what a passkey is.
+    //
+    // Patched on the response rather than the builder because
+    // `start_passkey_registration` hardcodes the flag and exposes no knob;
+    // `finish_passkey_registration` does not re-read it, so this is the whole
+    // change. `require_resident_key` is set alongside for WebAuthn L1 clients,
+    // which never learned the newer field.
+    if let Some(selection) = ccr.public_key.authenticator_selection.as_mut() {
+        selection.resident_key = Some(ResidentKeyRequirement::Required);
+        selection.require_resident_key = true;
+    }
 
     // Serialize and store the registration state
     let state_json =
@@ -173,15 +190,26 @@ pub struct StartAuthenticationResponse {
     pub options: RequestChallengeResponse,
 }
 
+/// Issue a usernameless sign-in challenge.
+///
+/// The challenge carries **no `allowCredentials`**. An earlier version built
+/// it with `start_passkey_authentication` over every row in the `passkey`
+/// table, which does the opposite of what its comment claimed: that call
+/// populates `allowCredentials` with each credential it is given, so a single
+/// unauthenticated request returned the credential ID of every passkey on the
+/// instance — stable, linkable per-user identifiers, plus a count of how many
+/// accounts had enrolled one — to anyone who asked.
+///
+/// Nothing here reads the database any more, which also retires the
+/// account-existence oracle that motivated the rate limit below: the response
+/// is now identical whether the instance has a thousand passkeys or none. The
+/// budget is still charged, because each call writes a challenge row and
+/// unauthenticated writes should not be free.
 pub async fn start_authentication(
     State(state): State<AppState>,
     headers: HeaderMap,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
 ) -> AppResult<Json<StartAuthenticationResponse>> {
-    // This endpoint leaks account existence (an empty passkey table responds
-    // differently than a populated one), so a probe must consume budget even
-    // though it never itself succeeds or fails a credential check. Reserve
-    // first thing, before any database query.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
     if let Some(retry_after_secs) = state
@@ -198,31 +226,17 @@ pub async fn start_authentication(
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
-    let all_passkeys = passkey::get_all_passkeys(&state.db).await?;
-
-    if all_passkeys.is_empty() {
-        return Err(AppError::PasskeyAuthenticationFailed(
-            "No passkeys registered".to_string(),
-        ));
-    }
-
-    // Deserialize passkeys
-    let passkey_credentials: Vec<Passkey> = all_passkeys
-        .iter()
-        .filter_map(|p| serde_json::from_slice(&p.public_key).ok())
-        .collect();
-
-    if passkey_credentials.is_empty() {
-        return Err(AppError::PasskeyAuthenticationFailed(
-            "No valid passkeys found".to_string(),
-        ));
-    }
-
-    // Start authentication - use discoverable credentials (no allowCredentials)
-    let (rcr, auth_state) = state
+    let (mut rcr, auth_state) = state
         .webauthn
-        .start_passkey_authentication(&passkey_credentials)
+        .start_discoverable_authentication()
         .map_err(|e| AppError::PasskeyAuthenticationFailed(e.to_string()))?;
+
+    // That call stamps `mediation: conditional`, which belongs to the browser
+    // autofill flow: a conditional `navigator.credentials.get()` waits silently
+    // for the user to pick a passkey from an input's dropdown. rdrs drives this
+    // from an explicit "Login with Passkey" button and wants the modal, so the
+    // field is cleared rather than advertising a mode `login.js` does not honour.
+    rcr.mediation = None;
 
     // Store the auth state
     let state_json =
@@ -283,10 +297,13 @@ pub async fn finish_authentication(
     .await?;
 
     // Deserialize the auth state
-    let auth_state: PasskeyAuthentication = serde_json::from_str(&challenge.state_data)
+    let auth_state: DiscoverableAuthentication = serde_json::from_str(&challenge.state_data)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // Find the passkey by credential ID (use raw_id which contains raw bytes)
+    // Find the passkey by credential ID (use raw_id which contains raw bytes).
+    // Client-supplied, and safe to trust for *selection* only: it decides which
+    // stored public key the signature is checked against, and naming someone
+    // else's credential just means the signature fails to verify below.
     let credential_id: Vec<u8> = req.credential.raw_id.as_ref().to_vec();
     let stored_passkey = passkey::find_by_credential_id(&state.db, &credential_id)
         .await?
@@ -304,10 +321,17 @@ pub async fn finish_authentication(
     let mut passkey_data: Passkey = serde_json::from_slice(&stored_passkey.public_key)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // Complete authentication
+    // Complete authentication. The single stored credential resolved above is
+    // the only one the assertion is allowed to match: `finish_discoverable_*`
+    // installs it as the allow-list before verifying, so the challenge going
+    // out empty costs nothing in strictness here.
     let auth_result = state
         .webauthn
-        .finish_passkey_authentication(&req.credential, &auth_state)
+        .finish_discoverable_authentication(
+            &req.credential,
+            auth_state,
+            std::slice::from_ref(&DiscoverableKey::from(&passkey_data)),
+        )
         .map_err(|e| AppError::PasskeyAuthenticationFailed(e.to_string()))?;
 
     // The WebAuthn ceremony verified successfully: hand the reservation back

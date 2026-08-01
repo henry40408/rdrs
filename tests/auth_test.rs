@@ -3,6 +3,7 @@ use common::default_test_config;
 
 use axum::http::{StatusCode, header};
 use axum_test::TestServer;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
 use rdrs::{AppState, Config, Db, auth, create_router, services};
 use serde_json::json;
@@ -494,6 +495,88 @@ async fn test_passkey_auth_start_is_rate_limited() {
 
     let response = server.post("/api/passkey/auth/start").await;
     response.assert_status(StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn passkey_challenge_never_discloses_registered_credentials() {
+    // Regression: the sign-in challenge used to be built from every row of
+    // the `passkey` table, and webauthn-rs turns the credentials it is given
+    // into `allowCredentials` — so one unauthenticated POST returned the
+    // credential ID of every passkey on the instance. Those IDs are stable,
+    // linkable per-user identifiers; the count alone says how many accounts
+    // have enrolled one. The flow is discoverable now: the challenge names no
+    // credential at all.
+    let (server, db) = build_server(default_test_config()).await;
+    create_user_directly(&db, "admin", "password123").await;
+    let user = rdrs::models::user::find_by_username(&db, "admin")
+        .await
+        .unwrap()
+        .expect("the user was just created");
+    // The handler never deserialises stored keys any more, so a placeholder
+    // blob is enough to prove the row is not read. What matters is that the
+    // credential ID below cannot appear in the response.
+    rdrs::models::passkey::create_passkey(
+        &db,
+        user.id,
+        b"secret-credential-id",
+        b"{}",
+        0,
+        "Laptop",
+        None,
+    )
+    .await
+    .unwrap();
+
+    let response = server.post("/api/passkey/auth/start").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    let allow = &body["options"]["publicKey"]["allowCredentials"];
+    assert!(
+        allow.is_null() || allow.as_array().is_some_and(std::vec::Vec::is_empty),
+        "the challenge must name no credentials, got {allow}"
+    );
+
+    // Belt and braces: whatever shape the options take, the ID itself must
+    // not appear anywhere in the response — in any encoding of those bytes.
+    let raw = response.text();
+    let encoded = BASE64_URL_SAFE_NO_PAD.encode(b"secret-credential-id");
+    assert!(
+        !raw.contains(&encoded) && !raw.contains("secret-credential-id"),
+        "a registered credential ID leaked into the challenge: {raw}"
+    );
+}
+
+#[tokio::test]
+async fn passkey_challenge_is_identical_with_and_without_registered_passkeys() {
+    // The old handler answered "No passkeys registered" (401) for an empty
+    // table and a challenge (200) otherwise — an account-existence oracle for
+    // anyone who could reach the endpoint. Both states must now be
+    // indistinguishable.
+    let (empty_server, _empty_db) = build_server(default_test_config()).await;
+    let empty = empty_server.post("/api/passkey/auth/start").await;
+
+    let (server, db) = build_server(default_test_config()).await;
+    create_user_directly(&db, "admin", "password123").await;
+    let user = rdrs::models::user::find_by_username(&db, "admin")
+        .await
+        .unwrap()
+        .expect("the user was just created");
+    rdrs::models::passkey::create_passkey(&db, user.id, b"cred", b"{}", 0, "Laptop", None)
+        .await
+        .unwrap();
+    let populated = server.post("/api/passkey/auth/start").await;
+
+    assert_eq!(empty.status_code(), populated.status_code());
+    empty.assert_status_ok();
+
+    // The challenge bytes differ per request by design; everything else about
+    // the options must match.
+    let mut a: serde_json::Value = empty.json();
+    let mut b: serde_json::Value = populated.json();
+    a["options"]["publicKey"]["challenge"] = serde_json::Value::Null;
+    b["options"]["publicKey"]["challenge"] = serde_json::Value::Null;
+    assert_eq!(a, b);
 }
 
 #[tokio::test]
