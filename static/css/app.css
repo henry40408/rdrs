@@ -1846,6 +1846,14 @@ td input[type="text"] {
     margin-top: var(--space-5);
 }
 
+/* A one-line note under a field explaining what will be accepted, so the
+   first rejection is not the user's first sight of the rule. Sits tight to
+   the input it belongs to rather than floating as its own paragraph. */
+.form-hint {
+    margin-top: var(--space-1);
+    font-size: var(--font-sm);
+}
+
 /* ===== Re-authentication banner =====
    The SSR twin of .reauth-dialog, shown at the top of /admin when the
    session's confirmation window has lapsed. A form on the page rather than a

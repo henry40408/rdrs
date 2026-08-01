@@ -68,12 +68,12 @@ async fn create_test_app(_name: &str) -> TestApp {
 }
 
 async fn setup_users(db: &Db) -> (i64, i64) {
-    let password_hash = rdrs::auth::hash_password("password123456789").unwrap();
+    let password_hash = rdrs::auth::hash_password("vulture-mango-77-quilt").unwrap();
     let admin = user::create_user(db, "admin", &password_hash, Role::Admin)
         .await
         .unwrap();
 
-    let password_hash = rdrs::auth::hash_password("password123456789").unwrap();
+    let password_hash = rdrs::auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = user::create_user(db, "user", &password_hash, Role::User)
         .await
         .unwrap();
@@ -86,7 +86,7 @@ async fn login(server: &mut TestServer, username: &str) {
         .post("/api/session")
         .json(&json!({
             "username": username,
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     login.assert_status_ok();

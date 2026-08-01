@@ -61,7 +61,7 @@ async fn setup_authenticated_user(app: &TestApp) -> i64 {
         .post("/api/register")
         .json(&json!({
             "username": "testuser",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -70,7 +70,7 @@ async fn setup_authenticated_user(app: &TestApp) -> i64 {
         .post("/api/session")
         .json(&json!({
             "username": "testuser",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status_ok();
@@ -142,7 +142,7 @@ async fn test_client_login_success() {
 
     let form = vec![
         ("Email", "testuser".to_string()),
-        ("Passwd", "password123456789".to_string()),
+        ("Passwd", "vulture-mango-77-quilt".to_string()),
     ];
     let response = app.server.post("/accounts/ClientLogin").form(&form).await;
     response.assert_status_ok();
@@ -183,7 +183,7 @@ async fn test_client_login_nonexistent_user() {
 
     let form = vec![
         ("Email", "nonexistent".to_string()),
-        ("Passwd", "password123456789".to_string()),
+        ("Passwd", "vulture-mango-77-quilt".to_string()),
     ];
     let response = app.server.post("/accounts/ClientLogin").form(&form).await;
     assert_ne!(response.status_code(), StatusCode::OK);
@@ -197,7 +197,7 @@ async fn test_client_login_token_used_for_api() {
     // Get auth token via ClientLogin
     let form = vec![
         ("Email", "testuser".to_string()),
-        ("Passwd", "password123456789".to_string()),
+        ("Passwd", "vulture-mango-77-quilt".to_string()),
     ];
     let response = app.server.post("/accounts/ClientLogin").form(&form).await;
     let body = response.text();
@@ -227,7 +227,7 @@ async fn test_client_login_token_is_not_a_web_session() {
     // Created directly in the DB rather than through `/api/session`, so the
     // TestServer's cookie jar never picks up a real session cookie — the only
     // cookies sent in this test are the ones this test adds explicitly.
-    create_user_directly(&app.db, "testuser", "password123456789").await;
+    create_user_directly(&app.db, "testuser", "vulture-mango-77-quilt").await;
     let user_id = rdrs::models::user::find_by_username(&app.db, "testuser")
         .await
         .unwrap()
@@ -236,7 +236,7 @@ async fn test_client_login_token_is_not_a_web_session() {
 
     let form = vec![
         ("Email", "testuser".to_string()),
-        ("Passwd", "password123456789".to_string()),
+        ("Passwd", "vulture-mango-77-quilt".to_string()),
     ];
     let response = app.server.post("/accounts/ClientLogin").form(&form).await;
     response.assert_status_ok();
@@ -293,7 +293,7 @@ async fn test_client_login_token_is_not_a_web_session() {
 #[tokio::test]
 async fn test_web_session_token_is_rejected_in_the_authorization_header() {
     let app = create_test_app(default_test_config()).await;
-    create_user_directly(&app.db, "testuser", "password123456789").await;
+    create_user_directly(&app.db, "testuser", "vulture-mango-77-quilt").await;
     let user_id = rdrs::models::user::find_by_username(&app.db, "testuser")
         .await
         .unwrap()
@@ -368,7 +368,7 @@ async fn test_post_token_works_for_both_credential_kinds() {
     // ApiToken credential (same underlying user).
     let form = vec![
         ("Email", "testuser".to_string()),
-        ("Passwd", "password123456789".to_string()),
+        ("Passwd", "vulture-mango-77-quilt".to_string()),
     ];
     let cl_response = app.server.post("/accounts/ClientLogin").form(&form).await;
     let cl_body = cl_response.text();
@@ -451,7 +451,7 @@ async fn test_expired_api_token_is_lazily_deleted() {
 
     let form = vec![
         ("Email", "testuser".to_string()),
-        ("Passwd", "password123456789".to_string()),
+        ("Passwd", "vulture-mango-77-quilt".to_string()),
     ];
     let response = app.server.post("/accounts/ClientLogin").form(&form).await;
     let body = response.text();
@@ -498,7 +498,7 @@ async fn create_user_directly(db: &Db, username: &str, password: &str) {
 #[tokio::test]
 async fn test_client_login_rate_limited() {
     let app = create_test_app(default_test_config()).await;
-    create_user_directly(&app.db, "testuser", "password123456789").await;
+    create_user_directly(&app.db, "testuser", "vulture-mango-77-quilt").await;
 
     let form = vec![
         ("Email", "testuser".to_string()),
@@ -520,7 +520,7 @@ async fn test_client_login_rate_limit_applies_to_greader_php_prefix() {
     // src/lib.rs), so the two paths must share the same rate-limit bucket —
     // an attacker cannot dodge the limiter by switching prefixes mid-attack.
     let app = create_test_app(default_test_config()).await;
-    create_user_directly(&app.db, "testuser", "password123456789").await;
+    create_user_directly(&app.db, "testuser", "vulture-mango-77-quilt").await;
 
     let form = vec![
         ("Email", "testuser".to_string()),

@@ -46,13 +46,12 @@ pub async fn register(
     if req.username.is_empty() {
         return Err(AppError::Validation("Username is required".to_string()));
     }
-    validate_password_strength(&req.password)?;
 
-    // Reserve an attempt before any DB query or password hashing. Never
-    // released: a successful registration is exactly the abuse this limiter
-    // exists to slow down (an attacker scripting account creation), so
-    // unlike login there is no "correct credential" outcome that should hand
-    // the budget back.
+    // Reserve an attempt before any DB query, strength estimation or password
+    // hashing. Never released: a successful registration is exactly the abuse
+    // this limiter exists to slow down (an attacker scripting account
+    // creation), so unlike login there is no "correct credential" outcome that
+    // should hand the budget back.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
     if let Some(retry_after_secs) = state
@@ -64,6 +63,14 @@ pub async fn register(
         audit::login_rate_limited("POST /api/register", "register", &ip.to_string());
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
+
+    // Behind the limiter, not in front of it: zxcvbn costs ~86µs on a typical
+    // password but ~79ms on a 128-character worst case (measured in release),
+    // which is Argon2 territory. Validating first would have let anyone choose
+    // how much CPU each rejected registration costs — the exact shape the
+    // limiter's module docs warn about. The username is handed to the
+    // estimator so a password built out of it is scored for what it is.
+    validate_password_strength(&req.password, &[&req.username])?;
 
     let config = state.config.clone();
     let user_count = user::count(&state.db).await?;

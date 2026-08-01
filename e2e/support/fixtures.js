@@ -72,7 +72,7 @@ export const test = base.extend({
   ],
 
   currentUser: async ({}, use) => {
-    await use({ username: `e2e-${nano()}`, password: "password123456789" });
+    await use({ username: `e2e-${nano()}`, password: "vulture-mango-77-quilt" });
   },
 });
 

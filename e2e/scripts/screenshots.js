@@ -138,7 +138,7 @@ test.use({ viewport: { width: 1920, height: 1080 } });
 
 test.describe("Screenshots", () => {
   test.beforeAll(async ({ api, seed }) => {
-    await api.register("demouser", "password123456789");
+    await api.register("demouser", "vulture-mango-77-quilt");
     const userId = seed.getUserId("demouser");
 
     // Fetch all favicons in parallel
@@ -183,7 +183,7 @@ test.describe("Screenshots", () => {
   test.beforeEach(async ({ page, serverUrl }) => {
     await page.goto(`${serverUrl}/login`);
     await page.getByTestId("username-input").fill("demouser");
-    await page.getByTestId("password-input").fill("password123456789");
+    await page.getByTestId("password-input").fill("vulture-mango-77-quilt");
     await page.getByTestId("login-submit").click();
     await page.waitForURL(`${serverUrl}/`);
     await expect(page.getByTestId("entry-item").first()).toBeVisible();
