@@ -1852,6 +1852,31 @@ td input[type="text"] {
     margin-bottom: var(--space-4);
 }
 
+/* An admin row carries up to six actions. Left alone the cell grows to fit
+   them on a single line and starves every other column — which is what the
+   ACTIONS header did to CREATED and STATUS. Capping the width makes them wrap
+   into two or three short lines instead, and the cap lives on a wrapper
+   because `max-width` on a <td> is ignored under auto table layout.
+   The row gap is tighter than the column gap so wrapped lines sit close
+   together rather than turning the cell into a tall stack. */
+.admin-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
+    /* Both bounds, not just the cap: with only a max-width the auto table
+       layout hands this cell its *minimum* width instead — every action on its
+       own line, a six-line cell, and the column starved to nothing. The min is
+       what reserves room for three actions per line. */
+    min-width: 17rem;
+    max-width: 19rem;
+}
+
+/* Keep a two-word action ("new link") on one line; breaking inside a label
+   makes the wrapped lines unreadable. */
+.admin-actions > form {
+    white-space: nowrap;
+}
+
 /* ===== Admin: the one-time account link =====
    Shown once, after creating an account or issuing a reset. Styled as a
    callout rather than a form so it reads as "act on this now" — the string is

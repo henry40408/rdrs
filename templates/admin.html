@@ -81,6 +81,7 @@
                                 {% else %}<span class="success-text">active</span>{% endif %}
                                 {% if let Some(expires) = u.invite_expires_at %}
                                 <br><span class="muted admin-invite-note" data-testid="admin-user-invite">link expires {{ expires }}</span>
+                                </div>
                                 {% endif %}
                             </td>
                             <td data-label="Created"><time datetime="{{ u.created_at_iso }}" data-local-text>{{ u.created_at }}</time></td>
@@ -88,6 +89,7 @@
                                 {% if u.is_self %}
                                     <span class="muted">(you)</span>
                                 {% else %}
+                                <div class="admin-actions">
                                     <form method="post" action="/admin/users/{{ u.id }}/role" class="form-inline">
                                         <input type="hidden" name="role" value="{% if u.role == "admin" %}user{% else %}admin{% endif %}">
                                         <button type="submit" class="action-link">{% if u.role == "admin" %}demote{% else %}promote{% endif %}</button>
@@ -110,6 +112,7 @@
                                     <form method="post" action="/admin/users/{{ u.id }}/delete" class="form-inline" data-confirm="Delete user? This cannot be undone.">
                                         <button type="submit" class="action-link action-link-danger">delete</button>
                                     </form>
+                                </div>
                                 {% endif %}
                             </td>
                         </tr>
