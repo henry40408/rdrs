@@ -368,7 +368,7 @@ size and attack surface. The build-stage design is described in
 
 ### Prerequisites
 
-- Rust 1.96 (pinned via `rust-toolchain.toml`; rustup installs it automatically)
+- Rust (version pinned in `rust-toolchain.toml`; rustup installs it automatically)
 - SQLite (bundled via rusqlite)
 
 ### Running Tests
