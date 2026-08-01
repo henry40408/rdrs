@@ -782,6 +782,39 @@ guarantee is exactly what the cheat sheet warns against.
   so a client left holding the old CSRF token would fail every subsequent
   state-changing request
 
+### Authentication: deliberately not done
+
+A review against OWASP's Authentication Cheat Sheet produced nine findings.
+Eight are implemented and documented above. The remaining two were considered
+and **declined**, which is recorded here so the next reader does not spend the
+evaluation again — and so that reopening either is a decision rather than an
+oversight.
+
+**Re-hashing a password on login when the Argon2 parameters change.** The
+Password Storage Cheat Sheet asks for it, and it is perhaps thirty lines. It
+buys nothing until someone actually raises the parameters, so it belongs in
+that change rather than ahead of it. Whoever writes it should note the trap:
+the comparison has to be *upward only* and disabled under `RDRS_FAST_HASH`, or
+every test-suite login will quietly downgrade a strong hash to the minimal-cost
+parameters that flag selects.
+
+**A real second factor (TOTP).** rdrs already offers two routes to strong
+authentication — passkeys, which are phishing-resistant and, since the
+discoverable-credential flow, usable without a username; and forward-auth,
+which hands the whole question to an IdP built for it. Implementing TOTP here
+would mean owning recovery codes and the lost-device path, which is where these
+features actually fail, and a self-hosted reader has no support desk to catch
+whoever gets stranded. If an in-tree option is ever wanted, the small version
+is a per-user "disable password login once a passkey is enrolled" switch: it
+gets phishing-resistant single-factor sign-in with none of the recovery
+machinery.
+
+Note that the second decision holds the first password-policy constant in
+place: `PASSWORD_MIN_LENGTH` is 15 *because* there is no second factor. A real
+one would let it drop to 8 (NIST SP800-63B), and would also make a breached-
+password blocklist worth revisiting — see the note under Password Policy on why
+one is not there today.
+
 ### Input Sanitization
 
 - All HTML content sanitized with Ammonia
