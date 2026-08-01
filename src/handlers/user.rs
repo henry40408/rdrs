@@ -392,18 +392,16 @@ pub async fn change_password_form(
         return FlashRedirect::error("/user-settings", "New passwords do not match.");
     }
 
-    if let Err(AppError::Validation(msg)) = validate_password_strength(&req.new_password) {
-        return FlashRedirect::error("/user-settings", format!("New {}.", msg.to_lowercase()));
-    }
-
-    // Reserved here rather than at the top of the handler: the two checks
-    // above are pure string comparisons, and a user fumbling "new passwords
-    // do not match" should not spend a credential-attempt budget. What needs
-    // guarding is the Argon2 `verify_password` immediately below — the caller
-    // already holds a session for this account, so this is not a way in from
-    // outside, but leaving it unthrottled would let a hijacked session
-    // brute-force the *original* password (useful for credential reuse
-    // elsewhere) and let any logged-in user spend server CPU at will.
+    // Reserved here rather than at the top of the handler: the check above is
+    // a pure string comparison, and a user fumbling "new passwords do not
+    // match" should not spend a credential-attempt budget. What needs guarding
+    // is everything below — the Argon2 `verify_password`, and the strength
+    // estimate, which costs ~79ms on a 128-character worst case (measured in
+    // release). The caller already holds a session for this account, so this
+    // is not a way in from outside, but leaving either unthrottled would let a
+    // hijacked session brute-force the *original* password (useful for
+    // credential reuse elsewhere) and let any logged-in user spend server CPU
+    // at will.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
     if let Some(retry_after_secs) = state
@@ -423,6 +421,24 @@ pub async fn change_password_form(
             "/user-settings",
             format!("Too many attempts. Please try again in {retry_after_secs} seconds."),
         );
+    }
+
+    // Shown as-is rather than reworded into "New <lowercased message>": the
+    // policy answers with zxcvbn's own feedback ("Repeats like 'aaa' are easy
+    // to guess. Add another word or two"), and lowercasing a sentence that
+    // names a pattern mangles it. Only the full stop is normalised. A
+    // rejection here keeps its reservation — the estimate is the work being
+    // paid for, and refunding it would restore the free-CPU path the limiter
+    // was moved above this check to close.
+    if let Err(AppError::Validation(msg)) =
+        validate_password_strength(&req.new_password, &[&auth_user.user.username])
+    {
+        let msg = if msg.ends_with('.') {
+            msg
+        } else {
+            format!("{msg}.")
+        };
+        return FlashRedirect::error("/user-settings", msg);
     }
 
     if !verify_password(&req.current_password, &auth_user.user.password_hash) {

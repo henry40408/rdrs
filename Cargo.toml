@@ -78,6 +78,10 @@ webauthn-rs = { version = "0.5", features = [
 # Already in the tree under webauthn-rs; named directly only to reach
 # `ResidentKeyRequirement`, which `webauthn_rs::prelude` does not re-export.
 webauthn-rs-proto = "0.5"
+# Password-strength estimation for new credentials. `default-features = false`
+# drops the `builder` feature, which exists only for constructing the crate's
+# options struct and would pull derive_builder + syn into the tree for nothing.
+zxcvbn = { version = "3", default-features = false }
 uuid = { version = "1", features = ["v4", "serde"] }
 openssl = { version = "0.10", features = ["vendored"] }
 moka = { version = "0.12", features = ["sync"] }

@@ -58,7 +58,7 @@ async fn create_test_app(config: Config) -> TestApp {
 /// Setup user, category, feed, and entries directly in database
 async fn setup_test_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
     // Create user
-    let password_hash = rdrs::auth::hash_password("password123456789").unwrap();
+    let password_hash = rdrs::auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = user::create_user(db, "testuser", &password_hash, Role::Admin)
         .await
         .unwrap();
@@ -113,7 +113,7 @@ async fn login(server: &mut TestServer) {
         .post("/api/session")
         .json(&json!({
             "username": "testuser",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     login.assert_status_ok();
@@ -277,7 +277,7 @@ async fn test_list_entries_with_continuation() {
     // Create entries where IDs correlate with published_at in ascending order.
     // This is needed because continuation pagination uses `e.id < c` (newest-first)
     // or `e.id > c` (oldest-first), so ID order must match timestamp order.
-    let password_hash = rdrs::auth::hash_password("password123456789").unwrap();
+    let password_hash = rdrs::auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = user::create_user(&app.db, "testuser", &password_hash, Role::Admin)
         .await
         .unwrap();
@@ -1852,7 +1852,7 @@ async fn test_stream_contents_with_count() {
 async fn test_stream_contents_with_continuation() {
     let mut app = create_test_app(default_test_config()).await;
     // Use custom setup to ensure IDs correlate with timestamps (needed for continuation)
-    let password_hash = rdrs::auth::hash_password("password123456789").unwrap();
+    let password_hash = rdrs::auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = user::create_user(&app.db, "testuser", &password_hash, Role::Admin)
         .await
         .unwrap();

@@ -24,6 +24,7 @@
             <div class="form-group">
                 <label for="password">Password</label>
                 <input type="password" id="password" name="password" required minlength="{{ password_min_length }}" maxlength="{{ password_max_length }}" autocomplete="new-password" data-testid="register-password">
+                <p class="muted form-hint">At least {{ password_min_length }} characters. A phrase of a few unrelated words works well — no mixture of cases or symbols is required.</p>
             </div>
             <div class="form-group">
                 <label for="confirm-password">Confirm Password</label>

@@ -10,7 +10,7 @@ Given("I am a registered user", async ({ api, currentUser }) => {
 // Register an unrelated account first so the account under test is NOT the
 // instance's first user (the first registration is promoted to admin).
 Given("the instance already has an owner account", async ({ api }) => {
-  await api.register("e2e-owner", "password123456789");
+  await api.register("e2e-owner", "vulture-mango-77-quilt");
 });
 
 Given("I am signed in", async ({ page, api, currentUser, serverUrl }) => {
@@ -37,7 +37,7 @@ When("I register with mismatched passwords", async ({ page, currentUser, serverU
   // Long enough to clear the field's own minlength, so the browser submits and
   // the page's mismatch check is what rejects it — a short value would be
   // stopped by constraint validation first and never exercise this scenario.
-  await page.getByTestId("register-confirm-password").fill("different45678901");
+  await page.getByTestId("register-confirm-password").fill("badger-kestrel-19-plume");
   await page.getByTestId("register-submit").click();
 });
 

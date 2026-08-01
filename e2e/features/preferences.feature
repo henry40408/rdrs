@@ -22,8 +22,8 @@ Feature: Preferences
     Then the html element has no data-theme attribute
 
   Scenario: Changing my password lets me sign in with the new password
-    When I change my password to "newpassword123456"
-    Then I can sign in with "newpassword123456"
+    When I change my password to "heron-lantern-53-drift"
+    Then I can sign in with "heron-lantern-53-drift"
 
   Scenario: Setting a read-article retention period persists
     When I set the retention period to "30" days

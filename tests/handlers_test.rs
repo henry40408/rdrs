@@ -92,7 +92,7 @@ async fn setup_authenticated_user(server: &mut TestServer) {
         .post("/api/register")
         .json(&json!({
             "username": "testuser",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -101,7 +101,7 @@ async fn setup_authenticated_user(server: &mut TestServer) {
         .post("/api/session")
         .json(&json!({
             "username": "testuser",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     login.assert_status_ok();
@@ -464,7 +464,7 @@ async fn test_update_feed_to_other_user_category() {
         .post("/api/register")
         .json(&json!({
             "username": "movefeeduser1",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -473,7 +473,7 @@ async fn test_update_feed_to_other_user_category() {
         .post("/api/session")
         .json(&json!({
             "username": "movefeeduser1",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     __login.assert_status_ok();
@@ -490,7 +490,7 @@ async fn test_update_feed_to_other_user_category() {
         .post("/api/register")
         .json(&json!({
             "username": "movefeeduser2",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -499,7 +499,7 @@ async fn test_update_feed_to_other_user_category() {
         .post("/api/session")
         .json(&json!({
             "username": "movefeeduser2",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     __login.assert_status_ok();
@@ -545,7 +545,7 @@ async fn test_delete_feed_other_user() {
         .post("/api/register")
         .json(&json!({
             "username": "feeddeluser1",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -555,7 +555,7 @@ async fn test_delete_feed_other_user() {
         .post("/api/session")
         .json(&json!({
             "username": "feeddeluser1",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     __login.assert_status_ok();
@@ -583,7 +583,7 @@ async fn test_delete_feed_other_user() {
         .post("/api/register")
         .json(&json!({
             "username": "feeddeluser2",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -593,7 +593,7 @@ async fn test_delete_feed_other_user() {
         .post("/api/session")
         .json(&json!({
             "username": "feeddeluser2",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     __login.assert_status_ok();
@@ -1333,7 +1333,7 @@ async fn test_category_isolation_between_users() {
         .post("/api/register")
         .json(&json!({
             "username": "user1",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1342,7 +1342,7 @@ async fn test_category_isolation_between_users() {
         .post("/api/session")
         .json(&json!({
             "username": "user1",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     __login.assert_status_ok();
@@ -1358,7 +1358,7 @@ async fn test_category_isolation_between_users() {
         .post("/api/register")
         .json(&json!({
             "username": "user2",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1367,7 +1367,7 @@ async fn test_category_isolation_between_users() {
         .post("/api/session")
         .json(&json!({
             "username": "user2",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     __login.assert_status_ok();
@@ -1455,7 +1455,7 @@ async fn test_get_feed_icon_no_icon() {
     let mut app = create_test_app(default_test_config()).await;
 
     // Create user and a feed (via OPML import) that has no icon
-    let hash = auth::hash_password("password123456789").unwrap();
+    let hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
     rdrs::models::user::create_user(&app.db, "iconuser", &hash, Role::User)
         .await
         .unwrap();
@@ -1465,7 +1465,7 @@ async fn test_get_feed_icon_no_icon() {
         .post("/api/session")
         .json(&json!({
             "username": "iconuser",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     __login.assert_status_ok();
@@ -1652,7 +1652,7 @@ async fn test_reauth_with_correct_password_reopens_the_window() {
 
     app.server
         .post("/api/session/reauth")
-        .json(&json!({ "password": "password123456789" }))
+        .json(&json!({ "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::NO_CONTENT);
 
@@ -1687,7 +1687,7 @@ async fn test_reauth_requires_a_session() {
 
     server
         .post("/api/session/reauth")
-        .json(&json!({ "password": "password123456789" }))
+        .json(&json!({ "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status_unauthorized();
 }
@@ -1884,7 +1884,7 @@ async fn test_reauth_refused_when_local_auth_disabled() {
 
     // Build the session directly: with local auth disabled there is no login
     // endpoint to go through.
-    let password_hash = auth::hash_password("password123456789").unwrap();
+    let password_hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
@@ -1896,7 +1896,7 @@ async fn test_reauth_refused_when_local_auth_disabled() {
 
     app.server
         .post("/api/session/reauth")
-        .json(&json!({ "password": "password123456789" }))
+        .json(&json!({ "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status_forbidden();
 }
@@ -1906,7 +1906,7 @@ async fn test_passkey_auth_start_with_invalid_passkey_data() {
     let app = create_test_app(default_test_config()).await;
 
     // Create user and passkey with invalid public_key JSON
-    let password_hash = auth::hash_password("password123456789").unwrap();
+    let password_hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
@@ -1994,7 +1994,7 @@ async fn test_list_passkeys_with_data() {
     let mut app = create_test_app(default_test_config()).await;
 
     // Create user and passkey
-    let password_hash = auth::hash_password("password123456789").unwrap();
+    let password_hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
@@ -2016,7 +2016,7 @@ async fn test_list_passkeys_with_data() {
         .post("/api/session")
         .json(&json!({
             "username": "testuser",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     __login.assert_status_ok();
@@ -2036,7 +2036,7 @@ async fn test_rename_passkey_success() {
     let mut app = create_test_app(default_test_config()).await;
 
     // Create user and passkey
-    let password_hash = auth::hash_password("password123456789").unwrap();
+    let password_hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
@@ -2058,7 +2058,7 @@ async fn test_rename_passkey_success() {
         .post("/api/session")
         .json(&json!({
             "username": "testuser",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     __login.assert_status_ok();
@@ -2082,7 +2082,7 @@ async fn test_delete_passkey_success() {
     let mut app = create_test_app(default_test_config()).await;
 
     // Create user and passkey
-    let password_hash = auth::hash_password("password123456789").unwrap();
+    let password_hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
@@ -2104,7 +2104,7 @@ async fn test_delete_passkey_success() {
         .post("/api/session")
         .json(&json!({
             "username": "testuser",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     __login.assert_status_ok();
@@ -2131,7 +2131,7 @@ async fn test_passkey_rename_other_user() {
     let mut app = create_test_app(default_test_config()).await;
 
     // Create two users, each with a passkey
-    let hash1 = auth::hash_password("password123456789").unwrap();
+    let hash1 = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user1 = rdrs::models::user::create_user(&app.db, "pkuser1", &hash1, Role::User)
         .await
         .unwrap();
@@ -2146,7 +2146,7 @@ async fn test_passkey_rename_other_user() {
         "User1 Passkey"
     )
     .unwrap();
-    let hash2 = auth::hash_password("password123456789").unwrap();
+    let hash2 = auth::hash_password("vulture-mango-77-quilt").unwrap();
     rdrs::models::user::create_user(&app.db, "pkuser2", &hash2, Role::User)
         .await
         .unwrap();
@@ -2157,7 +2157,7 @@ async fn test_passkey_rename_other_user() {
         .post("/api/session")
         .json(&json!({
             "username": "pkuser2",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     __login.assert_status_ok();
@@ -2177,7 +2177,7 @@ async fn test_passkey_delete_other_user() {
     let mut app = create_test_app(default_test_config()).await;
 
     // Create two users, user1 has a passkey
-    let hash1 = auth::hash_password("password123456789").unwrap();
+    let hash1 = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user1 = rdrs::models::user::create_user(&app.db, "pkdeluser1", &hash1, Role::User)
         .await
         .unwrap();
@@ -2192,7 +2192,7 @@ async fn test_passkey_delete_other_user() {
         "User1 Key"
     )
     .unwrap();
-    let hash2 = auth::hash_password("password123456789").unwrap();
+    let hash2 = auth::hash_password("vulture-mango-77-quilt").unwrap();
     rdrs::models::user::create_user(&app.db, "pkdeluser2", &hash2, Role::User)
         .await
         .unwrap();
@@ -2203,7 +2203,7 @@ async fn test_passkey_delete_other_user() {
         .post("/api/session")
         .json(&json!({
             "username": "pkdeluser2",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     __login.assert_status_ok();
@@ -2757,13 +2757,13 @@ async fn test_client_login_success() {
         .post("/api/register")
         .json(&json!({
             "username": "testuser",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
 
     // ClientLogin with correct credentials
-    let form: Vec<(&str, &str)> = vec![("Email", "testuser"), ("Passwd", "password123456789")];
+    let form: Vec<(&str, &str)> = vec![("Email", "testuser"), ("Passwd", "vulture-mango-77-quilt")];
     let response = server.post("/accounts/ClientLogin").form(&form).await;
     response.assert_status_ok();
 
@@ -2791,7 +2791,7 @@ async fn test_client_login_wrong_password() {
         .post("/api/register")
         .json(&json!({
             "username": "testuser",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -2807,7 +2807,7 @@ async fn test_client_login_nonexistent_user() {
     let server = create_test_server(default_test_config()).await;
 
     // ClientLogin with non-existent user → 401
-    let form: Vec<(&str, &str)> = vec![("Email", "nouser"), ("Passwd", "password123456789")];
+    let form: Vec<(&str, &str)> = vec![("Email", "nouser"), ("Passwd", "vulture-mango-77-quilt")];
     let response = server.post("/accounts/ClientLogin").form(&form).await;
     response.assert_status_unauthorized();
 }
@@ -2821,13 +2821,13 @@ async fn test_greader_auth_header() {
         .post("/api/register")
         .json(&json!({
             "username": "testuser",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
 
     // Get auth token via ClientLogin
-    let form: Vec<(&str, &str)> = vec![("Email", "testuser"), ("Passwd", "password123456789")];
+    let form: Vec<(&str, &str)> = vec![("Email", "testuser"), ("Passwd", "vulture-mango-77-quilt")];
     let response = server.post("/accounts/ClientLogin").form(&form).await;
     response.assert_status_ok();
 
@@ -2936,9 +2936,9 @@ async fn test_change_password_form_success() {
     let response = server
         .post("/user-settings/password")
         .form(&json!({
-            "current_password": "password123456789",
-            "new_password": "newpassword456789",
-            "confirm_password": "newpassword456789",
+            "current_password": "vulture-mango-77-quilt",
+            "new_password": "heron-lantern-53-drift",
+            "confirm_password": "heron-lantern-53-drift",
         }))
         .await;
 
@@ -2955,8 +2955,8 @@ async fn test_change_password_form_mismatch() {
     let response = server
         .post("/user-settings/password")
         .form(&json!({
-            "current_password": "password123456789",
-            "new_password": "newpassword456789",
+            "current_password": "vulture-mango-77-quilt",
+            "new_password": "heron-lantern-53-drift",
             "confirm_password": "differentvalue",
         }))
         .await;
@@ -3282,9 +3282,9 @@ async fn test_password_change_revokes_api_tokens() {
         .server
         .post("/user-settings/password")
         .form(&json!({
-            "current_password": "password123456789",
-            "new_password": "newpassword456789",
-            "confirm_password": "newpassword456789",
+            "current_password": "vulture-mango-77-quilt",
+            "new_password": "heron-lantern-53-drift",
+            "confirm_password": "heron-lantern-53-drift",
         }))
         .await;
     response.assert_status(StatusCode::SEE_OTHER);
@@ -3316,8 +3316,8 @@ async fn test_password_change_is_rate_limited() {
             .post("/user-settings/password")
             .form(&json!({
                 "current_password": "wrongpassword",
-                "new_password": "newpassword456789",
-                "confirm_password": "newpassword456789",
+                "new_password": "heron-lantern-53-drift",
+                "confirm_password": "heron-lantern-53-drift",
             }))
             .await;
     }
@@ -3325,9 +3325,9 @@ async fn test_password_change_is_rate_limited() {
     app.server
         .post("/user-settings/password")
         .form(&json!({
-            "current_password": "password123456789",
-            "new_password": "newpassword456789",
-            "confirm_password": "newpassword456789",
+            "current_password": "vulture-mango-77-quilt",
+            "new_password": "heron-lantern-53-drift",
+            "confirm_password": "heron-lantern-53-drift",
         }))
         .await;
 
@@ -3338,7 +3338,7 @@ async fn test_password_change_is_rate_limited() {
         .unwrap()
         .expect("user must exist");
     assert!(
-        rdrs::auth::verify_password("password123456789", &user.password_hash),
+        rdrs::auth::verify_password("vulture-mango-77-quilt", &user.password_hash),
         "a throttled request must not have changed the password"
     );
 
@@ -3347,7 +3347,7 @@ async fn test_password_change_is_rate_limited() {
     let login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "testuser", "password": "password123456789" }))
+        .json(&json!({ "username": "testuser", "password": "vulture-mango-77-quilt" }))
         .await;
     assert_ne!(
         login.status_code(),
@@ -3404,7 +3404,7 @@ async fn setup_admin_user(server: &mut TestServer) {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -3413,7 +3413,7 @@ async fn setup_admin_user(server: &mut TestServer) {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     login.assert_status_ok();
@@ -3426,7 +3426,7 @@ async fn register_target_user(server: &TestServer) {
         .post("/api/register")
         .json(&json!({
             "username": "target",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -3480,7 +3480,7 @@ async fn test_update_status_form_disables_user() {
         .post("/api/session")
         .json(&json!({
             "username": "target",
-            "password": "password123456789"
+            "password": "vulture-mango-77-quilt"
         }))
         .await;
     login_resp.assert_status_forbidden();
@@ -4043,13 +4043,13 @@ async fn test_entry_fragment_renders_reading_pane() {
     // Register and log in as alice.
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_frag", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_frag", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_frag", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_frag", "password": "vulture-mango-77-quilt" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4183,13 +4183,13 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "doc_nav", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "doc_nav", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "doc_nav", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "doc_nav", "password": "vulture-mango-77-quilt" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4273,13 +4273,13 @@ async fn test_entry_fragment_document_nav_preserves_referer_scope() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "ref_scope", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "ref_scope", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "ref_scope", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "ref_scope", "password": "vulture-mango-77-quilt" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4338,13 +4338,13 @@ async fn test_entry_fragment_404_for_other_user() {
     // Register alice (will be logged in).
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_404", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_404", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_404", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_404", "password": "vulture-mango-77-quilt" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4411,13 +4411,13 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
     // Register and log in as alice.
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_star", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_star", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_star", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_star", "password": "vulture-mango-77-quilt" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4504,13 +4504,13 @@ async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_unstar", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_unstar", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_unstar", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_unstar", "password": "vulture-mango-77-quilt" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4594,13 +4594,13 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
     // Register and log in as alice.
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_read", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_read", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_read", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_read", "password": "vulture-mango-77-quilt" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4684,13 +4684,13 @@ async fn test_unread_entry_form_is_idempotent_mark_unread() {
 
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_unr", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_unr", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_unr", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_unr", "password": "vulture-mango-77-quilt" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4782,13 +4782,13 @@ async fn test_star_entry_form_404_for_other_user() {
     // Register + login alice (session cookie is now alice's).
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_s404", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_s404", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_s404", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_s404", "password": "vulture-mango-77-quilt" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4865,13 +4865,13 @@ async fn test_read_entry_form_404_for_other_user() {
     // Register + login alice (session cookie is now alice's).
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_r404", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_r404", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_r404", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_r404", "password": "vulture-mango-77-quilt" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -4949,13 +4949,13 @@ async fn test_summarize_entry_form_renders_summary_pending_fragment() {
     // Register and log in as alice.
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_sum", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_sum", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_sum", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_sum", "password": "vulture-mango-77-quilt" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -5030,13 +5030,13 @@ async fn test_entries_load_more_returns_row_fragments() {
     // Register and log in as alice.
     app.server
         .post("/api/register")
-        .json(&json!({ "username": "alice_lm", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_lm", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = app
         .server
         .post("/api/session")
-        .json(&json!({ "username": "alice_lm", "password": "pw123456789012345" }))
+        .json(&json!({ "username": "alice_lm", "password": "vulture-mango-77-quilt" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
@@ -6220,7 +6220,7 @@ async fn confirming_the_password_reopens_the_admin_window() {
     let confirmed = app
         .server
         .post("/admin/reauth")
-        .form(&json!({ "password": "password123456789" }))
+        .form(&json!({ "password": "vulture-mango-77-quilt" }))
         .await;
     confirmed.assert_status(StatusCode::SEE_OTHER);
 

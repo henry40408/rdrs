@@ -111,8 +111,8 @@ async fn login(server: &mut TestServer, username: &str, password: &str) {
 #[tokio::test]
 async fn test_cancel_clears_failed_summary() {
     let mut app = create_test_app(default_test_config(), "test_cancel_clears_failed").await;
-    let (uid, eid) = setup_user_with_entry(&app.db, "user1", "password123456789").await;
-    login(&mut app.server, "user1", "password123456789").await;
+    let (uid, eid) = setup_user_with_entry(&app.db, "user1", "vulture-mango-77-quilt").await;
+    login(&mut app.server, "user1", "vulture-mango-77-quilt").await;
 
     // Seed a failed summary record
     rdrs::models::entry_summary::upsert_pending(&app.db, uid, eid)
@@ -145,7 +145,7 @@ async fn test_cancel_non_owner_returns_404() {
     let mut app = create_test_app(default_test_config(), "test_cancel_non_owner").await;
 
     // Create owner user with an entry
-    let (_uid1, eid) = setup_user_with_entry(&app.db, "owner", "password123456789").await;
+    let (_uid1, eid) = setup_user_with_entry(&app.db, "owner", "vulture-mango-77-quilt").await;
 
     // Create a second user who does NOT own that entry
     let password_hash = auth::hash_password("password456").unwrap();
@@ -172,8 +172,8 @@ async fn test_cancel_non_owner_returns_404() {
 async fn summarize_emits_pending_event() {
     let mut app = create_test_app(default_test_config(), "test_summarize_emits_pending").await;
     let mut sub = app.state.events.subscribe();
-    let (uid, eid) = setup_user_with_entry(&app.db, "pendinguser", "password123456789").await;
-    login(&mut app.server, "pendinguser", "password123456789").await;
+    let (uid, eid) = setup_user_with_entry(&app.db, "pendinguser", "vulture-mango-77-quilt").await;
+    login(&mut app.server, "pendinguser", "vulture-mango-77-quilt").await;
 
     app.server
         .post(&format!("/entries/{eid}/summarize"))
@@ -201,8 +201,8 @@ async fn summarize_emits_pending_event() {
 #[tokio::test]
 async fn test_cancel_removes_inflight_token() {
     let mut app = create_test_app(default_test_config(), "test_cancel_inflight_token").await;
-    let (uid, eid) = setup_user_with_entry(&app.db, "tokenuser", "password123456789").await;
-    login(&mut app.server, "tokenuser", "password123456789").await;
+    let (uid, eid) = setup_user_with_entry(&app.db, "tokenuser", "vulture-mango-77-quilt").await;
+    login(&mut app.server, "tokenuser", "vulture-mango-77-quilt").await;
 
     // Seed a pending summary record so delete has a row
     rdrs::models::entry_summary::upsert_pending(&app.db, uid, eid)

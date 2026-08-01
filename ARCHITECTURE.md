@@ -643,6 +643,38 @@ Uses Argon2id with:
 - Iterations: 2
 - Parallelism: 1
 
+### Password Policy
+
+`auth::validate_password_strength` is the single gate for every *new*
+credential (registration and change-password; existing passwords are never
+re-measured and never force-rotated). It checks, in order:
+
+1. **Length**, 15–128 **characters** — not bytes, so the rule means the same
+   thing in every script. 15 is NIST SP800-63B's floor for an account with no
+   second factor, which is what a password-protected rdrs account is. Over-long
+   passwords are rejected, never truncated.
+2. **Guessability**, via zxcvbn, refusing anything scoring below 3 on its 0–4
+   scale. The username is passed in as a `user_input`, so a password built out
+   of the account name is scored for what it is.
+
+There is deliberately **no breached-password blocklist**. The cheat sheet
+offers both controls, but the length minimum already does the blocklist's job:
+common-password corpora are overwhelmingly short (in SecLists' 10k-most-common
+list exactly one entry reaches 15 characters), so a list consulted after the
+length check would catch almost nothing while adding itself to the binary. What
+survives 15 characters is *structure* — `passwordpassword`, `qwertyuiopasdfgh`,
+`aaaaaaaaaaaaaaaa` — which is what the estimator is built to score. If a second
+factor ever lands and the minimum drops to 8, that calculus reverses and a
+blocklist becomes worth revisiting.
+
+Cost matters for ordering: zxcvbn runs in ~86µs on a typical password but
+~79ms on a 128-character worst case (measured in release), which is Argon2
+territory. Both call sites therefore run it **behind** the rate limiter, for
+the same reason hashing does — otherwise the caller, not the server, chooses
+how much CPU a rejected attempt costs. The score gates the request; the guess
+count is never shown, since advertising an entropy figure as a strength
+guarantee is exactly what the cheat sheet warns against.
+
 ### Session Management
 
 - Sliding session expiry: 7-day TTL, extended on each authenticated

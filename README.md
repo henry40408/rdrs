@@ -213,6 +213,16 @@ without a second factor, which is what a password-protected rdrs account is
 declared rather than discovered, and an over-long password is rejected outright
 instead of being silently truncated.
 
+Length alone does not make a password unguessable, so new passwords are also
+scored with [zxcvbn](https://github.com/dropbox/zxcvbn) and refused when it
+finds them trivially guessable — `passwordpassword`, `qwertyuiopasdfgh`,
+`aaaaaaaaaaaaaaaa` and your own username with digits stuck on the end all clear
+15 characters and none of them are worth having. The rejection quotes zxcvbn's
+own explanation, so it says *what* is wrong rather than just "too weak". An
+ordinary passphrase scores full marks, so in practice this never fires. Nothing
+is sent anywhere: the estimator and its dictionaries are compiled into the
+binary, like everything else.
+
 Existing passwords keep working at whatever length they were set; rdrs never
 forces a rotation. Changing one signs out every other browser session **and**
 revokes every GReader API token, so connected RSS clients must sign in again.
