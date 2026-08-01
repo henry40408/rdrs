@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use time::Duration;
 
 use crate::AppState;
-use crate::auth::{hash_password, verify_dummy_password, verify_password};
+use crate::auth::{
+    hash_password, validate_password_strength, verify_dummy_password, verify_password,
+};
 use crate::error::{AppError, AppResult};
 use crate::middleware::{
     AuthUser, Bucket, CSRF_COOKIE_NAME_HOST, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST,
@@ -44,11 +46,7 @@ pub async fn register(
     if req.username.is_empty() {
         return Err(AppError::Validation("Username is required".to_string()));
     }
-    if req.password.len() < 6 {
-        return Err(AppError::Validation(
-            "Password must be at least 6 characters".to_string(),
-        ));
-    }
+    validate_password_strength(&req.password)?;
 
     // Reserve an attempt before any DB query or password hashing. Never
     // released: a successful registration is exactly the abuse this limiter
@@ -68,13 +66,17 @@ pub async fn register(
     }
 
     let config = state.config.clone();
-    let password_hash = hash_password(&req.password)?;
-
     let user_count = user::count(&state.db).await?;
 
     if !config.can_register(user_count) {
         return Err(AppError::RegistrationNotAllowed);
     }
+
+    // Hashed only once the request is known to be one we will act on. Argon2 is
+    // deliberately expensive, and a deployment with signups closed would
+    // otherwise pay that cost for every refused attempt — an attacker's cheapest
+    // way to spend the server's CPU here, and pure waste even without one.
+    let password_hash = hash_password(&req.password)?;
 
     let role = if user_count == 0 {
         Role::Admin

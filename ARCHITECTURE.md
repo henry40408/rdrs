@@ -677,10 +677,23 @@ Uses Argon2id with:
   `middleware::auth::RecentlyAuthenticated` extractor requires it to be within
   `REAUTH_WINDOW_MINUTES` (5) and guards passkey registration and removal.
   A passkey is the one credential a password change does **not** revoke, so a
-  picked-up session must not be able to add one silently.
+  picked-up session must not be able to add one silently. The same window
+  guards every admin action that changes *another* account — promote/demote,
+  disable/enable, delete, and starting a masquerade
+  (`handlers::admin::require_recent_authentication`). Ending a masquerade is
+  deliberately **not** guarded: while masquerading, the password that would be
+  demanded belongs to the impersonated account, so the check could never be
+  satisfied and the admin would be stranded inside the impersonation — and
+  stepping back down is a de-escalation anyway.
   `POST /api/session/reauth` re-opens the window against the account password
   and shares the `PasswordChange` rate-limit budget, so it cannot be used to
-  sidestep that limit. The check sits on the *start* of the registration
+  sidestep that limit. `POST /admin/reauth` is its form-encoded twin: the admin
+  panel is server-rendered with no JavaScript to catch a 403 and re-prompt the
+  way `passkey.js` does, so `/admin` renders an inline confirmation form
+  whenever the window has lapsed and the refusal is an ordinary flash +
+  redirect. While masquerading, that endpoint verifies the *original* admin's
+  password (`session.original_user_id`), not the impersonated account's. The
+  check sits on the *start* of the registration
   ceremony because the challenge is single-use — a refusal at the finish would
   consume it and leave the retry with nothing to complete. Forward-auth
   sessions are exempt: the proxy re-asserts their identity every request, and

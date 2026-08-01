@@ -7,6 +7,16 @@
             <rdrs-flash></rdrs-flash>
             <div class="page-content">
                 <h1>Admin Panel</h1>
+                {% if needs_reauth %}
+                <form method="post" action="/admin/reauth" class="reauth-banner" data-testid="admin-reauth-form">
+                    <p class="reauth-banner__body">Confirm your password to change accounts. Promoting, disabling, deleting and viewing as another user all need it.</p>
+                    <div class="reauth-banner__row">
+                        <label class="sr-only" for="admin-reauth-password">Password</label>
+                        <input type="password" id="admin-reauth-password" name="password" required autocomplete="current-password" placeholder="Your password" data-testid="admin-reauth-password">
+                        <button type="submit" data-testid="admin-reauth-submit">Confirm</button>
+                    </div>
+                </form>
+                {% endif %}
                 <table class="mobile-cards admin-users-table" data-testid="admin-users-table">
                     <thead>
                         <tr>

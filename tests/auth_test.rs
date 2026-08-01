@@ -99,7 +99,7 @@ async fn test_register_first_user_becomes_admin() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
 
@@ -117,7 +117,7 @@ async fn test_register_second_user_becomes_user() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -126,7 +126,7 @@ async fn test_register_second_user_becomes_user() {
         .post("/api/register")
         .json(&json!({
             "username": "user1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
 
@@ -144,7 +144,7 @@ async fn test_register_duplicate_username() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -153,7 +153,7 @@ async fn test_register_duplicate_username() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "different123"
+            "password": "different12345678"
         }))
         .await;
 
@@ -175,7 +175,7 @@ async fn test_register_disabled_still_allows_first_account() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -184,7 +184,7 @@ async fn test_register_disabled_still_allows_first_account() {
         .post("/api/register")
         .json(&json!({
             "username": "user",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
 
@@ -204,7 +204,7 @@ async fn test_register_multi_user_disabled() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -213,7 +213,7 @@ async fn test_register_multi_user_disabled() {
         .post("/api/register")
         .json(&json!({
             "username": "user1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
 
@@ -228,7 +228,7 @@ async fn test_login_success() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -237,7 +237,7 @@ async fn test_login_success() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
 
@@ -255,7 +255,7 @@ async fn test_login_wrong_password() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -279,7 +279,7 @@ async fn test_login_nonexistent_user() {
         .post("/api/session")
         .json(&json!({
             "username": "nonexistent",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
 
@@ -289,7 +289,7 @@ async fn test_login_nonexistent_user() {
 #[tokio::test]
 async fn test_login_rate_limited_after_five_failures() {
     let (server, db) = build_server(default_test_config()).await;
-    create_user_directly(&db, "admin", "password123").await;
+    create_user_directly(&db, "admin", "password123456789").await;
 
     for _ in 0..5 {
         let response = server
@@ -321,7 +321,7 @@ async fn test_throttled_response_carries_retry_after() {
     // of the limiter's current fixed window, so it can only be bounded here,
     // not pinned to an exact number.
     let (server, db) = build_server(default_test_config()).await;
-    create_user_directly(&db, "admin", "password123").await;
+    create_user_directly(&db, "admin", "password123456789").await;
 
     for _ in 0..5 {
         server
@@ -356,7 +356,7 @@ async fn test_login_rate_limit_does_not_leak_valid_credentials() {
     // distinguish "right password, rate limited" from "wrong password,
     // rate limited" by noticing the correct guess still succeeds.
     let (server, db) = build_server(default_test_config()).await;
-    create_user_directly(&db, "admin", "password123").await;
+    create_user_directly(&db, "admin", "password123456789").await;
 
     for _ in 0..5 {
         server
@@ -373,7 +373,7 @@ async fn test_login_rate_limit_does_not_leak_valid_credentials() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     response.assert_status(StatusCode::TOO_MANY_REQUESTS);
@@ -385,14 +385,14 @@ async fn test_successful_login_does_not_consume_the_budget() {
     // never hit the 5-attempt budget because each one hands its reservation
     // back immediately after the password verifies.
     let (mut server, db) = build_server(default_test_config()).await;
-    create_user_directly(&db, "admin", "password123").await;
+    create_user_directly(&db, "admin", "password123456789").await;
 
     for _ in 0..10 {
         let response = server
             .post("/api/session")
             .json(&json!({
                 "username": "admin",
-                "password": "password123"
+                "password": "password123456789"
             }))
             .await;
         response.assert_status_ok();
@@ -420,7 +420,7 @@ async fn test_register_is_rate_limited() {
             .post("/api/register")
             .json(&json!({
                 "username": format!("user{i}"),
-                "password": "password123"
+                "password": "password123456789"
             }))
             .await;
         response.assert_status(StatusCode::CREATED);
@@ -430,7 +430,7 @@ async fn test_register_is_rate_limited() {
         .post("/api/register")
         .json(&json!({
             "username": "user5",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     response.assert_status(StatusCode::TOO_MANY_REQUESTS);
@@ -447,14 +447,14 @@ async fn test_registration_budget_exhaustion_does_not_lock_out_login() {
     // from independent buckets (`Bucket::Register` / `Bucket::Login`) so a
     // registration spree can never deny a legitimate login.
     let (server, db) = build_server(default_test_config()).await;
-    create_user_directly(&db, "admin", "password123").await;
+    create_user_directly(&db, "admin", "password123456789").await;
 
     for i in 0..5 {
         server
             .post("/api/register")
             .json(&json!({
                 "username": format!("user{i}"),
-                "password": "password123"
+                "password": "password123456789"
             }))
             .await
             .assert_status(StatusCode::CREATED);
@@ -464,7 +464,7 @@ async fn test_registration_budget_exhaustion_does_not_lock_out_login() {
         .post("/api/register")
         .json(&json!({
             "username": "user5",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::TOO_MANY_REQUESTS);
@@ -475,7 +475,7 @@ async fn test_registration_budget_exhaustion_does_not_lock_out_login() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     response.assert_status_ok();
@@ -507,7 +507,7 @@ async fn passkey_challenge_never_discloses_registered_credentials() {
     // have enrolled one. The flow is discoverable now: the challenge names no
     // credential at all.
     let (server, db) = build_server(default_test_config()).await;
-    create_user_directly(&db, "admin", "password123").await;
+    create_user_directly(&db, "admin", "password123456789").await;
     let user = rdrs::models::user::find_by_username(&db, "admin")
         .await
         .unwrap()
@@ -557,7 +557,7 @@ async fn passkey_challenge_is_identical_with_and_without_registered_passkeys() {
     let empty = empty_server.post("/api/passkey/auth/start").await;
 
     let (server, db) = build_server(default_test_config()).await;
-    create_user_directly(&db, "admin", "password123").await;
+    create_user_directly(&db, "admin", "password123456789").await;
     let user = rdrs::models::user::find_by_username(&db, "admin")
         .await
         .unwrap()
@@ -587,7 +587,7 @@ async fn test_get_current_user() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -596,7 +596,7 @@ async fn test_get_current_user() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
 
@@ -625,7 +625,7 @@ async fn test_logout() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -634,7 +634,7 @@ async fn test_logout() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -662,7 +662,7 @@ async fn test_masquerade() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -671,7 +671,7 @@ async fn test_masquerade() {
         .post("/api/register")
         .json(&json!({
             "username": "user1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -680,7 +680,7 @@ async fn test_masquerade() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -720,7 +720,7 @@ async fn test_session_token_rotates_once_past_the_refresh_window() {
         .post("/api/register")
         .json(&json!({
             "username": "alice",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -729,7 +729,7 @@ async fn test_session_token_rotates_once_past_the_refresh_window() {
         .post("/api/session")
         .json(&json!({
             "username": "alice",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     login.assert_status_ok();
@@ -773,7 +773,7 @@ async fn test_pre_rotation_token_still_authenticates_during_grace() {
         .post("/api/register")
         .json(&json!({
             "username": "bob",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -782,7 +782,7 @@ async fn test_pre_rotation_token_still_authenticates_during_grace() {
         .post("/api/session")
         .json(&json!({
             "username": "bob",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     login.assert_status_ok();
@@ -825,7 +825,7 @@ async fn test_masquerade_rotates_session_and_csrf_cookies() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -834,7 +834,7 @@ async fn test_masquerade_rotates_session_and_csrf_cookies() {
         .post("/api/register")
         .json(&json!({
             "username": "user1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -843,7 +843,7 @@ async fn test_masquerade_rotates_session_and_csrf_cookies() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -877,7 +877,7 @@ async fn test_masquerade_already_masquerading() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -886,7 +886,7 @@ async fn test_masquerade_already_masquerading() {
         .post("/api/register")
         .json(&json!({
             "username": "user1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -895,7 +895,7 @@ async fn test_masquerade_already_masquerading() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -926,7 +926,7 @@ async fn test_unmasquerade_not_masquerading() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -935,7 +935,7 @@ async fn test_unmasquerade_not_masquerading() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -981,6 +981,102 @@ async fn test_validation_short_password() {
 }
 
 #[tokio::test]
+async fn registration_enforces_the_password_length_policy() {
+    // The boundaries themselves, read from the constants so this test cannot
+    // drift from the policy it is guarding.
+    let server = create_test_server(default_test_config()).await;
+
+    let one_short = "a".repeat(rdrs::auth::PASSWORD_MIN_LENGTH - 1);
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "shorty", "password": one_short }))
+        .await
+        .assert_status_bad_request();
+
+    let one_long = "a".repeat(rdrs::auth::PASSWORD_MAX_LENGTH + 1);
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "longy", "password": one_long }))
+        .await
+        .assert_status_bad_request();
+
+    // Exactly at the minimum is accepted, and so is a passphrase with spaces
+    // and unicode — the policy is length only, no composition rules.
+    server
+        .post("/api/register")
+        .json(&json!({
+            "username": "atmin",
+            "password": "a".repeat(rdrs::auth::PASSWORD_MIN_LENGTH)
+        }))
+        .await
+        .assert_status(StatusCode::CREATED);
+
+    server
+        .post("/api/register")
+        .json(&json!({ "username": "passphrase", "password": "correct horse battery staple" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn an_over_long_password_is_refused_before_it_is_hashed() {
+    // A rejected password must not reach Argon2 — otherwise the length cap
+    // would be decided by the request-body limit and an attacker could pick
+    // how much hashing work each refused registration costs. Observable only
+    // by the error being a validation failure rather than a success, but the
+    // ordering is what the test pins.
+    let server = create_test_server(default_test_config()).await;
+
+    let response = server
+        .post("/api/register")
+        .json(&json!({
+            "username": "verbose",
+            "password": "a".repeat(100_000)
+        }))
+        .await;
+
+    response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert!(
+        body["error"]
+            .as_str()
+            .expect("a validation error carries a message")
+            .contains("at most"),
+        "expected the length policy to reject it, got {body}"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_registration_does_not_hash_the_password() {
+    // With signups closed, `can_register` must decide before `hash_password`
+    // runs: Argon2 is deliberately expensive, and paying it for a request that
+    // was never going to succeed is free CPU for whoever sends it. Asserted
+    // through the response the ordering produces — a refusal, not a
+    // validation error — plus the account genuinely not existing afterwards.
+    let mut config = default_test_config();
+    config.signup_enabled = false;
+    config.multi_user_enabled = false;
+    let (server, db) = build_server(config).await;
+    create_user_directly(&db, "owner", "password123456789").await;
+
+    let response = server
+        .post("/api/register")
+        .json(&json!({
+            "username": "intruder",
+            "password": "password123456789"
+        }))
+        .await;
+
+    response.assert_status(StatusCode::FORBIDDEN);
+    assert!(
+        rdrs::models::user::find_by_username(&db, "intruder")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn test_validation_empty_username() {
     let server = create_test_server(default_test_config()).await;
 
@@ -988,7 +1084,7 @@ async fn test_validation_empty_username() {
         .post("/api/register")
         .json(&json!({
             "username": "",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
 
@@ -1003,7 +1099,7 @@ async fn test_unread_page() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1012,7 +1108,7 @@ async fn test_unread_page() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
 
@@ -1047,7 +1143,7 @@ async fn test_admin_page_accessible_by_admin() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1056,7 +1152,7 @@ async fn test_admin_page_accessible_by_admin() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -1076,7 +1172,7 @@ async fn test_admin_page_forbidden_for_regular_user() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1085,7 +1181,7 @@ async fn test_admin_page_forbidden_for_regular_user() {
         .post("/api/register")
         .json(&json!({
             "username": "user1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1094,7 +1190,7 @@ async fn test_admin_page_forbidden_for_regular_user() {
         .post("/api/session")
         .json(&json!({
             "username": "user1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -1122,7 +1218,7 @@ async fn test_unread_page_shows_admin_link_for_admin() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1131,7 +1227,7 @@ async fn test_unread_page_shows_admin_link_for_admin() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -1153,7 +1249,7 @@ async fn test_unread_page_hides_admin_link_for_regular_user() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1162,7 +1258,7 @@ async fn test_unread_page_hides_admin_link_for_regular_user() {
         .post("/api/register")
         .json(&json!({
             "username": "user1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1171,7 +1267,7 @@ async fn test_unread_page_hides_admin_link_for_regular_user() {
         .post("/api/session")
         .json(&json!({
             "username": "user1",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -1236,7 +1332,7 @@ async fn test_flash_message_on_unread_page() {
         .post("/api/register")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -1245,7 +1341,7 @@ async fn test_flash_message_on_unread_page() {
         .post("/api/session")
         .json(&json!({
             "username": "admin",
-            "password": "password123"
+            "password": "password123456789"
         }))
         .await;
     __login.assert_status_ok();
@@ -1295,13 +1391,13 @@ async fn test_api_request_slides_session_expiry_forward() {
 
     server
         .post("/api/register")
-        .json(&json!({ "username": "admin", "password": "password123" }))
+        .json(&json!({ "username": "admin", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
 
     let __login = server
         .post("/api/session")
-        .json(&json!({ "username": "admin", "password": "password123" }))
+        .json(&json!({ "username": "admin", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
@@ -1329,13 +1425,13 @@ async fn test_page_request_slides_session_expiry_forward() {
 
     server
         .post("/api/register")
-        .json(&json!({ "username": "admin", "password": "password123" }))
+        .json(&json!({ "username": "admin", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
 
     let __login = server
         .post("/api/session")
-        .json(&json!({ "username": "admin", "password": "password123" }))
+        .json(&json!({ "username": "admin", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
@@ -1362,14 +1458,14 @@ async fn test_disable_local_auth_blocks_password_login() {
     // Seed a normal password user.
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
 
     // Password login is now forbidden.
     let res = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     res.assert_status(StatusCode::FORBIDDEN);
 }
@@ -1389,12 +1485,12 @@ fn set_cookie_headers(res: &axum_test::TestResponse) -> Vec<String> {
 async fn login_session_cookie(server: &TestServer) -> String {
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let res = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     res.assert_status_ok();
     set_cookie_headers(&res)
@@ -1489,12 +1585,12 @@ async fn test_prefixed_cookie_is_never_emitted_without_secure() {
     let server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let res = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     res.assert_status_ok();
 
@@ -1528,12 +1624,12 @@ async fn test_csrf_cookie_max_age_matches_session_cookie() {
     let server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     login.assert_status_ok();
 
@@ -1556,12 +1652,12 @@ async fn test_logout_clears_cookie_with_path() {
     let mut server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
@@ -1619,12 +1715,12 @@ async fn test_logout_removal_cookie_is_not_overwritten_by_slide() {
     let mut server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
@@ -1693,12 +1789,12 @@ async fn test_logout_clears_prefixed_cookies_when_secure_enabled() {
     let mut server = create_test_server(config).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     let token = __login.cookie("__Host-csrf_token").value().to_string();
@@ -1740,12 +1836,12 @@ async fn test_tampered_session_cookie_is_rejected() {
     let (mut server, _db) = build_server_no_save_cookies(default_test_config()).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     login.assert_status_ok();
     common::apply_csrf(&mut server, &login);
@@ -1791,12 +1887,12 @@ async fn test_logout_redirect_default_is_login() {
     let mut server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
@@ -1814,12 +1910,12 @@ async fn test_logout_redirect_uses_configured_url() {
     let mut server = create_test_server(config).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
@@ -1842,12 +1938,12 @@ async fn test_logout_redirect_uses_relative_configured_url() {
     let mut server = create_test_server(config).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
@@ -1870,12 +1966,12 @@ async fn test_logout_sends_clear_site_data() {
     let mut server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
@@ -1906,12 +2002,12 @@ async fn test_logout_clear_site_data_omits_cookies() {
     let mut server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
@@ -1940,12 +2036,12 @@ async fn test_login_page_redirects_authenticated_to_root() {
     let mut server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let __login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
@@ -1969,13 +2065,13 @@ async fn test_fresh_session_is_not_refreshed() {
 
     server
         .post("/api/register")
-        .json(&json!({ "username": "admin", "password": "password123" }))
+        .json(&json!({ "username": "admin", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
 
     let __login = server
         .post("/api/session")
-        .json(&json!({ "username": "admin", "password": "password123" }))
+        .json(&json!({ "username": "admin", "password": "password123456789" }))
         .await;
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
@@ -1996,12 +2092,12 @@ async fn test_authenticated_request_reissues_session_cookie() {
     let mut server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     login.assert_status_ok();
     common::apply_csrf(&mut server, &login);
@@ -2049,12 +2145,12 @@ async fn test_static_asset_response_has_no_set_cookie() {
     let mut server = create_test_server(default_test_config()).await;
     server
         .post("/api/register")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await
         .assert_status(StatusCode::CREATED);
     let login = server
         .post("/api/session")
-        .json(&json!({ "username": "u", "password": "password123" }))
+        .json(&json!({ "username": "u", "password": "password123456789" }))
         .await;
     login.assert_status_ok();
     common::apply_csrf(&mut server, &login);

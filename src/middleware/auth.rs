@@ -556,6 +556,13 @@ impl OptionalFromRequestParts<AppState> for PageAuthUser {
 pub struct AdminUser {
     pub user: User,
     pub session: Session,
+    /// Whether the trusted forward-auth proxy asserted this request's
+    /// identity. Carried through from [`AuthUser`] so the handlers that ask
+    /// for a recent password confirmation can exempt these sessions the same
+    /// way [`RecentlyAuthenticated`] does — the account may hold no usable
+    /// password at all, so demanding one would lock the admin out of the very
+    /// controls this is meant to protect.
+    pub via_forward_auth: bool,
 }
 
 impl FromRequestParts<AppState> for AdminUser {
@@ -585,6 +592,7 @@ impl FromRequestParts<AppState> for AdminUser {
         Ok(AdminUser {
             user: auth_user.user,
             session: auth_user.session,
+            via_forward_auth: auth_user.via_forward_auth,
         })
     }
 }

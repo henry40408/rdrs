@@ -18,7 +18,7 @@ Given("I am signed in as an admin", async ({ page, api, currentUser, seed, serve
 // Register a second user so there is a non-self row in the admin table.
 Given("there is another registered user", async ({ api, currentUser }) => {
   const otherUsername = `other-${currentUser.username}`;
-  await api.register(otherUsername, "password123");
+  await api.register(otherUsername, "password123456789");
 });
 
 When("I open the admin page", async ({ page, serverUrl }) => {

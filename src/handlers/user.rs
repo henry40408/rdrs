@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::AppState;
-use crate::auth::{hash_password, verify_password};
+use crate::auth::{hash_password, validate_password_strength, verify_password};
 use crate::error::{AppError, AppResult};
 use crate::middleware::flash::FlashRedirect;
 use crate::middleware::{AuthUser, Bucket};
@@ -392,11 +392,8 @@ pub async fn change_password_form(
         return FlashRedirect::error("/user-settings", "New passwords do not match.");
     }
 
-    if req.new_password.len() < 6 {
-        return FlashRedirect::error(
-            "/user-settings",
-            "New password must be at least 6 characters.",
-        );
+    if let Err(AppError::Validation(msg)) = validate_password_strength(&req.new_password) {
+        return FlashRedirect::error("/user-settings", format!("New {}.", msg.to_lowercase()));
     }
 
     // Reserved here rather than at the top of the handler: the two checks
