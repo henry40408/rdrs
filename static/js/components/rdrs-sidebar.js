@@ -106,6 +106,20 @@ function writeCachedFeeds(byCategory) {
     catch { /* quota / disabled storage — fine */ }
 }
 
+/// Favicon for a sidebar feed row: the real icon when the server says there is
+/// one, otherwise the initial-letter chip. Mirrors `_entry_row.html` —
+/// including `feed_initial()` (first character, uppercased) and
+/// `feed_color_index()` (feed id modulo the six-colour palette) from
+/// handlers/pages — so the same feed wears the same mark in both places.
+function feedFavicon(feed) {
+    if (feed.has_icon) {
+        return `<img class="entry-favicon" src="/api/feeds/${feed.id}/icon" alt="" loading="lazy" width="15" height="15">`;
+    }
+    const initial = (Array.from(feed.title || '')[0] || '?').toUpperCase();
+    const color = ((feed.id % 6) + 6) % 6;
+    return `<span class="entry-favicon entry-favicon-chip fav-c${color}" aria-hidden="true">${escapeHtml(initial)}</span>`;
+}
+
 /// Whether the nav item named `nav` is the active one for the page-level
 /// `active` attribute. Shared by `render()` and `_applyActive()` so the class
 /// a fresh render paints and the one an attribute change patches can't diverge.
@@ -376,6 +390,7 @@ class RdrsSidebar extends HTMLElement {
         const activeFeedId = this.activeFeedId;
         list.innerHTML = feeds.map((feed) => `
             <a href="/feeds/${feed.id}/entries" class="sidebar-feed${feed.id === activeFeedId ? ' active' : ''}" data-feed-id="${feed.id}" title="${escapeHtml(feed.title)}">
+                ${feedFavicon(feed)}
                 <span class="sidebar-item-label">${escapeHtml(feed.title)}</span>
                 ${feed.unread_count > 0 ? `<span class="sidebar-badge">${feed.unread_count}</span>` : ''}
             </a>`).join('');

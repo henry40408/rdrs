@@ -447,7 +447,9 @@ code {
 .sidebar-feed {
     display: flex;
     align-items: center;
-    gap: 9px;
+    /* The favicon brings its own 5px right margin (.entry-favicon), so the row
+       gap here would double the space after it. */
+    gap: 0;
     padding: 4px 8px;
     border-radius: var(--radius-md);
     color: var(--color-text-muted);

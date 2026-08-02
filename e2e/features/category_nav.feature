@@ -114,6 +114,14 @@ Feature: Category navigation
     Then the sidebar lists feed "Bravo Feed"
     And the sidebar does not list feed "Alpha Feed"
 
+  Scenario: Sidebar feeds carry their favicon, or the initial-letter fallback
+    Given the "Alpha Feed" feed has a favicon
+    When I open the entries page for category "Cat A"
+    And the sidebar has loaded its categories
+    Then the sidebar feed "Alpha Feed" shows its icon
+    When I click the sidebar category "Cat B"
+    Then the sidebar feed "Bravo Feed" shows an initial chip
+
   Scenario: Clicking a sidebar feed swaps the list in place
     When I open the entries page for category "Cat A"
     And the sidebar has loaded its categories

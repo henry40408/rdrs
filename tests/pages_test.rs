@@ -1847,6 +1847,30 @@ async fn test_sidebar_category_feeds_endpoint() {
         feeds[0]["unread_count"], 2,
         "unread counts must be scoped to the feed"
     );
+    assert_eq!(
+        feeds[0]["has_icon"], false,
+        "a feed with no stored icon must say so, or the sidebar renders a broken image"
+    );
+
+    rdrs::models::image::upsert(
+        &app.db,
+        rdrs::models::image::ENTITY_FEED,
+        feed_id,
+        &[1, 2, 3],
+        "image/png",
+        Some("https://x/icon.png"),
+    )
+    .await
+    .unwrap();
+    let with_icon: serde_json::Value = app
+        .server
+        .get(&format!("/api/sidebar/categories/{cat_id}/feeds"))
+        .await
+        .json();
+    assert_eq!(
+        with_icon["feeds"][0]["has_icon"], true,
+        "a stored icon must be reported so the sidebar renders it"
+    );
 
     // Another account's category is not readable.
     app.server

@@ -379,6 +379,18 @@ Then("the sidebar highlights feed {string}", async ({ page }, title) => {
   await expect(sidebarFeedLink(page, title)).toHaveClass(/active/);
 });
 
+Then("the sidebar feed {string} shows its icon", async ({ page }, title) => {
+  const icon = sidebarFeedLink(page, title).locator("img.entry-favicon");
+  await expect(icon).toBeVisible();
+  await expect(icon).toHaveAttribute("src", /\/api\/feeds\/\d+\/icon/);
+});
+
+Then("the sidebar feed {string} shows an initial chip", async ({ page }, title) => {
+  // The no-icon fallback, same as the entry rows: first letter, uppercased.
+  const chip = sidebarFeedLink(page, title).locator(".entry-favicon-chip");
+  await expect(chip).toHaveText(title.slice(0, 1).toUpperCase());
+});
+
 
 // A document load wipes anything hung off `window`, so a marker set before the
 // interaction and still readable after it proves the category switch stayed in

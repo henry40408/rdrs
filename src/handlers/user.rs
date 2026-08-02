@@ -312,6 +312,11 @@ pub struct SidebarFeedDto {
     pub id: i64,
     pub title: String,
     pub unread_count: i64,
+    /// Whether `/api/feeds/{id}/icon` has anything to serve. The sidebar draws
+    /// the favicon when it does and the initial-letter chip when it doesn't —
+    /// the same two-state treatment the entry rows use, and the reason the flag
+    /// is sent rather than letting a missing icon 404 into a broken image.
+    pub has_icon: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -344,6 +349,12 @@ pub async fn get_sidebar_category_feeds(
 
     let feeds = crate::models::feed::list_by_category(&state.db, category_id).await?;
     let unread = entry::count_unread_by_feed_in_category(&state.db, user_id, category_id).await?;
+    let feed_ids: Vec<i64> = feeds.iter().map(|f| f.id).collect();
+    // One lookup for the whole category — `image::exists` per feed would be a
+    // query per row.
+    let with_icon =
+        crate::models::image::existing_ids(&state.db, crate::models::image::ENTITY_FEED, &feed_ids)
+            .await?;
 
     Ok(Json(SidebarFeedsResponse {
         category_id,
@@ -351,6 +362,7 @@ pub async fn get_sidebar_category_feeds(
             .into_iter()
             .map(|f| SidebarFeedDto {
                 unread_count: unread.get(&f.id).copied().unwrap_or(0),
+                has_icon: with_icon.contains(&f.id),
                 // Feeds with no title of their own are listed by URL, matching
                 // how /feeds renders them.
                 title: f.title.unwrap_or(f.url),
