@@ -50,6 +50,18 @@ Feature: Triage entries (star, mark-read, summarize)
     And the reading-pane summarize toggle still shows its icon
     And the reading-pane summarize toggle reads "Dismiss"
 
+  Scenario: A summary that lands after the reader moved on stays out of the new entry
+    Given the user has Kagi configured
+    When I open the inbox
+    And the summary fragment response is held
+    And I click the entry titled "Test Entry 1"
+    And I click the "Summarize" button
+    And the summary fragment request is in flight
+    And I click the entry titled "Test Entry 2"
+    And the held summary fragment response lands
+    Then the reading pane shows the title "Test Entry 2"
+    And the reading pane shows no summary
+
   Scenario: Dismissing a summary clears the summary from the reading pane
     Given the entry titled "Test Entry 1" has a summary
     When I open the inbox

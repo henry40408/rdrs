@@ -480,6 +480,16 @@ the floor. The entries-family routes answer with four shapes:
   offset, the very jump this navigation avoids. `popstate` reverses it: a
   category path swaps back in place, anything else reloads.
 
+Swaps that target a reading-pane region (`#reading-pane`,
+`#rp-summary-container`) and are *not* pane navigation carry a staleness check:
+the entry in the request URL must still be the entry the pane shows when the
+response lands, otherwise only the response's flash is applied and the markup is
+dropped. Without it an SSE `summary` event for the outgoing entry — which passes
+its own `currentPaneEntryId()` pre-check *before* the switch — can paint one
+entry's summary into another's pane. The summary-dismiss handler, which clears
+the container without going through `performSwap()`, re-checks the same way
+after its `DELETE`.
+
 ### SSE Live Updates
 
 A single `GET /events` endpoint (`handlers/events.rs`) streams per-user Server-Sent Events to each open browser tab. Mutation paths (mark-read, mark-unread, mark-all, summarize, etc.) call `EventBus::emit_sidebar` or `emit_summary` on the shared in-memory `EventBus` (`services/events.rs`), which is a thin wrapper over a `tokio::sync::broadcast` channel. The browser's `EventSource` (wired up in `installSse()` in `static/js/app.js`) handles two event types:

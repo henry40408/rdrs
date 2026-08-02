@@ -140,6 +140,47 @@ Then("the sidebar unread count decreases by {int}", async ({ page }, _delta) => 
   expect(count).toBeGreaterThanOrEqual(0);
 });
 
+// Holding the SSE-driven `GET /entries/{id}/summary/fragment` reproduces the
+// race the reader hit: the event for the outgoing entry passes its
+// `currentPaneEntryId()` pre-check, then the response lands after the pane has
+// already moved on. `heldSummaryFragment` is set by the route handler and read
+// by the two steps below; each scenario re-arms it.
+let heldSummaryFragment = null;
+const SUMMARY_FRAGMENT_RE = /\/entries\/\d+\/summary\/fragment/;
+
+When("the summary fragment response is held", async ({ page }) => {
+  heldSummaryFragment = null;
+  await page.route(SUMMARY_FRAGMENT_RE, async (route) => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    heldSummaryFragment = { release };
+    await gate;
+    await route.continue();
+  });
+});
+
+When("the summary fragment request is in flight", async () => {
+  await expect.poll(() => heldSummaryFragment !== null, {
+    message: "no summary fragment request arrived — the SSE event never fired",
+    timeout: 15000,
+  }).toBe(true);
+});
+
+When("the held summary fragment response lands", async ({ page }) => {
+  const landed = page.waitForResponse(SUMMARY_FRAGMENT_RE);
+  heldSummaryFragment.release();
+  await landed;
+  // The response is on the wire; give performSwap the two frames it needs to
+  // apply — or, as asserted next, discard — it before we look at the DOM.
+  await page.evaluate(
+    () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+  );
+});
+
+Then("the reading pane shows no summary", async ({ page }) => {
+  await expect(page.locator("#rp-summary-container .summary-box")).toHaveCount(0);
+});
+
 Then("the reading pane shows a summary", async ({ page }) => {
   // The summary container always renders as <div id="rp-summary-container">.
   // When a summary exists, a .summary-box is inside it.
