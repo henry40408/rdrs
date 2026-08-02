@@ -1931,7 +1931,13 @@ pub async fn category_entries_page(
         active_category_id: Some(id),
         filter_tabs,
         status_filter,
-        show_mark_above: true,
+        // Hidden while a scoped search is active: "Mark Above as Read" marks
+        // the rows currently in the DOM, which under a search means only the
+        // matches — indistinguishable at a glance from the "Mark N matching as
+        // Read" button above it, and one of the two reads as "everything older
+        // than here". One control per meaning; the matching button is the one
+        // that belongs to a filtered list.
+        show_mark_above: search.is_none(),
         onboarding: false,
         snapshot_at: snapshot_now(),
         search: search.clone(),
@@ -2248,7 +2254,8 @@ pub async fn feed_entries_page(
         active_category_id: Some(cat_id),
         filter_tabs,
         status_filter,
-        show_mark_above: true,
+        // See the category page: the matching button owns a filtered list.
+        show_mark_above: search.is_none(),
         onboarding: false,
         snapshot_at: snapshot_now(),
         search: search.clone(),

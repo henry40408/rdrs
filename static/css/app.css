@@ -2041,6 +2041,82 @@ td input[type="text"] {
     font-size: var(--font-sm);
 }
 
+/* Icon-only chip for the filter bar (currently the scoped-search toggle).
+   Sized off the compact `.filter-bar select` above rather than the 44px
+   `.feed-filter-link` chips, so the control strip stays one level row. */
+.filter-chip-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-1) var(--space-2);
+    background: transparent;
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+}
+
+.filter-chip-btn:hover {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+}
+
+.filter-chip-btn .ico {
+    width: 18px;
+    height: 18px;
+}
+
+/* ===== Scoped search drawer ===== */
+/* The scoped-search box used to sit inline in `.filter-bar`, where a wrapped
+   bar (≤1024px — iPad is the obvious case) gave it a whole row of the list to
+   itself. It now lives above `.list-pane-header` and drops down when the
+   filter-bar toggle asks for it.
+
+   `grid-template-rows: 0fr → 1fr` animates to the content's own height without
+   hard-coding one — a `max-height` guess either clips or spends the transition
+   on empty space. The global prefers-reduced-motion block strips the
+   transition; the open/closed states stay correct without it. */
+.search-drawer {
+    display: grid;
+    grid-template-rows: 0fr;
+    /* `visibility` flips only after the collapse finishes (0s transition on a
+       delay), so the box animates out and *then* leaves the tab order and the
+       accessibility tree. Without it a collapsed drawer still holds a
+       focusable, screen-reader-visible input inside a clipped container. */
+    visibility: hidden;
+    transition: grid-template-rows 0.16s ease, visibility 0s linear 0.16s;
+    flex-shrink: 0;
+    background: var(--color-panel);
+    border-bottom: 1px solid transparent;
+}
+
+.search-drawer.is-open {
+    grid-template-rows: 1fr;
+    visibility: visible;
+    transition: grid-template-rows 0.16s ease;
+    border-bottom-color: var(--color-border-light);
+}
+
+/* min-height:0 is what actually lets the grid row collapse to 0fr; without it
+   the child's content height wins and the drawer never closes. */
+.search-drawer-clip {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.search-drawer-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+}
+
+.search-drawer .entries-search {
+    flex: 1;
+    min-width: 0;
+    margin-bottom: 0;
+}
+
 /* Top-level forms inside .page-content (e.g. Add Feed on /feeds,
    Add Category on /categories) need a bottom gap separating them
    from the next block (filter-bar / table). .filter-bar is itself
@@ -2683,6 +2759,18 @@ summary {
 
     .list-pane-header {
         padding: calc(2 * var(--space-4) + var(--touch-min)) var(--space-4) var(--space-3);
+    }
+
+    /* The search drawer opens above the header, i.e. under the fixed
+       hamburger. Indent its row past the button instead of below it (a full
+       row of clearance for a single input reads as a layout bug), and hand
+       the header back its clearance since the drawer now provides it. */
+    .search-drawer-row {
+        padding-left: calc(2 * var(--space-4) + var(--touch-min));
+    }
+
+    .list-pane:has(.search-drawer.is-open) .list-pane-header {
+        padding-top: var(--space-3);
     }
 
     /* Allow tab-bar to scroll edge-to-edge */

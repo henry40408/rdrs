@@ -34,6 +34,35 @@ Given(
   }
 );
 
+When("I open the scoped search box", async ({ page }) => {
+  await page.getByTestId("scoped-search-toggle").click();
+  await expect(page.getByTestId("scoped-search-input")).toBeFocused();
+});
+
+When("I close the scoped search box", async ({ page }) => {
+  await page.getByTestId("scoped-search-close").click();
+});
+
+Then("the scoped search box is open", async ({ page }) => {
+  await expect(page.getByTestId("scoped-search-input")).toBeVisible();
+  await expect(page.getByTestId("scoped-search-toggle")).toHaveAttribute("aria-expanded", "true");
+});
+
+Then("the scoped search box is closed", async ({ page }) => {
+  // The drawer collapses to a zero-height grid row, so the input is present
+  // but not visible — exactly what "hidden behind the toggle" means here.
+  await expect(page.getByTestId("scoped-search-input")).toBeHidden();
+  await expect(page.getByTestId("scoped-search-toggle")).toHaveAttribute("aria-expanded", "false");
+});
+
+Then("the mark-above button is hidden", async ({ page }) => {
+  await expect(page.getByTestId("mark-above-btn")).toHaveCount(0);
+});
+
+Then("the mark-above button is shown", async ({ page }) => {
+  await expect(page.getByTestId("mark-above-btn")).toBeVisible();
+});
+
 When("I type {string} into the scoped search box", async ({ page }, term) => {
   // The scoped-search form auto-submits via a 250ms debounce on `input`
   // (installEntriesSearch in app.js) and swaps `[data-entries-list]` — no
