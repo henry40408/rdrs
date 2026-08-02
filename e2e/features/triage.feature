@@ -119,8 +119,10 @@ Feature: Triage entries (star, mark-read, summarize)
     When I open the entries page for category "Anime"
     Then the scoped search box is closed
     And the mark-above button is shown
+    And the search toggle is as tall as the status filter
     When I open the scoped search box
     Then the scoped search box is open
+    And the search close button is as tall as the search box
 
   Scenario: Closing the scoped search box clears the search
     Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"

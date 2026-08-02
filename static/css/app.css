@@ -2041,11 +2041,15 @@ td input[type="text"] {
     font-size: var(--font-sm);
 }
 
-/* Icon-only chip for the filter bar (currently the scoped-search toggle).
-   Sized off the compact `.filter-bar select` above rather than the 44px
-   `.feed-filter-link` chips, so the control strip stays one level row. */
+/* Icon-only chip used beside a taller sibling control — the scoped-search
+   toggle next to the filter-bar selects, and the drawer's close button next to
+   the search input. `align-self: stretch` takes the height from whatever it
+   sits next to instead of restating it: the selects carry `min-height:
+   var(--touch-min)` while the input is sized by padding and font, so any fixed
+   value here would match one context and miss the other. */
 .filter-chip-btn {
     display: inline-flex;
+    align-self: stretch;
     align-items: center;
     justify-content: center;
     padding: var(--space-1) var(--space-2);

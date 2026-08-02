@@ -55,6 +55,24 @@ Then("the scoped search box is closed", async ({ page }) => {
   await expect(page.getByTestId("scoped-search-toggle")).toHaveAttribute("aria-expanded", "false");
 });
 
+// Height parity is what makes the filter bar read as one control strip and the
+// drawer as one field. Both chips take their height from a sibling
+// (`align-self: stretch`), which is exactly the kind of rule a later layout
+// change breaks silently — so measure it.
+const heightOf = async (locator) => (await locator.boundingBox()).height;
+
+Then("the search toggle is as tall as the status filter", async ({ page }) => {
+  const toggle = await heightOf(page.getByTestId("scoped-search-toggle"));
+  const select = await heightOf(page.getByTestId("status-filter-select"));
+  expect(Math.abs(toggle - select)).toBeLessThan(1);
+});
+
+Then("the search close button is as tall as the search box", async ({ page }) => {
+  const close = await heightOf(page.getByTestId("scoped-search-close"));
+  const input = await heightOf(page.getByTestId("scoped-search-input"));
+  expect(Math.abs(close - input)).toBeLessThan(1);
+});
+
 Then("the mark-above button is hidden", async ({ page }) => {
   await expect(page.getByTestId("mark-above-btn")).toHaveCount(0);
 });
