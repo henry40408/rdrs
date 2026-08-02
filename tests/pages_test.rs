@@ -1489,6 +1489,151 @@ async fn test_category_entries_page_pane_fragment() {
     );
 }
 
+/// `GET /feeds/{id}/entries?pane=1` — the same in-place navigation contract as
+/// the category page, since the sidebar now lists feeds and clicking one must
+/// not reload the document either.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_feed_entries_page_pane_fragment() {
+    let mut app = create_test_app_named(default_test_config(), "test_feed_entries_page_pane").await;
+
+    app.server
+        .post("/api/setup")
+        .json(&json!({ "username": "alice_fp", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_fp", "password": "vulture-mango-77-quilt" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
+
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "FPCat")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/fp-feed",
+            title: Some("FP Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-fp-0",
+        Some("FP Entry"),
+        Some("https://x/fp/0"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (feed_id, entry_id) = (feed.id, entry.id);
+
+    let resp = app
+        .server
+        .get(&format!("/feeds/{feed_id}/entries?pane=1&entry={entry_id}"))
+        .await;
+    resp.assert_status_ok();
+    let html = resp.text();
+    assert!(
+        html.contains(r#"data-swap-target="[data-list-pane]""#)
+            && html.contains(r##"data-swap-target="#reading-pane""##),
+        "pane fragment must target both the list pane and the reading pane"
+    );
+    assert!(
+        html.contains("<h1>") && html.contains("FP Feed"),
+        "pane fragment must carry the list-pane header"
+    );
+    assert!(
+        !html.contains("<rdrs-sidebar"),
+        "pane fragment must NOT include layout chrome"
+    );
+    assert!(
+        html.contains("reading-pane-empty") && !html.contains("reading-pane-article"),
+        "pane fragment must close the open entry even when ?entry= is present"
+    );
+}
+
+/// A feed page names its feed to the sidebar so the feed is highlighted inside
+/// its category's expanded list — and names the parent category, which is what
+/// makes that list expand at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_feed_entries_page_marks_active_feed() {
+    let mut app = create_test_app_named(default_test_config(), "test_feed_entries_active").await;
+
+    app.server
+        .post("/api/setup")
+        .json(&json!({ "username": "alice_af", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_af", "password": "vulture-mango-77-quilt" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
+
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "AFCat")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/af-feed",
+            title: Some("AF Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (cat_id, feed_id) = (cat.id, feed.id);
+
+    let html = app
+        .server
+        .get(&format!("/feeds/{feed_id}/entries"))
+        .await
+        .text();
+    assert!(
+        html.contains(&format!(r#"active-feed-id="{feed_id}""#)),
+        "feed page must mark its feed active in the sidebar"
+    );
+    assert!(
+        html.contains(&format!(r#"active-category-id="{cat_id}""#)),
+        "feed page must keep its parent category active so the feed list expands"
+    );
+
+    let category_html = app
+        .server
+        .get(&format!("/categories/{cat_id}/entries"))
+        .await
+        .text();
+    assert!(
+        !category_html.contains("active-feed-id"),
+        "a category page has no active feed"
+    );
+}
+
 /// `POST /categories/{id}/entries/mark-read` marks only the entries matching
 /// the scoped-search `q` as read, leaving non-matching entries untouched, and
 /// redirects back to the category page preserving `?q=`.
@@ -1593,6 +1738,151 @@ async fn test_category_mark_read_scoped_search() {
     assert!(
         other_read_at.is_none(),
         "entry not matching the scoped search must remain unread"
+    );
+}
+
+/// `GET /api/sidebar/categories/{id}/feeds` — the lazily-loaded feed list the
+/// sidebar shows under the open category, with per-feed unread counts. A
+/// category belonging to another account must 404 rather than leak its feeds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_sidebar_category_feeds_endpoint() {
+    let mut app = create_test_app_named(default_test_config(), "test_sidebar_category_feeds").await;
+
+    app.server
+        .post("/api/setup")
+        .json(&json!({ "username": "alice_sf", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_sf", "password": "vulture-mango-77-quilt" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
+
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "SFCat")
+        .await
+        .unwrap();
+    let other_cat = rdrs::models::category::create_category(&app.db, user_id, "SFOther")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/sf-feed",
+            title: Some("SF Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let other_feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: other_cat.id,
+            url: "https://x/sf-other-feed",
+            title: Some("SF Other Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    for i in 0..2 {
+        rdrs::models::entry::upsert_entry(
+            &app.db,
+            feed.id,
+            &format!("guid-sf-{i}"),
+            Some(&format!("SF Entry {i}")),
+            Some(&format!("https://x/sf/{i}")),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    rdrs::models::entry::upsert_entry(
+        &app.db,
+        other_feed.id,
+        "guid-sf-other",
+        Some("Other Entry"),
+        Some("https://x/sf/other"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (cat_id, feed_id) = (cat.id, feed.id);
+
+    let resp = app
+        .server
+        .get(&format!("/api/sidebar/categories/{cat_id}/feeds"))
+        .await;
+    resp.assert_status_ok();
+    let body: serde_json::Value = resp.json();
+    assert_eq!(body["category_id"], cat_id);
+    let feeds = body["feeds"].as_array().unwrap();
+    assert_eq!(
+        feeds.len(),
+        1,
+        "only the requested category's feeds may be listed"
+    );
+    assert_eq!(feeds[0]["id"], feed_id);
+    assert_eq!(feeds[0]["title"], "SF Feed");
+    assert_eq!(
+        feeds[0]["unread_count"], 2,
+        "unread counts must be scoped to the feed"
+    );
+    assert_eq!(
+        feeds[0]["has_icon"], false,
+        "a feed with no stored icon must say so, or the sidebar renders a broken image"
+    );
+
+    rdrs::models::image::upsert(
+        &app.db,
+        rdrs::models::image::ENTITY_FEED,
+        feed_id,
+        &[1, 2, 3],
+        "image/png",
+        Some("https://x/icon.png"),
+    )
+    .await
+    .unwrap();
+    let with_icon: serde_json::Value = app
+        .server
+        .get(&format!("/api/sidebar/categories/{cat_id}/feeds"))
+        .await
+        .json();
+    assert_eq!(
+        with_icon["feeds"][0]["has_icon"], true,
+        "a stored icon must be reported so the sidebar renders it"
+    );
+
+    // Another account's category is not readable.
+    app.server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_sf", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status_ok();
+    let missing = app.server.get("/api/sidebar/categories/999999/feeds").await;
+    assert_eq!(
+        missing.status_code(),
+        StatusCode::NOT_FOUND,
+        "a category the caller doesn't own must 404"
     );
 }
 

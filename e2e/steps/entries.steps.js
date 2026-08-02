@@ -360,6 +360,38 @@ Then("the sidebar highlights category {string}", async ({ page }, name) => {
   await expect(sidebarCategoryLink(page, name)).toHaveClass(/active/);
 });
 
+const sidebarFeedLink = (page, title) =>
+  page.locator(".sidebar-feed[data-feed-id]").filter({ hasText: title }).first();
+
+When("I click the sidebar feed {string}", async ({ page }, title) => {
+  await sidebarFeedLink(page, title).click();
+});
+
+Then("the sidebar lists feed {string}", async ({ page }, title) => {
+  await expect(sidebarFeedLink(page, title)).toBeVisible();
+});
+
+Then("the sidebar does not list feed {string}", async ({ page }, title) => {
+  await expect(sidebarFeedLink(page, title)).toHaveCount(0);
+});
+
+Then("the sidebar highlights feed {string}", async ({ page }, title) => {
+  await expect(sidebarFeedLink(page, title)).toHaveClass(/active/);
+});
+
+Then("the sidebar feed {string} shows its icon", async ({ page }, title) => {
+  const icon = sidebarFeedLink(page, title).locator("img.entry-favicon");
+  await expect(icon).toBeVisible();
+  await expect(icon).toHaveAttribute("src", /\/api\/feeds\/\d+\/icon/);
+});
+
+Then("the sidebar feed {string} shows an initial chip", async ({ page }, title) => {
+  // The no-icon fallback, same as the entry rows: first letter, uppercased.
+  const chip = sidebarFeedLink(page, title).locator(".entry-favicon-chip");
+  await expect(chip).toHaveText(title.slice(0, 1).toUpperCase());
+});
+
+
 // A document load wipes anything hung off `window`, so a marker set before the
 // interaction and still readable after it proves the category switch stayed in
 // the same document (the whole point of the list-pane swap: a reload resets the
@@ -403,7 +435,12 @@ Then("the sidebar is still scrolled where it was", async ({ page }) => {
     document.querySelector(".sidebar-nav").scrollTop,
   ]);
   expect(noted, "noted offset is gone — the document reloaded").toBeGreaterThan(0);
-  expect(now).toBe(noted);
+  // Not exact equality: the open category's feed list mounts and unmounts as
+  // the reader moves, which legitimately changes the scroll extent (and a
+  // bottom-anchored offset then gets clamped). What must hold is that the
+  // sidebar stays where it was rather than snapping back to the top — a reload
+  // or a full re-render lands on 0, which this catches.
+  expect(Math.abs(now - noted)).toBeLessThan(80);
 });
 
 Given("I have {int} more categories", async ({ seed, currentUser }, count) => {

@@ -190,9 +190,13 @@ pub struct EntriesLayoutContext {
     /// this — the rest pass `None`.
     pub header_feed_icon_id: Option<i64>,
     /// When `Some(category_id)`, sets `<rdrs-sidebar active-category-id="…">`
-    /// so the sidebar highlights the active category. Used by the feed +
-    /// category entries pages; `None` elsewhere.
+    /// so the sidebar highlights the active category *and* expands its feed
+    /// list. Used by the feed + category entries pages; `None` elsewhere.
     pub active_category_id: Option<i64>,
+    /// When `Some(feed_id)`, sets `<rdrs-sidebar active-feed-id="…">` so the
+    /// feed is highlighted inside its category's expanded list. Only
+    /// `/feeds/{id}/entries` sets it.
+    pub active_feed_id: Option<i64>,
     /// Optional status-filter tab bar (All / Unread / Read / Starred) for
     /// feed + category pages. `None` on the 5 PR-10 routes — they use
     /// path-based modes via the `show_tab_bar` flag instead.
@@ -780,6 +784,7 @@ pub async fn unread_page(
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
+                active_feed_id: None,
                 filter_tabs: None,
                 status_filter: None,
                 show_mark_above: true,
@@ -1396,6 +1401,7 @@ pub async fn entries_page(
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
+                active_feed_id: None,
                 filter_tabs: None,
                 status_filter: None,
                 show_mark_above: false,
@@ -1589,6 +1595,7 @@ pub async fn read_entries_page(
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
+                active_feed_id: None,
                 filter_tabs: None,
                 status_filter: None,
                 show_mark_above: false,
@@ -1680,6 +1687,7 @@ pub async fn starred_entries_page(
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
+                active_feed_id: None,
                 filter_tabs: None,
                 status_filter: None,
                 show_mark_above: false,
@@ -1771,6 +1779,7 @@ pub async fn summarized_entries_page(
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
                 active_category_id: None,
+                active_feed_id: None,
                 filter_tabs: None,
                 status_filter: None,
                 show_mark_above: false,
@@ -1929,6 +1938,7 @@ pub async fn category_entries_page(
         breadcrumb_items,
         header_feed_icon_id: None,
         active_category_id: Some(id),
+        active_feed_id: None,
         filter_tabs,
         status_filter,
         // Hidden while a scoped search is active: "Mark Above as Read" marks
@@ -2252,6 +2262,7 @@ pub async fn feed_entries_page(
         breadcrumb_items,
         header_feed_icon_id: if feed_has_icon { Some(id) } else { None },
         active_category_id: Some(cat_id),
+        active_feed_id: Some(id),
         filter_tabs,
         status_filter,
         // See the category page: the matching button owns a filtered list.
@@ -2268,6 +2279,22 @@ pub async fn feed_entries_page(
         return Ok((
             flash,
             EntriesRefreshFragmentTemplate {
+                entries,
+                next_cursor,
+                entries_layout,
+            },
+        )
+            .into_response());
+    }
+
+    // Sidebar-navigation fragment (pane=1): same contract as the category page —
+    // the whole left column plus an emptied reading pane, so picking a feed out
+    // of the sidebar doesn't reload the document.
+    if query.pane == Some(1) {
+        return Ok((
+            flash,
+            EntriesPaneFragmentTemplate {
+                title: feed_title,
                 entries,
                 next_cursor,
                 entries_layout,

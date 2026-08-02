@@ -307,6 +307,71 @@ pub async fn get_sidebar(
     Ok(Json(payload))
 }
 
+#[derive(Debug, Serialize)]
+pub struct SidebarFeedDto {
+    pub id: i64,
+    pub title: String,
+    pub unread_count: i64,
+    /// Whether `/api/feeds/{id}/icon` has anything to serve. The sidebar draws
+    /// the favicon when it does and the initial-letter chip when it doesn't —
+    /// the same two-state treatment the entry rows use, and the reason the flag
+    /// is sent rather than letting a missing icon 404 into a broken image.
+    pub has_icon: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SidebarFeedsResponse {
+    pub category_id: i64,
+    pub feeds: Vec<SidebarFeedDto>,
+}
+
+/// `GET /api/sidebar/categories/{id}/feeds` — the feeds the sidebar shows
+/// under the category the reader is currently in.
+///
+/// Deliberately *not* folded into `/api/sidebar`: that payload is embedded in
+/// every logged-in document (which is `no-store`), so carrying every feed of a
+/// several-hundred-feed account would be paid on every page load to render one
+/// category's worth. Only the open category's feeds are ever displayed, so only
+/// those are fetched — the client caches per category and revalidates on the
+/// same `rdrs:sidebar-stale` signal the badges use.
+///
+/// Ownership is enforced twice over: the category lookup is scoped to the
+/// caller, and the count query keeps `user_id` in its WHERE clause.
+pub async fn get_sidebar_category_feeds(
+    State(state): State<AppState>,
+    auth_user: AuthUser,
+    Path(category_id): Path<i64>,
+) -> AppResult<Json<SidebarFeedsResponse>> {
+    let user_id = auth_user.user.id;
+    category::find_by_id_and_user(&state.db, category_id, user_id)
+        .await?
+        .ok_or(AppError::CategoryNotFound)?;
+
+    let feeds = crate::models::feed::list_by_category(&state.db, category_id).await?;
+    let unread = entry::count_unread_by_feed_in_category(&state.db, user_id, category_id).await?;
+    let feed_ids: Vec<i64> = feeds.iter().map(|f| f.id).collect();
+    // One lookup for the whole category — `image::exists` per feed would be a
+    // query per row.
+    let with_icon =
+        crate::models::image::existing_ids(&state.db, crate::models::image::ENTITY_FEED, &feed_ids)
+            .await?;
+
+    Ok(Json(SidebarFeedsResponse {
+        category_id,
+        feeds: feeds
+            .into_iter()
+            .map(|f| SidebarFeedDto {
+                unread_count: unread.get(&f.id).copied().unwrap_or(0),
+                has_icon: with_icon.contains(&f.id),
+                // Feeds with no title of their own are listed by URL, matching
+                // how /feeds renders them.
+                title: f.title.unwrap_or(f.url),
+                id: f.id,
+            })
+            .collect(),
+    }))
+}
+
 pub async fn get_current_user(auth_user: AuthUser) -> Json<crate::models::User> {
     Json(auth_user.user)
 }

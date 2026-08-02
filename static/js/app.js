@@ -494,14 +494,16 @@ window.addEventListener('popstate', () => {
     // history slots. performSwap below would clear too on entry mismatch,
     // but doing it upfront also covers the close-pane branch.
     window.flash?.clear?.();
-    // Category switching is an in-place swap that pushes its own history
+    // Sidebar navigation is an in-place swap that pushes its own history
     // slot, so back/forward can now land on a different *path* within the
     // same document. Re-render the list for it — and for a destination we
-    // can't swap (the inbox, /entries*, feed pages), reload so the user gets
-    // the real page instead of a stale list under a new URL.
+    // can't swap (the inbox, /entries*, anything outside the entries family),
+    // reload so the user gets the real page instead of a stale list under a
+    // new URL.
     if (window.location.pathname !== renderedListPath) {
         const href = window.location.pathname + window.location.search;
-        if (categoryIdFromHref(href) && document.querySelector('[data-list-pane]')) {
+        const swappable = categoryIdFromHref(href) || feedIdFromHref(href);
+        if (swappable && document.querySelector('[data-list-pane]')) {
             swapListPane(href, { skipHistory: true, restoreEntry: true });
         } else {
             window.location.reload();
@@ -535,18 +537,20 @@ function closeReadingPane() {
     return true;
 }
 
-// ── Category navigation (in-place list-pane swap) ────────────────────
+// ── Sidebar navigation (in-place list-pane swap) ─────────────────────
 //
-// Sidebar category links, the `[` / `]` / `{` / `}` shortcuts and `g c` land
-// here instead of hard-navigating. The server's `?pane=1` response carries the
-// whole left column plus an emptied reading pane, so one swap:
+// Sidebar category and feed links, the `[` / `]` / `{` / `}` shortcuts and
+// `g c` / `g f` land here instead of hard-navigating. The server's `?pane=1`
+// response carries the whole left column plus an emptied reading pane, so one
+// swap:
 //   * leaves the sidebar untouched — a document reload resets `.sidebar-nav`'s
 //     internal scroll to the top, which is the jump this exists to avoid (same
 //     story for the document scroll on mobile);
-//   * closes the open entry, which belonged to the category being left.
+//   * closes the open entry, which belonged to the list being left.
 // Anything we can't swap (no list pane on the page, a modified click) falls
 // back to a normal navigation.
 const CATEGORY_PATH_RE = /^\/categories\/(\d+)\/entries\/?$/;
+const FEED_PATH_RE = /^\/feeds\/(\d+)\/entries\/?$/;
 
 function categoryIdFromHref(href) {
     const path = new URL(href, window.location.origin).pathname;
@@ -554,17 +558,25 @@ function categoryIdFromHref(href) {
     return m ? m[1] : null;
 }
 
+function feedIdFromHref(href) {
+    const path = new URL(href, window.location.origin).pathname;
+    const m = path.match(FEED_PATH_RE);
+    return m ? m[1] : null;
+}
+
 // Path the list pane currently renders. popstate compares against it to tell
 // a same-page `?entry=` toggle from a real category change.
 let renderedListPath = window.location.pathname;
 
-/// Swap the list pane over to `href` (a `/categories/{id}/entries` URL).
-/// `skipHistory` is for popstate restores (the browser already moved the
-/// address bar); `restoreEntry` re-opens the `?entry=` the restored URL names,
-/// since the fragment always ships an empty pane.
+/// Swap the list pane over to `href` — a `/categories/{id}/entries` or
+/// `/feeds/{id}/entries` URL. `skipHistory` is for popstate restores (the
+/// browser already moved the address bar); `restoreEntry` re-opens the
+/// `?entry=` the restored URL names, since the fragment always ships an empty
+/// pane.
 async function swapListPane(href, options = {}) {
     const catId = categoryIdFromHref(href);
-    if (!catId || !document.querySelector('[data-list-pane]')) {
+    const feedId = feedIdFromHref(href);
+    if ((!catId && !feedId) || !document.querySelector('[data-list-pane]')) {
         window.location.href = href;
         return;
     }
@@ -588,10 +600,22 @@ async function swapListPane(href, options = {}) {
     if (!options.skipHistory) window.history.pushState({}, '', target);
     renderedListPath = target.pathname;
     const sb = document.querySelector('rdrs-sidebar');
-    // Category pages server-render `active=""`; mirror that so no top-level
-    // nav item stays lit next to the highlighted category.
+    // Category and feed pages both server-render `active=""`; mirror that so no
+    // top-level nav item stays lit next to the highlighted row. A feed keeps
+    // its parent category active (and therefore expanded), which is where the
+    // feed link the reader just clicked lives.
     sb?.setAttribute('active', '');
-    sb?.setAttribute('active-category-id', catId);
+    if (feedId) {
+        sb?.setAttribute('active-feed-id', feedId);
+        // `options.categoryId` is the caller's hint (an entry row carries its
+        // own category); otherwise fall back to the loaded feed lists, which
+        // cover the case that matters — a feed clicked in the sidebar.
+        const parent = options.categoryId || sb?.categoryIdOfFeed?.(feedId);
+        if (parent) sb.setAttribute('active-category-id', String(parent));
+    } else {
+        sb?.setAttribute('active-category-id', catId);
+        sb?.removeAttribute('active-feed-id');
+    }
     sb?.closeDrawer?.();
     // Desktop panes scroll internally and the freshly inserted list starts at
     // its top; on mobile the document is the scroller and would otherwise keep
@@ -604,11 +628,13 @@ async function swapListPane(href, options = {}) {
     }
 }
 
-function installCategoryNav() {
+function installSidebarNav() {
     document.addEventListener('click', (event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey ||
             event.shiftKey || event.altKey) return;
-        const link = event.target.closest('#sidebar-categories a[data-category-id]');
+        const link = event.target.closest(
+            '#sidebar-categories a[data-category-id], #sidebar-categories a[data-feed-id]'
+        );
         if (!link) return;
         const href = link.getAttribute('href');
         // No list pane to swap into (e.g. /statistics, /feeds): plain navigation.
@@ -617,7 +643,40 @@ function installCategoryNav() {
         swapListPane(href);
     });
 }
-installCategoryNav();
+installSidebarNav();
+
+/// The sidebar rows `[` / `]` / `{` / `}` walk, in the order they appear on
+/// screen: every category, with the open category's feeds spliced in right
+/// after it. Feeds are only listed for the open category, so the flat list
+/// grows and shrinks as the reader moves — which is the point: the shortcuts
+/// step through exactly what is visible.
+function sidebarNavTargets() {
+    const sb = document.querySelector('rdrs-sidebar');
+    const cats = sb?.categories || [];
+    const activeCatId = sb?.activeCategoryId || 0;
+    const feeds = sb?.activeFeeds || [];
+    const targets = [];
+    for (const cat of cats) {
+        targets.push({
+            kind: 'category',
+            id: cat.id,
+            unread: cat.unread_count,
+            href: `/categories/${cat.id}/entries`,
+        });
+        if (cat.id === activeCatId) {
+            for (const feed of feeds) {
+                targets.push({
+                    kind: 'feed',
+                    id: feed.id,
+                    unread: feed.unread_count,
+                    href: `/feeds/${feed.id}/entries`,
+                    categoryId: cat.id,
+                });
+            }
+        }
+    }
+    return targets;
+}
 
 // Mobile back button inside the reading pane. The button is rendered in
 // `_reading_pane.html` but hidden on desktop via `.reading-pane-back`'s
@@ -973,8 +1032,8 @@ const KB_SHORTCUTS = [
     { group: 'Go to', key: 'g m', desc: 'Summarized' },
     { group: 'Go to', key: 'g f', desc: 'Selected entry’s feed' },
     { group: 'Go to', key: 'g c', desc: 'Selected entry’s category (parent category on a feed page)' },
-    { group: 'Go to', key: '[ / ]', desc: 'Previous / next category' },
-    { group: 'Go to', key: '{ / }', desc: 'Previous / next category with unread' },
+    { group: 'Go to', key: '[ / ]', desc: 'Previous / next sidebar row (categories + the open category’s feeds)' },
+    { group: 'Go to', key: '{ / }', desc: 'Previous / next sidebar row with unread' },
     { group: 'Feed / category pages', key: '1-4', desc: 'Status filter: All / Unread / Read / Starred' },
     { group: 'Other', key: '/', desc: 'Open the search box (scoped search on feed / category pages)' },
     { group: 'Other', key: '?', desc: 'Toggle this help' },
@@ -1032,7 +1091,9 @@ function goToEntryRelative(key) {
     const row = document.querySelector('[data-entry-row].selected');
     if (key === 'f') {
         const link = row?.querySelector('.entry-item-meta a[href^="/feeds/"]');
-        if (link) window.location.href = link.getAttribute('href');
+        // The row knows its own category, which is what keeps the sidebar
+        // expanded on the group the feed actually belongs to.
+        if (link) swapListPane(link.getAttribute('href'), { categoryId: row?.dataset.categoryId });
         return;
     }
     // key === 'c' — prefer the selected entry's own category (carried as
@@ -1299,43 +1360,43 @@ function installEntriesKeyboard() {
             case ']':
             case '{':
             case '}': {
-                // Category navigation. Starting point: the current category
-                // on /categories/{id}/entries; the feed's parent category on
-                // /feeds/{id}/entries (the sidebar exposes it as
-                // `active-category-id`); on every other list page (inbox,
-                // /entries*) `]`/`}` enter at the first (unread) category and
-                // `[`/`{` at the last. Wrapping always stays inside the
-                // category list — it never cycles back out to Unread/All.
-                const sb = document.querySelector('rdrs-sidebar');
-                const cats = sb?.categories || [];
-                if (cats.length === 0) return;
-                const catPage = window.location.pathname.match(/^\/categories\/(\d+)\/entries/);
-                const parentCatId = parseInt(sb?.getAttribute('active-category-id') || '0', 10);
-                const currentId = catPage
-                    ? parseInt(catPage[1], 10)
-                    : (window.location.pathname.startsWith('/feeds/') && parentCatId) ? parentCatId
-                    : null;
-                const len = cats.length;
+                // Sidebar navigation over the rows as displayed: categories,
+                // with the open category's feeds spliced in after it. Starting
+                // point: the current feed on /feeds/{id}/entries, the current
+                // category on /categories/{id}/entries; on every other list
+                // page (inbox, /entries*) `]`/`}` enter at the first row and
+                // `[`/`{` at the last. Wrapping stays inside this list — it
+                // never cycles back out to Unread/All.
+                const targets = sidebarNavTargets();
+                if (targets.length === 0) return;
+                const path = window.location.pathname;
+                const feedPage = path.match(/^\/feeds\/(\d+)\/entries/);
+                const catPage = path.match(/^\/categories\/(\d+)\/entries/);
+                const isCurrent = (t) => (feedPage
+                    ? t.kind === 'feed' && t.id === parseInt(feedPage[1], 10)
+                    : catPage
+                        ? t.kind === 'category' && t.id === parseInt(catPage[1], 10)
+                        : false);
+                const len = targets.length;
                 const forward = e.key === ']' || e.key === '}';
                 const step = forward ? 1 : -1;
                 const unreadOnly = e.key === '{' || e.key === '}';
-                // Virtual start index when there is no current category:
-                // forward starts just before the first item, backward just
-                // after the last, so the first probe lands on cats[0] /
-                // cats[len - 1]. An unknown current id degrades the same way.
-                let idx = currentId != null ? cats.findIndex(c => c.id === currentId) : -1;
+                // Virtual start index when nothing here is current: forward
+                // starts just before the first row, backward just after the
+                // last, so the first probe lands on targets[0] / the last one.
+                let idx = targets.findIndex(isCurrent);
                 if (idx === -1) idx = forward ? -1 : len;
                 let target = null;
                 for (let i = 1; i <= len; i++) {
-                    const probe = cats[((idx + i * step) % len + len) % len];
-                    if (probe.id === currentId) continue;
-                    if (unreadOnly && probe.unread_count <= 0) continue;
+                    const probe = targets[((idx + i * step) % len + len) % len];
+                    if (isCurrent(probe)) continue;
+                    if (unreadOnly && probe.unread <= 0) continue;
                     target = probe;
                     break;
                 }
                 if (!target) return;
                 e.preventDefault();
-                swapListPane(`/categories/${target.id}/entries`);
+                swapListPane(target.href, { categoryId: target.categoryId });
                 break;
             }
             case 'Escape': {

@@ -477,14 +477,26 @@ the floor. The entries-family routes answer with four shapes:
   A search also hides "Mark Above as Read" — under a filtered list its meaning
   collapses into the "Mark N matching as Read" button above it — while the `A`
   shortcut keeps working.
-- **category switch** — `?pane=1` (`/categories/{id}/entries` only) replaces the
-  whole `[data-list-pane]` column and resets `#reading-pane` to its empty state.
-  `swapListPane()` drives it for sidebar category links, the `[` / `]` / `{` /
-  `}` shortcuts and `g c`, pushes the clean URL with `pushState`, and patches the
-  sidebar's `.active` classes *without* re-rendering it — `<rdrs-sidebar>`'s
-  `render()` rebuilds `innerHTML`, which would reset `.sidebar-nav`'s own scroll
-  offset, the very jump this navigation avoids. `popstate` reverses it: a
-  category path swaps back in place, anything else reloads.
+- **sidebar navigation** — `?pane=1` (`/categories/{id}/entries` and
+  `/feeds/{id}/entries`) replaces the whole `[data-list-pane]` column and resets
+  `#reading-pane` to its empty state. `swapListPane()` drives it for sidebar
+  category and feed links, the `[` / `]` / `{` / `}` shortcuts and `g c` / `g f`,
+  pushes the clean URL with `pushState`, and patches the sidebar's `.active`
+  classes *without* re-rendering it — `<rdrs-sidebar>`'s `render()` rebuilds
+  `innerHTML`, which would reset `.sidebar-nav`'s own scroll offset, the very
+  jump this navigation avoids. `popstate` reverses it: a category or feed path
+  swaps back in place, anything else reloads.
+
+The sidebar lists the **feeds of the open category** underneath it, loaded on
+demand from `GET /api/sidebar/categories/{id}/feeds` (with per-feed unread
+counts) and mirrored per category in `sessionStorage`. They are deliberately not
+part of `/api/sidebar`: that payload is embedded in every logged-in document,
+which is `no-store`, so a several-hundred-feed account would pay for its whole
+subscription list on every page load to render one category's worth. `?pane=1`
+navigation and the `rdrs:sidebar-stale` signal both revalidate it. The `[` / `]`
+(and unread-only `{` / `}`) shortcuts walk categories and the open category's
+feeds as **one flat list, in the order displayed** — what is on screen is what
+the shortcuts step through.
 
 Swaps that target a reading-pane region (`#reading-pane`,
 `#rp-summary-container`) and are *not* pane navigation carry a staleness check:

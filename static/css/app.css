@@ -432,6 +432,49 @@ code {
 }
 .sidebar-item-icon .ico { width: 15px; height: 15px; }
 
+/* Feeds of the open category, listed under it. No indent rule and no extra
+   left margin: the favicon column already sets these rows apart from the
+   category above (which has no icon), and in a sidebar this narrow the guide
+   line cost more horizontal room than the nesting it signalled. A step down in
+   size and colour carries the rest. */
+.sidebar-feeds {
+    margin: 2px 0 var(--space-2);
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-feed {
+    display: flex;
+    align-items: center;
+    /* The favicon brings its own 5px right margin (.entry-favicon), so the row
+       gap here would double the space after it. Horizontal padding matches
+       `.sidebar-item` so a feed's icon starts on the same edge as a category's
+       label — the icon itself is the offset. */
+    gap: 0;
+    padding: 4px 10px;
+    border-radius: var(--radius-md);
+    color: var(--color-text-muted);
+    text-decoration: none;
+    font-size: 14px;
+    transition: background 0.12s, color 0.12s;
+}
+
+.sidebar-feed:hover {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+}
+
+.sidebar-feed.active {
+    background: var(--color-sidebar-active);
+    color: var(--color-text);
+    font-weight: 700;
+}
+
+.sidebar-feed.active .sidebar-badge {
+    color: var(--color-accent-text);
+    font-weight: 600;
+}
+
 /* Mono right-aligned unread count (no pill). Active row → accent-text. */
 .sidebar-badge {
     margin-left: auto;
@@ -2979,8 +3022,9 @@ summary {
         min-height: var(--touch-min);
     }
 
-    /* Drawer rows. */
-    .sidebar-item {
+    /* Drawer rows — feeds included; they are tap targets like any other. */
+    .sidebar-item,
+    .sidebar-feed {
         min-height: var(--touch-min);
     }
 
