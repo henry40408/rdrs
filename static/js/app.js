@@ -261,8 +261,19 @@ function initPaneImages() {
 let paneNavSeq = 0;
 let paneNavAbort = null;
 
+/// Fetch `url` and apply the response to `defaultTarget` (or to whatever
+/// `<template data-swap-target>` blocks it carries). Resolves `true` when a
+/// swap was actually applied, `false` when the call bailed out (superseded,
+/// aborted, or handed off to a full navigation) — callers that follow a swap
+/// with side effects (history, sidebar state) must not run them on a bail-out.
+///
+/// `options.fallbackUrl` is where the non-2xx / network-error path navigates
+/// instead of `url`. Fragment-only URLs need it: `?pane=1` returns bare
+/// `<template>` markup, so hard-navigating to the fetched URL would leave the
+/// user on a blank page rather than the real one.
 async function performSwap(url, init, defaultTarget, options) {
     const method = (init.method || 'GET').toUpperCase();
+    const fallbackUrl = options?.fallbackUrl || url;
     // popstate-driven restores pass `skipHistory: true` because the browser
     // has already moved the address bar via back/forward — we must not push
     // or replace on top of the slot the user just navigated into.
@@ -289,41 +300,41 @@ async function performSwap(url, init, defaultTarget, options) {
     try {
         response = await fetch(url, init);
     } catch {
-        if (init.signal?.aborted) return;
+        if (init.signal?.aborted) return false;
         // A newer pane navigation aborted this fetch — drop it silently.
         // Falling through to `location.href` would hard-navigate the page
         // to a fragment URL the user has already moved past.
-        if (isPaneNav && navSeq !== paneNavSeq) return;
+        if (isPaneNav && navSeq !== paneNavSeq) return false;
         if (method !== 'GET' && window.flash) {
             window.flash.error('Action failed — please try again.');
-            return;
+            return false;
         }
-        window.location.href = url;
-        return;
+        window.location.href = fallbackUrl;
+        return false;
     }
     // Superseded while the headers were in flight (abort loses this race
     // when the reply was already buffered): discard before acting on it.
-    if (isPaneNav && navSeq !== paneNavSeq) return;
+    if (isPaneNav && navSeq !== paneNavSeq) return false;
     if (!response.ok) {
         if (method !== 'GET' && window.flash) {
             window.flash.error('Action failed — please try again.');
-            return;
+            return false;
         }
-        window.location.href = url;
-        return;
+        window.location.href = fallbackUrl;
+        return false;
     }
     let text;
     try {
         text = await response.text();
     } catch {
-        if (init.signal?.aborted) return;
+        if (init.signal?.aborted) return false;
         // Aborted mid-body by a newer navigation (fetch itself had already
         // resolved) — same silent drop as above.
-        if (isPaneNav && navSeq !== paneNavSeq) return;
-        window.location.href = url;
-        return;
+        if (isPaneNav && navSeq !== paneNavSeq) return false;
+        window.location.href = fallbackUrl;
+        return false;
     }
-    if (isPaneNav && navSeq !== paneNavSeq) return;
+    if (isPaneNav && navSeq !== paneNavSeq) return false;
     const parsed = new DOMParser().parseFromString(text, 'text/html');
 
     // Decide pushState vs replaceState BEFORE the DOM mutates: opening an
@@ -370,13 +381,13 @@ async function performSwap(url, init, defaultTarget, options) {
         applyClassTemplates(parsed);
         applyFlashTemplates(parsed);
         document.dispatchEvent(new CustomEvent('rdrs:swap-complete'));
-        return;
+        return true;
     }
 
     const dst = document.querySelector(defaultTarget);
-    if (!dst) return;
+    if (!dst) return false;
     const incoming = parsed.body.firstElementChild;
-    if (!incoming) return;
+    if (!incoming) return false;
     dst.outerHTML = incoming.outerHTML;
     if (defaultTarget === '#reading-pane' && incomingEntryId && incomingEntryId !== paneEntryIdBefore) {
         window.flash?.clear?.();
@@ -385,6 +396,7 @@ async function performSwap(url, init, defaultTarget, options) {
     applyClassTemplates(parsed);
     applyFlashTemplates(parsed);
     document.dispatchEvent(new CustomEvent('rdrs:swap-complete'));
+    return true;
 }
 
 // Extract the entry id embedded in a swap URL like `/entries/123/fragment`
@@ -458,6 +470,20 @@ window.addEventListener('popstate', () => {
     // history slots. performSwap below would clear too on entry mismatch,
     // but doing it upfront also covers the close-pane branch.
     window.flash?.clear?.();
+    // Category switching is an in-place swap that pushes its own history
+    // slot, so back/forward can now land on a different *path* within the
+    // same document. Re-render the list for it — and for a destination we
+    // can't swap (the inbox, /entries*, feed pages), reload so the user gets
+    // the real page instead of a stale list under a new URL.
+    if (window.location.pathname !== renderedListPath) {
+        const href = window.location.pathname + window.location.search;
+        if (categoryIdFromHref(href) && document.querySelector('[data-list-pane]')) {
+            swapListPane(href, { skipHistory: true, restoreEntry: true });
+        } else {
+            window.location.reload();
+        }
+        return;
+    }
     const u = new URL(window.location.href);
     const entryId = u.searchParams.get('entry');
     if (!entryId) {
@@ -484,6 +510,90 @@ function closeReadingPane() {
     setEntryParam(null);
     return true;
 }
+
+// ── Category navigation (in-place list-pane swap) ────────────────────
+//
+// Sidebar category links, the `[` / `]` / `{` / `}` shortcuts and `g c` land
+// here instead of hard-navigating. The server's `?pane=1` response carries the
+// whole left column plus an emptied reading pane, so one swap:
+//   * leaves the sidebar untouched — a document reload resets `.sidebar-nav`'s
+//     internal scroll to the top, which is the jump this exists to avoid (same
+//     story for the document scroll on mobile);
+//   * closes the open entry, which belonged to the category being left.
+// Anything we can't swap (no list pane on the page, a modified click) falls
+// back to a normal navigation.
+const CATEGORY_PATH_RE = /^\/categories\/(\d+)\/entries\/?$/;
+
+function categoryIdFromHref(href) {
+    const path = new URL(href, window.location.origin).pathname;
+    const m = path.match(CATEGORY_PATH_RE);
+    return m ? m[1] : null;
+}
+
+// Path the list pane currently renders. popstate compares against it to tell
+// a same-page `?entry=` toggle from a real category change.
+let renderedListPath = window.location.pathname;
+
+/// Swap the list pane over to `href` (a `/categories/{id}/entries` URL).
+/// `skipHistory` is for popstate restores (the browser already moved the
+/// address bar); `restoreEntry` re-opens the `?entry=` the restored URL names,
+/// since the fragment always ships an empty pane.
+async function swapListPane(href, options = {}) {
+    const catId = categoryIdFromHref(href);
+    if (!catId || !document.querySelector('[data-list-pane]')) {
+        window.location.href = href;
+        return;
+    }
+    const target = new URL(href, window.location.origin);
+    const fetchUrl = new URL(target);
+    fetchUrl.searchParams.set('pane', '1');
+    fetchUrl.searchParams.delete('entry');
+    // Same reasoning as the entry-switch path: the outgoing pane's proxied
+    // images keep occupying connection slots long after the pane is detached.
+    cancelPaneImages(document.getElementById('reading-pane'));
+    window.flash?.clear?.();
+    const applied = await performSwap(
+        fetchUrl.toString(),
+        { method: 'GET' },
+        '[data-list-pane]',
+        // Never fall back to the `?pane=1` URL: it answers with bare
+        // `<template>` markup, which is not a page.
+        { fallbackUrl: href },
+    );
+    if (!applied) return;
+    if (!options.skipHistory) window.history.pushState({}, '', target);
+    renderedListPath = target.pathname;
+    const sb = document.querySelector('rdrs-sidebar');
+    // Category pages server-render `active=""`; mirror that so no top-level
+    // nav item stays lit next to the highlighted category.
+    sb?.setAttribute('active', '');
+    sb?.setAttribute('active-category-id', catId);
+    sb?.closeDrawer?.();
+    // Desktop panes scroll internally and the freshly inserted list starts at
+    // its top; on mobile the document is the scroller and would otherwise keep
+    // the previous category's offset.
+    window.scrollTo({ top: 0 });
+    const entryId = options.restoreEntry ? target.searchParams.get('entry') : null;
+    if (entryId) {
+        performSwap(`/entries/${entryId}/fragment`, { method: 'GET' }, '#reading-pane',
+            { skipHistory: true });
+    }
+}
+
+function installCategoryNav() {
+    document.addEventListener('click', (event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey ||
+            event.shiftKey || event.altKey) return;
+        const link = event.target.closest('#sidebar-categories a[data-category-id]');
+        if (!link) return;
+        const href = link.getAttribute('href');
+        // No list pane to swap into (e.g. /statistics, /feeds): plain navigation.
+        if (!href || !document.querySelector('[data-list-pane]')) return;
+        event.preventDefault();
+        swapListPane(href);
+    });
+}
+installCategoryNav();
 
 // Mobile back button inside the reading pane. The button is rendered in
 // `_reading_pane.html` but hidden on desktop via `.reading-pane-back`'s
@@ -906,11 +1016,11 @@ function goToEntryRelative(key) {
     // row); fall back to the page-parent category on /feeds/{id}/entries (the
     // sidebar exposes it as `active-category-id`).
     const rowCatId = row?.dataset.categoryId;
-    if (rowCatId) { window.location.href = `/categories/${rowCatId}/entries`; return; }
+    if (rowCatId) { swapListPane(`/categories/${rowCatId}/entries`); return; }
     if (!window.location.pathname.startsWith('/feeds/')) return;
     const sb = document.querySelector('rdrs-sidebar');
     const catId = sb && sb.getAttribute('active-category-id');
-    if (catId) window.location.href = `/categories/${catId}/entries`;
+    if (catId) swapListPane(`/categories/${catId}/entries`);
 }
 
 function installGoNavigation() {
@@ -1199,7 +1309,7 @@ function installEntriesKeyboard() {
                 }
                 if (!target) return;
                 e.preventDefault();
-                window.location.href = `/categories/${target.id}/entries`;
+                swapListPane(`/categories/${target.id}/entries`);
                 break;
             }
             case 'Escape': {
@@ -1361,9 +1471,14 @@ const AGE_LABELS = {
 };
 const READING_LIST_STREAM = 'user/-/state/com.google/reading-list';
 
+// Bound per element (not delegated) and re-run after every swap: the category
+// swap replaces the whole list-pane header, so the listener-bearing <select>
+// is discarded along with it. The guard keeps swaps that leave the header in
+// place from stacking a second listener.
 function installMarkAsReadDropdown() {
     const select = document.getElementById('mark-read-age');
-    if (!select) return;
+    if (!select || select.dataset.markReadBound) return;
+    select.dataset.markReadBound = '1';
     select.addEventListener('change', async () => {
         const age = select.value;
         select.selectedIndex = 0;
@@ -1410,19 +1525,23 @@ function installMarkAsReadDropdown() {
     });
 }
 installMarkAsReadDropdown();
+document.addEventListener('rdrs:swap-complete', installMarkAsReadDropdown);
 
 // Status-filter <select> on feed + category pages. Each option's value
 // is the URL to navigate to; the active option is pre-selected by the
-// server. The 1-4 keys hit the same options by position.
+// server. The 1-4 keys hit the same options by position. Re-bound after
+// swaps for the same reason as the Mark-as-Read dropdown above.
 function installStatusFilterSelect() {
     const select = document.getElementById('status-filter');
-    if (!select) return;
+    if (!select || select.dataset.statusFilterBound) return;
+    select.dataset.statusFilterBound = '1';
     select.addEventListener('change', () => {
         const url = select.value;
         if (url) window.location.href = url;
     });
 }
 installStatusFilterSelect();
+document.addEventListener('rdrs:swap-complete', installStatusFilterSelect);
 
 // Debounced auto-submit for the scoped-search box. The `<form
 // data-entries-search>` lives in `.list-pane-header`, outside the swapped

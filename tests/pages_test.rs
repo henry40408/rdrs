@@ -1400,6 +1400,95 @@ async fn test_category_entries_page_load_more_fragment() {
     );
 }
 
+/// `GET /categories/{id}/entries?pane=1` — the category-switch fragment
+/// `app.js` swaps in place of a document reload. It carries the whole left
+/// column (header included, unlike the Load-More / search fragments) and an
+/// emptied reading pane, and it stays empty even when `?entry=` is present:
+/// switching category closes the entry that belonged to the previous one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_category_entries_page_pane_fragment() {
+    let mut app =
+        create_test_app_named(default_test_config(), "test_category_entries_page_pane").await;
+
+    app.server
+        .post("/api/setup")
+        .json(&json!({ "username": "alice_cp", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_cp", "password": "vulture-mango-77-quilt" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
+
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "PaneCat")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/cpane-feed",
+            title: Some("CPane Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-cpane-0",
+        Some("Pane Entry"),
+        Some("https://x/cpane/0"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let cat_id: i64 = cat.id;
+    let entry_id: i64 = entry.id;
+
+    let resp = app
+        .server
+        .get(&format!(
+            "/categories/{cat_id}/entries?pane=1&entry={entry_id}"
+        ))
+        .await;
+    assert_eq!(resp.status_code(), StatusCode::OK);
+    let html = resp.text();
+    assert!(
+        html.contains(r#"data-swap-target="[data-list-pane]""#)
+            && html.contains(r##"data-swap-target="#reading-pane""##),
+        "pane fragment must target both the list pane and the reading pane"
+    );
+    assert!(
+        html.contains("<h1>PaneCat</h1>"),
+        "pane fragment must carry the list-pane header"
+    );
+    assert!(
+        html.contains("data-entry-row"),
+        "pane fragment must include row markup"
+    );
+    assert!(
+        !html.contains("<rdrs-sidebar"),
+        "pane fragment must NOT include layout chrome"
+    );
+    assert!(
+        html.contains("reading-pane-empty") && !html.contains("reading-pane-article"),
+        "pane fragment must close the open entry even when ?entry= is present"
+    );
+}
+
 /// `POST /categories/{id}/entries/mark-read` marks only the entries matching
 /// the scoped-search `q` as read, leaving non-matching entries untouched, and
 /// redirects back to the category page preserving `?q=`.

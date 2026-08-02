@@ -87,6 +87,15 @@ function writeCachedSidebar(data) {
 /// True when the difference between two sidebar payloads can't be expressed
 /// by surgical badge updates alone — identity changed, masquerade/admin role
 /// changed, or the category set was added/removed/renamed.
+/// Whether the nav item named `nav` is the active one for the page-level
+/// `active` attribute. Shared by `render()` and `_applyActive()` so the class
+/// a fresh render paints and the one an attribute change patches can't diverge.
+/// "All Entries" is the odd one out: it stays lit across the /entries family.
+function navIsActive(nav, active) {
+    if (nav === 'entries') return ['all', 'read', 'entries'].includes(active);
+    return nav === active;
+}
+
 function isStructuralChange(prev, next) {
     if (prev.username !== next.username) return true;
     if (!!prev.is_admin !== !!next.is_admin) return true;
@@ -135,7 +144,27 @@ class RdrsSidebar extends HTMLElement {
     }
 
     attributeChangedCallback() {
-        if (this._data) this.render(this._data);
+        // Both observed attributes only decide which item carries `.active`, so
+        // patch those classes instead of re-rendering. That matters now that
+        // category switching swaps the list pane in place: `render()` rebuilds
+        // `innerHTML`, and a rebuilt `.sidebar-nav` loses its scroll position —
+        // the exact jump the in-place swap exists to avoid.
+        this._applyActive();
+    }
+
+    /// Repaint `.active` from the current `active` / `active-category-id`
+    /// attributes. No-op before the first render (nothing to patch yet);
+    /// `render()` reads the same attributes itself.
+    _applyActive() {
+        const active = this.getAttribute('active') || '';
+        const activeCatId = parseInt(this.getAttribute('active-category-id') || '0', 10);
+        for (const item of this.querySelectorAll('.sidebar-item[data-nav]')) {
+            item.classList.toggle('active', navIsActive(item.dataset.nav, active));
+        }
+        for (const item of this.querySelectorAll('#sidebar-categories .sidebar-item')) {
+            const id = parseInt(item.dataset.categoryId || '0', 10);
+            item.classList.toggle('active', id !== 0 && id === activeCatId);
+        }
     }
 
     /// Latest category list from /api/sidebar, or [] before the first payload
@@ -267,14 +296,14 @@ class RdrsSidebar extends HTMLElement {
         const totalUnread = data ? data.total_unread : 0;
         const totalSummarized = data ? data.total_summarized : 0;
 
-        const isActive = (name) => active === name ? ' active' : '';
+        const isActive = (name) => navIsActive(name, active) ? ' active' : '';
 
         const categoriesHtml = cats && cats.length > 0 ? `
         <div class="sidebar-section">
             <div class="sidebar-section-title">Categories</div>
             <div id="sidebar-categories">
                 ${cats.map(cat => `
-                <a href="/categories/${cat.id}/entries" class="sidebar-item${cat.id === activeCatId ? ' active' : ''}" title="${escapeHtml(cat.name)}">
+                <a href="/categories/${cat.id}/entries" class="sidebar-item${cat.id === activeCatId ? ' active' : ''}" data-category-id="${cat.id}" title="${escapeHtml(cat.name)}">
                     <span class="sidebar-item-label">${escapeHtml(cat.name)}</span>
                     ${cat.unread_count > 0 ? `<span class="sidebar-badge">${cat.unread_count}</span>` : ''}
                 </a>
@@ -290,13 +319,13 @@ class RdrsSidebar extends HTMLElement {
         // /settings and /admin are both admin-only server-side; hide the links
         // for regular accounts so the nav matches what they can actually open.
         const appSettingsLink = isAdmin ? `
-            <a href="/settings" class="sidebar-item${isActive('settings')}" data-testid="nav-app-settings">
+            <a href="/settings" class="sidebar-item${isActive('settings')}" data-nav="settings" data-testid="nav-app-settings">
                 <span class="sidebar-item-icon">${ICON.cog}</span>
                 <span>App</span>
             </a>` : '';
 
         const adminLink = isAdmin ? `
-            <a href="/admin" class="sidebar-item${isActive('admin')}" data-testid="nav-admin">
+            <a href="/admin" class="sidebar-item${isActive('admin')}" data-nav="admin" data-testid="nav-admin">
                 <span class="sidebar-item-icon">${ICON.shield}</span>
                 <span>Admin</span>
             </a>` : '';
@@ -312,50 +341,50 @@ class RdrsSidebar extends HTMLElement {
     </div>
     <nav class="sidebar-nav">
         <div class="sidebar-section">
-            <a href="/" class="sidebar-item${isActive('unread')}" data-testid="nav-unread">
+            <a href="/" class="sidebar-item${isActive('unread')}" data-nav="unread" data-testid="nav-unread">
                 <span class="sidebar-item-icon">${ICON.inbox}</span>
                 <span>Unread</span>
                 <span class="sidebar-badge" id="unread-count">${totalUnread > 0 ? totalUnread : ''}</span>
             </a>
-            <a href="/entries/starred" class="sidebar-item${isActive('starred')}">
+            <a href="/entries/starred" class="sidebar-item${isActive('starred')}" data-nav="starred">
                 <span class="sidebar-item-icon">${ICON.star}</span>
                 <span>Starred</span>
             </a>
-            <a href="/entries/summarized" class="sidebar-item${isActive('summarized')}" data-testid="nav-summarized">
+            <a href="/entries/summarized" class="sidebar-item${isActive('summarized')}" data-nav="summarized" data-testid="nav-summarized">
                 <span class="sidebar-item-icon">${ICON.sparkle}</span>
                 <span>Summarized</span>
                 <span class="sidebar-badge" id="summarized-count">${totalSummarized > 0 ? totalSummarized : ''}</span>
             </a>
-            <a href="/entries" class="sidebar-item${['all', 'read', 'entries'].includes(active) ? ' active' : ''}" data-testid="nav-entries">
+            <a href="/entries" class="sidebar-item${isActive('entries')}" data-nav="entries" data-testid="nav-entries">
                 <span class="sidebar-item-icon">${ICON.list}</span>
                 <span>All Entries</span>
             </a>
         </div>
         ${categoriesHtml}
         <div class="sidebar-section">
-            <a href="/feeds" class="sidebar-item${isActive('feeds')}" data-testid="nav-feeds">
+            <a href="/feeds" class="sidebar-item${isActive('feeds')}" data-nav="feeds" data-testid="nav-feeds">
                 <span class="sidebar-item-icon">${ICON.rss}</span>
                 <span>Feeds</span>
             </a>
-            <a href="/categories" class="sidebar-item${isActive('categories')}" data-testid="nav-categories">
+            <a href="/categories" class="sidebar-item${isActive('categories')}" data-nav="categories" data-testid="nav-categories">
                 <span class="sidebar-item-icon">${ICON.folder}</span>
                 <span>Categories</span>
             </a>
         </div>
         <div class="sidebar-section">
-            <a href="/summarizer" class="sidebar-item${isActive('summarizer')}" data-testid="nav-summarizer">
+            <a href="/summarizer" class="sidebar-item${isActive('summarizer')}" data-nav="summarizer" data-testid="nav-summarizer">
                 <span class="sidebar-item-icon">${ICON.wand}</span>
                 <span>Summarizer</span>
             </a>
-            <a href="/search" class="sidebar-item${isActive('search')}" data-testid="nav-search">
+            <a href="/search" class="sidebar-item${isActive('search')}" data-nav="search" data-testid="nav-search">
                 <span class="sidebar-item-icon">${ICON.search}</span>
                 <span>Search</span>
             </a>
-            <a href="/statistics" class="sidebar-item${isActive('statistics')}" data-testid="nav-statistics">
+            <a href="/statistics" class="sidebar-item${isActive('statistics')}" data-nav="statistics" data-testid="nav-statistics">
                 <span class="sidebar-item-icon">${ICON.barchart}</span>
                 <span>Statistics</span>
             </a>
-            <a href="/user-settings" class="sidebar-item${isActive('user-settings')}" data-testid="nav-settings">
+            <a href="/user-settings" class="sidebar-item${isActive('user-settings')}" data-nav="user-settings" data-testid="nav-settings">
                 <span class="sidebar-item-icon">${ICON.user}</span>
                 <span>Settings</span>
             </a>

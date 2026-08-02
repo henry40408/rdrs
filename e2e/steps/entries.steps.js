@@ -337,6 +337,79 @@ When("I press the {string} key", async ({ page }, key) => {
   await page.keyboard.press(key);
 });
 
+const sidebarCategoryLink = (page, name) =>
+  page
+    .locator("#sidebar-categories a[data-category-id]")
+    .filter({ hasText: name })
+    .first();
+
+When("I click the sidebar category {string}", async ({ page }, name) => {
+  await sidebarCategoryLink(page, name).click();
+});
+
+Then("the sidebar highlights category {string}", async ({ page }, name) => {
+  await expect(sidebarCategoryLink(page, name)).toHaveClass(/active/);
+});
+
+// A document load wipes anything hung off `window`, so a marker set before the
+// interaction and still readable after it proves the category switch stayed in
+// the same document (the whole point of the list-pane swap: a reload resets the
+// sidebar's own scroll offset).
+When("I mark the document for reload detection", async ({ page }) => {
+  await page.evaluate(() => { window.__rdrsDocumentMarker = true; });
+});
+
+Then("the document did not reload", async ({ page }) => {
+  expect(await page.evaluate(() => window.__rdrsDocumentMarker === true)).toBe(true);
+});
+
+// The reported bug in one assertion: with enough categories to make
+// `.sidebar-nav` scroll, a document reload (or an innerHTML re-render of the
+// sidebar) sends it back to the top and the category the reader just clicked
+// scrolls out of view.
+When("I scroll the sidebar categories to the bottom", async ({ page }) => {
+  const offset = await page.evaluate(() => {
+    const nav = document.querySelector(".sidebar-nav");
+    nav.scrollTop = nav.scrollHeight;
+    window.__rdrsSidebarScroll = nav.scrollTop;
+    return nav.scrollTop;
+  });
+  expect(offset, "sidebar nav must actually overflow for this scenario").toBeGreaterThan(0);
+});
+
+// Deliberately the *last* category: Playwright scrolls a target into view
+// before clicking it, so clicking one above the fold would move `.sidebar-nav`
+// itself and the assertion that follows would measure the test's own scrolling
+// rather than the swap's effect.
+When("I click the last sidebar category", async ({ page }) => {
+  const link = page.locator("#sidebar-categories a[data-category-id]").last();
+  const name = (await link.locator(".sidebar-item-label").innerText()).trim();
+  await link.click();
+  await expect(page.locator(".list-pane-header h1")).toContainText(name);
+});
+
+Then("the sidebar is still scrolled where it was", async ({ page }) => {
+  const [noted, now] = await page.evaluate(() => [
+    window.__rdrsSidebarScroll,
+    document.querySelector(".sidebar-nav").scrollTop,
+  ]);
+  expect(noted, "noted offset is gone — the document reloaded").toBeGreaterThan(0);
+  expect(now).toBe(noted);
+});
+
+Given("I have {int} more categories", async ({ seed, currentUser }, count) => {
+  const userId = seed.getUserId(currentUser.username);
+  for (let i = 1; i <= count; i++) seed.createCategory(userId, `Filler ${i}`);
+});
+
+Then("the list header shows {string}", async ({ page }, title) => {
+  await expect(page.locator(".list-pane-header h1")).toContainText(title);
+});
+
+When("I go back in the browser", async ({ page }) => {
+  await page.goBack();
+});
+
 When("I confirm the next dialog", async ({ page }) => {
   // Pre-arms a one-shot dialog handler so the next window.confirm/alert
   // auto-accepts. Used by shortcuts that go through a confirmation prompt

@@ -1,0 +1,11 @@
+{# Category-switch response (`?pane=1`). Replaces the whole left column and
+   resets the reading pane via multi-target swap templates, so switching
+   category keeps the sidebar (and its scroll position) untouched instead of
+   reloading the document — and closes whatever entry was open, which belonged
+   to the category the reader just left. #}
+<template data-swap-target="[data-list-pane]">
+{% include "_list_pane.html" %}
+</template>
+<template data-swap-target="#reading-pane">
+{% include "_reading_pane_empty.html" %}
+</template>
