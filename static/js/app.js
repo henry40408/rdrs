@@ -976,7 +976,7 @@ const KB_SHORTCUTS = [
     { group: 'Go to', key: '[ / ]', desc: 'Previous / next category' },
     { group: 'Go to', key: '{ / }', desc: 'Previous / next category with unread' },
     { group: 'Feed / category pages', key: '1-4', desc: 'Status filter: All / Unread / Read / Starred' },
-    { group: 'Other', key: '/', desc: 'Focus search (on the search page)' },
+    { group: 'Other', key: '/', desc: 'Open the search box (scoped search on feed / category pages)' },
     { group: 'Other', key: '?', desc: 'Toggle this help' },
 ];
 
@@ -1224,14 +1224,16 @@ function installEntriesKeyboard() {
                 break;
             }
             case 'A': {
-                // Mark loaded rows as read — only fires on pages that
-                // render the button (feed/category/inbox). Delegates to
-                // the button's click handler so the confirm + fetch flow
-                // lives in one place.
+                // Mark loaded rows as read — only on pages that offer it
+                // (feed / category / inbox). The button is also hidden while a
+                // scoped search is active, since "Mark N matching as Read"
+                // owns that case visually; the shortcut still works there, so
+                // detect the search box rather than the button alone.
                 const btn = document.getElementById('mark-above-read');
-                if (!btn) return;
+                const searching = !!document.querySelector('[data-entries-search] input[name="q"]')?.value;
+                if (!btn && !searching) return;
                 e.preventDefault();
-                btn.click();
+                markLoadedEntriesAsRead(btn);
                 break;
             }
             case 'v': {
@@ -1574,8 +1576,88 @@ function installStatusFilterSelect() {
 installStatusFilterSelect();
 document.addEventListener('rdrs:swap-complete', installStatusFilterSelect);
 
+// ── Scoped-search drawer ─────────────────────────────────────────────
+//
+// The search box lives in a drawer above `.list-pane-header`, opened by the
+// magnifier chip in the filter bar. The server renders it open when the
+// request carried `?q=`, so deep links and list swaps arrive in the right
+// state; everything below only handles the interactive transitions.
+//
+// Closing clears the search. A collapsed box that is still filtering turns a
+// short list into a mystery ("where did my entries go?"), so close resets the
+// query, which the debounced submit path mirrors back out of the URL.
+function searchDrawerParts() {
+    const drawer = document.querySelector('[data-search-drawer]');
+    return {
+        drawer,
+        toggle: document.querySelector('[data-search-toggle]'),
+        input: drawer?.querySelector('input[name="q"]'),
+        form: drawer?.querySelector('form[data-entries-search]'),
+    };
+}
+
+function openSearchDrawer() {
+    const { drawer, toggle, input } = searchDrawerParts();
+    if (!drawer) return;
+    drawer.classList.add('is-open');
+    toggle?.setAttribute('aria-expanded', 'true');
+    input?.focus();
+}
+
+function closeSearchDrawer() {
+    const { drawer, toggle, input, form } = searchDrawerParts();
+    if (!drawer) return;
+    drawer.classList.remove('is-open');
+    toggle?.setAttribute('aria-expanded', 'false');
+    // Only re-submit when there was something to clear: an empty box means the
+    // list is already unfiltered, and a needless swap would drop the reader's
+    // scroll position in the list.
+    if (input && input.value !== '') {
+        input.value = '';
+        form?.requestSubmit();
+    }
+    // Focus would otherwise stay on a control inside a collapsed, zero-height
+    // container, which strands the keyboard user.
+    toggle?.focus();
+}
+
+// Delegated on the document, and therefore installed exactly once: the toggle
+// lives in the filter bar and the close button inside the drawer, and a
+// list-pane swap replaces both — per-element binding would have to re-run on
+// every swap and would stack duplicate document listeners if it did.
+function installSearchDrawer() {
+    document.addEventListener('click', (e) => {
+        if (e.target.closest('[data-search-toggle]')) {
+            e.preventDefault();
+            const open = document.querySelector('[data-search-drawer]')?.classList.contains('is-open');
+            if (open) closeSearchDrawer(); else openSearchDrawer();
+        } else if (e.target.closest('[data-search-close]')) {
+            e.preventDefault();
+            closeSearchDrawer();
+        }
+    });
+    document.addEventListener('keydown', (e) => {
+        // `/` opens the drawer from anywhere on a list page — the same key
+        // /search binds (see static/js/search.js), now that these pages have a
+        // search box to focus.
+        if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey &&
+            !e.target.matches('input, textarea, select')) {
+            if (!document.querySelector('[data-search-drawer]')) return;
+            e.preventDefault();
+            openSearchDrawer();
+            return;
+        }
+        // Esc inside the box closes the drawer rather than the reading pane.
+        if (e.key === 'Escape' && e.target.closest('[data-search-drawer]')) {
+            e.stopPropagation();
+            closeSearchDrawer();
+        }
+    }, true);
+}
+installSearchDrawer();
+
 // Debounced auto-submit for the scoped-search box. The `<form
-// data-entries-search>` lives in `.list-pane-header`, outside the swapped
+// data-entries-search>` lives in the search drawer, outside the swapped
 // `[data-entries-list]` container, so it survives every swap and keeps
 // input focus/caret while typing — only the installer's binding needs to
 // be re-applied when the list is swapped out from under it for other
@@ -1600,6 +1682,50 @@ document.addEventListener('rdrs:swap-complete', installEntriesSearch);
 // Entries that haven't been loaded yet stay untouched. Posts to the
 // GReader edit-tag endpoint with one `i=<id>` per visible row and
 // `a=user/-/state/com.google/read`.
+//
+// Split from the button so the `A` shortcut can still reach it while a scoped
+// search hides the button (see the `A` case in installEntriesKeyboard) — the
+// same treatment `m` gets for the row read-toggle whose visible form is gone.
+// `btn` is optional and only carries the busy state.
+async function markLoadedEntriesAsRead(btn) {
+    const rows = Array.from(document.querySelectorAll('[data-entry-row]'));
+    const ids = rows.map(r => r.dataset.entryId).filter(Boolean);
+    if (ids.length === 0) {
+        const msg = 'No entries to mark.';
+        if (window.flash) { window.flash.info(msg); } else { alert(msg); }
+        return;
+    }
+    if (!confirm(`Mark ${ids.length} loaded entries as read?`)) return;
+    const body = new URLSearchParams();
+    for (const id of ids) body.append('i', id);
+    body.set('a', 'user/-/state/com.google/read');
+    if (btn) {
+        btn.disabled = true;
+        btn.setAttribute('aria-busy', 'true');
+    }
+    try {
+        const resp = await fetch('/reader/api/0/edit-tag', {
+            method: 'POST',
+            body,
+            credentials: 'same-origin',
+        });
+        if (!resp.ok) throw new Error('Failed to mark entries as read');
+        if (window.flash) {
+            window.flash.set('success', `Marked ${ids.length} loaded entries as read.`);
+        }
+        window.location.reload();
+        return;
+    } catch (err) {
+        const message = err.message || 'Failed to mark entries as read';
+        if (window.flash) { window.flash.error(message); } else { alert(message); }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.removeAttribute('aria-busy');
+        }
+    }
+}
+
 function installMarkAboveButton() {
     const btn = document.getElementById('mark-above-read');
     if (!btn || btn.dataset.markAboveBound) return;
@@ -1609,40 +1735,7 @@ function installMarkAboveButton() {
     // per-element guard keeps unrelated swaps (which leave this same button in
     // place) from stacking a second listener and double-POSTing.
     btn.dataset.markAboveBound = '1';
-    btn.addEventListener('click', async () => {
-        const rows = Array.from(document.querySelectorAll('[data-entry-row]'));
-        const ids = rows.map(r => r.dataset.entryId).filter(Boolean);
-        if (ids.length === 0) {
-            const msg = 'No entries to mark.';
-            if (window.flash) { window.flash.info(msg); } else { alert(msg); }
-            return;
-        }
-        if (!confirm(`Mark ${ids.length} loaded entries as read?`)) return;
-        const body = new URLSearchParams();
-        for (const id of ids) body.append('i', id);
-        body.set('a', 'user/-/state/com.google/read');
-        btn.disabled = true;
-        btn.setAttribute('aria-busy', 'true');
-        try {
-            const resp = await fetch('/reader/api/0/edit-tag', {
-                method: 'POST',
-                body,
-                credentials: 'same-origin',
-            });
-            if (!resp.ok) throw new Error('Failed to mark entries as read');
-            if (window.flash) {
-                window.flash.set('success', `Marked ${ids.length} loaded entries as read.`);
-            }
-            window.location.reload();
-            return;
-        } catch (err) {
-            const message = err.message || 'Failed to mark entries as read';
-            if (window.flash) { window.flash.error(message); } else { alert(message); }
-        } finally {
-            btn.disabled = false;
-            btn.removeAttribute('aria-busy');
-        }
-    });
+    btn.addEventListener('click', () => markLoadedEntriesAsRead(btn));
 }
 installMarkAboveButton();
 document.addEventListener('rdrs:swap-complete', installMarkAboveButton);

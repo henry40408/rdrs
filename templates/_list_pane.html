@@ -5,7 +5,27 @@
    document, and a second hand-written copy of the header would drift.
 
    Needs `title`, `entries`, `next_cursor` and `entries_layout` in scope. #}
+{%- import "_icons.html" as icons -%}
 <div class="list-pane" data-list-pane>
+    {% if let Some(action) = entries_layout.search_action.as_ref() %}
+    {# Scoped search lives in a drawer above the header rather than inline in
+       the filter bar: at ≤1024px the bar wraps and a permanently mounted input
+       ate a whole row of the list. Rendered open when the request carries `q`,
+       so a `?q=` deep link (and every list swap that re-renders this partial)
+       arrives in the right state with no client-side flash. #}
+    <div id="search-drawer" class="search-drawer{% if entries_layout.search.is_some() %} is-open{% endif %}" data-search-drawer>
+        <div class="search-drawer-clip">
+            <div class="search-drawer-row">
+                <form class="entries-search" method="get" action="{{ action }}" data-swap="[data-entries-list]" data-entries-search>
+                    {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
+                    <input type="hidden" name="fragment" value="1">
+                    <input type="search" name="q" class="search-input" placeholder="Search in this view…" autocomplete="off" data-testid="scoped-search-input"{% if let Some(qq) = entries_layout.search.as_ref() %} value="{{ qq }}"{% endif %}>
+                </form>
+                <button type="button" class="filter-chip-btn" data-search-close data-testid="scoped-search-close" aria-label="Close search">{% call icons::close() %}{% endcall %}</button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
     <div class="list-pane-header">
         {% if !entries_layout.breadcrumb_items.is_empty() %}
         <nav class="breadcrumb" data-testid="breadcrumb">
@@ -42,12 +62,8 @@
                 </select>
             </div>
             {% endif %}
-            {% if let Some(action) = entries_layout.search_action.as_ref() %}
-            <form class="form-group form-group-inline entries-search" method="get" action="{{ action }}" data-swap="[data-entries-list]" data-entries-search>
-                {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
-                <input type="hidden" name="fragment" value="1">
-                <input type="search" name="q" class="search-input" placeholder="Search in this view…" autocomplete="off" data-testid="scoped-search-input"{% if let Some(qq) = entries_layout.search.as_ref() %} value="{{ qq }}"{% endif %}>
-            </form>
+            {% if entries_layout.search_action.is_some() %}
+            <button type="button" class="filter-chip-btn" data-search-toggle data-testid="scoped-search-toggle" aria-controls="search-drawer" aria-expanded="{% if entries_layout.search.is_some() %}true{% else %}false{% endif %}" aria-label="Search in this view">{% call icons::search() %}{% endcall %}</button>
             <span class="mark-matching-slot" data-mark-matching-slot>{% include "_mark_matching_button.html" %}</span>
             {% endif %}
         </div>

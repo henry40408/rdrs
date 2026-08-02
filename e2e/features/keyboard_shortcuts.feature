@@ -31,6 +31,7 @@ Feature: Keyboard shortcuts
 
   Scenario: A still marks loaded entries as read after a scoped search
     When I open the entries page for feed "Shortcut Feed"
+    And I open the scoped search box
     And I type "Entry" into the scoped search box
     And the URL has the "q" query parameter set to "Entry"
     And I confirm the next dialog

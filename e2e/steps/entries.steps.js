@@ -164,6 +164,15 @@ When("I open the entries page for category {string}", async ({ page, seed, curre
   await page.goto(`${serverUrl}/categories/${categoryId}/entries`);
 });
 
+When(
+  "I open the entries page for category {string} searching for {string}",
+  async ({ page, seed, currentUser, serverUrl }, name, q) => {
+    const userId = seed.getUserId(currentUser.username);
+    const categoryId = seed.findCategoryIdByName(userId, name);
+    await page.goto(`${serverUrl}/categories/${categoryId}/entries?q=${encodeURIComponent(q)}`);
+  }
+);
+
 When("I click the entry titled {string}", async ({ page }, title) => {
   // Click the title link (data-testid="entry-title-link") to trigger the
   // data-swap="#reading-pane" fetch. Clicking the entry-item container is

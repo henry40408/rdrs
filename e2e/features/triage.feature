@@ -107,15 +107,46 @@ Feature: Triage entries (star, mark-read, summarize)
   Scenario: Scoped search within a category, then mark matching as read
     Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
     When I open the entries page for category "Anime"
+    And I open the scoped search box
     And I type "Superheroine" into the scoped search box
     Then the entry list shows "Superheroine Rises"
     And the entry list does not show "Other News"
     When I mark matching entries as read
     Then "Superheroine Rises" is no longer in the unread list
 
+  Scenario: The scoped search box starts collapsed and opens from the filter bar
+    Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
+    When I open the entries page for category "Anime"
+    Then the scoped search box is closed
+    And the mark-above button is shown
+    And the search toggle is as tall as the status filter
+    When I open the scoped search box
+    Then the scoped search box is open
+    And the search close button is as tall as the search box
+
+  Scenario: Closing the scoped search box clears the search
+    Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
+    When I open the entries page for category "Anime"
+    And I open the scoped search box
+    And I type "Superheroine" into the scoped search box
+    Then the entry list does not show "Other News"
+    And the mark-above button is hidden
+    When I close the scoped search box
+    Then the scoped search box is closed
+    And the entry list shows "Other News"
+    And the URL has no "q" query parameter
+
+  Scenario: A scoped-search deep link arrives with the search box open
+    Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
+    When I open the entries page for category "Anime" searching for "Superheroine"
+    Then the scoped search box is open
+    And the entry list does not show "Other News"
+    And the mark-above button is hidden
+
   Scenario: Clearing the scoped search box resets the q query parameter
     Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
     When I open the entries page for category "Anime"
+    And I open the scoped search box
     And I type "Superheroine" into the scoped search box
     Then the entry list shows "Superheroine Rises"
     And the entry list does not show "Other News"

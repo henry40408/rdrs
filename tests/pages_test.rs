@@ -1596,6 +1596,86 @@ async fn test_category_mark_read_scoped_search() {
     );
 }
 
+/// "Mark Above as Read" is dropped from a scoped-search render. It marks the
+/// rows in the DOM, which under a search means the matches — one meaning too
+/// close to the "Mark N matching as Read" button rendered right above it for
+/// two controls to be safe.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_category_entries_hides_mark_above_while_searching() {
+    let mut app =
+        create_test_app_named(default_test_config(), "test_category_mark_above_search").await;
+
+    app.server
+        .post("/api/setup")
+        .json(&json!({ "username": "alice_ma", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "alice_ma", "password": "vulture-mango-77-quilt" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
+
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "MACat")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/ma-feed",
+            title: Some("MA Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-ma-0",
+        Some("Widget News"),
+        Some("https://x/ma/0"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let cat_id: i64 = cat.id;
+
+    let plain = app
+        .server
+        .get(&format!("/categories/{cat_id}/entries"))
+        .await;
+    assert!(
+        plain.text().contains("mark-above-read"),
+        "unfiltered category page must still offer Mark Above as Read"
+    );
+
+    let searched = app
+        .server
+        .get(&format!("/categories/{cat_id}/entries?q=Widget"))
+        .await;
+    let html = searched.text();
+    assert!(
+        html.contains("data-entry-row"),
+        "the scoped search must still return its match"
+    );
+    assert!(
+        !html.contains("mark-above-read"),
+        "Mark Above as Read must be hidden while a scoped search is active"
+    );
+}
+
 /// `POST /feeds/{id}/entries/mark-read` — same as
 /// `test_category_mark_read_scoped_search` but scoped to a feed, guarding
 /// against a copy-paste argument-order bug in `feed_mark_read_form` /

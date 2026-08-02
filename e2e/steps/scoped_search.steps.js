@@ -34,6 +34,53 @@ Given(
   }
 );
 
+When("I open the scoped search box", async ({ page }) => {
+  await page.getByTestId("scoped-search-toggle").click();
+  await expect(page.getByTestId("scoped-search-input")).toBeFocused();
+});
+
+When("I close the scoped search box", async ({ page }) => {
+  await page.getByTestId("scoped-search-close").click();
+});
+
+Then("the scoped search box is open", async ({ page }) => {
+  await expect(page.getByTestId("scoped-search-input")).toBeVisible();
+  await expect(page.getByTestId("scoped-search-toggle")).toHaveAttribute("aria-expanded", "true");
+});
+
+Then("the scoped search box is closed", async ({ page }) => {
+  // The drawer collapses to a zero-height grid row, so the input is present
+  // but not visible — exactly what "hidden behind the toggle" means here.
+  await expect(page.getByTestId("scoped-search-input")).toBeHidden();
+  await expect(page.getByTestId("scoped-search-toggle")).toHaveAttribute("aria-expanded", "false");
+});
+
+// Height parity is what makes the filter bar read as one control strip and the
+// drawer as one field. Both chips take their height from a sibling
+// (`align-self: stretch`), which is exactly the kind of rule a later layout
+// change breaks silently — so measure it.
+const heightOf = async (locator) => (await locator.boundingBox()).height;
+
+Then("the search toggle is as tall as the status filter", async ({ page }) => {
+  const toggle = await heightOf(page.getByTestId("scoped-search-toggle"));
+  const select = await heightOf(page.getByTestId("status-filter-select"));
+  expect(Math.abs(toggle - select)).toBeLessThan(1);
+});
+
+Then("the search close button is as tall as the search box", async ({ page }) => {
+  const close = await heightOf(page.getByTestId("scoped-search-close"));
+  const input = await heightOf(page.getByTestId("scoped-search-input"));
+  expect(Math.abs(close - input)).toBeLessThan(1);
+});
+
+Then("the mark-above button is hidden", async ({ page }) => {
+  await expect(page.getByTestId("mark-above-btn")).toHaveCount(0);
+});
+
+Then("the mark-above button is shown", async ({ page }) => {
+  await expect(page.getByTestId("mark-above-btn")).toBeVisible();
+});
+
 When("I type {string} into the scoped search box", async ({ page }, term) => {
   // The scoped-search form auto-submits via a 250ms debounce on `input`
   // (installEntriesSearch in app.js) and swaps `[data-entries-list]` — no

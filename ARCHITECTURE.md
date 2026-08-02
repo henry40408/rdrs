@@ -470,7 +470,13 @@ the floor. The entries-family routes answer with four shapes:
   (plus the row, via multi-target templates) when an entry is opened.
 - **Load More** — `?fragment=1&after=<cursor>` appends rows before `#load-more`.
 - **search refresh** — `?fragment=1` (no cursor) re-renders `[data-entries-list]`
-  and the "Mark N matching" slot, leaving the focused search box alone.
+  and the "Mark N matching" slot, leaving the focused search box alone. That box
+  lives in a drawer above `.list-pane-header`, opened by the filter-bar
+  magnifier; the server renders it open whenever the request carried `q`, so
+  deep links and swaps land in the right state without a client-side flash.
+  A search also hides "Mark Above as Read" — under a filtered list its meaning
+  collapses into the "Mark N matching as Read" button above it — while the `A`
+  shortcut keeps working.
 - **category switch** — `?pane=1` (`/categories/{id}/entries` only) replaces the
   whole `[data-list-pane]` column and resets `#reading-pane` to its empty state.
   `swapListPane()` drives it for sidebar category links, the `[` / `]` / `{` /
