@@ -2,7 +2,7 @@
 
 {% block page %}
     <div class="app-layout">
-        <rdrs-sidebar active="{{ entries_layout.active }}"{% if let Some(cat_id) = entries_layout.active_category_id %} active-category-id="{{ cat_id }}"{% endif %}></rdrs-sidebar>
+        <rdrs-sidebar active="{{ entries_layout.active }}"{% if let Some(cat_id) = entries_layout.active_category_id %} active-category-id="{{ cat_id }}"{% endif %}{% if let Some(feed_id) = entries_layout.active_feed_id %} active-feed-id="{{ feed_id }}"{% endif %}></rdrs-sidebar>
         <main class="main-content">
             <rdrs-flash></rdrs-flash>
             <div class="split-view">

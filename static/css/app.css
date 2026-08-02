@@ -432,6 +432,46 @@ code {
 }
 .sidebar-item-icon .ico { width: 15px; height: 15px; }
 
+/* Feeds of the open category, listed under it. Indented and a step down in
+   size / colour so the group reads as belonging to the category above it
+   rather than as more categories; the guide rule on the left carries the
+   nesting when the list runs past a screenful. */
+.sidebar-feeds {
+    margin: 2px 0 var(--space-2) 18px;
+    padding-left: var(--space-2);
+    border-left: 1px solid var(--color-border-light);
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-feed {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 4px 8px;
+    border-radius: var(--radius-md);
+    color: var(--color-text-muted);
+    text-decoration: none;
+    font-size: 14px;
+    transition: background 0.12s, color 0.12s;
+}
+
+.sidebar-feed:hover {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+}
+
+.sidebar-feed.active {
+    background: var(--color-sidebar-active);
+    color: var(--color-text);
+    font-weight: 700;
+}
+
+.sidebar-feed.active .sidebar-badge {
+    color: var(--color-accent-text);
+    font-weight: 600;
+}
+
 /* Mono right-aligned unread count (no pill). Active row → accent-text. */
 .sidebar-badge {
     margin-left: auto;
@@ -2979,8 +3019,9 @@ summary {
         min-height: var(--touch-min);
     }
 
-    /* Drawer rows. */
-    .sidebar-item {
+    /* Drawer rows — feeds included; they are tap targets like any other. */
+    .sidebar-item,
+    .sidebar-feed {
         min-height: var(--touch-min);
     }
 

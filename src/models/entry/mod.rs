@@ -583,6 +583,32 @@ pub async fn count_unread_by_feed(
     Ok(rows.into_iter().collect())
 }
 
+/// Returns a map of `feed_id` -> unread count for the feeds of one category.
+///
+/// The sidebar's feed list asks per category rather than reusing
+/// `count_unread_by_feed`, which aggregates every feed the account has — the
+/// point of loading feeds lazily is to keep a 1000-feed subscription off the
+/// hot path, and a whole-account GROUP BY would put it right back.
+/// `user_id` stays in the WHERE clause so a guessed `category_id` cannot read
+/// another account's counts.
+pub async fn count_unread_by_feed_in_category(
+    db: &Db,
+    user_id: i64,
+    category_id: i64,
+) -> AppResult<std::collections::HashMap<i64, i64>> {
+    let hint = Dialect::from_db(db).index_hint(" INDEXED BY idx_entry_unread_feed");
+    let sql = format!(
+        "SELECT f.id, COUNT(e.id) FROM feed f \
+         INNER JOIN category c ON f.category_id = c.id \
+         LEFT JOIN entry e{hint} ON e.feed_id = f.id AND e.read_at IS NULL \
+         WHERE c.user_id = $1 AND f.category_id = $2 GROUP BY f.id"
+    );
+    let rows = fetch_id_ts_rows(db, sql, vec![Bind::Int(user_id), Bind::Int(category_id)])
+        .await
+        .map_err(AppError::Database)?;
+    Ok(rows.into_iter().collect())
+}
+
 /// Returns a map of `category_id` -> unread count for a user
 pub async fn count_unread_by_category(
     db: &Db,

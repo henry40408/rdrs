@@ -52,6 +52,12 @@ const ICON = {
 
 const SIDEBAR_CACHE_KEY = 'rdrs.sidebar.v1';
 
+/// Per-category feed lists, mirrored so revisiting a category paints its feeds
+/// from the last known state instead of an empty gap while the fetch runs.
+/// Same trade as the main payload's mirror: possibly one interaction stale,
+/// corrected by the revalidation that follows immediately.
+const FEEDS_CACHE_KEY = 'rdrs.sidebar.feeds.v1';
+
 /// Window over which repeated `rdrs:sidebar-stale` signals collapse into a
 /// single fetch. Long enough to absorb the two that one entry-open produces
 /// (measured ~4 ms apart), short enough that the badges still settle within a
@@ -87,6 +93,19 @@ function writeCachedSidebar(data) {
 /// True when the difference between two sidebar payloads can't be expressed
 /// by surgical badge updates alone — identity changed, masquerade/admin role
 /// changed, or the category set was added/removed/renamed.
+function readCachedFeeds() {
+    try {
+        const raw = sessionStorage.getItem(FEEDS_CACHE_KEY);
+        const parsed = raw ? JSON.parse(raw) : null;
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch { return {}; }
+}
+
+function writeCachedFeeds(byCategory) {
+    try { sessionStorage.setItem(FEEDS_CACHE_KEY, JSON.stringify(byCategory)); }
+    catch { /* quota / disabled storage — fine */ }
+}
+
 /// Whether the nav item named `nav` is the active one for the page-level
 /// `active` attribute. Shared by `render()` and `_applyActive()` so the class
 /// a fresh render paints and the one an attribute change patches can't diverge.
@@ -106,13 +125,15 @@ function isStructuralChange(prev, next) {
 }
 
 class RdrsSidebar extends HTMLElement {
-    static get observedAttributes() { return ['active', 'active-category-id']; }
+    static get observedAttributes() { return ['active', 'active-category-id', 'active-feed-id']; }
 
     constructor() {
         super();
         // Bound once so connect/disconnect add and remove the *same* reference.
         this._onDocumentClick = this._onDocumentClick.bind(this);
         this._onStale = this._onStale.bind(this);
+        // category id -> feed list, for the categories opened this session.
+        this._feeds = readCachedFeeds();
     }
 
     connectedCallback() {
@@ -124,6 +145,7 @@ class RdrsSidebar extends HTMLElement {
         }
         // No initial render on cold start — first paint waits for fetch.
         this.fetchData();
+        this.fetchFeeds();
 
         // Tap-outside-to-close for the mobile drawer. The scrim is a CSS
         // pseudo-element (no clickable element of its own), so the listener has
@@ -143,21 +165,27 @@ class RdrsSidebar extends HTMLElement {
         this._abort = null;
     }
 
-    attributeChangedCallback() {
-        // Both observed attributes only decide which item carries `.active`, so
+    attributeChangedCallback(name, oldValue, newValue) {
+        // The observed attributes only decide which item carries `.active`, so
         // patch those classes instead of re-rendering. That matters now that
         // category switching swaps the list pane in place: `render()` rebuilds
         // `innerHTML`, and a rebuilt `.sidebar-nav` loses its scroll position —
         // the exact jump the in-place swap exists to avoid.
         this._applyActive();
+        // A new active category needs its feed list, which is loaded on demand.
+        if (name === 'active-category-id' && oldValue !== newValue) {
+            this._renderFeeds();
+            this.fetchFeeds();
+        }
     }
 
-    /// Repaint `.active` from the current `active` / `active-category-id`
-    /// attributes. No-op before the first render (nothing to patch yet);
-    /// `render()` reads the same attributes itself.
+    /// Repaint `.active` from the current `active` / `active-category-id` /
+    /// `active-feed-id` attributes. No-op before the first render (nothing to
+    /// patch yet); `render()` reads the same attributes itself.
     _applyActive() {
         const active = this.getAttribute('active') || '';
-        const activeCatId = parseInt(this.getAttribute('active-category-id') || '0', 10);
+        const activeCatId = this.activeCategoryId;
+        const activeFeedId = this.activeFeedId;
         for (const item of this.querySelectorAll('.sidebar-item[data-nav]')) {
             item.classList.toggle('active', navIsActive(item.dataset.nav, active));
         }
@@ -165,12 +193,78 @@ class RdrsSidebar extends HTMLElement {
             const id = parseInt(item.dataset.categoryId || '0', 10);
             item.classList.toggle('active', id !== 0 && id === activeCatId);
         }
+        for (const item of this.querySelectorAll('.sidebar-feed[data-feed-id]')) {
+            const id = parseInt(item.dataset.feedId || '0', 10);
+            item.classList.toggle('active', id !== 0 && id === activeFeedId);
+        }
     }
+
+    get activeCategoryId() { return parseInt(this.getAttribute('active-category-id') || '0', 10); }
+
+    get activeFeedId() { return parseInt(this.getAttribute('active-feed-id') || '0', 10); }
 
     /// Latest category list from /api/sidebar, or [] before the first payload
     /// lands. Read by app.js's `[` / `]` category navigation, which must not
     /// reach into the private `_data` field.
     get categories() { return this._data?.categories || []; }
+
+    /// Feeds of the currently active category, in the order they are rendered,
+    /// or [] when no category is active or the list hasn't arrived yet. Read by
+    /// app.js's `[` / `]` navigation, which walks categories and the open
+    /// category's feeds as one flat list — the order on screen.
+    get activeFeeds() {
+        const catId = this.activeCategoryId;
+        return catId ? (this._feeds[catId] || []) : [];
+    }
+
+    /// Which category a feed belongs to, if any list loaded this session names
+    /// it. Used by app.js to keep the right category expanded when navigation
+    /// lands on a feed; `null` means "unknown", not "no category".
+    categoryIdOfFeed(feedId) {
+        const wanted = parseInt(feedId, 10);
+        for (const [catId, feeds] of Object.entries(this._feeds)) {
+            if (feeds.some((f) => f.id === wanted)) return parseInt(catId, 10);
+        }
+        return null;
+    }
+
+    /// Load the active category's feeds. Only the open category is ever shown,
+    /// so only it is fetched: a several-hundred-feed account would otherwise
+    /// pay for its whole subscription list on every page load to render one
+    /// category's worth (see `get_sidebar_category_feeds`).
+    async fetchFeeds(options = {}) {
+        const catId = this.activeCategoryId;
+        if (!catId) return;
+        // First mount asks twice — once from the upgrade-time
+        // attributeChangedCallback, once from connectedCallback — and the
+        // second would abort the first for the same answer. A revalidation
+        // (`force`) still supersedes whatever is in flight.
+        if (this._feedsInFlightFor === catId && !options.force) return;
+        this._feedsInFlightFor = catId;
+        this._feedsAbort?.abort();
+        const controller = new AbortController();
+        this._feedsAbort = controller;
+        try {
+            const resp = await fetch(`/api/sidebar/categories/${catId}/feeds`, {
+                credentials: 'same-origin',
+                signal: controller.signal,
+            });
+            if (!resp.ok) return;
+            const data = await resp.json();
+            // The reader may have moved to another category while this was in
+            // flight; the response describes the category it was asked about.
+            if (data.category_id !== this.activeCategoryId) return;
+            this._feeds[data.category_id] = data.feeds || [];
+            writeCachedFeeds(this._feeds);
+            this._renderFeeds();
+        } catch { /* silent — includes the AbortError from being superseded */ }
+        finally {
+            if (this._feedsAbort === controller) {
+                this._feedsAbort = null;
+                this._feedsInFlightFor = null;
+            }
+        }
+    }
 
     /// Imperative escape hatch for a caller that already holds the element and
     /// wants to await the refetch. The `rdrs:sidebar-stale` event is the normal
@@ -191,6 +285,10 @@ class RdrsSidebar extends HTMLElement {
         this._staleTimer = setTimeout(() => {
             this._staleTimer = null;
             this.fetchData();
+            // Feed badges move for the same reasons category badges do — an
+            // entry opened, a bulk mark-as-read — and they come from a
+            // different endpoint, so they need their own refetch.
+            this.fetchFeeds({ force: true });
         }, STALE_COALESCE_MS);
     }
 
@@ -248,6 +346,39 @@ class RdrsSidebar extends HTMLElement {
         // detached. closest() still walks that node's own ancestor chain.
         if (e.target.closest('#sidebar') || e.target.closest('.sidebar-toggle')) return;
         this.closeDrawer();
+    }
+
+    /// Mount (or refresh) the feed list under the open category, and drop any
+    /// list left behind by the category before it. Written into the existing
+    /// DOM rather than folded into `render()` for the usual reason: a full
+    /// rebuild resets `.sidebar-nav`'s scroll offset, and this runs on every
+    /// category switch.
+    _renderFeeds() {
+        const container = this.querySelector('#sidebar-categories');
+        if (!container) return;
+        const catId = this.activeCategoryId;
+        for (const list of container.querySelectorAll('.sidebar-feeds')) {
+            if (parseInt(list.dataset.categoryId || '0', 10) !== catId) list.remove();
+        }
+        if (!catId) return;
+        const link = container.querySelector(`a[data-category-id="${catId}"]`);
+        const feeds = this._feeds[catId];
+        // No link yet (categories still loading) or no feed list yet: leave the
+        // gap rather than flash an empty group — fetchFeeds() calls back here.
+        if (!link || !feeds) return;
+        let list = container.querySelector(`.sidebar-feeds[data-category-id="${catId}"]`);
+        if (!list) {
+            list = document.createElement('div');
+            list.className = 'sidebar-feeds';
+            list.dataset.categoryId = String(catId);
+            link.insertAdjacentElement('afterend', list);
+        }
+        const activeFeedId = this.activeFeedId;
+        list.innerHTML = feeds.map((feed) => `
+            <a href="/feeds/${feed.id}/entries" class="sidebar-feed${feed.id === activeFeedId ? ' active' : ''}" data-feed-id="${feed.id}" title="${escapeHtml(feed.title)}">
+                <span class="sidebar-item-label">${escapeHtml(feed.title)}</span>
+                ${feed.unread_count > 0 ? `<span class="sidebar-badge">${feed.unread_count}</span>` : ''}
+            </a>`).join('');
     }
 
     /// Surgical badge update — used when only unread counts changed. Avoids a
@@ -400,6 +531,10 @@ class RdrsSidebar extends HTMLElement {
         <a href="#" data-testid="logout-btn" data-rdrs-logout>Sign Out</a>
     </div>
 </aside>`;
+
+        // The rebuild above also discards the open category's feed list, which
+        // lives inside #sidebar-categories and is not part of this template.
+        this._renderFeeds();
 
         // innerHTML above discards the previous subtree along with its
         // listeners, so every render re-binds from scratch.
