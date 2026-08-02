@@ -261,6 +261,10 @@ function initPaneImages() {
 let paneNavSeq = 0;
 let paneNavAbort = null;
 
+// Swap targets that live inside the reading pane, i.e. that only make sense
+// for the entry currently open. See the staleness check in performSwap().
+const PANE_REGION_TARGETS = new Set(['#reading-pane', '#rp-summary-container']);
+
 /// Fetch `url` and apply the response to `defaultTarget` (or to whatever
 /// `<template data-swap-target>` blocks it carries). Resolves `true` when a
 /// swap was actually applied, `false` when the call bailed out (superseded,
@@ -352,6 +356,26 @@ async function performSwap(url, init, defaultTarget, options) {
     // own `<template data-flash>` toast.
     const paneEntryIdBefore = currentPaneEntryId();
     const incomingEntryId = entryIdFromSwapUrl(url);
+
+    // An *action* response belongs to the entry it was fired on, so applying
+    // it once the reader has moved to another entry would paint one entry's
+    // summary (or article) into another's pane. The window is small but real:
+    // an SSE `summary` event for the outgoing entry can pass its
+    // `currentPaneEntryId()` pre-check and still land after the switch, and
+    // Save / Fetch-Full-Content have the same shape. Re-check here, against
+    // the DOM as it is now rather than as it was when the fetch started.
+    //
+    // Pane *navigation* is exempt: landing a different entry is its whole
+    // purpose, and `paneNavSeq` above already discards superseded ones.
+    // Row-scoped targets (`#entry-row-N`) are exempt too — a row action is
+    // valid whatever the pane is showing.
+    if (!isPaneNav && PANE_REGION_TARGETS.has(defaultTarget) &&
+        incomingEntryId && incomingEntryId !== paneEntryIdBefore) {
+        // The action itself did happen server-side, so let its toast through;
+        // only the markup is stale.
+        applyFlashTemplates(parsed);
+        return false;
+    }
 
     let swappedReadingPane = false;
     const templates = parsed.querySelectorAll('template[data-swap-target]');
@@ -1434,14 +1458,21 @@ function installSummaryActions() {
                 credentials: 'same-origin',
             });
             if (!r.ok) throw new Error('delete failed');
-            // Clear the inner `.summary-box` but leave the wrapper in
-            // place — the swap target for a later summarize click is
-            // `#rp-summary-container`, so the wrapper has to stay.
-            const container = document.querySelector('[data-summary-container]');
-            if (container) container.replaceChildren();
-            // The summary box (and its Dismiss control) is gone; flip the
-            // action-bar toggle button back to "Summarize".
-            syncSummarizeToggleLabel();
+            // Only touch the pane if it still shows the entry we dismissed:
+            // the reader can switch entries while the DELETE is in flight,
+            // and clearing the container then would blank the *new* entry's
+            // summary. Same staleness rule performSwap() applies to
+            // `#rp-summary-container` swaps.
+            if (String(currentPaneEntryId()) === String(entryId)) {
+                // Clear the inner `.summary-box` but leave the wrapper in
+                // place — the swap target for a later summarize click is
+                // `#rp-summary-container`, so the wrapper has to stay.
+                const container = document.querySelector('[data-summary-container]');
+                if (container) container.replaceChildren();
+                // The summary box (and its Dismiss control) is gone; flip the
+                // action-bar toggle button back to "Summarize".
+                syncSummarizeToggleLabel();
+            }
             const row = document.querySelector(
                 `[data-entry-row][data-entry-id="${entryId}"]`
             );
