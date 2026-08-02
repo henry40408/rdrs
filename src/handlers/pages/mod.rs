@@ -338,6 +338,13 @@ pub struct EntriesQuery {
     pub entry: Option<i64>,
     /// Scoped-search keyword (category/feed pages only). Empty/whitespace ⇒ no filter.
     pub q: Option<String>,
+    /// When `Some(1)`, return the category-switch pane fragment
+    /// (`EntriesPaneFragmentTemplate`) instead of the full document: the whole
+    /// left column plus an emptied reading pane. Only
+    /// `/categories/{id}/entries` honors it — it is the one navigation `app.js`
+    /// performs in place. Deliberately separate from `fragment`, whose two
+    /// existing modes (Load-More append, search refresh) both keep the header.
+    pub pane: Option<u8>,
 }
 
 /// Best-effort builder for the `?entry={id}` deep-link reading pane.
@@ -409,6 +416,28 @@ pub(crate) struct EntriesRefreshFragmentTemplate {
 }
 
 impl IntoResponse for EntriesRefreshFragmentTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Category-switch fragment (`?pane=1`): multi-target templates that replace
+/// the whole `[data-list-pane]` column and reset `#reading-pane` to its empty
+/// state. Renders `_list_pane.html` — the same partial the full page uses — so
+/// the swapped-in header can't drift from the server-rendered one.
+#[derive(Template)]
+#[template(path = "_entries_pane_fragment.html")]
+pub(crate) struct EntriesPaneFragmentTemplate {
+    pub title: String,
+    pub entries: Vec<EntryRowView>,
+    pub next_cursor: Option<String>,
+    pub entries_layout: EntriesLayoutContext,
+}
+
+impl IntoResponse for EntriesPaneFragmentTemplate {
     fn into_response(self) -> Response {
         match self.render() {
             Ok(html) => Html(html).into_response(),
@@ -1915,6 +1944,22 @@ pub async fn category_entries_page(
         return Ok((
             flash,
             EntriesRefreshFragmentTemplate {
+                entries,
+                next_cursor,
+                entries_layout,
+            },
+        )
+            .into_response());
+    }
+
+    // Category-switch fragment (pane=1): the whole left column + an emptied
+    // reading pane. No `?entry=` handling here on purpose — switching category
+    // closes the open entry.
+    if query.pane == Some(1) {
+        return Ok((
+            flash,
+            EntriesPaneFragmentTemplate {
+                title: category_name,
                 entries,
                 next_cursor,
                 entries_layout,

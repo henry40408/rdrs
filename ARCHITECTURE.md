@@ -458,6 +458,28 @@ a public image and carry no per-user meaning.
   - Required for native RSS clients (e.g., NetNewsWire) that render HTML directly
   - Configured via `RDRS_PUBLIC_BASE_URL` environment variable
 
+### Partial swaps (`data-swap`)
+
+`installSwap()` in `static/js/app.js` intercepts clicks / submits on elements
+tagged `data-swap="<selector>"`, fetches the URL, and replaces either the named
+target or every `<template data-swap-target="…">` block the response carries.
+On a non-2xx response it falls back to a real navigation, so the SSR page stays
+the floor. The entries-family routes answer with four shapes:
+
+- **reading pane** — `GET /entries/{id}/fragment` replaces `#reading-pane`
+  (plus the row, via multi-target templates) when an entry is opened.
+- **Load More** — `?fragment=1&after=<cursor>` appends rows before `#load-more`.
+- **search refresh** — `?fragment=1` (no cursor) re-renders `[data-entries-list]`
+  and the "Mark N matching" slot, leaving the focused search box alone.
+- **category switch** — `?pane=1` (`/categories/{id}/entries` only) replaces the
+  whole `[data-list-pane]` column and resets `#reading-pane` to its empty state.
+  `swapListPane()` drives it for sidebar category links, the `[` / `]` / `{` /
+  `}` shortcuts and `g c`, pushes the clean URL with `pushState`, and patches the
+  sidebar's `.active` classes *without* re-rendering it — `<rdrs-sidebar>`'s
+  `render()` rebuilds `innerHTML`, which would reset `.sidebar-nav`'s own scroll
+  offset, the very jump this navigation avoids. `popstate` reverses it: a
+  category path swaps back in place, anything else reloads.
+
 ### SSE Live Updates
 
 A single `GET /events` endpoint (`handlers/events.rs`) streams per-user Server-Sent Events to each open browser tab. Mutation paths (mark-read, mark-unread, mark-all, summarize, etc.) call `EventBus::emit_sidebar` or `emit_summary` on the shared in-memory `EventBus` (`services/events.rs`), which is a thin wrapper over a `tokio::sync::broadcast` channel. The browser's `EventSource` (wired up in `installSse()` in `static/js/app.js`) handles two event types:

@@ -6,62 +6,11 @@
         <main class="main-content">
             <rdrs-flash></rdrs-flash>
             <div class="split-view">
-                <div class="list-pane">
-                    <div class="list-pane-header">
-                        {% if !entries_layout.breadcrumb_items.is_empty() %}
-                        <nav class="breadcrumb" data-testid="breadcrumb">
-                            {% for item in entries_layout.breadcrumb_items %}{% if !loop.first %}<span class="breadcrumb-sep"> / </span>{% endif %}{% if let Some(href) = item.href.as_ref() %}<a href="{{ href }}">{{ item.label }}</a>{% else %}<span>{{ item.label }}</span>{% endif %}{% endfor %}
-                        </nav>
-                        {% endif %}
-                        <h1>{% if let Some(feed_id) = entries_layout.header_feed_icon_id %}<img class="feed-icon" src="/api/feeds/{{ feed_id }}/icon" alt="" width="20" height="20" loading="lazy">{% endif %}{{ title }}</h1>
-                        {% if entries_layout.show_tab_bar %}
-                        <div class="tab-bar">
-                            <a href="/entries" data-testid="tab-all" data-tab="all"{% if entries_layout.active == "all" %} class="active"{% endif %}>All</a>
-                            <a href="/entries/read" data-testid="tab-read" data-tab="read"{% if entries_layout.active == "read" %} class="active"{% endif %}>Read</a>
-                            <a href="/entries/starred" data-testid="tab-starred" data-tab="starred"{% if entries_layout.active == "starred" %} class="active"{% endif %}>Starred</a>
-                            <a href="/entries/summarized" data-testid="tab-summarized" data-tab="summarized"{% if entries_layout.active == "summarized" %} class="active"{% endif %}>Summarized</a>
-                        </div>
-                        {% endif %}
-                        {% if entries_layout.filter_tabs.is_some() || entries_layout.mark_as_read_scope.is_some() %}
-                        <div class="filter-bar">
-                            {% if let Some(tabs) = entries_layout.filter_tabs.as_ref() %}
-                            <div class="form-group form-group-inline" data-status-filter>
-                                <select id="status-filter" data-testid="status-filter-select" data-status-select class="select-auto">
-                                    {% for tab in tabs %}<option value="{{ tab.href }}"{% if tab.active %} selected{% endif %}>{{ tab.label }}</option>{% endfor %}
-                                </select>
-                            </div>
-                            {% endif %}
-                            {% if let Some(scope) = entries_layout.mark_as_read_scope.as_ref() %}
-                            <div class="form-group form-group-inline">
-                                <select id="mark-read-age" data-testid="mark-read-select" class="select-auto" data-mark-read-scope="{{ scope }}">
-                                    <option value="">Mark as Read...</option>
-                                    <option value="1">Older than 1 day</option>
-                                    <option value="7">Older than 1 week</option>
-                                    <option value="30">Older than 1 month</option>
-                                    <option value="365">Older than 1 year</option>
-                                    <option value="all">All entries</option>
-                                </select>
-                            </div>
-                            {% endif %}
-                            {% if let Some(action) = entries_layout.search_action.as_ref() %}
-                            <form class="form-group form-group-inline entries-search" method="get" action="{{ action }}" data-swap="[data-entries-list]" data-entries-search>
-                                {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
-                                <input type="hidden" name="fragment" value="1">
-                                <input type="search" name="q" class="search-input" placeholder="Search in this view…" autocomplete="off" data-testid="scoped-search-input"{% if let Some(qq) = entries_layout.search.as_ref() %} value="{{ qq }}"{% endif %}>
-                            </form>
-                            <span class="mark-matching-slot" data-mark-matching-slot>{% include "_mark_matching_button.html" %}</span>
-                            {% endif %}
-                        </div>
-                        {% endif %}
-                    </div>
-                    <div class="list-pane-body" data-entries-list data-snapshot-at="{{ entries_layout.snapshot_at }}">
-                        {% include "_entries_list_body.html" %}
-                    </div>
-                </div>
+                {% include "_list_pane.html" %}
                 {% if let Some(pane) = reading_pane.as_ref() %}
                     {% include "_reading_pane.html" %}
                 {% else %}
-                    <div id="reading-pane" class="reading-pane reading-pane-empty"><p class="empty-state-compact">Select an entry from the list to start reading.</p></div>
+                    {% include "_reading_pane_empty.html" %}
                 {% endif %}
             </div>
         </main>
