@@ -385,6 +385,14 @@ Then("the sidebar feed {string} shows its icon", async ({ page }, title) => {
   await expect(icon).toHaveAttribute("src", /\/api\/feeds\/\d+\/icon/);
 });
 
+When("I click the breadcrumb link {string}", async ({ page }, label) => {
+  await page.getByTestId("breadcrumb").getByRole("link", { name: label, exact: true }).click();
+});
+
+Then("the browser is on {string}", async ({ page }, path) => {
+  await expect(page).toHaveURL(new RegExp(`${path.replace(/\//g, "\\/")}$`));
+});
+
 // The feed name inside an entry row points at the same /feeds/{id}/entries the
 // sidebar does, so it must take the same in-place swap rather than reloading.
 When("I click the feed name in the entry titled {string}", async ({ page }, title) => {

@@ -628,45 +628,44 @@ async function swapListPane(href, options = {}) {
     }
 }
 
-function installSidebarNav() {
-    document.addEventListener('click', (event) => {
-        if (event.button !== 0 || event.metaKey || event.ctrlKey ||
-            event.shiftKey || event.altKey) return;
-        const link = event.target.closest(
-            '#sidebar-categories a[data-category-id], #sidebar-categories a[data-feed-id]'
-        );
-        if (!link) return;
-        const href = link.getAttribute('href');
-        // No list pane to swap into (e.g. /statistics, /feeds): plain navigation.
-        if (!href || !document.querySelector('[data-list-pane]')) return;
-        event.preventDefault();
-        swapListPane(href);
-    });
-}
-installSidebarNav();
+/// Every in-page anchor that lands on a category or feed list. One handler
+/// rather than one per surface: they all want the same swap, and the surfaces
+/// kept being discovered one bug report at a time (the entry row's feed name,
+/// then the breadcrumb's category).
+///
+///   * sidebar rows — the case the swap was built for;
+///   * the feed name in an entry row, which `g f` already swapped to;
+///   * the breadcrumb, whose middle crumb on a feed page is that feed's
+///     category. Its outer crumbs (`/categories`, `/feeds`) are ordinary pages
+///     and fail the swappable-href test below, so they navigate as before.
+const LIST_NAV_LINKS = [
+    '#sidebar-categories a[data-category-id]',
+    '#sidebar-categories a[data-feed-id]',
+    '[data-entry-row] a.entry-feed',
+    '.breadcrumb a',
+].join(', ');
 
-/// The feed name in an entry row links to `/feeds/{id}/entries` — the same
-/// destination the sidebar and `g f` reach by swapping the list pane in place.
-/// Left as a plain anchor it was the one route back to a full document load,
-/// which also threw away the reading pane and the sidebar's loaded state.
-function installEntryFeedNav() {
+function installListNav() {
     document.addEventListener('click', (event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey ||
             event.shiftKey || event.altKey) return;
-        const link = event.target.closest('[data-entry-row] a.entry-feed');
+        const link = event.target.closest(LIST_NAV_LINKS);
         if (!link) return;
         const href = link.getAttribute('href');
-        // Nothing to swap into: fall through to plain navigation, same guard
-        // the sidebar handler uses.
-        if (!href || !document.querySelector('[data-list-pane]')) return;
+        if (!href) return;
+        // Not a list URL (`/categories`, `/feeds`, …), or no list pane to swap
+        // into (e.g. this row rendered on a page without one): plain navigation.
+        if (!categoryIdFromHref(href) && !feedIdFromHref(href)) return;
+        if (!document.querySelector('[data-list-pane]')) return;
         event.preventDefault();
-        // Same hint `g f` passes: the row knows its own category, which is what
-        // keeps the sidebar expanded on the group the feed belongs to.
+        // Same hint `g f` passes: an entry row knows its own category, which is
+        // what keeps the sidebar expanded on the group the feed belongs to.
+        // Absent (sidebar, breadcrumb), swapListPane resolves it itself.
         const row = link.closest('[data-entry-row]');
         swapListPane(href, { categoryId: row?.dataset.categoryId });
     });
 }
-installEntryFeedNav();
+installListNav();
 
 /// The sidebar rows `[` / `]` / `{` / `}` walk, in the order they appear on
 /// screen: every category, with the open category's feeds spliced in right
