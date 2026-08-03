@@ -134,6 +134,32 @@ Feature: Category navigation
     And the sidebar highlights feed "Alpha Feed"
     And the sidebar highlights category "Cat A"
 
+  Scenario: Clicking the feed name in an entry row swaps the list in place
+    When I open the entries page for category "Cat A"
+    And the sidebar has loaded its categories
+    And I mark the document for reload detection
+    And I click the feed name in the entry titled "Test Entry 1"
+    Then I am on the entries page for feed "Alpha Feed"
+    And the document did not reload
+    And the list header shows "Alpha Feed"
+    And the sidebar highlights feed "Alpha Feed"
+    And the sidebar highlights category "Cat A"
+
+  Scenario: Clicking the category in the breadcrumb swaps the list in place
+    When I open the entries page for feed "Alpha Feed"
+    And the sidebar has loaded its categories
+    And I mark the document for reload detection
+    And I click the breadcrumb link "Cat A"
+    Then I am on the entries page for category "Cat A"
+    And the document did not reload
+    And the list header shows "Cat A"
+    And the sidebar highlights category "Cat A"
+
+  Scenario: The breadcrumb's non-list crumbs still navigate normally
+    When I open the entries page for feed "Alpha Feed"
+    And I click the breadcrumb link "Feeds"
+    Then the browser is on "/feeds"
+
   Scenario: A feed page opens with its category expanded and the feed highlighted
     When I open the entries page for feed "Bravo Feed"
     And the sidebar has loaded its categories
