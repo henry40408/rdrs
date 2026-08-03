@@ -64,7 +64,8 @@
                     <div class="feed-freshness-help-body">
                         <ul>
                             <li><strong>Fetched</strong> — when rdrs last <em>tried</em> to read this feed, whether or not it worked. Every feed is retried about once an hour.</li>
-                            <li><strong>Updated</strong> — the newest of three signals: the feed&rsquo;s own <code>&lt;updated&gt;</code> / <code>&lt;lastBuildDate&gt;</code> / <code>&lt;pubDate&gt;</code>, the date of its newest entry, and the <code>Last-Modified</code> header its server sends.</li>
+                            <li><strong>Updated</strong> — the <em>newest</em> of three signals, whichever of them this feed provides. They are not ranked: a missing signal is skipped, not treated as old.</li>
+                            <li>Those signals are the feed&rsquo;s own date (<code>&lt;updated&gt;</code>, falling back to <code>&lt;pubDate&gt;</code> / <code>&lt;lastBuildDate&gt;</code>), its newest entry&rsquo;s date (<code>&lt;published&gt;</code>, falling back to that entry&rsquo;s <code>&lt;updated&gt;</code>), and the <code>Last-Modified</code> header its server sends.</li>
                             <li>rdrs re-asks with <code>If-None-Match</code> / <code>If-Modified-Since</code>. A <code>304 Not Modified</code> moves <strong>Fetched</strong> forward and leaves <strong>Updated</strong> untouched.</li>
                             <li>A feed that publishes no dates at all shows <em>No date info</em>; its age is then judged by <strong>Fetched</strong> instead.</li>
                             <li>Age: up to {{ fresh_max_days }} days is normal, <span class="feed-freshness-warning">{{ fresh_max_days + 1 }}&ndash;{{ warning_max_days }} days</span> is a warning, <span class="feed-freshness-stale">over {{ warning_max_days }} days</span> — or no date at all — is stale. The <strong>Stale</strong> filter matches only that last group.</li>

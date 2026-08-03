@@ -2775,6 +2775,14 @@ async fn test_feeds_page_explains_freshness_rules() {
     assert!(body.contains("Last-Modified"));
     assert!(body.contains("304 Not Modified"));
     assert!(body.contains("No date info"));
+    // `effective_feed_updated_at` maxes over whichever signals exist — it does
+    // not walk them in priority order — so the help must not read as a
+    // fallback chain. A feed with only a Last-Modified header is judged by it,
+    // rather than being called stale for lacking an in-feed date.
+    assert!(
+        body.contains("They are not ranked: a missing signal is skipped, not treated as old."),
+        "help must state that the three Updated signals are maxed, not ranked"
+    );
     // The live thresholds, not hand-copied ones.
     assert!(
         body.contains(&format!(

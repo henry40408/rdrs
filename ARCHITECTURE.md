@@ -417,7 +417,15 @@ The sidebar shows an **SSO** pill when the current request is served through for
 attempt, success or failure. `feed_updated_at` is
 `effective_feed_updated_at(feed_timestamp, latest_entry_date, http_last_modified)`
 — the max of the feed's own `<updated>`/`<lastBuildDate>`/`<pubDate>`, its
-newest entry's date, and the response's `Last-Modified` — and is written through
+newest entry's date, and the response's `Last-Modified`. The three are *maxed,
+not ranked*: `.flatten().max()` drops the absent ones, so a feed carrying only a
+`Last-Modified` is judged by it instead of being called stale for having no
+in-feed date. The ordering that does exist is *inside* each signal, and the two
+in-feed ones prefer opposite fields: the feed timestamp is
+`updated.or(published)` while an entry's is `published.or(updated)`. An entry
+with neither falls back to the feed timestamp, so on such a feed the
+"newest entry" signal is a copy of the feed's own date and there are really only
+two independent sources. `feed_updated_at` is written through
 `COALESCE($5, feed_updated_at)`, so a `304` (or any failure) advances only
 `fetched_at` and never clears a date already known. `compute_freshness`
 (`handlers/pages/time_format.rs`) grades the result against `FRESH_MAX_DAYS` /
