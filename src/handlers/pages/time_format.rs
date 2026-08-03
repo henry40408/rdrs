@@ -54,6 +54,14 @@ pub fn format_relative_time(dt: Option<chrono::DateTime<chrono::Utc>>) -> (Strin
     }
 }
 
+/// Age (in days) up to which a feed still counts as fresh. Named because the
+/// `/feeds` help disclosure quotes these thresholds back to the user — the
+/// template reads them from here so the prose can never drift from the rule.
+pub const FRESH_MAX_DAYS: i64 = 30;
+
+/// Age (in days) up to which a feed is merely a warning rather than stale.
+pub const WARNING_MAX_DAYS: i64 = 90;
+
 /// Compute freshness CSS class and key from `feed_updated_at` and `fetched_at`.
 pub fn compute_freshness(
     feed_updated_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -63,19 +71,19 @@ pub fn compute_freshness(
     match feed_updated_at {
         Some(updated) => {
             let days = (now - updated).num_days();
-            if days <= 30 {
+            if days <= FRESH_MAX_DAYS {
                 (String::new(), "fresh".to_string())
-            } else if days <= 90 {
+            } else if days <= WARNING_MAX_DAYS {
                 ("feed-freshness-warning".to_string(), "warning".to_string())
             } else {
                 ("feed-freshness-stale".to_string(), "stale".to_string())
             }
         }
         None => match fetched_at {
-            Some(fetched) if (now - fetched).num_days() <= 30 => {
+            Some(fetched) if (now - fetched).num_days() <= FRESH_MAX_DAYS => {
                 ("muted".to_string(), "fresh".to_string())
             }
-            Some(fetched) if (now - fetched).num_days() <= 90 => {
+            Some(fetched) if (now - fetched).num_days() <= WARNING_MAX_DAYS => {
                 ("feed-freshness-warning".to_string(), "warning".to_string())
             }
             _ => ("feed-freshness-stale".to_string(), "stale".to_string()),

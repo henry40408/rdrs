@@ -199,10 +199,11 @@ pub async fn delete_token(db: &Db, id: i64, user_id: i64) -> AppResult<()> {
     Ok(())
 }
 
-pub async fn delete_user_tokens(db: &Db, user_id: i64) -> AppResult<()> {
-    db_execute!(db, "DELETE FROM api_token WHERE user_id = $1", user_id)
-        .map_err(AppError::Database)?;
-    Ok(())
+/// Delete every token belonging to `user_id`. Returns how many were revoked, so
+/// "Revoke all" can tell the user how many clients it just disconnected instead
+/// of claiming success over an empty list.
+pub async fn delete_user_tokens(db: &Db, user_id: i64) -> AppResult<u64> {
+    db_execute!(db, "DELETE FROM api_token WHERE user_id = $1", user_id).map_err(AppError::Database)
 }
 
 /// Delete every expired token row. Called periodically by the cleanup worker

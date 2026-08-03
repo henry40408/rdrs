@@ -75,6 +75,34 @@ pub async fn seed_account(
     user
 }
 
+/// The flash messages a response set, as one string ready for substring
+/// assertions.
+///
+/// The flash cookie holds a JSON array, which the cookie layer may or may not
+/// percent-encode depending on the characters in the message — so the value is
+/// decoded here rather than at each call site. Panics if the response set no
+/// flash cookie, which for a `FlashRedirect` handler is itself the bug.
+#[allow(dead_code)] // only the suites that assert on flash text need it
+pub fn flash_text(response: &TestResponse) -> String {
+    let raw = response.cookie("flash").value().to_string();
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(b) = u8::from_str_radix(&raw[i + 1..i + 3], 16)
+        {
+            out.push(b);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Default in-memory `Config` shared across the integration test suites.
 #[allow(dead_code)] // a few suites build their own Config inline
 pub fn default_test_config() -> Config {

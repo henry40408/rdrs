@@ -379,44 +379,12 @@ pub async fn import(
     auth: GReaderUser,
     State(state): State<AppState>,
     body: String,
-) -> AppResult<String> {
+) -> AppResult<([(&'static str, String); 1], String)> {
     let outlines = opml::parse_opml(&body)?;
-
-    let user_id = auth.user.id;
-    for outline in outlines {
-        let cat = match category::find_by_name_and_user(&state.db, &outline.category_name, user_id)
-            .await?
-        {
-            Some(cat) => cat,
-            None => category::create_category(&state.db, user_id, &outline.category_name).await?,
-        };
-
-        for opml_feed in outline.feeds {
-            if feed::find_by_url_and_category(&state.db, &opml_feed.xml_url, cat.id)
-                .await?
-                .is_some()
-            {
-                continue;
-            }
-
-            let _ = feed::create_feed(
-                &state.db,
-                &feed::CreateFeedParams {
-                    category_id: cat.id,
-                    url: &opml_feed.xml_url,
-                    title: opml_feed.title.as_deref(),
-                    description: None,
-                    site_url: opml_feed.html_url.as_deref(),
-                    custom_user_agent: None,
-                    http2_disabled: None,
-                    custom_referrer: None,
-                },
-            )
-            .await;
-        }
-    }
-
-    Ok("OK".to_string())
+    let summary = opml::import_outlines(&state.db, auth.user.id, outlines).await?;
+    Ok(super::ok_with_affected(
+        i64::try_from(summary.feeds_added).unwrap_or(i64::MAX),
+    ))
 }
 
 // --- subscribed ---

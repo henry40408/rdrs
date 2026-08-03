@@ -1,11 +1,14 @@
+use std::fmt::Write as _;
+
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::reader::Reader;
 use quick_xml::writer::Writer;
 use std::io::Cursor;
 
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
-use crate::models::{category::Category, feed::Feed};
+use crate::models::{category, category::Category, feed, feed::Feed};
 use crate::services::html_entities::decode_html_entities;
 
 #[derive(Debug, Clone)]
@@ -316,6 +319,155 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
     }
 
     Ok(outlines)
+}
+
+/// What an OPML import actually did. Callers report these numbers back to the
+/// user — "OPML imported." alone cannot distinguish 300 new subscriptions from
+/// a file whose every feed was already subscribed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ImportSummary {
+    pub categories_created: usize,
+    pub feeds_added: usize,
+    /// Already subscribed in the same category, so left alone.
+    pub feeds_skipped: usize,
+    /// Rejected by the database (duplicate URL race, oversized field, …).
+    pub feeds_failed: usize,
+}
+
+impl ImportSummary {
+    /// One-line summary for a flash message. Clauses that would read as noise
+    /// (`0 already subscribed`) are omitted rather than always printed.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let mut out = format!(
+            "OPML imported: {} feed{} added",
+            self.feeds_added,
+            if self.feeds_added == 1 { "" } else { "s" }
+        );
+        if self.feeds_skipped > 0 {
+            let _ = write!(out, ", {} already subscribed", self.feeds_skipped);
+        }
+        if self.feeds_failed > 0 {
+            let _ = write!(out, ", {} failed", self.feeds_failed);
+        }
+        out.push('.');
+        out
+    }
+}
+
+/// Subscribe `user_id` to every feed in `outlines`, creating any category that
+/// does not exist yet, and report how many rows were touched.
+///
+/// A feed already subscribed in the same category is skipped, and one the
+/// database rejects is counted rather than aborting the run: a single malformed
+/// entry in a 300-feed export must not cost the user the other 299. Only a
+/// category lookup/insert failure is fatal, since every following feed in that
+/// outline would have nowhere to go.
+pub async fn import_outlines(
+    db: &Db,
+    user_id: i64,
+    outlines: Vec<OpmlOutline>,
+) -> AppResult<ImportSummary> {
+    let mut summary = ImportSummary::default();
+
+    for outline in outlines {
+        let existing = category::find_by_name_and_user(db, &outline.category_name, user_id).await?;
+        let cat = if let Some(cat) = existing {
+            cat
+        } else {
+            summary.categories_created += 1;
+            category::create_category(db, user_id, &outline.category_name).await?
+        };
+
+        for opml_feed in outline.feeds {
+            if feed::find_by_url_and_category(db, &opml_feed.xml_url, cat.id)
+                .await?
+                .is_some()
+            {
+                summary.feeds_skipped += 1;
+                continue;
+            }
+
+            let created = feed::create_feed(
+                db,
+                &feed::CreateFeedParams {
+                    category_id: cat.id,
+                    url: &opml_feed.xml_url,
+                    title: opml_feed.title.as_deref(),
+                    description: None,
+                    site_url: opml_feed.html_url.as_deref(),
+                    custom_user_agent: None,
+                    http2_disabled: None,
+                    custom_referrer: None,
+                },
+            )
+            .await;
+
+            match created {
+                Ok(_) => summary.feeds_added += 1,
+                Err(e) => {
+                    summary.feeds_failed += 1;
+                    tracing::warn!(
+                        event = "opml.feed_import_failed",
+                        url = %opml_feed.xml_url,
+                        error = %e,
+                        "skipping OPML feed the database rejected"
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(summary)
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::ImportSummary;
+
+    #[test]
+    fn describe_omits_zero_clauses() {
+        let s = ImportSummary {
+            feeds_added: 12,
+            ..ImportSummary::default()
+        };
+        assert_eq!(s.describe(), "OPML imported: 12 feeds added.");
+    }
+
+    #[test]
+    fn describe_uses_singular_for_one_feed() {
+        let s = ImportSummary {
+            feeds_added: 1,
+            ..ImportSummary::default()
+        };
+        assert_eq!(s.describe(), "OPML imported: 1 feed added.");
+    }
+
+    #[test]
+    fn describe_reports_a_no_op_import_honestly() {
+        let s = ImportSummary {
+            feeds_skipped: 40,
+            ..ImportSummary::default()
+        };
+        assert_eq!(
+            s.describe(),
+            "OPML imported: 0 feeds added, 40 already subscribed."
+        );
+    }
+
+    #[test]
+    fn describe_surfaces_failures() {
+        let s = ImportSummary {
+            categories_created: 2,
+            feeds_added: 5,
+            feeds_skipped: 1,
+            feeds_failed: 3,
+        };
+        assert_eq!(
+            s.describe(),
+            "OPML imported: 5 feeds added, 1 already subscribed, 3 failed."
+        );
+    }
 }
 
 #[cfg(test)]

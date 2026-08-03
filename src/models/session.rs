@@ -329,7 +329,14 @@ pub async fn list_user_sessions(db: &Db, user_id: i64) -> AppResult<Vec<Session>
 /// `keep_token` may be a grace token (see [`delete_session`]), so the exemption
 /// checks `previous_token` too — otherwise the one session the caller meant to
 /// keep is the one this deletes.
-pub async fn delete_user_sessions_except(db: &Db, user_id: i64, keep_token: &str) -> AppResult<()> {
+///
+/// Returns the number of sessions deleted, so the caller can report how many
+/// devices it actually signed out and audit the revocation with its true size.
+pub async fn delete_user_sessions_except(
+    db: &Db,
+    user_id: i64,
+    keep_token: &str,
+) -> AppResult<u64> {
     db_execute!(
         db,
         "DELETE FROM session \
@@ -339,8 +346,7 @@ pub async fn delete_user_sessions_except(db: &Db, user_id: i64, keep_token: &str
         user_id,
         keep_token
     )
-    .map_err(AppError::Database)?;
-    Ok(())
+    .map_err(AppError::Database)
 }
 
 /// Delete one session by row id, scoped to `user_id` so a guessed or tampered

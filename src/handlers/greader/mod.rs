@@ -12,6 +12,20 @@ use axum::{
 
 use crate::AppState;
 
+/// Response header carrying how many rows a bulk write actually changed.
+///
+/// The `GReader` protocol answers these endpoints with a bare `OK` body that
+/// third-party clients parse literally, so the count rides beside it in a
+/// vendor-prefixed header instead. rdrs' own JS reads it to report "Marked N
+/// entries as read" from the server's number rather than guessing from the DOM;
+/// clients that ignore the header see the unchanged `OK` they expect.
+pub const AFFECTED_HEADER: &str = "x-rdrs-affected";
+
+/// Standard `GReader` `OK` body plus the affected-row count.
+pub fn ok_with_affected(count: i64) -> ([(&'static str, String); 1], String) {
+    ([(AFFECTED_HEADER, count.to_string())], "OK".to_string())
+}
+
 /// Build all Google Reader API routes.
 pub fn greader_routes() -> Router<AppState> {
     Router::new()

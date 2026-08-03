@@ -23,7 +23,10 @@ mod time_format;
 
 use script_json::{flash_bootstrap_json, serialize_sidebar_for_script};
 use search_text::{build_snippet, highlight_html};
-pub use time_format::{compute_freshness, format_relative_time, format_relative_time_compact};
+pub use time_format::{
+    FRESH_MAX_DAYS, WARNING_MAX_DAYS, compute_freshness, format_relative_time,
+    format_relative_time_compact,
+};
 
 // ============================================================================
 // Entries-family shared view structs (PR-10)
@@ -1125,10 +1128,9 @@ pub async fn feeds_page(
                 let (fetched_rel, fetched_dt) = format_relative_time(f.fetched_at);
                 let (updated_rel, updated_dt) = if f.feed_updated_at.is_some() {
                     format_relative_time(f.feed_updated_at)
-                } else if f
-                    .fetched_at
-                    .is_some_and(|ft| (chrono::Utc::now() - ft).num_days() <= 30)
-                {
+                } else if f.fetched_at.is_some_and(|ft| {
+                    (chrono::Utc::now() - ft).num_days() <= time_format::FRESH_MAX_DAYS
+                }) {
                     ("No date info".to_string(), String::new())
                 } else {
                     ("Never".to_string(), String::new())
@@ -1231,6 +1233,8 @@ pub async fn feeds_page(
             active_sort,
             active_category_id: active_category,
             filter_links,
+            fresh_max_days: time_format::FRESH_MAX_DAYS,
+            warning_max_days: time_format::WARNING_MAX_DAYS,
         },
     )
 }
@@ -2961,6 +2965,10 @@ pub struct FeedsTemplate {
     pub active_sort: String,
     pub active_category_id: Option<i64>,
     pub filter_links: Vec<FeedFilterLink>,
+    /// Freshness thresholds, surfaced so the help disclosure states the same
+    /// numbers `compute_freshness` actually applies.
+    pub fresh_max_days: i64,
+    pub warning_max_days: i64,
 }
 
 impl IntoResponse for FeedsTemplate {

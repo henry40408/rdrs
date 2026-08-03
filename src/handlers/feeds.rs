@@ -411,52 +411,15 @@ pub async fn import_opml_form(
         }
     };
     let user_id = auth_user.user.id;
-    let result: AppResult<()> = async {
-        for outline in outlines {
-            let cat =
-                match category::find_by_name_and_user(&state.db, &outline.category_name, user_id)
-                    .await?
-                {
-                    Some(cat) => cat,
-                    None => {
-                        category::create_category(&state.db, user_id, &outline.category_name)
-                            .await?
-                    }
-                };
-            for opml_feed in outline.feeds {
-                if feed::find_by_url_and_category(&state.db, &opml_feed.xml_url, cat.id)
-                    .await?
-                    .is_some()
-                {
-                    continue;
-                }
-                let _ = feed::create_feed(
-                    &state.db,
-                    &feed::CreateFeedParams {
-                        category_id: cat.id,
-                        url: &opml_feed.xml_url,
-                        title: opml_feed.title.as_deref(),
-                        description: None,
-                        site_url: opml_feed.html_url.as_deref(),
-                        custom_user_agent: None,
-                        http2_disabled: None,
-                        custom_referrer: None,
-                    },
-                )
-                .await;
-            }
-        }
-        Ok(())
-    }
-    .await;
+    let result = opml::import_outlines(&state.db, user_id, outlines).await;
     // The import dropped its transient OPML parse tree and per-feed buffers;
     // return those freed pages to the OS now instead of waiting for the
     // allocator's lazy purge.
     crate::reclaim_memory();
     match result {
-        Ok(()) => {
+        Ok(summary) => {
             state.sidebar_cache.bust(user_id);
-            FlashRedirect::success("/feeds", "OPML imported.").into_response()
+            FlashRedirect::success("/feeds", summary.describe()).into_response()
         }
         _ => FlashRedirect::error("/feeds/import", "Failed to import OPML").into_response(),
     }
