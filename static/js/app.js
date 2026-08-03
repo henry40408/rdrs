@@ -1565,6 +1565,17 @@ const AGE_LABELS = {
 };
 const READING_LIST_STREAM = 'user/-/state/com.google/reading-list';
 
+// Bulk writes keep the GReader-standard `OK` body and carry the number of rows
+// they actually changed in `X-RDRS-Affected`. Returns null when the header is
+// missing or unparseable so callers can fall back to their own estimate rather
+// than reporting "Marked null entries as read."
+function affectedCount(resp) {
+    const raw = resp.headers.get('X-RDRS-Affected');
+    if (raw === null) return null;
+    const n = Number.parseInt(raw, 10);
+    return Number.isNaN(n) ? null : n;
+}
+
 // Bound per element (not delegated) and re-run after every swap: the category
 // swap replaces the whole list-pane header, so the listener-bearing <select>
 // is discarded along with it. The guard keeps swaps that leave the header in
@@ -1601,7 +1612,14 @@ function installMarkAsReadDropdown() {
             });
             if (!resp.ok) throw new Error('Failed to mark as read');
             if (window.flash) {
-                window.flash.set('success', `Marked ${ageLabel} entries as read.`);
+                const n = affectedCount(resp);
+                const scopeSuffix = age === 'all' ? '' : ` ${ageLabel}`;
+                window.flash.set(
+                    'success',
+                    n === null
+                        ? `Marked${scopeSuffix || ' all'} entries as read.`
+                        : `Marked ${n} ${n === 1 ? 'entry' : 'entries'}${scopeSuffix} as read.`,
+                );
             }
             window.location.reload();
             return;
@@ -1772,7 +1790,14 @@ async function markLoadedEntriesAsRead(btn) {
         });
         if (!resp.ok) throw new Error('Failed to mark entries as read');
         if (window.flash) {
-            window.flash.set('success', `Marked ${ids.length} loaded entries as read.`);
+            // The server's count excludes rows that were already read, so it is
+            // usually smaller than the number of rows we posted. Report its
+            // number, not ours.
+            const n = affectedCount(resp) ?? ids.length;
+            window.flash.set(
+                'success',
+                `Marked ${n} ${n === 1 ? 'entry' : 'entries'} as read.`,
+            );
         }
         window.location.reload();
         return;

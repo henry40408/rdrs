@@ -65,7 +65,7 @@ Feature: Organizing feeds and categories
   Scenario: Importing an OPML file adds its feeds to the feeds table
     Given I am on the import OPML page
     When I import the OPML fixture "sample.opml"
-    Then I see a success flash "OPML imported."
+    Then I see a success flash "OPML imported: 1 feed added."
     And the feeds table contains "Imported Feed"
 
   Scenario: Exporting OPML includes my subscribed feeds

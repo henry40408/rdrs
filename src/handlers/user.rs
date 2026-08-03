@@ -563,9 +563,22 @@ pub async fn revoke_other_sessions_form(
     match session::delete_user_sessions_except(&state.db, user_id, &auth_user.session.session_token)
         .await
     {
-        Ok(()) => {
-            audit::sessions_destroyed_bulk(user_id, "revoke_others", None);
-            FlashRedirect::success("/user-settings", "Signed out all other sessions.")
+        Ok(0) => {
+            audit::sessions_destroyed_bulk(user_id, "revoke_others", Some(0));
+            FlashRedirect::info(
+                "/user-settings",
+                "No other sessions were signed in — nothing to sign out.",
+            )
+        }
+        Ok(count) => {
+            audit::sessions_destroyed_bulk(user_id, "revoke_others", Some(count));
+            FlashRedirect::success(
+                "/user-settings",
+                format!(
+                    "Signed out {count} other session{}.",
+                    if count == 1 { "" } else { "s" }
+                ),
+            )
         }
         Err(_) => FlashRedirect::error("/user-settings", "Failed to sign out other sessions."),
     }
@@ -649,9 +662,19 @@ pub async fn revoke_all_api_tokens_form(
     }
 
     match api_token::delete_user_tokens(&state.db, auth_user.user.id).await {
-        Ok(()) => {
-            audit::api_tokens_destroyed(auth_user.user.id, "revoke_all", None);
-            FlashRedirect::success("/user-settings", "All API tokens revoked.")
+        Ok(0) => {
+            audit::api_tokens_destroyed(auth_user.user.id, "revoke_all", Some(0));
+            FlashRedirect::info("/user-settings", "There were no API tokens to revoke.")
+        }
+        Ok(count) => {
+            audit::api_tokens_destroyed(auth_user.user.id, "revoke_all", Some(count));
+            FlashRedirect::success(
+                "/user-settings",
+                format!(
+                    "Revoked {count} API token{}.",
+                    if count == 1 { "" } else { "s" }
+                ),
+            )
         }
         Err(_) => FlashRedirect::error("/user-settings", "Failed to revoke API tokens."),
     }

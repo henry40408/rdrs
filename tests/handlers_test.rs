@@ -9,7 +9,7 @@
 //! - handlers/pages.rs (page rendering)
 
 mod common;
-use common::default_test_config;
+use common::{default_test_config, flash_text};
 
 use std::sync::Arc;
 
@@ -3387,6 +3387,102 @@ async fn test_revoke_others_does_not_touch_api_tokens() {
     );
 }
 
+/// A bulk revocation has to say how much it revoked. "Signed out all other
+/// sessions." reads identically whether it ended six sessions or none, which is
+/// exactly the case a user clicks this button to find out about.
+#[tokio::test]
+async fn test_revoke_others_flash_counts_the_sessions_it_ended() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let user = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .expect("user must exist");
+
+    // No other devices signed in yet — the flash must not claim otherwise.
+    let response = app
+        .server
+        .post("/user-settings/sessions/revoke-others")
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+    let text = flash_text(&response);
+    assert!(
+        text.contains("No other sessions were signed in"),
+        "revoking nothing must say so, got: {text}"
+    );
+
+    // Two other devices sign in, then the caller signs them out.
+    for _ in 0..2 {
+        rdrs::models::session::create_session(&app.db, user.id, "other-agent", "127.0.0.1")
+            .await
+            .unwrap();
+    }
+    let response = app
+        .server
+        .post("/user-settings/sessions/revoke-others")
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+    let text = flash_text(&response);
+    assert!(
+        text.contains("Signed out 2 other sessions."),
+        "flash must carry the affected-row count, got: {text}"
+    );
+
+    // The caller's own session survives, so a repeat is back to the zero case.
+    let response = app
+        .server
+        .post("/user-settings/sessions/revoke-others")
+        .await;
+    let text = flash_text(&response);
+    assert!(text.contains("No other sessions were signed in"), "{text}");
+}
+
+/// Singular wording, and the same count-or-say-nothing rule as sessions.
+#[tokio::test]
+async fn test_revoke_all_api_tokens_flash_counts_the_tokens() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let user = rdrs::models::user::find_by_username(&app.db, "testuser")
+        .await
+        .unwrap()
+        .expect("user must exist");
+
+    let response = app
+        .server
+        .post("/user-settings/api-tokens/revoke-all")
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+    let text = flash_text(&response);
+    assert!(
+        text.contains("There were no API tokens to revoke."),
+        "got: {text}"
+    );
+
+    rdrs::models::api_token::create_api_token(
+        &app.db,
+        user.id,
+        "greader",
+        "only-client",
+        "test-agent",
+        "127.0.0.1",
+    )
+    .await
+    .unwrap();
+
+    let response = app
+        .server
+        .post("/user-settings/api-tokens/revoke-all")
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+    let text = flash_text(&response);
+    assert!(
+        text.contains("Revoked 1 API token."),
+        "one token must read as singular, got: {text}"
+    );
+}
+
 // ============================================================================
 // Form-action admin endpoint tests (PR-5 T1)
 // ============================================================================
@@ -5568,6 +5664,46 @@ async fn test_import_opml_form_duplicate_skipped() {
     assert_eq!(
         count, 1,
         "duplicate import must not create a second feed row"
+    );
+}
+
+/// "OPML imported." cannot distinguish a 300-feed subscription haul from a
+/// re-import that added nothing, which is the whole question a user has after
+/// uploading a file they are not sure about.
+#[tokio::test]
+async fn test_import_opml_form_flash_reports_counts() {
+    let mut app =
+        create_test_app_named(default_test_config(), "test_import_opml_flash_counts").await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let existing = "https://already.example.com/feed.xml";
+    insert_test_feed(&app, "MixCat", existing).await;
+
+    let opml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>Mixed</title></head>
+  <body>
+    <outline text="MixCat" title="MixCat">
+      <outline type="rss" text="Already" xmlUrl="{existing}"/>
+      <outline type="rss" text="New A" xmlUrl="https://new-a.example.com/feed.xml"/>
+      <outline type="rss" text="New B" xmlUrl="https://new-b.example.com/feed.xml"/>
+    </outline>
+  </body>
+</opml>"#
+    );
+    let part = Part::bytes(opml.into_bytes())
+        .file_name("subs.opml")
+        .mime_type("application/xml");
+    let form = MultipartForm::new().add_part("file", part);
+    let response = app.server.post("/feeds/import").multipart(form).await;
+
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), "/feeds");
+    let text = flash_text(&response);
+    assert!(
+        text.contains("OPML imported: 2 feeds added, 1 already subscribed."),
+        "flash must break the import down by outcome, got: {text}"
     );
 }
 

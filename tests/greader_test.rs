@@ -1036,6 +1036,92 @@ async fn test_mark_all_as_read() {
     assert_eq!(count, 0);
 }
 
+/// The affected-row count rides in a header rather than the body, so a
+/// `GReader` client that parses the literal `OK` keeps working while rdrs' own
+/// JS can report a real number.
+#[tokio::test]
+async fn test_mark_all_as_read_reports_affected_count() {
+    let app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&app).await;
+
+    let (_cat_id, feed_id) =
+        create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
+    create_test_entries(&app.db, feed_id, 5).await;
+
+    let form = vec![("s", "user/-/state/com.google/reading-list".to_string())];
+    let response = app
+        .server
+        .post("/reader/api/0/mark-all-as-read")
+        .form(&form)
+        .await;
+    response.assert_status_ok();
+    assert_eq!(response.text(), "OK", "GReader body contract is unchanged");
+    assert_eq!(
+        response.header("x-rdrs-affected"),
+        "5",
+        "header must carry the number of entries actually marked"
+    );
+
+    // Nothing left unread: the same call now changes zero rows and must say so
+    // rather than repeating the first run's number.
+    let response = app
+        .server
+        .post("/reader/api/0/mark-all-as-read")
+        .form(&form)
+        .await;
+    response.assert_status_ok();
+    assert_eq!(response.header("x-rdrs-affected"), "0");
+}
+
+/// The count is the number of rows that *changed*, not the number of ids
+/// posted — the distinction the old DOM-counting flash could not make.
+#[tokio::test]
+async fn test_edit_tag_affected_count_excludes_already_read() {
+    let app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&app).await;
+
+    let (_cat_id, feed_id) =
+        create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
+    let entry_ids = create_test_entries(&app.db, feed_id, 3).await;
+
+    let form_for = |ids: &[i64]| -> Vec<(String, String)> {
+        let mut form: Vec<(String, String)> = ids
+            .iter()
+            .map(|id| {
+                (
+                    "i".to_string(),
+                    format!("tag:google.com,2005:reader/item/{:016x}", *id),
+                )
+            })
+            .collect();
+        form.push(("a".to_string(), "user/-/state/com.google/read".to_string()));
+        form
+    };
+
+    // Mark the first entry only.
+    let response = app
+        .server
+        .post("/reader/api/0/edit-tag")
+        .form(&form_for(&entry_ids[..1]))
+        .await;
+    response.assert_status_ok();
+    assert_eq!(response.header("x-rdrs-affected"), "1");
+
+    // Now post all three. Only the two still unread change.
+    let response = app
+        .server
+        .post("/reader/api/0/edit-tag")
+        .form(&form_for(&entry_ids))
+        .await;
+    response.assert_status_ok();
+    assert_eq!(response.text(), "OK");
+    assert_eq!(
+        response.header("x-rdrs-affected"),
+        "2",
+        "already-read entries must not be counted again"
+    );
+}
+
 // ============================================================================
 // Unread Count Tests
 // ============================================================================

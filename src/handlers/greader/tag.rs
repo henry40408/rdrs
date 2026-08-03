@@ -71,7 +71,7 @@ pub async fn edit_tag(
     auth: GReaderUser,
     State(state): State<AppState>,
     Form(raw_form): Form<Vec<(String, String)>>,
-) -> AppResult<String> {
+) -> AppResult<([(&'static str, String); 1], String)> {
     // Extract repeated `i` params and other fields
     let mut item_ids: Vec<String> = Vec::new();
     let mut add_tag: Option<String> = None;
@@ -104,14 +104,19 @@ pub async fn edit_tag(
     let add_stream = add_tag.as_deref().map(StreamId::parse).transpose()?;
     let remove_stream = remove_tag.as_deref().map(StreamId::parse).transpose()?;
 
-    // Batch mark-as-read: verify ownership, then use efficient bulk operation
-    if matches!(add_stream, Some(StreamId::Read)) {
+    // Batch mark-as-read: verify ownership, then use efficient bulk operation.
+    //
+    // The count these bulk updates return is the number of rows that actually
+    // changed, which is what gets reported to the user — not `entry_ids.len()`.
+    // Re-marking 40 already-read entries changed nothing, and saying "marked
+    // 40" there would be a lie the UI used to tell by counting DOM rows.
+    let affected = if matches!(add_stream, Some(StreamId::Read)) {
         // Verify all entries belong to the user
         let found = entry::find_by_ids_with_feed(&state.db, user_id, &entry_ids).await?;
         if found.len() != entry_ids.len() {
             return Err(AppError::EntryNotFound);
         }
-        entry::mark_read_by_ids(&state.db, user_id, &entry_ids).await?;
+        entry::mark_read_by_ids(&state.db, user_id, &entry_ids).await?
     } else {
         // Other operations: verify ownership for all ids once, then apply the
         // tag changes as bulk UPDATEs inside a single transaction (instead of
@@ -122,15 +127,16 @@ pub async fn edit_tag(
         }
 
         let mut tx = state.db.begin().await?;
+        let mut changed = 0_i64;
 
         // Apply add tag
         if let Some(ref stream) = add_stream {
             match stream {
                 StreamId::Starred => {
-                    entry::star_by_ids_tx(&mut tx, user_id, &entry_ids).await?;
+                    changed += entry::star_by_ids_tx(&mut tx, user_id, &entry_ids).await?;
                 }
                 StreamId::KeptUnread => {
-                    entry::mark_unread_by_ids_tx(&mut tx, user_id, &entry_ids).await?;
+                    changed += entry::mark_unread_by_ids_tx(&mut tx, user_id, &entry_ids).await?;
                 }
                 _ => {}
             }
@@ -140,24 +146,25 @@ pub async fn edit_tag(
         if let Some(ref stream) = remove_stream {
             match stream {
                 StreamId::Read => {
-                    entry::mark_unread_by_ids_tx(&mut tx, user_id, &entry_ids).await?;
+                    changed += entry::mark_unread_by_ids_tx(&mut tx, user_id, &entry_ids).await?;
                 }
                 StreamId::Starred => {
-                    entry::unstar_by_ids_tx(&mut tx, user_id, &entry_ids).await?;
+                    changed += entry::unstar_by_ids_tx(&mut tx, user_id, &entry_ids).await?;
                 }
                 _ => {}
             }
         }
 
         tx.commit().await?;
-    }
+        changed
+    };
 
     state.sidebar_cache.bust(user_id);
     // Busting alone only helps the next request that renders chrome. A GReader
     // client's write never passes through the browser, so without this an open
     // tab keeps showing the pre-change counts until something else reloads it.
     state.events.emit_sidebar(user_id);
-    Ok("OK".to_string())
+    Ok(super::ok_with_affected(affected))
 }
 
 // --- mark-all-as-read ---
@@ -178,7 +185,7 @@ pub async fn mark_all_as_read(
     auth: GReaderUser,
     State(state): State<AppState>,
     Form(form): Form<MarkAllReadForm>,
-) -> AppResult<String> {
+) -> AppResult<([(&'static str, String); 1], String)> {
     let stream_id = StreamId::parse(&form.s)?;
     let user_id = auth.user.id;
 
@@ -195,35 +202,35 @@ pub async fn mark_all_as_read(
         }
     });
 
-    match stream_id {
+    let affected = match stream_id {
         StreamId::ReadingList => {
-            entry::mark_all_read_by_user(&state.db, user_id, older_than_days).await?;
+            entry::mark_all_read_by_user(&state.db, user_id, older_than_days).await?
         }
         StreamId::Feed(url) => {
             let f = feed::find_by_url_for_user(&state.db, &url, user_id)
                 .await?
                 .ok_or(AppError::FeedNotFound)?;
-            entry::mark_all_read_by_feed(&state.db, f.id, older_than_days).await?;
+            entry::mark_all_read_by_feed(&state.db, f.id, older_than_days).await?
         }
         StreamId::Label(name) => {
             let cat = category::find_by_name_and_user(&state.db, &name, user_id)
                 .await?
                 .ok_or(AppError::CategoryNotFound)?;
-            entry::mark_all_read_by_category(&state.db, cat.id, older_than_days).await?;
+            entry::mark_all_read_by_category(&state.db, cat.id, older_than_days).await?
         }
         _ => {
             return Err(AppError::Validation(
                 "Invalid stream for mark-all-as-read".into(),
             ));
         }
-    }
+    };
 
     state.sidebar_cache.bust(user_id);
     // Busting alone only helps the next request that renders chrome. A GReader
     // client's write never passes through the browser, so without this an open
     // tab keeps showing the pre-change counts until something else reloads it.
     state.events.emit_sidebar(user_id);
-    Ok("OK".to_string())
+    Ok(super::ok_with_affected(affected))
 }
 
 // --- disable-tag ---

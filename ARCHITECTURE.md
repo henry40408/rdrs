@@ -225,6 +225,19 @@ Request handlers are organized by resource:
 - **entry.rs** - Entry reading, marking, searching
 - **admin.rs** - User management for admins
 
+**Bulk writes report what they changed.** Any action that can touch an unknown
+number of rows tells the user how many it actually touched, taking the number
+from the database rather than from what the caller asked for — re-marking 40
+already-read entries changed nothing, and a flash that says "40" there is
+wrong. Form-action endpoints put it in the flash (`mark_read_scoped`, OPML
+import via `opml::ImportSummary::describe`, revoke-others, revoke-all-tokens).
+The `GReader` endpoints cannot: their body is a bare `OK` that third-party
+clients parse literally, so `mark-all-as-read`, `edit-tag` and
+`subscription/import` keep that body and carry the count in the
+`X-RDRS-Affected` header (`handlers::greader::AFFECTED_HEADER`) instead. rdrs'
+own `app.js` reads the header for its flash and falls back to its DOM-row count
+only when the header is absent.
+
 ### Middleware
 
 - **auth.rs** - Extracts `AuthUser` from session cookie, provides `AdminUser` for admin-only routes
@@ -375,7 +388,7 @@ Because of that re-authentication, a local-only logout cannot actually end a for
 
 **Active session list:**
 
-`/user-settings` lists the current user's non-expired sessions as cards (`.cred-list` / `.cred-card`, shared with the GReader API token list below it), showing the full `user_agent`, `ip_address`, and created/last-active/expires times. The row `id` reaches the template so the revoke-one form can name it; the `session_token` never does. `POST /user-settings/sessions/{id}/revoke` deletes that one session (`session::delete_user_session_by_id`, `user_id`-scoped so a guessed id cannot reach another user's row, and returning the affected-row count so "already gone" is reported as such rather than as success). The caller's own session is refused there — the card renders a "This device" note instead of a button, and the handler re-checks — because signing yourself out is what Sign Out is for. `POST /user-settings/sessions/revoke-others` deletes every one of the user's sessions except the one making the request (`session::delete_user_sessions_except`), letting a user sign out other devices/browsers in one go without ending their own session.
+`/user-settings` lists the current user's non-expired sessions as cards (`.cred-list` / `.cred-card`, shared with the GReader API token list below it), showing the full `user_agent`, `ip_address`, and created/last-active/expires times. The row `id` reaches the template so the revoke-one form can name it; the `session_token` never does. `POST /user-settings/sessions/{id}/revoke` deletes that one session (`session::delete_user_session_by_id`, `user_id`-scoped so a guessed id cannot reach another user's row, and returning the affected-row count so "already gone" is reported as such rather than as success). The caller's own session is refused there — the card renders a "This device" note instead of a button, and the handler re-checks — because signing yourself out is what Sign Out is for. `POST /user-settings/sessions/revoke-others` deletes every one of the user's sessions except the one making the request (`session::delete_user_sessions_except`), letting a user sign out other devices/browsers in one go without ending their own session. It returns the deleted-row count, which the flash reports ("Signed out 2 other sessions.", or an info flash when there was nothing to end) and `audit::sessions_destroyed_bulk` records as its `count` — the audit helper always had the field, and a bulk revocation that cannot say how much it revoked answers neither the user's question nor the auditor's. `POST /user-settings/api-tokens/revoke-all` (`api_token::delete_user_tokens`) works the same way.
 
 Every `session` row is now created with mandatory `user_agent`, `ip_address`, and `last_seen_at` columns (all `NOT NULL`), captured at login time from the request that authenticated (the 4 sites: `POST /api/session`, forward-auth auto-login, passkey `finish_authentication`, and GReader `ClientLogin`). The client IP is resolved by `Config::client_ip`, which only honours `X-Forwarded-For`/`X-Real-IP` when the TCP peer is a trusted proxy per `RDRS_TRUSTED_PROXY_NETWORKS` (the same `is_trusted_peer` check used by forward-auth); when trusted, it reads `X-Forwarded-For` right-to-left and takes the right-most entry that is not itself a trusted proxy (append-mode proxies like nginx's `$proxy_add_x_forwarded_for`, Traefik, and Caddy add each hop's observed address on the right, so a left-most read would let the client's own spoofed prefix win), falling back to `X-Real-IP` and then the TCP peer. Because untrusted entries closer to the client are never believed and an untrusted peer's headers are ignored outright, a client cannot spoof its logged IP. `last_seen_at` is bumped by the `AuthUser`/`PageAuthUser` extractors on every authenticated request, throttled to at most once per minute per session (`session::touch_last_seen`) to avoid a write on every request.
 
@@ -399,6 +412,30 @@ The sidebar shows an **SSO** pill when the current request is served through for
 - Parses feed with feed-rs library (with custom timestamp parser for Chinese date support)
 - Inserts new entries, skips duplicates
 - Processes feeds in parallel using `tokio::task::JoinSet` with a concurrency limit of 4
+
+**What the two timestamps on `/feeds` mean.** `fetched_at` is written on every
+attempt, success or failure. `feed_updated_at` is
+`effective_feed_updated_at(feed_timestamp, latest_entry_date, http_last_modified)`
+— the max of the feed's own `<updated>`/`<lastBuildDate>`/`<pubDate>`, its
+newest entry's date, and the response's `Last-Modified`. The three are *maxed,
+not ranked*: `.flatten().max()` drops the absent ones, so a feed carrying only a
+`Last-Modified` is judged by it instead of being called stale for having no
+in-feed date. The ordering that does exist is *inside* each signal, and the two
+in-feed ones prefer opposite fields: the feed timestamp is
+`updated.or(published)` while an entry's is `published.or(updated)`. An entry
+with neither falls back to the feed timestamp, so on such a feed the
+"newest entry" signal is a copy of the feed's own date and there are really only
+two independent sources. `feed_updated_at` is written through
+`COALESCE($5, feed_updated_at)`, so a `304` (or any failure) advances only
+`fetched_at` and never clears a date already known. `compute_freshness`
+(`handlers/pages/time_format.rs`) grades the result against `FRESH_MAX_DAYS` /
+`WARNING_MAX_DAYS`, falling back to `fetched_at` for feeds that publish no dates
+at all; the `/feeds` Stale filter matches the stale band only, not the warning
+one. Those two constants are passed into `feeds.html` rather than retyped there,
+because the page now explains the rule to the user in a `<details>` disclosure
+and prose that drifts from the thresholds is worse than no prose. There is no
+consecutive-failure counter and no auto-disable: `fetch_error` holds the last
+error and is cleared by the next success.
 
 ### Entry Retention
 

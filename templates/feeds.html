@@ -59,6 +59,21 @@
                     <input type="hidden" name="filter" value="{{ active_filter }}">
                 </form>
 
+                <details class="feed-freshness-help" data-testid="feed-freshness-help">
+                    <summary>How &ldquo;Fetched&rdquo; and &ldquo;Updated&rdquo; are decided</summary>
+                    <div class="feed-freshness-help-body">
+                        <ul>
+                            <li><strong>Fetched</strong> — when rdrs last <em>tried</em> to read this feed, whether or not it worked. Every feed is retried about once an hour.</li>
+                            <li><strong>Updated</strong> — the <em>newest</em> of three signals, whichever of them this feed provides. They are not ranked: a missing signal is skipped, not treated as old.</li>
+                            <li>Those signals are the feed&rsquo;s own date (<code>&lt;updated&gt;</code>, falling back to <code>&lt;pubDate&gt;</code> / <code>&lt;lastBuildDate&gt;</code>), its newest entry&rsquo;s date (<code>&lt;published&gt;</code>, falling back to that entry&rsquo;s <code>&lt;updated&gt;</code>), and the <code>Last-Modified</code> header its server sends.</li>
+                            <li>rdrs re-asks with <code>If-None-Match</code> / <code>If-Modified-Since</code>. A <code>304 Not Modified</code> moves <strong>Fetched</strong> forward and leaves <strong>Updated</strong> untouched.</li>
+                            <li>A feed that publishes no dates at all shows <em>No date info</em>; its age is then judged by <strong>Fetched</strong> instead.</li>
+                            <li>Age: up to {{ fresh_max_days }} days is normal, <span class="feed-freshness-warning">{{ fresh_max_days + 1 }}&ndash;{{ warning_max_days }} days</span> is a warning, <span class="feed-freshness-stale">over {{ warning_max_days }} days</span> — or no date at all — is stale. The <strong>Stale</strong> filter matches only that last group.</li>
+                            <li>A failed fetch shows its error under the row and counts towards the <strong>Errors</strong> filter; it clears as soon as one fetch succeeds. Feeds are never auto-disabled for failing.</li>
+                        </ul>
+                    </div>
+                </details>
+
                 <table class="mobile-cards feeds-table">
                     <thead>
                         <tr>
@@ -80,9 +95,9 @@
                                             <span title="{{ feed.url }}">{{ feed.title }}</span>
                                         </div>
                                         <div class="feed-health-info">
-                                            <span class="muted">Fetched: <time datetime="{{ feed.fetched_at_datetime }}">{{ feed.fetched_at_relative }}</time></span>
+                                            <span class="muted">Fetched: <time datetime="{{ feed.fetched_at_datetime }}"{% if !feed.fetched_at_datetime.is_empty() %} title="{{ feed.fetched_at_datetime }}"{% endif %}>{{ feed.fetched_at_relative }}</time></span>
                                             &middot;
-                                            <span class="{{ feed.freshness_class }}">Updated: <time datetime="{{ feed.feed_updated_at_datetime }}">{{ feed.feed_updated_at_relative }}</time></span>
+                                            <span class="{{ feed.freshness_class }}">Updated: <time datetime="{{ feed.feed_updated_at_datetime }}"{% if !feed.feed_updated_at_datetime.is_empty() %} title="{{ feed.feed_updated_at_datetime }}"{% endif %}>{{ feed.feed_updated_at_relative }}</time></span>
                                         </div>
                                     </div>
                                 </td>

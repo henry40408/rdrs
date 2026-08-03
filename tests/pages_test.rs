@@ -2752,6 +2752,54 @@ async fn test_feeds_page_renders_ssr_rows() {
     assert!(!body.contains("/static/js/pages/feeds.js"));
 }
 
+/// The two timestamps on every feed row are computed from rules a user cannot
+/// guess (three date signals collapsed to a max, plus 304s that move only one
+/// of them). The page has to state them, and state the same numbers
+/// `compute_freshness` applies — hence the thresholds coming from the
+/// constants rather than being retyped into the template.
+#[tokio::test]
+async fn test_feeds_page_explains_freshness_rules() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_users(&app.db).await;
+    login(&mut app.server, "admin").await;
+
+    let response = app.server.get("/feeds").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(
+        body.contains("data-testid=\"feed-freshness-help\""),
+        "the /feeds page must carry the freshness help disclosure"
+    );
+    // What "Updated" is derived from, and why a fetch can leave it alone.
+    assert!(body.contains("Last-Modified"));
+    assert!(body.contains("304 Not Modified"));
+    assert!(body.contains("No date info"));
+    // `effective_feed_updated_at` maxes over whichever signals exist — it does
+    // not walk them in priority order — so the help must not read as a
+    // fallback chain. A feed with only a Last-Modified header is judged by it,
+    // rather than being called stale for lacking an in-feed date.
+    assert!(
+        body.contains("They are not ranked: a missing signal is skipped, not treated as old."),
+        "help must state that the three Updated signals are maxed, not ranked"
+    );
+    // The live thresholds, not hand-copied ones.
+    assert!(
+        body.contains(&format!(
+            "up to {} days is normal",
+            rdrs::handlers::pages::FRESH_MAX_DAYS
+        )),
+        "help text must quote the fresh threshold the code uses"
+    );
+    assert!(
+        body.contains(&format!(
+            "over {} days",
+            rdrs::handlers::pages::WARNING_MAX_DAYS
+        )),
+        "help text must quote the stale threshold the code uses"
+    );
+}
+
 #[tokio::test]
 async fn test_feed_edit_page_renders() {
     let mut app = create_test_app(default_test_config()).await;
