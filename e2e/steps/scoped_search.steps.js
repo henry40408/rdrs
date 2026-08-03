@@ -73,6 +73,28 @@ Then("the search close button is as tall as the search box", async ({ page }) =>
   expect(Math.abs(close - input)).toBeLessThan(1);
 });
 
+// On mobile the drawer opens under the fixed hamburger and its row is indented
+// past the button, putting the two side by side — so their midlines have to
+// agree. The drawer row's block padding is the only thing holding that, and it
+// is invisible to any per-element size assertion.
+Then("the scoped search box shares its midline with the hamburger", async ({ page }) => {
+  // Poll rather than measure once: the drawer expands over a 0.16s
+  // grid-template-rows transition, and while its clip is still short the
+  // centered input reports a box straddling the pane's top edge.
+  const midlineOf = async (locator) => {
+    const box = await locator.boundingBox();
+    return box.y + box.height / 2;
+  };
+  await expect
+    .poll(async () =>
+      Math.abs(
+        (await midlineOf(page.getByTestId("scoped-search-input"))) -
+          (await midlineOf(page.locator(".sidebar-toggle"))),
+      ),
+    )
+    .toBeLessThan(1);
+});
+
 Then("the mark-above button is hidden", async ({ page }) => {
   await expect(page.getByTestId("mark-above-btn")).toHaveCount(0);
 });

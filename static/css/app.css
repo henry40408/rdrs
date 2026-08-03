@@ -2811,8 +2811,16 @@ summary {
     /* The search drawer opens above the header, i.e. under the fixed
        hamburger. Indent its row past the button instead of below it (a full
        row of clearance for a single input reads as a layout bug), and hand
-       the header back its clearance since the drawer now provides it. */
+       the header back its clearance since the drawer now provides it.
+
+       The block padding is --space-4 — the hamburger's own top offset — rather
+       than the base --space-3. Both the button and the drawer's controls are
+       --touch-min tall at this width (the touch-baseline block below), so
+       matching the offset is what puts them on one midline; --space-3 left the
+       search box sitting 4px high of the hamburger beside it. */
     .search-drawer-row {
+        padding-top: var(--space-4);
+        padding-bottom: var(--space-4);
         padding-left: calc(2 * var(--space-4) + var(--touch-min));
     }
 

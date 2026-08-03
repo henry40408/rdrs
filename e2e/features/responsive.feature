@@ -157,6 +157,14 @@ Feature: Responsive layout
     And the ".reading-pane-back-link" control is at least 44px tall
 
   @mobile
+  Scenario: The open scoped search box lines up with the hamburger on mobile
+    Given I am viewing on a mobile screen
+    And I have a feed with 5 test entries
+    When I open the entries page for feed "Mobile Feed"
+    And I open the scoped search box
+    Then the scoped search box shares its midline with the hamburger
+
+  @mobile
   Scenario: Table action links meet the 44px touch minimum on mobile
     Given I am viewing on a mobile screen
     And I have a category named "Test Category"

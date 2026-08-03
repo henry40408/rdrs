@@ -385,6 +385,17 @@ Then("the sidebar feed {string} shows its icon", async ({ page }, title) => {
   await expect(icon).toHaveAttribute("src", /\/api\/feeds\/\d+\/icon/);
 });
 
+// The feed name inside an entry row points at the same /feeds/{id}/entries the
+// sidebar does, so it must take the same in-place swap rather than reloading.
+When("I click the feed name in the entry titled {string}", async ({ page }, title) => {
+  await page
+    .getByTestId("entry-item")
+    .filter({ hasText: title })
+    .first()
+    .locator(".entry-feed")
+    .click();
+});
+
 Then("the sidebar feed {string} shows an initial chip", async ({ page }, title) => {
   // The no-icon fallback, same as the entry rows: first letter, uppercased.
   const chip = sidebarFeedLink(page, title).locator(".entry-favicon-chip");

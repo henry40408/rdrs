@@ -645,6 +645,29 @@ function installSidebarNav() {
 }
 installSidebarNav();
 
+/// The feed name in an entry row links to `/feeds/{id}/entries` — the same
+/// destination the sidebar and `g f` reach by swapping the list pane in place.
+/// Left as a plain anchor it was the one route back to a full document load,
+/// which also threw away the reading pane and the sidebar's loaded state.
+function installEntryFeedNav() {
+    document.addEventListener('click', (event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey ||
+            event.shiftKey || event.altKey) return;
+        const link = event.target.closest('[data-entry-row] a.entry-feed');
+        if (!link) return;
+        const href = link.getAttribute('href');
+        // Nothing to swap into: fall through to plain navigation, same guard
+        // the sidebar handler uses.
+        if (!href || !document.querySelector('[data-list-pane]')) return;
+        event.preventDefault();
+        // Same hint `g f` passes: the row knows its own category, which is what
+        // keeps the sidebar expanded on the group the feed belongs to.
+        const row = link.closest('[data-entry-row]');
+        swapListPane(href, { categoryId: row?.dataset.categoryId });
+    });
+}
+installEntryFeedNav();
+
 /// The sidebar rows `[` / `]` / `{` / `}` walk, in the order they appear on
 /// screen: every category, with the open category's feeds spliced in right
 /// after it. Feeds are only listed for the open category, so the flat list
