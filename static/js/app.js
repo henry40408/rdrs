@@ -1574,7 +1574,10 @@ installSummaryActions();
 
 // "Mark as Read..." dropdown on /unread + /entries pages. Posts to the
 // GReader bulk-mark endpoint with an optional `ts=` cutoff in
-// microseconds, then full-reloads so the SSR row list refreshes. The
+// microseconds, then swaps the refreshed list in place — same treatment
+// as "Mark Above as Read", and for the same reason: a `location.reload()`
+// would throw away the open entry, the sidebar's loaded feed lists and
+// both scroll positions to redraw a list that only lost some rows. The
 // GReader API is permanent per the SSR-first spec, so this JS-glue is
 // the long-term home for the dropdown (the alternative — a native
 // form-POST — would navigate the user away to a JSON response).
@@ -1633,17 +1636,25 @@ function installMarkAsReadDropdown() {
                 credentials: 'same-origin',
             });
             if (!resp.ok) throw new Error('Failed to mark as read');
-            if (window.flash) {
-                const n = affectedCount(resp);
-                const scopeSuffix = age === 'all' ? '' : ` ${ageLabel}`;
-                window.flash.set(
-                    'success',
-                    n === null
-                        ? `Marked${scopeSuffix || ' all'} entries as read.`
-                        : `Marked ${n} ${n === 1 ? 'entry' : 'entries'}${scopeSuffix} as read.`,
-                );
+            const n = affectedCount(resp);
+            const scopeSuffix = age === 'all' ? '' : ` ${ageLabel}`;
+            const message = n === null
+                ? `Marked${scopeSuffix || ' all'} entries as read.`
+                : `Marked ${n} ${n === 1 ? 'entry' : 'entries'}${scopeSuffix} as read.`;
+            const refreshed = await refreshEntriesList();
+            if (!refreshed) {
+                // No list pane to swap into, or the swap bailed: hand the
+                // message to the next document via the cookie and reload.
+                window.flash?.set('success', message);
+                window.location.reload();
+                return;
             }
-            window.location.reload();
+            // Shown rather than `set()`: the page the message belongs to is
+            // the one still on screen.
+            window.flash?.success(message);
+            // The rows are gone from the list, but the unread badges beside
+            // it are still counting them.
+            document.dispatchEvent(new CustomEvent('rdrs:sidebar-stale'));
             return;
         } catch (err) {
             const message = err.message || 'Failed to mark as read';

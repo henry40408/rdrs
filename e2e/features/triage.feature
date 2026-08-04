@@ -38,8 +38,22 @@ Feature: Triage entries (star, mark-read, summarize)
 
   Scenario: Marking all entries read empties the unread list
     When I open the inbox
+    And I mark the document for reload detection
     And I mark all entries as read
     Then I see 0 entries in the entry list
+    And the document did not reload
+
+  # The age options are the dropdown path that leaves rows behind, so a
+  # regression to `location.reload()` costs the reader their scroll position
+  # and open entry for a list that only shrank by one row.
+  Scenario: Marking entries older than 1 day as read swaps the list in place
+    Given the feed "Triage Feed" has an entry titled "Ancient News" published 3 days ago
+    When I open the inbox
+    And I mark the document for reload detection
+    And I mark entries older than 1 day as read
+    Then the entry list does not show "Ancient News"
+    And I see 3 entries in the entry list
+    And the document did not reload
 
   Scenario: Summarizing an entry shows the summary in the reading pane
     Given the user has Kagi configured

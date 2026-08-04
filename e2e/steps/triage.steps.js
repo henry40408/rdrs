@@ -11,20 +11,54 @@ Given("the user has Kagi configured", async ({ seed, currentUser }) => {
   seed.configureKagi(userId);
 });
 
-When("I mark all entries as read", async ({ page }) => {
-  // app.js #mark-read-age <select> fires a window.confirm before calling
-  // /reader/api/0/mark-all-as-read. Pre-register the dialog handler so the
-  // prompt auto-accepts, then trigger the dropdown by selecting "all".
-  // On success app.js reloads the page; Playwright's auto-waiting picks up
-  // the post-reload DOM in the subsequent assertion.
+// app.js #mark-read-age <select> fires a window.confirm before calling
+// /reader/api/0/mark-all-as-read. Pre-register the dialog handler so the
+// prompt auto-accepts, then trigger the dropdown by picking an option. On
+// success app.js swaps the refreshed list into the live document rather than
+// reloading, so the assertions that follow run against the same page object
+// with no navigation to wait for — Playwright's auto-retrying assertions cover
+// the in-flight POST + swap.
+async function markAsReadViaDropdown(page, optionValue) {
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByTestId("mark-read-select").selectOption("all");
+  await page.getByTestId("mark-read-select").selectOption(optionValue);
+}
+
+When("I mark all entries as read", async ({ page }) => {
+  await markAsReadViaDropdown(page, "all");
 });
 
-// "Mark Above as Read" confirms before POSTing, same as the dropdown above.
-// Unlike it, the success path swaps the refreshed list into the live document
-// instead of reloading — so the assertions that follow run against the same
-// page object without a navigation to wait for.
+// The age options carry a `ts=` cutoff, which is the case most likely to
+// regress back to a reload: it is the only dropdown path that leaves rows
+// behind, so a reload there is visible as lost scroll and a closed entry.
+When("I mark entries older than 1 day as read", async ({ page }) => {
+  await markAsReadViaDropdown(page, "1");
+});
+
+// Backdated past the "older than 1 day" cutoff
+// (`COALESCE(published_at, created_at) < now - 1 day`), so the age option has
+// something to catch while the Background's freshly-seeded entries stay put.
+// That contrast is what proves the cutoff was applied rather than everything
+// being marked.
+Given(
+  "the feed {string} has an entry titled {string} published 3 days ago",
+  async ({ seed, currentUser }, feedTitle, title) => {
+    const userId = seed.getUserId(currentUser.username);
+    const feedId = seed.findFeedIdByTitle(userId, feedTitle);
+    seed.insertEntries([
+      {
+        feedId,
+        guid: `${currentUser.username}-aged-entry`,
+        title,
+        link: `https://example.com/${currentUser.username}/aged-entry`,
+        content: `<p>${title}</p>`,
+        publishedOffset: "-3 days",
+      },
+    ]);
+  }
+);
+
+// "Mark Above as Read" confirms before POSTing, same as the dropdown above,
+// and shares its swap-instead-of-reload success path.
 When("I mark the loaded entries as read", async ({ page }) => {
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByTestId("mark-above-btn").click();

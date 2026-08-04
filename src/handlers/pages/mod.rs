@@ -709,7 +709,8 @@ impl IntoResponse for InviteTemplate {
 /// When `?fragment=1&after=<offset>` is present the handler returns a
 /// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`);
 /// `?fragment=1` without a cursor returns the list-refresh fragment that
-/// "Mark Above as Read" swaps in place of a reload.
+/// the bulk mark-as-read paths ("Mark Above as Read" and the "Mark as Read..."
+/// age dropdown) swap in place of a reload.
 pub async fn unread_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
