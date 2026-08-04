@@ -513,11 +513,12 @@ the floor. The entries-family routes answer with four shapes:
   deep links and swaps land in the right state without a client-side flash.
   A search also hides "Mark Above as Read" — under a filtered list its meaning
   collapses into the "Mark N matching as Read" button above it — while the `A`
-  shortcut keeps working. The same response backs **Mark Above as Read**
-  (`refreshEntriesList()`): a bulk mark only removes rows, so it re-renders the
-  list in place and raises `rdrs:sidebar-stale` for the badges instead of
-  reloading the document and losing the open entry, the sidebar's loaded feed
-  lists and both scroll positions. The inbox serves it too, which is why `/`
+  shortcut keeps working. The same response backs **Mark Above as Read** and the
+  **"Mark as Read..." age dropdown** (both via `refreshEntriesList()`): a bulk
+  mark only removes rows, so they re-render the list in place and raise
+  `rdrs:sidebar-stale` for the badges instead of reloading the document and
+  losing the open entry, the sidebar's loaded feed lists and both scroll
+  positions. The inbox serves it too, which is why `/`
   distinguishes `?fragment=1&after=` (Load More) from a bare `?fragment=1`.
 - **sidebar navigation** — `?pane=1` (`/categories/{id}/entries` and
   `/feeds/{id}/entries`) replaces the whole `[data-list-pane]` column and resets
