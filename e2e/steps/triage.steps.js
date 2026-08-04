@@ -21,6 +21,15 @@ When("I mark all entries as read", async ({ page }) => {
   await page.getByTestId("mark-read-select").selectOption("all");
 });
 
+// "Mark Above as Read" confirms before POSTing, same as the dropdown above.
+// Unlike it, the success path swaps the refreshed list into the live document
+// instead of reloading — so the assertions that follow run against the same
+// page object without a navigation to wait for.
+When("I mark the loaded entries as read", async ({ page }) => {
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByTestId("mark-above-btn").click();
+});
+
 When("I star the entry titled {string}", async ({ page }, title) => {
   await page
     .getByTestId("entry-item")

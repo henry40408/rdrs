@@ -120,6 +120,37 @@ function feedFavicon(feed) {
     return `<span class="entry-favicon entry-favicon-chip fav-c${color}" aria-hidden="true">${escapeHtml(initial)}</span>`;
 }
 
+/// The reader's sidebar display preferences, read out of an `/api/sidebar`
+/// payload. Defaults match the server's, so a payload from before these
+/// settings existed (a stale sessionStorage mirror, say) behaves as it did.
+function sidebarPrefs(data) {
+    return {
+        sort: data?.sidebar_sort === 'unread' ? 'unread' : 'name',
+        hideRead: !!data?.sidebar_hide_read,
+    };
+}
+
+/// Apply those preferences to a list of category or feed rows.
+///
+/// `keepId` is the row the reader currently has open. It stays listed even at
+/// zero unread: hiding it would make the category or feed vanish from under
+/// the cursor the moment its last entry is marked read — while the reader is
+/// still looking at it.
+///
+/// The server always sends these lists complete and in name order, so 'name'
+/// is a no-op here and 'unread' re-sorts a copy. `Array.prototype.sort` is
+/// stable, so equal counts keep that A-Z order rather than shuffling.
+function arrangeSidebarRows(rows, prefs, keepId) {
+    let out = rows || [];
+    if (prefs.hideRead) {
+        out = out.filter((r) => r.unread_count > 0 || r.id === keepId);
+    }
+    if (prefs.sort === 'unread') {
+        out = out.slice().sort((a, b) => b.unread_count - a.unread_count);
+    }
+    return out;
+}
+
 /// Whether the nav item named `nav` is the active one for the page-level
 /// `active` attribute. Shared by `render()` and `_applyActive()` so the class
 /// a fresh render paints and the one an attribute change patches can't diverge.
@@ -134,8 +165,23 @@ function isStructuralChange(prev, next) {
     if (!!prev.is_admin !== !!next.is_admin) return true;
     if (!!prev.is_masquerading !== !!next.is_masquerading) return true;
     if (!!prev.via_forward_auth !== !!next.via_forward_auth) return true;
+    if (prev.sidebar_sort !== next.sidebar_sort) return true;
+    if (!!prev.sidebar_hide_read !== !!next.sidebar_hide_read) return true;
     const key = (cats) => (cats || []).map((c) => `${c.id}:${c.name}`).join('|');
-    return key(prev.categories) !== key(next.categories);
+    if (key(prev.categories) !== key(next.categories)) return true;
+    // With fully-read groups hidden, a badge reaching or leaving zero adds or
+    // removes a row — something `_updateBadges` has no way to express.
+    if (next.sidebar_hide_read) {
+        const shown = (cats) => (cats || []).filter((c) => c.unread_count > 0)
+            .map((c) => c.id).join('|');
+        if (shown(prev.categories) !== shown(next.categories)) return true;
+    }
+    // Under the unread ordering, changed counts also change the *order*, which
+    // this deliberately does not treat as structural: re-sorting the list on
+    // every mark-as-read would move rows out from under the pointer mid-click.
+    // The order settles on the next full render (a navigation, or any of the
+    // changes above).
+    return false;
 }
 
 class RdrsSidebar extends HTMLElement {
@@ -217,10 +263,15 @@ class RdrsSidebar extends HTMLElement {
 
     get activeFeedId() { return parseInt(this.getAttribute('active-feed-id') || '0', 10); }
 
-    /// Latest category list from /api/sidebar, or [] before the first payload
-    /// lands. Read by app.js's `[` / `]` category navigation, which must not
-    /// reach into the private `_data` field.
-    get categories() { return this._data?.categories || []; }
+    /// Latest category list from /api/sidebar — in the order it is rendered,
+    /// and without the rows the reader's preferences hide — or [] before the
+    /// first payload lands. Read by app.js's `[` / `]` category navigation,
+    /// which must not reach into the private `_data` field, and must step
+    /// through exactly what is on screen.
+    get categories() {
+        return arrangeSidebarRows(this._data?.categories, sidebarPrefs(this._data),
+            this.activeCategoryId);
+    }
 
     /// Feeds of the currently active category, in the order they are rendered,
     /// or [] when no category is active or the list hasn't arrived yet. Read by
@@ -228,7 +279,9 @@ class RdrsSidebar extends HTMLElement {
     /// category's feeds as one flat list — the order on screen.
     get activeFeeds() {
         const catId = this.activeCategoryId;
-        return catId ? (this._feeds[catId] || []) : [];
+        if (!catId) return [];
+        return arrangeSidebarRows(this._feeds[catId], sidebarPrefs(this._data),
+            this.activeFeedId);
     }
 
     /// Which category a feed belongs to, if any list loaded this session names
@@ -388,7 +441,8 @@ class RdrsSidebar extends HTMLElement {
             link.insertAdjacentElement('afterend', list);
         }
         const activeFeedId = this.activeFeedId;
-        list.innerHTML = feeds.map((feed) => `
+        list.innerHTML = arrangeSidebarRows(feeds, sidebarPrefs(this._data), activeFeedId)
+            .map((feed) => `
             <a href="/feeds/${feed.id}/entries" class="sidebar-feed${feed.id === activeFeedId ? ' active' : ''}" data-feed-id="${feed.id}" title="${escapeHtml(feed.title)}">
                 ${feedFavicon(feed)}
                 <span class="sidebar-item-label">${escapeHtml(feed.title)}</span>
@@ -438,7 +492,7 @@ class RdrsSidebar extends HTMLElement {
         const isAdmin = data ? !!data.is_admin : false;
         const isMasq = data ? !!data.is_masquerading : false;
         const viaForwardAuth = data ? !!data.via_forward_auth : false;
-        const cats = data ? data.categories : [];
+        const cats = arrangeSidebarRows(data?.categories, sidebarPrefs(data), activeCatId);
         const totalUnread = data ? data.total_unread : 0;
         const totalSummarized = data ? data.total_summarized : 0;
 

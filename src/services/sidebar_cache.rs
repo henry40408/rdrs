@@ -14,6 +14,10 @@ pub struct CachedChrome {
     pub categories: Vec<SidebarCategoryDto>,
     pub total_unread: i64,
     pub total_summarized: i64,
+    /// How the client should order and filter the category / feed lists.
+    /// Cached alongside the data it applies to, and busted by the preferences
+    /// form like every other field here.
+    pub sidebar_prefs: crate::models::user_settings::SidebarPrefs,
 }
 
 /// Stamp identifying how many times a user's entry has been busted. Taken
@@ -155,6 +159,7 @@ mod tests {
             }],
             total_unread: unread,
             total_summarized: 0,
+            sidebar_prefs: crate::models::user_settings::SidebarPrefs::default(),
         }
     }
 

@@ -142,6 +142,15 @@ pub struct SidebarResponse {
     pub total_unread: i64,
     pub total_summarized: i64,
     pub via_forward_auth: bool,
+    /// `"name"` or `"unread"` — how the client orders the category list and
+    /// the open category's feeds. The lists themselves are always sent in name
+    /// order; re-ordering is left to the client because it is the side that
+    /// knows which row is active and must stay put.
+    pub sidebar_sort: &'static str,
+    /// Whether the client drops fully-read categories and feeds from the list.
+    /// Same reasoning: the server still sends them, since the category the
+    /// reader currently has open stays visible even at zero unread.
+    pub sidebar_hide_read: bool,
 }
 
 /// Raw chrome data needed for every authenticated page render: theme,
@@ -155,6 +164,7 @@ pub struct ChromeData {
     pub categories: Vec<SidebarCategoryDto>,
     pub total_unread: i64,
     pub total_summarized: i64,
+    pub sidebar_prefs: user_settings::SidebarPrefs,
     /// Only set when `original_user_id` is passed (i.e. session is
     /// masquerading). `None` outside the masquerade path.
     pub original_user_is_admin: Option<bool>,
@@ -192,13 +202,23 @@ pub async fn read_chrome_data(
             categories: cached.categories,
             total_unread: cached.total_unread,
             total_summarized: cached.total_summarized,
+            sidebar_prefs: cached.sidebar_prefs,
             original_user_is_admin,
         };
     }
 
-    let theme = user_settings::get_theme(&state.db, user_id)
+    // One settings read for both the theme and the sidebar preferences —
+    // they live in the same row, and a `get_theme` + `get_sidebar_prefs` pair
+    // would run the same SELECT twice on every cache miss.
+    let settings = user_settings::find_by_user_id(&state.db, user_id)
         .await
         .unwrap_or(None);
+    let theme = settings.as_ref().and_then(|s| s.theme.clone());
+    let sidebar_prefs = settings
+        .as_ref()
+        .map_or_else(user_settings::SidebarPrefs::default, |s| {
+            user_settings::sidebar_prefs_of(s)
+        });
     let cats = category::list_by_user(&state.db, user_id)
         .await
         .unwrap_or_default();
@@ -228,6 +248,7 @@ pub async fn read_chrome_data(
         categories,
         total_unread,
         total_summarized,
+        sidebar_prefs,
     };
 
     // Skip caching the "no content yet" state — an account with no feeds and no
@@ -249,6 +270,7 @@ pub async fn read_chrome_data(
         categories: fresh.categories,
         total_unread: fresh.total_unread,
         total_summarized: fresh.total_summarized,
+        sidebar_prefs: fresh.sidebar_prefs,
         original_user_is_admin,
     }
 }
@@ -288,6 +310,8 @@ pub async fn build_sidebar_response(
         total_unread: chrome.total_unread,
         total_summarized: chrome.total_summarized,
         via_forward_auth,
+        sidebar_sort: chrome.sidebar_prefs.sort,
+        sidebar_hide_read: chrome.sidebar_prefs.hide_read,
     })
 }
 
@@ -685,6 +709,12 @@ pub struct UpdatePreferencesForm {
     pub theme: String,
     pub entries_per_page: i64,
     pub retention_read_days: i64,
+    /// `"name"` or `"unread"`. Absent from an older client's POST, which is
+    /// read as "leave the default ordering".
+    pub sidebar_sort: Option<String>,
+    /// An unchecked checkbox sends nothing at all, so presence — not value —
+    /// is what turns this on.
+    pub sidebar_hide_read: Option<String>,
 }
 
 pub async fn update_preferences_form(
@@ -701,11 +731,19 @@ pub async fn update_preferences_form(
     };
     let epp = req.entries_per_page;
     let retention_read_days = req.retention_read_days;
+    let sidebar_sort = req
+        .sidebar_sort
+        .as_deref()
+        .unwrap_or(user_settings::DEFAULT_SIDEBAR_SORT)
+        .to_string();
+    let sidebar_hide_read = req.sidebar_hide_read.is_some();
 
     let result: AppResult<()> = async {
         user_settings::upsert(&state.db, user_id, epp).await?;
         user_settings::update_theme(&state.db, user_id, theme).await?;
         user_settings::update_retention_read_days(&state.db, user_id, retention_read_days).await?;
+        user_settings::update_sidebar_prefs(&state.db, user_id, &sidebar_sort, sidebar_hide_read)
+            .await?;
         Ok(())
     }
     .await;

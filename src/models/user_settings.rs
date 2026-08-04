@@ -15,6 +15,42 @@ pub const MAX_ENTRIES_PER_PAGE: i64 = 100;
 /// "effectively never delete", which `0` expresses directly.
 pub const MAX_RETENTION_READ_DAYS: i64 = 3650;
 
+/// Sidebar ordering: categories (and the open category's feeds) A-Z by name.
+/// The order the list queries already return, so the client leaves them alone.
+pub const SIDEBAR_SORT_NAME: &str = "name";
+/// Sidebar ordering: most unread first, ties keeping their A-Z order.
+pub const SIDEBAR_SORT_UNREAD: &str = "unread";
+pub const DEFAULT_SIDEBAR_SORT: &str = SIDEBAR_SORT_NAME;
+
+/// Sidebar display preferences, the pair that decides what the category and
+/// feed lists look like. Read together because both reach the client in the
+/// same `/api/sidebar` payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidebarPrefs {
+    pub sort: &'static str,
+    pub hide_read: bool,
+}
+
+impl Default for SidebarPrefs {
+    fn default() -> Self {
+        Self {
+            sort: DEFAULT_SIDEBAR_SORT,
+            hide_read: false,
+        }
+    }
+}
+
+/// Map a stored/submitted sort value onto one of the known orderings.
+/// Unknown values (an older client, a hand-edited row) fall back to the
+/// default rather than erroring — this is a display preference, and a
+/// mis-ordered sidebar must not be able to break a page render.
+pub fn parse_sidebar_sort(value: &str) -> &'static str {
+    match value {
+        SIDEBAR_SORT_UNREAD => SIDEBAR_SORT_UNREAD,
+        _ => DEFAULT_SIDEBAR_SORT,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct UserSettings {
     pub id: i64,
@@ -23,6 +59,8 @@ pub struct UserSettings {
     pub retention_read_days: i64,
     pub save_services: Option<String>,
     pub theme: Option<String>, // "dark", "light", or NULL (system)
+    pub sidebar_sort: String,  // "name" or "unread"
+    pub sidebar_hide_read: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -41,7 +79,7 @@ pub async fn find_by_user_id(db: &Db, user_id: i64) -> AppResult<Option<UserSett
     query_opt!(
         db,
         UserSettings,
-        "SELECT id, user_id, entries_per_page, retention_read_days, save_services, theme, created_at, updated_at FROM user_settings WHERE user_id = $1",
+        "SELECT id, user_id, entries_per_page, retention_read_days, save_services, theme, sidebar_sort, sidebar_hide_read, created_at, updated_at FROM user_settings WHERE user_id = $1",
         user_id
     )
     .map_err(AppError::Database)
@@ -187,6 +225,55 @@ pub async fn update_retention_read_days(db: &Db, user_id: i64, days: i64) -> App
         db,
         "UPDATE user_settings SET retention_read_days = $1, updated_at = $2 WHERE user_id = $3",
         days,
+        Utc::now(),
+        user_id
+    )
+    .map_err(AppError::Database)?;
+    Ok(())
+}
+
+/// Get the sidebar display preferences for a user. Accounts with no
+/// `user_settings` row yet get the defaults.
+pub async fn get_sidebar_prefs(db: &Db, user_id: i64) -> AppResult<SidebarPrefs> {
+    Ok(find_by_user_id(db, user_id)
+        .await?
+        .as_ref()
+        .map_or_else(SidebarPrefs::default, sidebar_prefs_of))
+}
+
+/// Read the sidebar preferences out of an already-loaded settings row, so
+/// callers that need several fields (e.g. `read_chrome_data`, which also wants
+/// the theme) pay for one query instead of one per field.
+pub fn sidebar_prefs_of(settings: &UserSettings) -> SidebarPrefs {
+    SidebarPrefs {
+        sort: parse_sidebar_sort(&settings.sidebar_sort),
+        hide_read: settings.sidebar_hide_read,
+    }
+}
+
+/// Set the sidebar display preferences. `sort` is normalised rather than
+/// rejected — see `parse_sidebar_sort`.
+pub async fn update_sidebar_prefs(
+    db: &Db,
+    user_id: i64,
+    sort: &str,
+    hide_read: bool,
+) -> AppResult<()> {
+    let sort = parse_sidebar_sort(sort);
+    // Ensure a row exists, then update (mirrors update_theme).
+    db_execute!(
+        db,
+        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
+         ON CONFLICT(user_id) DO NOTHING",
+        user_id,
+        DEFAULT_ENTRIES_PER_PAGE
+    )
+    .map_err(AppError::Database)?;
+    db_execute!(
+        db,
+        "UPDATE user_settings SET sidebar_sort = $1, sidebar_hide_read = $2, updated_at = $3 WHERE user_id = $4",
+        sort,
+        hide_read,
         Utc::now(),
         user_id
     )
@@ -370,5 +457,67 @@ mod tests {
             get_retention_read_days(&db, user.id).await.unwrap(),
             MAX_RETENTION_READ_DAYS
         );
+    }
+
+    #[tokio::test]
+    async fn test_sidebar_prefs_default() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "sb", "hash", Role::User)
+            .await
+            .unwrap();
+
+        // No settings row at all.
+        assert_eq!(
+            get_sidebar_prefs(&db, user.id).await.unwrap(),
+            SidebarPrefs::default()
+        );
+
+        // A row created by another setting still reports the column defaults.
+        upsert(&db, user.id, 50).await.unwrap();
+        let prefs = get_sidebar_prefs(&db, user.id).await.unwrap();
+        assert_eq!(prefs.sort, SIDEBAR_SORT_NAME);
+        assert!(!prefs.hide_read);
+    }
+
+    #[tokio::test]
+    async fn test_update_sidebar_prefs() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "sb", "hash", Role::User)
+            .await
+            .unwrap();
+
+        update_sidebar_prefs(&db, user.id, SIDEBAR_SORT_UNREAD, true)
+            .await
+            .unwrap();
+        let prefs = get_sidebar_prefs(&db, user.id).await.unwrap();
+        assert_eq!(prefs.sort, SIDEBAR_SORT_UNREAD);
+        assert!(prefs.hide_read);
+
+        // Preserves the other settings.
+        upsert(&db, user.id, 50).await.unwrap();
+        update_sidebar_prefs(&db, user.id, SIDEBAR_SORT_NAME, false)
+            .await
+            .unwrap();
+        let s = find_by_user_id(&db, user.id).await.unwrap().unwrap();
+        assert_eq!(s.entries_per_page, 50);
+        assert_eq!(s.sidebar_sort, SIDEBAR_SORT_NAME);
+        assert!(!s.sidebar_hide_read);
+    }
+
+    #[tokio::test]
+    async fn test_unknown_sidebar_sort_falls_back_to_default() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "sb", "hash", Role::User)
+            .await
+            .unwrap();
+
+        assert_eq!(parse_sidebar_sort("nonsense"), DEFAULT_SIDEBAR_SORT);
+
+        // A rejected value must not be persisted verbatim either.
+        update_sidebar_prefs(&db, user.id, "nonsense", false)
+            .await
+            .unwrap();
+        let s = find_by_user_id(&db, user.id).await.unwrap().unwrap();
+        assert_eq!(s.sidebar_sort, DEFAULT_SIDEBAR_SORT);
     }
 }

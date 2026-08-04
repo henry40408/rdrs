@@ -150,6 +150,21 @@
                         <input type="number" id="retention-read-days" name="retention_read_days" value="{{ retention_read_days }}" min="0" max="3650" data-testid="retention-read-days" required>
                         <span class="muted text-xs">(0 = never delete, max 3650)</span>
                     </div>
+                    <div class="form-group">
+                        <label for="sidebar-sort">Sidebar order</label>
+                        <select id="sidebar-sort" name="sidebar_sort" data-testid="sidebar-sort">
+                            <option value="name"{% if sidebar_sort == "name" %} selected{% endif %}>Name (A-Z)</option>
+                            <option value="unread"{% if sidebar_sort == "unread" %} selected{% endif %}>Unread count (descending)</option>
+                        </select>
+                        <span class="muted text-xs">Applies to categories and to the open category's feeds.</span>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="sidebar-hide-read" name="sidebar_hide_read" value="1"{% if sidebar_hide_read %} checked{% endif %} data-testid="sidebar-hide-read">
+                            Hide fully-read categories and feeds
+                        </label>
+                        <span class="muted text-xs">The category or feed you are currently reading stays listed.</span>
+                    </div>
                     <button type="submit">Save Preferences</button>
                 </form>
 
