@@ -506,14 +506,19 @@ the floor. The entries-family routes answer with four shapes:
 - **reading pane** — `GET /entries/{id}/fragment` replaces `#reading-pane`
   (plus the row, via multi-target templates) when an entry is opened.
 - **Load More** — `?fragment=1&after=<cursor>` appends rows before `#load-more`.
-- **search refresh** — `?fragment=1` (no cursor) re-renders `[data-entries-list]`
+- **list refresh** — `?fragment=1` (no cursor) re-renders `[data-entries-list]`
   and the "Mark N matching" slot, leaving the focused search box alone. That box
   lives in a drawer above `.list-pane-header`, opened by the filter-bar
   magnifier; the server renders it open whenever the request carried `q`, so
   deep links and swaps land in the right state without a client-side flash.
   A search also hides "Mark Above as Read" — under a filtered list its meaning
   collapses into the "Mark N matching as Read" button above it — while the `A`
-  shortcut keeps working.
+  shortcut keeps working. The same response backs **Mark Above as Read**
+  (`refreshEntriesList()`): a bulk mark only removes rows, so it re-renders the
+  list in place and raises `rdrs:sidebar-stale` for the badges instead of
+  reloading the document and losing the open entry, the sidebar's loaded feed
+  lists and both scroll positions. The inbox serves it too, which is why `/`
+  distinguishes `?fragment=1&after=` (Load More) from a bare `?fragment=1`.
 - **sidebar navigation** — `?pane=1` (`/categories/{id}/entries` and
   `/feeds/{id}/entries`) replaces the whole `[data-list-pane]` column and resets
   `#reading-pane` to its empty state. `swapListPane()` drives it for sidebar
@@ -534,6 +539,19 @@ navigation and the `rdrs:sidebar-stale` signal both revalidate it. The `[` / `]`
 (and unread-only `{` / `}`) shortcuts walk categories and the open category's
 feeds as **one flat list, in the order displayed** — what is on screen is what
 the shortcuts step through.
+
+Two per-user settings shape those lists: `user_settings.sidebar_sort` (`name`,
+the server's A-Z order, or `unread`, busiest first) and
+`user_settings.sidebar_hide_read`, which drops fully-read categories and feeds.
+Both ride along in the `/api/sidebar` payload and are applied **client-side**,
+in `arrangeSidebarRows()`. The server keeps sending the complete list because
+only the client knows which row is active — and the active category or feed
+stays listed at zero unread, so finishing the last entry doesn't make the group
+the reader is looking at vanish from under the cursor. For the same
+don't-move-things-underneath reason, the unread ordering settles on a full
+render rather than re-sorting on every badge update; `isStructuralChange()`
+treats a changed *visible set* as structural (hidden rows must appear and
+disappear promptly) but a changed *order* as not.
 
 Swaps that target a reading-pane region (`#reading-pane`,
 `#rp-summary-container`) and are *not* pane navigation carry a staleness check:

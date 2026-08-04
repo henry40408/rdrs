@@ -1777,6 +1777,30 @@ function installEntriesSearch() {
 installEntriesSearch();
 document.addEventListener('rdrs:swap-complete', installEntriesSearch);
 
+/// Re-render the current list in place from the server's `?fragment=1`
+/// response (page 1 of whatever the URL already asks for — status tab, scoped
+/// search and all). The alternative for a bulk mark-as-read used to be
+/// `location.reload()`, which throws away the open entry, the sidebar's loaded
+/// feed lists and both scroll positions to redraw a list that only lost some
+/// rows.
+///
+/// Resolves `false` when there is no list to swap (or the swap bailed out), so
+/// callers can fall back to a reload rather than leave stale rows on screen.
+async function refreshEntriesList() {
+    if (!document.querySelector('[data-entries-list]')) return false;
+    const url = new URL(window.location.href);
+    url.searchParams.set('fragment', '1');
+    // `after` would make the server answer with the Load-More *append*
+    // fragment; `entry` only feeds the SSR reading pane, which this response
+    // deliberately leaves alone.
+    url.searchParams.delete('after');
+    url.searchParams.delete('entry');
+    return performSwap(url.toString(), { method: 'GET' }, '[data-entries-list]',
+        // The fetched URL answers with bare `<template>` markup, so a failure
+        // must land the user on the real page instead.
+        { fallbackUrl: window.location.href });
+}
+
 // "Mark Above as Read" button on feed + category pages. Sits at the
 // bottom of the list (below Load More) and marks every entry currently
 // rendered in the DOM — loaded rows + anything appended via Load More.
@@ -1811,17 +1835,25 @@ async function markLoadedEntriesAsRead(btn) {
             credentials: 'same-origin',
         });
         if (!resp.ok) throw new Error('Failed to mark entries as read');
-        if (window.flash) {
-            // The server's count excludes rows that were already read, so it is
-            // usually smaller than the number of rows we posted. Report its
-            // number, not ours.
-            const n = affectedCount(resp) ?? ids.length;
-            window.flash.set(
-                'success',
-                `Marked ${n} ${n === 1 ? 'entry' : 'entries'} as read.`,
-            );
+        // The server's count excludes rows that were already read, so it is
+        // usually smaller than the number of rows we posted. Report its
+        // number, not ours.
+        const n = affectedCount(resp) ?? ids.length;
+        const message = `Marked ${n} ${n === 1 ? 'entry' : 'entries'} as read.`;
+        const refreshed = await refreshEntriesList();
+        if (!refreshed) {
+            // No list pane to swap into, or the swap bailed: hand the message
+            // to the next document via the cookie and reload as before.
+            window.flash?.set('success', message);
+            window.location.reload();
+            return;
         }
-        window.location.reload();
+        // Shown rather than `set()`: the page the message belongs to is the one
+        // still on screen.
+        window.flash?.success(message);
+        // The rows are gone from the list, but the unread badges beside it are
+        // still counting them.
+        document.dispatchEvent(new CustomEvent('rdrs:sidebar-stale'));
         return;
     } catch (err) {
         const message = err.message || 'Failed to mark entries as read';

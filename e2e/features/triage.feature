@@ -104,6 +104,21 @@ Feature: Triage entries (star, mark-read, summarize)
     And I press the "a" key
     Then the reading pane summary is dismissed
 
+  Scenario: Mark Above as Read refreshes the list without reloading the page
+    When I open the inbox
+    And I mark the document for reload detection
+    And I mark the loaded entries as read
+    Then the entry list does not show "Test Entry 1"
+    And the entry list does not show "Test Entry 3"
+    And the document did not reload
+
+  Scenario: Mark Above as Read leaves the open entry in the reading pane
+    When I open the entries page for category "Triage Category"
+    And I click the entry titled "Test Entry 1"
+    And I mark the loaded entries as read
+    Then the reading pane shows the title "Test Entry 1"
+    And the entry list does not show "Test Entry 3"
+
   Scenario: Scoped search within a category, then mark matching as read
     Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
     When I open the entries page for category "Anime"

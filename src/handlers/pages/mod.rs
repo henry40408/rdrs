@@ -707,7 +707,9 @@ impl IntoResponse for InviteTemplate {
 /// placeholder until the user selects an entry (swap via `app.js`).
 ///
 /// When `?fragment=1&after=<offset>` is present the handler returns a
-/// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`).
+/// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`);
+/// `?fragment=1` without a cursor returns the list-refresh fragment that
+/// "Mark Above as Read" swaps in place of a reload.
 pub async fn unread_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -721,7 +723,7 @@ pub async fn unread_page(
         ..Default::default()
     };
 
-    if query.fragment == Some(1) {
+    if query.fragment == Some(1) && query.after.is_some() {
         let cursor = query
             .after
             .as_deref()
@@ -748,7 +750,6 @@ pub async fn unread_page(
             .into_response();
     }
 
-    let layout = build_app_layout(&state, &auth_user, &flash).await;
     let (entries, next_cursor) = build_entries_page(
         &state,
         user_id,
@@ -758,13 +759,53 @@ pub async fn unread_page(
         None,
     )
     .await;
-    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
     // When the unread list is empty, distinguish a brand-new account with no
     // feeds yet (→ getting-started onboarding) from an inbox where everything
     // has been read (→ "All caught up"). Only query when the list is empty.
     let no_feeds =
         entries.is_empty() && feed::count_by_user(&state.db, user_id).await.unwrap_or(0) == 0;
+
+    let entries_layout = EntriesLayoutContext {
+        active: "unread",
+        description: None,
+        empty_title: "All caught up",
+        empty_detail: "You've read every unread entry — new items land here as your feeds refresh.",
+        path: "/".to_string(),
+        show_tab_bar: false,
+        mark_as_read_scope: Some("user/-/state/com.google/reading-list".to_string()),
+        breadcrumb_items: vec![],
+        header_feed_icon_id: None,
+        active_category_id: None,
+        active_feed_id: None,
+        filter_tabs: None,
+        status_filter: None,
+        show_mark_above: true,
+        onboarding: no_feeds,
+        snapshot_at: snapshot_now(),
+        search: None,
+        search_action: None,
+        matching_count: None,
+    };
+
+    // List-refresh fragment (fragment=1, no cursor): re-render page 1 in place.
+    // The inbox has no scoped-search box, so unlike the category and feed pages
+    // this only ever serves the mark-above swap — but it is the same response,
+    // which is why it reuses the same template rather than growing a third one.
+    if query.fragment == Some(1) {
+        return (
+            flash,
+            EntriesRefreshFragmentTemplate {
+                entries,
+                next_cursor,
+                entries_layout,
+            },
+        )
+            .into_response();
+    }
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
 
     (
         flash,
@@ -775,28 +816,7 @@ pub async fn unread_page(
             entries,
             reading_pane,
             next_cursor,
-            entries_layout: EntriesLayoutContext {
-                active: "unread",
-                description: None,
-                empty_title: "All caught up",
-                empty_detail:
-                    "You've read every unread entry — new items land here as your feeds refresh.",
-                path: "/".to_string(),
-                show_tab_bar: false,
-                mark_as_read_scope: Some("user/-/state/com.google/reading-list".to_string()),
-                breadcrumb_items: vec![],
-                header_feed_icon_id: None,
-                active_category_id: None,
-                active_feed_id: None,
-                filter_tabs: None,
-                status_filter: None,
-                show_mark_above: true,
-                onboarding: no_feeds,
-                snapshot_at: snapshot_now(),
-                search: None,
-                search_action: None,
-                matching_count: None,
-            },
+            entries_layout,
         },
     )
         .into_response()
@@ -925,6 +945,7 @@ pub async fn user_settings_page(
         theme,
         entries_per_page,
         retention_read_days,
+        sidebar_prefs,
         linkding_configured,
         linkding_api_url,
         kagi_configured,
@@ -939,6 +960,9 @@ pub async fn user_settings_page(
         let retention_read_days = user_settings::get_retention_read_days(&state.db, user_id)
             .await
             .unwrap_or(0);
+        let sidebar_prefs = user_settings::get_sidebar_prefs(&state.db, user_id)
+            .await
+            .unwrap_or_default();
         let save_config = user_settings::get_save_services_config(&state.db, user_id)
             .await
             .unwrap_or_default();
@@ -957,6 +981,7 @@ pub async fn user_settings_page(
             theme,
             entries_per_page,
             retention_read_days,
+            sidebar_prefs,
             linkding_configured,
             linkding_api_url,
             kagi_configured,
@@ -1054,6 +1079,8 @@ pub async fn user_settings_page(
             theme,
             entries_per_page,
             retention_read_days,
+            sidebar_sort: sidebar_prefs.sort,
+            sidebar_hide_read: sidebar_prefs.hide_read,
             password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
             password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
             linkding_configured,
@@ -2574,6 +2601,8 @@ pub async fn build_app_layout(
         total_unread: chrome.total_unread,
         total_summarized: chrome.total_summarized,
         via_forward_auth: auth_user.via_forward_auth,
+        sidebar_sort: chrome.sidebar_prefs.sort,
+        sidebar_hide_read: chrome.sidebar_prefs.hide_read,
     };
     let sidebar_bootstrap_json = serialize_sidebar_for_script(&sidebar);
     let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
@@ -2693,6 +2722,10 @@ pub struct UserSettingsTemplate {
     pub theme: Option<String>,
     pub entries_per_page: i64,
     pub retention_read_days: i64,
+    /// Selected option of the sidebar-ordering `<select>`: `"name"` or
+    /// `"unread"` (see `user_settings::parse_sidebar_sort`).
+    pub sidebar_sort: &'static str,
+    pub sidebar_hide_read: bool,
     /// Same purpose as on [`SetupTemplate`]: the "Change Password" field's
     /// browser-side hint is generated from the server's own policy constants.
     pub password_min_length: usize,

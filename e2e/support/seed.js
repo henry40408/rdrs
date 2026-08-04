@@ -283,6 +283,22 @@ export class SeedHelper {
     }
   }
 
+  markFeedRead(userId, feedTitle) {
+    const db = new Database(this.dbPath);
+    try {
+      db.prepare(
+        `UPDATE entry SET read_at = datetime('now')
+         WHERE feed_id IN (
+           SELECT f.id FROM feed f
+           JOIN category c ON f.category_id = c.id
+           WHERE c.user_id = ? AND f.title = ?
+         )`
+      ).run(userId, feedTitle);
+    } finally {
+      db.close();
+    }
+  }
+
   seedTestEntries(feedId, count) {
     const entries = [];
     for (let i = 1; i <= count; i++) {

@@ -2979,6 +2979,50 @@ async fn test_update_preferences_form() {
 }
 
 #[tokio::test]
+async fn test_update_preferences_form_sets_sidebar_prefs() {
+    let mut server = create_test_server(default_test_config()).await;
+    setup_authenticated_user(&mut server).await;
+
+    // Defaults before anything is submitted.
+    let sidebar: serde_json::Value = server.get("/api/sidebar").await.json();
+    assert_eq!(sidebar["sidebar_sort"], "name");
+    assert_eq!(sidebar["sidebar_hide_read"], false);
+
+    server
+        .post("/user-settings/preferences")
+        .form(&json!({
+            "theme": "system",
+            "entries_per_page": 30,
+            "retention_read_days": 0,
+            "sidebar_sort": "unread",
+            "sidebar_hide_read": "1",
+        }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    let sidebar: serde_json::Value = server.get("/api/sidebar").await.json();
+    assert_eq!(sidebar["sidebar_sort"], "unread");
+    assert_eq!(sidebar["sidebar_hide_read"], true);
+
+    // An unchecked checkbox sends nothing, which must clear the flag rather
+    // than leave it on — and an unknown sort falls back to the default.
+    server
+        .post("/user-settings/preferences")
+        .form(&json!({
+            "theme": "system",
+            "entries_per_page": 30,
+            "retention_read_days": 0,
+            "sidebar_sort": "nonsense",
+        }))
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    let sidebar: serde_json::Value = server.get("/api/sidebar").await.json();
+    assert_eq!(sidebar["sidebar_sort"], "name");
+    assert_eq!(sidebar["sidebar_hide_read"], false);
+}
+
+#[tokio::test]
 async fn test_update_preferences_form_validation() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;

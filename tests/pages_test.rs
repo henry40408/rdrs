@@ -379,6 +379,15 @@ async fn test_user_settings_page_renders_ssr_content() {
     assert!(body.contains("<form method=\"post\" action=\"/user-settings/kagi\">"));
     assert!(body.contains("<rdrs-passkeys>"));
     assert!(body.contains("/static/js/passkey.js"));
+
+    // Sidebar display preferences, defaulting to the pre-existing behaviour.
+    assert!(body.contains(r#"name="sidebar_sort""#));
+    assert!(body.contains(r#"<option value="name" selected>"#));
+    assert!(body.contains(r#"name="sidebar_hide_read""#));
+    assert!(
+        !body.contains(r#"name="sidebar_hide_read" value="1" checked"#),
+        "hide-read must be off by default"
+    );
 }
 
 #[tokio::test]
@@ -3317,6 +3326,26 @@ async fn test_unread_page_renders_entry_rows() {
     assert!(
         html.contains(r#"id="mark-above-read""#),
         "unread page must render the Mark Above as Read button"
+    );
+
+    // `?fragment=1` without a cursor is the list-refresh response the
+    // mark-above swap fetches: the whole list re-rendered in place, not the
+    // Load-More append fragment (which would duplicate page 1 on top of it).
+    let fragment = app.server.get("/?fragment=1").await;
+    assert_eq!(fragment.status_code(), StatusCode::OK);
+    let frag_html = fragment.text();
+    assert!(
+        frag_html.contains(r#"data-swap-target="[data-entries-list]""#),
+        "refresh fragment must retarget the whole list container"
+    );
+    assert!(
+        !frag_html.contains(r##"data-swap-target="#load-more""##),
+        "a cursorless fragment must not be the Load-More append response"
+    );
+    assert!(frag_html.contains("Entry One"));
+    assert!(
+        !frag_html.contains("<rdrs-sidebar"),
+        "the fragment is markup for a swap, not a document"
     );
 }
 
