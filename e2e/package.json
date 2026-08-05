@@ -10,8 +10,8 @@
     "test:csp": "playwright test --config=scripts/audit.config.js scripts/csp-audit.spec.js"
   },
   "devDependencies": {
-    "@playwright/test": "^1.61.1",
-    "better-sqlite3": "^13.0.1",
+    "@playwright/test": "^1.62.0",
+    "better-sqlite3": "^13.0.2",
     "nanoid": "^6.0.0",
     "playwright-bdd": "^9.2.0"
   }
