@@ -768,10 +768,11 @@ code {
 
    Wrapping, not squeezing: on a narrow pane the feed name and the timestamp
    would otherwise both shrink to a few characters per line and interleave.
-   `flex-wrap` plus `flex-basis: auto` on both items makes the browser
-   compare their max-content widths against the pane, so the timestamp drops
-   to its own line (trailing hairline in tow) before either is forced to
-   break mid-phrase. */
+   `flex-wrap` alone fixes it — the default `flex: 0 1 auto` on both items
+   makes the browser compare their max-content widths against the pane, so
+   the timestamp drops to its own line (trailing hairline in tow) before
+   either is forced to break mid-phrase. Do not add `flex-grow` to `.src`:
+   it would push the timestamp to the far right on wide layouts. */
 .dispatch-eyebrow {
     display: flex;
     flex-wrap: wrap;
@@ -787,15 +788,23 @@ code {
 }
 .dispatch-eyebrow .src {
     display: inline-flex;
-    flex: 1 1 auto;
-    /* Keep the favicon on the first line when a long feed name still wraps
-       inside its own row. */
+    /* Keep the favicon on the first line when a long feed name wraps inside
+       its own row — `center` would drop it to the middle of the block. */
     align-items: flex-start;
     gap: 6px;
     color: var(--color-accent-text);
 }
-.dispatch-eyebrow .entry-favicon { margin-right: 0; }
-.dispatch-eyebrow time { flex: 0 1 auto; color: inherit; }
+.dispatch-eyebrow .entry-favicon {
+    margin-right: 0;
+    /* `flex-start` pins the icon to the top of the line box, but the text
+       sits half a leading lower, so re-centre it against the first line:
+       (12.5px font * 1.5 line-height - 15px icon) / 2. Single-line eyebrows
+       then render exactly as `align-items: center`. Not `1lh` — the chip
+       variant carries its own 8.5px font-size, which would resolve it
+       against the initial's line box instead of the feed name's. */
+    margin-top: 1.875px;
+}
+.dispatch-eyebrow time { color: inherit; }
 .dispatch-eyebrow::after {
     content: "";
     flex: 1;
