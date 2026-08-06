@@ -30,7 +30,10 @@
         <div class="dispatch-eyebrow">
             <span class="src">
                 {% if pane.feed_has_icon %}
-                <img class="entry-favicon" src="/api/feeds/{{ pane.feed_id }}/icon" alt="" width="15" height="15">
+                {# Sync decode, same reason as the entry row's favicon: an async
+                   decode can present the pane before the icon's bitmap is
+                   ready, which reads as the favicon blinking on every swap. #}
+                <img class="entry-favicon" src="/api/feeds/{{ pane.feed_id }}/icon" alt="" decoding="sync" width="15" height="15">
                 {% else %}
                 <span class="entry-favicon entry-favicon-chip fav-c{{ pane.feed_color_index() }}" aria-hidden="true">{{ pane.feed_initial() }}</span>
                 {% endif %}

@@ -22,6 +22,10 @@
 //   3. Background-revalidate via /api/sidebar after every mount, and surgically
 //      patch the unread badges (full-rerender only if identity / category set
 //      changed).
+//   4. The open category's feed rows are reconciled by feed id and survive a
+//      full re-render, so a refresh never recreates their `<img>` favicons.
+//      WebKit paints a fresh `<img>` a frame late even when the bytes are in
+//      the HTTP cache, and that frame is a visible blink.
 //
 // Action paths that mutate unread/category state announce it with
 // `document.dispatchEvent(new CustomEvent('rdrs:sidebar-stale'))` — the element
@@ -106,18 +110,49 @@ function writeCachedFeeds(byCategory) {
     catch { /* quota / disabled storage — fine */ }
 }
 
+/// First character of a feed's title, uppercased, and its palette slot (feed id
+/// modulo the six colours). Mirror `feed_initial()` / `feed_color_index()` in
+/// handlers/pages so the same feed wears the same mark here and in
+/// `_entry_row.html`.
+function feedInitial(feed) { return (Array.from(feed.title || '')[0] || '?').toUpperCase(); }
+
+function feedColorIndex(feed) { return ((feed.id % 6) + 6) % 6; }
+
+/// Identity of the mark a feed should be wearing: which icon, or which chip.
+/// Stamped onto the node as `data-favicon-key` so a refresh can tell "same mark,
+/// leave it alone" from "this feed's mark changed". Leaving it alone is the
+/// whole point — WebKit paints a freshly inserted `<img>` a frame late even when
+/// the bytes are already in the HTTP cache, so recreating one blinks the icon.
+function feedFaviconKey(feed) {
+    return feed.has_icon ? `img:${feed.id}` : `chip:${feedColorIndex(feed)}:${feedInitial(feed)}`;
+}
+
 /// Favicon for a sidebar feed row: the real icon when the server says there is
-/// one, otherwise the initial-letter chip. Mirrors `_entry_row.html` —
-/// including `feed_initial()` (first character, uppercased) and
-/// `feed_color_index()` (feed id modulo the six-colour palette) from
-/// handlers/pages — so the same feed wears the same mark in both places.
-function feedFavicon(feed) {
+/// one, otherwise the initial-letter chip. Built as a node rather than a markup
+/// string so rows can be reconciled in place; text goes in via `textContent`,
+/// which leaves nothing to escape.
+function buildFeedFavicon(feed) {
+    let node;
     if (feed.has_icon) {
-        return `<img class="entry-favicon" src="/api/feeds/${feed.id}/icon" alt="" loading="lazy" width="15" height="15">`;
+        node = document.createElement('img');
+        node.className = 'entry-favicon';
+        node.src = `/api/feeds/${feed.id}/icon`;
+        node.alt = '';
+        // No lazy loading and a sync decode, matching `_entry_row.html`: WebKit
+        // drops the frame while it re-runs lazy-load bookkeeping or decodes
+        // asynchronously, which is what the icons blinking on iOS looks like.
+        // At 15px, same-origin and cached for a day, neither buys anything.
+        node.decoding = 'sync';
+        node.width = 15;
+        node.height = 15;
+    } else {
+        node = document.createElement('span');
+        node.className = `entry-favicon entry-favicon-chip fav-c${feedColorIndex(feed)}`;
+        node.setAttribute('aria-hidden', 'true');
+        node.textContent = feedInitial(feed);
     }
-    const initial = (Array.from(feed.title || '')[0] || '?').toUpperCase();
-    const color = ((feed.id % 6) + 6) % 6;
-    return `<span class="entry-favicon entry-favicon-chip fav-c${color}" aria-hidden="true">${escapeHtml(initial)}</span>`;
+    node.dataset.faviconKey = feedFaviconKey(feed);
+    return node;
 }
 
 /// The reader's sidebar display preferences, read out of an `/api/sidebar`
@@ -415,11 +450,64 @@ class RdrsSidebar extends HTMLElement {
         this.closeDrawer();
     }
 
+    /// Build one feed row from scratch. Text is written with `textContent`, so
+    /// unlike the template strings in `render()` there is nothing to escape.
+    _buildFeedRow(feed) {
+        const row = document.createElement('a');
+        row.className = 'sidebar-feed';
+        row.href = `/feeds/${feed.id}/entries`;
+        row.dataset.feedId = String(feed.id);
+        row.appendChild(buildFeedFavicon(feed));
+        const label = document.createElement('span');
+        label.className = 'sidebar-item-label';
+        row.appendChild(label);
+        this._patchFeedRow(row, feed);
+        return row;
+    }
+
+    /// Bring an existing feed row up to date, touching only what actually
+    /// differs. Everything it leaves alone keeps its painted pixels — the
+    /// `<img>` favicon above all, which is why the favicon is compared by
+    /// `data-favicon-key` instead of being rebuilt unconditionally.
+    _patchFeedRow(row, feed) {
+        const title = feed.title || '';
+        if (row.title !== title) row.title = title;
+        const favicon = row.firstElementChild;
+        if (!favicon || favicon.dataset.faviconKey !== feedFaviconKey(feed)) {
+            const next = buildFeedFavicon(feed);
+            if (favicon) row.replaceChild(next, favicon);
+            else row.prepend(next);
+        }
+        const label = row.querySelector('.sidebar-item-label');
+        if (label && label.textContent !== title) label.textContent = title;
+        const badge = row.querySelector('.sidebar-badge');
+        if (feed.unread_count > 0) {
+            const text = String(feed.unread_count);
+            if (badge) {
+                if (badge.textContent !== text) badge.textContent = text;
+            } else {
+                const span = document.createElement('span');
+                span.className = 'sidebar-badge';
+                span.textContent = text;
+                row.appendChild(span);
+            }
+        } else if (badge) {
+            badge.remove();
+        }
+        row.classList.toggle('active', feed.id === this.activeFeedId);
+    }
+
     /// Mount (or refresh) the feed list under the open category, and drop any
     /// list left behind by the category before it. Written into the existing
     /// DOM rather than folded into `render()` for the usual reason: a full
     /// rebuild resets `.sidebar-nav`'s scroll offset, and this runs on every
     /// category switch.
+    ///
+    /// The rows are reconciled by feed id rather than rewritten as one
+    /// `innerHTML` blob. Every `rdrs:sidebar-stale` signal — an entry opened, a
+    /// mark-as-read — lands here, and a rewritten row means a rebuilt `<img>`,
+    /// which WebKit paints a frame late even from cache: the feed icons blinked
+    /// on essentially every interaction.
     _renderFeeds() {
         const container = this.querySelector('#sidebar-categories');
         if (!container) return;
@@ -427,6 +515,8 @@ class RdrsSidebar extends HTMLElement {
         for (const list of container.querySelectorAll('.sidebar-feeds')) {
             if (parseInt(list.dataset.categoryId || '0', 10) !== catId) list.remove();
         }
+        const detached = this._detachedFeeds;
+        this._detachedFeeds = null;
         if (!catId) return;
         const link = container.querySelector(`a[data-category-id="${catId}"]`);
         const feeds = this._feeds[catId];
@@ -434,20 +524,43 @@ class RdrsSidebar extends HTMLElement {
         // gap rather than flash an empty group — fetchFeeds() calls back here.
         if (!link || !feeds) return;
         let list = container.querySelector(`.sidebar-feeds[data-category-id="${catId}"]`);
+        // A full render() rebuilt #sidebar-categories and set the previous list
+        // aside; re-adopting it keeps those rows and their loaded icons.
+        if (!list && detached
+            && parseInt(detached.dataset.categoryId || '0', 10) === catId) {
+            list = detached;
+        }
         if (!list) {
             list = document.createElement('div');
             list.className = 'sidebar-feeds';
             list.dataset.categoryId = String(catId);
+        }
+        if (list.parentNode !== link.parentNode || list.previousElementSibling !== link) {
             link.insertAdjacentElement('afterend', list);
         }
-        const activeFeedId = this.activeFeedId;
-        list.innerHTML = arrangeSidebarRows(feeds, sidebarPrefs(this._data), activeFeedId)
-            .map((feed) => `
-            <a href="/feeds/${feed.id}/entries" class="sidebar-feed${feed.id === activeFeedId ? ' active' : ''}" data-feed-id="${feed.id}" title="${escapeHtml(feed.title)}">
-                ${feedFavicon(feed)}
-                <span class="sidebar-item-label">${escapeHtml(feed.title)}</span>
-                ${feed.unread_count > 0 ? `<span class="sidebar-badge">${feed.unread_count}</span>` : ''}
-            </a>`).join('');
+
+        const rows = new Map();
+        for (const row of list.children) {
+            if (row.dataset.feedId) rows.set(row.dataset.feedId, row);
+        }
+        let cursor = null;
+        const wanted = arrangeSidebarRows(feeds, sidebarPrefs(this._data), this.activeFeedId);
+        for (const feed of wanted) {
+            const key = String(feed.id);
+            let row = rows.get(key);
+            if (row) {
+                rows.delete(key);
+                this._patchFeedRow(row, feed);
+            } else {
+                row = this._buildFeedRow(feed);
+            }
+            // Move only when the row isn't already where it belongs, so a
+            // reordering doesn't detach and reattach every node after it.
+            const at = cursor ? cursor.nextSibling : list.firstChild;
+            if (at !== row) list.insertBefore(row, at);
+            cursor = row;
+        }
+        for (const row of rows.values()) row.remove();
     }
 
     /// Surgical badge update — used when only unread counts changed. Avoids a
@@ -529,6 +642,18 @@ class RdrsSidebar extends HTMLElement {
                 <span class="sidebar-item-icon">${ICON.shield}</span>
                 <span>Admin</span>
             </a>` : '';
+
+        // The rebuild below discards #sidebar-categories and with it the open
+        // category's feed list. Detach it first so `_renderFeeds()` can re-adopt
+        // the same rows instead of building new ones: with `sidebar_hide_read`
+        // on, an ordinary mark-as-read counts as a structural change, so this
+        // path runs often enough that a rebuilt list reads as the feed icons
+        // blinking.
+        const openFeeds = activeCatId
+            ? this.querySelector(`.sidebar-feeds[data-category-id="${activeCatId}"]`)
+            : null;
+        openFeeds?.remove();
+        this._detachedFeeds = openFeeds;
 
         this.innerHTML = `
 <button class="sidebar-toggle" type="button" aria-label="Open menu">${ICON.menu}</button>

@@ -244,6 +244,23 @@ Feature: Reading entries
     When the delayed fragment response has settled
     Then the reading pane shows the title "Test Entry 2"
 
+  # Regression: every open sends the row's marker form back, and once the entry
+  # is read that fragment is byte-identical to what is already there. Replacing
+  # it anyway repaints the whole grid row — favicon included, which WebKit
+  # re-rasterizes — so the icons blinked on repeated clicks with nothing about
+  # the row actually changing. An identical row fragment is now skipped.
+  Scenario: Re-opening an entry that is already read leaves its row untouched
+    Given the "Reading Feed" feed has a favicon
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    Then the reading pane shows the title "Test Entry 1"
+    When I click the entry titled "Test Entry 2"
+    Then the reading pane shows the title "Test Entry 2"
+    When I tag the entry rows
+    And I click the entry titled "Test Entry 1"
+    Then the reading pane shows the title "Test Entry 1"
+    And the entry rows are still the ones I tagged
+
   Scenario: A stale slow fragment response never overwrites a newer click
     When I open the inbox
     And the fragment response for the entry titled "Test Entry 1" is delayed
