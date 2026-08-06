@@ -265,6 +265,71 @@ let paneNavAbort = null;
 // for the entry currently open. See the staleness check in performSwap().
 const PANE_REGION_TARGETS = new Set(['#reading-pane', '#rp-summary-container']);
 
+/// The markup the server last delivered for each swap target.
+///
+/// When the next response for that target is byte-identical, the DOM already
+/// shows it and replacing the node is pure churn — a layout and a repaint of
+/// everything under it, which on WebKit is where images blink. Two paths hit
+/// this constantly: re-opening an entry sends the row's marker form back on
+/// every click and, once the entry is read, it never changes again; clicking the
+/// sidebar feed that is *already* open re-fetches and rebuilds the entire list
+/// pane from markup identical to what it replaces.
+///
+/// Comparing the server's answer against its own previous answer, rather than
+/// against the DOM, is what makes this reliable: the live DOM is covered in
+/// things the server never sent — `.selected` from `j`/`k`, `data-…-bound`
+/// listener markers, `title` attributes a client-side localizer adds to `<time>`
+/// — and every one of them made a DOM-to-response comparison differ.
+///
+/// A target is only known after the first swap that fills it, so a pane that
+/// arrived with the document still gets replaced once before this can settle.
+const lastServerMarkup = new Map();
+
+/// The single element a swap template carries, or null when it carries anything
+/// else (Load More returns N rows plus a form). The list-pane template indents
+/// its include, so the whitespace the parser hands back is ignored.
+function soleSwapElement(tpl) {
+    const nodes = Array.from(tpl.content.childNodes)
+        .filter((n) => n.nodeType !== Node.TEXT_NODE || n.textContent.trim() !== '');
+    if (nodes.length !== 1 || nodes[0].nodeType !== Node.ELEMENT_NODE) return null;
+    return nodes[0];
+}
+
+/// Attributes the server re-stamps on every render that change nothing the
+/// reader can see. `data-snapshot-at` is the render-time boundary the neighbor
+/// API echoes back as `read_after`; it moves every second, so leaving it in the
+/// comparison would make two responses for the same view never equal and the
+/// skip above could never fire.
+const VOLATILE_SERVER_ATTRS = ['data-snapshot-at'];
+
+/// `el`'s markup with those attributes removed, for comparison only.
+function comparableServerMarkup(el) {
+    const clone = el.cloneNode(true);
+    for (const name of VOLATILE_SERVER_ATTRS) {
+        for (const n of clone.querySelectorAll(`[${name}]`)) n.removeAttribute(name);
+        clone.removeAttribute(name);
+    }
+    return clone.outerHTML;
+}
+
+/// Copy those attributes from the response onto the DOM that is being kept.
+/// Skipping a swap must not freeze the snapshot boundary at whatever the reader
+/// first loaded — `j`/`k` would then treat a widening set of entries as unread.
+/// The two trees are identical apart from these attributes, so the elements
+/// carrying them line up one for one.
+function syncVolatileAttrs(incoming, live) {
+    for (const name of VOLATILE_SERVER_ATTRS) {
+        const from = incoming.querySelectorAll(`[${name}]`);
+        const onto = live.querySelectorAll(`[${name}]`);
+        for (let i = 0; i < Math.min(from.length, onto.length); i++) {
+            onto[i].setAttribute(name, from[i].getAttribute(name));
+        }
+        if (incoming.hasAttribute(name) && live.hasAttribute(name)) {
+            live.setAttribute(name, incoming.getAttribute(name));
+        }
+    }
+}
+
 /// Fetch `url` and apply the response to `defaultTarget` (or to whatever
 /// `<template data-swap-target>` blocks it carries). Resolves `true` when a
 /// swap was actually applied, `false` when the call bailed out (superseded,
@@ -385,6 +450,20 @@ async function performSwap(url, init, defaultTarget, options) {
             if (sel === '#reading-pane') swappedReadingPane = true;
             const dst = document.querySelector(sel);
             if (!dst) continue;
+            // Unchanged since the last time the server answered for this
+            // target? Then the DOM already shows it — see `lastServerMarkup`.
+            // The reading pane is exempt: replacing that node also resets its
+            // scroll offset, so keeping it would quietly change what re-opening
+            // the open entry does to a half-read article.
+            const sole = sel === '#reading-pane' ? null : soleSwapElement(tpl);
+            if (sole) {
+                const markup = comparableServerMarkup(sole);
+                if (lastServerMarkup.get(sel) === markup) {
+                    syncVolatileAttrs(sole, dst);
+                    continue;
+                }
+                lastServerMarkup.set(sel, markup);
+            }
             const parent = dst.parentNode;
             // Insert every child of the template content (including
             // multi-element payloads — e.g. Load-More returns N rows + a

@@ -379,6 +379,36 @@ Then("the sidebar highlights feed {string}", async ({ page }, title) => {
   await expect(sidebarFeedLink(page, title)).toHaveClass(/active/);
 });
 
+Then("the sidebar feed {string} shows {int} unread", async ({ page }, title, count) => {
+  await expect(sidebarFeedLink(page, title).locator(".sidebar-badge")).toHaveText(String(count));
+});
+
+// A row built by a re-render carries no `data-e2e-tag`, so a tag set before an
+// interaction and still there afterwards proves the row — and the favicon inside
+// it — was patched in place rather than rebuilt. Rebuilding an <img> costs a
+// blank frame in WebKit, which is what reconciling the feed list avoids.
+When("I tag the sidebar feed rows", async ({ page }) => {
+  const tagged = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll(".sidebar-feed[data-feed-id]")];
+    for (const row of rows) {
+      row.dataset.e2eTag = "1";
+      const icon = row.querySelector(".entry-favicon");
+      if (icon) icon.dataset.e2eTag = "1";
+    }
+    return rows.length;
+  });
+  expect(tagged).toBeGreaterThan(0);
+});
+
+Then("the sidebar feed rows are still the ones I tagged", async ({ page }) => {
+  await expect(
+    page.locator(".sidebar-feed[data-feed-id]:not([data-e2e-tag])")
+  ).toHaveCount(0);
+  await expect(
+    page.locator(".sidebar-feed[data-feed-id] .entry-favicon:not([data-e2e-tag])")
+  ).toHaveCount(0);
+});
+
 Then("the sidebar feed {string} shows its icon", async ({ page }, title) => {
   const icon = sidebarFeedLink(page, title).locator("img.entry-favicon");
   await expect(icon).toBeVisible();
@@ -502,6 +532,90 @@ Then("I see more than {int} entries in the entry list", async ({ page }, count) 
 
 Then("the first entry is titled {string}", async ({ page }, title) => {
   await expect(page.getByTestId("entry-item").first()).toContainText(title);
+});
+
+// Tag every element inside every entry row. A node the swap replaced comes back
+// from the server untagged, so what is still tagged afterwards is exactly what
+// survived — the check for "this interaction left the list alone".
+//
+// The tag is a JS property, not a `data-` attribute: an attribute would change
+// the node's `outerHTML`, and `outerHTML` is what performSwap compares to
+// decide a row fragment is unchanged. Tagging by attribute defeats the very
+// skip this asserts.
+When("I tag the entry rows", async ({ page }) => {
+  const tagged = await page.evaluate(() => {
+    const nodes = document.querySelectorAll("[data-entry-row], [data-entry-row] *");
+    for (const node of nodes) node.__e2eTag = true;
+    return nodes.length;
+  });
+  expect(tagged).toBeGreaterThan(0);
+});
+
+Then("the entry rows are still the ones I tagged", async ({ page }) => {
+  const untagged = await page.evaluate(() =>
+    [...document.querySelectorAll("[data-entry-row], [data-entry-row] *")]
+      .filter((node) => !node.__e2eTag)
+      .map((node) => `${node.nodeName.toLowerCase()}.${node.className} in #${node.closest("[data-entry-row]")?.id}`));
+  expect(untagged).toEqual([]);
+});
+
+// Arms the wait for the *next* list-pane response before the click that causes
+// it, so the assertion can be sure the response landed rather than guessing with
+// a timeout. Tags are JS properties rather than attributes — see "I tag the
+// entry rows" for why that matters here.
+const panePending = new WeakMap();
+const paneStamp = new WeakMap();
+
+When("I tag the entry list pane", async ({ page }) => {
+  const state = await page.evaluate(() => {
+    const pane = document.querySelector("[data-list-pane]");
+    pane.__e2ePaneTag = true;
+    const rows = [...pane.querySelectorAll("[data-entry-row]")];
+    const icons = [...pane.querySelectorAll("img")];
+    for (const node of [...rows, ...icons]) node.__e2ePaneTag = true;
+    return {
+      rows: rows.length,
+      icons: icons.length,
+      stamp: pane.querySelector("[data-snapshot-at]")?.getAttribute("data-snapshot-at"),
+    };
+  });
+  expect(state.rows).toBeGreaterThan(0);
+  expect(state.icons).toBeGreaterThan(0);
+  paneStamp.set(page, state.stamp);
+  panePending.set(page, page.waitForResponse((r) => r.url().includes("pane=1")));
+});
+
+// `data-snapshot-at` has one-second resolution, so two clicks inside the same
+// second carry the same stamp and "did it advance?" would be unanswerable.
+When("I let the render stamp age", async ({ page }) => {
+  await page.waitForTimeout(1100);
+});
+
+Then("the entry list pane is still the one I tagged", async ({ page }) => {
+  await panePending.get(page);
+  // One frame for the swap logic that runs on the response to have its say.
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const kept = await page.evaluate(() => {
+    const pane = document.querySelector("[data-list-pane]");
+    const nodes = [...pane.querySelectorAll("[data-entry-row]"), ...pane.querySelectorAll("img")];
+    return {
+      pane: pane.__e2ePaneTag === true,
+      total: nodes.length,
+      tagged: nodes.filter((n) => n.__e2ePaneTag).length,
+    };
+  });
+  expect(kept.pane).toBe(true);
+  expect(kept.total).toBeGreaterThan(0);
+  expect(kept.tagged).toBe(kept.total);
+});
+
+Then("the list's render stamp has advanced", async ({ page }) => {
+  const before = paneStamp.get(page);
+  expect(before).toBeTruthy();
+  await expect
+    .poll(async () => page.evaluate(() =>
+      document.querySelector("[data-list-pane] [data-snapshot-at]")?.getAttribute("data-snapshot-at")))
+    .not.toBe(before);
 });
 
 Then("the reading pane shows the title {string}", async ({ page }, title) => {

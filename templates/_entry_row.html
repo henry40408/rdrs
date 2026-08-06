@@ -38,7 +38,14 @@
 
     <div class="entry-item-meta">
         {% if r.feed_has_icon %}
-        <img class="entry-favicon" src="/api/feeds/{{ r.feed_id }}/icon" alt="" loading="lazy" width="15" height="15">
+        {# No `loading="lazy"`, deliberately: WebKit re-runs its lazy-load
+           bookkeeping when an image is re-inserted or its container repaints,
+           and drops the frame while it does — the icons blink on iOS while
+           Firefox and Blink hold them steady. These are 15px, same-origin and
+           cached for a day, so deferring them buys nothing worth that. Sync
+           decoding for the same reason: an async decode lets a repaint present
+           the <img> before its bitmap is ready. #}
+        <img class="entry-favicon" src="/api/feeds/{{ r.feed_id }}/icon" alt="" decoding="sync" width="15" height="15">
         {% else %}
         <span class="entry-favicon entry-favicon-chip fav-c{{ r.feed_color_index() }}" aria-hidden="true">{{ r.feed_initial() }}</span>
         {% endif %}
