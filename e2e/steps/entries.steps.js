@@ -164,6 +164,65 @@ When("I open the entries page for category {string}", async ({ page, seed, curre
   await page.goto(`${serverUrl}/categories/${categoryId}/entries`);
 });
 
+// `?status=all` keeps read entries listed, which is what the morph scenarios
+// need: on the unread view a row that is marked read simply leaves, and a row
+// that is gone proves nothing about whether the ones that stayed were rebuilt.
+When(
+  "I open the entries page for category {string} showing all statuses",
+  async ({ page, seed, currentUser, serverUrl }, name) => {
+    const userId = seed.getUserId(currentUser.username);
+    const categoryId = seed.findCategoryIdByName(userId, name);
+    await page.goto(`${serverUrl}/categories/${categoryId}/entries?status=all`);
+  }
+);
+
+When("the entry list favicons have loaded", async ({ page }) => {
+  const icons = page.locator("[data-entries-list] img.entry-favicon");
+  await expect(icons.first()).toBeVisible();
+  await expect
+    .poll(async () => icons.evaluateAll((imgs) => imgs.every((i) => i.complete && i.naturalWidth > 0)))
+    .toBe(true);
+});
+
+// Tags by JS property, not attribute — an attribute would change `outerHTML`,
+// which the swap logic compares, and would also be something the morph then has
+// to decide whether to strip.
+When("I tag the entry list contents", async ({ page }) => {
+  const counts = await page.evaluate(() => {
+    const list = document.querySelector("[data-entries-list]");
+    const rows = [...list.querySelectorAll("[data-entry-row]")];
+    const icons = [...list.querySelectorAll("img.entry-favicon")];
+    list.__e2eMorphTag = true;
+    for (const node of [...rows, ...icons]) node.__e2eMorphTag = true;
+    return { rows: rows.length, icons: icons.length };
+  });
+  expect(counts.rows).toBeGreaterThan(0);
+  expect(counts.icons).toBeGreaterThan(0);
+});
+
+Then("every entry in the list is marked read", async ({ page }) => {
+  const rows = page.locator("[data-entries-list] [data-entry-row]");
+  await expect(rows.first()).toBeVisible();
+  await expect
+    .poll(async () => rows.evaluateAll((els) => els.length > 0 && els.every((e) => e.classList.contains("entry-read"))))
+    .toBe(true);
+});
+
+Then("the entry list contents are still the ones I tagged", async ({ page }) => {
+  const kept = await page.evaluate(() => {
+    const list = document.querySelector("[data-entries-list]");
+    const nodes = [...list.querySelectorAll("[data-entry-row]"), ...list.querySelectorAll("img.entry-favicon")];
+    return {
+      container: list.__e2eMorphTag === true,
+      total: nodes.length,
+      tagged: nodes.filter((n) => n.__e2eMorphTag).length,
+    };
+  });
+  expect(kept.container).toBe(true);
+  expect(kept.total).toBeGreaterThan(0);
+  expect(kept.tagged).toBe(kept.total);
+});
+
 When(
   "I open the entries page for category {string} searching for {string}",
   async ({ page, seed, currentUser, serverUrl }, name, q) => {
