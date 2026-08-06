@@ -764,11 +764,19 @@ code {
 }
 
 /* Mono uppercase eyebrow: FEED · AGO, favicon leading, trailing hairline.
-   (Category / read-time are dropped — no server data for them in the pane.) */
+   (Category / read-time are dropped — no server data for them in the pane.)
+
+   Wrapping, not squeezing: on a narrow pane the feed name and the timestamp
+   would otherwise both shrink to a few characters per line and interleave.
+   `flex-wrap` plus `flex-basis: auto` on both items makes the browser
+   compare their max-content widths against the pane, so the timestamp drops
+   to its own line (trailing hairline in tow) before either is forced to
+   break mid-phrase. */
 .dispatch-eyebrow {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
+    gap: 4px 10px;
     margin-bottom: 16px;
     font-family: var(--font-mono);
     font-size: 12.5px;
@@ -779,12 +787,15 @@ code {
 }
 .dispatch-eyebrow .src {
     display: inline-flex;
-    align-items: center;
+    flex: 1 1 auto;
+    /* Keep the favicon on the first line when a long feed name still wraps
+       inside its own row. */
+    align-items: flex-start;
     gap: 6px;
     color: var(--color-accent-text);
 }
 .dispatch-eyebrow .entry-favicon { margin-right: 0; }
-.dispatch-eyebrow time { color: inherit; }
+.dispatch-eyebrow time { flex: 0 1 auto; color: inherit; }
 .dispatch-eyebrow::after {
     content: "";
     flex: 1;
