@@ -133,6 +133,29 @@ Feature: Triage entries (star, mark-read, summarize)
     Then the reading pane shows the title "Test Entry 1"
     And the entry list does not show "Test Entry 3"
 
+  # Both refresh paths re-render the whole row container with genuinely changed
+  # markup — the rows survive and only gain `entry-read` — so the
+  # skip-when-unchanged guard cannot apply. Replacing the container rebuilt
+  # every row and every favicon in it (measured: none of six preserved), and a
+  # rebuilt <img> is what WebKit blinks. The container is morphed instead.
+  Scenario: Mark Above as Read keeps the rows and favicons already on screen
+    Given the "Triage Feed" feed has a favicon
+    When I open the entries page for category "Triage Category" showing all statuses
+    And the entry list favicons have loaded
+    And I tag the entry list contents
+    And I mark the loaded entries as read
+    Then every entry in the list is marked read
+    And the entry list contents are still the ones I tagged
+
+  Scenario: The Mark as Read dropdown keeps the rows and favicons already on screen
+    Given the "Triage Feed" feed has a favicon
+    When I open the entries page for category "Triage Category" showing all statuses
+    And the entry list favicons have loaded
+    And I tag the entry list contents
+    And I mark all entries as read
+    Then every entry in the list is marked read
+    And the entry list contents are still the ones I tagged
+
   Scenario: Scoped search within a category, then mark matching as read
     Given a category "Anime" containing entries titled "Superheroine Rises" and "Other News"
     When I open the entries page for category "Anime"

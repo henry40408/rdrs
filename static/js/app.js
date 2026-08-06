@@ -295,6 +295,121 @@ function soleSwapElement(tpl) {
     return nodes[0];
 }
 
+/// Swap targets whose subtree is morphed into shape rather than replaced.
+///
+/// Both are pure entry-row markup. `[data-entries-list]` is the row container
+/// that "Mark Above as Read" and the Mark-as-Read dropdown re-render: the rows
+/// survive, they only gain `entry-read`, yet replacing the container rebuilt
+/// every one of them and every favicon inside — measured at none of six images
+/// preserved. `#entry-row-…` targets are the marker form a row action returns.
+///
+/// The rest stay on replacement, and not only out of caution. `[data-list-pane]`
+/// carries the filter bar's form controls, whose live value is state the markup
+/// does not describe, and a scroller whose offset is supposed to reset when the
+/// reader switches view. `#reading-pane` resets its scroll on purpose too. And a
+/// category switch replaces the rows with a different feed's anyway, so morphing
+/// would preserve almost nothing.
+function isMorphTarget(selector) {
+    return selector === '[data-entries-list]' || selector.startsWith('#entry-row-');
+}
+
+/// Attributes the client writes onto server-rendered markup as its own
+/// bookkeeping, which a morph must leave alone.
+///
+/// `data-…-bound` is the load-bearing one: it marks a control whose listeners
+/// are installed, so stripping it from an element that *survives* the morph
+/// invites the installer to bind a second copy to the same node — one click,
+/// two POSTs. `data-img-…` tracks a content image's load state, and `title` on
+/// a `<time>` is the tooltip `applyTimeTooltips()` writes.
+const CLIENT_OWNED_ATTR = /^(data-.+-bound|data-img-.+|data-localized|title)$/;
+
+/// Classes the client owns for the same reason: `.selected` is the `j`/`k`
+/// cursor, which the server has never heard of.
+const CLIENT_OWNED_CLASSES = ['selected'];
+
+/// Bring `from`'s attributes in line with `to`, keeping what the client owns.
+function morphAttributes(from, to) {
+    const mine = CLIENT_OWNED_CLASSES.filter((c) => from.classList.contains(c));
+    for (const { name, value } of to.attributes) {
+        if (from.getAttribute(name) !== value) from.setAttribute(name, value);
+    }
+    for (const name of from.getAttributeNames()) {
+        if (to.hasAttribute(name) || CLIENT_OWNED_ATTR.test(name)) continue;
+        from.removeAttribute(name);
+    }
+    for (const c of mine) from.classList.add(c);
+}
+
+/// Whether two nodes are similar enough to morph one into the other rather than
+/// swapping one for the other.
+function morphCompatible(from, to) {
+    if (!from || from.nodeType !== to.nodeType) return false;
+    if (from.nodeType !== Node.ELEMENT_NODE) return true;
+    if (from.tagName !== to.tagName) return false;
+    // An id is a key; two differently-keyed elements are different elements
+    // even when they look alike.
+    return (from.id || '') === (to.id || '');
+}
+
+/// Reshape `from`'s children into `to`'s, reusing the nodes already there.
+///
+/// Elements carrying an `id` are matched by it — entry rows have one, so a list
+/// that lost a row in the middle keeps every surviving row's node instead of
+/// shifting everything up by one. Everything else matches positionally.
+function morphChildren(from, to) {
+    const keyed = new Map();
+    for (const el of from.children) if (el.id) keyed.set(el.id, el);
+
+    let cursor = from.firstChild;
+    for (const next of Array.from(to.childNodes)) {
+        const key = next.nodeType === Node.ELEMENT_NODE && next.id ? next.id : null;
+        const existing = key ? keyed.get(key) : null;
+        if (existing) {
+            keyed.delete(key);
+            if (existing === cursor) cursor = cursor.nextSibling;
+            else from.insertBefore(existing, cursor);
+            morphNode(existing, next);
+            continue;
+        }
+        // Never consume a keyed node positionally: it may be the match for an
+        // incoming node further down the list.
+        const reusable = cursor && !(cursor.nodeType === Node.ELEMENT_NODE && cursor.id)
+            && morphCompatible(cursor, next) ? cursor : null;
+        if (reusable) {
+            cursor = cursor.nextSibling;
+            morphNode(reusable, next);
+            continue;
+        }
+        from.insertBefore(document.importNode(next, true), cursor);
+    }
+    while (cursor) {
+        const spent = cursor;
+        cursor = cursor.nextSibling;
+        spent.remove();
+    }
+    for (const orphan of keyed.values()) orphan.remove();
+}
+
+/// Morph one node into another, in place.
+function morphNode(from, to) {
+    if (from.nodeType !== Node.ELEMENT_NODE) {
+        if (from.nodeValue !== to.nodeValue) from.nodeValue = to.nodeValue;
+        return;
+    }
+    morphAttributes(from, to);
+    morphChildren(from, to);
+}
+
+/// Morph the live `dst` into the shape of `incoming`, leaving every node that
+/// survives — an `<img>` above all — exactly where it was. A rebuilt `<img>` has
+/// no bitmap yet and a re-inserted one sends WebKit back through its load and
+/// decode path, so the icons blink; a morphed one is never touched at all.
+function morphSwap(dst, incoming) {
+    if (!morphCompatible(dst, incoming)) return false;
+    morphNode(dst, incoming);
+    return true;
+}
+
 /// Attributes the server re-stamps on every render that change nothing the
 /// reader can see. `data-snapshot-at` is the render-time boundary the neighbor
 /// API echoes back as `read_after`; it moves every second, so leaving it in the
@@ -463,6 +578,10 @@ async function performSwap(url, init, defaultTarget, options) {
                     continue;
                 }
                 lastServerMarkup.set(sel, markup);
+                // Entry-row markup is morphed into place instead of replaced,
+                // so the rows and favicons that survive the change keep their
+                // nodes. See `isMorphTarget`.
+                if (isMorphTarget(sel) && morphSwap(dst, sole)) continue;
             }
             const parent = dst.parentNode;
             // Insert every child of the template content (including
