@@ -52,18 +52,6 @@ pub async fn tag_list(
 
 // --- edit-tag ---
 
-/// Form data for edit-tag. Supports multiple `i` parameters via Vec.
-#[derive(Debug, Deserialize)]
-pub struct EditTagForm {
-    /// Add tag
-    pub a: Option<String>,
-    /// Remove tag
-    pub r: Option<String>,
-    /// POST token
-    #[serde(rename = "T")]
-    pub token: Option<String>,
-}
-
 /// `POST /reader/api/0/edit-tag`
 ///
 /// Supports batch operations via multiple `i=` parameters.

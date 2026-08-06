@@ -57,7 +57,6 @@
     --space-8: 2rem;
     --space-10: 2.5rem;
     --space-12: 3rem;
-    --space-16: 4rem;
 
     /* Font sizes */
     --font-xs: 0.875rem;
@@ -107,7 +106,6 @@
 
     /* Icon sizes */
     --icon-sm: 14px;
-    --icon-md: 18px;
 
     /* Colors (Ink & Paper) — light-dark(light, dark) resolves against
        color-scheme: the default `light dark` follows the OS preference;
@@ -2993,7 +2991,7 @@ summary {
 
     /* While a banner is visible, the banner-stack's own padding-top
        (above) already clears the floating hamburger, so the header
-       below no longer needs its --space-16 clearance — trim it to
+       below no longer needs its own hamburger clearance — trim it to
        normal section spacing. The heading sits lower while a banner
        is shown and moves up on dismiss; that's inherent to banners
        now occupying real vertical space below the button instead of

@@ -346,18 +346,3 @@ Then("the entry-list filter bar does not overflow the list pane", async ({ page 
   expect(overflow.pastRight).toBeLessThanOrEqual(1);
   expect(overflow.horizontalScroll).toBeLessThanOrEqual(1);
 });
-
-Then("the {string} controls each span at least {int}% of the row", async ({ page }, selector, pct) => {
-  // "row" = the first entry-item; scope the controls to that same row so the
-  // width comparison is against the row they live in (rows are uniform width).
-  const firstRow = page.getByTestId("entry-item").first();
-  const row = await firstRow.boundingBox();
-  expect(row).not.toBeNull();
-  const btns = await firstRow.locator(selector).all();
-  expect(btns.length).toBeGreaterThanOrEqual(2);
-  for (const b of btns) {
-    const box = await b.boundingBox();
-    expect(box).not.toBeNull();
-    expect(box.width).toBeGreaterThanOrEqual((row.width * pct) / 100);
-  }
-});

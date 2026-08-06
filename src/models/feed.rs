@@ -106,24 +106,6 @@ pub async fn find_by_id(db: &Db, id: i64) -> AppResult<Option<Feed>> {
     .map_err(AppError::Database)
 }
 
-pub async fn find_by_id_and_category(
-    db: &Db,
-    id: i64,
-    category_id: i64,
-) -> AppResult<Option<Feed>> {
-    query_opt!(
-        db,
-        Feed,
-        "SELECT id, category_id, url, title, description, site_url, \
-         feed_updated_at, fetched_at, fetch_error, etag, last_modified, \
-         custom_user_agent, http2_disabled, custom_referrer, bucket, created_at, updated_at \
-         FROM feed WHERE id = $1 AND category_id = $2",
-        id,
-        category_id
-    )
-    .map_err(AppError::Database)
-}
-
 pub async fn find_by_url_and_category(
     db: &Db,
     url: &str,
