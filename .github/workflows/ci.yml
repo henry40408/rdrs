@@ -6,12 +6,12 @@ on:
   pull_request:
     branches: [main]
 
-# One run per ref at a time. A newer push supersedes the run it interrupted;
-# a tag does not — a tagged build publishes one specific version and nothing
-# should quietly cancel it.
+# One run per ref at a time — a newer push supersedes the run it interrupted.
+# No tag carve-out here (unlike Docker, which publishes on `v*`): this workflow
+# has no tag trigger, so `github.ref` is never a tag and the guard was dead.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: true
 
 jobs:
   # fmt + clippy on Linux. Runs in parallel with everything else — no gating.

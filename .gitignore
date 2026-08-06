@@ -2,3 +2,6 @@
 *.sqlite3
 .superpowers/
 e2e/scripts/touch-audit-report.json
+# `cargo llvm-cov nextest --lcov --output-path lcov.info` (see CLAUDE.md) drops
+# this in the repo root.
+lcov.info

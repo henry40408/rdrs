@@ -726,10 +726,6 @@ Then("the reading pane shows the original feed body", async ({ page }) => {
   await expect(page.getByTestId("reading-pane-body")).toHaveAttribute("data-mode", "original");
 });
 
-Then("the reading pane shows the original entry body", async ({ page }) => {
-  await expect(page.getByTestId("reading-pane-body")).toHaveAttribute("data-mode", "original");
-});
-
 When("the sidebar shows no unread for category {string}", async ({ page }, name) => {
   // <rdrs-sidebar> hydrates from the SSR bootstrap on mount and then
   // re-fetches /api/sidebar asynchronously to refresh badges. Tests that

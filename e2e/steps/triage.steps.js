@@ -230,17 +230,6 @@ Then("the reading pane shows a summary", async ({ page }) => {
   await expect(page.locator("#rp-summary-container .summary-box")).toBeVisible();
 });
 
-Then("the {string} button still shows its icon", async ({ page }, label) => {
-  // Regression guard: the busy-state helper must not wipe the button's icon
-  // SVG when it swaps in the "Summarizing…" label. The action-bar Summarize
-  // form is NOT inside its swap target (#rp-summary-container), so it survives
-  // the swap and its icon must remain.
-  const btn = page
-    .locator(".reading-pane-actions")
-    .getByRole("button", { name: label });
-  await expect(btn.locator(".action-icon svg")).toBeVisible();
-});
-
 // The action-bar Summarize/Dismiss toggle button, located by its stable
 // `data-summary-toggle` marker rather than its (changing) accessible name —
 // its name flips between "Summarize" and "Dismiss summary" with summary state,
