@@ -8,7 +8,7 @@ use common::default_test_config;
 use axum::http::StatusCode;
 use axum_test::TestServer;
 use rdrs::{AppState, Config, Db, auth, create_router, services};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 async fn test_server() -> TestServer {
     test_server_with_config(default_test_config()).await
@@ -330,5 +330,180 @@ async fn a_leftover_unprefixed_csrf_cookie_is_evicted_on_a_secure_deployment() {
         live.value(),
         csrf.value(),
         "evicting the stale cookie must not change the live token"
+    );
+}
+
+/// Establish an anonymous session and return its (session cookie value, CSRF
+/// token) pair — what a browser holds after one page load.
+async fn anonymous_pair(server: &TestServer) -> (String, String) {
+    let res = server.get("/login").await;
+    let session = res
+        .maybe_cookie("session_token")
+        .expect("anonymous_session must mint a session cookie");
+    let csrf = res
+        .maybe_cookie("csrf_token")
+        .expect("anonymous_session must mint a CSRF cookie");
+    (session.value().to_owned(), csrf.value().to_owned())
+}
+
+#[tokio::test]
+async fn an_x_csrf_token_header_that_does_not_derive_from_the_session_is_rejected() {
+    let server = test_server().await;
+    let (session, csrf) = anonymous_pair(&server).await;
+
+    let rejected = server
+        .post("/api/setup")
+        .add_header("sec-fetch-site", "same-origin")
+        .add_cookie(cookie::Cookie::new("session_token", session.clone()))
+        .add_header("x-csrf-token", "not-this-session's-token")
+        .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
+        .await;
+    rejected.assert_status(StatusCode::FORBIDDEN);
+
+    // The same request with the session's own token gets through.
+    let accepted = server
+        .post("/api/setup")
+        .add_header("sec-fetch-site", "same-origin")
+        .add_cookie(cookie::Cookie::new("session_token", session))
+        .add_header("x-csrf-token", csrf)
+        .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
+        .await;
+    accepted.assert_status(StatusCode::CREATED);
+}
+
+/// The body path: a native form POST carries the token as a `_csrf` field
+/// instead of a header, and the guard has to buffer the body to find it.
+#[tokio::test]
+async fn a_form_post_is_gated_on_its_csrf_field() {
+    let server = test_server().await;
+    let (session, csrf) = anonymous_pair(&server).await;
+
+    // The route needs a login, but `csrf_guard` runs first — a missing `_csrf`
+    // is a 403 before the handler's own auth check is ever reached.
+    let missing = server
+        .post("/feeds/1/entries/mark-read")
+        .add_header("sec-fetch-site", "same-origin")
+        .add_cookie(cookie::Cookie::new("session_token", session.clone()))
+        .form(&[("scope", "all")])
+        .await;
+    missing.assert_status(StatusCode::FORBIDDEN);
+
+    // With the field present the guard passes it through and rebuilds the body,
+    // so the request reaches the handler — which redirects an anonymous visitor
+    // to the login page rather than 403ing.
+    let passed = server
+        .post("/feeds/1/entries/mark-read")
+        .add_header("sec-fetch-site", "same-origin")
+        .add_cookie(cookie::Cookie::new("session_token", session))
+        .form(&[("scope", "all"), ("_csrf", &csrf)])
+        .await;
+    assert_ne!(
+        passed.status_code(),
+        StatusCode::FORBIDDEN,
+        "a form carrying its session's own token must clear the guard"
+    );
+}
+
+/// A body too large to buffer is rejected rather than read: `CSRF_MAX_BODY_BYTES`
+/// caps what a malicious client can make the guard hold in memory.
+#[tokio::test]
+async fn a_body_over_the_buffering_limit_is_rejected() {
+    let server = test_server().await;
+    let (session, _) = anonymous_pair(&server).await;
+
+    let res = server
+        .post("/feeds/1/entries/mark-read")
+        .add_header("sec-fetch-site", "same-origin")
+        .add_header("content-type", "application/x-www-form-urlencoded")
+        .add_cookie(cookie::Cookie::new("session_token", session))
+        .text("x".repeat((1 << 20) + 1))
+        .await;
+    res.assert_status(StatusCode::FORBIDDEN);
+}
+
+/// A `tracing` writer that keeps everything in memory so a test can assert on
+/// what was logged.
+#[derive(Clone, Default)]
+struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+impl CapturedLogs {
+    fn contents(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+impl std::io::Write for CapturedLogs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The observability half of the fix. Both CSRF layers answer with a bodyless
+/// 403, so with nothing in the log there is no way to tell which one fired —
+/// the production incident had to be diagnosed by reading the source. The
+/// rejection must name the check and identify the session by its salted
+/// `secret::audit_id`, never by the credential itself.
+///
+/// This installs a *global* subscriber, which a process accepts only once. That
+/// is fine under `cargo nextest` — which the project mandates, and which runs
+/// every test in its own process — and it is the only test here that does so.
+#[tokio::test]
+async fn a_token_mismatch_is_logged_without_leaking_the_session_cookie() {
+    let logs = CapturedLogs::default();
+    let writer = logs.clone();
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_max_level(tracing::Level::WARN)
+            .without_time()
+            // Off, or the styling escapes land between a field name and its
+            // `=` and every substring assertion below silently misses.
+            .with_ansi(false)
+            .finish(),
+    )
+    .expect("no other subscriber may already be installed in this process");
+
+    let server = test_server().await;
+    let (session, _) = anonymous_pair(&server).await;
+
+    let res = server
+        .post("/api/setup")
+        .add_header("sec-fetch-site", "same-origin")
+        .add_cookie(cookie::Cookie::new("session_token", session.clone()))
+        .add_header("x-csrf-token", "not-this-session's-token")
+        .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
+        .await;
+    res.assert_status(StatusCode::FORBIDDEN);
+
+    let logged = logs.contents();
+    assert!(
+        logged.contains("csrf.mismatch"),
+        "the rejection must name the check that fired, got: {logged}"
+    );
+    assert!(
+        logged.contains("session="),
+        "the rejection must carry a session identifier to correlate on, got: {logged}"
+    );
+    assert!(
+        !logged.contains(&session),
+        "the session cookie must never reach the log, got: {logged}"
+    );
+
+    // The first-line guard logs under its own event, so the two are
+    // distinguishable in an access log.
+    let cross_site = server
+        .post("/api/setup")
+        .add_header("sec-fetch-site", "cross-site")
+        .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
+        .await;
+    cross_site.assert_status(StatusCode::FORBIDDEN);
+    assert!(
+        logs.contents().contains("csrf.cross_site"),
+        "a cross-site rejection must be told apart from a token mismatch"
     );
 }
