@@ -111,6 +111,17 @@ async fn non_browser_client_without_headers_reaches_the_handler() {
     res.assert_status(StatusCode::CREATED);
 }
 
+/// Every `Set-Cookie` on a response, as raw header strings — the only way to
+/// see a *removal* cookie, which a parsed jar renders indistinguishable from a
+/// live one with an empty value.
+fn set_cookie_headers(res: &axum_test::TestResponse) -> Vec<String> {
+    res.headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(std::string::ToString::to_string))
+        .collect()
+}
+
 #[tokio::test]
 async fn logged_out_page_request_emits_exactly_one_set_cookie_per_name() {
     // `anonymous_session` mints a fresh (session_token, csrf_token) pair for a
@@ -121,12 +132,7 @@ async fn logged_out_page_request_emits_exactly_one_set_cookie_per_name() {
     let res = server.get("/login").await;
     res.assert_status_ok();
 
-    let set_cookies: Vec<String> = res
-        .headers()
-        .get_all("set-cookie")
-        .iter()
-        .filter_map(|v| v.to_str().ok().map(std::string::ToString::to_string))
-        .collect();
+    let set_cookies = set_cookie_headers(&res);
 
     for name in ["session_token", "csrf_token"] {
         let prefix = format!("{name}=");
@@ -212,4 +218,117 @@ async fn secure_anonymous_session_round_trips_and_does_not_remint_csrf_cookie() 
             "the CSRF token must never change across requests for the same session"
         );
     }
+}
+
+/// A CSRF cookie that is *present* but no longer derives from the session must
+/// be re-minted, so the browser heals itself on the next page load.
+///
+/// This is the shape of the production failure: `anonymous_session` used to
+/// check only whether a CSRF cookie existed, never whether it still matched, so
+/// a browser holding a cookie from an earlier generation got a 403 on every
+/// unsafe request until that cookie expired — up to `SESSION_EXPIRY_DAYS` — with
+/// no way out from inside the app, since logout is itself behind `csrf_guard`.
+#[tokio::test]
+async fn a_stale_csrf_cookie_is_reminted_and_unblocks_the_next_post() {
+    let server = test_server().await;
+
+    let first = server.get("/login").await;
+    let session = first
+        .maybe_cookie("session_token")
+        .expect("anonymous_session must mint a session cookie");
+    let expected = first
+        .maybe_cookie("csrf_token")
+        .expect("anonymous_session must mint a CSRF cookie");
+
+    // Same session, but the browser presents a CSRF cookie that does not derive
+    // from it.
+    let second = server
+        .get("/login")
+        .add_cookie(cookie::Cookie::new(
+            "session_token",
+            session.value().to_owned(),
+        ))
+        .add_cookie(cookie::Cookie::new(
+            "csrf_token",
+            "from-an-earlier-generation",
+        ))
+        .await;
+    second.assert_status_ok();
+    let healed = second
+        .maybe_cookie("csrf_token")
+        .expect("a CSRF cookie that does not match the session must be replaced");
+    assert_eq!(
+        healed.value(),
+        expected.value(),
+        "the re-minted cookie must carry the token derived from this session"
+    );
+
+    // And the token handed back actually satisfies the synchronizer-token guard.
+    let register = server
+        .post("/api/setup")
+        .add_header("sec-fetch-site", "same-origin")
+        .add_cookie(cookie::Cookie::new(
+            "session_token",
+            session.value().to_owned(),
+        ))
+        .add_header("x-csrf-token", healed.value())
+        .json(&serde_json::json!({ "username": "u", "password": "vulture-mango-77-quilt" }))
+        .await;
+    register.assert_status(StatusCode::CREATED);
+}
+
+/// On a Secure deployment the live CSRF cookie is `__Host-csrf_token`; a
+/// leftover unprefixed `csrf_token` (from before the upgrade that introduced
+/// the prefixed names, or before an operator flipped `RDRS_COOKIE_SECURE`) is
+/// never refreshed, so its value drifts away from the session. Two generations
+/// coexisting is exactly what let the front end and the back end disagree about
+/// which cookie counts — so the stale one is evicted rather than left to expire.
+#[tokio::test]
+async fn a_leftover_unprefixed_csrf_cookie_is_evicted_on_a_secure_deployment() {
+    let config = Config {
+        cookie_secure: true,
+        ..default_test_config()
+    };
+    let server = test_server_with_config(config).await;
+
+    let first = server.get("/login").await;
+    let session = first
+        .maybe_cookie("__Host-session_token")
+        .expect("a Secure deployment mints the __Host- prefixed session cookie");
+    let csrf = first
+        .maybe_cookie("__Host-csrf_token")
+        .expect("a Secure deployment mints the __Host- prefixed CSRF cookie");
+
+    let second = server
+        .get("/login")
+        .add_cookie(cookie::Cookie::new(
+            "__Host-session_token",
+            session.value().to_owned(),
+        ))
+        .add_cookie(cookie::Cookie::new(
+            "__Host-csrf_token",
+            csrf.value().to_owned(),
+        ))
+        .add_cookie(cookie::Cookie::new("csrf_token", "left-over-generation"))
+        .await;
+    second.assert_status_ok();
+
+    let set_cookies = set_cookie_headers(&second);
+    assert!(
+        set_cookies
+            .iter()
+            .any(|h| h.starts_with("csrf_token=") && h.contains("Max-Age=0")),
+        "the stale unprefixed CSRF cookie must be expired, got {set_cookies:?}"
+    );
+    // The removal must not leave the page tokenless: `slide_session_cookie`
+    // skips its own reissue once it sees a Set-Cookie under either CSRF name,
+    // so the live cookie has to ride along with the removal.
+    let live = second
+        .maybe_cookie("__Host-csrf_token")
+        .expect("the live CSRF cookie must be reissued alongside the removal");
+    assert_eq!(
+        live.value(),
+        csrf.value(),
+        "evicting the stale cookie must not change the live token"
+    );
 }
