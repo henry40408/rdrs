@@ -690,6 +690,20 @@ Two independent lines, so a bypass of one is not a bypass of both.
   plus its `csrf_token`. Layered inside `forward_auth` so a real forward-auth
   session's `Set-Cookie` wins; skipped for `/api`, `/static`, `/favicon`,
   `/health`, and the GReader prefixes so shared caches are never cookie-poisoned.
+- **Keeping the two sides in step.** The CSRF cookie has two names — `csrf_token`
+  and, on a `Secure` deployment, `__Host-csrf_token` — and a browser can hold
+  both at once (one minted before the upgrade that introduced the prefix, or
+  before `RDRS_COOKIE_SECURE` was flipped). Three rules stop the front end and
+  the back end picking different ones, which would 403 every unsafe request:
+  `static/js/csrf.js` prefers the `__Host-` name, mirroring
+  `session_token_from_jar`; `anonymous_session` *validates* the cookie against
+  `derive_csrf(secret, session_token)` rather than merely checking it is present,
+  re-minting on any mismatch and expiring the leftover under the other name (safe
+  because the cookie is never the credential); and both guards `warn!` on
+  rejection (`csrf.cross_site`, `csrf.mismatch`, the latter identifying the
+  session only by `secret::audit_id`) so a bodyless 403 is diagnosable from the
+  log. Self-healing matters more than it looks: logout is itself behind
+  `csrf_guard`, so a diverged browser has no in-app escape hatch.
 
 ### Response security headers
 

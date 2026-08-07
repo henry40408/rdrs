@@ -18,17 +18,30 @@
 function csrfToken() {
   // The server writes __Host-csrf_token instead of csrf_token whenever the
   // deployment is Secure (see middleware::csrf::csrf_cookie_name on the Rust
-  // side). Match the __Host- prefix too — a plain `csrf_token=` pattern does
+  // side). Both names must be matched — a plain `csrf_token=` pattern does
   // NOT match `__Host-csrf_token=` (the character before `csrf_token` is
   // `-`, which fails the `(?:^|;\s*)` anchor), so on a Secure deployment
   // every JS-driven POST would silently send no token and get 403'd by the
-  // synchronizer-token guard. The regex matches either name and returns
-  // whichever occurs first in document.cookie — it does not prefer the
-  // __Host- form. That's safe only because both names always carry the same
-  // derive_csrf value (see slide_session_cookie on the Rust side), so it
-  // never matters which one wins.
-  const m = document.cookie.match(/(?:^|;\s*)(?:__Host-)?csrf_token=([^;]*)/);
-  return m ? decodeURIComponent(m[1]) : "";
+  // synchronizer-token guard.
+  //
+  // __Host-csrf_token WINS when both are present, mirroring
+  // middleware::auth::session_token_from_jar, which resolves the session the
+  // guard derives the expected token from in exactly that order. The two
+  // sides must agree: a browser can hold two cookie generations at once (an
+  // unprefixed cookie minted before the deployment turned Secure, alongside
+  // the prefixed one), and document.cookie orders by creation time, so
+  // "whichever comes first" would hand back the *older* value while the
+  // server validated against the newer session — 403 on every unsafe
+  // request, for as long as the stale cookie lived. Preferring the prefix is
+  // also a hardening win: a sibling subdomain can set `csrf_token` (cookie
+  // tossing) but can never write a __Host- prefixed name.
+  const read = (name) => {
+    const m = document.cookie.match(
+      new RegExp(`(?:^|;\\s*)${name}=([^;]*)`)
+    );
+    return m ? decodeURIComponent(m[1]) : "";
+  };
+  return read("__Host-csrf_token") || read("csrf_token");
 }
 
 const UNSAFE_METHOD = /^(POST|PUT|PATCH|DELETE)$/i;
