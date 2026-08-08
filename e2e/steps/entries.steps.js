@@ -718,6 +718,16 @@ Then("the first entry is selected", async ({ page }) => {
   await expect(page.getByTestId("entry-item").first()).toHaveClass(/selected|active/);
 });
 
+// `.selected` is client-side only, so a stale highlight left on a row the
+// reader has navigated away from shows up here as a count of 2.
+Then("exactly one entry is selected", async ({ page }) => {
+  await expect(page.locator("[data-entry-row].selected")).toHaveCount(1);
+});
+
+Then("the selected entry is titled {string}", async ({ page }, title) => {
+  await expect(page.locator("[data-entry-row].selected")).toContainText(title);
+});
+
 Then("the keyboard shortcut help overlay is visible", async ({ page }) => {
   await expect(page.getByTestId("kb-help")).toBeVisible();
 });

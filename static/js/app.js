@@ -1014,6 +1014,34 @@ function maybeResolveNeighbors() {
     resolveNeighbors(id);
 }
 
+// Submit the Load-More form once for its current cursor, so the list can
+// catch up with a pane that navigated past the loaded page.
+//
+// Guarding on the cursor *value* rather than an in-flight flag is what makes
+// repeat calls safe: a successful append replaces the form with a fresh one
+// carrying the next cursor, so holding `j` down re-enters here with the same
+// cursor until the response lands and is a no-op — no duplicate rows. A flag
+// cleared on `rdrs:swap-complete` could not do this; the pane fragment swap
+// fired alongside us usually completes first and would clear it too early.
+//
+// One page per call, deliberately. Stepping through entries lands exactly one
+// past the loaded page, so one append is always enough; a far-away `?entry=`
+// deep-link stays out of reach rather than firing a burst of requests, which
+// is no worse than before this existed.
+//
+// The key carries the form action as well, so navigating to another list whose
+// next page happens to start at the same cursor still auto-loads.
+let requestedLoadMoreKey = null;
+function loadMoreOnce() {
+    const form = document.getElementById('load-more');
+    const cursor = form?.querySelector('input[name="after"]')?.value;
+    if (!cursor) return;
+    const key = `${form.action}|${cursor}`;
+    if (key === requestedLoadMoreKey) return;
+    requestedLoadMoreKey = key;
+    form.requestSubmit();
+}
+
 // Open the neighbor in `direction` ('prev' | 'next'). Prefers clicking the
 // matching list row's link when that entry is already loaded — that path
 // also keeps the keyboard list selection in sync — and falls back to a
@@ -1037,6 +1065,11 @@ function doNavigateNeighbor(direction) {
     );
     if (link) { link.click(); return; }
     performSwap(`/entries/${id}/fragment`, { method: 'GET' }, '#reading-pane');
+    // The neighbor is past the loaded page, so nothing in the list points at
+    // what the reader is now on. Pull the next page in behind the pane swap:
+    // the two target different nodes and only `#reading-pane` GETs go through
+    // the pane-nav abort guard, so they don't cancel each other.
+    loadMoreOnce();
 }
 
 function installNeighborNav() {
@@ -1404,7 +1437,24 @@ function installEntriesKeyboard() {
     // the active row's DOM node — the server-rendered replacement has no
     // way to carry over the client-side `.selected` class. Re-apply it
     // after every swap so the list highlights stay aligned with `activeId`.
+    //
+    // The open pane is also the authority on *which* entry that is. A
+    // neighbor past the loaded page swaps only `#reading-pane` — there is no
+    // row to click, so neither `focusRow` nor the click listener below runs —
+    // and without adopting its id here `activeId` would stay on the last
+    // loaded row: that row keeps `.selected` while the reader is elsewhere,
+    // and closing the pane sends `j`/`k` back to it. On the click path this
+    // is a no-op (`focusRow` already stored the same id). The row is allowed
+    // to be missing: Load More appends it moments later and that swap runs
+    // this handler again, highlighting it then.
     document.addEventListener('rdrs:swap-complete', () => {
+        const paneId = currentPaneEntryId();
+        if (paneId != null && paneId !== activeId) {
+            // Clear the outgoing row *before* reassigning, or its `.selected`
+            // is orphaned and the list shows two highlights.
+            activeRow()?.classList.remove('selected');
+            activeId = paneId;
+        }
         const row = activeRow();
         if (row) row.classList.add('selected');
     });

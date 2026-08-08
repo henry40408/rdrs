@@ -82,6 +82,16 @@ Feature: Reading entries
     And I click "Load more"
     Then I see more than 50 entries in the entry list
 
+  Scenario: Reading past the loaded page pulls the list forward and moves the selection
+    Given the feed has 60 entries
+    When I open the inbox
+    And I click the entry titled "Test Entry 50"
+    And I press the "j" key
+    Then the reading pane shows the title "Test Entry 51"
+    And I see more than 50 entries in the entry list
+    And exactly one entry is selected
+    And the selected entry is titled "Test Entry 51"
+
   Scenario: Keyboard j and k move selection between entries
     When I open the inbox
     And I press the "j" key
