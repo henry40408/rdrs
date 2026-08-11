@@ -64,6 +64,29 @@ When("I mark the loaded entries as read", async ({ page }) => {
   await page.getByTestId("mark-above-btn").click();
 });
 
+// `[data-entries-list]` (`.list-pane-body`) is the scroller at this viewport —
+// the pane scrolls internally on desktop, which is where the offset survives a
+// swap. Polled because the rows arrive with the page and the first evaluate can
+// land on a container that has not laid out yet (scrollHeight === clientHeight).
+When("I scroll the entry list to the bottom", async ({ page }) => {
+  await expect
+    .poll(async () =>
+      page.locator("[data-entries-list]").evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+        return el.scrollTop;
+      })
+    )
+    .toBeGreaterThan(0);
+});
+
+Then("the entry list is scrolled to the top", async ({ page }) => {
+  await expect
+    .poll(async () =>
+      page.locator("[data-entries-list]").evaluate((el) => el.scrollTop)
+    )
+    .toBe(0);
+});
+
 When("I star the entry titled {string}", async ({ page }, title) => {
   await page
     .getByTestId("entry-item")

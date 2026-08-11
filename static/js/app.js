@@ -2054,10 +2054,28 @@ async function refreshEntriesList() {
     // deliberately leaves alone.
     url.searchParams.delete('after');
     url.searchParams.delete('entry');
-    return performSwap(url.toString(), { method: 'GET' }, '[data-entries-list]',
+    const applied = await performSwap(url.toString(), { method: 'GET' }, '[data-entries-list]',
         // The fetched URL answers with bare `<template>` markup, so a failure
         // must land the user on the real page instead.
         { fallbackUrl: window.location.href });
+    if (applied) scrollEntriesListToTop();
+    return applied;
+}
+
+/// Send the list scroller back to the first row.
+///
+/// A bulk mark-as-read answers with page 1 again, so the rows the reader had
+/// scrolled past are gone (on an unread list) or now read — the offset the
+/// scroller kept points at unrelated rows, and after "Mark Above as Read" it
+/// points past the end of a list that just lost everything above it. Both
+/// mark-as-read paths want the reader looking at what is left, from the top.
+///
+/// Desktop scrolls `[data-entries-list]` (`.list-pane-body`) internally; on
+/// mobile the pane is full-height and the document is the scroller, so both are
+/// reset — the same pair `swapListPane()` handles.
+function scrollEntriesListToTop() {
+    document.querySelector('[data-entries-list]')?.scrollTo({ top: 0 });
+    window.scrollTo({ top: 0 });
 }
 
 // "Mark Above as Read" button on feed + category pages. Sits at the
