@@ -1,4 +1,5 @@
 {% extends "app_layout.html" %}
+{% import "macros.html" as macros %}
 
 {% block page %}
     <div class="app-layout">
@@ -9,6 +10,9 @@
                 <h1>Import OPML</h1>
 
                 <form method="post" action="/feeds/import" enctype="multipart/form-data">
+                    {# Multipart bodies bypass `csrf_guard`; the import handler
+                       validates this field itself (see handlers::feeds). #}
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <div class="form-group">
                         <label for="file">Upload .opml file</label>
                         <input type="file" id="file" name="file" accept=".opml,.xml" data-testid="opml-file-input">

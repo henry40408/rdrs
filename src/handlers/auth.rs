@@ -4,6 +4,7 @@ use axum::{
     Json,
     extract::{ConnectInfo, Extension, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
+    response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use serde::{Deserialize, Serialize};
@@ -16,7 +17,7 @@ use crate::auth::{
 use crate::error::{AppError, AppResult};
 use crate::middleware::{
     AuthUser, Bucket, CSRF_COOKIE_NAME_HOST, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST,
-    build_session_cookie,
+    build_session_cookie, flash::FlashRedirect,
 };
 use crate::models::category;
 use crate::models::session;
@@ -54,6 +55,21 @@ pub async fn setup(
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(req): Json<SetupRequest>,
 ) -> AppResult<(StatusCode, Json<SetupResponse>)> {
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let user = perform_setup(&state, &headers, peer, &req, "POST /api/setup").await?;
+    Ok((StatusCode::CREATED, Json(user)))
+}
+
+/// The first-account creation itself, shared by the JSON endpoint above and the
+/// native form POST in [`setup_form`]. `endpoint` only labels the rate-limit
+/// warnings and audit records.
+async fn perform_setup(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer: Option<std::net::IpAddr>,
+    req: &SetupRequest,
+    endpoint: &'static str,
+) -> AppResult<SetupResponse> {
     if req.username.is_empty() {
         return Err(AppError::Validation("Username is required".to_string()));
     }
@@ -62,15 +78,14 @@ pub async fn setup(
     // hashing. Never released: scripted account creation is exactly the abuse
     // this limiter exists to slow down, so unlike login there is no "correct
     // credential" outcome that should hand the budget back.
-    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
-    let ip = state.config.client_ip(peer, &headers);
+    let ip = state.config.client_ip(peer, headers);
     if let Some(retry_after_secs) = state
         .login_rate_limiter
         .try_acquire(Bucket::AccountSetup, ip)
         .retry_after_secs()
     {
-        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::AccountSetup, endpoint = "POST /api/setup", "credential attempt rate limited");
-        audit::login_rate_limited("POST /api/setup", "setup", &ip.to_string());
+        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::AccountSetup, endpoint, "credential attempt rate limited");
+        audit::login_rate_limited(endpoint, "setup", &ip.to_string());
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
@@ -106,14 +121,64 @@ pub async fn setup(
         user.role.as_str(),
     );
 
-    Ok((
-        StatusCode::CREATED,
-        Json(SetupResponse {
-            id: user.id,
-            username: user.username,
-            role: user.role,
-        }),
-    ))
+    Ok(SetupResponse {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+    })
+}
+
+/// The first-run form, posted natively. Mirrors [`login_form`]: `setup.js`
+/// still intercepts the submit and uses the JSON endpoint, and this is what a
+/// browser without JavaScript falls back to. The `confirm_password` match is
+/// checked here because it is a property of the *form*, not of the API.
+#[derive(Debug, Deserialize)]
+pub struct SetupForm {
+    pub username: String,
+    pub password: String,
+    #[serde(rename = "confirm-password")]
+    pub confirm_password: String,
+}
+
+pub async fn setup_form(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
+    axum::Form(form): axum::Form<SetupForm>,
+) -> Response {
+    let render_error = |message: String| {
+        crate::handlers::pages::SetupTemplate {
+            error: Some(message),
+            flash_messages: Vec::new(),
+            git_version: crate::GIT_VERSION,
+            password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
+            password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
+            csrf_token: crate::middleware::csrf_token_from_jar(&jar, &state.config.secret),
+        }
+        .into_response()
+    };
+
+    if form.password != form.confirm_password {
+        return render_error("Passwords do not match".to_string());
+    }
+
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let req = SetupRequest {
+        username: form.username,
+        password: form.password,
+    };
+    match perform_setup(&state, &headers, peer, &req, "POST /setup").await {
+        Ok(_) => {
+            FlashRedirect::success("/login", "Account created. Please sign in.").into_response()
+        }
+        Err(AppError::Validation(msg)) => render_error(msg),
+        Err(AppError::TooManyRequests { retry_after_secs }) => render_error(format!(
+            "Too many attempts. Please try again in {retry_after_secs} seconds."
+        )),
+        Err(AppError::UsernameExists) => render_error("Username already exists".to_string()),
+        Err(_) => render_error("Could not create the account".to_string()),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,6 +201,22 @@ pub async fn login(
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<(CookieJar, Json<LoginResponse>)> {
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let (jar, resp) = perform_login(&state, jar, &headers, peer, &req, "POST /api/session").await?;
+    Ok((jar, Json(resp)))
+}
+
+/// The password sign-in itself, shared by the JSON endpoint above and the
+/// native form POST in [`login_form`]. `endpoint` only labels the rate-limit
+/// warnings and audit records, so each caller stays distinguishable in the log.
+async fn perform_login(
+    state: &AppState,
+    jar: CookieJar,
+    headers: &HeaderMap,
+    peer: Option<std::net::IpAddr>,
+    req: &LoginRequest,
+    endpoint: &'static str,
+) -> AppResult<(CookieJar, LoginResponse)> {
     if state.config.disable_local_auth {
         return Err(AppError::Forbidden);
     }
@@ -143,16 +224,15 @@ pub async fn login(
     // Reserve an attempt before the username lookup or password verification
     // — enforcing the limit any later would still let an attacker choose how
     // much Argon2 work the server does per guess.
-    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
-    let ip = state.config.client_ip(peer, &headers);
-    let user_agent = request_user_agent(&headers);
+    let ip = state.config.client_ip(peer, headers);
+    let user_agent = request_user_agent(headers);
     if let Some(retry_after_secs) = state
         .login_rate_limiter
         .try_acquire(Bucket::Login, ip)
         .retry_after_secs()
     {
-        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Login, endpoint = "POST /api/session", "credential attempt rate limited");
-        audit::login_rate_limited("POST /api/session", "login", &ip.to_string());
+        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Login, endpoint, "credential attempt rate limited");
+        audit::login_rate_limited(endpoint, "login", &ip.to_string());
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
@@ -166,8 +246,8 @@ pub async fn login(
         .try_acquire_account(Bucket::Login, &req.username)
         .retry_after_secs()
     {
-        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Login, subject = "account", endpoint = "POST /api/session", "credential attempt rate limited");
-        audit::login_rate_limited("POST /api/session", "login_account", &ip.to_string());
+        tracing::warn!(event = "auth.rate_limited", %ip, bucket = ?Bucket::Login, subject = "account", endpoint, "credential attempt rate limited");
+        audit::login_rate_limited(endpoint, "login_account", &ip.to_string());
         return Err(AppError::TooManyRequests { retry_after_secs });
     }
 
@@ -237,12 +317,70 @@ pub async fn login(
 
     Ok((
         jar.add(cookie).add(csrf),
-        Json(LoginResponse {
+        LoginResponse {
             id: user.id,
             username: user.username,
             role: user.role,
-        }),
+        },
     ))
+}
+
+/// `POST /login` — the same sign-in as [`login`], driven by a native form
+/// submit rather than `fetch`.
+///
+/// This is what makes `/login` work with JavaScript disabled: the form on the
+/// page has a real `action`/`method`, so a browser that never ran `login.js`
+/// posts here instead of issuing a `GET` that would put the password in the
+/// address bar. `login.js` still calls `preventDefault()` and takes the JSON
+/// route, so nothing changes for a browser that does run it.
+///
+/// Failures re-render the login page with the message inline (200, not the
+/// error status) — the visitor needs the form back, and the generic
+/// "Invalid credentials" wording is unchanged, so this reveals nothing the
+/// JSON endpoint doesn't.
+pub async fn login_form(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    connect: Option<Extension<ConnectInfo<SocketAddr>>>,
+    axum::Form(req): axum::Form<LoginRequest>,
+) -> Response {
+    let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
+    // Read before `jar` is handed over: a failed attempt re-renders the form,
+    // and the session it belongs to is the same anonymous one either way.
+    let csrf_token = crate::middleware::csrf_token_from_jar(&jar, &state.config.secret);
+    match perform_login(&state, jar, &headers, peer, &req, "POST /login").await {
+        Ok((jar, _)) => (jar, Redirect::to("/")).into_response(),
+        Err(e) => {
+            let setup_available = user::count(&state.db)
+                .await
+                .ok()
+                .is_some_and(|count| state.config.can_setup(count));
+            crate::handlers::pages::LoginTemplate {
+                setup_available,
+                flash_messages: Vec::new(),
+                git_version: crate::GIT_VERSION,
+                local_auth_enabled: !state.config.disable_local_auth,
+                csrf_token,
+                error: Some(login_error_message(&e)),
+            }
+            .into_response()
+        }
+    }
+}
+
+/// The one-line, deliberately uninformative rendering of a failed sign-in.
+/// Mirrors what `AppError`'s JSON body would have said, so the two paths cannot
+/// drift into telling a visitor different things about the same failure.
+fn login_error_message(err: &AppError) -> String {
+    match err {
+        AppError::TooManyRequests { retry_after_secs } => {
+            format!("Too many attempts. Please try again in {retry_after_secs} seconds.")
+        }
+        AppError::Forbidden => "Password sign-in is disabled on this instance.".to_string(),
+        AppError::UserDisabled => "This account is disabled.".to_string(),
+        _ => "Invalid credentials".to_string(),
+    }
 }
 
 #[derive(Debug, Serialize)]

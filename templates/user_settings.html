@@ -1,4 +1,5 @@
 {% extends "app_layout.html" %}
+{% import "macros.html" as macros %}
 
 {% block page_script %}
     <script type="module" src="/static/js/passkey.js?v={{ layout.git_version }}"></script>
@@ -39,6 +40,7 @@
                             <span class="cred-card-current">This device</span>
                             {% else %}
                             <form method="post" action="/user-settings/sessions/{{ s.id }}/revoke">
+                                {% call macros::csrf_field(csrf_token) %}{% endcall %}
                                 <button type="submit" class="btn btn-secondary">Revoke</button>
                             </form>
                             {% endif %}
@@ -47,6 +49,7 @@
                     {% endfor %}
                 </ul>
                 <form method="post" action="/user-settings/sessions/revoke-others">
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <button type="submit">Sign out other sessions</button>
                 </form>
 
@@ -76,6 +79,7 @@
                         </dl>
                         <div class="cred-card-actions">
                             <form method="post" action="/user-settings/api-tokens/{{ t.id }}/revoke">
+                                {% call macros::csrf_field(csrf_token) %}{% endcall %}
                                 <button type="submit" class="btn btn-secondary">Revoke</button>
                             </form>
                         </div>
@@ -83,6 +87,7 @@
                     {% endfor %}
                 </ul>
                 <form method="post" action="/user-settings/api-tokens/revoke-all" data-confirm="Revoke all API tokens? Every connected GReader client will need to sign in again.">
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <button type="submit" class="btn btn-secondary">Revoke all API tokens</button>
                 </form>
                 {% endif %}
@@ -106,6 +111,7 @@
 
                 <h2>Change Password</h2>
                 <form method="post" action="/user-settings/password">
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <div class="form-group">
                         <label for="current-password">Current Password</label>
                         <input type="password" id="current-password" name="current_password" required autocomplete="current-password" data-testid="current-password">
@@ -132,6 +138,7 @@
 
                 <h2>Display Preferences</h2>
                 <form method="post" action="/user-settings/preferences">
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <div class="form-group">
                         <label for="theme-select">Theme</label>
                         <select id="theme-select" name="theme" data-testid="theme-select">
@@ -180,6 +187,7 @@
                     {% if linkding_configured %}<span class="success-text">Configured</span>{% endif %}
                 </p>
                 <form method="post" action="/user-settings/linkding">
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <div class="form-group">
                         <label for="linkding-api-url">API URL</label>
                         <input type="url" id="linkding-api-url" name="api_url" value="{{ linkding_api_url }}" placeholder="https://linkding.example.com">
@@ -192,6 +200,7 @@
                 </form>
                 {% if linkding_configured %}
                 <form method="post" action="/user-settings/linkding" class="form-inline-block" data-confirm="Clear Linkding settings?">
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <input type="hidden" name="_clear" value="1">
                     <button type="submit" class="btn btn-secondary">Clear Linkding</button>
                 </form>
@@ -204,6 +213,7 @@
                     {% if kagi_configured %}<span class="success-text">Configured</span>{% endif %}
                 </p>
                 <form method="post" action="/user-settings/kagi">
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <div class="form-group">
                         <label for="kagi-session-link">Session Link</label>
                         <input type="text" id="kagi-session-link" name="session_link" placeholder="{% if kagi_configured %}(unchanged){% else %}Paste your session link{% endif %}">
@@ -227,6 +237,7 @@
                 </form>
                 {% if kagi_configured %}
                 <form method="post" action="/user-settings/kagi" class="form-inline-block" data-confirm="Clear Kagi settings?">
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <input type="hidden" name="_clear" value="1">
                     <button type="submit" class="btn btn-secondary">Clear Kagi</button>
                 </form>

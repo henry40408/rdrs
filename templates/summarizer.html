@@ -19,6 +19,7 @@
                 </div>
                 {% else %}
                 <form method="post" action="/summarizer" data-testid="summarizer-form" data-summarizer-form>
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <label class="field-label" for="sz-urls">Links to summarize</label>
                     <textarea id="sz-urls" name="urls" rows="6" spellcheck="false" class="textarea-full"
                         placeholder="https://example.com/article&#10;https://another.com/post"

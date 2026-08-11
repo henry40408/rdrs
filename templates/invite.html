@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "macros.html" as macros %}
 
 {% block title %}Set your password - RDRS{% endblock %}
 
@@ -13,9 +14,10 @@
         <p class="muted invite-lead">Choose a password for <strong>{{ name }}</strong>.</p>
         {# A plain form POST — no fetch, no JSON. The link in the address bar is
            the only authority this page has; the CSRF token rides along the way
-           it does on every other form here, injected by csrf.js from the
-           readable cookie the anonymous-session middleware mints on the GET. #}
+           it does on every other form here, rendered from the anonymous session
+           the middleware mints on the GET. #}
         <form method="post" action="/invite/{{ token }}" data-testid="invite-form">
+            {% call macros::csrf_field(csrf_token) %}{% endcall %}
             <div class="form-group">
                 <label for="password">Password</label>
                 <input type="password" id="password" name="password" required minlength="{{ password_min_length }}" maxlength="{{ password_max_length }}" autocomplete="new-password" data-testid="invite-password">

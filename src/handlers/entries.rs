@@ -24,6 +24,10 @@ use crate::{
 #[template(path = "_reading_pane.html")]
 pub struct ReadingPaneFragment {
     pub pane: ReadingPaneView,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Carried by
+    /// every fragment that renders a form, because the markup is shared with
+    /// the full-page render and `csrf.js` is not guaranteed to be running.
+    pub csrf_token: String,
 }
 
 impl IntoResponse for ReadingPaneFragment {
@@ -52,6 +56,8 @@ pub struct FlashPayload {
 pub struct ReadingPaneWithFlash {
     pub pane: ReadingPaneView,
     pub flash: Option<FlashPayload>,
+    /// See [`ReadingPaneFragment::csrf_token`].
+    pub csrf_token: String,
 }
 
 impl IntoResponse for ReadingPaneWithFlash {
@@ -71,6 +77,8 @@ impl IntoResponse for ReadingPaneWithFlash {
 #[template(path = "_summarize_pending.html")]
 pub struct SummarizePending {
     pub id: i64,
+    /// See [`ReadingPaneFragment::csrf_token`].
+    pub csrf_token: String,
 }
 
 impl IntoResponse for SummarizePending {
@@ -104,6 +112,8 @@ impl IntoResponse for SummarizeCleared {
 #[template(path = "_summary_fragment.html")]
 pub struct SummaryFragment {
     pub pane: ReadingPaneView,
+    /// See [`ReadingPaneFragment::csrf_token`].
+    pub csrf_token: String,
 }
 
 impl IntoResponse for SummaryFragment {
@@ -241,7 +251,12 @@ pub async fn entry_fragment(
         state.events.emit_sidebar(user_id);
     }
 
-    Ok(OpenEntryMulti { pane, r: row }.into_response())
+    Ok(OpenEntryMulti {
+        pane,
+        r: row,
+        csrf_token: auth_user.csrf_token,
+    }
+    .into_response())
 }
 
 /// `GET /entries/{id}/summary/fragment` — returns the summary container swap
@@ -258,7 +273,10 @@ pub async fn summary_fragment(
         .ok_or(AppError::EntryNotFound)?;
     // has_save/has_kagi are irrelevant to the summary container; pass false.
     let pane = build_reading_pane_view(&state, user_id, &ewf, false, false).await?;
-    Ok(SummaryFragment { pane })
+    Ok(SummaryFragment {
+        pane,
+        csrf_token: auth_user.csrf_token,
+    })
 }
 
 /// Read the user's save-services config + Kagi config to drive the
@@ -403,6 +421,8 @@ pub struct EntryActionMulti {
     pub r: EntryRowView,
     pub flash: Option<FlashPayload>,
     pub pane_star_form: Option<PaneStarFormView>,
+    /// See [`ReadingPaneFragment::csrf_token`].
+    pub csrf_token: String,
 }
 
 impl IntoResponse for EntryActionMulti {
@@ -424,6 +444,8 @@ impl IntoResponse for EntryActionMulti {
 pub struct OpenEntryMulti {
     pub pane: ReadingPaneView,
     pub r: EntryRowView,
+    /// See [`ReadingPaneFragment::csrf_token`].
+    pub csrf_token: String,
 }
 
 impl IntoResponse for OpenEntryMulti {
@@ -444,7 +466,14 @@ pub async fn star_entry_form(
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<EntryActionMulti> {
-    set_starred_state(state, auth_user.user.id, entry_id, true).await
+    set_starred_state(
+        state,
+        auth_user.user.id,
+        entry_id,
+        true,
+        auth_user.csrf_token,
+    )
+    .await
 }
 
 /// `POST /entries/{id}/unstar` — idempotently mark the entry as unstarred.
@@ -455,7 +484,14 @@ pub async fn unstar_entry_form(
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<EntryActionMulti> {
-    set_starred_state(state, auth_user.user.id, entry_id, false).await
+    set_starred_state(
+        state,
+        auth_user.user.id,
+        entry_id,
+        false,
+        auth_user.csrf_token,
+    )
+    .await
 }
 
 /// Shared core for the idempotent star/unstar handlers. Renders the response
@@ -465,6 +501,7 @@ async fn set_starred_state(
     user_id: i64,
     entry_id: i64,
     desired_starred: bool,
+    csrf_token: String,
 ) -> AppResult<EntryActionMulti> {
     let mut ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await?
@@ -504,6 +541,7 @@ async fn set_starred_state(
         r: row_view_from(&ewf, status),
         flash: None,
         pane_star_form,
+        csrf_token,
     })
 }
 
@@ -516,7 +554,14 @@ pub async fn read_entry_form(
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<EntryActionMulti> {
-    set_read_state(state, auth_user.user.id, entry_id, true).await
+    set_read_state(
+        state,
+        auth_user.user.id,
+        entry_id,
+        true,
+        auth_user.csrf_token,
+    )
+    .await
 }
 
 /// `POST /entries/{id}/unread` — idempotently mark the entry as unread.
@@ -527,7 +572,14 @@ pub async fn unread_entry_form(
     State(state): State<AppState>,
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<EntryActionMulti> {
-    set_read_state(state, auth_user.user.id, entry_id, false).await
+    set_read_state(
+        state,
+        auth_user.user.id,
+        entry_id,
+        false,
+        auth_user.csrf_token,
+    )
+    .await
 }
 
 /// Shared core for the two idempotent read/unread handlers. Renders the
@@ -537,6 +589,7 @@ async fn set_read_state(
     user_id: i64,
     entry_id: i64,
     desired_read: bool,
+    csrf_token: String,
 ) -> AppResult<EntryActionMulti> {
     let mut ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await?
@@ -579,6 +632,7 @@ async fn set_read_state(
         r: row_view_from(&ewf, status),
         flash,
         pane_star_form: None,
+        csrf_token,
     })
 }
 
@@ -636,7 +690,10 @@ pub async fn summarize_entry_form(
         .events
         .emit_summary(user_id, entry_id, Some(SummaryStatus::Pending));
 
-    Ok(SummarizePending { id: entry_id })
+    Ok(SummarizePending {
+        id: entry_id,
+        csrf_token: auth_user.csrf_token,
+    })
 }
 
 /// `POST /entries/{id}/summarize/cancel` — cancel an in-flight / queued
@@ -733,6 +790,7 @@ pub async fn fetch_full_content_form(
     Ok(ReadingPaneWithFlash {
         pane,
         flash: Some(flash),
+        csrf_token: auth_user.csrf_token,
     })
 }
 
@@ -810,6 +868,7 @@ pub async fn save_entry_form(
     Ok(ReadingPaneWithFlash {
         pane,
         flash: Some(flash),
+        csrf_token: auth_user.csrf_token,
     })
 }
 

@@ -398,6 +398,9 @@ pub(crate) struct EntriesFragmentTemplate {
     pub status_filter: Option<String>,
     /// Forwarded into the Load-More form so paged fetches keep the search filter.
     pub q: Option<String>,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. The appended
+    /// rows carry the same star / mark-read forms the full page renders.
+    pub csrf_token: String,
 }
 
 impl IntoResponse for EntriesFragmentTemplate {
@@ -420,6 +423,8 @@ pub(crate) struct EntriesRefreshFragmentTemplate {
     pub entries: Vec<EntryRowView>,
     pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`].
+    pub csrf_token: String,
 }
 
 impl IntoResponse for EntriesRefreshFragmentTemplate {
@@ -442,6 +447,8 @@ pub(crate) struct EntriesPaneFragmentTemplate {
     pub entries: Vec<EntryRowView>,
     pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`].
+    pub csrf_token: String,
 }
 
 impl IntoResponse for EntriesPaneFragmentTemplate {
@@ -538,6 +545,12 @@ pub struct LoginTemplate {
     pub flash_messages: Vec<FlashMessage>,
     pub git_version: &'static str,
     pub local_auth_enabled: bool,
+    /// Synchronizer token for the native `POST /login` fallback, taken from the
+    /// anonymous session `anonymous_session` mints on this GET.
+    pub csrf_token: String,
+    /// Server-rendered sign-in failure, for the no-JavaScript path. `login.js`
+    /// writes into the same `#error` element when it drives the request itself.
+    pub error: Option<String>,
 }
 
 impl IntoResponse for LoginTemplate {
@@ -552,6 +565,7 @@ impl IntoResponse for LoginTemplate {
 pub async fn login_page(
     auth: Option<PageAuthUser>,
     State(state): State<AppState>,
+    jar: axum_extra::extract::CookieJar,
     flash: Flash,
 ) -> Response {
     if auth.is_some() {
@@ -570,6 +584,8 @@ pub async fn login_page(
             flash_messages: flash.messages,
             git_version: crate::GIT_VERSION,
             local_auth_enabled: !state.config.disable_local_auth,
+            csrf_token: crate::middleware::csrf_token_from_jar(&jar, &state.config.secret),
+            error: None,
         },
     )
         .into_response()
@@ -587,6 +603,8 @@ pub struct SetupTemplate {
     /// the HTML by hand for that reason alone.
     pub password_min_length: usize,
     pub password_max_length: usize,
+    /// Synchronizer token for the native `POST /setup` fallback.
+    pub csrf_token: String,
 }
 
 impl IntoResponse for SetupTemplate {
@@ -604,7 +622,11 @@ impl IntoResponse for SetupTemplate {
 /// disabled form: the page has no second purpose, and leaving it reachable
 /// would invite the "is registration open?" question the invite flow exists to
 /// retire.
-pub async fn setup_page(State(state): State<AppState>, flash: Flash) -> Response {
+pub async fn setup_page(
+    State(state): State<AppState>,
+    jar: axum_extra::extract::CookieJar,
+    flash: Flash,
+) -> Response {
     let can_setup = crate::models::user::count(&state.db)
         .await
         .ok()
@@ -622,6 +644,7 @@ pub async fn setup_page(State(state): State<AppState>, flash: Flash) -> Response
             git_version: crate::GIT_VERSION,
             password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
             password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
+            csrf_token: crate::middleware::csrf_token_from_jar(&jar, &state.config.secret),
         },
     )
         .into_response()
@@ -638,6 +661,10 @@ pub async fn setup_page(State(state): State<AppState>, flash: Flash) -> Response
 #[template(path = "invite.html")]
 pub struct InviteTemplate {
     pub git_version: &'static str,
+    /// Synchronizer token for the password form, taken from the anonymous
+    /// session `anonymous_session` mints on the GET. Empty for the two shapes
+    /// that render no form (dead end, throttled notice).
+    pub csrf_token: String,
     /// `None` renders the dead end; `Some` renders the form for that account.
     pub username: Option<String>,
     /// Echoed into the form action so the POST lands on the same link.
@@ -648,9 +675,10 @@ pub struct InviteTemplate {
 }
 
 impl InviteTemplate {
-    pub fn form(token: &str, username: String) -> Self {
+    pub fn form(token: &str, username: String, csrf_token: String) -> Self {
         Self {
             git_version: crate::GIT_VERSION,
+            csrf_token,
             username: Some(username),
             token: token.to_string(),
             error: None,
@@ -659,10 +687,10 @@ impl InviteTemplate {
         }
     }
 
-    pub fn error(token: &str, username: String, message: &str) -> Self {
+    pub fn error(token: &str, username: String, message: &str, csrf_token: String) -> Self {
         Self {
             error: Some(message.to_string()),
-            ..Self::form(token, username)
+            ..Self::form(token, username, csrf_token)
         }
     }
 
@@ -670,6 +698,8 @@ impl InviteTemplate {
     pub fn invalid() -> Self {
         Self {
             git_version: crate::GIT_VERSION,
+            // Renders no form, so there is nothing to protect.
+            csrf_token: String::new(),
             username: None,
             token: String::new(),
             error: None,
@@ -746,6 +776,7 @@ pub async fn unread_page(
                 path: "/",
                 status_filter: None,
                 q: None,
+                csrf_token: auth_user.csrf_token.clone(),
             },
         )
             .into_response();
@@ -800,6 +831,7 @@ pub async fn unread_page(
                 entries,
                 next_cursor,
                 entries_layout,
+                csrf_token: auth_user.csrf_token.clone(),
             },
         )
             .into_response();
@@ -817,6 +849,7 @@ pub async fn unread_page(
             entries,
             reading_pane,
             next_cursor,
+            csrf_token: auth_user.csrf_token.clone(),
             entries_layout,
         },
     )
@@ -861,6 +894,7 @@ pub async fn admin_page(
         user: admin.user.clone(),
         session: admin.session.clone(),
         via_forward_auth: admin.via_forward_auth,
+        csrf_token: admin.csrf_token.clone(),
     };
     let layout = build_app_layout(&state, &auth_user, &flash).await;
 
@@ -920,6 +954,7 @@ pub async fn admin_page(
             title: "Admin Panel",
             git_version: crate::GIT_VERSION,
             layout,
+            csrf_token: auth_user.csrf_token.clone(),
             users,
             can_create_account,
             needs_reauth,
@@ -1067,6 +1102,7 @@ pub async fn user_settings_page(
             title: "Settings",
             git_version: crate::GIT_VERSION,
             layout,
+            csrf_token: auth_user.csrf_token.clone(),
             username,
             role,
             created_at,
@@ -1254,6 +1290,7 @@ pub async fn feeds_page(
             title: "Feeds",
             git_version: crate::GIT_VERSION,
             layout,
+            csrf_token: auth_user.csrf_token.clone(),
             feeds: rows,
             categories,
             total_feed_count,
@@ -1333,6 +1370,7 @@ pub async fn feed_edit_page(
             title: "Edit Feed",
             git_version: crate::GIT_VERSION,
             layout,
+            csrf_token: auth_user.csrf_token.clone(),
             feed: feed_view,
             categories: cats,
         },
@@ -1354,6 +1392,7 @@ pub async fn feeds_import_page(
             title: "Import OPML",
             git_version: crate::GIT_VERSION,
             layout,
+            csrf_token: auth_user.csrf_token.clone(),
         },
     )
 }
@@ -1396,6 +1435,7 @@ pub async fn entries_page(
                 path: "/entries",
                 status_filter: None,
                 q: None,
+                csrf_token: auth_user.csrf_token.clone(),
             },
         )
             .into_response();
@@ -1422,6 +1462,7 @@ pub async fn entries_page(
             entries,
             reading_pane,
             next_cursor,
+            csrf_token: auth_user.csrf_token.clone(),
             entries_layout: EntriesLayoutContext {
                 active: "all",
                 description: None,
@@ -1510,6 +1551,7 @@ pub async fn settings_page(
         user: admin.user.clone(),
         session: admin.session.clone(),
         via_forward_auth: admin.via_forward_auth,
+        csrf_token: admin.csrf_token.clone(),
     };
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let user_agent_is_default = state.config.user_agent == crate::config::DEFAULT_USER_AGENT;
@@ -1590,6 +1632,7 @@ pub async fn read_entries_page(
                 path: "/entries/read",
                 status_filter: None,
                 q: None,
+                csrf_token: auth_user.csrf_token.clone(),
             },
         )
             .into_response();
@@ -1616,6 +1659,7 @@ pub async fn read_entries_page(
             entries,
             reading_pane,
             next_cursor,
+            csrf_token: auth_user.csrf_token.clone(),
             entries_layout: EntriesLayoutContext {
                 active: "read",
                 description: None,
@@ -1682,6 +1726,7 @@ pub async fn starred_entries_page(
                 path: "/entries/starred",
                 status_filter: None,
                 q: None,
+                csrf_token: auth_user.csrf_token.clone(),
             },
         )
             .into_response();
@@ -1708,6 +1753,7 @@ pub async fn starred_entries_page(
             entries,
             reading_pane,
             next_cursor,
+            csrf_token: auth_user.csrf_token.clone(),
             entries_layout: EntriesLayoutContext {
                 active: "starred",
                 description: None,
@@ -1774,6 +1820,7 @@ pub async fn summarized_entries_page(
                 path: "/entries/summarized",
                 status_filter: None,
                 q: None,
+                csrf_token: auth_user.csrf_token.clone(),
             },
         )
             .into_response();
@@ -1800,6 +1847,7 @@ pub async fn summarized_entries_page(
             entries,
             reading_pane,
             next_cursor,
+            csrf_token: auth_user.csrf_token.clone(),
             entries_layout: EntriesLayoutContext {
                 active: "summarized",
                 description: None,
@@ -1901,6 +1949,7 @@ pub async fn category_entries_page(
             path: Box::leak(path.into_boxed_str()),
             status_filter,
             q: search.clone(),
+            csrf_token: auth_user.csrf_token.clone(),
         };
         return Ok((flash, fragment).into_response());
     }
@@ -1995,6 +2044,7 @@ pub async fn category_entries_page(
                 entries,
                 next_cursor,
                 entries_layout,
+                csrf_token: auth_user.csrf_token.clone(),
             },
         )
             .into_response());
@@ -2011,6 +2061,7 @@ pub async fn category_entries_page(
                 entries,
                 next_cursor,
                 entries_layout,
+                csrf_token: auth_user.csrf_token.clone(),
             },
         )
             .into_response());
@@ -2027,6 +2078,7 @@ pub async fn category_entries_page(
         reading_pane,
         next_cursor,
         entries_layout,
+        csrf_token: auth_user.csrf_token.clone(),
     };
 
     Ok((flash, template).into_response())
@@ -2221,6 +2273,7 @@ pub async fn feed_entries_page(
             path: Box::leak(path.into_boxed_str()),
             status_filter,
             q: search.clone(),
+            csrf_token: auth_user.csrf_token.clone(),
         };
         return Ok((flash, fragment).into_response());
     }
@@ -2314,6 +2367,7 @@ pub async fn feed_entries_page(
                 entries,
                 next_cursor,
                 entries_layout,
+                csrf_token: auth_user.csrf_token.clone(),
             },
         )
             .into_response());
@@ -2330,6 +2384,7 @@ pub async fn feed_entries_page(
                 entries,
                 next_cursor,
                 entries_layout,
+                csrf_token: auth_user.csrf_token.clone(),
             },
         )
             .into_response());
@@ -2346,6 +2401,7 @@ pub async fn feed_entries_page(
         reading_pane,
         next_cursor,
         entries_layout,
+        csrf_token: auth_user.csrf_token.clone(),
     };
 
     Ok((flash, template).into_response())
@@ -2704,6 +2760,8 @@ pub struct UserSettingsTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`].
+    pub csrf_token: String,
     pub username: String,
     pub role: String,
     pub created_at: String,
@@ -2771,6 +2829,8 @@ pub struct AdminTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`].
+    pub csrf_token: String,
     pub users: Vec<AdminUserView>,
     /// The one-time link the last create-or-reissue produced, rendered in its
     /// own block. `None` on an ordinary page load — it is shown once, and
@@ -2941,6 +3001,8 @@ pub struct CategoriesTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`].
+    pub csrf_token: String,
     pub categories: Vec<CategoryRowView>,
 }
 
@@ -2992,6 +3054,8 @@ pub struct FeedsTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`].
+    pub csrf_token: String,
     pub feeds: Vec<FeedRowView>,
     pub categories: Vec<FeedCategoryOption>,
     pub total_feed_count: i64,
@@ -3034,6 +3098,8 @@ pub struct FeedEditTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`].
+    pub csrf_token: String,
     pub feed: FeedEditView,
     pub categories: Vec<FeedCategoryOption>,
 }
@@ -3054,6 +3120,8 @@ pub struct FeedsImportTemplate {
     pub title: &'static str,
     pub git_version: &'static str,
     pub layout: AppLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`].
+    pub csrf_token: String,
 }
 
 impl IntoResponse for FeedsImportTemplate {
@@ -3079,6 +3147,11 @@ pub struct UnreadTemplate {
     pub reading_pane: Option<ReadingPaneView>,
     pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
+    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
+    /// are shared with the swap fragments — hence a leaf-level field rather
+    /// than one on `layout`, exactly like `git_version`.
+    pub csrf_token: String,
 }
 
 impl IntoResponse for UnreadTemplate {
@@ -3101,6 +3174,11 @@ pub struct EntriesTemplate {
     pub reading_pane: Option<ReadingPaneView>,
     pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
+    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
+    /// are shared with the swap fragments — hence a leaf-level field rather
+    /// than one on `layout`, exactly like `git_version`.
+    pub csrf_token: String,
 }
 
 impl IntoResponse for EntriesTemplate {
@@ -3123,6 +3201,11 @@ pub struct ReadEntriesTemplate {
     pub reading_pane: Option<ReadingPaneView>,
     pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
+    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
+    /// are shared with the swap fragments — hence a leaf-level field rather
+    /// than one on `layout`, exactly like `git_version`.
+    pub csrf_token: String,
 }
 
 impl IntoResponse for ReadEntriesTemplate {
@@ -3145,6 +3228,11 @@ pub struct StarredEntriesTemplate {
     pub reading_pane: Option<ReadingPaneView>,
     pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
+    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
+    /// are shared with the swap fragments — hence a leaf-level field rather
+    /// than one on `layout`, exactly like `git_version`.
+    pub csrf_token: String,
 }
 
 impl IntoResponse for StarredEntriesTemplate {
@@ -3167,6 +3255,11 @@ pub struct SummarizedEntriesTemplate {
     pub reading_pane: Option<ReadingPaneView>,
     pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
+    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
+    /// are shared with the swap fragments — hence a leaf-level field rather
+    /// than one on `layout`, exactly like `git_version`.
+    pub csrf_token: String,
 }
 
 impl IntoResponse for SummarizedEntriesTemplate {
@@ -3189,6 +3282,11 @@ pub struct FeedEntriesTemplate {
     pub reading_pane: Option<ReadingPaneView>,
     pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
+    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
+    /// are shared with the swap fragments — hence a leaf-level field rather
+    /// than one on `layout`, exactly like `git_version`.
+    pub csrf_token: String,
 }
 
 impl IntoResponse for FeedEntriesTemplate {
@@ -3211,6 +3309,11 @@ pub struct CategoryEntriesTemplate {
     pub reading_pane: Option<ReadingPaneView>,
     pub next_cursor: Option<String>,
     pub entries_layout: EntriesLayoutContext,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. Referenced as
+    /// the bare `{{ csrf_token }}` by the row / reading-pane form macros, which
+    /// are shared with the swap fragments — hence a leaf-level field rather
+    /// than one on `layout`, exactly like `git_version`.
+    pub csrf_token: String,
 }
 
 impl IntoResponse for CategoryEntriesTemplate {
@@ -3497,6 +3600,7 @@ pub async fn categories_page(
             title: "Categories",
             git_version: crate::GIT_VERSION,
             layout,
+            csrf_token: auth_user.csrf_token.clone(),
             categories,
         },
     )

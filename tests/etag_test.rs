@@ -32,7 +32,14 @@ async fn create_test_server(config: Config) -> TestServer {
         login_rate_limiter: common::test_rate_limiter(),
     };
 
-    TestServer::builder().build(create_router(state))
+    // `save_cookies`, so the two requests in `matching_if_none_match_returns_304`
+    // share one anonymous session. `/login` renders that session's CSRF token
+    // into its form, so a cookie-less client is handed a *fresh* session — and
+    // therefore a different token and a different body — on every request, and
+    // no two ETags would ever match. A browser carries the cookie.
+    TestServer::builder()
+        .save_cookies()
+        .build(create_router(state))
 }
 
 #[tokio::test]

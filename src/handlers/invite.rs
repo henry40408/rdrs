@@ -14,6 +14,7 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
+use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 
 use crate::AppState;
@@ -56,7 +57,11 @@ async fn resolve(state: &AppState, token: &str) -> Option<LiveInvite> {
 }
 
 /// `GET /invite/{token}` — the "choose a password" form, or a dead end.
-pub async fn invite_page(State(state): State<AppState>, Path(token): Path<String>) -> Response {
+pub async fn invite_page(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(token): Path<String>,
+) -> Response {
     let Some(live) = resolve(&state, &token).await else {
         return InviteTemplate::invalid().into_response();
     };
@@ -65,7 +70,12 @@ pub async fn invite_page(State(state): State<AppState>, Path(token): Path<String
     // valid link already authorises knowing whose account it opens; showing it
     // before that would answer questions about accounts to anyone who guessed
     // a URL.
-    InviteTemplate::form(&token, live.username).into_response()
+    InviteTemplate::form(
+        &token,
+        live.username,
+        crate::middleware::csrf_token_from_jar(&jar, &state.config.secret),
+    )
+    .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,10 +88,13 @@ pub struct RedeemForm {
 pub async fn redeem_form(
     State(state): State<AppState>,
     headers: HeaderMap,
+    jar: CookieJar,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(token): Path<String>,
     Form(req): Form<RedeemForm>,
 ) -> Response {
+    // Re-rendered on every failure below, so the retry carries a live token.
+    let csrf_token = crate::middleware::csrf_token_from_jar(&jar, &state.config.secret);
     // Throttled before the token is even looked up: this endpoint runs the
     // strength estimator and Argon2, and it is reachable without a session, so
     // it is the cheapest anonymous way to spend server CPU in the app.
@@ -102,19 +115,24 @@ pub async fn redeem_form(
     };
 
     if req.password != req.confirm_password {
-        return InviteTemplate::error(&token, live.username, "Passwords do not match.")
+        return InviteTemplate::error(&token, live.username, "Passwords do not match.", csrf_token)
             .into_response();
     }
 
     if let Err(AppError::Validation(msg)) =
         validate_password_strength(&req.password, &[&live.username])
     {
-        return InviteTemplate::error(&token, live.username, &msg).into_response();
+        return InviteTemplate::error(&token, live.username, &msg, csrf_token).into_response();
     }
 
     let Ok(password_hash) = hash_password(&req.password) else {
-        return InviteTemplate::error(&token, live.username, "Could not set the password.")
-            .into_response();
+        return InviteTemplate::error(
+            &token,
+            live.username,
+            "Could not set the password.",
+            csrf_token,
+        )
+        .into_response();
     };
 
     // Spend the link *before* writing the password. Two submissions racing on
@@ -131,8 +149,13 @@ pub async fn redeem_form(
         .await
         .is_err()
     {
-        return InviteTemplate::error(&token, live.username, "Could not set the password.")
-            .into_response();
+        return InviteTemplate::error(
+            &token,
+            live.username,
+            "Could not set the password.",
+            csrf_token,
+        )
+        .into_response();
     }
 
     // An admin-issued reset lands here too, and the account may well have live

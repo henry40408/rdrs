@@ -11,12 +11,12 @@
    action-agnostic. Selectors resolving to nothing (row not on the page — e.g.
    acting from the reading pane on a filtered list) are skipped by the swap
    helper, same as before. #}
-<template data-swap-target="#entry-row-{{ r.id }} .entry-marker">{% call macros::row_marker_form(r.id, r.is_read) %}{% endcall %}</template>
-<template data-swap-target="#entry-row-{{ r.id }} .entry-star-form">{% call macros::row_star_form(r.id, r.is_starred) %}{% endcall %}</template>
+<template data-swap-target="#entry-row-{{ r.id }} .entry-marker">{% call macros::row_marker_form(r.id, r.is_read, csrf_token) %}{% endcall %}</template>
+<template data-swap-target="#entry-row-{{ r.id }} .entry-star-form">{% call macros::row_star_form(r.id, r.is_starred, csrf_token) %}{% endcall %}</template>
 <template data-class-target="#entry-row-{{ r.id }}" data-class-{% if r.is_read %}add{% else %}remove{% endif %}="entry-read"></template>
 {% if let Some(f) = flash.as_ref() %}
 <template data-flash data-level="{{ f.level }}">{{ f.message }}</template>
 {% endif %}
 {% if let Some(psf) = pane_star_form.as_ref() %}
-<template data-swap-target="#reading-pane-star-form-{{ psf.id }}">{% call macros::pane_star_form(psf.id, psf.is_starred) %}{% endcall %}</template>
+<template data-swap-target="#reading-pane-star-form-{{ psf.id }}">{% call macros::pane_star_form(psf.id, psf.is_starred, csrf_token) %}{% endcall %}</template>
 {% endif %}

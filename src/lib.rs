@@ -84,8 +84,14 @@ pub fn create_router(state: AppState) -> Router {
             get(handlers::favicon::apple_touch_icon),
         )
         .route("/", get(handlers::pages::unread_page))
-        .route("/login", get(handlers::pages::login_page))
-        .route("/setup", get(handlers::pages::setup_page))
+        .route(
+            "/login",
+            get(handlers::pages::login_page).post(handlers::auth::login_form),
+        )
+        .route(
+            "/setup",
+            get(handlers::pages::setup_page).post(handlers::auth::setup_form),
+        )
         // The one-time link an admin hands out. Anonymous by design: the token
         // in the path is the only authority, so nothing here reads a session.
         .route(
