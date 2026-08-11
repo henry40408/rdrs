@@ -147,6 +147,19 @@ Feature: Triage entries (star, mark-read, summarize)
     Then every entry in the list is marked read
     And the entry list contents are still the ones I tagged
 
+  # The refresh answers with page 1 again, so an offset kept from before the
+  # mark points at rows the reader has already triaged — and on an unread list
+  # it points past the end of everything that just disappeared. `status=all`
+  # keeps the rows (and therefore the scroll extent), which is what makes the
+  # offset observable at all.
+  Scenario: Mark Above as Read returns the list to the top
+    Given I have a feed "Scroll Feed" with 30 test entries in category "Triage Category"
+    When I open the entries page for category "Triage Category" showing all statuses
+    And I scroll the entry list to the bottom
+    And I mark the loaded entries as read
+    Then every entry in the list is marked read
+    And the entry list is scrolled to the top
+
   Scenario: The Mark as Read dropdown keeps the rows and favicons already on screen
     Given the "Triage Feed" feed has a favicon
     When I open the entries page for category "Triage Category" showing all statuses
