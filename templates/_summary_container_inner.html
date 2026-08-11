@@ -1,8 +1,10 @@
 {%- import "_icons.html" as icons -%}
+{%- import "macros.html" as macros -%}
 {% if pane.summary_in_flight %}
 <div class="summary-box" data-summary-pending>
     <div class="summary-actions">
         <form method="post" action="/entries/{{ pane.id }}/summarize/cancel" data-swap="#rp-summary-container">
+            {% call macros::csrf_field(csrf_token) %}{% endcall %}
             <button type="submit" class="rp-action" aria-label="Cancel summarization"><span class="action-icon" aria-hidden="true">{% call icons::close() %}{% endcall %}</span><span class="action-label">Cancel</span></button>
         </form>
     </div>
@@ -26,9 +28,11 @@
 <div class="summary-box">
     <div class="summary-actions">
         <form method="post" action="/entries/{{ pane.id }}/summarize" data-swap="#rp-summary-container">
+            {% call macros::csrf_field(csrf_token) %}{% endcall %}
             <button type="submit" class="rp-action" aria-label="Retry summarization"><span class="action-icon" aria-hidden="true">{% call icons::refresh() %}{% endcall %}</span><span class="action-label">Retry</span></button>
         </form>
         <form method="post" action="/entries/{{ pane.id }}/summarize/cancel" data-swap="#rp-summary-container">
+            {% call macros::csrf_field(csrf_token) %}{% endcall %}
             <button type="submit" class="rp-action" aria-label="Clear failed summary"><span class="action-icon" aria-hidden="true">{% call icons::close() %}{% endcall %}</span><span class="action-label">Clear</span></button>
         </form>
     </div>

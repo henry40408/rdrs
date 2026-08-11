@@ -12,12 +12,12 @@
     <div class="auth-card">
         {% call macros::flash(flash_messages) %}{% endcall %}
         <h1>rdrs</h1>
-        {% if let Some(err) = error %}
-        <div class="error">{{ err }}</div>
-        {% else %}
         <p class="muted">Create the administrator account for this instance. Everyone else is added from the admin panel afterwards.</p>
-        <div id="error" class="error" hidden data-testid="setup-error"></div>
-        <form id="setup-form" data-testid="setup-form">
+        {# Shared by both paths, like the login page: filled in server-side
+           after a failed native POST, written by setup.js on the fetch path. #}
+        <div id="error" class="error"{% if error.is_none() %} hidden{% endif %} data-testid="setup-error">{% if let Some(err) = error %}{{ err }}{% endif %}</div>
+        <form id="setup-form" method="post" action="/setup" data-testid="setup-form">
+            {% call macros::csrf_field(csrf_token) %}{% endcall %}
             <div class="form-group">
                 <label for="username">Username</label>
                 <input type="text" id="username" name="username" required autocomplete="username" data-testid="setup-username">
@@ -33,7 +33,6 @@
             </div>
             <button type="submit" class="btn-block" data-testid="setup-submit">Create Account</button>
         </form>
-        {% endif %}
         <div class="link">
             <a href="/login">Already have an account? Sign in</a>
         </div>

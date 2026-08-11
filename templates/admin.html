@@ -1,4 +1,5 @@
 {% extends "app_layout.html" %}
+{% import "macros.html" as macros %}
 
 {% block page_script %}
     <script type="module" src="/static/js/admin.js?v={{ layout.git_version }}"></script>
@@ -13,6 +14,7 @@
                 <h1>Admin Panel</h1>
                 {% if needs_reauth %}
                 <form method="post" action="/admin/reauth" class="reauth-banner" data-testid="admin-reauth-form">
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <p class="reauth-banner__body">Confirm your password to change accounts. Creating, promoting, disabling, deleting and viewing as another user all need it.</p>
                     <div class="reauth-banner__row">
                         <label class="sr-only" for="admin-reauth-password">Password</label>
@@ -54,6 +56,7 @@
                        one-time link, which is shown once on the flash below. #}
                     <p class="muted">Creating an account issues a one-time link. Send it to the person it belongs to — they choose their own password. The link is shown once and expires in a week.</p>
                     <form method="post" action="/admin/users" class="admin-create-account__form" data-testid="admin-create-user-form">
+                        {% call macros::csrf_field(csrf_token) %}{% endcall %}
                         <div class="form-group">
                             <label for="new-username">Username</label>
                             <input type="text" id="new-username" name="username" required autocomplete="off" data-testid="admin-new-username">
@@ -98,25 +101,31 @@
                                 {% else %}
                                 <div class="admin-actions">
                                     <form method="post" action="/admin/users/{{ u.id }}/role" class="form-inline">
+                                        {% call macros::csrf_field(csrf_token) %}{% endcall %}
                                         <input type="hidden" name="role" value="{% if u.role == "admin" %}user{% else %}admin{% endif %}">
                                         <button type="submit" class="action-link">{% if u.role == "admin" %}demote{% else %}promote{% endif %}</button>
                                     </form>
                                     <form method="post" action="/admin/users/{{ u.id }}/status" class="form-inline">
+                                        {% call macros::csrf_field(csrf_token) %}{% endcall %}
                                         <input type="hidden" name="disabled" value="{% if u.disabled %}false{% else %}true{% endif %}">
                                         <button type="submit" class="action-link" data-testid="admin-disable-btn">{% if u.disabled %}enable{% else %}disable{% endif %}</button>
                                     </form>
                                     <form method="post" action="/admin/users/{{ u.id }}/invite" class="form-inline" data-confirm="Issue a new link? Any existing one stops working. The account's current password keeps working until the new link is used.">
+                                        {% call macros::csrf_field(csrf_token) %}{% endcall %}
                                         <button type="submit" class="action-link" data-testid="admin-invite-btn">{% if u.awaiting_password %}new link{% else %}reset password{% endif %}</button>
                                     </form>
                                     {% if u.invite_expires_at.is_some() %}
                                     <form method="post" action="/admin/users/{{ u.id }}/invite/revoke" class="form-inline">
+                                        {% call macros::csrf_field(csrf_token) %}{% endcall %}
                                         <button type="submit" class="action-link" data-testid="admin-invite-revoke-btn">revoke link</button>
                                     </form>
                                     {% endif %}
                                     <form method="post" action="/admin/users/{{ u.id }}/masquerade" class="form-inline">
+                                        {% call macros::csrf_field(csrf_token) %}{% endcall %}
                                         <button type="submit" class="action-link">view as</button>
                                     </form>
                                     <form method="post" action="/admin/users/{{ u.id }}/delete" class="form-inline" data-confirm="Delete user? This cannot be undone.">
+                                        {% call macros::csrf_field(csrf_token) %}{% endcall %}
                                         <button type="submit" class="action-link action-link-danger">delete</button>
                                     </form>
                                 </div>

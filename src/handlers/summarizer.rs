@@ -129,6 +129,8 @@ pub struct SummarizerTemplate {
     pub urls_text: String,
     pub error: Option<String>,
     pub cards: Vec<SummarizerCard>,
+    /// See [`crate::middleware::auth::PageAuthUser::csrf_token`].
+    pub csrf_token: String,
 }
 
 impl IntoResponse for SummarizerTemplate {
@@ -164,6 +166,7 @@ pub async fn summarizer_page(
             git_version: crate::GIT_VERSION,
             layout,
             kagi_configured: configured,
+            csrf_token: auth_user.csrf_token.clone(),
             urls_text: String::new(),
             error: None,
             cards: Vec::new(),
@@ -210,6 +213,7 @@ pub async fn start(
             git_version: crate::GIT_VERSION,
             layout,
             kagi_configured: configured,
+            csrf_token: auth_user.csrf_token.clone(),
             urls_text: form.urls,
             error,
             cards,

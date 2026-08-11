@@ -1,4 +1,5 @@
 {% extends "app_layout.html" %}
+{% import "macros.html" as macros %}
 
 {% block page %}
     <div class="app-layout">
@@ -14,6 +15,7 @@
                 </div>
 
                 <form method="post" action="/feeds">
+                    {% call macros::csrf_field(csrf_token) %}{% endcall %}
                     <div class="form-group">
                         <label for="url">Feed URL</label>
                         <input type="text" id="url" name="url" placeholder="https://example.com/feed.xml or https://example.com" required data-testid="feed-url-input">
@@ -108,10 +110,12 @@
                                 <td class="actions{% if feed.fetch_error.is_some() %} feed-error-no-border{% endif %}">
                                     <a href="/feeds/{{ feed.id }}/entries">entries</a>
                                     <form method="post" action="/feeds/{{ feed.id }}/refresh" class="form-inline">
+                                        {% call macros::csrf_field(csrf_token) %}{% endcall %}
                                         <button type="submit" class="action-link">refresh</button>
                                     </form>
                                     <a href="/feeds/{{ feed.id }}/edit">edit</a>
                                     <form method="post" action="/feeds/{{ feed.id }}/delete" class="form-inline" data-confirm="Delete this feed? This cannot be undone.">
+                                        {% call macros::csrf_field(csrf_token) %}{% endcall %}
                                         <button type="submit" class="action-link action-link-danger">delete</button>
                                     </form>
                                 </td>

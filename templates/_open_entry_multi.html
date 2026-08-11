@@ -10,5 +10,5 @@
    form plus an `entry-read` class directive — not a whole-row re-render. The
    star form is deliberately absent: opening never touches it. #}
 <template data-swap-target="#reading-pane">{% include "_reading_pane.html" %}</template>
-<template data-swap-target="#entry-row-{{ r.id }} .entry-marker">{% call macros::row_marker_form(r.id, r.is_read) %}{% endcall %}</template>
+<template data-swap-target="#entry-row-{{ r.id }} .entry-marker">{% call macros::row_marker_form(r.id, r.is_read, csrf_token) %}{% endcall %}</template>
 <template data-class-target="#entry-row-{{ r.id }}" data-class-{% if r.is_read %}add{% else %}remove{% endif %}="entry-read"></template>

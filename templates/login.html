@@ -12,7 +12,10 @@
     <div class="auth-card">
         {% call macros::flash(flash_messages) %}{% endcall %}
         <h1>rdrs</h1>
-        <div id="error" class="error" hidden data-testid="login-error"></div>
+        {# One element for both paths: the server fills it in after a failed
+           native POST, and login.js writes into it when it drives the request
+           over fetch instead. #}
+        <div id="error" class="error"{% if error.is_none() %} hidden{% endif %} data-testid="login-error">{% if let Some(e) = error %}{{ e }}{% endif %}</div>
 
         <div id="passkey-section" hidden>
             <button type="button" id="passkey-login-btn" class="auth-passkey-btn">
@@ -24,7 +27,12 @@
         </div>
 
         {% if local_auth_enabled %}
-        <form id="login-form" data-testid="login-form">
+        {# A real action/method, not a JS-only form: without them a submit with
+           JavaScript off becomes `GET /login?username=…&password=…`, putting
+           the password in the address bar and the browser's history.
+           login.js still calls preventDefault() and posts JSON. #}
+        <form id="login-form" method="post" action="/login" data-testid="login-form">
+            {% call macros::csrf_field(csrf_token) %}{% endcall %}
             <div class="form-group">
                 <label for="username">Username</label>
                 <input type="text" id="username" name="username" required autocomplete="username" data-testid="username-input">

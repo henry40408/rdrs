@@ -469,6 +469,13 @@ pub struct PageAuthUser {
     pub user: User,
     pub session: Session,
     pub via_forward_auth: bool,
+    /// The synchronizer token to render into this page's forms, so a POST
+    /// submitted without JavaScript still satisfies `csrf_guard`. Derived from
+    /// the *cookie* token rather than `session.session_token`: the guard
+    /// re-derives from the cookie the browser sends back, and during a
+    /// rotation's grace interval those two differ. See
+    /// [`crate::middleware::csrf::csrf_token_from_jar`].
+    pub csrf_token: String,
 }
 
 /// Redirect response for unauthorized page access
@@ -534,6 +541,7 @@ impl FromRequestParts<AppState> for PageAuthUser {
             user,
             session,
             via_forward_auth,
+            csrf_token: crate::secret::derive_csrf(&state.config.secret, &token),
         })
     }
 }
@@ -603,6 +611,8 @@ pub struct PageAdminUser {
     pub user: User,
     pub session: Session,
     pub via_forward_auth: bool,
+    /// See [`PageAuthUser::csrf_token`].
+    pub csrf_token: String,
 }
 
 impl FromRequestParts<AppState> for PageAdminUser {
@@ -635,6 +645,7 @@ impl FromRequestParts<AppState> for PageAdminUser {
             user: page_auth_user.user,
             session: page_auth_user.session,
             via_forward_auth: page_auth_user.via_forward_auth,
+            csrf_token: page_auth_user.csrf_token,
         })
     }
 }

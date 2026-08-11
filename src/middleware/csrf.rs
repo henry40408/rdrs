@@ -109,6 +109,28 @@ pub fn build_csrf_cookie(session_token: &str, secret: &[u8], secure: bool) -> Co
         .build()
 }
 
+/// The synchronizer token to render into a server-side form, for the session
+/// this request carries. Empty when the request holds no readable session
+/// cookie at all, which for a browser only happens on the routes
+/// [`ANON_SKIP_PREFIXES`] excludes from [`anonymous_session`] — none of which
+/// render a form.
+///
+/// Derived the same way [`csrf_guard`] derives the value it *expects*: from the
+/// token in the session cookie, not from a `Session` row's `session_token`.
+/// The two diverge for the seconds-long grace interval after a rotation, and it
+/// is the cookie the browser will send back with the form.
+///
+/// Logged-in pages get this via [`PageAuthUser::csrf_token`][pau] instead,
+/// which the extractor has already computed; this is for the handful of
+/// anonymous pages that render a form (`/login`, `/setup`, `/invite/{token}`).
+///
+/// [pau]: crate::middleware::auth::PageAuthUser::csrf_token
+pub fn csrf_token_from_jar(jar: &CookieJar, secret: &[u8]) -> String {
+    session_token_from_jar(jar, secret)
+        .map(|token| derive_csrf(secret, &token))
+        .unwrap_or_default()
+}
+
 /// Removal cookie for a CSRF cookie carried under `name`, used to evict a
 /// leftover generation written under the name this deployment no longer uses.
 ///

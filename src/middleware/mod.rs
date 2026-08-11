@@ -15,6 +15,7 @@ pub use auth::{
 pub use cache_control::no_store_for_authenticated;
 pub use csrf::{
     CSRF_COOKIE_NAME, CSRF_COOKIE_NAME_HOST, CSRF_HEADER, build_csrf_cookie, csrf_cookie_name,
+    csrf_token_from_jar,
 };
 pub use date_header::DateHeaderLayer;
 pub use etag::ETagLayer;

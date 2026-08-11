@@ -76,17 +76,32 @@ window.fetch = function (input, init) {
   return nativeFetch(input, init);
 };
 
-// Inject `_csrf` into a native POST form before it submits. Capture phase, so it
+// Refresh `_csrf` on a native POST form before it submits. Capture phase, so it
 // runs ahead of the form-swap handler that serialises the form into a body.
+//
+// The server renders the field itself (see the `csrf_field` macro), so the
+// usual job here is to *overwrite* a value, not add one. Overwrite rather than
+// leave it alone: the rendered token is a snapshot taken when the page was
+// built, and `slide_session_cookie` rotates the session token on the way out of
+// a response — so the page that triggered a rotation carries the pre-rotation
+// token while the browser already holds the post-rotation cookie, which is what
+// `csrf_guard` will check against. The cookie is never staler than the markup.
+//
+// The field is still created when missing, for any form that predates the
+// server-side rendering (a cached page, a hand-written fragment).
 document.addEventListener(
   "submit",
   (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
     if ((form.getAttribute("method") || "get").toUpperCase() !== "POST") return;
-    if (form.querySelector('input[name="_csrf"]')) return;
     const token = csrfToken();
     if (!token) return;
+    const existing = form.querySelector('input[name="_csrf"]');
+    if (existing) {
+      existing.value = token;
+      return;
+    }
     const input = document.createElement("input");
     input.type = "hidden";
     input.name = "_csrf";

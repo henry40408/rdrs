@@ -12,7 +12,7 @@
    summary cluster (SSE renderSummaryBadge), and .entry-read/.selected hooks. #}
 <div id="entry-row-{{ r.id }}" class="entry-item{% if r.is_read %} entry-read{% endif %}" data-entry-row data-entry-id="{{ r.id }}" data-category-id="{{ r.category_id }}"{% if let Some(link) = r.link.as_ref() %} data-entry-link="{{ link }}"{% endif %} data-testid="entry-item">
     {# Marker: dot = idempotent read/unread toggle (mirrors the star form). #}
-    {% call macros::row_marker_form(r.id, r.is_read) %}{% endcall %}
+    {% call macros::row_marker_form(r.id, r.is_read, csrf_token) %}{% endcall %}
 
     <a href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" title="{{ r.title }}" class="entry-item-title" data-testid="entry-title-link">{{ r.title }}</a>
 
@@ -53,7 +53,7 @@
     </div>
 
     <div class="rail-actions">
-        {% call macros::row_star_form(r.id, r.is_starred) %}{% endcall %}
+        {% call macros::row_star_form(r.id, r.is_starred, csrf_token) %}{% endcall %}
         {% if let Some(link) = r.link.as_ref() %}
         <a class="entry-open-ext" href="{{ link }}" target="_blank" rel="noopener noreferrer" data-testid="entry-open-original" aria-label="Open original" title="Open original (v)">{% call icons::external() %}{% endcall %}</a>
         {% endif %}
