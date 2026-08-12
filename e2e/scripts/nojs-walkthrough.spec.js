@@ -1,10 +1,18 @@
-// Exploratory walkthrough of the whole app with scripting genuinely off.
+// Walks the whole app with scripting genuinely off, and fails the run on
+// anything a scriptless reader cannot do.
 //
-// The Rust suite asserts the paths we thought of; this drives a real browser
-// with `javaScriptEnabled: false` and reports what a scriptless reader actually
-// runs into. It prints findings and does not gate CI — the point is discovery.
+// The Rust suite asserts the paths we thought of. This drives a real browser
+// with `javaScriptEnabled: false`, which is what found that sign-out did not
+// exist without JavaScript (#489) — reachable only as a `fetch` DELETE, which
+// no form can send.
 //
-//   cd e2e && npx playwright test --config=scripts/audit.config.js scripts/nojs-walkthrough.spec.js
+// A gate rather than a report, matching how `csp-audit` is wired and
+// `touch-audit` is not: a job nobody has to read is a job nobody reads. Every
+// check below is a deliberate guarantee from the no-JS series (#480–#489), so a
+// failure here means one of them regressed, not that the page moved. The
+// findings are printed before the assertion so the log says which.
+//
+//   cd e2e && npm run test:nojs
 import { test, expect } from "@playwright/test";
 import { spawnRdrs, spawnMockFeedServer } from "../support/server.js";
 import { SeedHelper } from "../support/seed.js";
@@ -227,6 +235,5 @@ test("a reader with JavaScript disabled can work the app", async ({ page, contex
   for (const f of findings) console.log(`- ${f}`);
   console.log("=== end ===\n");
 
-  // Report-only, like touch-audit: this is discovery, not a gate.
-  expect(true).toBe(true);
+  expect(findings, "the app must stay usable with JavaScript disabled").toEqual([]);
 });
