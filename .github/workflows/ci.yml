@@ -191,6 +191,21 @@ jobs:
         working-directory: e2e
         run: npm run test:csp
 
+      # Rides on this job for the same reasons as the CSP audit above, and is
+      # pinned to one shard because it walks the whole app itself. Shard 2/3
+      # rather than 1/3 only to keep the two extra specs off the same runner.
+      #
+      # The Rust suite (`tests/no_js_test.rs`) covers the scriptless paths from
+      # the server's side; this is the only check that runs a browser with
+      # scripting actually disabled. That distinction is not academic — it is
+      # what caught sign-out being unreachable without JavaScript (#489), a
+      # `fetch` DELETE no form could ever send, which every server-side test had
+      # happily passed around.
+      - name: No-JavaScript walkthrough
+        if: matrix.shard == '2/3'
+        working-directory: e2e
+        run: npm run test:nojs
+
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
