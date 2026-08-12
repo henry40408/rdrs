@@ -1000,7 +1000,9 @@ pub async fn fetch_full_content_form(
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
 
-    let (pane, flash) = match fetch_and_extract(&link, &state.config.user_agent).await {
+    // Only the outcome differs between these arms — the pane is built the same
+    // way either side, from `ewf`, which the success arm updates in place.
+    let flash = match fetch_and_extract(&link, &state.config.user_agent).await {
         Ok(extracted) => {
             // Store the *raw* extraction and let the pane sanitise it like any
             // other body. Persisting is what makes this survive a refresh, a
@@ -1010,31 +1012,19 @@ pub async fn fetch_full_content_form(
             entry::set_full_content_for_user(&state.db, user_id, entry_id, &extracted.content)
                 .await?;
             ewf.entry.full_content = Some(extracted.content);
-            (
-                build_reading_pane_view(
-                    &state,
-                    user_id,
-                    &ewf,
-                    has_save,
-                    has_kagi,
-                    ContentView::Full,
-                )
-                .await?,
-                FlashPayload {
-                    level: "success",
-                    message: "Fetched full content.".to_string(),
-                },
-            )
-        }
-        Err(e) => (
-            build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, ContentView::Full)
-                .await?,
             FlashPayload {
-                level: "error",
-                message: format!("Failed to fetch full content: {e}"),
-            },
-        ),
+                level: "success",
+                message: "Fetched full content.".to_string(),
+            }
+        }
+        Err(e) => FlashPayload {
+            level: "error",
+            message: format!("Failed to fetch full content: {e}"),
+        },
     };
+    let pane =
+        build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, ContentView::Full)
+            .await?;
     // The scriptless path now reaches here and gets a redirect, so its message
     // has to ride along as a cookie — and it can finally be the truthful one,
     // because the page it lands on renders the article this just stored.
