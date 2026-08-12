@@ -743,6 +743,54 @@ async fn the_navigation_fallback_carries_the_unread_total() {
     );
 }
 
+/// Sign-out was reachable only through `fetch('/api/session', {method:'DELETE'})`
+/// behind an `href="#"`, and a form cannot send DELETE — so with scripting off
+/// there was no way to end a session at all. On a shared machine that is not a
+/// cosmetic gap.
+#[tokio::test]
+async fn a_scriptless_reader_can_sign_out() {
+    let server = create_test_server(default_test_config()).await;
+    setup_and_login(&server).await;
+
+    let html = server.get("/").await.text();
+    assert!(
+        html.contains(r#"action="/logout""#),
+        "the scriptless nav must offer a sign-out form"
+    );
+
+    let out = server
+        .post("/logout")
+        .form(&[("_csrf", csrf_field(&html))])
+        .await;
+    out.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(out.header(header::LOCATION), "/login");
+
+    // The session is really over, not merely redirected away from: a logged-in
+    // page now bounces to the sign-in form.
+    let after = server.get("/").await;
+    assert_eq!(
+        after.status_code(),
+        StatusCode::SEE_OTHER,
+        "the session must be destroyed, not just navigated away from"
+    );
+}
+
+/// The guard is not loosened by the new route: a sign-out POST without the
+/// rendered token is still refused, so a cross-site form cannot end a session.
+#[tokio::test]
+async fn signing_out_still_needs_the_csrf_token() {
+    let server = create_test_server(default_test_config()).await;
+    setup_and_login(&server).await;
+
+    server
+        .post("/logout")
+        .await
+        .assert_status(StatusCode::FORBIDDEN);
+
+    // And the session survived the attempt.
+    server.get("/").await.assert_status_ok();
+}
+
 #[tokio::test]
 async fn entry_list_rows_render_the_token() {
     let server = create_test_server(default_test_config()).await;

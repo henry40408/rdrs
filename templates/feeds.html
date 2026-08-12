@@ -59,6 +59,16 @@
                         {% endfor %}
                     </div>
                     <input type="hidden" name="filter" value="{{ active_filter }}">
+                    {# Both selects apply themselves through `data-submit-on-change`
+                       in behaviors.js, which leaves a scriptless reader with two
+                       dropdowns and no way to act on them. `<noscript>` because a
+                       button that is redundant the moment scripting works is
+                       clutter, and the browser skips this entirely when it does. #}
+                    <noscript>
+                        <div class="form-group form-group-inline">
+                            <button type="submit" class="btn btn-secondary" data-testid="feed-filter-apply">Apply</button>
+                        </div>
+                    </noscript>
                 </form>
 
                 <details class="feed-freshness-help" data-testid="feed-freshness-help">

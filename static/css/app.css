@@ -339,6 +339,27 @@ code {
     margin-right: var(--space-2);
 }
 
+/* Sign-out is a form, not a link, because it mutates — but it belongs on the
+   same row and should read like its neighbours. */
+.nav-fallback-logout {
+    display: inline;
+}
+
+.nav-fallback-logout button {
+    background: none;
+    border: 0;
+    padding: var(--space-1) 0;
+    font: inherit;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+}
+
+.nav-fallback-logout button:hover,
+.nav-fallback-logout button:focus-visible {
+    color: var(--color-text);
+    text-decoration: underline;
+}
+
 .nav-fallback-count {
     color: var(--color-text-muted);
     font-variant-numeric: tabular-nums;

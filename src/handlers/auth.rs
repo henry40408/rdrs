@@ -17,7 +17,8 @@ use crate::auth::{
 use crate::error::{AppError, AppResult};
 use crate::middleware::{
     AuthUser, Bucket, CSRF_COOKIE_NAME_HOST, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST,
-    build_session_cookie, flash::FlashRedirect,
+    build_session_cookie,
+    flash::{FlashRedirect, SetFlash},
 };
 use crate::models::category;
 use crate::models::session;
@@ -491,6 +492,35 @@ pub async fn reauthenticate(
 /// header is present on this request. `logout_url_configured` explicitly
 /// indicates whether an `auth_proxy_logout_url` is configured, so the client
 /// can decide whether to navigate to `redirect_to`.
+/// `POST /logout` — the same thing as a native form submit.
+///
+/// Sign-out was reachable only through `fetch('/api/session', {method:'DELETE'})`
+/// from a `href="#"` link, and a form cannot send DELETE — so with scripting off
+/// there was no way to end a session at all, which on a shared machine is not a
+/// cosmetic gap. Mirrors `POST /login` and `POST /setup`: same core work,
+/// answered with a flash and a redirect instead of JSON.
+pub async fn logout_form(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    auth_user: AuthUser,
+) -> AppResult<Response> {
+    let (headers, jar, body) = destroy_session(&state, jar, auth_user).await?;
+
+    // Forward-auth with no logout URL configured: the proxy re-injects the
+    // identity on the next request, so bouncing to /login would silently sign
+    // the reader back in. Say so rather than pretending, matching what the
+    // scripted path flashes.
+    let flash = if body.via_forward_auth && !body.logout_url_configured {
+        SetFlash::warning(
+            "You are signed in via your reverse proxy. To end your session, log out at your proxy or SSO provider.",
+        )
+    } else {
+        SetFlash::info("You have been logged out.")
+    };
+
+    Ok((headers, jar, flash, Redirect::to(&body.redirect_to)).into_response())
+}
+
 pub async fn logout(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -500,6 +530,19 @@ pub async fn logout(
     CookieJar,
     Json<LogoutResponse>,
 )> {
+    let (headers, jar, body) = destroy_session(&state, jar, auth_user).await?;
+    Ok((headers, jar, Json(body)))
+}
+
+/// Shared core: destroy the session, clear every cookie it could be carried
+/// under, and work out where the caller should land. Both the JSON and the form
+/// endpoint go through this so a change to cookie removal cannot apply to only
+/// one of them.
+async fn destroy_session(
+    state: &AppState,
+    jar: CookieJar,
+    auth_user: AuthUser,
+) -> AppResult<([(HeaderName, HeaderValue); 1], CookieJar, LogoutResponse)> {
     let token = auth_user.session.session_token.clone();
     session::delete_session(&state.db, &token).await?;
     audit::session_destroyed(&state.config.secret, &token, auth_user.user.id, "logout");
@@ -556,10 +599,10 @@ pub async fn logout(
             .remove(csrf_removal)
             .add(host_removal)
             .add(host_csrf_removal),
-        Json(LogoutResponse {
+        LogoutResponse {
             redirect_to,
             via_forward_auth: auth_user.via_forward_auth,
             logout_url_configured,
-        }),
+        },
     ))
 }

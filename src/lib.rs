@@ -92,6 +92,10 @@ pub fn create_router(state: AppState) -> Router {
             "/setup",
             get(handlers::pages::setup_page).post(handlers::auth::setup_form),
         )
+        // Sign-out as a form POST. `DELETE /api/session` is unreachable without
+        // scripting — a form cannot send DELETE — which left a scriptless
+        // reader unable to end their session at all.
+        .route("/logout", post(handlers::auth::logout_form))
         // The one-time link an admin hands out. Anonymous by design: the token
         // in the path is the only authority, so nothing here reads a session.
         .route(
