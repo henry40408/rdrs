@@ -9,6 +9,9 @@
 <form id="load-more" method="get" action="{{ path }}" data-swap="#load-more" class="load-more-form">
     <input type="hidden" name="after" value="{{ after }}">
     <input type="hidden" name="fragment" value="1">
+    {# Echoed, never re-stamped: every page of one reading session has to
+       paginate against the same boundary. #}
+    {% if let Some(sn) = snapshot.as_ref() %}<input type="hidden" name="snapshot" value="{{ sn }}">{% endif %}
     {% if let Some(s) = status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
     {% if let Some(qq) = q.as_ref() %}<input type="hidden" name="q" value="{{ qq }}">{% endif %}
     <button type="submit" data-testid="load-more-btn">Load More</button>
