@@ -147,29 +147,50 @@ fn is_entry_list_path(path: &str) -> bool {
         || is_scoped_entries_path(path, "feeds")
 }
 
+/// The entry-list page a request came from, recovered from the same-origin
+/// `Referer`. `None` when the header is absent, unparseable, or points at
+/// something that is not an entry list (a fresh tab, `/search`, `/settings`).
+///
+/// Only the returned URL's path + query is ever used by callers, so a redirect
+/// built from it is always same-origin (no open redirect).
+fn referring_entry_list(headers: &HeaderMap) -> Option<url::Url> {
+    let referer = headers.get(header::REFERER).and_then(|v| v.to_str().ok())?;
+    let url = url::Url::parse(referer).ok()?;
+    is_entry_list_path(url.path()).then_some(url)
+}
+
+/// Render a recovered referrer back down to the `path?query` form a `Location`
+/// header wants.
+fn path_and_query(url: &url::Url) -> String {
+    match url.query() {
+        Some(q) => format!("{}?{}", url.path(), q),
+        None => url.path().to_string(),
+    }
+}
+
+/// A real top-level browser navigation rather than a `fetch()` from the swap
+/// helper. Browsers tag navigations with `Sec-Fetch-Dest: document`; `fetch()`
+/// sends `empty`. Used to tell a scriptless form POST (or an open-in-new-tab)
+/// apart from the enhanced path, because every fragment response in this module
+/// renders as a blank page when loaded as a document.
+fn is_document_navigation(headers: &HeaderMap) -> bool {
+    headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) == Some("document")
+}
+
 /// Build the redirect target for a real top-level navigation to the
 /// partial-only `/entries/{id}/fragment` route. The fragment renders bare
 /// `<template>` blocks (blank as a document), so a browser navigation must land
 /// on a full list page with the reading pane pre-opened via `?entry={id}`.
 ///
 /// The originating scope (unread / a category / a feed / read / starred /
-/// summarized) is recovered from the same-origin `Referer` and preserved, along
-/// with its filters (`status`, scoped-search `q`); only the referrer's path +
-/// query is reused, so the redirect is always same-origin (no open redirect).
-/// Falls back to All Entries when the referrer is absent, unparseable, or not an
-/// entry-list page (a fresh tab, a refreshed `/fragment` URL, or `/search`).
+/// summarized) is recovered from the `Referer` and preserved, along with its
+/// filters (`status`, scoped-search `q`). Falls back to All Entries when the
+/// referrer is unusable (a fresh tab, a refreshed `/fragment` URL, or
+/// `/search`).
 fn fragment_document_redirect(headers: &HeaderMap, entry_id: i64) -> String {
-    let fallback = || format!("/entries?entry={entry_id}");
-
-    let Some(referer) = headers.get(header::REFERER).and_then(|v| v.to_str().ok()) else {
-        return fallback();
+    let Some(mut url) = referring_entry_list(headers) else {
+        return format!("/entries?entry={entry_id}");
     };
-    let Ok(mut url) = url::Url::parse(referer) else {
-        return fallback();
-    };
-    if !is_entry_list_path(url.path()) {
-        return fallback();
-    }
 
     // Preserve the originating filters, swapping any stale `entry` for this one.
     let preserved: Vec<(String, String)> = url
@@ -186,9 +207,23 @@ fn fragment_document_redirect(headers: &HeaderMap, entry_id: i64) -> String {
         qp.append_pair("entry", &entry_id.to_string());
     }
 
-    match url.query() {
-        Some(q) => format!("{}?{}", url.path(), q),
-        None => url.path().to_string(),
+    path_and_query(&url)
+}
+
+/// Build the redirect target for a scriptless entry-action POST (star, read,
+/// …). The action has already been applied; this only decides where the browser
+/// lands.
+///
+/// Unlike [`fragment_document_redirect`], the referrer is reused *verbatim*: an
+/// action fired from a list row must not drag the reader into that entry's
+/// reading pane, and an action fired from the pane already carries `?entry=` in
+/// its own URL, so it stays open either way. Falls back to All Entries with the
+/// pane opened on the entry when the referrer is unusable — with no SSR flash
+/// banner yet, seeing the entry's new state is the only feedback available.
+fn action_document_redirect(headers: &HeaderMap, entry_id: i64) -> String {
+    match referring_entry_list(headers) {
+        Some(url) => path_and_query(&url),
+        None => format!("/entries?entry={entry_id}"),
     }
 }
 
@@ -209,12 +244,11 @@ pub async fn entry_fragment(
     // display as a blank page when loaded as a top-level document. A real
     // browser navigation here (the swap helper's error fallback, a click that
     // lands before `app.js` wires up the interceptor, open-in-new-tab, or a
-    // refresh of the URL) must NOT show that blank page. Browsers tag
-    // top-level navigations with `Sec-Fetch-Dest: document` (a `fetch()` sends
-    // `empty`), so redirect those to the originating list page (recovered from
-    // the `Referer`) with the pane pre-opened via `?entry=` — keeping the user
-    // in their current scope instead of always dumping them into All Entries.
-    if headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) == Some("document") {
+    // refresh of the URL) must NOT show that blank page. Redirect those to the
+    // originating list page (recovered from the `Referer`) with the pane
+    // pre-opened via `?entry=` — keeping the user in their current scope
+    // instead of always dumping them into All Entries.
+    if is_document_navigation(&headers) {
         return Ok(Redirect::to(&fragment_document_redirect(&headers, entry_id)).into_response());
     }
 
@@ -457,6 +491,23 @@ impl IntoResponse for OpenEntryMulti {
     }
 }
 
+/// Answer an entry-action POST. The swap helper's `fetch()` gets the
+/// multi-target fragment it knows how to consume; a scriptless form submit is a
+/// top-level navigation, and every one of these fragments is blank as a
+/// document, so send the browser back to the list it came from instead. The
+/// action itself has already been applied by the caller either way.
+fn entry_action_response(
+    fragment: impl IntoResponse,
+    headers: &HeaderMap,
+    entry_id: i64,
+) -> Response {
+    if is_document_navigation(headers) {
+        // 303, so the browser re-issues the follow-up as a GET.
+        return Redirect::to(&action_document_redirect(headers, entry_id)).into_response();
+    }
+    fragment.into_response()
+}
+
 /// `POST /entries/{id}/star` — idempotently mark the entry as starred.
 /// No-op when the entry is already starred. Response includes the pane-
 /// star-form swap so the reading pane button label flips to "Unstar"
@@ -464,16 +515,18 @@ impl IntoResponse for OpenEntryMulti {
 pub async fn star_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<EntryActionMulti> {
-    set_starred_state(
+) -> AppResult<Response> {
+    let multi = set_starred_state(
         state,
         auth_user.user.id,
         entry_id,
         true,
         auth_user.csrf_token,
     )
-    .await
+    .await?;
+    Ok(entry_action_response(multi, &headers, entry_id))
 }
 
 /// `POST /entries/{id}/unstar` — idempotently mark the entry as unstarred.
@@ -482,16 +535,18 @@ pub async fn star_entry_form(
 pub async fn unstar_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<EntryActionMulti> {
-    set_starred_state(
+) -> AppResult<Response> {
+    let multi = set_starred_state(
         state,
         auth_user.user.id,
         entry_id,
         false,
         auth_user.csrf_token,
     )
-    .await
+    .await?;
+    Ok(entry_action_response(multi, &headers, entry_id))
 }
 
 /// Shared core for the idempotent star/unstar handlers. Renders the response
@@ -552,16 +607,18 @@ async fn set_starred_state(
 pub async fn read_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<EntryActionMulti> {
-    set_read_state(
+) -> AppResult<Response> {
+    let multi = set_read_state(
         state,
         auth_user.user.id,
         entry_id,
         true,
         auth_user.csrf_token,
     )
-    .await
+    .await?;
+    Ok(entry_action_response(multi, &headers, entry_id))
 }
 
 /// `POST /entries/{id}/unread` — idempotently mark the entry as unread.
@@ -570,16 +627,18 @@ pub async fn read_entry_form(
 pub async fn unread_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<EntryActionMulti> {
-    set_read_state(
+) -> AppResult<Response> {
+    let multi = set_read_state(
         state,
         auth_user.user.id,
         entry_id,
         false,
         auth_user.csrf_token,
     )
-    .await
+    .await?;
+    Ok(entry_action_response(multi, &headers, entry_id))
 }
 
 /// Shared core for the two idempotent read/unread handlers. Renders the
@@ -647,8 +706,9 @@ async fn set_read_state(
 pub async fn summarize_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<SummarizePending> {
+) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
     // Fetch the entry and extract the link needed by SummaryJob. Ownership is
@@ -690,10 +750,14 @@ pub async fn summarize_entry_form(
         .events
         .emit_summary(user_id, entry_id, Some(SummaryStatus::Pending));
 
-    Ok(SummarizePending {
-        id: entry_id,
-        csrf_token: auth_user.csrf_token,
-    })
+    Ok(entry_action_response(
+        SummarizePending {
+            id: entry_id,
+            csrf_token: auth_user.csrf_token,
+        },
+        &headers,
+        entry_id,
+    ))
 }
 
 /// `POST /entries/{id}/summarize/cancel` — cancel an in-flight / queued
@@ -707,8 +771,9 @@ pub async fn summarize_entry_form(
 pub async fn summarize_cancel_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<SummarizeCleared> {
+) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
     // Validate ownership and delete the record in one write txn.
@@ -731,7 +796,7 @@ pub async fn summarize_cancel_form(
     state.events.emit_summary(user_id, entry_id, None);
     state.events.emit_sidebar(user_id);
 
-    Ok(SummarizeCleared)
+    Ok(entry_action_response(SummarizeCleared, &headers, entry_id))
 }
 
 /// `POST /entries/{id}/fetch-full-content` — fetch the source article from
@@ -743,8 +808,9 @@ pub async fn summarize_cancel_form(
 pub async fn fetch_full_content_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<ReadingPaneWithFlash> {
+) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
     let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
@@ -787,11 +853,15 @@ pub async fn fetch_full_content_form(
             },
         ),
     };
-    Ok(ReadingPaneWithFlash {
-        pane,
-        flash: Some(flash),
-        csrf_token: auth_user.csrf_token,
-    })
+    Ok(entry_action_response(
+        ReadingPaneWithFlash {
+            pane,
+            flash: Some(flash),
+            csrf_token: auth_user.csrf_token,
+        },
+        &headers,
+        entry_id,
+    ))
 }
 
 /// `POST /entries/{id}/save` — send the entry to every configured save
@@ -800,8 +870,9 @@ pub async fn fetch_full_content_form(
 pub async fn save_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<ReadingPaneWithFlash> {
+) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
     let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
@@ -865,11 +936,15 @@ pub async fn save_entry_form(
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
     let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
-    Ok(ReadingPaneWithFlash {
-        pane,
-        flash: Some(flash),
-        csrf_token: auth_user.csrf_token,
-    })
+    Ok(entry_action_response(
+        ReadingPaneWithFlash {
+            pane,
+            flash: Some(flash),
+            csrf_token: auth_user.csrf_token,
+        },
+        &headers,
+        entry_id,
+    ))
 }
 
 #[cfg(test)]
@@ -937,5 +1012,48 @@ mod tests {
             let h = with_referer(path);
             assert_eq!(fragment_document_redirect(&h, 5), "/entries?entry=5");
         }
+    }
+
+    #[test]
+    fn action_redirect_returns_to_the_list_without_opening_the_pane() {
+        // An action fired from a list row must leave the reader in the list —
+        // no `?entry=` is grafted on, unlike the fragment redirect.
+        let h = with_referer("https://rdrs.example/feeds/7/entries?status=unread");
+        assert_eq!(
+            action_document_redirect(&h, 42),
+            "/feeds/7/entries?status=unread"
+        );
+    }
+
+    #[test]
+    fn action_redirect_keeps_an_open_pane_open() {
+        // Fired from the reading pane, whose URL already carries `?entry=`.
+        let h = with_referer("https://rdrs.example/?entry=42");
+        assert_eq!(action_document_redirect(&h, 42), "/?entry=42");
+    }
+
+    #[test]
+    fn action_redirect_falls_back_to_the_entry_without_referer() {
+        // No usable referrer: show the entry, the only feedback available until
+        // the flash banner is server-rendered.
+        assert_eq!(
+            action_document_redirect(&HeaderMap::new(), 5),
+            "/entries?entry=5"
+        );
+        let h = with_referer("https://rdrs.example/settings");
+        assert_eq!(action_document_redirect(&h, 5), "/entries?entry=5");
+    }
+
+    #[test]
+    fn document_navigation_only_matches_a_top_level_navigation() {
+        let mut h = HeaderMap::new();
+        assert!(!is_document_navigation(&h));
+
+        // The swap helper's `fetch()`.
+        h.insert("sec-fetch-dest", HeaderValue::from_static("empty"));
+        assert!(!is_document_navigation(&h));
+
+        h.insert("sec-fetch-dest", HeaderValue::from_static("document"));
+        assert!(is_document_navigation(&h));
     }
 }

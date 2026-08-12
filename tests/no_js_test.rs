@@ -16,18 +16,22 @@ use common::default_test_config;
 
 use std::sync::Arc;
 
-use axum::http::StatusCode;
+use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum_test::TestServer;
 use rdrs::{AppState, Config, Db, auth, create_router, services};
 
 async fn create_test_server(config: Config) -> TestServer {
+    create_test_server_with_db(config).await.0
+}
+
+async fn create_test_server_with_db(config: Config) -> (TestServer, Db) {
     let db = Db::connect_in_memory().await.unwrap();
     let webauthn = auth::create_webauthn(&config).unwrap();
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
 
     let state = AppState {
-        db,
+        db: db.clone(),
         config: Arc::new(config),
         webauthn: Arc::new(webauthn),
         summary_cache,
@@ -42,9 +46,10 @@ async fn create_test_server(config: Config) -> TestServer {
 
     // A cookie jar and nothing else — no default `X-CSRF-Token` header, which
     // is the whole point of this suite.
-    TestServer::builder()
+    let server = TestServer::builder()
         .save_cookies()
-        .build(create_router(state))
+        .build(create_router(state));
+    (server, db)
 }
 
 /// Pull the first server-rendered `_csrf` value out of a page, the way a
@@ -187,6 +192,140 @@ async fn mutation_without_the_form_field_is_still_rejected() {
         .await;
 
     response.assert_status(StatusCode::FORBIDDEN);
+}
+
+/// Seed a category, a feed and one unread entry directly, returning
+/// `(feed_id, entry_id)`. Subscribing through the UI would need a live feed to
+/// fetch, which has nothing to do with what these tests assert.
+async fn seed_entry(db: &Db) -> (i64, i64) {
+    let user_id: i64 = rdrs::query_scalar!(db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(db, user_id, "T")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/no-js-feed",
+            title: Some("No-JS Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        db,
+        feed.id,
+        "guid-no-js",
+        Some("E"),
+        Some("https://x/n"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    (feed.id, entry.id)
+}
+
+/// A scriptless entry action is a top-level navigation, and every entry-action
+/// handler answers with a bare `<template>` fragment that renders as a blank
+/// page when loaded as a document. The response has to be a redirect back to
+/// the list instead — with the action still applied.
+#[tokio::test]
+async fn entry_actions_redirect_a_scriptless_form_post() {
+    let (server, db) = create_test_server_with_db(default_test_config()).await;
+    setup_and_login(&server).await;
+    let (feed_id, entry_id) = seed_entry(&db).await;
+
+    let list_url = format!("/feeds/{feed_id}/entries?status=unread");
+    let page = server.get(&list_url).await;
+    page.assert_status_ok();
+    let token = csrf_field(&page.text());
+
+    // What a browser with scripting off actually sends for a row's mark-read
+    // button: a urlencoded POST, tagged `Sec-Fetch-Dest: document` because it is
+    // a navigation, referred by the list page it was fired from.
+    let response = server
+        .post(&format!("/entries/{entry_id}/read"))
+        .add_header(
+            HeaderName::from_static("sec-fetch-dest"),
+            HeaderValue::from_static("document"),
+        )
+        .add_header(
+            header::REFERER,
+            HeaderValue::from_str(&format!("http://localhost{list_url}")).unwrap(),
+        )
+        .form(&[("_csrf", token.clone())])
+        .await;
+
+    // Back to the exact list, filters intact and *without* `?entry=`: an action
+    // fired from a row must not drag the reader into that entry's pane.
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), list_url);
+
+    // The redirect must not have cost the action. The write is dispatched off
+    // the critical path via a detached task, so poll for it.
+    let mut read_at: Option<String> = None;
+    for _ in 0..100 {
+        read_at = rdrs::query_scalar!(
+            &db,
+            Option<String>,
+            "SELECT read_at FROM entry WHERE id = $1",
+            entry_id
+        )
+        .unwrap();
+        if read_at.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        read_at.is_some(),
+        "a scriptless /read must still mark the entry read"
+    );
+
+    // Fired from the reading pane, whose URL already carries `?entry=`: the
+    // pane stays open across the redirect.
+    let pane_url = format!("/entries?entry={entry_id}");
+    let pane = server.get(&pane_url).await;
+    pane.assert_status_ok();
+    let response = server
+        .post(&format!("/entries/{entry_id}/star"))
+        .add_header(
+            HeaderName::from_static("sec-fetch-dest"),
+            HeaderValue::from_static("document"),
+        )
+        .add_header(
+            header::REFERER,
+            HeaderValue::from_str(&format!("http://localhost{pane_url}")).unwrap(),
+        )
+        .form(&[("_csrf", csrf_field(&pane.text()))])
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(response.header(header::LOCATION), pane_url);
+
+    // No usable referrer (a fresh tab, a stripped header): fall back to All
+    // Entries with the entry open, the only feedback available until the flash
+    // banner is server-rendered.
+    let response = server
+        .post(&format!("/entries/{entry_id}/unstar"))
+        .add_header(
+            HeaderName::from_static("sec-fetch-dest"),
+            HeaderValue::from_static("document"),
+        )
+        .form(&[("_csrf", token)])
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.header(header::LOCATION),
+        format!("/entries?entry={entry_id}")
+    );
 }
 
 #[tokio::test]
