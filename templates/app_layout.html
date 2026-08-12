@@ -20,6 +20,45 @@
 
 {% block body %}
     <script type="application/json" id="rdrs-sidebar-bootstrap">{{ layout.sidebar_bootstrap_json|safe }}</script>
+    {# Navigation for a reader without JavaScript. `<rdrs-sidebar>` renders
+       nothing until `rdrs-sidebar.js` mounts, which leaves a scriptless reader
+       with no way out of whatever page they are on.
+
+       Server-rendering the *real* sidebar was measured and rejected (see that
+       file's header): its markup is ~3.5x the bootstrap JSON it would replace,
+       and logged-in responses are `no-store`, so the difference is paid on every
+       load. These bytes ship to everyone too, which is why this is destinations
+       only — no icons, no per-category tree. Categories and feeds are reachable
+       through their own index pages, so they are listed rather than expanded.
+
+       Measured in situ rather than guessed: this block costs 711 B raw and
+       **158 B gzipped** on the landing page (6952 vs 6241 raw, 2144 vs 1986
+       gzip -9). Compressing it on its own suggests ~530 B, which is wrong by
+       3.4x — it shares `<a href="/…` prefixes with the rest of the document.
+       158 B is under the 180 B the bootstrap JSON itself costs, and well under
+       the ~473 B delta that sank full SSR. Re-measure before adding icons or a
+       category tree here; that is what changes the answer.
+
+       Inside `<noscript>` the browser does not parse this as elements when
+       scripting is on, so `:has(.nav-fallback)` never matches there and the CSR
+       layout is untouched. #}
+    <noscript>
+        <nav class="nav-fallback" aria-label="Main navigation">
+            <a class="nav-fallback-brand" href="/">rdrs</a>
+            <a href="/">Unread{% if layout.total_unread > 0 %} <span class="nav-fallback-count">{{ layout.total_unread }}</span>{% endif %}</a>
+            <a href="/entries">All</a>
+            <a href="/entries/starred">Starred</a>
+            <a href="/entries/summarized">Summarized</a>
+            <a href="/categories">Categories</a>
+            <a href="/feeds">Feeds</a>
+            <a href="/search">Search</a>
+            <a href="/summarizer">Summarizer</a>
+            <a href="/statistics">Statistics</a>
+            <a href="/user-settings">Preferences</a>
+            <a href="/settings">Settings</a>
+            {% if layout.is_admin %}<a href="/admin">Admin</a>{% endif %}
+        </nav>
+    </noscript>
     {% block page %}{% endblock %}
     <rdrs-kb-help data-testid="kb-help"></rdrs-kb-help>
 {% endblock %}

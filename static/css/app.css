@@ -300,6 +300,58 @@ code {
    6x-CPU / Slow-3G profile with a cold cache. Only the 1px right border and
    the nav items are missing, for the 1-2 frames that window lasts. Keep the two
    tokens equal or that stops being true. */
+/* ===== Scriptless navigation fallback ===== */
+/* Rendered only inside `<noscript>` (see app_layout.html), so these rules cost
+   a JavaScript reader nothing but the stylesheet bytes — and the stylesheet is
+   versioned and cacheable, unlike the `no-store` HTML the real sidebar's markup
+   would have had to ride on. That is the whole reason the weight lives here.
+
+   A plain in-flow bar rather than an imitation of `.sidebar`: that class is
+   `position: fixed` and, below 1024px, parked at `translateX(-100%)` until the
+   drawer's `.open` is toggled — by JavaScript. Reusing it would put this
+   navigation off-screen on exactly the devices least likely to recover. */
+.nav-fallback {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    background: var(--color-bg-sidebar);
+    border-bottom: 1px solid var(--color-border-light);
+    font-size: var(--font-sm);
+}
+
+.nav-fallback a {
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    padding: var(--space-1) 0;
+}
+
+.nav-fallback a:hover,
+.nav-fallback a:focus-visible {
+    color: var(--color-text);
+    text-decoration: underline;
+}
+
+.nav-fallback-brand {
+    font-weight: 600;
+    color: var(--color-text);
+    margin-right: var(--space-2);
+}
+
+.nav-fallback-count {
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* The sidebar column is reserved by `.main-content`'s margin whether or not
+   anything ever fills it. With scripting off nothing will, so reclaim it —
+   `<noscript>` content is not parsed into elements when scripting is on, so
+   this never matches there. */
+body:has(.nav-fallback) .main-content {
+    margin-left: 0;
+}
+
 .sidebar {
     width: var(--sidebar-width);
     min-width: var(--sidebar-width);
