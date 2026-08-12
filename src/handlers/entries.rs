@@ -147,29 +147,102 @@ fn is_entry_list_path(path: &str) -> bool {
         || is_scoped_entries_path(path, "feeds")
 }
 
+/// The entry-list page a request came from, recovered from the same-origin
+/// `Referer`. `None` when the header is absent, unparseable, or points at
+/// something that is not an entry list (a fresh tab, `/search`, `/settings`).
+///
+/// Only the returned URL's path + query is ever used by callers, so a redirect
+/// built from it is always same-origin (no open redirect).
+fn referring_entry_list(headers: &HeaderMap) -> Option<url::Url> {
+    let referer = headers.get(header::REFERER).and_then(|v| v.to_str().ok())?;
+    let url = url::Url::parse(referer).ok()?;
+    is_entry_list_path(url.path()).then_some(url)
+}
+
+/// Render a recovered referrer back down to the `path?query` form a `Location`
+/// header wants.
+fn path_and_query(url: &url::Url) -> String {
+    match url.query() {
+        Some(q) => format!("{}?{}", url.path(), q),
+        None => url.path().to_string(),
+    }
+}
+
+/// A real top-level browser navigation rather than a `fetch()` from the swap
+/// helper. Browsers tag navigations with `Sec-Fetch-Dest: document`; `fetch()`
+/// sends `empty`. Used to tell a scriptless form POST (or an open-in-new-tab)
+/// apart from the enhanced path, because every fragment response in this module
+/// renders as a blank page when loaded as a document.
+fn is_document_navigation(headers: &HeaderMap) -> bool {
+    headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) == Some("document")
+}
+
+/// A speculative load the reader never asked for — a prefetch or a prerender.
+/// Opening an entry marks it read, and a browser guessing at what might be
+/// clicked next must not get to make that decision.
+///
+/// `Sec-Purpose` is the current header (prerender sends `prefetch;prerender`,
+/// hence the substring test); `Purpose` is what Chromium sent before it, and
+/// `X-Moz` is Firefox's. Nothing in the app opts into speculation today — no
+/// `<link rel=prefetch>`, no speculation rules — so this guards against a
+/// future one, or an extension deciding for the reader.
+fn is_speculative_load(headers: &HeaderMap) -> bool {
+    let header_says_prefetch = |name: &str, exact: bool| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| {
+                if exact {
+                    v.eq_ignore_ascii_case("prefetch")
+                } else {
+                    v.to_ascii_lowercase().contains("prefetch")
+                }
+            })
+    };
+    header_says_prefetch("sec-purpose", false)
+        || header_says_prefetch("purpose", true)
+        || header_says_prefetch("x-moz", true)
+}
+
+/// Mark a speculative response uncacheable. Without this the browser could
+/// serve the reader's real click straight out of its prefetch cache — and since
+/// that response was produced *without* the mark-as-read, the entry would
+/// silently never become read.
+fn deny_storage(response: &mut Response) {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+}
+
+/// Dispatch the open-marks-read side effect: the write goes off the critical
+/// path (a detached task — nothing downstream waits on it) and the sidebar's
+/// cached unread counts are invalidated and re-pushed over SSE.
+fn dispatch_mark_read_on_open(state: &AppState, user_id: i64, entry_id: i64) {
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        if let Err(e) = entry::mark_as_read(&db, entry_id).await {
+            tracing::warn!(event = "entry.mark_read_failed", entry_id, error = %e, "async mark_as_read failed");
+        }
+    });
+    state.sidebar_cache.bust(user_id);
+    state.events.emit_sidebar(user_id);
+}
+
 /// Build the redirect target for a real top-level navigation to the
 /// partial-only `/entries/{id}/fragment` route. The fragment renders bare
 /// `<template>` blocks (blank as a document), so a browser navigation must land
 /// on a full list page with the reading pane pre-opened via `?entry={id}`.
 ///
 /// The originating scope (unread / a category / a feed / read / starred /
-/// summarized) is recovered from the same-origin `Referer` and preserved, along
-/// with its filters (`status`, scoped-search `q`); only the referrer's path +
-/// query is reused, so the redirect is always same-origin (no open redirect).
-/// Falls back to All Entries when the referrer is absent, unparseable, or not an
-/// entry-list page (a fresh tab, a refreshed `/fragment` URL, or `/search`).
+/// summarized) is recovered from the `Referer` and preserved, along with its
+/// filters (`status`, scoped-search `q`). Falls back to All Entries when the
+/// referrer is unusable (a fresh tab, a refreshed `/fragment` URL, or
+/// `/search`).
 fn fragment_document_redirect(headers: &HeaderMap, entry_id: i64) -> String {
-    let fallback = || format!("/entries?entry={entry_id}");
-
-    let Some(referer) = headers.get(header::REFERER).and_then(|v| v.to_str().ok()) else {
-        return fallback();
+    let Some(mut url) = referring_entry_list(headers) else {
+        return format!("/entries?entry={entry_id}");
     };
-    let Ok(mut url) = url::Url::parse(referer) else {
-        return fallback();
-    };
-    if !is_entry_list_path(url.path()) {
-        return fallback();
-    }
 
     // Preserve the originating filters, swapping any stale `entry` for this one.
     let preserved: Vec<(String, String)> = url
@@ -186,9 +259,23 @@ fn fragment_document_redirect(headers: &HeaderMap, entry_id: i64) -> String {
         qp.append_pair("entry", &entry_id.to_string());
     }
 
-    match url.query() {
-        Some(q) => format!("{}?{}", url.path(), q),
-        None => url.path().to_string(),
+    path_and_query(&url)
+}
+
+/// Build the redirect target for a scriptless entry-action POST (star, read,
+/// …). The action has already been applied; this only decides where the browser
+/// lands.
+///
+/// Unlike [`fragment_document_redirect`], the referrer is reused *verbatim*: an
+/// action fired from a list row must not drag the reader into that entry's
+/// reading pane, and an action fired from the pane already carries `?entry=` in
+/// its own URL, so it stays open either way. Falls back to All Entries with the
+/// pane opened on the entry when the referrer is unusable — with no SSR flash
+/// banner yet, seeing the entry's new state is the only feedback available.
+fn action_document_redirect(headers: &HeaderMap, entry_id: i64) -> String {
+    match referring_entry_list(headers) {
+        Some(url) => path_and_query(&url),
+        None => format!("/entries?entry={entry_id}"),
     }
 }
 
@@ -204,34 +291,53 @@ pub async fn entry_fragment(
 ) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
+    // Read current state on the READ connection (not blocked by a background
+    // sync's write transaction under WAL). This happens before the
+    // document-navigation branch below because opening an entry marks it read,
+    // and deciding that needs the entry — a scriptless reader is opening it
+    // just as much as a `fetch()` is.
+    let found = entry::find_by_id_for_user(&state.db, user_id, entry_id).await?;
+
+    let speculative = is_speculative_load(&headers);
+    let mark_read = !speculative && found.as_ref().is_some_and(|e| e.entry.read_at.is_none());
+
     // `/entries/{id}/fragment` is a partial-only route: it renders just the
     // `<template data-swap-target>` blocks the swap helper consumes, which
     // display as a blank page when loaded as a top-level document. A real
-    // browser navigation here (the swap helper's error fallback, a click that
-    // lands before `app.js` wires up the interceptor, open-in-new-tab, or a
-    // refresh of the URL) must NOT show that blank page. Browsers tag
-    // top-level navigations with `Sec-Fetch-Dest: document` (a `fetch()` sends
-    // `empty`), so redirect those to the originating list page (recovered from
+    // browser navigation here (a scriptless click on an entry title, the swap
+    // helper's error fallback, a click that lands before `app.js` wires up the
+    // interceptor, open-in-new-tab, or a refresh of the URL) must NOT show that
+    // blank page. Redirect those to the originating list page (recovered from
     // the `Referer`) with the pane pre-opened via `?entry=` — keeping the user
     // in their current scope instead of always dumping them into All Entries.
-    if headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) == Some("document") {
-        return Ok(Redirect::to(&fragment_document_redirect(&headers, entry_id)).into_response());
+    //
+    // A missing entry redirects too rather than 404ing: the list handlers
+    // silently ignore an `?entry=` they can't resolve, so a stale link lands on
+    // the list instead of an error page. The `fetch()` path below still 404s,
+    // which is what `app.js` falls back on.
+    if is_document_navigation(&headers) {
+        // Nothing to render on this path, so the write is dispatched here.
+        if mark_read {
+            dispatch_mark_read_on_open(&state, user_id, entry_id);
+        }
+        let mut response =
+            Redirect::to(&fragment_document_redirect(&headers, entry_id)).into_response();
+        if speculative {
+            deny_storage(&mut response);
+        }
+        return Ok(response);
     }
 
-    // Read current state on the READ connection (not blocked by a background
-    // sync's write transaction under WAL).
-    let mut ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
-        .await?
-        .ok_or(AppError::EntryNotFound)?;
+    let mut ewf = found.ok_or(AppError::EntryNotFound)?;
     let status = entry_summary::get_statuses_for_entries(&state.db, user_id, &[entry_id])
         .await?
         .get(&entry_id)
         .copied();
 
-    let was_unread = ewf.entry.read_at.is_none();
-
-    // Optimistically reflect the read state in the rendered row + pane.
-    if was_unread {
+    // Optimistically reflect the read state in the rendered row + pane. Tied to
+    // `mark_read`, not to the entry's prior state: a speculative load leaves the
+    // entry alone, so it must render it as it actually is.
+    if mark_read {
         ewf.entry.read_at = Some(chrono::Utc::now());
     }
 
@@ -239,24 +345,35 @@ pub async fn entry_fragment(
     let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
     let row = row_view_from(&ewf, status);
 
-    // Enqueue the real write off the critical path (only when it changes state).
-    if was_unread {
-        let db = state.db.clone();
-        tokio::spawn(async move {
-            if let Err(e) = entry::mark_as_read(&db, entry_id).await {
-                tracing::warn!(event = "entry.mark_read_failed", entry_id, error = %e, "async mark_as_read failed");
-            }
-        });
-        state.sidebar_cache.bust(user_id);
-        state.events.emit_sidebar(user_id);
+    // Dispatched *here*, not beside the `mark_read` decision above, and moving
+    // it earlier breaks reading past the end of the loaded page.
+    //
+    // Opening the neighbour past the last loaded row swaps only `#reading-pane`;
+    // `app.js` adopts that entry as the selection and waits for Load More to
+    // append its row before it can highlight it. Load More re-queries the list
+    // — on the unread list, an entry that is already marked read is no longer
+    // in it. Dispatching before the render lets this write commit first often
+    // enough that the row never arrives and the selection is silently lost
+    // (`reading.feature`, "Reading past the loaded page"). Sequencing it behind
+    // the render leaves the read query its usual head start.
+    //
+    // The race is inherent, not introduced here — this only keeps it as narrow
+    // as it has always been. The scriptless path above has no render to sit
+    // behind and no Load More to outrun, so it dispatches immediately.
+    if mark_read {
+        dispatch_mark_read_on_open(&state, user_id, entry_id);
     }
 
-    Ok(OpenEntryMulti {
+    let mut response = OpenEntryMulti {
         pane,
         r: row,
         csrf_token: auth_user.csrf_token,
     }
-    .into_response())
+    .into_response();
+    if speculative {
+        deny_storage(&mut response);
+    }
+    Ok(response)
 }
 
 /// `GET /entries/{id}/summary/fragment` — returns the summary container swap
@@ -457,6 +574,23 @@ impl IntoResponse for OpenEntryMulti {
     }
 }
 
+/// Answer an entry-action POST. The swap helper's `fetch()` gets the
+/// multi-target fragment it knows how to consume; a scriptless form submit is a
+/// top-level navigation, and every one of these fragments is blank as a
+/// document, so send the browser back to the list it came from instead. The
+/// action itself has already been applied by the caller either way.
+fn entry_action_response(
+    fragment: impl IntoResponse,
+    headers: &HeaderMap,
+    entry_id: i64,
+) -> Response {
+    if is_document_navigation(headers) {
+        // 303, so the browser re-issues the follow-up as a GET.
+        return Redirect::to(&action_document_redirect(headers, entry_id)).into_response();
+    }
+    fragment.into_response()
+}
+
 /// `POST /entries/{id}/star` — idempotently mark the entry as starred.
 /// No-op when the entry is already starred. Response includes the pane-
 /// star-form swap so the reading pane button label flips to "Unstar"
@@ -464,16 +598,18 @@ impl IntoResponse for OpenEntryMulti {
 pub async fn star_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<EntryActionMulti> {
-    set_starred_state(
+) -> AppResult<Response> {
+    let multi = set_starred_state(
         state,
         auth_user.user.id,
         entry_id,
         true,
         auth_user.csrf_token,
     )
-    .await
+    .await?;
+    Ok(entry_action_response(multi, &headers, entry_id))
 }
 
 /// `POST /entries/{id}/unstar` — idempotently mark the entry as unstarred.
@@ -482,16 +618,18 @@ pub async fn star_entry_form(
 pub async fn unstar_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<EntryActionMulti> {
-    set_starred_state(
+) -> AppResult<Response> {
+    let multi = set_starred_state(
         state,
         auth_user.user.id,
         entry_id,
         false,
         auth_user.csrf_token,
     )
-    .await
+    .await?;
+    Ok(entry_action_response(multi, &headers, entry_id))
 }
 
 /// Shared core for the idempotent star/unstar handlers. Renders the response
@@ -552,16 +690,18 @@ async fn set_starred_state(
 pub async fn read_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<EntryActionMulti> {
-    set_read_state(
+) -> AppResult<Response> {
+    let multi = set_read_state(
         state,
         auth_user.user.id,
         entry_id,
         true,
         auth_user.csrf_token,
     )
-    .await
+    .await?;
+    Ok(entry_action_response(multi, &headers, entry_id))
 }
 
 /// `POST /entries/{id}/unread` — idempotently mark the entry as unread.
@@ -570,16 +710,18 @@ pub async fn read_entry_form(
 pub async fn unread_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<EntryActionMulti> {
-    set_read_state(
+) -> AppResult<Response> {
+    let multi = set_read_state(
         state,
         auth_user.user.id,
         entry_id,
         false,
         auth_user.csrf_token,
     )
-    .await
+    .await?;
+    Ok(entry_action_response(multi, &headers, entry_id))
 }
 
 /// Shared core for the two idempotent read/unread handlers. Renders the
@@ -647,8 +789,9 @@ async fn set_read_state(
 pub async fn summarize_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<SummarizePending> {
+) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
     // Fetch the entry and extract the link needed by SummaryJob. Ownership is
@@ -690,10 +833,14 @@ pub async fn summarize_entry_form(
         .events
         .emit_summary(user_id, entry_id, Some(SummaryStatus::Pending));
 
-    Ok(SummarizePending {
-        id: entry_id,
-        csrf_token: auth_user.csrf_token,
-    })
+    Ok(entry_action_response(
+        SummarizePending {
+            id: entry_id,
+            csrf_token: auth_user.csrf_token,
+        },
+        &headers,
+        entry_id,
+    ))
 }
 
 /// `POST /entries/{id}/summarize/cancel` — cancel an in-flight / queued
@@ -707,8 +854,9 @@ pub async fn summarize_entry_form(
 pub async fn summarize_cancel_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<SummarizeCleared> {
+) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
     // Validate ownership and delete the record in one write txn.
@@ -731,7 +879,7 @@ pub async fn summarize_cancel_form(
     state.events.emit_summary(user_id, entry_id, None);
     state.events.emit_sidebar(user_id);
 
-    Ok(SummarizeCleared)
+    Ok(entry_action_response(SummarizeCleared, &headers, entry_id))
 }
 
 /// `POST /entries/{id}/fetch-full-content` — fetch the source article from
@@ -743,8 +891,9 @@ pub async fn summarize_cancel_form(
 pub async fn fetch_full_content_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<ReadingPaneWithFlash> {
+) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
     let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
@@ -787,11 +936,15 @@ pub async fn fetch_full_content_form(
             },
         ),
     };
-    Ok(ReadingPaneWithFlash {
-        pane,
-        flash: Some(flash),
-        csrf_token: auth_user.csrf_token,
-    })
+    Ok(entry_action_response(
+        ReadingPaneWithFlash {
+            pane,
+            flash: Some(flash),
+            csrf_token: auth_user.csrf_token,
+        },
+        &headers,
+        entry_id,
+    ))
 }
 
 /// `POST /entries/{id}/save` — send the entry to every configured save
@@ -800,8 +953,9 @@ pub async fn fetch_full_content_form(
 pub async fn save_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
-) -> AppResult<ReadingPaneWithFlash> {
+) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
     let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
@@ -865,11 +1019,15 @@ pub async fn save_entry_form(
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
     let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
-    Ok(ReadingPaneWithFlash {
-        pane,
-        flash: Some(flash),
-        csrf_token: auth_user.csrf_token,
-    })
+    Ok(entry_action_response(
+        ReadingPaneWithFlash {
+            pane,
+            flash: Some(flash),
+            csrf_token: auth_user.csrf_token,
+        },
+        &headers,
+        entry_id,
+    ))
 }
 
 #[cfg(test)]
@@ -937,5 +1095,73 @@ mod tests {
             let h = with_referer(path);
             assert_eq!(fragment_document_redirect(&h, 5), "/entries?entry=5");
         }
+    }
+
+    #[test]
+    fn action_redirect_returns_to_the_list_without_opening_the_pane() {
+        // An action fired from a list row must leave the reader in the list —
+        // no `?entry=` is grafted on, unlike the fragment redirect.
+        let h = with_referer("https://rdrs.example/feeds/7/entries?status=unread");
+        assert_eq!(
+            action_document_redirect(&h, 42),
+            "/feeds/7/entries?status=unread"
+        );
+    }
+
+    #[test]
+    fn action_redirect_keeps_an_open_pane_open() {
+        // Fired from the reading pane, whose URL already carries `?entry=`.
+        let h = with_referer("https://rdrs.example/?entry=42");
+        assert_eq!(action_document_redirect(&h, 42), "/?entry=42");
+    }
+
+    #[test]
+    fn action_redirect_falls_back_to_the_entry_without_referer() {
+        // No usable referrer: show the entry, the only feedback available until
+        // the flash banner is server-rendered.
+        assert_eq!(
+            action_document_redirect(&HeaderMap::new(), 5),
+            "/entries?entry=5"
+        );
+        let h = with_referer("https://rdrs.example/settings");
+        assert_eq!(action_document_redirect(&h, 5), "/entries?entry=5");
+    }
+
+    #[test]
+    fn speculative_load_matches_every_prefetch_header_shape() {
+        let mut h = HeaderMap::new();
+        assert!(!is_speculative_load(&h));
+
+        // A prerender's `Sec-Purpose` carries both tokens.
+        for value in ["prefetch", "prefetch;prerender", "Prefetch"] {
+            h.insert("sec-purpose", HeaderValue::from_str(value).unwrap());
+            assert!(is_speculative_load(&h), "sec-purpose: {value}");
+        }
+        h.remove("sec-purpose");
+
+        // Legacy Chromium and Firefox.
+        h.insert("purpose", HeaderValue::from_static("prefetch"));
+        assert!(is_speculative_load(&h));
+        h.remove("purpose");
+        h.insert("x-moz", HeaderValue::from_static("prefetch"));
+        assert!(is_speculative_load(&h));
+        h.remove("x-moz");
+
+        // A reader actually opening the entry.
+        h.insert("sec-fetch-dest", HeaderValue::from_static("empty"));
+        assert!(!is_speculative_load(&h));
+    }
+
+    #[test]
+    fn document_navigation_only_matches_a_top_level_navigation() {
+        let mut h = HeaderMap::new();
+        assert!(!is_document_navigation(&h));
+
+        // The swap helper's `fetch()`.
+        h.insert("sec-fetch-dest", HeaderValue::from_static("empty"));
+        assert!(!is_document_navigation(&h));
+
+        h.insert("sec-fetch-dest", HeaderValue::from_static("document"));
+        assert!(is_document_navigation(&h));
     }
 }
