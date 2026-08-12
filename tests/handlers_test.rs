@@ -4311,7 +4311,9 @@ async fn test_entry_fragment_renders_reading_pane() {
 /// A real top-level browser navigation to the partial-only `/fragment` route
 /// (carrying `Sec-Fetch-Dest: document`) must redirect to the full entries
 /// page rather than serving the bare `<template>` blocks — which render as a
-/// blank page. The redirect path is read-only and must not mark the entry read.
+/// blank page. Opening still marks the entry read on the way out: the reader
+/// opened it, and a scriptless click is the same intent as the `fetch()` the
+/// swap helper would have sent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_redirects_on_top_level_navigation() {
     let mut app = create_test_app_named(default_test_config(), "test_entry_fragment_doc_nav").await;
@@ -4380,8 +4382,132 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
         .unwrap_or("");
     assert_eq!(location, format!("/entries?entry={entry_id}"));
 
-    // The redirect short-circuits before the write transaction, so the entry
-    // stays unread (the user will mark it read by opening it normally).
+    // The mark-as-read fires before the redirect, on the same detached task the
+    // `fetch()` path uses — so poll for it rather than assuming it has landed.
+    let mut read_at: Option<String> = None;
+    for _ in 0..100 {
+        read_at = rdrs::query_scalar!(
+            &app.db,
+            Option<String>,
+            "SELECT read_at FROM entry WHERE id = $1",
+            entry_id
+        )
+        .unwrap();
+        if read_at.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        read_at.is_some(),
+        "a scriptless open must mark the entry read, like the fetch() path"
+    );
+}
+
+/// A prefetch or prerender is the browser guessing, not the reader opening
+/// something — it must not mark anything read, and its response must not be
+/// storable, or the reader's real click could be served from the prefetch cache
+/// and the entry would never become read at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_entry_fragment_speculative_load_does_not_mark_read() {
+    let mut app =
+        create_test_app_named(default_test_config(), "test_entry_fragment_speculative").await;
+
+    app.server
+        .post("/api/setup")
+        .json(&json!({ "username": "spec_load", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "spec_load", "password": "vulture-mango-77-quilt" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
+
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/spec-feed",
+            title: Some("Spec Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        &app.db,
+        feed.id,
+        "guid-spec",
+        Some("Hello World"),
+        Some("https://x/spec"),
+        Some("<p>Body</p>"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let entry_id = entry.id;
+
+    // Chrome's current header. A prerender sends `prefetch;prerender`, which the
+    // substring test also has to catch.
+    for purpose in ["prefetch", "prefetch;prerender"] {
+        let response = app
+            .server
+            .get(&format!("/entries/{entry_id}/fragment"))
+            .add_header(
+                HeaderName::from_static("sec-purpose"),
+                HeaderValue::from_str(purpose).unwrap(),
+            )
+            .await;
+        response.assert_status_ok();
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store"),
+            "a speculative response must not be storable ({purpose})"
+        );
+    }
+
+    // Same request as a scriptless navigation, so the redirect branch is covered
+    // too — still no mutation, still unstorable.
+    let response = app
+        .server
+        .get(&format!("/entries/{entry_id}/fragment"))
+        .add_header(
+            HeaderName::from_static("sec-purpose"),
+            HeaderValue::from_static("prefetch"),
+        )
+        .add_header(
+            HeaderName::from_static("sec-fetch-dest"),
+            HeaderValue::from_static("document"),
+        )
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store")
+    );
+
+    // Nothing above may have marked it read. The write is detached, so give it
+    // the same window a real one would have had to land in.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     let read_at: Option<String> = rdrs::query_scalar!(
         &app.db,
         Option<String>,
@@ -4391,15 +4517,40 @@ async fn test_entry_fragment_redirects_on_top_level_navigation() {
     .unwrap();
     assert!(
         read_at.is_none(),
-        "the top-level-navigation redirect must not mark the entry read"
+        "a speculative load must leave the entry unread"
+    );
+
+    // And the reader's real open still works.
+    app.server
+        .get(&format!("/entries/{entry_id}/fragment"))
+        .await
+        .assert_status_ok();
+    let mut read_at: Option<String> = None;
+    for _ in 0..100 {
+        read_at = rdrs::query_scalar!(
+            &app.db,
+            Option<String>,
+            "SELECT read_at FROM entry WHERE id = $1",
+            entry_id
+        )
+        .unwrap();
+        if read_at.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        read_at.is_some(),
+        "a genuine open after a prefetch must still mark read"
     );
 }
 
 /// A top-level navigation to `/entries/{id}/fragment` carrying a `Referer` from
 /// a scoped list page must redirect back into that scope (preserving its
-/// filters) with the pane pre-opened — not dump the user into All Entries. The
-/// redirect short-circuits before the entry is looked up, so the id need not
-/// exist. Regression for "clicking an Unread/category/feed entry jumps to All
+/// filters) with the pane pre-opened — not dump the user into All Entries. An
+/// id that resolves to nothing still redirects rather than 404ing (the list
+/// silently ignores an unresolvable `?entry=`), so the id need not exist.
+/// Regression for "clicking an Unread/category/feed entry jumps to All
 /// Entries" when `app.js` is stale-cached and clicks fall through to navigation.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_document_nav_preserves_referer_scope() {

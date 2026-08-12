@@ -177,6 +177,58 @@ fn is_document_navigation(headers: &HeaderMap) -> bool {
     headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) == Some("document")
 }
 
+/// A speculative load the reader never asked for — a prefetch or a prerender.
+/// Opening an entry marks it read, and a browser guessing at what might be
+/// clicked next must not get to make that decision.
+///
+/// `Sec-Purpose` is the current header (prerender sends `prefetch;prerender`,
+/// hence the substring test); `Purpose` is what Chromium sent before it, and
+/// `X-Moz` is Firefox's. Nothing in the app opts into speculation today — no
+/// `<link rel=prefetch>`, no speculation rules — so this guards against a
+/// future one, or an extension deciding for the reader.
+fn is_speculative_load(headers: &HeaderMap) -> bool {
+    let header_says_prefetch = |name: &str, exact: bool| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| {
+                if exact {
+                    v.eq_ignore_ascii_case("prefetch")
+                } else {
+                    v.to_ascii_lowercase().contains("prefetch")
+                }
+            })
+    };
+    header_says_prefetch("sec-purpose", false)
+        || header_says_prefetch("purpose", true)
+        || header_says_prefetch("x-moz", true)
+}
+
+/// Mark a speculative response uncacheable. Without this the browser could
+/// serve the reader's real click straight out of its prefetch cache — and since
+/// that response was produced *without* the mark-as-read, the entry would
+/// silently never become read.
+fn deny_storage(response: &mut Response) {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+}
+
+/// Dispatch the open-marks-read side effect: the write goes off the critical
+/// path (a detached task — nothing downstream waits on it) and the sidebar's
+/// cached unread counts are invalidated and re-pushed over SSE.
+fn dispatch_mark_read_on_open(state: &AppState, user_id: i64, entry_id: i64) {
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        if let Err(e) = entry::mark_as_read(&db, entry_id).await {
+            tracing::warn!(event = "entry.mark_read_failed", entry_id, error = %e, "async mark_as_read failed");
+        }
+    });
+    state.sidebar_cache.bust(user_id);
+    state.events.emit_sidebar(user_id);
+}
+
 /// Build the redirect target for a real top-level navigation to the
 /// partial-only `/entries/{id}/fragment` route. The fragment renders bare
 /// `<template>` blocks (blank as a document), so a browser navigation must land
@@ -239,33 +291,52 @@ pub async fn entry_fragment(
 ) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
+    // Read current state on the READ connection (not blocked by a background
+    // sync's write transaction under WAL). This happens before the
+    // document-navigation branch below because opening an entry marks it read,
+    // and deciding that needs the entry — a scriptless reader is opening it
+    // just as much as a `fetch()` is.
+    let found = entry::find_by_id_for_user(&state.db, user_id, entry_id).await?;
+
+    let speculative = is_speculative_load(&headers);
+    let mark_read = !speculative && found.as_ref().is_some_and(|e| e.entry.read_at.is_none());
+    if mark_read {
+        dispatch_mark_read_on_open(&state, user_id, entry_id);
+    }
+
     // `/entries/{id}/fragment` is a partial-only route: it renders just the
     // `<template data-swap-target>` blocks the swap helper consumes, which
     // display as a blank page when loaded as a top-level document. A real
-    // browser navigation here (the swap helper's error fallback, a click that
-    // lands before `app.js` wires up the interceptor, open-in-new-tab, or a
-    // refresh of the URL) must NOT show that blank page. Redirect those to the
-    // originating list page (recovered from the `Referer`) with the pane
-    // pre-opened via `?entry=` — keeping the user in their current scope
-    // instead of always dumping them into All Entries.
+    // browser navigation here (a scriptless click on an entry title, the swap
+    // helper's error fallback, a click that lands before `app.js` wires up the
+    // interceptor, open-in-new-tab, or a refresh of the URL) must NOT show that
+    // blank page. Redirect those to the originating list page (recovered from
+    // the `Referer`) with the pane pre-opened via `?entry=` — keeping the user
+    // in their current scope instead of always dumping them into All Entries.
+    //
+    // A missing entry redirects too rather than 404ing: the list handlers
+    // silently ignore an `?entry=` they can't resolve, so a stale link lands on
+    // the list instead of an error page. The `fetch()` path below still 404s,
+    // which is what `app.js` falls back on.
     if is_document_navigation(&headers) {
-        return Ok(Redirect::to(&fragment_document_redirect(&headers, entry_id)).into_response());
+        let mut response =
+            Redirect::to(&fragment_document_redirect(&headers, entry_id)).into_response();
+        if speculative {
+            deny_storage(&mut response);
+        }
+        return Ok(response);
     }
 
-    // Read current state on the READ connection (not blocked by a background
-    // sync's write transaction under WAL).
-    let mut ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
-        .await?
-        .ok_or(AppError::EntryNotFound)?;
+    let mut ewf = found.ok_or(AppError::EntryNotFound)?;
     let status = entry_summary::get_statuses_for_entries(&state.db, user_id, &[entry_id])
         .await?
         .get(&entry_id)
         .copied();
 
-    let was_unread = ewf.entry.read_at.is_none();
-
-    // Optimistically reflect the read state in the rendered row + pane.
-    if was_unread {
+    // Optimistically reflect the read state in the rendered row + pane. Tied to
+    // `mark_read`, not to the entry's prior state: a speculative load leaves the
+    // entry alone, so it must render it as it actually is.
+    if mark_read {
         ewf.entry.read_at = Some(chrono::Utc::now());
     }
 
@@ -273,24 +344,16 @@ pub async fn entry_fragment(
     let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
     let row = row_view_from(&ewf, status);
 
-    // Enqueue the real write off the critical path (only when it changes state).
-    if was_unread {
-        let db = state.db.clone();
-        tokio::spawn(async move {
-            if let Err(e) = entry::mark_as_read(&db, entry_id).await {
-                tracing::warn!(event = "entry.mark_read_failed", entry_id, error = %e, "async mark_as_read failed");
-            }
-        });
-        state.sidebar_cache.bust(user_id);
-        state.events.emit_sidebar(user_id);
-    }
-
-    Ok(OpenEntryMulti {
+    let mut response = OpenEntryMulti {
         pane,
         r: row,
         csrf_token: auth_user.csrf_token,
     }
-    .into_response())
+    .into_response();
+    if speculative {
+        deny_storage(&mut response);
+    }
+    Ok(response)
 }
 
 /// `GET /entries/{id}/summary/fragment` — returns the summary container swap
@@ -1042,6 +1105,31 @@ mod tests {
         );
         let h = with_referer("https://rdrs.example/settings");
         assert_eq!(action_document_redirect(&h, 5), "/entries?entry=5");
+    }
+
+    #[test]
+    fn speculative_load_matches_every_prefetch_header_shape() {
+        let mut h = HeaderMap::new();
+        assert!(!is_speculative_load(&h));
+
+        // A prerender's `Sec-Purpose` carries both tokens.
+        for value in ["prefetch", "prefetch;prerender", "Prefetch"] {
+            h.insert("sec-purpose", HeaderValue::from_str(value).unwrap());
+            assert!(is_speculative_load(&h), "sec-purpose: {value}");
+        }
+        h.remove("sec-purpose");
+
+        // Legacy Chromium and Firefox.
+        h.insert("purpose", HeaderValue::from_static("prefetch"));
+        assert!(is_speculative_load(&h));
+        h.remove("purpose");
+        h.insert("x-moz", HeaderValue::from_static("prefetch"));
+        assert!(is_speculative_load(&h));
+        h.remove("x-moz");
+
+        // A reader actually opening the entry.
+        h.insert("sec-fetch-dest", HeaderValue::from_static("empty"));
+        assert!(!is_speculative_load(&h));
     }
 
     #[test]

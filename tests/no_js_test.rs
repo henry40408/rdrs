@@ -328,6 +328,67 @@ async fn entry_actions_redirect_a_scriptless_form_post() {
     );
 }
 
+/// The entry title is a plain `<a href="/entries/{id}/fragment">`, so with
+/// scripting off clicking it is a top-level navigation. It has to do what the
+/// swap helper's `fetch()` would have done — mark the entry read — and then
+/// land somewhere that is not the blank partial.
+#[tokio::test]
+async fn opening_an_entry_marks_it_read_without_javascript() {
+    let (server, db) = create_test_server_with_db(default_test_config()).await;
+    setup_and_login(&server).await;
+    let (feed_id, entry_id) = seed_entry(&db).await;
+
+    let list_url = format!("/feeds/{feed_id}/entries?status=unread");
+    let response = server
+        .get(&format!("/entries/{entry_id}/fragment"))
+        .add_header(
+            HeaderName::from_static("sec-fetch-dest"),
+            HeaderValue::from_static("document"),
+        )
+        .add_header(
+            header::REFERER,
+            HeaderValue::from_str(&format!("http://localhost{list_url}")).unwrap(),
+        )
+        .await;
+
+    // Lands on the list it was opened from, pane pre-opened on the entry.
+    response.assert_status(StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.header(header::LOCATION),
+        format!("{list_url}&entry={entry_id}")
+    );
+
+    let mut read_at: Option<String> = None;
+    for _ in 0..100 {
+        read_at = rdrs::query_scalar!(
+            &db,
+            Option<String>,
+            "SELECT read_at FROM entry WHERE id = $1",
+            entry_id
+        )
+        .unwrap();
+        if read_at.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        read_at.is_some(),
+        "opening an entry with scripting off must mark it read"
+    );
+
+    // The landing page reflects it: the row's toggle now offers the inverse
+    // action, which is the only read-state feedback a scriptless reader gets.
+    let landed = server.get(&format!("{list_url}&entry={entry_id}")).await;
+    landed.assert_status_ok();
+    assert!(
+        landed
+            .text()
+            .contains(&format!(r#"action="/entries/{entry_id}/unread""#)),
+        "the row must come back offering Mark Unread"
+    );
+}
+
 #[tokio::test]
 async fn entry_list_rows_render_the_token() {
     let server = create_test_server(default_test_config()).await;
