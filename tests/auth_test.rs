@@ -1362,11 +1362,14 @@ async fn test_flash_message_on_unread_page() {
 
     response.assert_status_ok();
     let body = response.text();
-    // Flash messages are now embedded in the rdrs-flash-bootstrap JSON
-    // for the rdrs-flash element to consume on connect.
-    assert!(body.contains(r#"id="rdrs-flash-bootstrap""#));
+    // Server-rendered as a banner inside `<rdrs-flash>`, not handed over as
+    // JSON — a message the reader cannot see without JavaScript is not
+    // feedback. The level survives as the class and the assertive ARIA role.
+    assert!(body.contains("<rdrs-flash"));
+    assert!(body.contains(r#"data-testid="flash-message""#));
     assert!(body.contains("Warning test"));
-    assert!(body.contains(r#""level":"warning""#));
+    assert!(body.contains("banner--warning"));
+    assert!(body.contains(r#"role="alert""#));
 }
 
 /// Force a logged-in user's session into the refresh window by back-dating

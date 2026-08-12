@@ -697,9 +697,9 @@ async fn test_categories_page_with_flash() {
 
     response.assert_status_ok();
     let body = response.text();
-    // SSR page embeds pending flash messages as inline JSON for
-    // `<rdrs-flash>` to display on first paint.
-    assert!(body.contains("id=\"rdrs-flash-bootstrap\""));
+    // Pending flash messages are rendered as banners inside `<rdrs-flash>`,
+    // so they are visible on first paint with or without JavaScript.
+    assert!(body.contains(r#"data-testid="flash-message""#));
     assert!(body.contains("Category created successfully"));
 }
 
@@ -720,8 +720,8 @@ async fn test_feeds_page_with_flash() {
 
     response.assert_status_ok();
     let body = response.text();
-    // SSR page still embeds pending flash messages inline.
-    assert!(body.contains("id=\"rdrs-flash-bootstrap\""));
+    // SSR page still renders pending flash messages inline.
+    assert!(body.contains(r#"data-testid="flash-message""#));
     assert!(body.contains("Failed to add feed"));
 }
 
@@ -742,9 +742,9 @@ async fn test_entries_page_with_flash() {
 
     response.assert_status_ok();
     let body = response.text();
-    // Post-SSR migration: flash is embedded inline, no CSR shell.
+    // Post-SSR migration: flash is rendered inline, no CSR shell.
     assert!(!body.contains("<rdrs-entries-page>"));
-    assert!(body.contains(r#"id="rdrs-flash-bootstrap""#));
+    assert!(body.contains(r#"data-testid="flash-message""#));
     assert!(body.contains("Entries refreshed"));
 }
 
@@ -795,7 +795,7 @@ async fn test_user_settings_page_with_flash() {
 
     response.assert_status_ok();
     let body = response.text();
-    assert!(body.contains("id=\"rdrs-flash-bootstrap\""));
+    assert!(body.contains(r#"data-testid="flash-message""#));
     assert!(body.contains("Settings saved"));
 }
 
