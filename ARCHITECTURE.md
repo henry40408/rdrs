@@ -459,6 +459,14 @@ error and is cleared by the next success.
 - Fetches article URL
 - Extracts main content using readability algorithm
 - SSRF protection via shared `utils/url_validation` module (blocks private IPs, localhost, internal domains)
+- The extraction is stored on `entry.full_content` as **raw** HTML and sanitized
+  per render like feed content — `sanitize_html` signs image-proxy URLs with
+  `RDRS_SECRET`, so a sanitized copy in the database would outlive its key
+- Because it is stored, the reading pane keeps showing it across refreshes, new
+  tabs and scriptless page loads; `GET /entries/{id}/fragment?view=original`
+  renders what the feed published instead, and dropping the parameter goes back
+  without re-fetching. Re-posting the action refreshes the stored copy
+- Not mirrored into `content_text`: search covers what the feed published
 
 ### Image Proxy (`image_proxy.rs`)
 

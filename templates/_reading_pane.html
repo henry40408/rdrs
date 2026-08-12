@@ -59,11 +59,17 @@
             </form>
             {% if let Some(link) = pane.link.as_ref() %}
             {% if pane.is_full_content %}
-            {# `GET /entries/{id}/fragment` returns the original feed-supplied
-               reading pane (plus row + sidebar-unread, which are already in
-               their post-open state, so the swap is effectively a no-op for
-               them). Lets the user revert from a Fetch-Full-Content view. #}
-            <a href="/entries/{{ pane.id }}/fragment" data-swap="#reading-pane" class="rp-action is-on" aria-label="Show Original"><span class="action-icon" aria-hidden="true">{% call icons::revert() %}{% endcall %}</span><span class="action-label">Original</span><kbd>d</kbd></a>
+            {# `?view=original` re-renders the pane from what the feed published.
+               The parameter is needed now that the fetched article is stored:
+               without it the fragment would hand back the fetched one again. #}
+            <a href="/entries/{{ pane.id }}/fragment?view=original" data-swap="#reading-pane" class="rp-action is-on" aria-label="Show Original"><span class="action-icon" aria-hidden="true">{% call icons::revert() %}{% endcall %}</span><span class="action-label">Original</span><kbd>d</kbd></a>
+            {% else if pane.has_stored_full_content %}
+            {# Already fetched once, currently showing the original: going back
+               is a plain link, so the reader never re-fetches someone else's
+               server just to undo a toggle. Re-fetching stays available from
+               the original view via the button below on entries with no stored
+               article — see `has_stored_full_content`. #}
+            <a href="/entries/{{ pane.id }}/fragment" data-swap="#reading-pane" class="rp-action" aria-label="Show Full Content"><span class="action-icon" aria-hidden="true">{% call icons::document() %}{% endcall %}</span><span class="action-label">Full content</span><kbd>d</kbd></a>
             {% else %}
             <form method="post" action="/entries/{{ pane.id }}/fetch-full-content" data-swap="#reading-pane" data-cancel-swap>
                 {% call macros::csrf_field(csrf_token) %}{% endcall %}
