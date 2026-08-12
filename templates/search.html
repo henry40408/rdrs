@@ -1,4 +1,5 @@
 {% extends "app_layout.html" %}
+{% import "macros.html" as macros %}
 
 {% block page_script %}<script type="module" src="/static/js/search.js?v={{ layout.git_version }}"></script>{% endblock %}
 
@@ -6,7 +7,7 @@
     <div class="app-layout">
         <rdrs-sidebar active="search"></rdrs-sidebar>
         <main class="main-content">
-            <rdrs-flash></rdrs-flash>
+            {% call macros::flash_mount(layout.flash_messages) %}{% endcall %}
             <div class="page-content page-content-full">
                 <h1>Search</h1>
 

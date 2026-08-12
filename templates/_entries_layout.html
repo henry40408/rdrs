@@ -1,10 +1,11 @@
 {% extends "app_layout.html" %}
+{% import "macros.html" as macros %}
 
 {% block page %}
     <div class="app-layout">
         <rdrs-sidebar active="{{ entries_layout.active }}"{% if let Some(cat_id) = entries_layout.active_category_id %} active-category-id="{{ cat_id }}"{% endif %}{% if let Some(feed_id) = entries_layout.active_feed_id %} active-feed-id="{{ feed_id }}"{% endif %}></rdrs-sidebar>
         <main class="main-content">
-            <rdrs-flash></rdrs-flash>
+            {% call macros::flash_mount(layout.flash_messages) %}{% endcall %}
             <div class="split-view">
                 {% include "_list_pane.html" %}
                 {% if let Some(pane) = reading_pane.as_ref() %}

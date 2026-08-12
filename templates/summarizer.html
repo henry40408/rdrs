@@ -7,7 +7,7 @@
     <div class="app-layout">
         <rdrs-sidebar active="summarizer"></rdrs-sidebar>
         <main class="main-content">
-            <rdrs-flash></rdrs-flash>
+            {% call macros::flash_mount(layout.flash_messages) %}{% endcall %}
             <div class="page-content page-content-full">
                 <h1>Summarizer</h1>
                 <p class="page-lead">Paste one or more links and get a Kagi summary for each, one after another — without adding them to a feed. Nothing here is saved to your library.</p>

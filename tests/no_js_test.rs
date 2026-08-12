@@ -179,6 +179,103 @@ async fn logged_in_mutation_succeeds_with_only_the_form_field() {
     );
 }
 
+/// A mutation's only confirmation is its flash message, and `<rdrs-flash>` used
+/// to be filled in by JavaScript reading a JSON bootstrap — so with scripting
+/// off every action succeeded in total silence. The banner is server-rendered
+/// now, so following the redirect shows it.
+#[tokio::test]
+async fn a_mutation_confirms_itself_with_a_server_rendered_banner() {
+    let server = create_test_server(default_test_config()).await;
+    setup_and_login(&server).await;
+
+    let page = server.get("/categories").await;
+    let created = server
+        .post("/categories")
+        .form(&[
+            ("_csrf", csrf_field(&page.text())),
+            ("name", "Announced".to_string()),
+        ])
+        .await;
+    created.assert_status(StatusCode::SEE_OTHER);
+
+    // Follow the redirect the way a browser would, carrying the flash cookie
+    // the response just set.
+    let landing = created.header(header::LOCATION);
+    let after = server.get(landing.to_str().unwrap()).await;
+    after.assert_status_ok();
+    let html = after.text();
+
+    assert!(
+        html.contains(r#"data-testid="flash-message""#),
+        "the flash must be rendered as a banner, not left in a JSON blob:\n{html}"
+    );
+    assert!(
+        html.contains("Category created."),
+        "the banner must carry the message text"
+    );
+    // The element doubles as the client's mount point, so it has to be the
+    // thing the server rendered into — not a sibling the JS would ignore.
+    assert!(
+        html.contains("<rdrs-flash"),
+        "the banners belong inside `<rdrs-flash>`"
+    );
+    // Nothing is left that only JavaScript could read.
+    assert!(
+        !html.contains("rdrs-flash-bootstrap"),
+        "the JSON bootstrap is gone; SSR is the only path now"
+    );
+}
+
+/// With nothing to say, `<rdrs-flash>` must render *childless* — not even
+/// whitespace. `.banner-stack:empty { display: none }` is what keeps the empty
+/// mount out of the layout, and `:empty` counts text nodes: a stray newline
+/// from the template turns it into a permanent invisible band on every page,
+/// which on mobile pushes the header out of alignment.
+#[tokio::test]
+async fn an_empty_flash_mount_has_no_children_at_all() {
+    let server = create_test_server(default_test_config()).await;
+    setup_and_login(&server).await;
+
+    let html = server.get("/categories").await.text();
+    assert!(
+        html.contains("<rdrs-flash"),
+        "the mount point must still be rendered for the client to append into"
+    );
+    assert!(
+        html.contains("tabindex=\"-1\"></rdrs-flash>"),
+        "an empty flash mount must close immediately, with no whitespace inside:\n{html}"
+    );
+}
+
+/// A scriptless reader keeps the UTC timestamp (`rdrs-flash.js` rewrites it to
+/// local time when it runs), so it has to be both rendered and machine-readable.
+#[tokio::test]
+async fn a_server_rendered_banner_timestamps_itself_unambiguously() {
+    let server = create_test_server(default_test_config()).await;
+    setup_and_login(&server).await;
+
+    let page = server.get("/categories").await;
+    let created = server
+        .post("/categories")
+        .form(&[
+            ("_csrf", csrf_field(&page.text())),
+            ("name", "Timed".to_string()),
+        ])
+        .await;
+    let landing = created.header(header::LOCATION);
+    let after = server.get(landing.to_str().unwrap()).await;
+    let html = after.text();
+
+    assert!(
+        html.contains(r#"data-testid="flash-time""#),
+        "the banner must show a time"
+    );
+    assert!(
+        html.contains("<time class=\"banner-time\" datetime=\""),
+        "and carry it as an RFC 3339 `datetime` the client can localize"
+    );
+}
+
 #[tokio::test]
 async fn mutation_without_the_form_field_is_still_rejected() {
     let server = create_test_server(default_test_config()).await;

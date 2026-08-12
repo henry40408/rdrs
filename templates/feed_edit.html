@@ -5,7 +5,7 @@
     <div class="app-layout">
         <rdrs-sidebar active="feeds"></rdrs-sidebar>
         <main class="main-content">
-            <rdrs-flash></rdrs-flash>
+            {% call macros::flash_mount(layout.flash_messages) %}{% endcall %}
             <div class="page-content">
                 <h1>Edit Feed</h1>
 

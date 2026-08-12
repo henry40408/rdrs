@@ -1,10 +1,11 @@
 {% extends "app_layout.html" %}
+{% import "macros.html" as macros %}
 
 {% block page %}
     <div class="app-layout">
         <rdrs-sidebar></rdrs-sidebar>
         <main class="main-content">
-            <rdrs-flash></rdrs-flash>
+            {% call macros::flash_mount(layout.flash_messages) %}{% endcall %}
             <div class="page-content">
                 <h1>{{ heading }}</h1>
                 <p class="muted">{{ message }}</p>

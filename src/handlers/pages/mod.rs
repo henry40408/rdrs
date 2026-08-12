@@ -21,7 +21,7 @@ mod script_json;
 mod search_text;
 mod time_format;
 
-use script_json::{flash_bootstrap_json, serialize_sidebar_for_script};
+use script_json::serialize_sidebar_for_script;
 use search_text::{build_snippet, highlight_html};
 pub use time_format::{
     FRESH_MAX_DAYS, WARNING_MAX_DAYS, compute_freshness, format_relative_time,
@@ -2620,7 +2620,11 @@ pub struct AppLayoutContext {
     pub theme: Option<String>,
     pub git_version: &'static str,
     pub sidebar_bootstrap_json: String,
-    pub flash_bootstrap_json: String,
+    /// Rendered directly into `<rdrs-flash>` by `macros::flash_mount`, not
+    /// handed to the client as JSON: a flash the reader cannot see without
+    /// JavaScript is not feedback. `rdrs-flash.js` keeps these banners and
+    /// appends its own for anything raised after load.
+    pub flash_messages: Vec<FlashMessage>,
 }
 
 /// Build the shared layout context for a logged-in page response.
@@ -2662,13 +2666,12 @@ pub async fn build_app_layout(
         sidebar_hide_read: chrome.sidebar_prefs.hide_read,
     };
     let sidebar_bootstrap_json = serialize_sidebar_for_script(&sidebar);
-    let flash_bootstrap_json = flash_bootstrap_json(&flash.messages);
 
     AppLayoutContext {
         theme: chrome.theme,
         git_version: crate::GIT_VERSION,
         sidebar_bootstrap_json,
-        flash_bootstrap_json,
+        flash_messages: flash.messages.clone(),
     }
 }
 

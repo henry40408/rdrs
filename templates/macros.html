@@ -25,20 +25,33 @@
 {% macro row_marker_form(id, is_read, csrf) %}<form class="entry-marker" method="post" action="/entries/{{ id }}/{% if is_read %}unread{% else %}read{% endif %}" data-swap="#entry-row-{{ id }}">{% call csrf_field(csrf) %}{% endcall %}<button type="submit" class="unread-toggle" data-testid="entry-read-toggle" aria-label="{% if is_read %}Mark unread{% else %}Mark read{% endif %}" title="{% if is_read %}Mark unread{% else %}Mark read{% endif %} (m)"></button></form>{% endmacro %}
 {% macro row_star_form(id, is_starred, csrf) %}<form class="entry-star-form" method="post" action="/entries/{{ id }}/{% if is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ id }}">{% call csrf_field(csrf) %}{% endcall %}<button type="submit" class="entry-star{% if is_starred %} starred{% endif %}" data-testid="entry-star-action" aria-label="{% if is_starred %}Unstar{% else %}Star{% endif %}" title="{% if is_starred %}Unstar{% else %}Star{% endif %} (f)">{% call icons::star(is_starred) %}{% endcall %}</button></form>{% endmacro %}
 {% macro pane_star_form(id, is_starred, csrf) %}<form id="reading-pane-star-form-{{ id }}" method="post" action="/entries/{{ id }}/{% if is_starred %}unstar{% else %}star{% endif %}" data-swap="#entry-row-{{ id }}">{% call csrf_field(csrf) %}{% endcall %}<button type="submit" class="rp-action{% if is_starred %} is-on{% endif %}" aria-label="{% if is_starred %}Unstar{% else %}Star{% endif %}"><span class="action-icon" aria-hidden="true">{% call icons::star(is_starred) %}{% endcall %}</span><span class="action-label">{% if is_starred %}Starred{% else %}Star{% endif %}</span><kbd>f</kbd></button></form>{% endmacro %}
-{% macro flash(messages) %}
-{% if !messages.is_empty() %}
-<div class="banner-stack" role="region" aria-label="Notifications" tabindex="-1">
-    {% for msg in messages %}
-    <div class="banner {{ msg.level_class() }}" role="{{ msg.aria_role() }}" data-testid="flash-message">
+{# The banners themselves, without a container. Shared by the two mounts below
+   so a logged-out page and a logged-in one cannot drift apart. #}
+{# No whitespace outside the loop: an empty stack must render as a *childless*
+   element, or `.banner-stack:empty { display: none }` stops matching and every
+   page grows an invisible band that shoves the mobile header out of line. #}
+{% macro flash_banners(messages) %}{% for msg in messages %}<div class="banner {{ msg.level_class() }}" role="{{ msg.aria_role() }}" data-testid="flash-message">
         <span class="banner-icon" aria-hidden="true"></span>
         <div class="banner-body"><span class="sr-only">{{ msg.level_name() }}: </span><span class="banner-message">{{ msg.message }}</span></div>
         <time class="banner-time" datetime="{{ msg.timestamp_iso() }}" data-testid="flash-time">{{ msg.formatted_time() }}</time>
         <button type="button" class="banner-dismiss" aria-label="Dismiss notification" data-testid="flash-close" data-flash-dismiss>{% call icons::close() %}{% endcall %}</button>
-    </div>
-    {% endfor %}
+    </div>{% endfor %}{% endmacro %}
+{# Logged-out pages (login, setup): a plain container, no custom element —
+   those pages never raise a message after load. #}
+{% macro flash(messages) %}
+{% if !messages.is_empty() %}
+<div class="banner-stack" role="region" aria-label="Notifications" tabindex="-1">
+    {% call flash_banners(messages) %}{% endcall %}
 </div>
 {% endif %}
 {% endmacro %}
+{# Logged-in pages: the same banners, but inside `<rdrs-flash>` so the element
+   is both the server's output and the client's mount point for later toasts.
+   The attributes mirror what `rdrs-flash.js` sets on connect — it only fills in
+   what is missing, so rendering them here costs nothing and means a scriptless
+   reader gets the same landmark. Emitted even when empty: the element must
+   exist for `show()` to append into, and `.banner-stack:empty` hides it. #}
+{% macro flash_mount(messages) %}<rdrs-flash class="banner-stack" role="region" aria-label="Notifications" tabindex="-1">{% call flash_banners(messages) %}{% endcall %}</rdrs-flash>{% endmacro %}
 {% macro summarizer_card(card) %}<div class="summary-box sz-card{% if card.state == "queued" %} pending{% endif %}" id="sz-card-{{ card.index }}" data-summarizer-card data-summarizer-url="{{ card.url }}" data-summarizer-index="{{ card.index }}" data-state="{{ card.state }}">
     <div class="summary-actions" data-sz-actions>
         {% if card.state == "completed" %}<button type="button" class="rp-action" data-sz-copy aria-label="Copy summary"><span class="action-label">Copy</span></button><button type="button" class="rp-action" data-sz-dismiss aria-label="Dismiss summary"><span class="action-label">Dismiss</span></button>{% else if card.state == "error" %}<button type="button" class="rp-action" data-sz-retry aria-label="Retry summarization"><span class="action-label">Retry</span></button><button type="button" class="rp-action" data-sz-dismiss aria-label="Dismiss"><span class="action-label">Dismiss</span></button>{% endif %}

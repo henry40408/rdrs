@@ -26,18 +26,12 @@ class RdrsFlash extends HTMLElement {
         // Focusable as a fallback target when the trigger element is gone.
         if (!this.hasAttribute('tabindex')) this.tabIndex = -1;
 
-        const node = document.getElementById('rdrs-flash-bootstrap');
-        if (node && node.textContent && !this._bootstrapApplied) {
-            this._bootstrapApplied = true;
-            try {
-                const messages = JSON.parse(node.textContent);
-                if (Array.isArray(messages)) {
-                    for (const m of messages) {
-                        if (m && m.level && m.message) this.show(m.level, m.message);
-                    }
-                }
-            } catch { /* malformed — ignore */ }
-        }
+        // Nothing to bootstrap: the server renders the page's own messages as
+        // banners inside this element (`macros::flash_mount`), which is the
+        // only way a reader without JavaScript ever sees them. They arrive
+        // already parsed, already dismissible via the delegated handler below,
+        // and `localizeTime()` fixes up their clock. This element's job from
+        // here is `show()` — the toasts raised after load.
     }
 
     /** Set a flash message cookie for next page load. */
