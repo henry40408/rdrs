@@ -300,9 +300,6 @@ pub async fn entry_fragment(
 
     let speculative = is_speculative_load(&headers);
     let mark_read = !speculative && found.as_ref().is_some_and(|e| e.entry.read_at.is_none());
-    if mark_read {
-        dispatch_mark_read_on_open(&state, user_id, entry_id);
-    }
 
     // `/entries/{id}/fragment` is a partial-only route: it renders just the
     // `<template data-swap-target>` blocks the swap helper consumes, which
@@ -319,6 +316,10 @@ pub async fn entry_fragment(
     // the list instead of an error page. The `fetch()` path below still 404s,
     // which is what `app.js` falls back on.
     if is_document_navigation(&headers) {
+        // Nothing to render on this path, so the write is dispatched here.
+        if mark_read {
+            dispatch_mark_read_on_open(&state, user_id, entry_id);
+        }
         let mut response =
             Redirect::to(&fragment_document_redirect(&headers, entry_id)).into_response();
         if speculative {
@@ -343,6 +344,25 @@ pub async fn entry_fragment(
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
     let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
     let row = row_view_from(&ewf, status);
+
+    // Dispatched *here*, not beside the `mark_read` decision above, and moving
+    // it earlier breaks reading past the end of the loaded page.
+    //
+    // Opening the neighbour past the last loaded row swaps only `#reading-pane`;
+    // `app.js` adopts that entry as the selection and waits for Load More to
+    // append its row before it can highlight it. Load More re-queries the list
+    // — on the unread list, an entry that is already marked read is no longer
+    // in it. Dispatching before the render lets this write commit first often
+    // enough that the row never arrives and the selection is silently lost
+    // (`reading.feature`, "Reading past the loaded page"). Sequencing it behind
+    // the render leaves the read query its usual head start.
+    //
+    // The race is inherent, not introduced here — this only keeps it as narrow
+    // as it has always been. The scriptless path above has no render to sit
+    // behind and no Load More to outrun, so it dispatches immediately.
+    if mark_read {
+        dispatch_mark_read_on_open(&state, user_id, entry_id);
+    }
 
     let mut response = OpenEntryMulti {
         pane,
