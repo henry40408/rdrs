@@ -2664,6 +2664,10 @@ pub struct AppLayoutContext {
     /// Unread total for that fallback's Unread link. The per-category counts
     /// are deliberately left out — see `templates/app_layout.html`.
     pub total_unread: i64,
+    /// For the fallback's sign-out form. Carried on the layout rather than
+    /// read from each page's own `csrf_token`, because not every page that
+    /// extends this one has one.
+    pub csrf_token: String,
 }
 
 /// Build the shared layout context for a logged-in page response.
@@ -2713,6 +2717,7 @@ pub async fn build_app_layout(
         flash_messages: flash.messages.clone(),
         is_admin,
         total_unread: sidebar.total_unread,
+        csrf_token: auth_user.csrf_token.clone(),
     }
 }
 
