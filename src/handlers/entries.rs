@@ -10,6 +10,7 @@ use crate::{
     error::{AppError, AppResult},
     handlers::pages::{EntryRowView, ReadingPaneView, format_relative_time, row_view_from},
     middleware::auth::PageAuthUser,
+    middleware::flash::{FlashMessage, FlashRedirect},
     models::{entry, entry_summary, user_settings},
     services::{
         SummaryJob, SummaryStatus, fetch_and_extract, sanitize_html,
@@ -46,6 +47,22 @@ impl IntoResponse for ReadingPaneFragment {
 pub struct FlashPayload {
     pub level: &'static str,
     pub message: String,
+}
+
+impl FlashPayload {
+    /// The same message as a cookie-borne [`FlashMessage`], for the scriptless
+    /// path: there is no swap helper to hand a `<template data-flash>` to, so
+    /// the message has to survive a redirect and be rendered by the next page.
+    fn to_message(&self) -> FlashMessage {
+        match self.level {
+            "success" => FlashMessage::success(&self.message),
+            "error" => FlashMessage::error(&self.message),
+            "warning" => FlashMessage::warning(&self.message),
+            // `info` and anything that ever drifts out of the four levels the
+            // `<rdrs-flash>` API accepts.
+            _ => FlashMessage::info(&self.message),
+        }
+    }
 }
 
 /// Multi-target response: swaps the reading pane and (optionally) pops a
@@ -579,14 +596,27 @@ impl IntoResponse for OpenEntryMulti {
 /// top-level navigation, and every one of these fragments is blank as a
 /// document, so send the browser back to the list it came from instead. The
 /// action itself has already been applied by the caller either way.
+///
+/// `flash` is the same message the fragment carries as `<template data-flash>`,
+/// handed over as a cookie so the page landed on renders it. Without this a
+/// scriptless action that changes nothing visible — Save is the pure case, its
+/// whole effect being on someone else's server — completes in total silence.
+/// Actions whose result is visible in the markup they return to (star, read,
+/// summarize) pass `None`, matching the swap helper, which deliberately raises
+/// no toast for them either.
 fn entry_action_response(
     fragment: impl IntoResponse,
+    flash: Option<FlashMessage>,
     headers: &HeaderMap,
     entry_id: i64,
 ) -> Response {
     if is_document_navigation(headers) {
-        // 303, so the browser re-issues the follow-up as a GET.
-        return Redirect::to(&action_document_redirect(headers, entry_id)).into_response();
+        let location = action_document_redirect(headers, entry_id);
+        // 303 either way, so the browser re-issues the follow-up as a GET.
+        return match flash {
+            Some(message) => FlashRedirect::to(location, message).into_response(),
+            None => Redirect::to(&location).into_response(),
+        };
     }
     fragment.into_response()
 }
@@ -609,7 +639,8 @@ pub async fn star_entry_form(
         auth_user.csrf_token,
     )
     .await?;
-    Ok(entry_action_response(multi, &headers, entry_id))
+    let flash = multi.flash.as_ref().map(FlashPayload::to_message);
+    Ok(entry_action_response(multi, flash, &headers, entry_id))
 }
 
 /// `POST /entries/{id}/unstar` — idempotently mark the entry as unstarred.
@@ -629,7 +660,8 @@ pub async fn unstar_entry_form(
         auth_user.csrf_token,
     )
     .await?;
-    Ok(entry_action_response(multi, &headers, entry_id))
+    let flash = multi.flash.as_ref().map(FlashPayload::to_message);
+    Ok(entry_action_response(multi, flash, &headers, entry_id))
 }
 
 /// Shared core for the idempotent star/unstar handlers. Renders the response
@@ -701,7 +733,8 @@ pub async fn read_entry_form(
         auth_user.csrf_token,
     )
     .await?;
-    Ok(entry_action_response(multi, &headers, entry_id))
+    let flash = multi.flash.as_ref().map(FlashPayload::to_message);
+    Ok(entry_action_response(multi, flash, &headers, entry_id))
 }
 
 /// `POST /entries/{id}/unread` — idempotently mark the entry as unread.
@@ -721,7 +754,8 @@ pub async fn unread_entry_form(
         auth_user.csrf_token,
     )
     .await?;
-    Ok(entry_action_response(multi, &headers, entry_id))
+    let flash = multi.flash.as_ref().map(FlashPayload::to_message);
+    Ok(entry_action_response(multi, flash, &headers, entry_id))
 }
 
 /// Shared core for the two idempotent read/unread handlers. Renders the
@@ -833,11 +867,15 @@ pub async fn summarize_entry_form(
         .events
         .emit_summary(user_id, entry_id, Some(SummaryStatus::Pending));
 
+    // No flash: the redirect lands with `?entry=`, so the pane comes back
+    // showing the summary container in its pending state — the result is the
+    // feedback, exactly as it is for the swap helper.
     Ok(entry_action_response(
         SummarizePending {
             id: entry_id,
             csrf_token: auth_user.csrf_token,
         },
+        None,
         &headers,
         entry_id,
     ))
@@ -879,7 +917,14 @@ pub async fn summarize_cancel_form(
     state.events.emit_summary(user_id, entry_id, None);
     state.events.emit_sidebar(user_id);
 
-    Ok(entry_action_response(SummarizeCleared, &headers, entry_id))
+    // No flash, same reason as `summarize_entry_form`: the pane returns to its
+    // empty state and that *is* the confirmation.
+    Ok(entry_action_response(
+        SummarizeCleared,
+        None,
+        &headers,
+        entry_id,
+    ))
 }
 
 /// `POST /entries/{id}/fetch-full-content` — fetch the source article from
@@ -888,6 +933,8 @@ pub async fn summarize_cancel_form(
 /// `pane.is_full_content = true` so the template swaps "Fetch Full
 /// Content" for a "Show Original" link; clicking it re-renders the pane
 /// via `GET /entries/{id}/fragment` which restores the feed-supplied body.
+///
+/// Scriptless callers are turned away before the fetch — see below.
 pub async fn fetch_full_content_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -895,6 +942,21 @@ pub async fn fetch_full_content_form(
     AxumPath(entry_id): AxumPath<i64>,
 ) -> AppResult<Response> {
     let user_id = auth_user.user.id;
+
+    // The fetched article lives only in this response: nothing writes it back,
+    // and `build_reading_pane_view` always rebuilds from the feed-supplied
+    // body. A scriptless caller gets a redirect, so the page it lands on would
+    // show the original content — the fetch would be work done, and a request
+    // made to someone else's server, for a result guaranteed to be discarded.
+    // Say so instead of doing it, and do not claim success the reader can see
+    // is not there.
+    if is_document_navigation(&headers) {
+        return Ok(FlashRedirect::warning(
+            action_document_redirect(&headers, entry_id),
+            "Fetching full content needs JavaScript — the article is loaded into the open reading pane, not saved.",
+        )
+        .into_response());
+    }
 
     let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await?
@@ -936,12 +998,15 @@ pub async fn fetch_full_content_form(
             },
         ),
     };
+    // `None`: only a `fetch()` reaches this far — the scriptless path returned
+    // above — so there is no redirect for a cookie to ride on.
     Ok(entry_action_response(
         ReadingPaneWithFlash {
             pane,
             flash: Some(flash),
             csrf_token: auth_user.csrf_token,
         },
+        None,
         &headers,
         entry_id,
     ))
@@ -1019,12 +1084,17 @@ pub async fn save_entry_form(
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
     let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
+    // Save's entire effect is on the bookmarking service; nothing about the
+    // entry changes. Without carrying this message the scriptless reader gets a
+    // redirect back to an identical page and no way to tell it worked.
+    let message = flash.to_message();
     Ok(entry_action_response(
         ReadingPaneWithFlash {
             pane,
             flash: Some(flash),
             csrf_token: auth_user.csrf_token,
         },
+        Some(message),
         &headers,
         entry_id,
     ))

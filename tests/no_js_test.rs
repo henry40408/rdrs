@@ -486,6 +486,154 @@ async fn opening_an_entry_marks_it_read_without_javascript() {
     );
 }
 
+/// Follow a scriptless entry action's redirect the way a browser would, and
+/// return the landing page's HTML.
+async fn follow(server: &TestServer, response: &axum_test::TestResponse) -> String {
+    response.assert_status(StatusCode::SEE_OTHER);
+    let landing = response.header(header::LOCATION);
+    let page = server.get(landing.to_str().unwrap()).await;
+    page.assert_status_ok();
+    page.text()
+}
+
+/// Post an entry action the way a scriptless browser does: a form navigation,
+/// carrying the rendered `_csrf` field and nothing else.
+async fn post_action(server: &TestServer, path: &str, csrf: &str) -> axum_test::TestResponse {
+    server
+        .post(path)
+        .add_header(
+            HeaderName::from_static("sec-fetch-dest"),
+            HeaderValue::from_static("document"),
+        )
+        .form(&[("_csrf", csrf.to_string())])
+        .await
+}
+
+/// The redirect #481 introduced answers with no body, so an action whose result
+/// is not visible in the page it lands on said nothing at all. The message the
+/// swap helper would have toasted now rides along as a flash cookie.
+#[tokio::test]
+async fn a_scriptless_entry_action_reports_itself() {
+    let (server, db) = create_test_server_with_db(default_test_config()).await;
+    setup_and_login(&server).await;
+    let (_feed_id, entry_id) = seed_entry(&db).await;
+
+    let page = server.get(&format!("/entries?entry={entry_id}")).await;
+    let csrf = csrf_field(&page.text());
+
+    // Mark read first so the unread toggle has something to undo — "Marked as
+    // unread." is only raised when the call actually changes state.
+    post_action(&server, &format!("/entries/{entry_id}/read"), &csrf)
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    let unread = post_action(&server, &format!("/entries/{entry_id}/unread"), &csrf).await;
+    let html = follow(&server, &unread).await;
+    assert!(
+        html.contains("Marked as unread."),
+        "the action's message must survive the redirect as a banner:\n{html}"
+    );
+    assert!(
+        html.contains(r#"data-testid="flash-message""#),
+        "and be rendered as one"
+    );
+}
+
+/// Star and mark-read change the list they return to, so they carry no message
+/// — matching the swap helper, which raises no toast for them either. A banner
+/// here would be noise on every click.
+#[tokio::test]
+async fn a_self_evident_action_stays_quiet() {
+    let (server, db) = create_test_server_with_db(default_test_config()).await;
+    setup_and_login(&server).await;
+    let (_feed_id, entry_id) = seed_entry(&db).await;
+
+    let page = server.get(&format!("/entries?entry={entry_id}")).await;
+    let csrf = csrf_field(&page.text());
+
+    let starred = post_action(&server, &format!("/entries/{entry_id}/star"), &csrf).await;
+    let html = follow(&server, &starred).await;
+    assert!(
+        !html.contains(r#"data-testid="flash-message""#),
+        "starring speaks for itself — the row comes back starred:\n{html}"
+    );
+}
+
+/// Save's whole effect is on someone else's server, so the flash is the only
+/// evidence it happened. Pointed at an unreachable Linkding here, which still
+/// proves the plumbing: the failure has to reach the reader rather than vanish.
+#[tokio::test]
+async fn a_failed_save_reaches_a_scriptless_reader() {
+    let (server, db) = create_test_server_with_db(default_test_config()).await;
+    setup_and_login(&server).await;
+    let (_feed_id, entry_id) = seed_entry(&db).await;
+
+    let user_id: i64 = rdrs::query_scalar!(&db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    rdrs::models::user_settings::update_save_services(
+        &db,
+        user_id,
+        &rdrs::services::save::SaveServicesConfig {
+            linkding: Some(rdrs::services::save::linkding::LinkdingConfig {
+                api_url: "http://127.0.0.1:1/linkding".to_string(),
+                api_token: "t".to_string(),
+            }),
+            kagi: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let page = server.get(&format!("/entries?entry={entry_id}")).await;
+    let csrf = csrf_field(&page.text());
+
+    let saved = post_action(&server, &format!("/entries/{entry_id}/save"), &csrf).await;
+    let html = follow(&server, &saved).await;
+    assert!(
+        html.contains("Linkding"),
+        "the save failure must be reported, not swallowed:\n{html}"
+    );
+    assert!(
+        html.contains("banner--error"),
+        "and it is an error, not a success"
+    );
+}
+
+/// Fetch-full-content loads the article into the *open pane* and persists
+/// nothing, so a scriptless caller — who gets a redirect and a page rebuilt
+/// from the feed-supplied body — could never see it. Say so instead of doing
+/// the work: the entry's link here is unreachable, so a fetch that did happen
+/// would surface as a failure message rather than this one.
+#[tokio::test]
+async fn fetch_full_content_declines_rather_than_lying() {
+    let (server, db) = create_test_server_with_db(default_test_config()).await;
+    setup_and_login(&server).await;
+    let (_feed_id, entry_id) = seed_entry(&db).await;
+
+    let page = server.get(&format!("/entries?entry={entry_id}")).await;
+    let csrf = csrf_field(&page.text());
+
+    let fetched = post_action(
+        &server,
+        &format!("/entries/{entry_id}/fetch-full-content"),
+        &csrf,
+    )
+    .await;
+    let html = follow(&server, &fetched).await;
+
+    assert!(
+        html.contains("needs JavaScript"),
+        "the reader must be told why nothing changed:\n{html}"
+    );
+    assert!(
+        !html.contains("Failed to fetch full content"),
+        "no request should have been made to the source at all"
+    );
+    assert!(
+        !html.contains("Fetched full content."),
+        "and success must not be claimed for content that is not shown"
+    );
+}
+
 #[tokio::test]
 async fn entry_list_rows_render_the_token() {
     let server = create_test_server(default_test_config()).await;
