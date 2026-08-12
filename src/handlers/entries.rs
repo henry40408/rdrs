@@ -362,21 +362,17 @@ pub async fn entry_fragment(
     let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
     let row = row_view_from(&ewf, status);
 
-    // Dispatched *here*, not beside the `mark_read` decision above, and moving
-    // it earlier breaks reading past the end of the loaded page.
+    // Kept behind the render simply to stay off the critical path.
     //
-    // Opening the neighbour past the last loaded row swaps only `#reading-pane`;
-    // `app.js` adopts that entry as the selection and waits for Load More to
-    // append its row before it can highlight it. Load More re-queries the list
-    // — on the unread list, an entry that is already marked read is no longer
-    // in it. Dispatching before the render lets this write commit first often
-    // enough that the row never arrives and the selection is silently lost
-    // (`reading.feature`, "Reading past the loaded page"). Sequencing it behind
-    // the render leaves the read query its usual head start.
-    //
-    // The race is inherent, not introduced here — this only keeps it as narrow
-    // as it has always been. The scriptless path above has no render to sit
-    // behind and no Load More to outrun, so it dispatches immediately.
+    // This position used to be load-bearing: Load More re-queried the unread
+    // list, so an entry marked read here vanished from it, and the row `app.js`
+    // was waiting for in order to highlight the selection never arrived
+    // (`reading.feature`, "Reading past the loaded page" — issue #482). The
+    // window was thin enough that dispatching a few queries earlier lost it
+    // every time. Load More now paginates against the page's render-time
+    // snapshot, so an entry read during that page view stays listed and the
+    // ordering here no longer decides anything: the previously-breaking
+    // ordering was re-tested against that scenario and passes.
     if mark_read {
         dispatch_mark_read_on_open(&state, user_id, entry_id);
     }

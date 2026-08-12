@@ -3909,6 +3909,237 @@ fn extract_after_value(html: &str) -> Option<String> {
     Some(rest[..j].to_string())
 }
 
+/// Pull the Load-More form's hidden `snapshot` value.
+fn extract_snapshot_value(html: &str) -> Option<String> {
+    let needle = "name=\"snapshot\" value=\"";
+    let i = html.find(needle)? + needle.len();
+    let rest = &html[i..];
+    let j = rest.find('"')?;
+    Some(rest[..j].to_string())
+}
+
+/// Reading past the end of the loaded page used to lose the reader's place:
+/// the entry they opened became read, Load More re-queried the *unread* list
+/// without it, and the row `app.js` was waiting for in order to highlight the
+/// selection never arrived (issue #482).
+///
+/// The page now paginates against its own render instant, so an entry read
+/// while reading that page stays in its pages — the same snapshot rule the
+/// neighbours navigation has always used.
+#[tokio::test]
+async fn test_unread_load_more_keeps_an_entry_read_during_this_page_view() {
+    let mut app = create_test_app_named(default_test_config(), "test_unread_snapshot").await;
+
+    app.server
+        .post("/api/setup")
+        .json(&json!({ "username": "snapuser", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "snapuser", "password": "vulture-mango-77-quilt" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
+
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "S")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/snapshot-feed",
+            title: Some("S Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    // Three pages' worth, so page 2 still renders a Load-More form of its own
+    // and the snapshot has somewhere to be echoed to.
+    for i in 0..160u32 {
+        rdrs::models::entry::upsert_entry(
+            &app.db,
+            feed.id,
+            &format!("sn-{i}"),
+            Some(&format!("S {i}")),
+            None,
+            None,
+            None,
+            None,
+            Some(
+                chrono::Utc
+                    .with_ymd_and_hms(2024, 1, 1, i / 3600, (i / 60) % 60, i % 60)
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap();
+    }
+
+    // Every unread-capable list view, not just the inbox: a category or feed
+    // page defaults to Unread and strands the selection exactly the same way.
+    for base in [
+        "/".to_string(),
+        format!("/categories/{}/entries", cat.id),
+        format!("/feeds/{}/entries", feed.id),
+    ] {
+        // Page 1, and the snapshot it stamped.
+        let html = app.server.get(&base).await.text();
+        assert_eq!(extract_entry_ids(&html).len(), 50, "{base}: page 1");
+        let cursor =
+            extract_after_value(&html).unwrap_or_else(|| panic!("{base}: needs an after cursor"));
+        let snapshot = extract_snapshot_value(&html)
+            .unwrap_or_else(|| panic!("{base}: needs the page's snapshot"));
+        let sep = if base.contains('?') { '&' } else { '?' };
+        let more = format!(
+            "{base}{sep}fragment=1&after={}&snapshot={}",
+            encode(&cursor),
+            encode(&snapshot)
+        );
+
+        // The reader opens the first entry of the *next* page — the one there is
+        // no row for yet, which is the case that used to strand the selection.
+        // Reading it marks it read.
+        let frag_before = app.server.get(&more).await.text();
+        let next_id: i64 = extract_entry_ids(&frag_before)
+            .iter()
+            .filter_map(|s| s.parse().ok())
+            .min()
+            .unwrap_or_else(|| panic!("{base}: page 2 has rows"));
+        rdrs::models::entry::mark_as_read(&app.db, next_id)
+            .await
+            .unwrap();
+
+        // Load More again, exactly as the form would: same cursor, same snapshot.
+        let frag = app.server.get(&more).await.text();
+        assert!(
+            extract_entry_ids(&frag).contains(&next_id.to_string()),
+            "{base}: the entry read during this page view must still be listed — \
+             its row is what the selection is waiting for (#482)"
+        );
+
+        // The next form carries the *same* snapshot forward, not a fresh one:
+        // re-stamping would move the boundary and drop whatever was read since.
+        assert_eq!(
+            extract_snapshot_value(&frag).as_deref(),
+            Some(snapshot.as_str()),
+            "{base}: the snapshot must be echoed, never re-stamped"
+        );
+
+        // Without the snapshot — a stale form, say — the strict unread filter
+        // still applies, so the read entry is gone. This is what the old
+        // behaviour did on every page.
+        let strict = app
+            .server
+            .get(&format!("{base}{sep}fragment=1&after={}", encode(&cursor)))
+            .await
+            .text();
+        assert!(
+            !extract_entry_ids(&strict).contains(&next_id.to_string()),
+            "{base}: no snapshot means strict unread — the widening must be opt-in"
+        );
+
+        // Put it back so the next view starts from the same 160 unread entries.
+        rdrs::models::entry::set_read_for_user(&app.db, user_id, next_id, false)
+            .await
+            .unwrap();
+    }
+}
+
+/// The widening is scoped to unread views. Read / starred / summarized paginate
+/// on a different predicate entirely, so a snapshot on their Load-More form must
+/// change nothing — it is forwarded only so one template serves every list.
+#[tokio::test]
+async fn test_load_more_snapshot_is_inert_on_non_unread_views() {
+    let mut app = create_test_app_named(default_test_config(), "test_snapshot_inert").await;
+
+    app.server
+        .post("/api/setup")
+        .json(&json!({ "username": "inertuser", "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let __login = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": "inertuser", "password": "vulture-mango-77-quilt" }))
+        .await;
+    __login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &__login);
+
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "I")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/inert-feed",
+            title: Some("I Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    for i in 0..5u32 {
+        let (e, _) = rdrs::models::entry::upsert_entry(
+            &app.db,
+            feed.id,
+            &format!("in-{i}"),
+            Some(&format!("I {i}")),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        rdrs::models::entry::mark_as_read(&app.db, e.id)
+            .await
+            .unwrap();
+        rdrs::models::entry::set_starred_for_user(&app.db, user_id, e.id, true)
+            .await
+            .unwrap();
+    }
+
+    let snapshot = encode("2000-01-01 00:00:00");
+    for base in ["/entries/read", "/entries/starred", "/entries/summarized"] {
+        let plain = app.server.get(&format!("{base}?fragment=1")).await;
+        plain.assert_status_ok();
+        let with_snapshot = app
+            .server
+            .get(&format!("{base}?fragment=1&snapshot={snapshot}"))
+            .await;
+        with_snapshot.assert_status_ok();
+        assert_eq!(
+            extract_entry_ids(&plain.text()),
+            extract_entry_ids(&with_snapshot.text()),
+            "{base}: a snapshot must not change what this view lists"
+        );
+    }
+}
+
+/// Percent-encode the two characters the cursor / snapshot tokens contain.
+fn encode(value: &str) -> String {
+    value
+        .replace(' ', "%20")
+        .replace('|', "%7C")
+        .replace(':', "%3A")
+}
+
 #[tokio::test]
 async fn test_settings_page_groups_and_forward_auth() {
     let mut config = default_test_config();

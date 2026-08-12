@@ -25,6 +25,10 @@
         <form id="load-more" method="get" action="{{ entries_layout.path }}" data-swap="#load-more" class="load-more-form">
             <input type="hidden" name="after" value="{{ after }}">
             <input type="hidden" name="fragment" value="1">
+            {# The render instant this page paginates against, so an entry read
+               while reading it does not vanish from the next page — including
+               the one the reader is on, whose row the selection is waiting for. #}
+            <input type="hidden" name="snapshot" value="{{ entries_layout.snapshot_at }}">
             {% if let Some(s) = entries_layout.status_filter.as_ref() %}<input type="hidden" name="status" value="{{ s }}">{% endif %}
             {% if let Some(qq) = entries_layout.search.as_ref() %}<input type="hidden" name="q" value="{{ qq }}">{% endif %}
             <button type="submit" data-testid="load-more-btn">Load More</button>

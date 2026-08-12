@@ -345,6 +345,18 @@ pub struct EntriesQuery {
     pub entry: Option<i64>,
     /// Scoped-search keyword (category/feed pages only). Empty/whitespace ⇒ no filter.
     pub q: Option<String>,
+    /// The page's render-time snapshot (`snapshot_now()`), echoed back by the
+    /// Load-More form and applied as [`entry::EntryFilter::read_after`].
+    ///
+    /// Without it, an unread list paginates against a moving target: the reader
+    /// opens an entry, it becomes read, and the next page silently drops it —
+    /// including the entry they are *currently reading*, whose row `app.js` is
+    /// waiting for in order to highlight it (see the neighbours navigation,
+    /// which has always echoed the same snapshot for the same reason).
+    ///
+    /// Ignored unless the view is unread-only, and harmless when garbage: it
+    /// only ever widens which of the reader's *own* entries stay listed.
+    pub snapshot: Option<String>,
     /// When `Some(1)`, return the category-switch pane fragment
     /// (`EntriesPaneFragmentTemplate`) instead of the full document: the whole
     /// left column plus an emptied reading pane. Only
@@ -398,6 +410,12 @@ pub(crate) struct EntriesFragmentTemplate {
     pub status_filter: Option<String>,
     /// Forwarded into the Load-More form so paged fetches keep the search filter.
     pub q: Option<String>,
+    /// The page's snapshot, forwarded into the next Load-More form so every
+    /// page of one reading session paginates against the same boundary. Echoed
+    /// rather than re-stamped on purpose: re-stamping would move the boundary
+    /// forward one page at a time and reintroduce the dropped-row bug for
+    /// whatever was read since. See [`EntriesQuery::snapshot`].
+    pub snapshot: Option<String>,
     /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. The appended
     /// rows carry the same star / mark-read forms the full page renders.
     pub csrf_token: String,
@@ -751,6 +769,9 @@ pub async fn unread_page(
     let user_id = auth_user.user.id;
     let filter = entry::EntryFilter {
         unread_only: true,
+        // Absent on a normal page load — only the Load-More form echoes it —
+        // so this widens nothing until the reader actually pages.
+        read_after: query.snapshot.clone(),
         ..Default::default()
     };
 
@@ -776,6 +797,7 @@ pub async fn unread_page(
                 path: "/",
                 status_filter: None,
                 q: None,
+                snapshot: query.snapshot.clone(),
                 csrf_token: auth_user.csrf_token.clone(),
             },
         )
@@ -1435,6 +1457,7 @@ pub async fn entries_page(
                 path: "/entries",
                 status_filter: None,
                 q: None,
+                snapshot: query.snapshot.clone(),
                 csrf_token: auth_user.csrf_token.clone(),
             },
         )
@@ -1632,6 +1655,7 @@ pub async fn read_entries_page(
                 path: "/entries/read",
                 status_filter: None,
                 q: None,
+                snapshot: query.snapshot.clone(),
                 csrf_token: auth_user.csrf_token.clone(),
             },
         )
@@ -1726,6 +1750,7 @@ pub async fn starred_entries_page(
                 path: "/entries/starred",
                 status_filter: None,
                 q: None,
+                snapshot: query.snapshot.clone(),
                 csrf_token: auth_user.csrf_token.clone(),
             },
         )
@@ -1820,6 +1845,7 @@ pub async fn summarized_entries_page(
                 path: "/entries/summarized",
                 status_filter: None,
                 q: None,
+                snapshot: query.snapshot.clone(),
                 csrf_token: auth_user.csrf_token.clone(),
             },
         )
@@ -1922,6 +1948,9 @@ pub async fn category_entries_page(
         "starred" => filter.starred_only = true,
         _ => filter.unread_only = true,
     }
+    // Only consulted when the view is unread-only, and only ever present on a
+    // Load-More request. See [`EntriesQuery::snapshot`].
+    filter.read_after = query.snapshot.clone();
     let search = query.q.clone().filter(|s| !s.trim().is_empty());
     filter.search = search.clone();
     let cursor = query
@@ -1949,6 +1978,7 @@ pub async fn category_entries_page(
             path: Box::leak(path.into_boxed_str()),
             status_filter,
             q: search.clone(),
+            snapshot: query.snapshot.clone(),
             csrf_token: auth_user.csrf_token.clone(),
         };
         return Ok((flash, fragment).into_response());
@@ -2246,6 +2276,9 @@ pub async fn feed_entries_page(
         "starred" => filter.starred_only = true,
         _ => filter.unread_only = true,
     }
+    // Only consulted when the view is unread-only, and only ever present on a
+    // Load-More request. See [`EntriesQuery::snapshot`].
+    filter.read_after = query.snapshot.clone();
     let search = query.q.clone().filter(|s| !s.trim().is_empty());
     filter.search = search.clone();
     let cursor = query
@@ -2273,6 +2306,7 @@ pub async fn feed_entries_page(
             path: Box::leak(path.into_boxed_str()),
             status_filter,
             q: search.clone(),
+            snapshot: query.snapshot.clone(),
             csrf_token: auth_user.csrf_token.clone(),
         };
         return Ok((flash, fragment).into_response());
