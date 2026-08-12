@@ -2659,6 +2659,11 @@ pub struct AppLayoutContext {
     /// JavaScript is not feedback. `rdrs-flash.js` keeps these banners and
     /// appends its own for anything raised after load.
     pub flash_messages: Vec<FlashMessage>,
+    /// Whether to offer the admin link in the scriptless nav fallback.
+    pub is_admin: bool,
+    /// Unread total for that fallback's Unread link. The per-category counts
+    /// are deliberately left out — see `templates/app_layout.html`.
+    pub total_unread: i64,
 }
 
 /// Build the shared layout context for a logged-in page response.
@@ -2706,6 +2711,8 @@ pub async fn build_app_layout(
         git_version: crate::GIT_VERSION,
         sidebar_bootstrap_json,
         flash_messages: flash.messages.clone(),
+        is_admin,
+        total_unread: sidebar.total_unread,
     }
 }
 

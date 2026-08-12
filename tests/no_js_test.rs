@@ -634,6 +634,115 @@ async fn fetch_full_content_declines_rather_than_lying() {
     );
 }
 
+/// `<rdrs-sidebar>` renders nothing until its script mounts, so with scripting
+/// off there was no navigation at all — whatever page you landed on was where
+/// you stayed. Every logged-in page now ships a `<noscript>` nav.
+#[tokio::test]
+async fn every_logged_in_page_offers_navigation_without_javascript() {
+    let (server, db) = create_test_server_with_db(default_test_config()).await;
+    setup_and_login(&server).await;
+    let (feed_id, entry_id) = seed_entry(&db).await;
+
+    for path in [
+        "/".to_string(),
+        "/entries".to_string(),
+        "/entries/starred".to_string(),
+        "/categories".to_string(),
+        "/feeds".to_string(),
+        "/statistics".to_string(),
+        "/settings".to_string(),
+        format!("/feeds/{feed_id}/entries"),
+        format!("/entries?entry={entry_id}"),
+    ] {
+        let html = server.get(&path).await.text();
+        assert!(
+            html.contains(r#"<nav class="nav-fallback""#),
+            "{path}: no scriptless navigation"
+        );
+        // The destinations that make the app navigable at all: the lists, and
+        // the two index pages standing in for the category / feed tree.
+        for target in [
+            r#"href="/entries""#,
+            r#"href="/entries/starred""#,
+            r#"href="/categories""#,
+            r#"href="/feeds""#,
+            r#"href="/settings""#,
+        ] {
+            assert!(html.contains(target), "{path}: missing {target}");
+        }
+    }
+}
+
+/// The fallback lives inside `<noscript>`, which a browser with scripting on
+/// does not parse into elements — that is what keeps it off the CSR path
+/// entirely, including the `:has(.nav-fallback)` rule that reclaims the
+/// sidebar's reserved column.
+#[tokio::test]
+async fn the_navigation_fallback_stays_inside_noscript() {
+    let (server, _db) = create_test_server_with_db(default_test_config()).await;
+    setup_and_login(&server).await;
+
+    let html = server.get("/").await.text();
+    let opened = html
+        .find("<noscript>")
+        .expect("the fallback is in a noscript");
+    let closed = html[opened..]
+        .find("</noscript>")
+        .expect("that noscript closes")
+        + opened;
+    let nav = html
+        .find(r#"<nav class="nav-fallback""#)
+        .expect("nav present");
+    assert!(
+        nav > opened && nav < closed,
+        "the nav must sit inside the noscript, or a scripted browser renders it too"
+    );
+
+    // The real sidebar is still the CSR element plus its JSON bootstrap; this
+    // must not have turned into server-rendered sidebar markup, which was
+    // measured and rejected (see rdrs-sidebar.js).
+    assert!(html.contains("<rdrs-sidebar"), "the CSR sidebar stays");
+    assert!(
+        html.contains(r#"id="rdrs-sidebar-bootstrap""#),
+        "and so does its bootstrap payload"
+    );
+    assert!(
+        !html.contains(r#"<div class="sidebar""#),
+        "the sidebar's own markup must not be server-rendered"
+    );
+}
+
+/// The unread total rides along, because it is already loaded for the bootstrap
+/// and is the one count worth a scriptless reader's bytes. Per-category counts
+/// are deliberately absent.
+#[tokio::test]
+async fn the_navigation_fallback_carries_the_unread_total() {
+    let (server, db) = create_test_server_with_db(default_test_config()).await;
+    setup_and_login(&server).await;
+    let (_feed_id, entry_id) = seed_entry(&db).await;
+
+    let html = server.get("/").await.text();
+    assert!(
+        html.contains(r#"<span class="nav-fallback-count">1</span>"#),
+        "one unread entry must show as a count:\n{html}"
+    );
+
+    // Read it through the app, not by writing to the DB: a direct write leaves
+    // the sidebar cache holding the old total, which is precisely the staleness
+    // this count must never show.
+    let csrf = csrf_field(&html);
+    post_action(&server, &format!("/entries/{entry_id}/read"), &csrf)
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    // The count goes away rather than showing a zero.
+    let html = server.get("/").await.text();
+    assert!(
+        !html.contains("nav-fallback-count"),
+        "an empty inbox shows no badge at all:\n{html}"
+    );
+}
+
 #[tokio::test]
 async fn entry_list_rows_render_the_token() {
     let server = create_test_server(default_test_config()).await;
