@@ -115,12 +115,19 @@ pub struct ReadingPaneView {
     pub summary_error: Option<String>,
     pub has_kagi: bool,
     pub has_save: bool,
-    /// `true` after `POST /entries/{id}/fetch-full-content` succeeds —
-    /// the `content_html` field then holds the externally-fetched
-    /// article body instead of the feed-supplied content. The reading
-    /// pane swaps "Fetch Full Content" for a "Show Original" link in
-    /// this case so the user can revert.
+    /// `true` when `content_html` holds the fetched article rather than what
+    /// the feed published. The pane swaps "Fetch Full Content" for an
+    /// "Original" link so the reader can revert.
+    ///
+    /// Since the article is stored, this is now true on any later render too —
+    /// a refresh, a new tab, a scriptless page load — not only in the response
+    /// that fetched it.
     pub is_full_content: bool,
+    /// `true` when an article has been fetched for this entry, whichever body
+    /// is currently rendered. Lets the pane offer a way *back* to the fetched
+    /// article while showing the original, instead of making the reader
+    /// re-fetch it from someone else's server.
+    pub has_stored_full_content: bool,
 }
 
 impl ReadingPaneView {
@@ -390,9 +397,16 @@ async fn maybe_build_reading_pane(
     let (has_save, has_kagi) = crate::handlers::entries::load_pane_action_flags(state, user_id)
         .await
         .ok()?;
-    crate::handlers::entries::build_reading_pane_view(state, user_id, &ewf, has_save, has_kagi)
-        .await
-        .ok()
+    crate::handlers::entries::build_reading_pane_view(
+        state,
+        user_id,
+        &ewf,
+        has_save,
+        has_kagi,
+        crate::handlers::entries::ContentView::Full,
+    )
+    .await
+    .ok()
 }
 
 /// Fragment template for the Load-More response.
@@ -3671,6 +3685,7 @@ mod tests {
                 title: Some(title.to_string()),
                 link: None,
                 content: None,
+                full_content: None,
                 summary: None,
                 author: None,
                 published_at: Some(now),

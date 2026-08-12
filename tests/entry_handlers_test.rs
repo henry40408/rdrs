@@ -2316,3 +2316,164 @@ async fn summary_fragment_404_for_other_users_entry() {
         .await;
     assert_eq!(response.status_code(), axum::http::StatusCode::NOT_FOUND);
 }
+
+// ============================================================================
+// Fetched full content is persisted
+// ============================================================================
+//
+// These store through the model rather than driving `POST
+// /entries/{id}/fetch-full-content` end to end, because `fetch_and_extract`
+// runs every URL through the SSRF guard in `utils::url_validation`, which
+// blocks loopback — so a wiremock server on 127.0.0.1 can never be the source.
+// (Feed-refresh tests can use wiremock because that path does not validate.)
+// Weakening a security control to make a test convenient would be the wrong
+// trade, so the handler's *failure* arm is covered in `no_js_test.rs` and its
+// success arm hands the extraction straight to the write asserted here.
+
+/// The article "Fetch Full Content" retrieves used to live only inside the
+/// response that fetched it: a refresh lost it, and a reader without JavaScript
+/// — who gets a redirect and a freshly rendered page — could never see it.
+#[tokio::test]
+async fn test_stored_full_content_survives_a_re_render_and_toggles() {
+    let mut app = create_test_app(default_test_config()).await;
+    let (user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    let (e, _) = entry::upsert_entry(
+        &app.db,
+        feed_id,
+        "full-content-guid",
+        Some("Fetchable"),
+        Some("https://example.com/article"),
+        Some("<p>Just the feed summary.</p>"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    login(&mut app.server).await;
+
+    // Before anything is fetched: the pane shows what the feed published, and
+    // offers to fetch.
+    let before = app
+        .server
+        .get(&format!("/entries/{}/fragment", e.id))
+        .await
+        .text();
+    assert!(before.contains("Just the feed summary."));
+    assert!(before.contains(r#"aria-label="Fetch Full Content""#));
+
+    entry::set_full_content_for_user(&app.db, user_id, e.id, "<p>The whole article, fetched.</p>")
+        .await
+        .unwrap();
+
+    // The point of the change: a *fresh* render has it, because it was written
+    // down rather than held in the one response that fetched it.
+    let again = app
+        .server
+        .get(&format!("/entries/{}/fragment", e.id))
+        .await
+        .text();
+    assert!(
+        again.contains("The whole article, fetched."),
+        "the stored article must survive a re-render:\n{again}"
+    );
+    assert!(
+        again.contains(r#"aria-label="Show Original""#),
+        "and the pane must offer the way back"
+    );
+
+    // `?view=original` returns the feed's own body without discarding what was
+    // stored, and offers a link back that costs no second request to the source.
+    let original = app
+        .server
+        .get(&format!("/entries/{}/fragment?view=original", e.id))
+        .await
+        .text();
+    assert!(original.contains("Just the feed summary."));
+    assert!(!original.contains("The whole article, fetched."));
+    assert!(
+        original.contains(r#"aria-label="Show Full Content""#),
+        "going back must be a link, not a re-fetch:\n{original}"
+    );
+
+    // The deep-linked list page renders it too — this is what a scriptless
+    // reader lands on after the redirect.
+    let deep_linked = app.server.get(&format!("/entries?entry={}", e.id)).await;
+    deep_linked.assert_status_ok();
+    assert!(
+        deep_linked.text().contains("The whole article, fetched."),
+        "a full page render must show the stored article"
+    );
+}
+
+/// Storing again replaces what was there, so the fetch button stays a refresh
+/// rather than becoming a no-op once something is stored.
+#[tokio::test]
+async fn test_storing_full_content_again_replaces_it() {
+    let mut app = create_test_app(default_test_config()).await;
+    let (user_id, _cat_id, feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    let (e, _) = entry::upsert_entry(
+        &app.db,
+        feed_id,
+        "refetch-guid",
+        Some("Refetchable"),
+        Some("https://example.com/article"),
+        Some("<p>Feed summary.</p>"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    login(&mut app.server).await;
+
+    entry::set_full_content_for_user(&app.db, user_id, e.id, "<p>First version.</p>")
+        .await
+        .unwrap();
+    entry::set_full_content_for_user(&app.db, user_id, e.id, "<p>Second version.</p>")
+        .await
+        .unwrap();
+
+    let after = app
+        .server
+        .get(&format!("/entries/{}/fragment", e.id))
+        .await
+        .text();
+    assert!(
+        after.contains("Second version."),
+        "a re-fetch must replace what was stored:\n{after}"
+    );
+    assert!(!after.contains("First version."));
+}
+
+/// The write is scoped to the owning user like every other per-user entry
+/// write, so one account cannot plant an article in another's entry.
+#[tokio::test]
+async fn test_storing_full_content_is_scoped_to_the_owner() {
+    let app = create_test_app(default_test_config()).await;
+    let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
+    let (other_user_id, _c, _f, other_entry_ids) = setup_second_user_data(&app.db).await;
+
+    // The first user's id against the second user's entry: no rows match.
+    let owner_of_nothing = other_user_id + 999;
+    entry::set_full_content_for_user(
+        &app.db,
+        owner_of_nothing,
+        other_entry_ids[0],
+        "<p>Planted.</p>",
+    )
+    .await
+    .unwrap();
+
+    let stored: Option<String> = rdrs::query_scalar!(
+        &app.db,
+        Option<String>,
+        "SELECT full_content FROM entry WHERE id = $1",
+        other_entry_ids[0]
+    )
+    .unwrap();
+    assert!(
+        stored.is_none(),
+        "a non-owner write must touch nothing, got {stored:?}"
+    );
+}

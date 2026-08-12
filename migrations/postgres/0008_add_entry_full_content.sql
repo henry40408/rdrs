@@ -1,0 +1,20 @@
+-- Persist the article fetched by "Fetch Full Content".
+--
+-- Until now that article existed only inside the response that fetched it: the
+-- handler swapped it into the reading pane and nothing wrote it down, so a
+-- refresh lost it and a reader without JavaScript — who gets a redirect and a
+-- freshly rendered page — could never see it at all.
+--
+-- Stored as the *raw* extracted HTML, exactly like `content` from the feed.
+-- Sanitising happens per render, because `sanitize_html` signs image-proxy URLs
+-- with `RDRS_SECRET` and resolves relative links against the entry's own URL:
+-- baking that into the row would break every stored article the moment the
+-- secret rotated, and would freeze the sanitiser's rules at write time.
+--
+-- NULL means "never fetched", which is what every existing row is — no backfill
+-- and no default, since the absence is meaningful rather than a missing value.
+--
+-- Deliberately not indexed and not mirrored into `content_text`: search covers
+-- what the feed published, and extending it to fetched articles would need its
+-- own text extraction and a decision about re-indexing on re-fetch.
+ALTER TABLE entry ADD COLUMN full_content TEXT;

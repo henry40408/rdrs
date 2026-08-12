@@ -598,13 +598,13 @@ async fn a_failed_save_reaches_a_scriptless_reader() {
     );
 }
 
-/// Fetch-full-content loads the article into the *open pane* and persists
-/// nothing, so a scriptless caller — who gets a redirect and a page rebuilt
-/// from the feed-supplied body — could never see it. Say so instead of doing
-/// the work: the entry's link here is unreachable, so a fetch that did happen
-/// would surface as a failure message rather than this one.
+/// Fetch-full-content used to be declined without JavaScript, because the
+/// article existed only in the response that fetched it and a scriptless caller
+/// gets a redirect. Now that it is stored, the scriptless path is a real one:
+/// the fetch happens, and the failure it hits here (the seeded link is
+/// unreachable) is reported rather than swallowed.
 #[tokio::test]
-async fn fetch_full_content_declines_rather_than_lying() {
+async fn fetch_full_content_reports_a_failure_to_a_scriptless_reader() {
     let (server, db) = create_test_server_with_db(default_test_config()).await;
     setup_and_login(&server).await;
     let (_feed_id, entry_id) = seed_entry(&db).await;
@@ -621,16 +621,18 @@ async fn fetch_full_content_declines_rather_than_lying() {
     let html = follow(&server, &fetched).await;
 
     assert!(
-        html.contains("needs JavaScript"),
-        "the reader must be told why nothing changed:\n{html}"
+        html.contains("Failed to fetch full content"),
+        "the attempt really happened and its failure must reach the reader:\n{html}"
     );
     assert!(
-        !html.contains("Failed to fetch full content"),
-        "no request should have been made to the source at all"
+        !html.contains("needs JavaScript"),
+        "the feature no longer needs JavaScript, so it must not say it does"
     );
+    // Nothing was stored, so the pane still offers to fetch rather than
+    // pretending an article is available.
     assert!(
-        !html.contains("Fetched full content."),
-        "and success must not be claimed for content that is not shown"
+        !html.contains(r#"aria-label="Show Original""#),
+        "a failed fetch must not leave the pane claiming full content"
     );
 }
 

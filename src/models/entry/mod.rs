@@ -35,6 +35,11 @@ pub struct Entry {
     pub title: Option<String>,
     pub link: Option<String>,
     pub content: Option<String>,
+    /// The article fetched by "Fetch Full Content", as raw HTML — `None` until
+    /// someone asks for it. Sanitised per render like [`Self::content`], never
+    /// at write time: `sanitize_html` signs image-proxy URLs with the app
+    /// secret, and a stored signature would outlive its key.
+    pub full_content: Option<String>,
     pub summary: Option<String>,
     pub author: Option<String>,
     pub published_at: Option<DateTime<Utc>>,
@@ -145,6 +150,7 @@ struct EntryWithFeedRow {
     title: Option<String>,
     link: Option<String>,
     content: Option<String>,
+    full_content: Option<String>,
     summary: Option<String>,
     author: Option<String>,
     published_at: Option<DateTime<Utc>>,
@@ -171,6 +177,7 @@ impl From<EntryWithFeedRow> for EntryWithFeed {
                 title: r.title,
                 link: r.link,
                 content: r.content,
+                full_content: r.full_content,
                 summary: r.summary,
                 author: r.author,
                 published_at: r.published_at,
@@ -193,11 +200,11 @@ impl From<EntryWithFeedRow> for EntryWithFeed {
 /// SELECT column list for [`EntryWithFeedRow`], aliased to its field names.
 /// `has_icon` here uses a correlated COUNT subquery, for queries that do NOT
 /// `LEFT JOIN image`. Keep both variants and the row struct in sync.
-const ENTRY_WITH_FEED_COLUMNS_COUNT: &str = "e.id AS id, e.feed_id AS feed_id, e.guid AS guid, e.title AS title, e.link AS link, e.content AS content, e.summary AS summary, e.author AS author, e.published_at AS published_at, e.read_at AS read_at, e.starred_at AS starred_at, e.created_at AS created_at, e.updated_at AS updated_at, f.title AS feed_title, f.url AS feed_url, f.site_url AS site_url, c.id AS category_id, c.name AS category_name, (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) AS has_icon, f.custom_referrer AS custom_referrer";
+const ENTRY_WITH_FEED_COLUMNS_COUNT: &str = "e.id AS id, e.feed_id AS feed_id, e.guid AS guid, e.title AS title, e.link AS link, e.content AS content, e.full_content AS full_content, e.summary AS summary, e.author AS author, e.published_at AS published_at, e.read_at AS read_at, e.starred_at AS starred_at, e.created_at AS created_at, e.updated_at AS updated_at, f.title AS feed_title, f.url AS feed_url, f.site_url AS site_url, c.id AS category_id, c.name AS category_name, (SELECT COUNT(*) FROM image i WHERE i.entity_type = 'feed' AND i.entity_id = f.id) AS has_icon, f.custom_referrer AS custom_referrer";
 
 /// Same columns as [`ENTRY_WITH_FEED_COLUMNS_COUNT`] but computes `has_icon`
 /// from a `LEFT JOIN image i` already present in the query.
-const ENTRY_WITH_FEED_COLUMNS_JOIN: &str = "e.id AS id, e.feed_id AS feed_id, e.guid AS guid, e.title AS title, e.link AS link, e.content AS content, e.summary AS summary, e.author AS author, e.published_at AS published_at, e.read_at AS read_at, e.starred_at AS starred_at, e.created_at AS created_at, e.updated_at AS updated_at, f.title AS feed_title, f.url AS feed_url, f.site_url AS site_url, c.id AS category_id, c.name AS category_name, CAST(CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END AS BIGINT) AS has_icon, f.custom_referrer AS custom_referrer";
+const ENTRY_WITH_FEED_COLUMNS_JOIN: &str = "e.id AS id, e.feed_id AS feed_id, e.guid AS guid, e.title AS title, e.link AS link, e.content AS content, e.full_content AS full_content, e.summary AS summary, e.author AS author, e.published_at AS published_at, e.read_at AS read_at, e.starred_at AS starred_at, e.created_at AS created_at, e.updated_at AS updated_at, f.title AS feed_title, f.url AS feed_url, f.site_url AS site_url, c.id AS category_id, c.name AS category_name, CAST(CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END AS BIGINT) AS has_icon, f.custom_referrer AS custom_referrer";
 
 // --- dynamic-query execution helpers ---------------------------------------
 //
@@ -367,7 +374,7 @@ pub async fn find_by_id(db: &Db, id: i64) -> AppResult<Option<Entry>> {
     query_opt!(
         db,
         Entry,
-        "SELECT id, feed_id, guid, title, link, content, summary, author, \
+        "SELECT id, feed_id, guid, title, link, content, full_content, summary, author, \
          published_at, read_at, starred_at, created_at, updated_at \
          FROM entry WHERE id = $1",
         id
@@ -451,7 +458,7 @@ pub async fn find_by_guid_and_feed(db: &Db, guid: &str, feed_id: i64) -> AppResu
     query_opt!(
         db,
         Entry,
-        "SELECT id, feed_id, guid, title, link, content, summary, author, \
+        "SELECT id, feed_id, guid, title, link, content, full_content, summary, author, \
          published_at, read_at, starred_at, created_at, updated_at \
          FROM entry WHERE guid = $1 AND feed_id = $2",
         guid,
@@ -464,7 +471,7 @@ pub async fn list_by_feed(db: &Db, feed_id: i64, limit: i64, offset: i64) -> App
     query_all!(
         db,
         Entry,
-        "SELECT id, feed_id, guid, title, link, content, summary, author, \
+        "SELECT id, feed_id, guid, title, link, content, full_content, summary, author, \
          published_at, read_at, starred_at, created_at, updated_at \
          FROM entry WHERE feed_id = $1 \
          ORDER BY COALESCE(published_at, created_at) DESC LIMIT $2 OFFSET $3",
@@ -1163,6 +1170,36 @@ pub async fn set_starred_for_user(
     Ok(find_by_id_for_user(db, user_id, entry_id)
         .await?
         .map(|ewf| (ewf, changed)))
+}
+
+/// Store the article fetched by "Fetch Full Content", scoped to the owning
+/// user. Overwrites any previous fetch, so pressing the button again is a
+/// refresh rather than a no-op.
+///
+/// `html` is the *raw* extracted markup. It is sanitised on the way out, never
+/// on the way in — see [`Entry::full_content`].
+pub async fn set_full_content_for_user(
+    db: &Db,
+    user_id: i64,
+    entry_id: i64,
+    html: &str,
+) -> AppResult<()> {
+    // The user scope rides on the same feed → category join every other
+    // per-user write uses, so an entry belonging to someone else updates
+    // nothing rather than erroring.
+    db_execute!(
+        db,
+        "UPDATE entry SET full_content = $1, updated_at = datetime('now') \
+         WHERE id = $2 AND feed_id IN ( \
+             SELECT f.id FROM feed f JOIN category c ON c.id = f.category_id \
+             WHERE c.user_id = $3 \
+         )",
+        html,
+        entry_id,
+        user_id
+    )
+    .map_err(AppError::Database)?;
+    Ok(())
 }
 
 /// Set the read state for an entry, scoped to the owning user. Idempotent —
@@ -3910,7 +3947,7 @@ mod tests {
         // Tiny in-memory dataset is enough — INDEXED BY is mandatory and the
         // planner has no choice to override the hint.
         let sql = r"
-            SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.summary, e.author,
+            SELECT e.id, e.feed_id, e.guid, e.title, e.link, e.content, e.full_content, e.summary, e.author,
                    e.published_at, e.read_at, e.starred_at, e.created_at, e.updated_at,
                    f.title, f.url, f.site_url, c.id, c.name,
                    CASE WHEN i.id IS NOT NULL THEN 1 ELSE 0 END as has_icon,

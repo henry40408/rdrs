@@ -305,8 +305,10 @@ pub async fn entry_fragment(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(entry_id): AxumPath<i64>,
+    axum::extract::Query(query): axum::extract::Query<FragmentQuery>,
 ) -> AppResult<Response> {
     let user_id = auth_user.user.id;
+    let view = query.content_view();
 
     // Read current state on the READ connection (not blocked by a background
     // sync's write transaction under WAL). This happens before the
@@ -359,7 +361,7 @@ pub async fn entry_fragment(
     }
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
-    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
+    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, view).await?;
     let row = row_view_from(&ewf, status);
 
     // Kept behind the render simply to stay off the critical path.
@@ -402,7 +404,8 @@ pub async fn summary_fragment(
         .await?
         .ok_or(AppError::EntryNotFound)?;
     // has_save/has_kagi are irrelevant to the summary container; pass false.
-    let pane = build_reading_pane_view(&state, user_id, &ewf, false, false).await?;
+    let pane =
+        build_reading_pane_view(&state, user_id, &ewf, false, false, ContentView::Full).await?;
     Ok(SummaryFragment {
         pane,
         csrf_token: auth_user.csrf_token,
@@ -424,6 +427,39 @@ pub(crate) async fn load_pane_action_flags(
     Ok((has_save, has_kagi))
 }
 
+/// Query string for `GET /entries/{id}/fragment`.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct FragmentQuery {
+    /// `original` renders what the feed published even when a fetched article
+    /// is stored. Anything else — including absence — renders the fetched
+    /// article, so the way back is simply dropping the parameter.
+    pub view: Option<String>,
+}
+
+impl FragmentQuery {
+    fn content_view(&self) -> ContentView {
+        match self.view.as_deref() {
+            Some("original") => ContentView::Original,
+            _ => ContentView::Full,
+        }
+    }
+}
+
+/// Which body the reading pane should render.
+///
+/// Only meaningful once an article has been fetched and stored; before that
+/// both variants render what the feed published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ContentView {
+    /// The stored fetched article when there is one — the default, so a
+    /// refresh or a scriptless page load keeps showing what was fetched.
+    #[default]
+    Full,
+    /// What the feed published, even when a fetched article exists. Reached by
+    /// `?view=original`; the way back is the same URL without it.
+    Original,
+}
+
 /// Build a `ReadingPaneView` from an already-loaded `EntryWithFeed`. The
 /// content sanitizer + summary lookup happen here so callers that already
 /// have the entry (e.g. `entry_fragment`, which loads it inside its write
@@ -436,20 +472,33 @@ pub(crate) async fn load_pane_action_flags(
 /// persistent `entry_summary` table so a server restart (or any other
 /// path that bypassed the cache) does not hide an already-completed
 /// summary on the next entry open.
+///
+/// `view` picks between the stored fetched article and what the feed published.
+/// [`ContentView::Full`] is the default and falls back to the feed's own
+/// content when nothing has been fetched, so callers need not check first.
 pub(crate) async fn build_reading_pane_view(
     state: &AppState,
     user_id: i64,
     ewf: &entry::EntryWithFeed,
     has_save: bool,
     has_kagi: bool,
+    view: ContentView,
 ) -> AppResult<ReadingPaneView> {
     let entry_id = ewf.entry.id;
-    let raw_content = ewf
-        .entry
-        .content
-        .as_deref()
-        .or(ewf.entry.summary.as_deref())
-        .unwrap_or("");
+    // A stored fetched article wins unless the reader asked for the original,
+    // so it survives a refresh, a new tab and a scriptless page load — which is
+    // the whole point of storing it.
+    let stored_full = ewf.entry.full_content.as_deref().filter(|s| !s.is_empty());
+    let showing_full = matches!(view, ContentView::Full) && stored_full.is_some();
+    let raw_content = if showing_full {
+        stored_full.unwrap_or("")
+    } else {
+        ewf.entry
+            .content
+            .as_deref()
+            .or(ewf.entry.summary.as_deref())
+            .unwrap_or("")
+    };
 
     let link_str = ewf.entry.link.clone().unwrap_or_default();
     let base_url = if link_str.is_empty() {
@@ -496,7 +545,8 @@ pub(crate) async fn build_reading_pane_view(
         summary_error,
         has_kagi,
         has_save,
-        is_full_content: false,
+        is_full_content: showing_full,
+        has_stored_full_content: stored_full.is_some(),
     })
 }
 
@@ -939,22 +989,7 @@ pub async fn fetch_full_content_form(
 ) -> AppResult<Response> {
     let user_id = auth_user.user.id;
 
-    // The fetched article lives only in this response: nothing writes it back,
-    // and `build_reading_pane_view` always rebuilds from the feed-supplied
-    // body. A scriptless caller gets a redirect, so the page it lands on would
-    // show the original content — the fetch would be work done, and a request
-    // made to someone else's server, for a result guaranteed to be discarded.
-    // Say so instead of doing it, and do not claim success the reader can see
-    // is not there.
-    if is_document_navigation(&headers) {
-        return Ok(FlashRedirect::warning(
-            action_document_redirect(&headers, entry_id),
-            "Fetching full content needs JavaScript — the article is loaded into the open reading pane, not saved.",
-        )
-        .into_response());
-    }
-
-    let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
+    let mut ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
     let link = ewf
@@ -967,19 +1002,24 @@ pub async fn fetch_full_content_form(
 
     let (pane, flash) = match fetch_and_extract(&link, &state.config.user_agent).await {
         Ok(extracted) => {
-            let sanitized = sanitize_html(
-                &extracted.content,
-                &state.config.secret,
-                Some(&link),
-                ewf.custom_referrer.as_deref(),
-                None,
-            );
-            let mut pane =
-                build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
-            pane.content_html = sanitized;
-            pane.is_full_content = true;
+            // Store the *raw* extraction and let the pane sanitise it like any
+            // other body. Persisting is what makes this survive a refresh, a
+            // second tab, and a scriptless page load — before it did not, so
+            // the scriptless path had to decline the request outright rather
+            // than claim a success the reader could see was not there.
+            entry::set_full_content_for_user(&state.db, user_id, entry_id, &extracted.content)
+                .await?;
+            ewf.entry.full_content = Some(extracted.content);
             (
-                pane,
+                build_reading_pane_view(
+                    &state,
+                    user_id,
+                    &ewf,
+                    has_save,
+                    has_kagi,
+                    ContentView::Full,
+                )
+                .await?,
                 FlashPayload {
                     level: "success",
                     message: "Fetched full content.".to_string(),
@@ -987,22 +1027,25 @@ pub async fn fetch_full_content_form(
             )
         }
         Err(e) => (
-            build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?,
+            build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, ContentView::Full)
+                .await?,
             FlashPayload {
                 level: "error",
                 message: format!("Failed to fetch full content: {e}"),
             },
         ),
     };
-    // `None`: only a `fetch()` reaches this far — the scriptless path returned
-    // above — so there is no redirect for a cookie to ride on.
+    // The scriptless path now reaches here and gets a redirect, so its message
+    // has to ride along as a cookie — and it can finally be the truthful one,
+    // because the page it lands on renders the article this just stored.
+    let message = flash.to_message();
     Ok(entry_action_response(
         ReadingPaneWithFlash {
             pane,
             flash: Some(flash),
             csrf_token: auth_user.csrf_token,
         },
-        None,
+        Some(message),
         &headers,
         entry_id,
     ))
@@ -1079,7 +1122,9 @@ pub async fn save_entry_form(
     };
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
-    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi).await?;
+    let pane =
+        build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, ContentView::Full)
+            .await?;
     // Save's entire effect is on the bookmarking service; nothing about the
     // entry changes. Without carrying this message the scriptless reader gets a
     // redirect back to an identical page and no way to tell it worked.
