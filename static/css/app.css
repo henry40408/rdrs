@@ -3010,12 +3010,33 @@ summary {
     /* ===== Entry row — mobile (wire log) =====
        Narrow viewports get the comfortable 36px controls too (this breakpoint,
        ≤1024px, is the phone/tablet range); wide touch hybrids are covered
-       separately by @media (any-pointer: coarse). Columns come from --mk. */
+       separately by @media (any-pointer: coarse). Columns come from --mk.
+
+       The padding looks arbitrary because it is measured to the *ink*, not to
+       the boxes. Every control keeps its full 36px box in the layout — nothing
+       here shrinks or un-flows a tap target — and at that size the boxes carry
+       far more air than the text does, unevenly, so four equal paddings frame
+       the row with four different-looking margins. What each side actually
+       spends before the first mark, on a 393px phone:
+
+         top     the title's line box starts ~1px in
+         bottom  the rail's 36px controls make grid row 2 taller than the 21px
+                 meta line they share it with, and align-self:center parks half
+                 that surplus under the feed name: ~10.5px, on the row's bottom
+                 edge, where row 1 is instead filled flush by the title
+         left    the 9px dot is centred in a 36px box: 13.5px
+         right   the time is plain text, flush to the padding edge: 0px
+                 (the rail's icons behind it are 14px in a 36px box: 11px)
+
+       So the paddings below are 16/16/6/4, and the margins they buy are
+       17/16/16.5/17.5 — top/right/bottom/left. Equal padding was 15 a side and
+       bought 16/12/25.5/25.5: a row whose content read as pinned to the top
+       left, with the sides pinched against the screen edges. */
     .entry-item {
         --sz: 36px;
         --mk: 36px;
         --dot-shift: -7px;
-        padding: 14px 12px 14px 12px;
+        padding: 16px 16px 6px 4px;
     }
     .unread-toggle,
     .entry-star,
@@ -3761,8 +3782,10 @@ summary {
     padding: 0 var(--space-5);
 }
 
-/* Mobile: align load-more / mark-above wrappers with .entry-item (which drops
-   from space-5 to space-4 horizontal padding at this width). Placed here so it
+/* Mobile: pull the load-more / mark-above wrappers in from space-5 to space-4,
+   so a full-width button doesn't overshoot the list's rows on a narrow screen.
+   Not tied to .entry-item's own padding — that is set per side for optical
+   balance at 36px controls, not as a shared list inset. Placed here so it
    follows the base .load-more-form rule in source order. */
 @media (max-width: 1024px) {
     .load-more-form,
@@ -3840,7 +3863,9 @@ summary {
     .rp-action kbd,
     .reading-pane-nav-btn kbd { display: none; }
 
-    .entry-item { padding-top: 15px; padding-bottom: 15px; }
+    /* Vertical padding measured to the ink, matching the ≤1024px block — see
+       the optical-balance note there. */
+    .entry-item { padding-top: 16px; padding-bottom: 6px; }
 
     /* 44px minimum interactive controls. */
     button,
@@ -3889,6 +3914,11 @@ summary {
         --sz: 36px;
         --mk: 36px;
         --dot-shift: -7px;
+        /* 36px controls need the same optical padding as the ≤1024px block —
+           see the note there. Restated rather than inherited: this block is
+           last, so whichever of the three touch paths a device matches, the row
+           ends up with one padding. */
+        padding: 16px 16px 6px 4px;
     }
     .unread-toggle,
     .entry-star,
