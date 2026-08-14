@@ -321,7 +321,7 @@ function isMorphTarget(selector) {
 /// invites the installer to bind a second copy to the same node — one click,
 /// two POSTs. `data-img-…` tracks a content image's load state, and `title` on
 /// a `<time>` is the tooltip `applyTimeTooltips()` writes.
-const CLIENT_OWNED_ATTR = /^(data-.+-bound|data-img-.+|data-localized|title)$/;
+const CLIENT_OWNED_ATTR = /^(data-.+-bound|data-img-.+|data-localized|data-tooltip-at|title)$/;
 
 /// Classes the client owns for the same reason: `.selected` is the `j`/`k`
 /// cursor, which the server has never heard of.
@@ -643,12 +643,47 @@ function syncEntryParamFromSwapUrl(swapUrl, options) {
     setEntryParam(id, options);
 }
 
-function setEntryParam(entryId, options) {
+function writeEntryParam(entryId, push) {
     const u = new URL(window.location.href);
     if (entryId == null) u.searchParams.delete('entry');
     else u.searchParams.set('entry', String(entryId));
-    if (options?.push) window.history.pushState({}, '', u);
+    if (push) window.history.pushState({}, '', u);
     else window.history.replaceState({}, '', u);
+}
+
+// A pending replace-mode write, coalesced to one per frame.
+let pendingEntryParam;
+let entryParamFrame = 0;
+
+/// Mirror the open entry into `?entry=`.
+///
+/// The replace-mode write is deferred to the next frame: `history.replaceState`
+/// is one of the more expensive things on the swap's synchronous path, and
+/// holding `j` down issues one per keypress only for the last to matter. The
+/// address bar still settles on the right entry within a frame, and a refresh
+/// or share reproduces the pane exactly as before.
+///
+/// Pushes are not deferred — that single push is what makes browser-back close
+/// the pane, and it must land in the same task as the navigation that caused it
+/// or the history slot lands out of order.
+function setEntryParam(entryId, options) {
+    if (options?.push) {
+        if (entryParamFrame) {
+            cancelAnimationFrame(entryParamFrame);
+            entryParamFrame = 0;
+            pendingEntryParam = undefined;
+        }
+        writeEntryParam(entryId, true);
+        return;
+    }
+    pendingEntryParam = entryId;
+    if (entryParamFrame) return;
+    entryParamFrame = requestAnimationFrame(() => {
+        entryParamFrame = 0;
+        const id = pendingEntryParam;
+        pendingEntryParam = undefined;
+        writeEntryParam(id, false);
+    });
 }
 
 // Mirror the scoped-search box's `q` into the address bar. Sets it when the
@@ -673,6 +708,13 @@ function syncScopedSearchParam(form) {
 function currentPaneEntryId() {
     const pane = document.getElementById('reading-pane');
     if (!pane || pane.classList.contains('reading-pane-empty')) return null;
+    // `_reading_pane.html` stamps the id on the pane element itself. Reading an
+    // attribute costs nothing; the form scan below is a substring-match
+    // selector over the whole article subtree, and this is called several times
+    // per swap. Kept as a fallback so a pane rendered by any other template
+    // (error states, fragments that predate the attribute) still resolves.
+    const stamped = pane.getAttribute('data-entry-id');
+    if (stamped) return stamped;
     const form = pane.querySelector('form[action*="/entries/"]');
     const m = form?.action.match(/\/entries\/(\d+)\//);
     return m ? m[1] : null;
@@ -968,8 +1010,13 @@ function currentEntryFilterParams() {
 // fetch landing after the user moved on). Anything else leaves both
 // buttons disabled.
 function applyNeighborButtons() {
-    const prevBtn = document.querySelector('[data-pane-prev]');
-    const nextBtn = document.querySelector('[data-pane-next]');
+    // Scoped to the pane, not the document. Both buttons live inside
+    // `#reading-pane`, which sits *after* the list in document order, so a
+    // document-wide attribute selector walks every rendered entry row before
+    // reaching them — and this runs on every swap and every neighbor resolve.
+    const pane = document.getElementById('reading-pane');
+    const prevBtn = pane?.querySelector('[data-pane-prev]');
+    const nextBtn = pane?.querySelector('[data-pane-next]');
     const open = currentPaneEntryId();
     const valid = open != null && neighborState.entryId === open;
     if (prevBtn) prevBtn.disabled = !(valid && neighborState.prevId != null);
@@ -1249,6 +1296,17 @@ function applyTimeTooltips(root) {
     for (const el of scope.querySelectorAll('time[datetime]')) {
         const iso = el.getAttribute('datetime');
         if (!iso) continue;
+        // The tooltip is a pure function of `datetime`, and this runs after
+        // *every* swap over the whole document — a list paged to 500 rows would
+        // otherwise re-format 500 instants per keypress. `data-tooltip-at`
+        // records the instant already rendered; the server owns `datetime`, so
+        // a row whose timestamp really changed still re-formats. The attribute
+        // is in CLIENT_OWNED_ATTR, so a morph preserves it alongside `title`.
+        //
+        // Deliberately *not* `data-localized`: that name belongs to
+        // rdrs-flash.js, which uses it as a valueless "already rewritten"
+        // marker and selects on `:not([data-localized])`.
+        if (el.getAttribute('data-tooltip-at') === iso) continue;
         const d = new Date(iso);
         if (isNaN(d.getTime())) continue;
         const local = d.toLocaleString();
@@ -1256,6 +1314,7 @@ function applyTimeTooltips(root) {
         if (el.hasAttribute('data-local-text')) {
             el.textContent = local;
         }
+        el.setAttribute('data-tooltip-at', iso);
     }
 }
 applyTimeTooltips();
@@ -1413,10 +1472,22 @@ function installEntriesKeyboard() {
     // would then fall back to the top of the list because `indexOf`
     // returns -1 for the detached node.
     let activeId = null;
+    // The node behind `activeId`, when we still hold a live one. Rows are
+    // morphed rather than replaced (see `isMorphTarget`), so the node the
+    // reader is sitting on normally survives every swap and re-resolving it by
+    // attribute selector — several times per keypress, against a list that can
+    // be hundreds of rows long — is pure repeat work. Validated on every read,
+    // so a row that *was* replaced falls back to the query.
+    let activeNode = null;
     const rows = () => Array.from(document.querySelectorAll('[data-entry-row]'));
-    const activeRow = () => activeId
-        ? document.querySelector(`[data-entry-row][data-entry-id="${activeId}"]`)
-        : null;
+    const activeRow = () => {
+        if (!activeId) return null;
+        if (activeNode?.isConnected && activeNode.getAttribute('data-entry-id') === activeId) {
+            return activeNode;
+        }
+        activeNode = document.querySelector(`[data-entry-row][data-entry-id="${activeId}"]`);
+        return activeNode;
+    };
     const focusRow = (row) => {
         if (!row) return;
         const prev = activeRow();
@@ -1424,6 +1495,7 @@ function installEntriesKeyboard() {
         row.classList.add('selected');
         row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         activeId = row.getAttribute('data-entry-id');
+        activeNode = row;
     };
     const move = (delta) => {
         const all = rows();
