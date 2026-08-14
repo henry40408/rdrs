@@ -9,7 +9,7 @@
    `.reading-pane.reading-pane-active` as a full-screen overlay.
    Empty-state placeholders MUST NOT carry the class, or mobile will
    trap users behind a blank pane. #}
-<div id="reading-pane" class="reading-pane reading-pane-active">
+<div id="reading-pane" class="reading-pane reading-pane-active" data-entry-id="{{ pane.id }}">
     {# Pane toolbar. On mobile it also holds the Back affordance (left); the
        prev/next nav sits at the right on every viewport. #}
     <div class="reading-pane-back">
