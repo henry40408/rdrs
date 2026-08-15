@@ -141,14 +141,30 @@ async fn close_matches_input_height(world: &mut RdrsWorld) -> Result<()> {
     .await
 }
 
+/// Polled for the same reason the midline assertion below is: the drawer
+/// expands over a 0.16s `grid-template-rows` transition, so measuring once
+/// catches the input still growing — its final height next to a close button
+/// that already has its own. A single measurement passes or fails on how fast
+/// the machine is, which is not what the rule is about.
 async fn expect_same_height(world: &RdrsWorld, one: &str, other: &str) -> Result<()> {
     let driver = world.driver()?;
-    let (_, _, _, first) = driver.bounding_box(one).await?;
-    let (_, _, _, second) = driver.bounding_box(other).await?;
-    ensure!(
-        (first - second).abs() < 1.0,
-        "`{one}` is {first}px tall and `{other}` is {second}px"
-    );
+    let matched = eventually(
+        &format!("`{one}` and `{other}` to match in height"),
+        || async {
+            let (_, _, _, first) = driver.bounding_box(one).await?;
+            let (_, _, _, second) = driver.bounding_box(other).await?;
+            Ok((first - second).abs() < 1.0)
+        },
+    )
+    .await;
+    if matched.is_err() {
+        let (_, _, _, first) = driver.bounding_box(one).await?;
+        let (_, _, _, second) = driver.bounding_box(other).await?;
+        ensure!(
+            (first - second).abs() < 1.0,
+            "`{one}` is {first}px tall and `{other}` is {second}px"
+        );
+    }
     Ok(())
 }
 
