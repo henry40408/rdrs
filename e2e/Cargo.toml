@@ -23,6 +23,7 @@ futures-util = { version = "0.3", default-features = false }
 percent-encoding = "2.3"
 rand = "0.10"
 regex = "1.12"
+serde = { version = "1", features = ["derive"] }
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls",
   "charset",
@@ -57,6 +58,24 @@ tokio = { version = "1.53.1", features = [
 [[test]]
 name = "e2e"
 harness = false
+
+# Hyphenated names for the audits, so the commands read the way the old npm
+# scripts did (`npm run test:csp` → `cargo run --bin csp-audit`).
+[[bin]]
+name = "csp-audit"
+path = "src/bin/csp_audit.rs"
+
+[[bin]]
+name = "nojs"
+path = "src/bin/nojs.rs"
+
+[[bin]]
+name = "touch-audit"
+path = "src/bin/touch_audit.rs"
+
+[[bin]]
+name = "dom-bench"
+path = "src/bin/dom_bench.rs"
 
 # Mirrors the root crate's lint set, minus the entries that only apply to the
 # server. Being a separate workspace means none of it is inherited, and test
