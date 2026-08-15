@@ -138,7 +138,7 @@ impl Browser {
              unlike Playwright, the driver manager downloads only the driver",
         )?;
 
-        let browser = Self {
+        let mut browser = Self {
             driver,
             viewport: DESKTOP,
             media: Media::default(),
@@ -146,6 +146,15 @@ impl Browser {
         // Stated up front rather than left to the browser — see
         // `Media::features` for what headless Chrome reports otherwise.
         browser.apply_media().await?;
+        // `--window-size` above sizes the *window*; what the stylesheet reads
+        // is the viewport, and the two differ by whatever chrome the platform's
+        // headless build keeps. Pinning it here is what Playwright's `viewport`
+        // option did, and it matters: the touch baseline
+        // (`button { min-height: 44px }`) lives under
+        // `@media (max-width: 1024px)`, so a desktop scenario that lands even
+        // slightly under 1024 is laid out as a phone — which is how a 44px
+        // close button ended up beside a 35px input on CI and nowhere else.
+        browser.set_viewport(DESKTOP).await?;
         if scripting == Scripting::Disabled {
             browser.disable_scripting().await?;
         }

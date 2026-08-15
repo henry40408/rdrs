@@ -160,9 +160,42 @@ async fn expect_same_height(world: &RdrsWorld, one: &str, other: &str) -> Result
     if matched.is_err() {
         let (_, _, _, first) = driver.bounding_box(one).await?;
         let (_, _, _, second) = driver.bounding_box(other).await?;
+        // Reports what the browser actually resolved, because the height alone
+        // cannot say *why* they differ — a min-height from the touch branch, a
+        // padding difference, or an `align-self` that stopped stretching all
+        // look identical from outside.
+        let why = driver
+            .execute(
+                r"
+                const describe = (sel) => {
+                  const el = document.querySelector(sel);
+                  if (!el) return '(missing)';
+                  const s = getComputedStyle(el);
+                  return `h=${s.height} min-h=${s.minHeight} pad=${s.paddingTop}/${s.paddingBottom}` +
+                         ` font=${s.fontSize} align-self=${s.alignSelf} box=${s.boxSizing}`;
+                };
+                return {
+                  one: describe(arguments[0]),
+                  other: describe(arguments[1]),
+                  hoverNone: matchMedia('(hover: none)').matches,
+                  pointerCoarse: matchMedia('(pointer: coarse)').matches,
+                  width: window.innerWidth,
+                };
+                ",
+                vec![serde_json::json!(one), serde_json::json!(other)],
+            )
+            .await?;
+        let why = why.json();
         ensure!(
             (first - second).abs() < 1.0,
-            "`{one}` is {first}px tall and `{other}` is {second}px"
+            "`{one}` is {first}px tall and `{other}` is {second}px.\n  \
+             {one}: {}\n  {other}: {}\n  \
+             (hover:none)={} (pointer:coarse)={} innerWidth={}",
+            why["one"].as_str().unwrap_or("?"),
+            why["other"].as_str().unwrap_or("?"),
+            why["hoverNone"],
+            why["pointerCoarse"],
+            why["width"],
         );
     }
     Ok(())
