@@ -6,21 +6,27 @@
 //! the first call claims the setup endpoint and everything after it goes
 //! through the real admin + invite flow.
 //!
-//! A port of `support/api.js`. The one structural change is that the
-//! bootstrap admin is a process-wide `OnceCell` rather than a map keyed by
-//! base URL — with a single server per run there is only ever one.
+//! A port of `support/api.js`, including its map of bootstrap admins keyed by
+//! base URL: the suite runs a pool of servers, each with its own database, so
+//! each needs its own first account.
+
+use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
 use percent_encoding::percent_decode_str;
 use reqwest::header::{HeaderValue, SET_COOKIE};
 use reqwest::{Client, StatusCode, redirect};
-use tokio::sync::OnceCell;
+use tokio::sync::Mutex;
 
 /// The password every account this suite creates is given.
 pub const PASSWORD: &str = "vulture-mango-77-quilt";
 
-/// The one account allowed to claim `/api/setup`, created on first use.
-static BOOTSTRAP_ADMIN: OnceCell<Credentials> = OnceCell::const_new();
+/// The account that claimed `/api/setup` on each server, created on first use.
+///
+/// `/api/setup` closes for good once claimed, so this must be remembered per
+/// server rather than per scenario — every later account on that server is
+/// created by its admin.
+static BOOTSTRAP_ADMINS: Mutex<Option<HashMap<String, Credentials>>> = Mutex::const_new(None);
 
 /// A username and password pair.
 #[derive(Debug, Clone)]
@@ -136,17 +142,24 @@ impl Api {
         })
     }
 
-    async fn ensure_admin(&self) -> Result<&Credentials> {
-        BOOTSTRAP_ADMIN
-            .get_or_try_init(|| async {
-                let admin = Credentials {
-                    username: format!("e2e-bootstrap-{}", crate::random_slug()),
-                    password: PASSWORD.to_owned(),
-                };
-                self.claim_setup(&admin.username, &admin.password).await?;
-                Ok(admin)
-            })
-            .await
+    /// This server's bootstrap admin, claiming `/api/setup` the first time.
+    ///
+    /// The lock is held across the claim so two scenarios starting at once on
+    /// the same server cannot both try it — the second would be refused, since
+    /// setup closes for good.
+    async fn ensure_admin(&self) -> Result<Credentials> {
+        let mut admins = BOOTSTRAP_ADMINS.lock().await;
+        let admins = admins.get_or_insert_with(HashMap::new);
+        if let Some(admin) = admins.get(&self.base_url) {
+            return Ok(admin.clone());
+        }
+        let admin = Credentials {
+            username: format!("e2e-bootstrap-{}", crate::random_slug()),
+            password: PASSWORD.to_owned(),
+        };
+        self.claim_setup(&admin.username, &admin.password).await?;
+        admins.insert(self.base_url.clone(), admin.clone());
+        Ok(admin)
     }
 
     async fn claim_setup(&self, username: &str, password: &str) -> Result<()> {

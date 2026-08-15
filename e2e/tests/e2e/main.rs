@@ -16,7 +16,7 @@ use cucumber::World as _;
 use cucumber::writer::Stats as _;
 use rdrs_e2e::Harness;
 use rdrs_e2e::browser::{Browser, Scripting};
-use rdrs_e2e::world::{RdrsWorld, set_endpoints};
+use rdrs_e2e::world::{RdrsWorld, set_pool};
 
 /// Where the `.feature` files live, and what a run covers by default.
 const FEATURES: &str = "features";
@@ -45,16 +45,22 @@ fn max_concurrent_scenarios() -> usize {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Killed when this binding drops at the end of `main`.
-    let harness = Harness::start().await?;
-    set_endpoints(harness.endpoints().clone());
+    // One server per concurrent scenario, all killed when this binding drops
+    // at the end of `main`. Sized to the concurrency limit so a scenario never
+    // shares a server — see `world::Pool` for what goes wrong when they do.
+    let concurrency = max_concurrent_scenarios();
+    let mut servers = Vec::with_capacity(concurrency);
+    for _ in 0..concurrency {
+        servers.push(Harness::start().await?);
+    }
+    set_pool(servers.iter().map(|s| s.endpoints().clone()).collect());
     // Before anything runs in parallel — see `Browser::prepare`.
     Browser::prepare().await?;
 
     let writer = RdrsWorld::cucumber()
         // Each scenario gets its own browser and its own account, so they do
         // not interfere. `Browser::prepare` must have run first.
-        .max_concurrent_scenarios(max_concurrent_scenarios())
+        .max_concurrent_scenarios(concurrency)
         .fail_on_skipped()
         .before(|_feature, _rule, _scenario, world| {
             Box::pin(async move {

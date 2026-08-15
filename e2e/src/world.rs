@@ -12,12 +12,13 @@
 //! process-wide (see `server.rs`); what stays per-scenario is the account and
 //! the browser.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use cucumber::World;
 use thirtyfour::prelude::*;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::api::{Api, Credentials, PASSWORD};
 use crate::browser::{Browser, Scripting, Viewport};
@@ -25,29 +26,48 @@ use crate::network::{Action, Network, RouteHandle};
 use crate::seed::Seed;
 use crate::server::Endpoints;
 
-/// Set once by the runner, read by every `World::new`.
-static ENDPOINTS: OnceLock<Endpoints> = OnceLock::new();
+/// The pool of servers scenarios borrow from, published once by the runner.
+static POOL: OnceLock<Pool> = OnceLock::new();
 
-/// Publishes the running server's addresses to the worlds.
+/// A set of interchangeable servers, one borrowed per running scenario.
+///
+/// Playwright ran one server per worker. Cucumber has no worker concept, so
+/// the first cut here shared a single server for the whole run — which fails
+/// on one specific thing: **the summary worker drains its queue one job at a
+/// time, per server** (Kagi is rate-limited per key, so concurrency there
+/// would only buy 429s), and its database work runs at background priority so
+/// it yields to every interactive request. Four scenarios summarising against
+/// one server therefore queue behind each other for longer than any sensible
+/// assertion waits.
+///
+/// A pool sized to the concurrency limit restores what per-worker servers
+/// gave: a scenario holds a server for its whole run, so no two scenarios ever
+/// share one queue.
+struct Pool {
+    /// Servers not currently lent out.
+    free: std::sync::Mutex<Vec<Endpoints>>,
+    /// One permit per server, so `new` waits rather than finding `free` empty.
+    permits: Arc<Semaphore>,
+}
+
+/// Publishes the pool to the worlds.
 ///
 /// # Panics
 ///
 /// Panics if called twice.
-pub fn set_endpoints(endpoints: Endpoints) {
-    ENDPOINTS
-        .set(endpoints)
-        .expect("the endpoints are published once, before any scenario runs");
+pub fn set_pool(servers: Vec<Endpoints>) {
+    let permits = Arc::new(Semaphore::new(servers.len()));
+    POOL.set(Pool {
+        free: std::sync::Mutex::new(servers),
+        permits,
+    })
+    .ok()
+    .expect("the pool is published once, before any scenario runs");
 }
 
-/// The running server's addresses.
-///
-/// # Panics
-///
-/// Panics when the runner has not published them yet.
-pub fn endpoints() -> &'static Endpoints {
-    ENDPOINTS
-        .get()
-        .expect("the runner publishes the endpoints before the first scenario")
+fn pool() -> &'static Pool {
+    POOL.get()
+        .expect("the runner publishes the pool before the first scenario")
 }
 
 /// State shared by the steps of one scenario.
@@ -89,11 +109,41 @@ pub struct RdrsWorld {
     pub held_summary_fragment: Option<RouteHandle>,
     /// Counts re-queue POSTs, to prove an in-flight toggle is inert.
     pub summarize_posts: Option<RouteHandle>,
+    /// The server this scenario borrowed, returned to the pool on drop.
+    endpoints: Option<Endpoints>,
+    /// Held for the scenario's lifetime so the pool cannot lend the same
+    /// server twice; released with the world.
+    _lease: OwnedSemaphorePermit,
+}
+
+impl Drop for RdrsWorld {
+    /// Returns the borrowed server before the lease is released, so the next
+    /// scenario through the permit always finds one waiting.
+    fn drop(&mut self) {
+        if let Some(endpoints) = self.endpoints.take()
+            && let Ok(mut free) = pool().free.lock()
+        {
+            free.push(endpoints);
+        }
+    }
 }
 
 impl RdrsWorld {
     async fn new() -> Result<Self> {
-        let endpoints = endpoints();
+        let pool = pool();
+        // Waits when every server is busy, which is the point: the permit is
+        // what makes "pop a free server" infallible below.
+        let lease = Arc::clone(&pool.permits)
+            .acquire_owned()
+            .await
+            .context("the server pool was closed")?;
+        let endpoints = pool
+            .free
+            .lock()
+            .expect("the pool lock is never held across a panic")
+            .pop()
+            .expect("a permit guarantees a free server");
+
         Ok(Self {
             user: Credentials {
                 username: format!("e2e-{}", crate::random_slug()),
@@ -113,6 +163,8 @@ impl RdrsWorld {
             pane_stamp: None,
             held_summary_fragment: None,
             summarize_posts: None,
+            endpoints: Some(endpoints),
+            _lease: lease,
         })
     }
 
@@ -207,14 +259,21 @@ impl RdrsWorld {
         &self.seed
     }
 
+    /// The addresses of the server this scenario borrowed.
+    fn endpoints(&self) -> &Endpoints {
+        self.endpoints
+            .as_ref()
+            .expect("the world holds its server until it is dropped")
+    }
+
     /// The base URL of the server under test.
     pub fn base_url(&self) -> &str {
-        &endpoints().base_url
+        &self.endpoints().base_url
     }
 
     /// A URL that answers with a valid RSS document.
     pub fn feed_url(&self) -> &str {
-        &endpoints().feed_url
+        &self.endpoints().feed_url
     }
 
     /// The row id of this scenario's account, resolving it on first use.
