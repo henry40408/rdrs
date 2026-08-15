@@ -63,50 +63,6 @@ pub enum Scripting {
 pub struct Browser {
     driver: WebDriver,
     viewport: Viewport,
-    /// The emulated media, tracked because `Emulation.setEmulatedMedia`
-    /// replaces the *whole* feature list on every call — setting a colour
-    /// scheme would otherwise silently drop the pointer emulation, and vice
-    /// versa.
-    media: Media,
-}
-
-/// The media features this suite emulates.
-#[derive(Debug, Default, Clone)]
-struct Media {
-    /// `None` follows the browser's own setting; the screenshots pin it.
-    color_scheme: Option<String>,
-    /// Coarse pointer and no hover — the touch-device branch.
-    touch: bool,
-}
-
-impl Media {
-    /// The `features` array for `Emulation.setEmulatedMedia`.
-    ///
-    /// The pointer features are always stated, never left to the browser:
-    /// headless Chrome has no real pointing device and reports
-    /// `pointer: coarse` / `hover: none` unless told otherwise, which silently
-    /// puts every desktop scenario on the touch-target branch of the
-    /// stylesheet — a 44px minimum where the design says 35.
-    fn features(&self) -> serde_json::Value {
-        let (pointer, hover) = if self.touch {
-            ("coarse", "none")
-        } else {
-            ("fine", "hover")
-        };
-        let mut features = vec![
-            serde_json::json!({ "name": "pointer", "value": pointer }),
-            serde_json::json!({ "name": "any-pointer", "value": pointer }),
-            serde_json::json!({ "name": "hover", "value": hover }),
-            serde_json::json!({ "name": "any-hover", "value": hover }),
-        ];
-        if let Some(scheme) = &self.color_scheme {
-            features.push(serde_json::json!({
-                "name": "prefers-color-scheme",
-                "value": scheme,
-            }));
-        }
-        serde_json::Value::Array(features)
-    }
 }
 
 impl Browser {
@@ -118,7 +74,18 @@ impl Browser {
     /// downloaded, or when the session cannot be created.
     pub async fn open(scripting: Scripting) -> Result<Self> {
         let mut caps = DesiredCapabilities::chrome();
-        caps.set_headless()?;
+        // `--headless=new`, not thirtyfour's `set_headless()` (which sends the
+        // bare `--headless`). The old headless has no pointing device, so it
+        // reports `hover: none` — and the stylesheet's touch baseline hangs off
+        // `@media (hover: none)`, which put every desktop scenario on the
+        // 44px-tap-target branch. Newer Chrome builds alias `--headless` to the
+        // new mode, so this only ever failed where the alias had not landed.
+        //
+        // It cannot be corrected after the fact: `Emulation.setEmulatedMedia`
+        // silently ignores `hover` and `pointer` (measured), and the only CDP
+        // command that moves them is `setTouchEmulationEnabled`, which is the
+        // wrong direction for a desktop session.
+        caps.add_arg("--headless=new")?;
         caps.add_arg(&format!(
             "--window-size={},{}",
             DESKTOP.width, DESKTOP.height
@@ -141,19 +108,14 @@ impl Browser {
         let mut browser = Self {
             driver,
             viewport: DESKTOP,
-            media: Media::default(),
         };
-        // Stated up front rather than left to the browser — see
-        // `Media::features` for what headless Chrome reports otherwise.
-        browser.apply_media().await?;
         // `--window-size` above sizes the *window*; what the stylesheet reads
         // is the viewport, and the two differ by whatever chrome the platform's
         // headless build keeps. Pinning it here is what Playwright's `viewport`
         // option did, and it matters: the touch baseline
-        // (`button { min-height: 44px }`) lives under
+        // (`button { min-height: 44px }`) also lives under
         // `@media (max-width: 1024px)`, so a desktop scenario that lands even
-        // slightly under 1024 is laid out as a phone — which is how a 44px
-        // close button ended up beside a 35px input on CI and nowhere else.
+        // slightly under 1024 would be laid out as a phone.
         browser.set_viewport(DESKTOP).await?;
         if scripting == Scripting::Disabled {
             browser.disable_scripting().await?;
@@ -227,7 +189,12 @@ impl Browser {
     /// # Errors
     ///
     /// Fails when either CDP command is refused.
-    pub async fn set_touch(&mut self, enabled: bool) -> Result<()> {
+    /// This is the *only* command that moves `hover` and `pointer`:
+    /// `Emulation.setEmulatedMedia` silently ignores both (measured), whatever
+    /// the `DevTools` media-feature list suggests. Which also means a desktop
+    /// session cannot opt *into* `hover: hover` — it has to start there, which
+    /// is what `--headless=new` is for.
+    pub async fn set_touch(&self, enabled: bool) -> Result<()> {
         self.driver
             .cdp()
             .send_raw(
@@ -235,11 +202,7 @@ impl Browser {
                 serde_json::json!({ "enabled": enabled, "maxTouchPoints": 5 }),
             )
             .await?;
-        // The media features are a separate override: the touch emulation
-        // above changes event dispatch but not what `@media (pointer: coarse)`
-        // sees.
-        self.media.touch = enabled;
-        self.apply_media().await
+        Ok(())
     }
 
     /// Emulates `prefers-color-scheme`, with no stored preference — the app's
@@ -248,19 +211,15 @@ impl Browser {
     /// # Errors
     ///
     /// Fails when the CDP command is refused.
-    pub async fn emulate_color_scheme(&mut self, scheme: &str) -> Result<()> {
-        self.media.color_scheme = Some(scheme.to_owned());
-        self.apply_media().await
-    }
-
-    /// Sends the whole emulated-media set, since CDP replaces rather than
-    /// merges it.
-    async fn apply_media(&self) -> Result<()> {
+    pub async fn emulate_color_scheme(&self, scheme: &str) -> Result<()> {
         self.driver
             .cdp()
             .send_raw(
                 "Emulation.setEmulatedMedia",
-                serde_json::json!({ "media": "screen", "features": self.media.features() }),
+                serde_json::json!({
+                    "media": "screen",
+                    "features": [{ "name": "prefers-color-scheme", "value": scheme }],
+                }),
             )
             .await?;
         Ok(())

@@ -593,7 +593,7 @@ async fn banner_below_hamburger(world: &mut RdrsWorld) -> Result<()> {
 #[then("the flash banner is vertically centered on a wide touch tablet")]
 async fn banner_centered_on_touch_tablet(world: &mut RdrsWorld) -> Result<()> {
     world.resize(Viewport::new(1180, 820)).await?;
-    world.browser_mut()?.set_touch(true).await?;
+    world.browser()?.set_touch(true).await?;
     world.goto("/").await?;
 
     let driver = world.driver()?;
