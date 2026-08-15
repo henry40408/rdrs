@@ -84,12 +84,34 @@ where
 ///
 /// Fails when `probe` errors, or when it has still not held by
 /// [`WAIT_TIMEOUT`].
-pub async fn eventually<F, Fut>(what: &str, mut probe: F) -> Result<()>
+pub async fn eventually<F, Fut>(what: &str, probe: F) -> Result<()>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<bool>>,
 {
-    let deadline = Instant::now() + WAIT_TIMEOUT;
+    eventually_within(WAIT_TIMEOUT, what, probe).await
+}
+
+/// [`eventually`] with a deadline of its own.
+///
+/// For the handful of waits that are not "the page is catching up" but "a
+/// background worker is getting to it" — chiefly summarization, which drains
+/// one job at a time and yields its database work to interactive requests, so
+/// on a slow machine it legitimately outlasts the interaction timeout.
+///
+/// # Errors
+///
+/// Fails when `probe` errors, or when it has still not held by `timeout`.
+pub async fn eventually_within<F, Fut>(
+    timeout: std::time::Duration,
+    what: &str,
+    mut probe: F,
+) -> Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<bool>>,
+{
+    let deadline = Instant::now() + timeout;
     loop {
         match probe().await {
             Ok(true) => return Ok(()),
@@ -98,7 +120,7 @@ where
             Err(error) => return Err(error),
         }
         if Instant::now() >= deadline {
-            bail!("{what}: still not true after {WAIT_TIMEOUT:?}");
+            bail!("{what}: still not true after {timeout:?}");
         }
         tokio::time::sleep(WAIT_INTERVAL).await;
     }

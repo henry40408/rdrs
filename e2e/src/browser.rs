@@ -81,6 +81,12 @@ impl Browser {
         ))?;
         // Containers get a 64 MB /dev/shm by default, which Chrome outgrows.
         caps.add_arg("--disable-dev-shm-usage")?;
+        // Playwright launches chromium with this, and the layout assertions
+        // were written against it. Without it the classic scrollbars on Linux
+        // take 15px out of the viewport, so a pane asked to be 375px wide
+        // measures 360 — while macOS's overlay scrollbars take none, which
+        // makes the difference invisible locally and a CI-only failure.
+        caps.add_arg("--hide-scrollbars")?;
 
         let driver = WebDriver::managed(caps).await.context(
             "could not start a browser session — a local Chrome or Chromium is required \

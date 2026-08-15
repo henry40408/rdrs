@@ -7,7 +7,7 @@ use anyhow::{Result, ensure};
 use cucumber::{given, then, when};
 use rdrs_e2e::dom::{Dom, TextContent, Within};
 use rdrs_e2e::seed::NewEntry;
-use rdrs_e2e::wait::{eventually, eventually_eq};
+use rdrs_e2e::wait::{eventually, eventually_eq, eventually_within};
 use rdrs_e2e::world::RdrsWorld;
 use thirtyfour::prelude::*;
 
@@ -17,6 +17,15 @@ use super::reading_pane::SUMMARIZE_TOGGLE;
 /// How long a held response may wait for its request to arrive. Generous: it
 /// is the SSE round trip that triggers it, not a click.
 const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long a summary may take to come back.
+///
+/// Longer than the interaction timeout because it is not the page catching up:
+/// the summary worker drains one job at a time and runs its database work at
+/// background priority, so on a two-core CI runner it legitimately outlasts a
+/// wait sized for a click. Matched to the server's own `SUMMARY_TIMEOUT`, past
+/// which the job has genuinely failed rather than being slow.
+const SUMMARY_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Seeds a fake Kagi session token so the reading pane renders its Summarize
 /// button. Real Kagi requests go to the mock upstream.
@@ -350,11 +359,17 @@ async fn pane_shows_no_summary(world: &mut RdrsWorld) -> Result<()> {
 #[then("the reading pane shows a summary")]
 async fn pane_shows_summary(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
-    if driver
-        .css("#rp-summary-container .summary-box")
-        .await
-        .is_ok()
-    {
+    let arrived = eventually_within(SUMMARY_TIMEOUT, "a summary to render", || async {
+        let Some(box_) = driver.css_opt("#rp-summary-container .summary-box").await? else {
+            return Ok(false);
+        };
+        // The pending placeholder is a `.summary-box` too, so its presence is
+        // not the answer — the summary has landed only once the pending marker
+        // is gone.
+        Ok(box_.attr("data-summary-pending").await?.is_none())
+    })
+    .await;
+    if arrived.is_ok() {
         return Ok(());
     }
     let panel = driver

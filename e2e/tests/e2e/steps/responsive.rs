@@ -353,17 +353,32 @@ async fn filter_bar_fits(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
+/// Sub-pixel slack for the size assertions.
+///
+/// `getBoundingClientRect` reports fractional layout, so a control laid out to
+/// exactly 44px can measure 43.99999237 — Playwright's `boundingBox()` never
+/// showed this because it reads the CDP box model, whose quads are already
+/// quantised. A tap target off by a ten-thousandth of a pixel is the same tap
+/// target; anything that actually regresses is out by whole pixels.
+const SUBPIXEL: f64 = 0.5;
+
 #[then(expr = "the {string} control is at least {int}px tall")]
 async fn control_at_least_tall(world: &mut RdrsWorld, selector: String, min: f64) -> Result<()> {
     let (_, _, _, height) = world.driver()?.bounding_box(&selector).await?;
-    ensure!(height >= min, "`{selector}` is {height}px tall");
+    ensure!(
+        height >= min - SUBPIXEL,
+        "`{selector}` is {height}px tall, short of {min}"
+    );
     Ok(())
 }
 
 #[then(expr = "the {string} control is at least {int}px wide")]
 async fn control_at_least_wide(world: &mut RdrsWorld, selector: String, min: f64) -> Result<()> {
     let (_, _, width, _) = world.driver()?.bounding_box(&selector).await?;
-    ensure!(width >= min, "`{selector}` is {width}px wide");
+    ensure!(
+        width >= min - SUBPIXEL,
+        "`{selector}` is {width}px wide, short of {min}"
+    );
     Ok(())
 }
 

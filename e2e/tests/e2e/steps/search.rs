@@ -81,9 +81,16 @@ async fn narrow_viewport(world: &mut RdrsWorld) -> Result<()> {
 #[when(expr = "I search for {string}")]
 async fn search_for(world: &mut RdrsWorld, term: String) -> Result<()> {
     let driver = world.driver()?;
-    driver.fill("search-input", &term).await?;
+    let field = driver.test_id("search-input").await?;
+    field.clear().await?;
+    field.send_keys(&term).await?;
+
     let document = driver.find(By::Tag("html")).await?;
-    driver.press_focused("Enter").await?;
+    // Sent to the field itself rather than to whatever holds focus: a stray
+    // click or a re-render between the fill and the keystroke would otherwise
+    // send Enter somewhere that does not submit, and the wait below would then
+    // time out with nothing to explain it.
+    field.send_keys(Key::Enter).await?;
     document
         .wait_until()
         .wait(WAIT_TIMEOUT, WAIT_INTERVAL)
