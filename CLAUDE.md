@@ -18,37 +18,54 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 suite isn't dominated by password hashing. Use it for local test runs; **never**
 set it in production.
 
-### E2E (Playwright BDD, run from `e2e/`)
+### E2E (cucumber + thirtyfour, run from `e2e/`)
 
-- Install: `npm ci`. Run all: `npx playwright test` (CI shards with
-  `--shard=1/3` etc. and `--grep-invert "@skip"`). One feature:
-  `npx playwright test --grep "<scenario or tag>"`.
-- Regenerate README screenshots: `npm run screenshots` (writes to `../screenshots/`).
-- CSP audit (CI gate): `npm run test:csp` — walks the app in a browser and fails
-  on any Content Security Policy violation. Run it after touching `templates/`,
-  `static/css/` or `static/js/`; the Rust-side scan in
+`e2e/` is **its own cargo workspace**, deliberately: a `--workspace` coverage
+run at the root would otherwise compile thirtyfour and drive a real browser.
+That also means the root's `cargo fmt --all` and `cargo clippy` do not reach it,
+so CI lints it as a separate step and so should you.
+
+- Run all: `cargo test --test e2e`. One feature, while working on it:
+  `RDRS_E2E_FEATURES=features/reading.feature cargo test --test e2e`.
+- Format / lint (CI gates): `cargo fmt --all -- --check` and
+  `cargo clippy --all-targets -- -D warnings`, from `e2e/`.
+- Regenerate README screenshots: `cargo run --bin screenshots` (writes to
+  `../screenshots/`).
+- CSP audit (CI gate): `cargo run --bin csp-audit` — walks the app in a browser
+  and fails on any Content Security Policy violation. Run it after touching
+  `templates/`, `static/css/` or `static/js/`; the Rust-side scan in
   `src/middleware/security_headers.rs` only greps sources and cannot see
   runtime-injected markup or shadow DOM.
+- No-JS walkthrough (CI gate): `cargo run --bin nojs` — drives the app with
+  script execution disabled *and* every `*.js` request aborted.
+- Touch-target report (not a gate): `cargo run --bin touch-audit`.
+- Swap benchmark: `cargo run --bin dom-bench -- --label before` (`--entries`,
+  `--rows`, `--mode`, `--profile`; see the module docs). This is what the
+  "capture a baseline before and after" rule for performance work measures.
 
-**After editing a `.feature` file, run `npx bddgen`.** The generated
-`.features-gen/` is git-ignored and the project's custom `globalSetup` shadows
-playwright-bdd's generation hook, so a fresh checkout without a prior `bddgen`
-has no specs: `playwright test` silently runs zero tests and passes. CI runs
-`bddgen` as an explicit step for the same reason.
+**A browser must be installed**, unlike under Playwright: `WebDriver::managed`
+downloads and supervises the *driver*, never the browser. On macOS,
+`brew install --cask ungoogled-chromium`; CI's `ubuntu-latest` already ships
+Chrome.
 
 **Rebuild before E2E/screenshots.** Static assets and templates are embedded
-into the binary via `include_str!`/`include_bytes!` at compile time, and the E2E
-global-setup *skips the build if a binary already exists*. After editing
-anything under `static/`, `templates/`, or Rust source, run `cargo build` first
-or you are testing stale assets.
+into the binary via `include_str!`/`include_bytes!` at compile time, and the
+suite *skips the build if a binary already exists*. After editing anything
+under `static/`, `templates/`, or Rust source, run `cargo build` first or you
+are testing stale assets.
+
+**The `.feature` files are the contract** and are read as-is — there is no
+generation step. Adding a scenario means adding steps under
+`e2e/tests/e2e/steps/`; the suite fails on an unmatched step rather than
+skipping it.
 
 ## UI changes require screenshot updates
 
 After any change that alters the rendered UI (`static/css/`, `templates/`,
-`static/js/`): `cargo build`, then `cd e2e && npm run screenshots`, and include
-the result in the same change. The four images under `screenshots/` are
+`static/js/`): `cargo build`, then `cd e2e && cargo run --bin screenshots`, and
+include the result in the same change. The four images under `screenshots/` are
 referenced by `README.md`, so stale screenshots count as part of the change. The
-generator (`e2e/scripts/screenshots.js`) seeds demo data and captures the unread
+generator (`e2e/src/bin/screenshots.rs`) seeds demo data and captures the unread
 list (with reading pane) and the keyboard-help overlay in light and dark themes.
 
 ## Architecture

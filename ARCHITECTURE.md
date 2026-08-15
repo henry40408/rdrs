@@ -786,15 +786,15 @@ Style replacements:
 Writing to `element.style` **from script** stays legal throughout — CSP polices
 markup, not the CSSOM.
 
-The static scan is only half the guard. `e2e/scripts/csp-audit.spec.js` walks the
+The static scan is only half the guard. `e2e/src/bin/csp_audit.rs` walks the
 app in Chromium, listens for `securitypolicyviolation`, and fails on anything the
 browser blocks — covering what a source grep cannot see: markup injected at
 runtime, `<style>` inside a shadow root, a cross-origin `@import` or webfont, an
 `img-src` the templates never mention. It ends with a **positive control** — a
 planted `style=` that the policy must reject — so a clean report can only mean
 the collector was live, never that it silently stopped observing. CI runs it as
-one step of the `e2e-tests` job (shard 1 only, reusing that job's build);
-locally it is `cd e2e && npm run test:csp`.
+one step of the `e2e-tests` job, reusing that job's build; locally it is
+`cd e2e && cargo run --bin csp-audit`.
 
 Two omissions are deliberate and documented in the module: **no
 `Cross-Origin-Resource-Policy`** (it would block the absolute `/api/proxy/image`
