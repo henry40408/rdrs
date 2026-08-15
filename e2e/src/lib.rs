@@ -30,8 +30,46 @@ pub fn random_slug() -> String {
         .collect()
 }
 
+/// The first cell of every row in a step's data table.
+///
+/// Every table in this suite is a single column — titles, URLs — which is what
+/// `table.raw().map((row) => row[0])` said in the JavaScript steps.
+///
+/// # Errors
+///
+/// Fails when the step carries no table.
+pub fn first_column(step: &cucumber::gherkin::Step) -> anyhow::Result<Vec<String>> {
+    let table = step
+        .table
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("this step needs a data table"))?;
+    Ok(table
+        .rows
+        .iter()
+        .filter_map(|row| row.first().cloned())
+        .collect())
+}
+
 /// Matches the one-time invite path inside a flash message.
 pub fn invite_path_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"/invite/[A-Za-z0-9_-]+").expect("the invite pattern compiles"))
+}
+
+/// Matches a `HH:MM:SS` clock reading, the shape of the flash timestamp.
+pub fn clock_time_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^\d{2}:\d{2}:\d{2}$").expect("the clock pattern compiles"))
+}
+
+/// Captures the entry id out of a reading-pane action form's `action`.
+pub fn pane_entry_id_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"/entries/(\d+)/").expect("the pane id pattern compiles"))
+}
+
+/// Matches the URL a feed's stored favicon is served from.
+pub fn feed_icon_src_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"/api/feeds/\d+/icon").expect("the icon pattern compiles"))
 }

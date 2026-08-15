@@ -1,4 +1,4 @@
-//! Writing test data straight into the server's SQLite file.
+//! Writing test data straight into the server's `SQLite` file.
 //!
 //! A port of `support/seed.js`, which used `better-sqlite3`. Going through the
 //! database rather than the UI is what keeps the suite's `Given` steps to one
@@ -23,7 +23,7 @@ pub struct NewEntry {
     pub link: String,
     pub content: String,
     pub summary: Option<String>,
-    /// A SQLite modifier applied to `datetime('now', ?)`, e.g. `-2 hours`.
+    /// A `SQLite` modifier applied to `datetime('now', ?)`, e.g. `-2 hours`.
     pub published_offset: String,
 }
 
@@ -204,7 +204,12 @@ impl Seed {
     /// # Errors
     ///
     /// Fails when the statement is rejected.
-    pub async fn create_feed(&self, category_id: i64, url: &str, title: Option<&str>) -> Result<i64> {
+    pub async fn create_feed(
+        &self,
+        category_id: i64,
+        url: &str,
+        title: Option<&str>,
+    ) -> Result<i64> {
         sqlx::query("INSERT OR IGNORE INTO feed (category_id, url, title) VALUES (?, ?, ?)")
             .bind(category_id)
             .bind(url)
@@ -353,10 +358,11 @@ impl Seed {
     /// Fails when the statement is rejected.
     pub async fn configure_kagi(&self, user_id: i64, session_token: &str) -> Result<()> {
         let payload = serde_json::json!({ "kagi": { "session_token": session_token } }).to_string();
-        let existing: Option<i64> = sqlx::query_scalar("SELECT id FROM user_settings WHERE user_id = ?")
-            .bind(user_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let existing: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM user_settings WHERE user_id = ?")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await?;
         if existing.is_some() {
             sqlx::query("UPDATE user_settings SET save_services = ? WHERE user_id = ?")
                 .bind(&payload)

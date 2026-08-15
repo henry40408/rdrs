@@ -109,7 +109,10 @@ async fn visit_path(world: &mut RdrsWorld, path: String) -> Result<()> {
 #[then("I am redirected to the login page with a success message")]
 async fn redirected_with_success(world: &mut RdrsWorld) -> Result<()> {
     world.expect_path("/login").await?;
-    world.driver()?.expect_text("flash-message", "Password set").await
+    world
+        .driver()?
+        .expect_text("flash-message", "Password set")
+        .await
 }
 
 #[then("I land on the unread inbox")]

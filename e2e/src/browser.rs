@@ -130,7 +130,7 @@ impl Browser {
     /// Resizes the viewport, Playwright's `setViewportSize`.
     ///
     /// Goes through `Emulation.setDeviceMetricsOverride` rather than the
-    /// WebDriver window commands: a headless window's outer size includes
+    /// `WebDriver` window commands: a headless window's outer size includes
     /// chrome the layout does not see, so setting 375×667 that way lands a
     /// viewport of some other width — and the responsive scenarios assert on
     /// exact breakpoints.
@@ -208,6 +208,28 @@ impl Browser {
                 serde_json::json!({
                     "media": "screen",
                     "features": [{ "name": "prefers-color-scheme", "value": scheme }],
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Grants clipboard access, Playwright's
+    /// `grantPermissions(["clipboard-read", "clipboard-write"])`.
+    ///
+    /// Without it `navigator.clipboard.writeText` rejects in a headless
+    /// browser, and the copy button never reaches its "Copied" state.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the CDP command is refused.
+    pub async fn grant_clipboard(&self) -> Result<()> {
+        self.driver
+            .cdp()
+            .send_raw(
+                "Browser.grantPermissions",
+                serde_json::json!({
+                    "permissions": ["clipboardReadWrite", "clipboardSanitizedWrite"],
                 }),
             )
             .await?;

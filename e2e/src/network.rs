@@ -15,7 +15,7 @@
 //!
 //! `WebDriver` has no equivalent, so this drives CDP directly. It needs
 //! thirtyfour's `cdp-events` feature: commands go out over the ordinary
-//! WebDriver connection, but `Fetch.requestPaused` has to be *received*, which
+//! `WebDriver` connection, but `Fetch.requestPaused` has to be *received*, which
 //! only the WebSocket transport can do.
 //!
 //! Every paused request must be answered — continued, failed or fulfilled — or
@@ -27,19 +27,27 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use futures_util::StreamExt;
 use regex::Regex;
 use thirtyfour::cdp::domains::fetch::{
-    ContinueRequest, Enable, FailRequest, RequestPattern, RequestPaused,
+    ContinueRequest, Enable, FailRequest, FulfillRequest, HeaderEntry, RequestPattern,
+    RequestPaused,
 };
 use thirtyfour::cdp::domains::network::{ErrorReason, ResourceType, ResponseReceived};
 use thirtyfour::prelude::*;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, watch};
 use tokio::task::JoinHandle;
 
 /// What to do with a request whose URL matches a rule.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Action {
+    /// Let it through untouched, and only count it.
+    ///
+    /// The shape of Playwright's `page.on("request", …)`: the scenario wants to
+    /// know whether a request fired at all, not to change it.
+    Watch,
     /// Refuse it, as an ad blocker or an offline network would.
     Abort,
     /// Hold it for a while, then let it through.
@@ -47,19 +55,31 @@ pub enum Action {
     /// The delay is served without blocking other requests: the dispatcher
     /// hands each paused request to its own task.
     Delay(Duration),
+    /// Hold it until the scenario says otherwise, then let it through.
+    ///
+    /// The open-ended form of [`Action::Delay`], for the races whose second
+    /// half is triggered by something other than the clock — the summary
+    /// fragment held until the pane has moved on.
+    Hold(watch::Receiver<bool>),
+    /// Answer it here, without going to the network at all — Playwright's
+    /// `route.fulfill`.
+    Fulfill { content_type: String, body: String },
 }
 
 /// One URL pattern and what to do with the requests it matches.
 #[derive(Debug)]
 struct Rule {
     pattern: Regex,
+    /// Only match this HTTP method, when set.
+    method: Option<String>,
     action: Action,
-    /// How many requests this rule has answered — what
-    /// [`Interceptor::hits`] reports.
+    /// How many matching requests have been intercepted, counted the moment
+    /// they are paused — before any hold.
+    arrived: Arc<AtomicUsize>,
+    /// How many have been answered.
     hits: Arc<AtomicUsize>,
-    /// Notified after each request this rule handled has been answered, so a
-    /// step can wait for a held response to settle.
-    settled: Arc<Notify>,
+    /// Notified when a request is paused, and again once it is answered.
+    signal: Arc<Notify>,
 }
 
 /// A live CDP attachment to one browser: request rules, plus a log of the
@@ -130,7 +150,10 @@ impl Network {
                     if !matches!(event.r#type, ResourceType::Document) {
                         continue;
                     }
-                    let url = event.response.get("url").and_then(serde_json::Value::as_str);
+                    let url = event
+                        .response
+                        .get("url")
+                        .and_then(serde_json::Value::as_str);
                     let status = event
                         .response
                         .get("status")
@@ -157,16 +180,25 @@ impl Network {
                         let _ = session.send(continue_request(&event)).await;
                         continue;
                     };
+                    let method = event
+                        .request
+                        .get("method")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
                     let matched = {
                         let rules = rules.lock().await;
                         rules
                             .iter()
-                            .find(|rule| rule.pattern.is_match(url))
+                            .find(|rule| {
+                                rule.pattern.is_match(url)
+                                    && rule.method.as_ref().is_none_or(|wanted| wanted == method)
+                            })
                             .map(|rule| {
                                 (
-                                    rule.action,
+                                    rule.action.clone(),
+                                    Arc::clone(&rule.arrived),
                                     Arc::clone(&rule.hits),
-                                    Arc::clone(&rule.settled),
+                                    Arc::clone(&rule.signal),
                                 )
                             })
                     };
@@ -175,11 +207,20 @@ impl Network {
                     // Each request is answered on its own task, so a held one
                     // does not stall the rest of the page.
                     tokio::spawn(async move {
-                        let Some((action, hits, settled)) = matched else {
+                        let Some((action, arrived, hits, signal)) = matched else {
                             let _ = session.send(continue_request(&event)).await;
                             return;
                         };
+                        // Counted and announced before any hold, so a step can
+                        // wait for "the request has been made" separately from
+                        // "the response has landed".
+                        arrived.fetch_add(1, Ordering::SeqCst);
+                        signal.notify_waiters();
+
                         match action {
+                            Action::Watch => {
+                                let _ = session.send(continue_request(&event)).await;
+                            }
                             Action::Abort => {
                                 let _ = session
                                     .send(fail_request(&event, ErrorReason::BlockedByClient))
@@ -194,9 +235,25 @@ impl Network {
                                 // error.
                                 let _ = session.send(continue_request(&event)).await;
                             }
+                            Action::Hold(mut release) => {
+                                // `changed()` returns immediately when the
+                                // sender already flipped it, so a release that
+                                // beats the request here is not lost.
+                                while !*release.borrow_and_update() {
+                                    if release.changed().await.is_err() {
+                                        break;
+                                    }
+                                }
+                                let _ = session.send(continue_request(&event)).await;
+                            }
+                            Action::Fulfill { content_type, body } => {
+                                let _ = session
+                                    .send(fulfill_request(&event, &content_type, &body))
+                                    .await;
+                            }
                         }
                         hits.fetch_add(1, Ordering::SeqCst);
-                        settled.notify_waiters();
+                        signal.notify_waiters();
                     });
                 }
             }
@@ -225,7 +282,8 @@ impl Network {
             .map(|document| document.status)
     }
 
-    /// Adds a rule, returning a handle for waiting on and counting its hits.
+    /// Adds a rule for every method, returning a handle for waiting on and
+    /// counting its requests.
     ///
     /// Rules are tried in the order they were added, first match wins.
     ///
@@ -233,17 +291,51 @@ impl Network {
     ///
     /// Fails when `pattern` is not a valid regular expression.
     pub async fn route(&self, pattern: &str, action: Action) -> Result<RouteHandle> {
+        self.route_method(pattern, None, action).await
+    }
+
+    /// Adds a rule scoped to one HTTP method.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `pattern` is not a valid regular expression.
+    pub async fn route_method(
+        &self,
+        pattern: &str,
+        method: Option<&str>,
+        action: Action,
+    ) -> Result<RouteHandle> {
         let regex = Regex::new(pattern)
             .with_context(|| format!("`{pattern}` is not a valid URL pattern"))?;
+        let arrived = Arc::new(AtomicUsize::new(0));
         let hits = Arc::new(AtomicUsize::new(0));
-        let settled = Arc::new(Notify::new());
+        let signal = Arc::new(Notify::new());
         self.rules.lock().await.push(Rule {
             pattern: regex,
+            method: method.map(str::to_owned),
             action,
+            arrived: Arc::clone(&arrived),
             hits: Arc::clone(&hits),
-            settled: Arc::clone(&settled),
+            signal: Arc::clone(&signal),
         });
-        Ok(RouteHandle { hits, settled })
+        Ok(RouteHandle {
+            arrived,
+            hits,
+            signal,
+            release: None,
+        })
+    }
+
+    /// Holds every matching request open until the handle is released.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `pattern` is not a valid regular expression.
+    pub async fn hold(&self, pattern: &str) -> Result<RouteHandle> {
+        let (release, gate) = watch::channel(false);
+        let mut handle = self.route(pattern, Action::Hold(gate)).await?;
+        handle.release = Some(Arc::new(release));
+        Ok(handle)
     }
 }
 
@@ -254,35 +346,80 @@ impl Drop for Network {
     }
 }
 
-/// A rule's counter and its settle signal.
+/// A rule's counters, its progress signal, and — for a held route — the switch
+/// that lets the request go.
 #[derive(Debug, Clone)]
 pub struct RouteHandle {
+    arrived: Arc<AtomicUsize>,
     hits: Arc<AtomicUsize>,
-    settled: Arc<Notify>,
+    signal: Arc<Notify>,
+    release: Option<Arc<watch::Sender<bool>>>,
 }
 
 impl RouteHandle {
-    /// How many requests this rule has answered so far.
+    /// How many matching requests have been intercepted, held or not.
+    pub fn arrived(&self) -> usize {
+        self.arrived.load(Ordering::SeqCst)
+    }
+
+    /// How many matching requests have been answered.
     pub fn hits(&self) -> usize {
         self.hits.load(Ordering::SeqCst)
     }
 
-    /// Waits until one more request handled by this rule has been answered.
+    /// Waits until a matching request has been intercepted.
     ///
-    /// Returns immediately if one already has — `Notify` alone would miss a
-    /// notification sent before the wait started, which is the common case when
-    /// the delay is shorter than the step that follows it.
+    /// # Errors
+    ///
+    /// Fails when none arrives within `timeout`.
+    pub async fn wait_for_arrival(&self, timeout: Duration) -> Result<()> {
+        self.wait_until(timeout, || self.arrived() > 0)
+            .await
+            .context("no matching request was made in time")
+    }
+
+    /// Waits until a matching request has been answered.
     ///
     /// # Errors
     ///
     /// Fails when nothing settles within `timeout`.
     pub async fn wait_for_settled(&self, timeout: Duration) -> Result<()> {
-        if self.hits() > 0 {
-            return Ok(());
-        }
-        tokio::time::timeout(timeout, self.settled.notified())
+        self.wait_until(timeout, || self.hits() > 0)
             .await
-            .context("no held request settled in time")?;
+            .context("no held request settled in time")
+    }
+
+    /// Lets a held request through.
+    ///
+    /// # Errors
+    ///
+    /// Fails when this handle did not come from [`Network::hold`].
+    pub fn release(&self) -> Result<()> {
+        let release = self
+            .release
+            .as_ref()
+            .context("this route was not created with `hold`")?;
+        // Ignores a closed channel: the dispatcher having gone away means the
+        // browser is closing, not that the release failed.
+        let _ = release.send(true);
+        Ok(())
+    }
+
+    /// Polls `done` between notifications.
+    ///
+    /// The check comes first each time round, because `Notify` drops a
+    /// notification sent before anyone was waiting — the common case when the
+    /// request settles faster than the step that follows it.
+    async fn wait_until(&self, timeout: Duration, done: impl Fn() -> bool) -> Result<()> {
+        tokio::time::timeout(timeout, async {
+            loop {
+                if done() {
+                    return;
+                }
+                self.signal.notified().await;
+            }
+        })
+        .await?;
         Ok(())
     }
 }
@@ -301,5 +438,20 @@ fn fail_request(event: &RequestPaused, reason: ErrorReason) -> FailRequest {
     FailRequest {
         request_id: event.request_id.clone(),
         error_reason: reason,
+    }
+}
+
+fn fulfill_request(event: &RequestPaused, content_type: &str, body: &str) -> FulfillRequest {
+    FulfillRequest {
+        request_id: event.request_id.clone(),
+        response_code: 200,
+        response_headers: Some(vec![HeaderEntry {
+            name: "Content-Type".to_owned(),
+            value: content_type.to_owned(),
+        }]),
+        // CDP takes the body base64-encoded, which is also how it carries
+        // binary responses.
+        body: Some(BASE64.encode(body)),
+        response_phrase: None,
     }
 }

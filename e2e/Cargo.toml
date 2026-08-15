@@ -15,6 +15,8 @@ description = "Browser E2E tests and screenshot pipeline for rdrs"
 [dependencies]
 anyhow = "1.0.104"
 axum = "0.8"
+# CDP takes a fulfilled response's body base64-encoded.
+base64 = "0.23"
 cucumber = "0.23.0"
 # For `StreamExt::next` over thirtyfour's CDP event streams.
 futures-util = { version = "0.3", default-features = false }
@@ -74,6 +76,7 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"
 needless_pass_by_value = "allow"
+return_self_not_must_use = "allow"
 similar_names = "allow"
 too_many_lines = "allow"
 

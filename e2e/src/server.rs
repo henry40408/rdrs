@@ -50,7 +50,7 @@ const KAGI_LATENCY: Duration = Duration::from_millis(300);
 pub struct Endpoints {
     /// Base URL of the rdrs server under test.
     pub base_url: String,
-    /// The SQLite file the server was started against, for direct seeding.
+    /// The `SQLite` file the server was started against, for direct seeding.
     pub db_path: PathBuf,
     /// A URL that always answers with a valid RSS document.
     pub feed_url: String,

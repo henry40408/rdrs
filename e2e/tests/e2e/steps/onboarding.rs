@@ -50,5 +50,8 @@ async fn see_text_on_landing(world: &mut RdrsWorld, text: String) -> Result<()> 
 
 #[then("I see the active WebAuthn RP origin")]
 async fn see_rp_origin(world: &mut RdrsWorld) -> Result<()> {
-    world.driver()?.expect_text("webauthn-rp-origin", "http").await
+    world
+        .driver()?
+        .expect_text("webauthn-rp-origin", "http")
+        .await
 }

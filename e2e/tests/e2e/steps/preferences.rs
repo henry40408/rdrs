@@ -22,12 +22,15 @@ async fn switch_theme(world: &mut RdrsWorld, theme: String) -> Result<()> {
     let driver = world.driver()?;
     driver.select_option("theme-select", &theme).await?;
     driver
-        .click_css(&format!("{PREFERENCES_FORM} button[type=submit]"))
+        .submit_css(&format!("{PREFERENCES_FORM} button[type=submit]"))
         .await?;
     world.expect_path("/user-settings").await
 }
 
+// Also an `And` after a `When` in one scenario, where it acts as a barrier
+// before the next interaction.
 #[then(expr = "the html element has data-theme {string}")]
+#[when(expr = "the html element has data-theme {string}")]
 async fn html_has_theme(world: &mut RdrsWorld, value: String) -> Result<()> {
     world
         .driver()?
@@ -37,7 +40,10 @@ async fn html_has_theme(world: &mut RdrsWorld, value: String) -> Result<()> {
 
 #[then("the html element has no data-theme attribute")]
 async fn html_has_no_theme(world: &mut RdrsWorld) -> Result<()> {
-    world.driver()?.expect_attr("html", "data-theme", None).await
+    world
+        .driver()?
+        .expect_attr("html", "data-theme", None)
+        .await
 }
 
 /// Light mode drops the global `-webkit-font-smoothing: antialiased` (which
@@ -83,7 +89,7 @@ async fn change_password(world: &mut RdrsWorld, new_password: String) -> Result<
         )
         .await?;
     driver
-        .click_css(&format!("{PASSWORD_FORM} button[type=submit]"))
+        .submit_css(&format!("{PASSWORD_FORM} button[type=submit]"))
         .await?;
     // The server deletes every session and redirects to /login on success.
     world.expect_path("/login").await?;
@@ -109,7 +115,7 @@ async fn set_retention(world: &mut RdrsWorld, days: String) -> Result<()> {
     let driver = world.driver()?;
     driver.fill("retention-read-days", &days).await?;
     driver
-        .click_css(&format!("{PREFERENCES_FORM} button[type=submit]"))
+        .submit_css(&format!("{PREFERENCES_FORM} button[type=submit]"))
         .await?;
     world.expect_path("/user-settings").await
 }

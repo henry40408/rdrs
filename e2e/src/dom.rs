@@ -122,6 +122,129 @@ pub trait Dom {
 
     /// Evaluates a script and hands back the JSON it returned.
     async fn eval(&self, script: &str) -> Result<serde_json::Value>;
+
+    /// Finds an element and reads its text in one go, reporting `None` when it
+    /// is not there *or* went away mid-read.
+    ///
+    /// The shape every "does this region say X yet?" poll needs. Doing it in
+    /// two steps races the in-place swaps: the element is found, the list pane
+    /// is replaced, and the read fails with a stale-reference error — which is
+    /// the poll's answer ("not yet"), not a fault.
+    async fn text_of_css(&self, selector: &str) -> Result<Option<String>>;
+
+    /// [`Dom::text_of_css`] addressed by `data-testid`.
+    async fn text_of_test_id(&self, id: &str) -> Result<Option<String>>;
+
+    /// The rendered text of every element a CSS selector matches, in document
+    /// order.
+    ///
+    /// Playwright's `toHaveText([...])` compared exactly this, and pinned the
+    /// count along the way — a row that should have been hidden fails on the
+    /// comparison rather than passing unnoticed at the end of the list.
+    async fn texts_of(&self, selector: &str) -> Result<Vec<String>>;
+
+    /// Is the checkbox ticked? Playwright's `toBeChecked`.
+    async fn is_checked(&self, id: &str) -> Result<bool>;
+
+    /// Ticks a checkbox if it is not already, Playwright's `check`.
+    async fn check(&self, id: &str) -> Result<()>;
+
+    /// Does this element have keyboard focus? Playwright's `toBeFocused`.
+    async fn is_focused(&self, id: &str) -> Result<bool>;
+
+    /// One computed style property of the first element a selector matches.
+    async fn computed_style(&self, selector: &str, property: &str) -> Result<String>;
+
+    /// The first matching element's border box, as `(x, y, width, height)` in
+    /// viewport coordinates — Playwright's `boundingBox`.
+    ///
+    /// Read through `getBoundingClientRect` rather than `WebElement::rect`,
+    /// which reports document coordinates and so disagrees once the page has
+    /// scrolled.
+    async fn bounding_box(&self, selector: &str) -> Result<(f64, f64, f64, f64)>;
+
+    /// Clicks the page body, then presses a key — the suite's "I press the X
+    /// key" step.
+    ///
+    /// The shortcuts are bound on `document`, so a key sent while a field
+    /// holds focus is typed into the field instead of acting.
+    async fn press(&self, key: &str) -> Result<()>;
+
+    /// Presses a key without moving focus first.
+    ///
+    /// The help overlay puts focus on its own Esc button, and clicking the
+    /// body to "focus nothing" would both blur it and trip its
+    /// click-outside-to-close handler — so the scenarios that drive the
+    /// overlay use this instead.
+    async fn press_focused(&self, key: &str) -> Result<()>;
+}
+
+/// Clicks an element once it is actually clickable.
+///
+/// Playwright checks actionability before every click and waits for it;
+/// `WebElement::click` does not, and dispatches into a disabled control
+/// happily. The reading pane's Summarize toggle starts disabled and is enabled
+/// only once `/api/entries/{id}/neighbors` resolves, so a click that does not
+/// wait lands on the disabled button, fires nothing, and fails several steps
+/// later with no summary and no explanation.
+///
+/// [`Dom::click`] and [`Dom::click_css`] already wait; this is for the callers
+/// that have found the element themselves, usually by scoping to a row.
+///
+/// # Errors
+///
+/// Fails when the element never becomes clickable.
+pub async fn click_when_ready(element: &WebElement) -> Result<()> {
+    element
+        .wait_until()
+        .wait(WAIT_TIMEOUT, WAIT_INTERVAL)
+        .clickable()
+        .await
+        .context("the element never became clickable")?;
+    element.click().await?;
+    Ok(())
+}
+
+/// Clicks a control that navigates, and waits for the navigation to land.
+///
+/// The element-handle form of [`Dom::submit_css`], for the row-scoped controls
+/// — a feed's Refresh, a category's Delete — that are found by walking a table
+/// rather than by selector. Without the wait, the assertion that follows reads
+/// the *old* page, where nothing has changed yet.
+///
+/// # Errors
+///
+/// Fails when the click does not replace the document.
+pub async fn submit_element(driver: &WebDriver, element: &WebElement) -> Result<()> {
+    let document = driver.find(By::Tag("html")).await?;
+    click_when_ready(element).await?;
+    document
+        .wait_until()
+        .wait(WAIT_TIMEOUT, WAIT_INTERVAL)
+        .stale()
+        .await
+        .context("the click did not navigate anywhere")?;
+    Ok(())
+}
+
+/// The text an element contains, as Playwright compared it.
+///
+/// **Not** `WebElement::text`, which is `WebDriver`'s "Get Element Text" and
+/// returns *rendered* text — put through `text-transform`, so a heading styled
+/// `uppercase` reads `READING FEED` where the markup says `Reading Feed`.
+/// Playwright's `toContainText` / `toHaveText` / `hasText` all read
+/// `textContent` instead, so every assertion ported from them has to as well,
+/// or it compares against the stylesheet rather than the page's content.
+#[allow(async_fn_in_trait)]
+pub trait TextContent {
+    /// The element's `textContent`, untouched by CSS.
+    async fn content_text(&self) -> Result<String>;
+}
+
+impl TextContent for WebElement {
+    async fn content_text(&self) -> Result<String> {
+        Ok(self.prop("textContent").await?.unwrap_or_default())
+    }
 }
 
 /// Finding elements inside another element, for the steps that scoped a query
@@ -133,6 +256,12 @@ pub trait Within {
     /// Stands in for `getByRole("link", { name })`.
     async fn link_named(&self, name: &str) -> Result<Option<WebElement>>;
 
+    /// The descendant button with this accessible name, if there is one.
+    ///
+    /// Stands in for `getByRole("button", { name })`, which matches either the
+    /// rendered text or an `aria-label` — both are in use here.
+    async fn button_named(&self, name: &str) -> Result<Option<WebElement>>;
+
     /// The descendant carrying `data-testid`, without waiting.
     async fn test_id_opt(&self, id: &str) -> Result<Option<WebElement>>;
 
@@ -142,8 +271,19 @@ pub trait Within {
 
 impl Within for WebElement {
     async fn link_named(&self, name: &str) -> Result<Option<WebElement>> {
-        let xpath = format!(".//a[normalize-space(.)={}]", xpath_literal(name));
-        Ok(self.query(By::XPath(xpath)).nowait().first_opt().await?)
+        Ok(self
+            .query(By::XPath(named_role_xpath("a", name)))
+            .nowait()
+            .first_opt()
+            .await?)
+    }
+
+    async fn button_named(&self, name: &str) -> Result<Option<WebElement>> {
+        Ok(self
+            .query(By::XPath(named_role_xpath("button", name)))
+            .wait(WAIT_TIMEOUT, WAIT_INTERVAL)
+            .first_opt()
+            .await?)
     }
 
     async fn test_id_opt(&self, id: &str) -> Result<Option<WebElement>> {
@@ -251,17 +391,15 @@ impl Dom for WebDriver {
         let mut last = None;
         loop {
             if let Some(element) = self.test_id_opt(id).await? {
-                let text = element.text().await.unwrap_or_default();
+                let text = element.content_text().await.unwrap_or_default();
                 if text.contains(needle) {
                     return Ok(());
                 }
                 last = Some(text);
             }
             if Instant::now() >= deadline {
-                let seen = last.map_or_else(
-                    || "no such element".to_owned(),
-                    |text| format!("{text:?}"),
-                );
+                let seen =
+                    last.map_or_else(|| "no such element".to_owned(), |text| format!("{text:?}"));
                 bail!(
                     "testid `{id}`: expected text containing {needle:?}, \
                      last saw {seen} after {WAIT_TIMEOUT:?}"
@@ -272,7 +410,7 @@ impl Dom for WebDriver {
     }
 
     async fn text_of(&self, id: &str) -> Result<String> {
-        Ok(self.test_id(id).await?.text().await?)
+        self.test_id(id).await?.content_text().await
     }
 
     async fn is_visible(&self, id: &str) -> Result<bool> {
@@ -365,7 +503,14 @@ impl Dom for WebDriver {
             let Some(element) = self.css_opt(selector).await? else {
                 return Ok(false);
             };
-            Ok(element.attr(attr).await?.as_deref() == expected)
+            // A stale handle means the document was replaced between finding
+            // the element and reading it — which is exactly what these
+            // assertions are waiting through, since most of them follow a form
+            // post. Treat it as "not yet", not as a failure.
+            match element.attr(attr).await {
+                Ok(value) => Ok(value.as_deref() == expected),
+                Err(_) => Ok(false),
+            }
         })
         .await
     }
@@ -384,8 +529,9 @@ impl Dom for WebDriver {
         // `getByText` resolves to; without it every ancestor up to `<body>`
         // matches and the first hit is a container that may well be off-screen.
         let literal = xpath_literal(text);
-        let xpath =
-            format!("//*[contains(normalize-space(.), {literal})][not(.//*[contains(normalize-space(.), {literal})])]");
+        let xpath = format!(
+            "//*[contains(normalize-space(.), {literal})][not(.//*[contains(normalize-space(.), {literal})])]"
+        );
         displayed(self, By::XPath(xpath), &format!("text {text:?}"))
             .await
             .map(|_| ())
@@ -393,6 +539,104 @@ impl Dom for WebDriver {
 
     async fn eval(&self, script: &str) -> Result<serde_json::Value> {
         Ok(self.execute(script, vec![]).await?.json().clone())
+    }
+
+    async fn text_of_css(&self, selector: &str) -> Result<Option<String>> {
+        let Some(element) = self.css_opt(selector).await? else {
+            return Ok(None);
+        };
+        Ok(element.content_text().await.ok())
+    }
+
+    async fn text_of_test_id(&self, id: &str) -> Result<Option<String>> {
+        let Some(element) = self.test_id_opt(id).await? else {
+            return Ok(None);
+        };
+        Ok(element.content_text().await.ok())
+    }
+
+    async fn texts_of(&self, selector: &str) -> Result<Vec<String>> {
+        let mut texts = Vec::new();
+        for element in self.css_all(selector).await? {
+            texts.push(element.content_text().await?);
+        }
+        Ok(texts)
+    }
+
+    async fn is_checked(&self, id: &str) -> Result<bool> {
+        Ok(self.test_id(id).await?.is_selected().await?)
+    }
+
+    async fn check(&self, id: &str) -> Result<()> {
+        if !self.is_checked(id).await? {
+            self.click(id).await?;
+        }
+        Ok(())
+    }
+
+    async fn is_focused(&self, id: &str) -> Result<bool> {
+        let element = self.test_id(id).await?;
+        Ok(self.active_element().await? == element)
+    }
+
+    async fn computed_style(&self, selector: &str, property: &str) -> Result<String> {
+        // Deliberately not `css`, which waits for a *displayed* element: the
+        // scenarios that read a computed style are usually asking whether
+        // something is `display: none`, and requiring it to be visible first
+        // makes that question unanswerable.
+        let element = self
+            .css_opt(selector)
+            .await?
+            .with_context(|| format!("no element matches `{selector}`"))?;
+        let value = self
+            .execute(
+                "return getComputedStyle(arguments[0]).getPropertyValue(arguments[1]);",
+                vec![element.to_json()?, serde_json::json!(property)],
+            )
+            .await?;
+        Ok(value.json().as_str().unwrap_or_default().to_owned())
+    }
+
+    async fn bounding_box(&self, selector: &str) -> Result<(f64, f64, f64, f64)> {
+        let rect = self
+            .execute(
+                "const r = arguments[0].getBoundingClientRect();\
+                 return [r.x, r.y, r.width, r.height];",
+                vec![self.css(selector).await?.to_json()?],
+            )
+            .await?;
+        let values = rect
+            .json()
+            .as_array()
+            .context("the rect probe did not return an array")?
+            .iter()
+            .map(|value| value.as_f64().unwrap_or_default())
+            .collect::<Vec<_>>();
+        let [x, y, width, height] = values[..] else {
+            bail!(
+                "the rect probe returned {} values, expected 4",
+                values.len()
+            );
+        };
+        Ok((x, y, width, height))
+    }
+
+    async fn press(&self, key: &str) -> Result<()> {
+        self.find(By::Tag("body")).await?.click().await?;
+        self.press_focused(key).await
+    }
+
+    async fn press_focused(&self, key: &str) -> Result<()> {
+        // Only `Enter` and `Escape` are named keys in this suite; everything
+        // else is a literal character, including the ones needing shift (`A`,
+        // `}`, `?`), which WebDriver applies for us.
+        let keys = match key {
+            "Enter" => char::from(Key::Enter).to_string(),
+            "Escape" => char::from(Key::Escape).to_string(),
+            other => other.to_owned(),
+        };
+        self.action_chain().send_keys(keys).perform().await?;
+        Ok(())
     }
 }
 
@@ -413,7 +657,30 @@ async fn all(driver: &WebDriver, by: By) -> Result<Vec<WebElement>> {
     Ok(driver.query(by).nowait().all_from_selector().await?)
 }
 
-/// Quotes a string for XPath, which has no escape syntax of its own.
+/// An `XPath` for "the `tag` whose accessible name matches `name`", the way
+/// `getByRole(role, { name })` matches.
+///
+/// Playwright's default is **substring, case-insensitive** — not the exact
+/// comparison the name suggests. Matching exactly instead makes a button
+/// labelled "Load more entries" invisible to a step asking for "Load more",
+/// and a label the stylesheet uppercases invisible to everything.
+///
+/// The name comes from the rendered text or an `aria-label`; both are in use
+/// here. `XPath` 1.0 has no case-insensitive compare, so both sides are folded
+/// with `translate`.
+fn named_role_xpath(tag: &str, name: &str) -> String {
+    const UPPER: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const LOWER: &str = "abcdefghijklmnopqrstuvwxyz";
+    let needle = xpath_literal(&name.to_lowercase());
+    let fold = |expression: &str| format!("translate({expression}, '{UPPER}', '{LOWER}')");
+    format!(
+        ".//{tag}[contains({}, {needle}) or contains({}, {needle})]",
+        fold("normalize-space(.)"),
+        fold("@aria-label"),
+    )
+}
+
+/// Quotes a string for `XPath`, which has no escape syntax of its own.
 ///
 /// A value containing both quote characters has to be assembled with
 /// `concat()`; anything simpler picks whichever quote it does not contain.

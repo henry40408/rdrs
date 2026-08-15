@@ -120,7 +120,10 @@ async fn walk(
     if url.as_str().contains("/login") {
         findings.note(
             "login",
-            format!("still on /login after submitting: {}", driver.title().await?),
+            format!(
+                "still on /login after submitting: {}",
+                driver.title().await?
+            ),
         );
     }
 
@@ -189,7 +192,10 @@ async fn walk(
         findings.note("categories", "no create form");
     } else {
         driver
-            .fill_css(&format!(r#"{ADD_CATEGORY} input[name="name"]"#), "Walkthrough")
+            .fill_css(
+                &format!(r#"{ADD_CATEGORY} input[name="name"]"#),
+                "Walkthrough",
+            )
             .await?;
         driver
             .submit_css(&format!(r#"{ADD_CATEGORY} button[type="submit"]"#))
@@ -221,7 +227,11 @@ async fn walk(
         let user_id = seed.user_id(USER).await?;
         let category_id = seed.create_category(user_id, "Walk").await?;
         let feed_id = seed
-            .create_feed(category_id, "https://example.invalid/walk", Some("Walk Feed"))
+            .create_feed(
+                category_id,
+                "https://example.invalid/walk",
+                Some("Walk Feed"),
+            )
             .await?;
         let entries: Vec<_> = (0..3)
             .map(|i| {

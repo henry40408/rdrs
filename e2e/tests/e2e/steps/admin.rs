@@ -3,7 +3,7 @@
 use anyhow::{Result, ensure};
 use cucumber::{given, then, when};
 use rdrs_e2e::api::PASSWORD;
-use rdrs_e2e::dom::{Dom, Within};
+use rdrs_e2e::dom::{Dom, Within, submit_element};
 use rdrs_e2e::world::RdrsWorld;
 
 /// Promotes this scenario's account to admin through the seed helper, then
@@ -51,16 +51,15 @@ async fn open_statistics(world: &mut RdrsWorld) -> Result<()> {
 async fn disable_other_user(world: &mut RdrsWorld) -> Result<()> {
     let other = world.other_username()?;
     let driver = world.driver()?;
-    driver
+    let button = driver
         .row_with_text(&other)
         .await?
         .test_id("admin-disable-btn")
-        .await?
-        .click()
         .await?;
-    // The form POST redirects back to /admin; waiting for the row to come back
-    // is what the old `waitForURL(/\/admin/)` was standing in for.
-    driver.row_with_text(&other).await.map(|_| ())
+    // The form POST redirects back to /admin, so the wait is for the document
+    // to be replaced — what the old `waitForURL(/\/admin/)` stood in for, and
+    // which watching the URL cannot detect when it redirects to the same page.
+    submit_element(driver, &button).await
 }
 
 #[then("I see my username in the users table")]
@@ -100,6 +99,9 @@ async fn expect_at_least(world: &RdrsWorld, id: &str, minimum: u32) -> Result<()
         .trim()
         .parse()
         .map_err(|_| anyhow::anyhow!("`{id}` reads {text:?}, which is not a count"))?;
-    ensure!(count >= minimum, "`{id}` is {count}, expected at least {minimum}");
+    ensure!(
+        count >= minimum,
+        "`{id}` is {count}, expected at least {minimum}"
+    );
     Ok(())
 }
