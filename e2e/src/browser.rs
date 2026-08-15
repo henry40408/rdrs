@@ -74,18 +74,28 @@ impl Browser {
     /// downloaded, or when the session cannot be created.
     pub async fn open(scripting: Scripting) -> Result<Self> {
         let mut caps = DesiredCapabilities::chrome();
-        // `--headless=new`, not thirtyfour's `set_headless()` (which sends the
-        // bare `--headless`). The old headless has no pointing device, so it
-        // reports `hover: none` — and the stylesheet's touch baseline hangs off
-        // `@media (hover: none)`, which put every desktop scenario on the
-        // 44px-tap-target branch. Newer Chrome builds alias `--headless` to the
-        // new mode, so this only ever failed where the alias had not landed.
-        //
-        // It cannot be corrected after the fact: `Emulation.setEmulatedMedia`
-        // silently ignores `hover` and `pointer` (measured), and the only CDP
-        // command that moves them is `setTouchEmulationEnabled`, which is the
-        // wrong direction for a desktop session.
         caps.add_arg("--headless=new")?;
+        // Pins the hover and pointer *types* the way Playwright does, because
+        // nothing else can. A headless browser has no pointing device, so on a
+        // Linux runner it reports `hover: none` — and the stylesheet's touch
+        // baseline hangs off `@media (hover: none)`, which lays every desktop
+        // scenario out on the 44px-tap-target branch (a 44px close button
+        // beside a 35px input). macOS reports `hover: hover` regardless, which
+        // is why this was invisible locally.
+        //
+        // It cannot be corrected after the session starts:
+        // `Emulation.setEmulatedMedia` silently ignores `hover` and `pointer`
+        // — measured, whatever the DevTools feature list suggests — and the
+        // only command that moves them, `setTouchEmulationEnabled`, goes the
+        // other way. `set_touch(true)` still overrides this, which is also
+        // measured.
+        //
+        // The values are Blink's own enums: `kHoverHoverType = 2`,
+        // `kPointerFine = 4`.
+        caps.add_arg(
+            "--blink-settings=primaryHoverType=2,availableHoverTypes=2,\
+             primaryPointerType=4,availablePointerTypes=4",
+        )?;
         caps.add_arg(&format!(
             "--window-size={},{}",
             DESKTOP.width, DESKTOP.height
