@@ -133,11 +133,11 @@ Feature: Triage entries (star, mark-read, summarize)
     Then the reading pane shows the title "Test Entry 1"
     And the entry list does not show "Test Entry 3"
 
-  # Both refresh paths re-render the whole row container with genuinely changed
-  # markup — the rows survive and only gain `entry-read` — so the
-  # skip-when-unchanged guard cannot apply. Replacing the container rebuilt
-  # every row and every favicon in it (measured: none of six preserved), and a
-  # rebuilt <img> is what WebKit blinks. The container is morphed instead.
+  # Replacing the row container rebuilt every row and every favicon in it
+  # (measured: none of six preserved), and a rebuilt <img> is what WebKit
+  # blinks. The container is morphed instead — which also means it never takes
+  # the skip-when-unchanged shortcut, since morphing an identical tree already
+  # touches nothing (see the feed-switch scenario below).
   Scenario: Mark Above as Read keeps the rows and favicons already on screen
     Given the "Triage Feed" feed has a favicon
     When I open the entries page for category "Triage Category" showing all statuses
@@ -159,6 +159,23 @@ Feature: Triage entries (star, mark-read, summarize)
     And I mark the loaded entries as read
     Then every entry in the list is marked read
     And the entry list is scrolled to the top
+
+  # The list container used to take the same skip-when-unchanged shortcut as a
+  # replacement target: identical server answer, no swap. Every feed's empty
+  # state is the same markup, so marking a second feed read answered with a
+  # list byte-identical to the first feed's — the swap was skipped and the rows
+  # just marked stayed on screen, unread, under a flash saying they had been
+  # marked, until a reload. The feed switch in between is the whole point: it
+  # answers for `[data-list-pane]`, so it rewrites this container without ever
+  # updating what the shortcut compares against.
+  Scenario: Mark Above as Read still refreshes the list after switching feeds
+    Given I have a feed "Second Feed" with 3 test entries in category "Triage Category"
+    When I open the entries page for feed "Triage Feed"
+    And I mark the loaded entries as read
+    And I click the sidebar feed "Second Feed"
+    Then the entry list has 3 entries
+    When I mark the loaded entries as read
+    Then the entry list has 0 entries
 
   Scenario: The Mark as Read dropdown keeps the rows and favicons already on screen
     Given the "Triage Feed" feed has a favicon

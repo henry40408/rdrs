@@ -68,6 +68,13 @@ When("I mark the loaded entries as read", async ({ page }) => {
 // the pane scrolls internally on desktop, which is where the offset survives a
 // swap. Polled because the rows arrive with the page and the first evaluate can
 // land on a container that has not laid out yet (scrollHeight === clientHeight).
+// Counted from the rows themselves, never from the empty-state placeholder: a
+// list that failed to refresh still has its rows on screen, and asserting on
+// the placeholder would let that pass as "empty" the moment it renders.
+Then("the entry list has {int} entries", async ({ page }, count) => {
+  await expect(page.getByTestId("entry-item")).toHaveCount(count);
+});
+
 When("I scroll the entry list to the bottom", async ({ page }) => {
   await expect
     .poll(async () =>
