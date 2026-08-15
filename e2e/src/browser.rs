@@ -63,6 +63,50 @@ pub enum Scripting {
 pub struct Browser {
     driver: WebDriver,
     viewport: Viewport,
+    /// The emulated media, tracked because `Emulation.setEmulatedMedia`
+    /// replaces the *whole* feature list on every call — setting a colour
+    /// scheme would otherwise silently drop the pointer emulation, and vice
+    /// versa.
+    media: Media,
+}
+
+/// The media features this suite emulates.
+#[derive(Debug, Default, Clone)]
+struct Media {
+    /// `None` follows the browser's own setting; the screenshots pin it.
+    color_scheme: Option<String>,
+    /// Coarse pointer and no hover — the touch-device branch.
+    touch: bool,
+}
+
+impl Media {
+    /// The `features` array for `Emulation.setEmulatedMedia`.
+    ///
+    /// The pointer features are always stated, never left to the browser:
+    /// headless Chrome has no real pointing device and reports
+    /// `pointer: coarse` / `hover: none` unless told otherwise, which silently
+    /// puts every desktop scenario on the touch-target branch of the
+    /// stylesheet — a 44px minimum where the design says 35.
+    fn features(&self) -> serde_json::Value {
+        let (pointer, hover) = if self.touch {
+            ("coarse", "none")
+        } else {
+            ("fine", "hover")
+        };
+        let mut features = vec![
+            serde_json::json!({ "name": "pointer", "value": pointer }),
+            serde_json::json!({ "name": "any-pointer", "value": pointer }),
+            serde_json::json!({ "name": "hover", "value": hover }),
+            serde_json::json!({ "name": "any-hover", "value": hover }),
+        ];
+        if let Some(scheme) = &self.color_scheme {
+            features.push(serde_json::json!({
+                "name": "prefers-color-scheme",
+                "value": scheme,
+            }));
+        }
+        serde_json::Value::Array(features)
+    }
 }
 
 impl Browser {
@@ -97,7 +141,11 @@ impl Browser {
         let browser = Self {
             driver,
             viewport: DESKTOP,
+            media: Media::default(),
         };
+        // Stated up front rather than left to the browser — see
+        // `Media::features` for what headless Chrome reports otherwise.
+        browser.apply_media().await?;
         if scripting == Scripting::Disabled {
             browser.disable_scripting().await?;
         }
@@ -170,7 +218,7 @@ impl Browser {
     /// # Errors
     ///
     /// Fails when either CDP command is refused.
-    pub async fn set_touch(&self, enabled: bool) -> Result<()> {
+    pub async fn set_touch(&mut self, enabled: bool) -> Result<()> {
         self.driver
             .cdp()
             .send_raw(
@@ -178,26 +226,11 @@ impl Browser {
                 serde_json::json!({ "enabled": enabled, "maxTouchPoints": 5 }),
             )
             .await?;
-        // The media features are a separate override; the touch emulation above
-        // changes event dispatch but not what `@media (pointer: coarse)` sees.
-        let features = if enabled {
-            serde_json::json!([
-                { "name": "pointer", "value": "coarse" },
-                { "name": "any-pointer", "value": "coarse" },
-                { "name": "hover", "value": "none" },
-                { "name": "any-hover", "value": "none" },
-            ])
-        } else {
-            serde_json::json!([])
-        };
-        self.driver
-            .cdp()
-            .send_raw(
-                "Emulation.setEmulatedMedia",
-                serde_json::json!({ "media": "screen", "features": features }),
-            )
-            .await?;
-        Ok(())
+        // The media features are a separate override: the touch emulation
+        // above changes event dispatch but not what `@media (pointer: coarse)`
+        // sees.
+        self.media.touch = enabled;
+        self.apply_media().await
     }
 
     /// Emulates `prefers-color-scheme`, with no stored preference — the app's
@@ -206,15 +239,19 @@ impl Browser {
     /// # Errors
     ///
     /// Fails when the CDP command is refused.
-    pub async fn emulate_color_scheme(&self, scheme: &str) -> Result<()> {
+    pub async fn emulate_color_scheme(&mut self, scheme: &str) -> Result<()> {
+        self.media.color_scheme = Some(scheme.to_owned());
+        self.apply_media().await
+    }
+
+    /// Sends the whole emulated-media set, since CDP replaces rather than
+    /// merges it.
+    async fn apply_media(&self) -> Result<()> {
         self.driver
             .cdp()
             .send_raw(
                 "Emulation.setEmulatedMedia",
-                serde_json::json!({
-                    "media": "screen",
-                    "features": [{ "name": "prefers-color-scheme", "value": scheme }],
-                }),
+                serde_json::json!({ "media": "screen", "features": self.media.features() }),
             )
             .await?;
         Ok(())
