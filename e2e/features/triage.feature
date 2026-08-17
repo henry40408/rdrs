@@ -160,6 +160,23 @@ Feature: Triage entries (star, mark-read, summarize)
     Then every entry in the list is marked read
     And the entry list is scrolled to the top
 
+  # The *entry list* going back to the top is the point of the scenario above.
+  # The sidebar beside it is not: it is a separate scroller, and the reader's
+  # place in a long category list has nothing to do with the rows that were just
+  # triaged. Hiding fully-read groups is what made the difference visible —
+  # emptying a group takes it out of the list, which the sidebar treats as a
+  # structural change and answers with a full re-render, and that rebuild used
+  # to drop the offset.
+  Scenario: Mark Above as Read leaves the sidebar scrolled where it was
+    Given fully-read categories and feeds are hidden
+    And I have 20 more categories with unread entries
+    When I open the entries page for category "Triage Category"
+    And the sidebar has loaded its categories
+    And I scroll the sidebar categories to the bottom
+    And I mark the loaded entries as read
+    And the sidebar shows no unread for category "Triage Category"
+    Then the sidebar is still scrolled where it was
+
   # The list container used to take the same skip-when-unchanged shortcut as a
   # replacement target: identical server answer, no swap. Every feed's empty
   # state is the same markup, so marking a second feed read answered with a

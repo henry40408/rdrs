@@ -655,6 +655,15 @@ class RdrsSidebar extends HTMLElement {
         openFeeds?.remove();
         this._detachedFeeds = openFeeds;
 
+        // `.sidebar-nav` is its own scroller, and the rebuild below replaces it
+        // — so its offset has to be carried across the same way the feed list
+        // above is. With `sidebar_hide_read` on this is not a navigation-only
+        // path: emptying a group takes it out of the list, which counts as a
+        // structural change, so "Mark Above as Read" (a button at the *bottom*
+        // of the entry list) re-rendered the sidebar and sent a reader who had
+        // scrolled down their categories back to the top.
+        const navOffset = this.querySelector('.sidebar-nav')?.scrollTop ?? 0;
+
         this.innerHTML = `
 <button class="sidebar-toggle" type="button" aria-label="Open menu">${ICON.menu}</button>
 
@@ -729,6 +738,16 @@ class RdrsSidebar extends HTMLElement {
         // The rebuild above also discards the open category's feed list, which
         // lives inside #sidebar-categories and is not part of this template.
         this._renderFeeds();
+
+        // After `_renderFeeds()`, which is what settles the scroll extent:
+        // restored before those rows exist, a bottom-anchored offset would be
+        // clamped to the height of a list still missing them. A row this render
+        // genuinely dropped shortens the list too, and the browser clamps to
+        // the new maximum — the closest thing to "where it was" left.
+        if (navOffset > 0) {
+            const nav = this.querySelector('.sidebar-nav');
+            if (nav) nav.scrollTop = navOffset;
+        }
 
         // innerHTML above discards the previous subtree along with its
         // listeners, so every render re-binds from scratch.

@@ -534,9 +534,9 @@ the floor. The entries-family routes answer with four shapes:
   category and feed links, the `[` / `]` / `{` / `}` shortcuts and `g c` / `g f`,
   pushes the clean URL with `pushState`, and patches the sidebar's `.active`
   classes *without* re-rendering it — `<rdrs-sidebar>`'s `render()` rebuilds
-  `innerHTML`, which would reset `.sidebar-nav`'s own scroll offset, the very
-  jump this navigation avoids. `popstate` reverses it: a category or feed path
-  swaps back in place, anything else reloads.
+  `innerHTML`, and a navigation has no reason to pay for that or to churn the
+  rows under the pointer. `popstate` reverses it: a category or feed path swaps
+  back in place, anything else reloads.
 
 The sidebar lists the **feeds of the open category** underneath it, loaded on
 demand from `GET /api/sidebar/categories/{id}/feeds` (with per-feed unread
@@ -561,6 +561,14 @@ don't-move-things-underneath reason, the unread ordering settles on a full
 render rather than re-sorting on every badge update; `isStructuralChange()`
 treats a changed *visible set* as structural (hidden rows must appear and
 disappear promptly) but a changed *order* as not.
+
+`sidebar_hide_read` is what makes that full render an *everyday* path rather than
+a navigation one: emptying a group takes it out of the visible set, so an
+ordinary mark-as-read is structural. `render()` therefore carries two things
+across its own `innerHTML` rebuild — the open category's feed rows, re-adopted by
+id so their `<img>` favicons are never recreated, and `.sidebar-nav`'s scroll
+offset, since the nav is its own scroller and a reader deep in a long category
+list has nothing to do with the entries just triaged.
 
 Swaps that target a reading-pane region (`#reading-pane`,
 `#rp-summary-container`) and are *not* pane navigation carry a staleness check:

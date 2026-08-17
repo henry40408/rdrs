@@ -177,6 +177,30 @@ async fn more_categories(world: &mut RdrsWorld, count: u32) -> Result<()> {
     Ok(())
 }
 
+/// The same filler, but with something unread in each one, for the scenarios
+/// that also turn on the hide-fully-read setting: it drops every empty
+/// category, and a sidebar short enough to fit has no scroll offset to lose.
+#[given(expr = "I have {int} more categories with unread entries")]
+async fn more_categories_with_unread(world: &mut RdrsWorld, count: u32) -> Result<()> {
+    let username = world.user.username.clone();
+    let user_id = world.user_id().await?;
+    let seed = world.seed().clone();
+    for i in 1..=count {
+        let category_id = seed
+            .create_category(user_id, &format!("Filler {i}"))
+            .await?;
+        let feed_id = seed
+            .create_feed(
+                category_id,
+                &format!("https://example.com/{username}-filler-{i}.xml"),
+                Some(&format!("Filler Feed {i}")),
+            )
+            .await?;
+        seed.seed_test_entries(feed_id, 1).await?;
+    }
+    Ok(())
+}
+
 // ── Navigation ───────────────────────────────────────────────────────────────
 
 #[when("I open the all entries page")]
