@@ -514,6 +514,15 @@ body:has(.nav-fallback) .main-content {
     flex-direction: column;
 }
 
+/* The list is mounted for the open category whether or not it has rows to
+   show, and `hide fully-read` empties it whenever the reader is sitting in a
+   category they have finished. Its margins were then the only thing left of
+   it: a gap under the category row that reads as a group which failed to
+   render. */
+.sidebar-feeds:empty {
+    display: none;
+}
+
 .sidebar-feed {
     display: flex;
     align-items: center;

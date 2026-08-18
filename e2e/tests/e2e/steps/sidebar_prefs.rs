@@ -1,10 +1,10 @@
 //! Sidebar ordering and the hide-fully-read toggle — a port of
 //! `sidebar_prefs.steps.js`.
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use cucumber::{given, then, when};
 use rdrs_e2e::dom::Dom;
-use rdrs_e2e::wait::eventually_eq;
+use rdrs_e2e::wait::{eventually, eventually_eq};
 use rdrs_e2e::world::RdrsWorld;
 
 /// The two sidebar settings ship in the same "Display Preferences" form as the
@@ -68,6 +68,48 @@ async fn sidebar_feeds_read(world: &mut RdrsWorld, expected: String) -> Result<(
         &expected,
     )
     .await
+}
+
+/// Hiding fully-read feeds can empty the open category's list completely, and
+/// the list is mounted either way — so its margins showed as a gap under the
+/// category row, reading as a group that failed to render.
+///
+/// Measured as the distance to the row below rather than by inspecting the
+/// list: what regressed is the space the reader sees, and stating it that way
+/// keeps the assertion true however the list is (or isn't) hidden. Waiting for
+/// the list to mount first is what keeps it from passing on a sidebar whose
+/// feeds simply have not arrived yet.
+#[then(expr = "the sidebar leaves no gap below category {string}")]
+async fn no_gap_below_category(world: &mut RdrsWorld, name: String) -> Result<()> {
+    let driver = world.driver()?;
+    eventually("the open category's feed list mounted", || async {
+        Ok(!driver
+            .css_all(".sidebar-feeds[data-category-id]")
+            .await?
+            .is_empty())
+    })
+    .await?;
+    let script = format!(
+        r##"
+        const name = {};
+        const rows = [...document.querySelectorAll("#sidebar-categories a[data-category-id]")];
+        const at = rows.findIndex(
+            (row) => row.querySelector(".sidebar-item-label")?.textContent.trim() === name,
+        );
+        if (at < 0 || at + 1 >= rows.length) return null;
+        return Math.round(
+            rows[at + 1].getBoundingClientRect().top - rows[at].getBoundingClientRect().bottom,
+        );
+        "##,
+        serde_json::Value::from(name.as_str()),
+    );
+    let gap = driver
+        .eval(&script)
+        .await?
+        .as_i64()
+        .with_context(|| format!("`{name}` and the category below it were not both listed"))?;
+    ensure!(gap <= 1, "the sidebar left a {gap}px gap below `{name}`");
+    Ok(())
 }
 
 #[then(expr = "the sidebar order field shows {string}")]
