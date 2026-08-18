@@ -38,6 +38,7 @@ Feature: Sidebar display preferences
     When I open the entries page for category "Cat A"
     And the sidebar has loaded its categories
     Then the sidebar categories read "Cat A, Cat B"
+    And the sidebar leaves no gap below category "Cat A"
 
   Scenario: Hiding fully-read groups drops a read feed from the open category
     Given all entries in feed "Zulu Feed" are marked read
