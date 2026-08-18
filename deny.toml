@@ -31,6 +31,13 @@ ignore = [
     # now resolved).
     "RUSTSEC-2026-0192",
     "RUSTSEC-2026-0206",
+    # h2 queues empty DATA frames without limit (low severity), reachable via
+    # the `http2` feature we ask reqwest for — every feed poll and image fetch
+    # talks HTTP/2 to a server we don't control. Patched in h2 0.4.16, but that
+    # was published 2026-08-17 and we don't adopt a release under 7 days old, so
+    # this is a dated hold, not an accepted risk: drop it with the bump on or
+    # after 2026-08-24. Tracked in issue #500.
+    "RUSTSEC-2026-0258",
 ]
 
 [licenses]

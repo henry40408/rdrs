@@ -448,6 +448,7 @@ error and is cleared by the next success.
 
 **HTML Sanitization** (`sanitize.rs`):
 - Uses Ammonia for XSS protection
+- Drops `aria-hidden="true"` subtrees before Ammonia runs. Ammonia strips `class`/`style` too, so markup the source site only kept off-screen via its own CSS would otherwise surface as literal text — e.g. the line-number gutter VitePress/Shiki emits beside a code block, which lands as a column of bare numbers under every block. Falls back to the original when that would empty the entry
 - Removes tracking parameters (utm_*, fbclid, etc.)
 - Blocks tracking domains (pixel.*, analytics.*, etc.)
 - Removes 1x1 tracking pixels

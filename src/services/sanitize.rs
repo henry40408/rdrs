@@ -101,6 +101,44 @@ fn style_dim(style: &str, prop: &str) -> Option<String> {
     None
 }
 
+/// Pre-ammonia pass: drop `aria-hidden="true"` subtrees, content included.
+///
+/// Ammonia strips `class`, `style` and `aria-hidden` alike, so any markup the
+/// source site only kept off-screen through its own stylesheet lands in the
+/// reading pane as literal text — no CSS of ours can hide it afterwards,
+/// because the hook it was hidden by is gone. The loudest example is the
+/// line-number gutter VitePress/Shiki emits beside every code block
+/// (`<div class="line-numbers-wrapper" aria-hidden="true">`, one `<span>` and
+/// one `<br>` per line, absolutely positioned over the block): stripped of its
+/// class it renders as a column of bare numbers *below* the code, once per
+/// block.
+///
+/// `aria-hidden="true"` is the author stating the subtree carries nothing a
+/// reader needs — the same signal Readability uses to skip a node — so honour it
+/// generically instead of blocklisting per-site class names.
+fn drop_aria_hidden(html: &str) -> String {
+    let handler = element!("[aria-hidden]", |el| {
+        if el
+            .get_attribute("aria-hidden")
+            .is_some_and(|v| v.eq_ignore_ascii_case("true"))
+        {
+            el.remove();
+        }
+        Ok(())
+    });
+    let stripped = rewrite_str(
+        html,
+        RewriteStrSettings::new().append_element_content_handler(handler),
+    )
+    .unwrap_or_else(|_| html.to_string());
+    // A site that wraps its whole article in `aria-hidden="true"` (sloppy, but
+    // it happens) would otherwise leave the entry blank; a gutter beats nothing.
+    if stripped.trim().is_empty() && !html.trim().is_empty() {
+        return html.to_string();
+    }
+    stripped
+}
+
 /// Pre-ammonia pass: for any `<img>` lacking BOTH `width` and `height`, inject
 /// them from `data-original-width`/`data-original-height` or an inline
 /// `style="width:..px;height:..px"`. Ammonia strips those hint sources, so this
@@ -394,9 +432,11 @@ pub fn sanitize_html(
 
     let url_schemes: HashSet<&str> = ["http", "https"].iter().copied().collect();
 
-    // Step 0: Promote lazy-loaded image URLs into src before ammonia drops the
-    // data: placeholder and the unknown data-* attributes.
-    let unlazied = promote_lazy_images(content);
+    // Step 0: Drop author-hidden scaffolding, then promote lazy-loaded image
+    // URLs into src before ammonia drops the data: placeholder and the unknown
+    // data-* attributes. Both read attributes ammonia is about to strip.
+    let visible = drop_aria_hidden(content);
+    let unlazied = promote_lazy_images(&visible);
     let unlazied = harvest_image_dimensions(&unlazied);
 
     // Step 1: Ammonia sanitization (already adds rel="noopener noreferrer")
@@ -1057,5 +1097,52 @@ mod tests {
         let input = r#"<img src="https://e.com/a.jpg" alt="x">"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(output.contains("data-img-state=\"loading\""), "{output}");
+    }
+
+    #[test]
+    fn test_drops_code_block_line_number_gutter() {
+        // VitePress/Shiki shape: the gutter is a sibling of <pre>, hidden by the
+        // source site's CSS via a class ammonia strips. Left in, it renders as a
+        // column of bare numbers under every code block.
+        let input = concat!(
+            r#"<div class="language-ts line-numbers-mode"><span class="lang">ts</span>"#,
+            r#"<pre><code><span class="line">const a = 1;</span>"#,
+            "\n",
+            r#"<span class="line">const b = 2;</span></code></pre>"#,
+            r#"<div class="line-numbers-wrapper" aria-hidden="true">"#,
+            r#"<span class="line-number">1</span><br><span class="line-number">2</span><br></div></div>"#,
+        );
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(output.contains("const a = 1;"), "{output}");
+        assert!(output.contains("const b = 2;"), "{output}");
+        assert!(!output.contains("<br>"), "gutter survived: {output}");
+        assert!(
+            !output.contains("<span>1</span>"),
+            "gutter survived: {output}"
+        );
+    }
+
+    #[test]
+    fn test_keeps_aria_hidden_false_and_absent() {
+        let input = r#"<p aria-hidden="false">keep me</p><p>and me</p>"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(output.contains("keep me"), "{output}");
+        assert!(output.contains("and me"), "{output}");
+    }
+
+    #[test]
+    fn test_aria_hidden_matched_case_insensitively() {
+        let input = r#"<p>body</p><span aria-hidden="TRUE">decor</span>"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(output.contains("body"), "{output}");
+        assert!(!output.contains("decor"), "{output}");
+    }
+
+    #[test]
+    fn test_wholly_aria_hidden_content_is_kept() {
+        // Blanking the entry is worse than showing markup the author hid.
+        let input = r#"<div aria-hidden="true"><p>the entire article</p></div>"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(output.contains("the entire article"), "{output}");
     }
 }
