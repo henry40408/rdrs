@@ -188,6 +188,33 @@ subsystem.
 Two source-level tests (`tests/logging_test.rs`) enforce both halves of this:
 every log call must set `event`, and no message may interpolate values.
 
+### Request Timing
+
+Every request is timed by `middleware/request_log.rs` and logged once, when the
+response head is ready — carrying `method`, `route`, `status`, `elapsed` (human
+readable) and `elapsed_ms` (a number, for aggregation):
+
+| Event | Level | When |
+| --- | --- | --- |
+| `http.request` | DEBUG | Every request. Off under the default filter. |
+| `http.slow_request` | WARN | The request took ≥ 1s. Visible by default, and carries `threshold_ms`. |
+
+So a healthy deployment logs nothing per request while a slow one still stands
+out. Turn the full stream on with `RUST_LOG=rdrs=debug`, or narrow it to just
+this middleware with `RUST_LOG=rdrs=info,rdrs::middleware::request_log=debug`.
+
+`route` is the *matched route template* (`/invite/{token}`), never the request
+path: an invite token is a single-use credential that travels in the path, and
+a log line outlives it. A request that matched no route is labelled
+`<unmatched>` for the same reason — its path is attacker-controlled text.
+
+The duration covers the server's own work up to the response head, so it
+excludes streaming the body — which is why an `/events` SSE connection reads as
+a fast request rather than a multi-minute one. Pair it with the database side,
+which sqlx logs itself: `RUST_LOG=sqlx::query=debug` gives every statement with
+its own `elapsed`, and `sqlx::query=warn` alone gives just the statements that
+took over a second.
+
 ### Audit Logging
 
 Session creation, renewal, and destruction; API-token issuance and revocation;

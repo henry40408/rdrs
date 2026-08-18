@@ -466,5 +466,15 @@ pub fn create_router(state: AppState) -> Router {
         router
     };
 
+    // Per-request timing. Outermost — over the security headers, over both
+    // CSRF guards and `forward_auth` (all of which answer some requests
+    // without calling `next`), and over `/events` — so every response the
+    // process produces is timed exactly once. See middleware::request_log for
+    // what the duration does and does not include, and why the log records
+    // the matched route template rather than the request path.
+    let router = router.layer(axum::middleware::from_fn(
+        middleware::request_log::log_request_duration,
+    ));
+
     router.with_state(state)
 }
