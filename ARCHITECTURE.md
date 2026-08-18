@@ -106,7 +106,8 @@ src/
 │   ├── date_header.rs   # Date response header
 │   ├── etag.rs          # ETag / conditional-request handling
 │   ├── flash.rs         # Flash messages
-│   └── forward_auth.rs  # Forward-auth / trusted-header browser login
+│   ├── forward_auth.rs  # Forward-auth / trusted-header browser login
+│   └── request_log.rs   # Per-request duration logging
 │
 └── auth/
     ├── password.rs      # Password hashing (Argon2)
