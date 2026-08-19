@@ -74,6 +74,7 @@ src/
 │
 ├── utils/               # Shared utility modules
 │   ├── datetime.rs      # Date/time parsing (RFC 2822, ISO 8601, Chinese dates)
+│   ├── han.rs           # Simplified-Chinese detection for the `lang` attribute
 │   └── url_validation.rs# URL validation and SSRF protection
 │
 ├── services/            # Business logic

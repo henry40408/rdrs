@@ -16,6 +16,7 @@ use crate::models::api_token;
 use crate::models::session;
 use crate::models::user_settings;
 use crate::models::{category, entry, entry_summary, feed};
+use crate::utils::han;
 
 mod script_json;
 mod search_text;
@@ -85,6 +86,13 @@ impl EntryRowView {
     pub fn feed_color_index(&self) -> u8 {
         feed_color_index(self.feed_id)
     }
+
+    /// `Some("zh-Hans")` when the title is Simplified Chinese, so the row can
+    /// tag it and stop a Traditional-locale browser resolving most of the line
+    /// in `PingFang TC` and the odd character in `PingFang SC`. See `utils::han`.
+    pub fn title_lang(&self) -> Option<&'static str> {
+        han::lang_attr(&self.title)
+    }
 }
 
 /// View-model for the reading pane (`_reading_pane.html`).
@@ -141,6 +149,19 @@ impl ReadingPaneView {
     /// `EntryRowView::feed_color_index`).
     pub fn feed_color_index(&self) -> u8 {
         feed_color_index(self.feed_id)
+    }
+
+    /// `Some("zh-Hans")` for a Simplified headline (mirrors
+    /// `EntryRowView::title_lang`).
+    pub fn title_lang(&self) -> Option<&'static str> {
+        han::lang_attr(&self.title)
+    }
+
+    /// `Some("zh-Hans")` for a Simplified article body. Decided separately
+    /// from the headline: an entry can carry a translated or feed-supplied
+    /// title over body text in the other script.
+    pub fn content_lang(&self) -> Option<&'static str> {
+        han::lang_attr(&self.content_html)
     }
 }
 

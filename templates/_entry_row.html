@@ -14,7 +14,11 @@
     {# Marker: dot = idempotent read/unread toggle (mirrors the star form). #}
     {% call macros::row_marker_form(r.id, r.is_read, csrf_token) %}{% endcall %}
 
-    <a href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" title="{{ r.title }}" class="entry-item-title" data-testid="entry-title-link">{{ r.title }}</a>
+    {# `lang` on a Simplified title keeps the whole line on one font: with no
+       hint, a Traditional-locale browser places most of it in PingFang TC and
+       drops the handful of codepoints that face lacks (杀 远 迟 稳 …) into
+       PingFang SC. See `utils::han`. #}
+    <a href="/entries/{{ r.id }}/fragment" data-swap="#reading-pane" title="{{ r.title }}" class="entry-item-title" data-testid="entry-title-link"{% if let Some(lang) = r.title_lang() %} lang="{{ lang }}"{% endif %}>{{ r.title }}</a>
 
     <span class="entry-timerow">
         {# Summary-status cluster relocated here (was the meta tail). Empty span

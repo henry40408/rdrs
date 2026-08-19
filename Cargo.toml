@@ -90,6 +90,10 @@ hex = "0.4.3"
 mimalloc = "0.1"
 libmimalloc-sys = { version = "0.1", features = ["extended"] }
 lol_html = "3.0.0"
+# Already linked in via lol_html / quick-xml / reqwest; declared directly so
+# `utils::han` can use the GBK and Big5 encoders to tell Simplified Chinese
+# apart from Traditional. Adds no weight to the binary.
+encoding_rs = "0.8"
 async-stream = "0.3"
 tokio-stream = "0.1"
 
