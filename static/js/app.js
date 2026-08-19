@@ -1034,7 +1034,47 @@ function applyNeighborButtons() {
     if (nextBtn) nextBtn.disabled = !(valid && neighborState.nextId != null);
 }
 
+// Answer prev/next from the list already in the DOM, for an entry whose row
+// has a loaded row on *both* sides. Returns null when it can't, and the
+// caller falls back to the server.
+//
+// The rows under `[data-entries-list]` are flat siblings rendered in the same
+// order, under the same filter, that `find_neighbors` resolves server-side,
+// and nothing removes one once rendered — marking an entry read only restyles
+// its row, and on unread views the page's `read_after` snapshot keeps the
+// server counting it too. So an interior row's DOM neighbours are its real
+// neighbours, and the ~7-query round trip per entry opened is pure latency.
+//
+// Interior rows only, deliberately. The first row is the head of the list *as
+// rendered*, and the last row is never the end of the set — Load More may
+// still have pages to append. Neither end can prove a `null`, so both fall
+// through rather than guess one.
+//
+// Skipped entirely while a scoped search is active: `currentEntryFilterParams`
+// does not forward `q` (and `NeighborsQuery` has no field for it), so the
+// server resolves neighbours across the *unsearched* set. Answering those from
+// a searched DOM would quietly change which entry j/k lands on.
+function neighborsFromLoadedList(entryId) {
+    if (document.querySelector('[data-entries-search] input[name="q"]')?.value) return null;
+    const rows = document.querySelectorAll('[data-entries-list] [data-entry-row]');
+    const wanted = String(entryId);
+    for (let i = 1; i < rows.length - 1; i++) {
+        if (rows[i].getAttribute('data-entry-id') !== wanted) continue;
+        return {
+            prevId: Number(rows[i - 1].getAttribute('data-entry-id')),
+            nextId: Number(rows[i + 1].getAttribute('data-entry-id')),
+        };
+    }
+    return null;
+}
+
 async function resolveNeighbors(entryId) {
+    const local = neighborsFromLoadedList(entryId);
+    if (local) {
+        neighborState = { entryId, prevId: local.prevId, nextId: local.nextId };
+        applyNeighborButtons();
+        return;
+    }
     const params = currentEntryFilterParams();
     const url = `/api/entries/${entryId}/neighbors${params ? `?${params}` : ''}`;
     try {

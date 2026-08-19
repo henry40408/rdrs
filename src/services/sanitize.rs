@@ -1,6 +1,7 @@
 use ammonia::Builder;
 use lol_html::{RewriteStrSettings, element, rewrite_str};
 use scraper::{Html, Selector};
+use std::borrow::Cow;
 use std::collections::HashSet;
 use url::Url;
 
@@ -84,6 +85,28 @@ fn is_tracking_param(name: &str) -> bool {
 /// Attributes that carry the real image URL for lazy-loaded images, in priority order.
 const LAZY_SRC_ATTRS: &[&str] = &["data-src", "data-lazy-src", "data-original"];
 
+/// ASCII-case-insensitive substring test, for the pre-pass gates below.
+///
+/// They have to be case-insensitive: HTML tag and attribute names are, and so
+/// are the parsers each gate stands in front of, so a feed that ships `<IMG
+/// DATA-SRC=...>` must not slip past a lowercase-only check and silently lose
+/// its pass. `needle` must already be lowercase.
+///
+/// Scanning a few KiB for a short needle costs microseconds against the
+/// hundreds a parse costs, so this is worth paying on every document to skip
+/// the parse on most of them.
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    debug_assert!(needle.bytes().all(|b| !b.is_ascii_uppercase()));
+    let (h, n) = (haystack.as_bytes(), needle.as_bytes());
+    // `windows(0)` panics, so the empty needle is answered before it is reached
+    // — every caller passes a literal, but a panic is not a thing to leave lying
+    // in a function this hot.
+    if n.is_empty() {
+        return true;
+    }
+    h.len() >= n.len() && h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
+}
+
 /// Parse a `width:NNpx` / `height:NNpx` integer out of an inline `style`.
 fn style_dim(style: &str, prop: &str) -> Option<String> {
     for decl in style.split(';') {
@@ -116,7 +139,12 @@ fn style_dim(style: &str, prop: &str) -> Option<String> {
 /// `aria-hidden="true"` is the author stating the subtree carries nothing a
 /// reader needs — the same signal Readability uses to skip a node — so honour it
 /// generically instead of blocklisting per-site class names.
-fn drop_aria_hidden(html: &str) -> String {
+fn drop_aria_hidden(html: &str) -> Cow<'_, str> {
+    // Gate: no `aria-hidden` anywhere means the rewrite below cannot match, so
+    // skip its parse. On a real corpus this fires for ~98% of entries.
+    if !contains_ignore_ascii_case(html, "aria-hidden") {
+        return Cow::Borrowed(html);
+    }
     let handler = element!("[aria-hidden]", |el| {
         if el
             .get_attribute("aria-hidden")
@@ -134,16 +162,27 @@ fn drop_aria_hidden(html: &str) -> String {
     // A site that wraps its whole article in `aria-hidden="true"` (sloppy, but
     // it happens) would otherwise leave the entry blank; a gutter beats nothing.
     if stripped.trim().is_empty() && !html.trim().is_empty() {
-        return html.to_string();
+        return Cow::Borrowed(html);
     }
-    stripped
+    Cow::Owned(stripped)
 }
 
 /// Pre-ammonia pass: for any `<img>` lacking BOTH `width` and `height`, inject
 /// them from `data-original-width`/`data-original-height` or an inline
 /// `style="width:..px;height:..px"`. Ammonia strips those hint sources, so this
 /// must run before it. Only injects when a usable integer PAIR is found.
-fn harvest_image_dimensions(html: &str) -> String {
+fn harvest_image_dimensions(html: &str) -> Cow<'_, str> {
+    // Gate: the handler only ever fires on an `<img>`, and only injects when it
+    // finds a hint in `data-original-*` or an inline `style`. Absent an image
+    // or any hint source there is nothing for the parse to do. Deliberately a
+    // superset of the handler's real trigger — it skips only documents where no
+    // injection is possible at all.
+    if !contains_ignore_ascii_case(html, "<img")
+        || !(contains_ignore_ascii_case(html, "style")
+            || contains_ignore_ascii_case(html, "data-original-"))
+    {
+        return Cow::Borrowed(html);
+    }
     let handler = element!("img", |el| {
         if el.get_attribute("width").is_some() || el.get_attribute("height").is_some() {
             return Ok(());
@@ -175,7 +214,7 @@ fn harvest_image_dimensions(html: &str) -> String {
         html,
         RewriteStrSettings::new().append_element_content_handler(handler),
     )
-    .unwrap_or_else(|_| html.to_string())
+    .map_or(Cow::Borrowed(html), Cow::Owned)
 }
 
 /// Promote lazy-loaded image URLs into `src` before sanitization.
@@ -185,7 +224,18 @@ fn harvest_image_dimensions(html: &str) -> String {
 /// later drops both the `data:` src (disallowed scheme) and the unknown `data-*`
 /// attribute, leaving an empty `<img>` and making images disappear. Running this
 /// first moves the real URL into `src` so the rest of the pipeline can proxy it.
-fn promote_lazy_images(html: &str) -> String {
+fn promote_lazy_images(html: &str) -> Cow<'_, str> {
+    // Gate: a promotion needs one of `LAZY_SRC_ATTRS` to be present, so without
+    // any of them the work below cannot change a byte. Worth gating harder than
+    // the other two pre-passes: this one builds a full scraper DOM *and*
+    // compiles a CSS selector per call, and on a real corpus fewer than 2% of
+    // entries carry a lazy attribute at all.
+    if !LAZY_SRC_ATTRS
+        .iter()
+        .any(|a| contains_ignore_ascii_case(html, a))
+    {
+        return Cow::Borrowed(html);
+    }
     let document = Html::parse_fragment(html);
     let img_selector = Selector::parse("img").expect("static CSS selector");
 
@@ -234,7 +284,7 @@ fn promote_lazy_images(html: &str) -> String {
         }
     }
 
-    result
+    Cow::Owned(result)
 }
 
 /// Decide whether an `<img>` is a tracking pixel, given its attributes.
@@ -1144,5 +1194,61 @@ mod tests {
         let input = r#"<div aria-hidden="true"><p>the entire article</p></div>"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(output.contains("the entire article"), "{output}");
+    }
+
+    #[test]
+    fn test_contains_ignore_ascii_case() {
+        assert!(contains_ignore_ascii_case("a <IMG> b", "<img"));
+        assert!(contains_ignore_ascii_case("DATA-Src=", "data-src"));
+        assert!(contains_ignore_ascii_case("xx", "xx"));
+        assert!(!contains_ignore_ascii_case("x", "xx"));
+        assert!(!contains_ignore_ascii_case("data_src", "data-src"));
+        // `windows(0)` would panic rather than answer.
+        assert!(contains_ignore_ascii_case("", ""));
+    }
+
+    // The three pre-passes are gated on a cheap substring test so the common
+    // document skips their parse. HTML attribute names are case-insensitive, so
+    // each gate has to be too — these pin that, since a lowercase-only gate
+    // would make the pass silently vanish rather than fail loudly.
+
+    #[test]
+    fn test_uppercase_aria_hidden_attribute_still_dropped() {
+        let input = r#"<p>body</p><span ARIA-HIDDEN="true">decor</span>"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(output.contains("body"), "{output}");
+        assert!(!output.contains("decor"), "{output}");
+    }
+
+    #[test]
+    fn test_uppercase_lazy_attribute_still_promoted() {
+        let input =
+            r#"<img src="data:image/gif;base64,R0lGOD" DATA-SRC="https://example.com/photo.png">"#;
+        let output = sanitize_html(
+            input,
+            TEST_SECRET,
+            Some("https://example.com/post"),
+            None,
+            None,
+        );
+        assert!(output.contains("/api/proxy/image?url="), "{output}");
+        assert!(!output.contains("data:image/gif"), "{output}");
+    }
+
+    #[test]
+    fn test_uppercase_dimension_hints_still_harvested() {
+        let input = r#"<img src="https://example.com/a.jpg" DATA-ORIGINAL-WIDTH="800" DATA-ORIGINAL-HEIGHT="600">"#;
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(output.contains(r#"width="800""#), "{output}");
+        assert!(output.contains(r#"height="600""#), "{output}");
+    }
+
+    #[test]
+    fn test_document_without_pre_pass_triggers_is_unchanged() {
+        // The gates' happy path: nothing here can trigger any of the three, so
+        // the output must match what the ammonia + rewrite steps alone produce.
+        let input = r"<p>Plain <strong>body</strong> text.</p>";
+        let output = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert_eq!(output, "<p>Plain <strong>body</strong> text.</p>");
     }
 }

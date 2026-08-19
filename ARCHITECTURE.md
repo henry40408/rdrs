@@ -456,6 +456,7 @@ error and is cleared by the next success.
 - Fixes relative image URLs
 - For images lacking `width`/`height`, harvests intrinsic dimensions (from `data-original-width`/`-height` or inline `style`) and injects them so the browser can reserve space
 - Tags proxied content images with `data-img-state="loading"`; the reading pane shows a CSS skeleton until the image loads and swaps in a broken-image fallback (with `alt`) on error
+- The three pre-Ammonia passes (`aria-hidden`, lazy-image promotion, dimension harvesting) each parse the whole document, and on a real corpus fewer than a quarter of entries need any of them — so each is gated behind an ASCII-case-insensitive substring test and returns a borrowed `Cow` when it cannot possibly match. **A gate must stay a superset of its pass's real trigger**: widening what a pass reacts to without widening its gate makes the pass silently stop firing rather than fail
 
 **Full Content Extraction** (`readability.rs`):
 - Fetches article URL
@@ -514,7 +515,15 @@ On a non-2xx response it falls back to a real navigation, so the SSR page stays
 the floor. The entries-family routes answer with four shapes:
 
 - **reading pane** — `GET /entries/{id}/fragment` replaces `#reading-pane`
-  (plus the row, via multi-target templates) when an entry is opened.
+  (plus the row, via multi-target templates) when an entry is opened. The
+  pane's Prev/Next targets come from `GET /api/entries/{id}/neighbors`, but
+  only when the loaded list cannot answer: rows are flat siblings in the same
+  order the endpoint resolves, and none is ever removed client-side, so an
+  entry with a row on *both* sides takes its neighbours straight from the DOM.
+  The two ends fall through — the first row's list may have been reached with
+  an `after` cursor and the last row's may have pages left — as does a scoped
+  search, which `NeighborsQuery` has no field for and the server therefore
+  answers across the unsearched set.
 - **Load More** — `?fragment=1&after=<cursor>` appends rows before `#load-more`.
 - **list refresh** — `?fragment=1` (no cursor) re-renders `[data-entries-list]`
   and the "Mark N matching" slot, leaving the focused search box alone. That box
