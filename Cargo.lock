@@ -3312,6 +3312,7 @@ dependencies = [
  "clap",
  "cookie",
  "dateparser",
+ "encoding_rs",
  "feed-rs",
  "hex",
  "hmac",

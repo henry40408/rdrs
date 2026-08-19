@@ -224,6 +224,109 @@ async fn seed_one_entry(db: &Db, username: &str, slug: &str) -> i64 {
     entry.id
 }
 
+/// Seed one entry with a caller-supplied title and body, so a test can pin
+/// what the templates do with particular text.
+async fn seed_entry_with_text(db: &Db, username: &str, slug: &str, title: &str, body: &str) -> i64 {
+    let user = rdrs::models::user::find_by_username(db, username)
+        .await
+        .unwrap()
+        .unwrap();
+    let cat = rdrs::models::category::create_category(db, user.id, &format!("cat-{slug}"))
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: &format!("https://example.com/{slug}.xml"),
+            title: Some(&format!("Feed {slug}")),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (entry, _) = rdrs::models::entry::upsert_entry(
+        db,
+        feed.id,
+        &format!("guid-{slug}"),
+        Some(title),
+        Some(&format!("https://example.com/{slug}")),
+        Some(body),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    entry.id
+}
+
+/// Simplified text carries `lang="zh-Hans"` on both the row title and the
+/// pane, so a Traditional-locale browser resolves the whole string in one
+/// font instead of dropping the codepoints `PingFang TC` lacks into another.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_simplified_entry_is_tagged_zh_hans() {
+    let mut app = create_test_app_named(default_test_config(), "test_lang_hans").await;
+    setup_users(&app.db).await;
+    let entry_id = seed_entry_with_text(
+        &app.db,
+        "admin",
+        "hans",
+        "《控制》新作体验：新怪谈游戏的祖师爷，又杀回来了",
+        "<p>这款游戏的敌人远比想象中稳定。</p>",
+    )
+    .await;
+    login(&mut app.server, "admin").await;
+
+    let response = app.server.get(&format!("/?entry={entry_id}")).await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(
+        body.contains(r#"data-testid="entry-title-link" lang="zh-Hans""#),
+        "simplified row title must be tagged; body was: {body}"
+    );
+    assert!(
+        body.contains(r#"data-testid="reading-pane-title" lang="zh-Hans""#),
+        "simplified pane headline must be tagged; body was: {body}"
+    );
+    assert!(
+        body.contains(r#"lang="zh-Hans">&#60;p&#62;这款游戏"#)
+            || body.contains(r#"lang="zh-Hans"><p>这款游戏"#),
+        "simplified article body must be tagged; body was: {body}"
+    );
+}
+
+/// Traditional text is left untagged: it already resolves in one font, and
+/// forcing it onto the Simplified cascade would restyle every glyph.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_traditional_entry_is_not_tagged() {
+    let mut app = create_test_app_named(default_test_config(), "test_lang_hant").await;
+    setup_users(&app.db).await;
+    let entry_id = seed_entry_with_text(
+        &app.db,
+        "admin",
+        "hant",
+        "《控制》新作體驗：新怪談遊戲的祖師爺，又殺回來了",
+        "<p>這款遊戲的敵人遠比想像中穩定。</p>",
+    )
+    .await;
+    login(&mut app.server, "admin").await;
+
+    let response = app.server.get(&format!("/?entry={entry_id}")).await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(
+        !body.contains(r#"lang="zh-Hans""#),
+        "traditional entry must not be tagged; body was: {body}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_unread_page_entry_query_populates_reading_pane() {
     let mut app = create_test_app_named(default_test_config(), "test_unread_entry_query_ok").await;
