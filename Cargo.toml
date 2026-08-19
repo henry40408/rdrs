@@ -98,7 +98,7 @@ async-stream = "0.3"
 tokio-stream = "0.1"
 
 [build-dependencies]
-resvg = "0.47"
+resvg = "0.48"
 image = "0.25"
 ico = "0.5"
 
