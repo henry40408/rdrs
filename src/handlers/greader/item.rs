@@ -498,7 +498,7 @@ fn entry_with_feed_to_greader_item(
     let timestamp_usec = (published * 1_000_000).to_string();
 
     let link = e.link.as_deref().unwrap_or("");
-    let base_url = if link.is_empty() { None } else { Some(link) };
+    let base_url = Some(ewf.content_base_url());
     let referrer = ewf.custom_referrer.as_deref();
 
     // When no_content is set, skip all HTML sanitization (list view doesn't need content).
