@@ -500,12 +500,7 @@ pub(crate) async fn build_reading_pane_view(
             .unwrap_or("")
     };
 
-    let link_str = ewf.entry.link.clone().unwrap_or_default();
-    let base_url = if link_str.is_empty() {
-        None
-    } else {
-        Some(link_str.as_str())
-    };
+    let base_url = Some(ewf.content_base_url());
     let referrer = ewf.custom_referrer.as_deref();
     let proxy_base_url = state.config.public_base_url.as_deref();
     let content_html = sanitize_html(

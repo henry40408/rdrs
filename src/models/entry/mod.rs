@@ -62,6 +62,31 @@ pub struct EntryWithFeed {
     pub custom_referrer: Option<String>,
 }
 
+impl EntryWithFeed {
+    /// Base URL for resolving relative URLs inside this entry's content.
+    ///
+    /// `entry.link` first: it names the document the markup was authored
+    /// against, so it resolves the entry's own relative paths most accurately.
+    /// It is optional, though — an RSS `<item>` is valid with only a `<guid>` —
+    /// so fall back to the feed's declared site, then to the feed URL itself,
+    /// which a synced feed always has.
+    ///
+    /// Never returns `None`, and that is the point: it is what lets
+    /// [`crate::services::sanitize_html`] treat an image URL it cannot resolve
+    /// as markup to drop rather than markup to pass through. A feed that omits
+    /// `<link>` used to leave `<img src="//evil.tld/x.gif">` unrewritten and so
+    /// unproxied, which in a client without our CSP (a third-party `GReader`
+    /// app) fetches straight from the attacker — the reader's IP and a read
+    /// receipt with it.
+    pub fn content_base_url(&self) -> &str {
+        [self.entry.link.as_deref(), self.site_url.as_deref()]
+            .into_iter()
+            .flatten()
+            .find(|s| !s.is_empty())
+            .unwrap_or(&self.feed_url)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct EntryFilter {
     pub feed_id: Option<i64>,
@@ -1876,6 +1901,63 @@ mod tests {
 
     async fn setup_db() -> Db {
         Db::connect_in_memory().await.unwrap()
+    }
+
+    fn ewf_with_base_parts(link: Option<&str>, site_url: Option<&str>) -> EntryWithFeed {
+        let now = Utc::now();
+        EntryWithFeed {
+            entry: Entry {
+                id: 1,
+                feed_id: 1,
+                guid: "g".to_string(),
+                title: None,
+                link: link.map(str::to_string),
+                content: None,
+                full_content: None,
+                summary: None,
+                author: None,
+                published_at: Some(now),
+                read_at: None,
+                starred_at: None,
+                created_at: now,
+                updated_at: now,
+            },
+            feed_title: None,
+            feed_url: "https://feed.example/atom.xml".to_string(),
+            site_url: site_url.map(str::to_string),
+            category_id: 1,
+            category_name: "Cat".to_string(),
+            feed_has_icon: false,
+            custom_referrer: None,
+        }
+    }
+
+    #[test]
+    fn content_base_url_prefers_the_entry_link() {
+        let ewf = ewf_with_base_parts(
+            Some("https://site.example/post"),
+            Some("https://site.example/"),
+        );
+        assert_eq!(ewf.content_base_url(), "https://site.example/post");
+    }
+
+    #[test]
+    fn content_base_url_falls_back_to_site_then_feed() {
+        // An RSS `<item>` carrying only a `<guid>` is valid, and used to leave
+        // the sanitizer with no base at all.
+        let ewf = ewf_with_base_parts(None, Some("https://site.example/"));
+        assert_eq!(ewf.content_base_url(), "https://site.example/");
+
+        let ewf = ewf_with_base_parts(None, None);
+        assert_eq!(ewf.content_base_url(), "https://feed.example/atom.xml");
+    }
+
+    #[test]
+    fn content_base_url_treats_empty_strings_as_absent() {
+        // The columns are nullable *and* can hold "", so emptiness has to be
+        // skipped as well as `None` — an empty base resolves nothing.
+        let ewf = ewf_with_base_parts(Some(""), Some(""));
+        assert_eq!(ewf.content_base_url(), "https://feed.example/atom.xml");
     }
 
     async fn create_test_user(db: &Db, username: &str) -> i64 {

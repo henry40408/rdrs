@@ -431,17 +431,27 @@ fn rewrite_post_ammonia(
             } else {
                 None
             };
-            if let Some(url) = absolute_url {
-                let proxy_url = if let Some(ref_val) = referrer {
-                    create_proxy_url_with_referrer(&url, ref_val, secret, proxy_base_url)
-                } else {
-                    create_proxy_url(&url, secret, proxy_base_url)
-                };
-                el.set_attribute("src", &proxy_url)?;
-                el.set_attribute("loading", "lazy")?;
-                el.set_attribute("decoding", "async")?;
-                el.set_attribute("data-img-state", "loading")?;
-            }
+            // Fail closed. This branch cannot produce a working image either
+            // way: a path-relative src resolves against *our* origin and 404s,
+            // and a protocol-relative one (`//evil.tld/x.gif`) resolves to the
+            // author's host — fetched directly, outside the proxy, leaking the
+            // reader's IP and a read receipt. Dropping it costs nothing and
+            // makes "every image goes through the proxy" an invariant rather
+            // than something that merely usually holds. Callers should pass a
+            // base (see `EntryWithFeed::content_base_url`) so this stays rare.
+            let Some(url) = absolute_url else {
+                el.remove();
+                return Ok(());
+            };
+            let proxy_url = if let Some(ref_val) = referrer {
+                create_proxy_url_with_referrer(&url, ref_val, secret, proxy_base_url)
+            } else {
+                create_proxy_url(&url, secret, proxy_base_url)
+            };
+            el.set_attribute("src", &proxy_url)?;
+            el.set_attribute("loading", "lazy")?;
+            el.set_attribute("decoding", "async")?;
+            el.set_attribute("data-img-state", "loading")?;
         }
         Ok(())
     });
@@ -471,6 +481,17 @@ fn rewrite_post_ammonia(
     rewritten.unwrap_or_else(|_| html.to_string())
 }
 
+/// Reduce untrusted feed markup to the tag whitelist below, then rewrite what
+/// survives: tracking pixels removed, tracking params stripped, links given
+/// `target`/`referrerpolicy`, and **every image routed through the signed image
+/// proxy**.
+///
+/// `base_url` is part of that last guarantee, not a nicety. An image `src` that
+/// cannot be resolved to an absolute `http(s)` URL is dropped rather than passed
+/// through, so a caller that omits the base silently loses relative images —
+/// pass [`crate::models::entry::EntryWithFeed::content_base_url`], which always
+/// yields one. `None` is for callers with genuinely no document to resolve
+/// against, and for tests.
 pub fn sanitize_html(
     content: &str,
     secret: &[u8],
@@ -1020,12 +1041,80 @@ mod tests {
     }
 
     #[test]
-    fn test_relative_images_without_base_url_unchanged() {
-        let input = r#"<img src="/images/photo.jpg" alt="Photo">"#;
+    fn test_relative_images_without_base_url_are_dropped() {
+        let input = r#"<p>Text</p><img src="/images/photo.jpg" alt="Photo">"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
-        // Without base URL, relative paths should remain unchanged
-        assert!(output.contains("src=\"/images/photo.jpg\""));
-        assert!(!output.contains("/api/proxy/image"));
+        // Fail closed. Keeping the src would resolve it against whatever origin
+        // the document happens to be on rather than the feed's, so the image is
+        // broken at best and off-origin at worst; the rest of the entry stays.
+        assert!(!output.contains("<img"), "{output}");
+        assert!(!output.contains("/images/photo.jpg"), "{output}");
+        assert!(output.contains("<p>Text</p>"), "{output}");
+    }
+
+    #[test]
+    fn protocol_relative_image_never_escapes_the_proxy() {
+        // `//evil.tld/x.gif` reads as relative to a check that only tests for an
+        // `http(s)://` prefix, but is absolute to a browser. Left unrewritten it
+        // is fetched straight from the author's host — the reader's IP and a
+        // read receipt with it — which our CSP stops but a third-party GReader
+        // client's webview does not.
+        let input = r#"<img src="//evil.tld/x.gif">"#;
+
+        let no_base = sanitize_html(input, TEST_SECRET, None, None, None);
+        assert!(!no_base.contains("evil.tld"), "{no_base}");
+
+        let with_base = sanitize_html(
+            input,
+            TEST_SECRET,
+            Some("https://feed.example/post"),
+            None,
+            None,
+        );
+        assert!(with_base.contains("/api/proxy/image?url="), "{with_base}");
+        assert!(!with_base.contains(r#"src="//evil.tld"#), "{with_base}");
+    }
+
+    /// Every `src="..."` value in `html`, in document order. Only `<img>` keeps
+    /// a `src` through sanitization, so this needs no tag matching.
+    fn image_srcs(html: &str) -> Vec<&str> {
+        html.match_indices(r#"src=""#)
+            .map(|(i, m)| {
+                let rest = &html[i + m.len()..];
+                &rest[..rest.find('"').unwrap_or(rest.len())]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_emitted_image_src_is_proxied_or_inline_data() {
+        // Stated as an invariant rather than a list of known-bad inputs:
+        // anything the rewrite cannot turn into a signed proxy URL must not
+        // reach the page, so a src form nobody has thought of yet fails here
+        // instead of silently shipping unproxied.
+        let inputs = [
+            r#"<img src="//evil.tld/x.gif">"#,
+            r#"<img src="/\/evil.tld/x.gif">"#,
+            r#"<img src="/images/photo.jpg">"#,
+            r#"<img src="images/photo.jpg">"#,
+            r#"<img src="../images/photo.jpg">"#,
+            r#"<img src="https://cdn.example.com/a.jpg">"#,
+            r#"<img src="data:image/svg+xml,%3Csvg%3E%3C/svg%3E" data-src="/img/pic.jpg">"#,
+            r#"<img src="">"#,
+            r#"<img alt="no src">"#,
+            r#"<figure><img src="//evil.tld/a.png"><figcaption>c</figcaption></figure>"#,
+        ];
+        for base in [None, Some("https://feed.example/post")] {
+            for input in inputs {
+                let output = sanitize_html(input, TEST_SECRET, base, None, None);
+                for src in image_srcs(&output) {
+                    assert!(
+                        src.starts_with("/api/proxy/image?url=") || src.starts_with("data:"),
+                        "unproxied src {src:?} escaped from {input:?} with base {base:?}: {output}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
