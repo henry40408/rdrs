@@ -13,7 +13,7 @@ use crate::{
     middleware::flash::{FlashMessage, FlashRedirect},
     models::{entry, entry_summary, user_settings},
     services::{
-        SummaryJob, SummaryStatus, fetch_and_extract, sanitize_html,
+        SummaryJob, SummaryStatus, fetch_and_extract, sanitize_html, sanitize_summary,
         save::{BookmarkData, linkding},
         strip_tracking_params,
     },
@@ -549,6 +549,12 @@ pub(crate) async fn build_reading_pane_view(
 /// Reads the in-memory cache first; on miss or terminal-failed state falls back
 /// to the `entry_summary` table so a completed summary persisted in a previous
 /// session is still surfaced.
+///
+/// A completed summary is passed through [`sanitize_summary`] on the way out
+/// rather than on the way in, which is both how feed content is handled and
+/// what lets rows already sitting in the table benefit without a migration.
+/// Both templates that render one — the reading pane and the SSE-driven
+/// `_summary_fragment` — read it from here, so this is the whole surface.
 async fn resolve_summary(
     state: &AppState,
     user_id: i64,
@@ -556,7 +562,13 @@ async fn resolve_summary(
 ) -> AppResult<(Option<String>, bool, Option<String>)> {
     if let Some(cached) = state.summary_cache.get(user_id, entry_id) {
         match cached.status {
-            SummaryStatus::Completed => return Ok((cached.summary_text, false, None)),
+            SummaryStatus::Completed => {
+                return Ok((
+                    cached.summary_text.as_deref().map(sanitize_summary),
+                    false,
+                    None,
+                ));
+            }
             SummaryStatus::Pending | SummaryStatus::Processing => return Ok((None, true, None)),
             SummaryStatus::Failed => {
                 // Fall through to DB — a retry may have refreshed the row
@@ -567,7 +579,9 @@ async fn resolve_summary(
     let db_entry = entry_summary::find_by_user_and_entry(&state.db, user_id, entry_id).await?;
     match db_entry {
         Some(s) => match s.status {
-            SummaryStatus::Completed => Ok((s.summary_text, false, None)),
+            SummaryStatus::Completed => {
+                Ok((s.summary_text.as_deref().map(sanitize_summary), false, None))
+            }
             SummaryStatus::Pending | SummaryStatus::Processing => Ok((None, true, None)),
             SummaryStatus::Failed => Ok((None, false, s.error_message)),
         },
