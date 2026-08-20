@@ -13,6 +13,7 @@ use crate::handlers::pages::{AppLayoutContext, build_app_layout};
 use crate::middleware::auth::PageAuthUser;
 use crate::middleware::flash::Flash;
 use crate::models::user_settings;
+use crate::services::sanitize_summary;
 use crate::utils::url_validation::validate_url;
 
 /// Maximum URLs accepted in a single summarizer run.
@@ -98,7 +99,9 @@ pub(crate) fn url_host(url: &str) -> String {
 }
 
 /// One URL's card. `state` selects the rendered branch; unused string fields are
-/// empty. `summary` is trusted HTML/markdown from Kagi (rendered with `|safe`).
+/// empty. `summary` is Kagi's output run through
+/// [`crate::services::sanitize_summary`] — it is rendered with `|safe`, and
+/// Kagi writes it from a page nobody here controls, so it is not trusted.
 ///
 /// `pub` (not `pub(crate)`): it's a field type of the `pub` `SummarizerTemplate`.
 #[derive(Debug, Clone)]
@@ -281,7 +284,11 @@ pub async fn item(
             title: r.title.unwrap_or(host),
             url: form.url.clone(),
             state: "completed",
-            summary: r.output_text.unwrap_or_default(),
+            summary: r
+                .output_text
+                .as_deref()
+                .map(sanitize_summary)
+                .unwrap_or_default(),
             error: String::new(),
         },
         Ok(r) => err_card(r.error.unwrap_or_else(|| "Summarization failed.".into())),

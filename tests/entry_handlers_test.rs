@@ -2302,6 +2302,44 @@ async fn summary_fragment_renders_completed_summary() {
 }
 
 #[tokio::test]
+async fn summary_fragment_sanitizes_a_hostile_summary() {
+    // Kagi writes the summary from a page nobody here controls, and it is
+    // rendered with `|safe`. Sanitizing on read (not on write) is what lets a
+    // row already in the table — like this one — come back clean.
+    let mut app = create_test_app(default_test_config()).await;
+    let (user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
+    login(&mut app.server).await;
+
+    let entry_id = entry_ids[0];
+    rdrs::models::entry_summary::upsert_pending(&app.db, user_id, entry_id)
+        .await
+        .unwrap();
+    rdrs::models::entry_summary::set_completed(
+        &app.db,
+        user_id,
+        entry_id,
+        r#"<style>body{background:url(//evil.tld/x)}</style><p>Real <a href="https://evil.tld/login">summary</a> <img src="//evil.tld/beacon.gif"></p>"#,
+    )
+    .await
+    .unwrap();
+
+    let response = app
+        .server
+        .get(&format!("/entries/{entry_id}/summary/fragment"))
+        .await;
+    assert_eq!(response.status_code(), axum::http::StatusCode::OK);
+    let body = response.text();
+
+    assert!(
+        !body.contains("evil.tld"),
+        "hostile markup reached the page: {body}"
+    );
+    assert!(!body.contains("<style"), "style element survived: {body}");
+    assert!(body.contains("Real"), "legitimate text was lost: {body}");
+    assert!(body.contains("summary"), "anchor text was lost: {body}");
+}
+
+#[tokio::test]
 async fn summary_fragment_404_for_other_users_entry() {
     let mut app = create_test_app(default_test_config()).await;
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;

@@ -481,6 +481,39 @@ fn rewrite_post_ammonia(
     rewritten.unwrap_or_else(|_| html.to_string())
 }
 
+/// The markup an AI summary may keep. Much narrower than [`sanitize_html`]'s
+/// set because a summary is prose: no images, no tables, no headings, and no
+/// links — see [`sanitize_summary`].
+const SUMMARY_TAGS: &[&str] = &[
+    "p", "br", "strong", "em", "b", "i", "ul", "ol", "li", "code",
+];
+
+/// Reduce a model-written summary to inline prose markup.
+///
+/// The summary is written by Kagi from an article nobody here controls, so it
+/// is attacker-influenced in exactly the way feed content is — and it reaches
+/// the page through `|safe`. Our CSP already refuses what a `<style>` or an
+/// `on*=` handler in it would try to do, but until now CSP was the *only* thing
+/// between an injected tag and the reading pane. This makes it the second of
+/// two, on the same reasoning that gives feed content a sanitizer despite the
+/// same CSP covering it.
+///
+/// `a` is deliberately absent, unlike in [`sanitize_html`]. A summary is prose
+/// *about* an article, so a link inside it serves no reader — while a link
+/// inside a box the UI presents as trustworthy is a ready-made phishing
+/// primitive. Dropping the tag keeps the anchor's text, so only the
+/// linkification is lost.
+///
+/// Escaping is the quieter half of the win: a plain-text summary containing
+/// `5 < 10` renders as written afterwards, where today the bare `<` opens a
+/// bogus tag and swallows whatever follows it.
+pub fn sanitize_summary(summary: &str) -> String {
+    Builder::default()
+        .tags(SUMMARY_TAGS.iter().copied().collect())
+        .clean(summary)
+        .to_string()
+}
+
 /// Reduce untrusted feed markup to the tag whitelist below, then rewrite what
 /// survives: tracking pixels removed, tracking params stripped, links given
 /// `target`/`referrerpolicy`, and **every image routed through the signed image
@@ -563,6 +596,62 @@ mod tests {
     use super::*;
 
     const TEST_SECRET: &[u8] = b"test_secret_key_32_bytes_long!!!";
+
+    // ============ AI summary sanitization ============
+
+    #[test]
+    fn summary_keeps_prose_markup() {
+        let input = "<p>A <strong>bold</strong> and <em>italic</em> line.</p><ul><li>one</li></ul>";
+        assert_eq!(sanitize_summary(input), input);
+    }
+
+    #[test]
+    fn summary_drops_style_and_script_with_their_content() {
+        let input =
+            "<style>@import url(//evil.tld/x.css);</style><p>Body</p><script>alert(1)</script>";
+        let output = sanitize_summary(input);
+        assert!(!output.contains("evil.tld"), "{output}");
+        assert!(!output.contains("alert"), "{output}");
+        assert_eq!(output, "<p>Body</p>");
+    }
+
+    #[test]
+    fn summary_drops_images_and_event_handlers() {
+        // An `<img>` here would be an un-proxied external fetch on a page that
+        // never routes images that way — the same leak the entry pipeline
+        // closes, arriving through a different door.
+        let input = r#"<p onclick="x()">Body <img src="//evil.tld/beacon.gif"></p>"#;
+        let output = sanitize_summary(input);
+        assert!(!output.contains("evil.tld"), "{output}");
+        assert!(!output.contains("onclick"), "{output}");
+        assert!(output.contains("Body"), "{output}");
+    }
+
+    #[test]
+    fn summary_unlinks_anchors_but_keeps_their_text() {
+        // `a` is excluded on purpose: a link inside a box the UI frames as
+        // trustworthy is a phishing primitive, and a prose summary needs none.
+        let input = r#"<p>See <a href="https://evil.tld/login">your account</a>.</p>"#;
+        let output = sanitize_summary(input);
+        assert!(!output.contains("<a"), "{output}");
+        assert!(!output.contains("evil.tld"), "{output}");
+        assert!(output.contains("your account"), "{output}");
+    }
+
+    #[test]
+    fn summary_escapes_plain_text_rather_than_parsing_it() {
+        // Rendered raw, the bare `<` opens a tag and eats the rest of the line.
+        let output = sanitize_summary("Latency held at 5 < 10 ms & stayed there.");
+        assert_eq!(output, "Latency held at 5 &lt; 10 ms &amp; stayed there.");
+    }
+
+    #[test]
+    fn summary_leaves_markdown_untouched_as_text() {
+        // Kagi returns markdown today and nothing converts it, so sanitizing
+        // must not disturb what already reaches the page.
+        let input = "**Bold** and _italic_ with a [link](https://example.com).";
+        assert_eq!(sanitize_summary(input), input);
+    }
 
     #[test]
     fn test_sanitize_basic_html() {
