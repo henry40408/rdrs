@@ -1383,6 +1383,7 @@ pub async fn feed_edit_page(
             .await?
             .ok_or(AppError::FeedNotFound)?;
         let cats = category::list_by_user(&state.db, user_id).await?;
+        let referrer_suggestions = referrer_suggestions(f.site_url.as_deref(), &f.url);
         Ok::<_, AppError>((
             FeedEditView {
                 id: f.id,
@@ -1394,6 +1395,7 @@ pub async fn feed_edit_page(
                 custom_user_agent: f.custom_user_agent.unwrap_or_default(),
                 http2_disabled: f.http2_disabled,
                 custom_referrer: f.custom_referrer.unwrap_or_default(),
+                referrer_suggestions,
             },
             cats.into_iter()
                 .map(|c| FeedCategoryOption {
@@ -1432,6 +1434,7 @@ pub async fn feed_edit_page(
             csrf_token: auth_user.csrf_token.clone(),
             feed: feed_view,
             categories: cats,
+            user_agent_suggestions: crate::config::CUSTOM_USER_AGENT_SUGGESTIONS,
         },
     )
         .into_response())
@@ -3180,6 +3183,46 @@ pub struct FeedEditView {
     pub custom_user_agent: String,
     pub http2_disabled: bool,
     pub custom_referrer: String,
+    /// Backs the referrer field's `<datalist>`. Computed here because the
+    /// suggestion is this feed's own origin and Askama cannot derive one from
+    /// the URL it already holds. Empty when neither URL parses, in which case
+    /// the template renders no `<datalist>` rather than an empty one.
+    pub referrer_suggestions: Vec<String>,
+}
+
+/// The origins worth offering as this feed's `Referer`, most specific first
+/// and deduplicated.
+///
+/// The site the feed describes leads: the images that need a `Referer` at all
+/// are the ones the articles embed, and those are served by the site, not by
+/// wherever the XML happens to be hosted. The feed URL's own origin follows,
+/// and is usually the same — when it is, the list is one entry, which is the
+/// honest answer rather than the same value printed twice.
+///
+/// Non-HTTP schemes are skipped: a `Referer` is only ever sent on an HTTP
+/// request, so a `file:` or `data:` origin could not be used even if a feed
+/// row somehow held one.
+fn referrer_suggestions(site_url: Option<&str>, feed_url: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for candidate in [site_url, Some(feed_url)].into_iter().flatten() {
+        let Ok(parsed) = url::Url::parse(candidate.trim()) else {
+            continue;
+        };
+        if !matches!(parsed.scheme(), "http" | "https") {
+            continue;
+        }
+        let Some(host) = parsed.host_str() else {
+            continue;
+        };
+        let origin = match parsed.port() {
+            Some(port) => format!("{}://{host}:{port}/", parsed.scheme()),
+            None => format!("{}://{host}/", parsed.scheme()),
+        };
+        if !out.contains(&origin) {
+            out.push(origin);
+        }
+    }
+    out
 }
 
 /// Per-route template for `/feeds/{id}/edit`.
@@ -3193,6 +3236,9 @@ pub struct FeedEditTemplate {
     pub csrf_token: String,
     pub feed: FeedEditView,
     pub categories: Vec<FeedCategoryOption>,
+    /// Backs the user-agent field's `<datalist>`; static, unlike the referrer
+    /// suggestions, which are this feed's own.
+    pub user_agent_suggestions: &'static [&'static str],
 }
 
 impl IntoResponse for FeedEditTemplate {
@@ -3699,7 +3745,7 @@ pub async fn categories_page(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_snippet, highlight_html, row_view_from};
+    use super::{build_snippet, highlight_html, referrer_suggestions, row_view_from};
     use crate::models::entry::{Entry, EntryWithFeed};
     use chrono::Utc;
 
@@ -3730,6 +3776,60 @@ mod tests {
             feed_has_icon: false,
             custom_referrer: None,
         }
+    }
+
+    #[test]
+    fn referrer_suggestion_leads_with_the_site_the_feed_describes() {
+        assert_eq!(
+            referrer_suggestions(
+                Some("https://example.com/blog"),
+                "https://cdn.example.net/rss"
+            ),
+            vec![
+                "https://example.com/".to_string(),
+                "https://cdn.example.net/".to_string()
+            ]
+        );
+    }
+
+    /// The common case: the XML sits on the site it describes, so both
+    /// candidates collapse to one origin. Printing it twice would look like a
+    /// choice where there is none.
+    #[test]
+    fn referrer_suggestions_are_deduplicated() {
+        assert_eq!(
+            referrer_suggestions(Some("https://example.com/"), "https://example.com/feed.xml"),
+            vec!["https://example.com/".to_string()]
+        );
+    }
+
+    #[test]
+    fn referrer_suggestion_falls_back_to_the_feed_url() {
+        assert_eq!(
+            referrer_suggestions(None, "https://example.com/feed.xml"),
+            vec!["https://example.com/".to_string()]
+        );
+        // A blank site_url is what the DB holds for "unset", not a URL.
+        assert_eq!(
+            referrer_suggestions(Some(""), "https://example.com/feed.xml"),
+            vec!["https://example.com/".to_string()]
+        );
+    }
+
+    #[test]
+    fn referrer_suggestion_keeps_a_non_default_port() {
+        assert_eq!(
+            referrer_suggestions(None, "http://localhost:8080/feed.xml"),
+            vec!["http://localhost:8080/".to_string()]
+        );
+    }
+
+    /// Nothing usable means no suggestions, which the template turns into no
+    /// `<datalist>` rather than an empty one.
+    #[test]
+    fn referrer_suggestions_skip_what_cannot_be_a_referer() {
+        assert!(referrer_suggestions(None, "not a url").is_empty());
+        assert!(referrer_suggestions(Some("file:///etc/hosts"), "not a url").is_empty());
     }
 
     #[test]
