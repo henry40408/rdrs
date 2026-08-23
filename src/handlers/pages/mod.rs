@@ -1173,6 +1173,8 @@ pub async fn user_settings_page(
             theme,
             entries_per_page,
             retention_read_days,
+            entries_per_page_suggestions: user_settings::ENTRIES_PER_PAGE_SUGGESTIONS,
+            retention_read_days_suggestions: user_settings::RETENTION_READ_DAYS_SUGGESTIONS,
             sidebar_sort: sidebar_prefs.sort,
             sidebar_hide_read: sidebar_prefs.hide_read,
             password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
@@ -2865,6 +2867,11 @@ pub struct UserSettingsTemplate {
     pub theme: Option<String>,
     pub entries_per_page: i64,
     pub retention_read_days: i64,
+    /// Backs the two number fields' `<datalist>`s. Held as slices of the
+    /// model's constants so the suggestions have one source of truth with the
+    /// tests that prove the handler accepts every one of them.
+    pub entries_per_page_suggestions: &'static [i64],
+    pub retention_read_days_suggestions: &'static [i64],
     /// Selected option of the sidebar-ordering `<select>`: `"name"` or
     /// `"unread"` (see `user_settings::parse_sidebar_sort`).
     pub sidebar_sort: &'static str,

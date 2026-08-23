@@ -149,12 +149,18 @@
                     </div>
                     <div class="form-group">
                         <label for="entries-per-page">Entries per page</label>
-                        <input type="number" id="entries-per-page" name="entries_per_page" value="{{ entries_per_page }}" min="10" max="100" required>
+                        <input type="number" id="entries-per-page" name="entries_per_page" value="{{ entries_per_page }}" min="10" max="100" list="entries-per-page-list" autocomplete="off" required>
+                        <datalist id="entries-per-page-list">
+                            {% for v in entries_per_page_suggestions %}<option value="{{ v }}">{% endfor %}
+                        </datalist>
                         <span class="muted text-xs">(10-100)</span>
                     </div>
                     <div class="form-group">
                         <label for="retention-read-days">Delete read articles older than (days)</label>
-                        <input type="number" id="retention-read-days" name="retention_read_days" value="{{ retention_read_days }}" min="0" max="3650" data-testid="retention-read-days" required>
+                        <input type="number" id="retention-read-days" name="retention_read_days" value="{{ retention_read_days }}" min="0" max="3650" list="retention-read-days-list" autocomplete="off" data-testid="retention-read-days" required>
+                        <datalist id="retention-read-days-list">
+                            {% for v in retention_read_days_suggestions %}<option value="{{ v }}">{% endfor %}
+                        </datalist>
                         <span class="muted text-xs">(0 = never delete, max 3650)</span>
                     </div>
                     <div class="form-group">

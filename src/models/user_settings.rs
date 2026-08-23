@@ -15,6 +15,20 @@ pub const MAX_ENTRIES_PER_PAGE: i64 = 100;
 /// "effectively never delete", which `0` expresses directly.
 pub const MAX_RETENTION_READ_DAYS: i64 = 3650;
 
+/// Values offered by the settings form's `<datalist>` for `entries_per_page`,
+/// ascending. Every entry must satisfy [`upsert`]'s range check — a suggestion
+/// the form would reject is worse than no suggestion at all, because the user
+/// picked it out of the browser's own dropdown. Enforced by
+/// `entries_per_page_suggestions_are_all_accepted`.
+pub const ENTRIES_PER_PAGE_SUGGESTIONS: &[i64] = &[10, 25, 50, 100];
+
+/// Same contract as [`ENTRIES_PER_PAGE_SUGGESTIONS`], for
+/// `retention_read_days` against [`update_retention_read_days`]. `0` leads
+/// because it is the default and means "never delete"; the form's help text
+/// carries that meaning, since a `<datalist>` on a number input renders bare
+/// values and `label` support is inconsistent across browsers.
+pub const RETENTION_READ_DAYS_SUGGESTIONS: &[i64] = &[0, 7, 30, 90, 365];
+
 /// Sidebar ordering: categories (and the open category's feeds) A-Z by name.
 /// The order the list queries already return, so the client leaves them alone.
 pub const SIDEBAR_SORT_NAME: &str = "name";
@@ -409,6 +423,54 @@ mod tests {
         let settings = find_by_user_id(&db, user.id).await.unwrap().unwrap();
         assert_eq!(settings.entries_per_page, 50);
         assert_eq!(settings.theme, Some("dark".to_string()));
+    }
+
+    /// The `<datalist>` promise: every value the settings form offers for
+    /// `entries_per_page` round-trips through `upsert`. A suggestion the form
+    /// rejects is worse than none — the user picked it out of the browser's own
+    /// dropdown, so a validation error there reads as a bug, not as a typo.
+    #[tokio::test]
+    async fn entries_per_page_suggestions_are_all_accepted() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "epp_sugg", "hash", Role::User)
+            .await
+            .unwrap();
+
+        assert!(!ENTRIES_PER_PAGE_SUGGESTIONS.is_empty());
+        for &v in ENTRIES_PER_PAGE_SUGGESTIONS {
+            let settings = upsert(&db, user.id, v)
+                .await
+                .unwrap_or_else(|e| panic!("suggestion {v} rejected by upsert: {e:?}"));
+            assert_eq!(settings.entries_per_page, v);
+        }
+
+        // A browser renders a datalist in document order, so an unsorted list
+        // reads as arbitrary.
+        assert!(ENTRIES_PER_PAGE_SUGGESTIONS.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    /// Same contract for `retention_read_days`, including the leading `0`
+    /// ("never delete") the form deliberately offers.
+    #[tokio::test]
+    async fn retention_read_days_suggestions_are_all_accepted() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "rrd_sugg", "hash", Role::User)
+            .await
+            .unwrap();
+
+        assert!(RETENTION_READ_DAYS_SUGGESTIONS.contains(&0));
+        for &v in RETENTION_READ_DAYS_SUGGESTIONS {
+            update_retention_read_days(&db, user.id, v)
+                .await
+                .unwrap_or_else(|e| panic!("suggestion {v} rejected: {e:?}"));
+            assert_eq!(get_retention_read_days(&db, user.id).await.unwrap(), v);
+        }
+
+        assert!(
+            RETENTION_READ_DAYS_SUGGESTIONS
+                .windows(2)
+                .all(|w| w[0] < w[1])
+        );
     }
 
     #[tokio::test]
