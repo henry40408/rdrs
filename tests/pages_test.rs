@@ -3002,6 +3002,114 @@ async fn test_feed_edit_page_renders() {
     assert!(body.contains("Edit Cat"));
 }
 
+/// The render half of the `<datalist>` contract for the HTTP settings: the
+/// unit tests prove the suggestions are well-formed, this proves the page
+/// offers them — the referrer list built from this feed's own URLs.
+#[tokio::test]
+async fn test_feed_edit_page_offers_http_setting_suggestions() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_users(&app.db).await;
+
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO category (user_id, name) VALUES ($1, $2)",
+        1_i64,
+        "Edit Cat"
+    )
+    .unwrap();
+    // Feed XML and site live on different hosts, so both origins are offered.
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO feed (category_id, url, title, site_url) VALUES ($1, $2, $3, $4)",
+        1_i64,
+        "https://cdn.example.net/edit.xml",
+        "Editable Feed",
+        "https://example.com/blog"
+    )
+    .unwrap();
+
+    login(&mut app.server, "admin").await;
+
+    let response = app.server.get("/feeds/1/edit").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    for (input_id, list_id) in [
+        ("custom_user_agent", "user-agent-list"),
+        ("custom_referrer", "referrer-list"),
+    ] {
+        assert!(
+            body.contains(&format!(r#"id="{input_id}""#)),
+            "{input_id} input missing"
+        );
+        assert!(
+            body.contains(&format!(r#"list="{list_id}""#)),
+            "{input_id} does not reference {list_id}"
+        );
+        assert!(
+            body.contains(&format!(r#"<datalist id="{list_id}">"#)),
+            "{list_id} not rendered"
+        );
+    }
+
+    for ua in rdrs::config::CUSTOM_USER_AGENT_SUGGESTIONS {
+        assert!(
+            body.contains(&format!(r#"<option value="{ua}">"#)),
+            "user agent {ua:?} not offered"
+        );
+    }
+
+    // The site the feed describes leads, its own host follows.
+    let site_at = body
+        .find(r#"<option value="https://example.com/">"#)
+        .expect("site origin not offered");
+    let feed_at = body
+        .find(r#"<option value="https://cdn.example.net/">"#)
+        .expect("feed origin not offered");
+    assert!(site_at < feed_at, "the site origin should be offered first");
+}
+
+/// A feed whose URLs yield no usable origin gets no referrer `<datalist>` at
+/// all — an empty one would open a dropdown with nothing in it.
+#[tokio::test]
+async fn test_feed_edit_page_omits_the_referrer_list_when_there_is_nothing_to_suggest() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_users(&app.db).await;
+
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO category (user_id, name) VALUES ($1, $2)",
+        1_i64,
+        "Edit Cat"
+    )
+    .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "INSERT INTO feed (category_id, url, title) VALUES ($1, $2, $3)",
+        1_i64,
+        "not a url",
+        "Broken Feed"
+    )
+    .unwrap();
+
+    login(&mut app.server, "admin").await;
+
+    let response = app.server.get("/feeds/1/edit").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    assert!(
+        !body.contains(r#"<datalist id="referrer-list">"#),
+        "an empty referrer datalist was rendered"
+    );
+    assert!(
+        !body.contains(r#"list="referrer-list""#),
+        "the input points at a datalist that is not there"
+    );
+    // The static user-agent list is unaffected.
+    assert!(body.contains(r#"<datalist id="user-agent-list">"#));
+}
+
 #[tokio::test]
 async fn test_feed_edit_page_not_found_renders_error_page() {
     let mut app = create_test_app(default_test_config()).await;

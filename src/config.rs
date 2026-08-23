@@ -11,6 +11,29 @@ pub const DEFAULT_USER_AGENT: &str = concat!(
     " (RSS Reader; +https://github.com/henry40408/rdrs)"
 );
 
+/// Values the feed-edit form suggests for a per-feed `User-Agent` override.
+///
+/// The field exists for the one case [`DEFAULT_USER_AGENT`] does not survive: a
+/// server that turns away anything not shaped like a browser. So the list is
+/// browser strings — the shape someone reaching for this field is after, which
+/// a blank box gives no hint of.
+///
+/// [`DEFAULT_USER_AGENT`] is deliberately **not** among them. Leaving the field
+/// empty already selects it, and picking it from a list would do something
+/// subtly worse: freeze today's `GIT_VERSION` into the feed's row, so the feed
+/// keeps announcing a version rdrs has long since moved past.
+///
+/// Every entry must survive `HeaderValue::from_str`, which is what
+/// `feed_sync::refresh_feed` puts it through — and that call drops the header
+/// on failure rather than erroring, so a bad suggestion would silently send no
+/// `User-Agent` at all. Enforced by
+/// `custom_user_agent_suggestions_are_valid_header_values`.
+pub const CUSTOM_USER_AGENT_SUGGESTIONS: &[&str] = &[
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0",
+];
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
@@ -831,6 +854,31 @@ mod tests {
         // Nothing configured means no persistent secret, which the startup
         // warning in `main` reports.
         assert!(config.secret_generated);
+    }
+
+    /// The `<datalist>` promise for the per-feed user agent. `refresh_feed`
+    /// builds the header with `HeaderValue::from_str` and *drops it on
+    /// failure* rather than erroring, so a suggestion that cannot become a
+    /// header value would leave the feed sending no `User-Agent` at all —
+    /// silently, and only for the operator who picked it out of the browser's
+    /// own dropdown.
+    #[test]
+    fn custom_user_agent_suggestions_are_valid_header_values() {
+        assert!(!CUSTOM_USER_AGENT_SUGGESTIONS.is_empty());
+
+        for ua in CUSTOM_USER_AGENT_SUGGESTIONS {
+            assert!(
+                reqwest::header::HeaderValue::from_str(ua).is_ok(),
+                "suggestion {ua:?} cannot be sent as a header value"
+            );
+        }
+
+        // Offering the default would freeze today's GIT_VERSION into the
+        // feed's row; leaving the field empty already selects it.
+        assert!(
+            !CUSTOM_USER_AGENT_SUGGESTIONS.contains(&DEFAULT_USER_AGENT),
+            "the default belongs to the empty field, not the list"
+        );
     }
 
     #[test]

@@ -40,11 +40,20 @@
                         <div class="feed-http-settings-body">
                             <div class="form-group">
                                 <label for="custom_user_agent">Custom User Agent</label>
-                                <input type="text" id="custom_user_agent" name="custom_user_agent" value="{{ feed.custom_user_agent }}">
+                                <input type="text" id="custom_user_agent" name="custom_user_agent" value="{{ feed.custom_user_agent }}" list="user-agent-list" autocomplete="off">
+                                <datalist id="user-agent-list">
+                                    {% for ua in user_agent_suggestions %}<option value="{{ ua }}">{% endfor %}
+                                </datalist>
+                                <div class="feed-http-hint">Leave empty to use the server's own user agent</div>
                             </div>
                             <div class="form-group">
                                 <label for="custom_referrer">Custom Referrer</label>
-                                <input type="text" id="custom_referrer" name="custom_referrer" value="{{ feed.custom_referrer }}">
+                                <input type="text" id="custom_referrer" name="custom_referrer" value="{{ feed.custom_referrer }}"{% if !feed.referrer_suggestions.is_empty() %} list="referrer-list"{% endif %} autocomplete="off">
+                                {% if !feed.referrer_suggestions.is_empty() %}
+                                <datalist id="referrer-list">
+                                    {% for r in feed.referrer_suggestions %}<option value="{{ r }}">{% endfor %}
+                                </datalist>
+                                {% endif %}
                                 <div class="feed-http-hint">Some image servers require a specific Referer header to serve images</div>
                             </div>
                             <div class="form-group">
