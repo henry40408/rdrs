@@ -493,6 +493,57 @@ async fn test_user_settings_page_renders_ssr_content() {
     );
 }
 
+/// The render half of the `<datalist>` contract — `user_settings`'s own tests
+/// prove the handler accepts every suggestion, this proves the page actually
+/// offers them. Both fields keep `min`/`max`, which a datalist does not relax.
+#[tokio::test]
+async fn test_user_settings_page_offers_number_field_suggestions() {
+    use rdrs::models::user_settings::{
+        ENTRIES_PER_PAGE_SUGGESTIONS, RETENTION_READ_DAYS_SUGGESTIONS,
+    };
+
+    let mut app = create_test_app(default_test_config()).await;
+    setup_users(&app.db).await;
+    login(&mut app.server, "admin").await;
+
+    let response = app.server.get("/user-settings").await;
+    response.assert_status_ok();
+    let body = response.text();
+
+    // Each input points at its list, and the list exists.
+    for (input_id, list_id) in [
+        ("entries-per-page", "entries-per-page-list"),
+        ("retention-read-days", "retention-read-days-list"),
+    ] {
+        assert!(
+            body.contains(&format!(r#"id="{input_id}""#)),
+            "{input_id} input missing"
+        );
+        assert!(
+            body.contains(&format!(r#"list="{list_id}""#)),
+            "{input_id} does not reference {list_id}"
+        );
+        assert!(
+            body.contains(&format!(r#"<datalist id="{list_id}">"#)),
+            "{list_id} not rendered"
+        );
+    }
+
+    for &v in ENTRIES_PER_PAGE_SUGGESTIONS
+        .iter()
+        .chain(RETENTION_READ_DAYS_SUGGESTIONS)
+    {
+        assert!(
+            body.contains(&format!(r#"<option value="{v}">"#)),
+            "suggestion {v} not offered"
+        );
+    }
+
+    // The range constraints survive; the list only suggests.
+    assert!(body.contains(r#"min="10" max="100""#));
+    assert!(body.contains(r#"min="0" max="3650""#));
+}
+
 #[tokio::test]
 async fn test_user_settings_lists_api_tokens() {
     let mut app = create_test_app(default_test_config()).await;
