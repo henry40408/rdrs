@@ -382,6 +382,85 @@ async fn control_at_least_wide(world: &mut RdrsWorld, selector: String, min: f64
     Ok(())
 }
 
+/// Every control in the reading pane's action bar, as `(label, x, width)`.
+///
+/// On mobile the bar is a fixed strip whose buttons are laid out by flex, so a
+/// label that changes width — "Summarize" → "Summarizing…" → "Dismiss", "Star"
+/// → "Starred" — is exactly the input that must *not* move anything.
+async fn action_bar_boxes(world: &RdrsWorld) -> Result<Vec<(String, f64, f64)>> {
+    let boxes = world
+        .driver()?
+        .eval(
+            "return [...document.querySelectorAll('.reading-pane-actions .rp-action')]\
+               .map((b) => {\
+                 const r = b.getBoundingClientRect();\
+                 const l = b.querySelector('.action-label');\
+                 return [l ? l.textContent.trim() : '', r.x, r.width];\
+               });",
+        )
+        .await?;
+    let rows = boxes
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("the action-bar probe did not return an array"))?
+        .iter()
+        .map(|row| {
+            (
+                row[0].as_str().unwrap_or_default().to_owned(),
+                row[1].as_f64().unwrap_or_default(),
+                row[2].as_f64().unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    ensure!(!rows.is_empty(), "the reading pane has no action bar");
+    Ok(rows)
+}
+
+fn describe(boxes: &[(String, f64, f64)]) -> String {
+    boxes
+        .iter()
+        .map(|(label, x, width)| format!("{label} @{x:.1}+{width:.1}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[when("I record the reading-pane action bar layout")]
+async fn record_action_bar(world: &mut RdrsWorld) -> Result<()> {
+    world.action_bar = Some(action_bar_boxes(world).await?);
+    Ok(())
+}
+
+/// The bar's slots must stay the same size in the same places whatever the
+/// labels now read — otherwise every button slides sideways under the thumb
+/// that just tapped one.
+#[then("the reading-pane action bar layout is unchanged")]
+async fn action_bar_unchanged(world: &mut RdrsWorld) -> Result<()> {
+    let before = world
+        .action_bar
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("no action-bar layout was recorded"))?;
+    let after = action_bar_boxes(world).await?;
+    ensure!(
+        before.len() == after.len(),
+        "the bar had {} controls and now has {}:\n  before: {}\n  after:  {}",
+        before.len(),
+        after.len(),
+        describe(&before),
+        describe(&after)
+    );
+    for (old, new) in before.iter().zip(&after) {
+        let moved = (old.1 - new.1).abs();
+        let resized = (old.2 - new.2).abs();
+        ensure!(
+            moved <= SUBPIXEL && resized <= SUBPIXEL,
+            "`{}` moved {moved:.1}px and resized {resized:.1}px:\n  before: {}\n  after:  {}",
+            old.0,
+            describe(&before),
+            describe(&after)
+        );
+    }
+    Ok(())
+}
+
 #[then(expr = "the {string} element is visible")]
 async fn element_visible(world: &mut RdrsWorld, selector: String) -> Result<()> {
     let element = world.driver()?.css(&selector).await?;

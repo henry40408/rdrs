@@ -21,6 +21,11 @@ use super::entries::{entry_id, entry_row};
 /// Dismiss control.
 pub const SUMMARIZE_TOGGLE: &str = ".reading-pane-actions [data-summary-toggle] button";
 
+/// The action bar's star toggle, scoped to the bar: every entry row carries a
+/// star with the same accessible name, and a body-wide lookup finds one of
+/// those first.
+const PANE_STAR: &str = ".reading-pane-actions [id^='reading-pane-star-form-'] button";
+
 /// How long a held response is kept before being let through.
 ///
 /// Long enough for the second click to land while the first is still in
@@ -119,6 +124,17 @@ async fn delay_full_content(world: &mut RdrsWorld, title: String) -> Result<()> 
         .delay_requests(&format!(r"/entries/{id}/fetch-full-content"), HOLD)
         .await?;
     world.delayed_full_content = Some(handle);
+    Ok(())
+}
+
+#[when(expr = "the summarize response for the entry titled {string} is delayed")]
+async fn delay_summarize(world: &mut RdrsWorld, title: String) -> Result<()> {
+    let id = entry_id(world, &title).await?;
+    // `(\?|$)` so the cancel POST, which shares the prefix, stays fast.
+    let handle = world
+        .delay_requests(&format!(r"/entries/{id}/summarize(\?|$)"), HOLD)
+        .await?;
+    world.delayed_summarize = Some(handle);
     Ok(())
 }
 
@@ -362,6 +378,28 @@ async fn click_button(world: &mut RdrsWorld, label: String) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("the page has no `{label}` button"))?;
     click_when_ready(&button).await?;
     Ok(())
+}
+
+#[when("I click the reading-pane star button")]
+async fn click_pane_star(world: &mut RdrsWorld) -> Result<()> {
+    world.driver()?.click_css(PANE_STAR).await
+}
+
+/// The label flips with the starred state, which is what makes it a layout
+/// input worth asserting on.
+#[then(expr = "the reading-pane star button reads {string}")]
+async fn pane_star_reads(world: &mut RdrsWorld, text: String) -> Result<()> {
+    let driver = world.driver()?;
+    eventually_eq("the star button's label", text, || async {
+        Ok(driver
+            .css(&format!("{PANE_STAR} .action-label"))
+            .await?
+            .content_text()
+            .await?
+            .trim()
+            .to_owned())
+    })
+    .await
 }
 
 #[then(expr = "I see a {string} button")]

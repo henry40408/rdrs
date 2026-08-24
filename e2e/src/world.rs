@@ -109,6 +109,12 @@ pub struct RdrsWorld {
     pub held_summary_fragment: Option<RouteHandle>,
     /// Counts re-queue POSTs, to prove an in-flight toggle is inert.
     pub summarize_posts: Option<RouteHandle>,
+    /// The held summarize POST, so the busy label stays up long enough to be
+    /// measured against the bar's recorded geometry.
+    pub delayed_summarize: Option<RouteHandle>,
+    /// The mobile action bar's control geometry, as `(label, x, width)` per
+    /// button, captured before an action changes a label.
+    pub action_bar: Option<Vec<(String, f64, f64)>>,
     /// The server this scenario borrowed, returned to the pool on drop.
     endpoints: Option<Endpoints>,
     /// Held for the scenario's lifetime so the pool cannot lend the same
@@ -163,6 +169,8 @@ impl RdrsWorld {
             pane_stamp: None,
             held_summary_fragment: None,
             summarize_posts: None,
+            delayed_summarize: None,
+            action_bar: None,
             endpoints: Some(endpoints),
             _lease: lease,
         })
