@@ -2967,7 +2967,19 @@ summary {
     }
 
     /* Actions move to a fixed bottom bar: thumb-reachable, available while the
-       article scrolls. flex:1 + space-around spreads 2-5 controls evenly. */
+       article scrolls. Equal flex slots spread 2-5 controls evenly.
+
+       Nothing in this bar may be sized by its label. The labels change under
+       the thumb that just tapped one — "Summarize" → "Summarizing…" →
+       "Dismiss", "Star" → "Starred", "Full content" → "Fetching…" — and a
+       text-sized bar re-divides itself on every one of them (measured: the
+       three neighbours shrink 8.5px and slide up to 20px left the moment
+       Summarize is tapped). `flex-wrap` inherited from the base rule is the
+       loud half of it: one label growing past the row drops the last control
+       onto a second line and the bar gains a whole row mid-tap. Hence nowrap
+       here, `min-width: 0` below — a flex item's `min-width: auto` otherwise
+       lets a `white-space: nowrap` label's min-content width beat
+       `flex-basis: 0` — and the ellipsis on the label itself. */
     .reading-pane-actions {
         position: fixed;
         left: 0;
@@ -2977,6 +2989,7 @@ summary {
         margin: 0;
         padding: var(--space-2);
         gap: var(--space-1);
+        flex-wrap: nowrap;
         justify-content: space-around;
         background: var(--color-bg-secondary);
         border-top: 1px solid var(--color-border);
@@ -2985,23 +2998,37 @@ summary {
 
     /* Both the form-wrapped buttons and the bare <a> are direct children. */
     .reading-pane-actions > * {
-        flex: 1;
+        flex: 1 1 0;
+        min-width: 0;
     }
 
     .reading-pane-actions form {
         display: flex;
     }
 
-    /* Stacked icon-over-label, borderless, big icon, ≥48px tall. */
+    /* Stacked icon-over-label, borderless, big icon, ≥48px tall. Side padding
+       is dropped because the slot *is* the tap target now that it no longer
+       hugs its text: the 8px it used to eat is what decides whether the widest
+       resting label ("Full content", measured at 84px) fits its slot or shows
+       an ellipsis. */
     .reading-pane-actions .rp-action {
-        flex: 1;
+        flex: 1 1 0;
+        min-width: 0;
         flex-direction: column;
         gap: 2px;
         min-height: 3rem;
-        padding: var(--space-1);
+        padding: var(--space-1) 0;
         border-color: transparent;
         background: transparent;
         font-size: var(--font-xs);
+    }
+
+    /* The label is the part that changes, so it is the part that gives: it is
+       clipped to its slot rather than widening it. */
+    .reading-pane-actions .action-label {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .reading-pane-actions .rp-action .action-icon {

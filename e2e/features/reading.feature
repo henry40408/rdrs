@@ -320,6 +320,30 @@ Feature: Reading entries
     And the ".rp-action" control is at least 44px tall
     And the ".reading-pane-actions" control is at least 360px wide
 
+  @mobile
+  Scenario: A busy action does not re-divide the mobile action bar
+    Given I am viewing on a mobile screen
+    And the user has Kagi configured
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    Then the reading pane is visible on mobile
+    When I record the reading-pane action bar layout
+    And the summarize response for the entry titled "Test Entry 1" is delayed
+    And I click the reading-pane summarize toggle
+    Then the reading-pane summarize toggle reads "Summarizing…"
+    And the reading-pane action bar layout is unchanged
+
+  @mobile
+  Scenario: Starring does not re-divide the mobile action bar
+    Given I am viewing on a mobile screen
+    When I open the inbox
+    And I click the entry titled "Test Entry 1"
+    Then the reading pane is visible on mobile
+    When I record the reading-pane action bar layout
+    And I click the reading-pane star button
+    Then the reading-pane star button reads "Starred"
+    And the reading-pane action bar layout is unchanged
+
   Scenario: A broken content image shows the dashed-box fallback
     Given the entry titled "Test Entry 3" has content with a broken image
     When I open the inbox
