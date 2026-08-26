@@ -4,11 +4,10 @@ use crate::db::{Db, DbInner};
 use crate::error::{AppError, AppResult};
 use crate::{query_all, query_scalar};
 
-/// Render a timestamp column/expression as the `%Y-%m-%d %H:%M:%S` TEXT this
-/// module reads into `String`. `SQLite` stores exactly that TEXT (pass-through);
-/// PG columns are `TIMESTAMPTZ`, so wrap in `to_char(..., 'YYYY-MM-DD
-/// HH24:MI:SS')` (UTC session) — a bare read would fail to decode a timestamptz
-/// into `String`. Mirrors `entry::filters::Dialect::cursor_ts`.
+/// Render a timestamp column as the `%Y-%m-%d %H:%M:%S` TEXT this module reads
+/// into `String`. `SQLite` stores exactly that; PG columns are `TIMESTAMPTZ`, so
+/// they need `to_char(...)` — a bare read would fail to decode one into
+/// `String`. Mirrors `entry::filters::Dialect::cursor_ts`.
 fn ts_text(db: &Db, expr: &str) -> String {
     if db.is_postgres() {
         format!("to_char({expr}, 'YYYY-MM-DD HH24:MI:SS')")
@@ -18,12 +17,10 @@ fn ts_text(db: &Db, expr: &str) -> String {
 }
 
 /// Parse a `YYYY-MM-DD` date-range bound for binding. As a `NaiveDate` it
-/// compares correctly against the timestamp columns on both backends: `SQLite`
-/// compares the `YYYY-MM-DD` TEXT lexicographically against the stored
-/// `%Y-%m-%d %H:%M:%S`, and `PostgreSQL` implicitly casts `date` to
-/// `timestamptz` — a raw `%Y-%m-%d` *string* bind would not coerce against a
-/// timestamptz column. Falls back to today on an unparseable input (matching the
-/// range-fill fallback used when charting).
+/// compares correctly on both backends: `SQLite` compares the TEXT
+/// lexicographically, `PostgreSQL` implicitly casts `date` to `timestamptz` —
+/// where a raw `%Y-%m-%d` *string* bind would not coerce. Falls back to today on
+/// unparseable input, matching the range-fill fallback used when charting.
 fn parse_ymd(s: &str) -> NaiveDate {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap_or_else(|_| chrono::Utc::now().date_naive())
 }
@@ -41,8 +38,8 @@ impl PersonalOverview {
     /// Unread = entries published in the period that are not yet read.
     ///
     /// `read_entries` counts the read subset of the *same* publish cohort as
-    /// `total_entries`, so this difference is always non-negative — no clamp
-    /// needed (and none wanted: a clamp would mask a future cohort regression).
+    /// `total_entries`, so this is always non-negative — no clamp needed, and
+    /// none wanted, since one would mask a future cohort regression.
     pub fn unread_entries(&self) -> i64 {
         self.total_entries - self.read_entries
     }
@@ -75,13 +72,11 @@ pub struct DailyBucket {
     pub count: i64,
 }
 
-/// Collapse per-day read counts into at most `max_bars` contiguous buckets so
-/// a dense date range stays readable (and tappable) as a fixed number of bars.
+/// Collapse per-day read counts into at most `max_bars` contiguous buckets so a
+/// dense date range stays readable (and tappable) as a fixed number of bars.
 ///
-/// Each bucket covers `ceil(len / max_bars)` consecutive days; when the input
-/// already fits within `max_bars`, every bucket is a single day (no change).
-/// Input is assumed chronologically ordered, as produced by
-/// [`get_daily_read_counts`].
+/// Each bucket covers `ceil(len / max_bars)` consecutive days, so input already
+/// within `max_bars` is unchanged. Input is assumed chronologically ordered.
 pub fn bucket_daily_counts(daily: &[DailyReadCount], max_bars: usize) -> Vec<DailyBucket> {
     let max_bars = max_bars.max(1);
     if daily.is_empty() {
@@ -138,21 +133,18 @@ impl AdminEntryStats {
 }
 
 /// Free space a `VACUUM` would hand back, for backends that can measure it.
-///
-/// `SQLite` reads this straight off its page-level freelist accounting. There is
-/// no comparable figure on `PostgreSQL` without an extension, so PG reports
-/// `None` rather than a number — see [`get_admin_database_stats`].
+/// `SQLite` reads it off its page-level freelist accounting; there is no
+/// comparable figure on `PostgreSQL` without an extension, so PG reports `None`.
 pub struct ReclaimableSpace {
     pub bytes: i64,
     /// `bytes / db_size_bytes`, in `0.0..=1.0`.
     pub fragmentation_ratio: f64,
 }
 
-/// Admin database storage + record stats (period-independent).
-///
-/// `reclaimable` is `None` on backends that cannot report free space (currently
-/// `PostgreSQL`); the `/statistics` page omits the card entirely rather than
-/// rendering a zero that would read as "no bloat".
+/// Admin database storage + record stats (period-independent). `reclaimable` is
+/// `None` on backends that cannot report free space, and the `/statistics` page
+/// omits the card entirely rather than rendering a zero that reads as "no
+/// bloat".
 pub struct AdminDatabaseStats {
     pub db_size_bytes: i64,
     pub reclaimable: Option<ReclaimableSpace>,
@@ -266,11 +258,10 @@ pub async fn get_daily_read_counts(
     from: &str,
     to: &str,
 ) -> AppResult<Vec<DailyReadCount>> {
-    // Ad-hoc `(date_string, count)` rows → fetch as a tuple and post-process in
-    // Rust (fill zero-count days below). Only the day bucket dialect-forks:
-    // SQLite's `DATE()` vs PG's `to_char(...)`. The range bounds are bound as
-    // dates (see `parse_ymd`) so the raw `read_at >= $2 / < $3` comparison works
-    // on both backends without wrapping the column.
+    // Ad-hoc `(date_string, count)` rows, fetched as a tuple and post-processed
+    // in Rust to fill zero-count days. Only the day bucket dialect-forks; the
+    // range bounds are bound as dates (see `parse_ymd`) so the raw comparison
+    // works on both backends without wrapping the column.
     let day_bucket = if db.is_postgres() {
         "to_char(e.read_at, 'YYYY-MM-DD')".to_string()
     } else {
@@ -458,29 +449,24 @@ pub async fn get_admin_entry_stats(db: &Db, from: &str, to: &str) -> AppResult<A
 /// Period-independent. Storage figures are dialect-specific — see below.
 pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> {
     // Storage stats dialect-fork. SQLite exposes page-level accounting via
-    // PRAGMAs (total size = page_count * page_size; reclaimable = freelist *
-    // page_size). PostgreSQL reports the on-disk database size via
-    // `pg_database_size()` but has no comparable free-space figure, so it
-    // reports `None` and the UI drops the card.
+    // PRAGMAs; PostgreSQL reports on-disk size via `pg_database_size()` but has
+    // no comparable free-space figure, so it reports `None` and the UI drops the
+    // card.
     //
     // The tempting substitute is `pg_stat_user_tables.n_dead_tup`, and it is
-    // wrong here on three counts (measured against PostgreSQL 17.10):
+    // wrong on three counts (measured against PostgreSQL 17.10):
     //
-    //   1. That view's own definition ends `AND schemaname !~ '^pg_toast'`, so
-    //      TOAST relations are invisible to it — and `entry.content` (HTML) is
-    //      exactly what gets TOASTed. A table holding 880 KB, 800 KB of it in
-    //      TOAST, reported 60 dead tuples through this view while the TOAST
-    //      relation itself held 420. It misses the bulk of the bloat.
-    //   2. It counts *tuples*, not bytes. Converting needs an average row
-    //      width, which is meaningless for a column whose values are TOASTed.
-    //   3. It is a transient figure, not a high-water mark: autovacuum resets
-    //      it to zero while those pages stay in the file. It measures "waiting
-    //      to be vacuumed", not "reclaimable".
+    //   1. That view excludes TOAST relations — and `entry.content` is exactly
+    //      what gets TOASTed. A table holding 880 KB, 800 KB of it in TOAST,
+    //      reported 60 dead tuples while the TOAST relation held 420.
+    //   2. It counts *tuples*, not bytes, and converting needs an average row
+    //      width, which is meaningless for a TOASTed column.
+    //   3. It is transient, not a high-water mark: autovacuum resets it to zero
+    //      while those pages stay in the file.
     //
-    // A trustworthy number needs the `pgstattuple` extension (a deployment
-    // dependency, and a full relation scan) — not worth it for a single-binary,
-    // zero-config app. Better no card than one that under-reports by an order
-    // of magnitude.
+    // A trustworthy number needs the `pgstattuple` extension — a deployment
+    // dependency and a full relation scan. Better no card than one that
+    // under-reports by an order of magnitude.
     let (db_size_bytes, reclaimable_bytes) = match db.inner() {
         DbInner::Sqlite(pool) => {
             let page_count = sqlx::query_scalar::<_, i64>("PRAGMA page_count")
@@ -563,13 +549,11 @@ pub async fn get_admin_database_stats(db: &Db) -> AppResult<AdminDatabaseStats> 
     ) {
         (Some(min), Some(max)) => {
             let coverage = (max - min).num_seconds() as f64 / 86_400.0;
-            // Average over the span we actually retain entries for, not the
-            // age since the oldest entry: retention prunes read entries, so
-            // `total_entries / age` systematically understated the rate (old
-            // unread entries stretch the denominator while their pruned
-            // neighbours are gone from the numerator). Numerator and
-            // denominator now cover the same retained set. Guard a sub-day
-            // span (single entry, or all created the same day) at 1 day.
+            // Averaged over the span entries are actually retained for, not the
+            // age since the oldest: retention prunes read entries, so
+            // `total_entries / age` understated the rate — old unread entries
+            // stretch the denominator while their pruned neighbours are gone
+            // from the numerator. A sub-day span is guarded at 1 day.
             let avg = total_entries as f64 / coverage.max(1.0);
             (coverage, avg)
         }
@@ -916,7 +900,6 @@ mod tests {
         let user_id = create_user_with_data(&db).await;
         let feed_id = get_feed_id(&db, user_id).await;
 
-        // Add a second category + feed
         let cat2 = category::create_category(&db, user_id, "Science")
             .await
             .unwrap();

@@ -1,40 +1,21 @@
 // static/js/csrf.js — echo the CSRF token back to the server on every
-// state-changing request.
-//
-// The server hands the token to the page as a readable `csrf_token` cookie (see
-// middleware::csrf). This module returns it in the two shapes the guard accepts,
-// so no individual call site has to think about CSRF:
-//
-//   - as the `X-CSRF-Token` header on same-origin `fetch()` — covers the
-//     form-swap layer, the bodyless keyboard-shortcut POSTs, and the JSON
-//     endpoints (login, passkey, logout, unmasquerade);
-//   - as a hidden `_csrf` field on native POST form submits — covers the forms
-//     that post a body the browser serialises itself, including the multipart
-//     OPML import.
-//
-// Loaded from base.html on every page, ahead of the feature modules, so the
-// `fetch` patch is in place before anything calls it.
+// state-changing request: as the `X-CSRF-Token` header on same-origin `fetch()`,
+// and as a hidden `_csrf` field on native POST form submits. Loaded from
+// base.html ahead of the feature modules, so the `fetch` patch is in place
+// before anything calls it.
 
 function csrfToken() {
-  // The server writes __Host-csrf_token instead of csrf_token whenever the
-  // deployment is Secure (see middleware::csrf::csrf_cookie_name on the Rust
-  // side). Both names must be matched — a plain `csrf_token=` pattern does
-  // NOT match `__Host-csrf_token=` (the character before `csrf_token` is
-  // `-`, which fails the `(?:^|;\s*)` anchor), so on a Secure deployment
-  // every JS-driven POST would silently send no token and get 403'd by the
-  // synchronizer-token guard.
+  // Both names must be matched: the server writes __Host-csrf_token on a Secure
+  // deployment (middleware::csrf::csrf_cookie_name), and a plain `csrf_token=`
+  // pattern does not match it — the `-` before the name fails the `(?:^|;\s*)`
+  // anchor, so every JS-driven POST would send no token and get 403'd.
   //
-  // __Host-csrf_token WINS when both are present, mirroring
-  // middleware::auth::session_token_from_jar, which resolves the session the
-  // guard derives the expected token from in exactly that order. The two
-  // sides must agree: a browser can hold two cookie generations at once (an
-  // unprefixed cookie minted before the deployment turned Secure, alongside
-  // the prefixed one), and document.cookie orders by creation time, so
-  // "whichever comes first" would hand back the *older* value while the
-  // server validated against the newer session — 403 on every unsafe
-  // request, for as long as the stale cookie lived. Preferring the prefix is
-  // also a hardening win: a sibling subdomain can set `csrf_token` (cookie
-  // tossing) but can never write a __Host- prefixed name.
+  // __Host- wins when both are present, mirroring the resolution order in
+  // middleware::auth::session_token_from_jar. A browser can hold both cookie
+  // generations at once and document.cookie orders by creation time, so
+  // "whichever comes first" would validate an older value against a newer
+  // session. Preferring the prefix also blocks cookie tossing: a sibling
+  // subdomain can set `csrf_token`, never a __Host- prefixed name.
   const read = (name) => {
     const m = document.cookie.match(
       new RegExp(`(?:^|;\\s*)${name}=([^;]*)`)
@@ -46,8 +27,7 @@ function csrfToken() {
 
 const UNSAFE_METHOD = /^(POST|PUT|PATCH|DELETE)$/i;
 
-// A relative URL, or an absolute one with our own origin, is same-origin. Only
-// those get the token — it must never leak to a third-party host.
+// Only same-origin requests get the token — it must never leak to a third party.
 function isSameOrigin(url) {
   try {
     return new URL(url, location.href).origin === location.origin;
@@ -56,8 +36,7 @@ function isSameOrigin(url) {
   }
 }
 
-// Patch fetch so a same-origin state-changing request carries the token even
-// though its call site never set it. A caller that already set the header wins.
+// A call site that already set the header wins.
 const nativeFetch = window.fetch.bind(window);
 window.fetch = function (input, init) {
   const isRequest = typeof Request !== "undefined" && input instanceof Request;
@@ -76,19 +55,14 @@ window.fetch = function (input, init) {
   return nativeFetch(input, init);
 };
 
-// Refresh `_csrf` on a native POST form before it submits. Capture phase, so it
-// runs ahead of the form-swap handler that serialises the form into a body.
+// Capture phase, so this runs ahead of the form-swap handler that serialises the
+// form into a body.
 //
-// The server renders the field itself (see the `csrf_field` macro), so the
-// usual job here is to *overwrite* a value, not add one. Overwrite rather than
-// leave it alone: the rendered token is a snapshot taken when the page was
-// built, and `slide_session_cookie` rotates the session token on the way out of
-// a response — so the page that triggered a rotation carries the pre-rotation
-// token while the browser already holds the post-rotation cookie, which is what
-// `csrf_guard` will check against. The cookie is never staler than the markup.
-//
-// The field is still created when missing, for any form that predates the
-// server-side rendering (a cached page, a hand-written fragment).
+// The server renders the field (the `csrf_field` macro), so the usual job is to
+// overwrite: `slide_session_cookie` rotates the session token on the way out of
+// a response, leaving the markup's snapshot staler than the cookie `csrf_guard`
+// checks against. Still created when missing, for any form that predates the
+// server-side rendering.
 document.addEventListener(
   "submit",
   (event) => {

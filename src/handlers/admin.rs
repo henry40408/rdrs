@@ -50,14 +50,12 @@ pub async fn stop_masquerade(
 /// handler can return alongside its own response.
 ///
 /// Both are rebuilt from `new_token`: the session cookie carries the token
-/// itself (signed), and the CSRF cookie carries a value *derived* from it
-/// (`secret::derive_csrf`), so reissuing only the first would leave the client
-/// holding a CSRF token that no longer matches the session and every
-/// subsequent state-changing request would fail `csrf_guard`.
+/// itself, and the CSRF cookie a value *derived* from it, so reissuing only the
+/// first would leave the client holding a CSRF token that no longer matches and
+/// every state-changing request would fail `csrf_guard`.
 ///
-/// `slide_session_cookie` leaves a response alone once it carries a
-/// `Set-Cookie` for these purposes under either the plain or `__Host-` name,
-/// so the cookies added here reach the browser unmodified.
+/// `slide_session_cookie` leaves a response alone once it carries a `Set-Cookie`
+/// for these purposes under either name, so these reach the browser unmodified.
 fn rotated_cookies(state: &AppState, new_token: &str) -> CookieJar {
     let secret = &state.config.secret;
     let secure = state.config.cookie_secure;
@@ -67,35 +65,29 @@ fn rotated_cookies(state: &AppState, new_token: &str) -> CookieJar {
 }
 
 // ============================================================================
-// Form-action POST endpoints for the SSR /admin page (PR-5 T1).
-// Each accepts application/x-www-form-urlencoded bodies and returns a
-// FlashRedirect response (303 See Other + flash cookie + Location).
-// Existing JSON endpoints above remain until PR-5 T2 removes them.
+// Form-action POST endpoints for the SSR /admin page. Each accepts a urlencoded
+// body and returns a FlashRedirect (303 + flash cookie + Location).
 // ============================================================================
 
 /// Refuse an account-changing action unless the session proved its password
 /// recently, returning the redirect to answer with when it did not.
 ///
-/// OWASP's Authentication Cheat Sheet asks for current credentials before
-/// sensitive account changes, precisely so that a stolen session or a CSRF
-/// that slips a guard cannot quietly hand out admin, disable an account, or
-/// delete one. rdrs already had the mechanism —
-/// `middleware::auth::RecentlyAuthenticated` and its `REAUTH_WINDOW_MINUTES`
-/// window — but only passkey enrolment used it; the admin panel, which is
-/// strictly more powerful, did not.
+/// OWASP asks for current credentials before sensitive account changes,
+/// precisely so a stolen session or a CSRF that slips a guard cannot quietly
+/// hand out admin, disable an account, or delete one. The mechanism already
+/// existed — `middleware::auth::RecentlyAuthenticated` — but only passkey
+/// enrolment used it; the admin panel, which is strictly more powerful, did not.
 ///
-/// This is a plain function rather than an extractor because the SSR admin
-/// page has no JavaScript to catch a 403 and re-prompt (the way `passkey.js`
-/// does): the answer has to be a redirect the browser can simply follow, and
-/// `/admin` renders its own confirmation form when the window has lapsed.
+/// A plain function rather than an extractor because the SSR admin page has no
+/// JavaScript to catch a 403 and re-prompt: the answer has to be a redirect the
+/// browser can follow, and `/admin` renders its own confirmation form.
 ///
 /// Two deliberate exemptions:
-/// - **Forward-auth sessions**, for the reason given on `AdminUser`'s
-///   `via_forward_auth`: their password is not rdrs's to check.
-/// - **`stop_masquerade`**, which never calls this. While masquerading, the
-///   password that would be asked for belongs to the *impersonated* user, so
-///   the check could not be satisfied and the admin would be stranded inside
-///   the masquerade. Ending one is also a de-escalation, not an escalation.
+/// - **Forward-auth sessions**, whose password is not rdrs's to check.
+/// - **`stop_masquerade`**, which never calls this: the password that would be
+///   asked for belongs to the *impersonated* user, so the check could not be
+///   satisfied and the admin would be stranded. Ending one is also a
+///   de-escalation.
 fn require_recent_authentication(admin: &AdminUser) -> Option<FlashRedirect> {
     if admin.via_forward_auth || admin.session.authenticated_recently(chrono::Utc::now()) {
         return None;
@@ -114,12 +106,10 @@ pub struct AdminReauthForm {
 
 /// `POST /admin/reauth` — re-open the confirmation window from the admin page.
 ///
-/// The JSON `POST /api/session/reauth` does the same job for `passkey.js`;
-/// this is its form-encoded twin, so the admin panel keeps working with
-/// JavaScript switched off. Like that endpoint it creates nothing and rotates
-/// nothing — the only thing that changes is `last_authenticated_at` — and it
-/// draws on the same `PasswordChange` budget, so it cannot be used to
-/// brute-force a password that the change-password form throttles.
+/// The form-encoded twin of `POST /api/session/reauth`, so the admin panel keeps
+/// working with JavaScript switched off. Like that endpoint it creates nothing
+/// and rotates nothing, and it draws on the same `PasswordChange` budget, so it
+/// cannot be used to brute-force a password the change form throttles.
 pub async fn reauth_form(
     State(state): State<AppState>,
     admin: AdminUser,
@@ -186,11 +176,10 @@ pub async fn reauth_form(
 
 /// Mint a link for `user_id` and return the path the recipient should open.
 ///
-/// The raw token exists only in this function's return value and in whatever
-/// the admin does with it next — the table keeps an HMAC, so nothing can
-/// reproduce it afterwards. That is deliberate: a link recoverable from the
-/// database would be a standing credential for every account with an
-/// outstanding invite.
+/// The raw token exists only in this function's return value and in whatever the
+/// admin does with it next — the table keeps an HMAC, so nothing can reproduce it
+/// afterwards. A link recoverable from the database would be a standing
+/// credential for every account with an outstanding invite.
 async fn issue_invite(
     state: &AppState,
     user_id: i64,
@@ -230,11 +219,10 @@ pub struct CreateUserForm {
 
 /// `POST /admin/users` — create an account and issue its first invite.
 ///
-/// The account exists immediately but holds an unusable password hash (`"!"`,
-/// the same convention forward-auth uses for accounts it creates), so it
-/// cannot be signed into by any path — password or `GReader` — until someone
-/// redeems the link. That is what makes creating an account safe to do ahead
-/// of the person actually arriving.
+/// The account exists immediately but holds an unusable password hash (`"!"`, the
+/// convention forward-auth uses too), so it cannot be signed into by any path
+/// until someone redeems the link. That is what makes creating an account safe to
+/// do ahead of the person actually arriving.
 pub async fn create_user_form(
     State(state): State<AppState>,
     admin: AdminUser,
@@ -295,12 +283,11 @@ pub async fn create_user_form(
 /// `POST /admin/users/{id}/invite` — issue a fresh link, revoking any current
 /// one.
 ///
-/// Serves two jobs that are the same mechanism: handing a pending account a
-/// replacement when the first link expired, and resetting the password of an
-/// account that already has one. rdrs has no self-service password recovery —
-/// with no email there is nowhere to send it — so this is the recovery path,
-/// and it deliberately leaves the existing password working until the link is
-/// redeemed. Issuing one must not be able to lock someone out.
+/// Two jobs, one mechanism: handing a pending account a replacement when the
+/// first link expired, and resetting the password of an account that already has
+/// one. rdrs has no self-service recovery — with no email there is nowhere to
+/// send it — so this is the recovery path, and it deliberately leaves the
+/// existing password working until the link is redeemed.
 pub async fn reissue_invite_form(
     State(state): State<AppState>,
     admin: AdminUser,

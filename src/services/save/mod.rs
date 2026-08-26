@@ -55,7 +55,6 @@ impl SaveServicesConfig {
         {
             services.push("linkding");
         }
-        // Add more services here as they are implemented
         services
     }
 

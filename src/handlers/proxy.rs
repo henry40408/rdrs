@@ -154,14 +154,12 @@ pub async fn proxy_image(
     )
     .to_string();
 
-    // Check Content-Length if available
     if let Some(content_length) = response.content_length()
         && content_length > MAX_IMAGE_SIZE
     {
         return Err(AppError::ImageTooLarge);
     }
 
-    // Read the body with size limit
     let bytes = response
         .bytes()
         .await

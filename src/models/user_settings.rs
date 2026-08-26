@@ -149,7 +149,6 @@ pub async fn update_save_services(
         .to_json()
         .map_err(|e| AppError::Internal(format!("Failed to serialize save_services: {e}")))?;
 
-    // First ensure user_settings row exists
     db_execute!(
         db,
         "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
@@ -159,7 +158,6 @@ pub async fn update_save_services(
     )
     .map_err(AppError::Database)?;
 
-    // Then update save_services
     db_execute!(
         db,
         "UPDATE user_settings SET save_services = $1, updated_at = $2 WHERE user_id = $3",
@@ -186,7 +184,6 @@ pub async fn get_theme(db: &Db, user_id: i64) -> AppResult<Option<String>> {
 
 /// Update theme preference for a user
 pub async fn update_theme(db: &Db, user_id: i64, theme: Option<String>) -> AppResult<()> {
-    // First ensure user_settings row exists
     db_execute!(
         db,
         "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
@@ -196,7 +193,6 @@ pub async fn update_theme(db: &Db, user_id: i64, theme: Option<String>) -> AppRe
     )
     .map_err(AppError::Database)?;
 
-    // Then update theme
     db_execute!(
         db,
         "UPDATE user_settings SET theme = $1, updated_at = $2 WHERE user_id = $3",
@@ -322,20 +318,16 @@ mod tests {
             .await
             .unwrap();
 
-        // Create settings
         let settings = upsert(&db, user.id, 50).await.unwrap();
         assert_eq!(settings.user_id, user.id);
         assert_eq!(settings.entries_per_page, 50);
 
-        // Verify
         let found = find_by_user_id(&db, user.id).await.unwrap().unwrap();
         assert_eq!(found.entries_per_page, 50);
 
-        // Update settings
         let updated = upsert(&db, user.id, 75).await.unwrap();
         assert_eq!(updated.entries_per_page, 75);
 
-        // Verify get_entries_per_page
         let entries_per_page = get_entries_per_page(&db, user.id).await.unwrap();
         assert_eq!(entries_per_page, 75);
     }
@@ -382,21 +374,18 @@ mod tests {
             .await
             .unwrap();
 
-        // Set dark theme
         update_theme(&db, user.id, Some("dark".to_string()))
             .await
             .unwrap();
         let theme = get_theme(&db, user.id).await.unwrap();
         assert_eq!(theme, Some("dark".to_string()));
 
-        // Set light theme
         update_theme(&db, user.id, Some("light".to_string()))
             .await
             .unwrap();
         let theme = get_theme(&db, user.id).await.unwrap();
         assert_eq!(theme, Some("light".to_string()));
 
-        // Set to system (None)
         update_theme(&db, user.id, None).await.unwrap();
         let theme = get_theme(&db, user.id).await.unwrap();
         assert_eq!(theme, None);
@@ -409,17 +398,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Create settings first via upsert
         upsert(&db, user.id, 50).await.unwrap();
 
-        // Update theme should work on existing settings
         update_theme(&db, user.id, Some("dark".to_string()))
             .await
             .unwrap();
         let theme = get_theme(&db, user.id).await.unwrap();
         assert_eq!(theme, Some("dark".to_string()));
 
-        // Verify entries_per_page is preserved
         let settings = find_by_user_id(&db, user.id).await.unwrap().unwrap();
         assert_eq!(settings.entries_per_page, 50);
         assert_eq!(settings.theme, Some("dark".to_string()));

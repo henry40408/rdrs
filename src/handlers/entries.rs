@@ -166,10 +166,10 @@ fn is_entry_list_path(path: &str) -> bool {
 
 /// The entry-list page a request came from, recovered from the same-origin
 /// `Referer`. `None` when the header is absent, unparseable, or points at
-/// something that is not an entry list (a fresh tab, `/search`, `/settings`).
+/// something that is not an entry list.
 ///
-/// Only the returned URL's path + query is ever used by callers, so a redirect
-/// built from it is always same-origin (no open redirect).
+/// Only the path and query are ever used, so a redirect built from it is always
+/// same-origin.
 fn referring_entry_list(headers: &HeaderMap) -> Option<url::Url> {
     let referer = headers.get(header::REFERER).and_then(|v| v.to_str().ok())?;
     let url = url::Url::parse(referer).ok()?;
@@ -186,23 +186,21 @@ fn path_and_query(url: &url::Url) -> String {
 }
 
 /// A real top-level browser navigation rather than a `fetch()` from the swap
-/// helper. Browsers tag navigations with `Sec-Fetch-Dest: document`; `fetch()`
-/// sends `empty`. Used to tell a scriptless form POST (or an open-in-new-tab)
-/// apart from the enhanced path, because every fragment response in this module
-/// renders as a blank page when loaded as a document.
+/// helper: browsers tag navigations `Sec-Fetch-Dest: document`, `fetch()` sends
+/// `empty`. Every fragment response in this module renders as a blank page when
+/// loaded as a document, so the two paths have to be told apart.
 fn is_document_navigation(headers: &HeaderMap) -> bool {
     headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok()) == Some("document")
 }
 
-/// A speculative load the reader never asked for — a prefetch or a prerender.
+/// A speculative load the reader never asked for — a prefetch or prerender.
 /// Opening an entry marks it read, and a browser guessing at what might be
 /// clicked next must not get to make that decision.
 ///
 /// `Sec-Purpose` is the current header (prerender sends `prefetch;prerender`,
-/// hence the substring test); `Purpose` is what Chromium sent before it, and
-/// `X-Moz` is Firefox's. Nothing in the app opts into speculation today — no
-/// `<link rel=prefetch>`, no speculation rules — so this guards against a
-/// future one, or an extension deciding for the reader.
+/// hence the substring test), `Purpose` is what Chromium sent before it, `X-Moz`
+/// is Firefox's. Nothing here opts into speculation today, so this guards
+/// against a future one or an extension deciding for the reader.
 fn is_speculative_load(headers: &HeaderMap) -> bool {
     let header_says_prefetch = |name: &str, exact: bool| {
         headers
@@ -247,15 +245,13 @@ fn dispatch_mark_read_on_open(state: &AppState, user_id: i64, entry_id: i64) {
 }
 
 /// Build the redirect target for a real top-level navigation to the
-/// partial-only `/entries/{id}/fragment` route. The fragment renders bare
-/// `<template>` blocks (blank as a document), so a browser navigation must land
-/// on a full list page with the reading pane pre-opened via `?entry={id}`.
+/// partial-only `/entries/{id}/fragment` route, which renders bare `<template>`
+/// blocks and so is blank as a document. The browser must land on a full list
+/// page with the pane pre-opened via `?entry={id}`.
 ///
-/// The originating scope (unread / a category / a feed / read / starred /
-/// summarized) is recovered from the `Referer` and preserved, along with its
-/// filters (`status`, scoped-search `q`). Falls back to All Entries when the
-/// referrer is unusable (a fresh tab, a refreshed `/fragment` URL, or
-/// `/search`).
+/// The originating scope is recovered from the `Referer` and preserved along
+/// with its filters (`status`, scoped-search `q`). Falls back to All Entries
+/// when the referrer is unusable.
 fn fragment_document_redirect(headers: &HeaderMap, entry_id: i64) -> String {
     let Some(mut url) = referring_entry_list(headers) else {
         return format!("/entries?entry={entry_id}");
@@ -279,16 +275,14 @@ fn fragment_document_redirect(headers: &HeaderMap, entry_id: i64) -> String {
     path_and_query(&url)
 }
 
-/// Build the redirect target for a scriptless entry-action POST (star, read,
-/// …). The action has already been applied; this only decides where the browser
-/// lands.
+/// Build the redirect target for a scriptless entry-action POST. The action has
+/// already been applied; this only decides where the browser lands.
 ///
 /// Unlike [`fragment_document_redirect`], the referrer is reused *verbatim*: an
-/// action fired from a list row must not drag the reader into that entry's
-/// reading pane, and an action fired from the pane already carries `?entry=` in
-/// its own URL, so it stays open either way. Falls back to All Entries with the
-/// pane opened on the entry when the referrer is unusable — with no SSR flash
-/// banner yet, seeing the entry's new state is the only feedback available.
+/// action fired from a list row must not drag the reader into that entry's pane,
+/// and one fired from the pane already carries `?entry=` in its own URL. Falls
+/// back to All Entries with the pane opened on the entry — with no SSR flash
+/// banner yet, seeing the new state is the only feedback available.
 fn action_document_redirect(headers: &HeaderMap, entry_id: i64) -> String {
     match referring_entry_list(headers) {
         Some(url) => path_and_query(&url),
@@ -310,30 +304,26 @@ pub async fn entry_fragment(
     let user_id = auth_user.user.id;
     let view = query.content_view();
 
-    // Read current state on the READ connection (not blocked by a background
-    // sync's write transaction under WAL). This happens before the
-    // document-navigation branch below because opening an entry marks it read,
-    // and deciding that needs the entry — a scriptless reader is opening it
-    // just as much as a `fetch()` is.
+    // Read current state on the READ connection, which a background sync's write
+    // transaction does not block under WAL. Before the document-navigation
+    // branch below, because opening an entry marks it read and deciding that
+    // needs the entry — a scriptless reader is opening it just as much.
     let found = entry::find_by_id_for_user(&state.db, user_id, entry_id).await?;
 
     let speculative = is_speculative_load(&headers);
     let mark_read = !speculative && found.as_ref().is_some_and(|e| e.entry.read_at.is_none());
 
-    // `/entries/{id}/fragment` is a partial-only route: it renders just the
-    // `<template data-swap-target>` blocks the swap helper consumes, which
-    // display as a blank page when loaded as a top-level document. A real
-    // browser navigation here (a scriptless click on an entry title, the swap
-    // helper's error fallback, a click that lands before `app.js` wires up the
-    // interceptor, open-in-new-tab, or a refresh of the URL) must NOT show that
-    // blank page. Redirect those to the originating list page (recovered from
-    // the `Referer`) with the pane pre-opened via `?entry=` — keeping the user
-    // in their current scope instead of always dumping them into All Entries.
+    // `/entries/{id}/fragment` renders only the `<template data-swap-target>`
+    // blocks the swap helper consumes, which display as a blank page when loaded
+    // as a document. A real browser navigation here — a scriptless click, the
+    // swap helper's error fallback, a click landing before `app.js` wires up,
+    // open-in-new-tab, a refresh — must not show that. Those redirect to the
+    // originating list page with the pane pre-opened, keeping the reader in
+    // their current scope instead of dumping them into All Entries.
     //
-    // A missing entry redirects too rather than 404ing: the list handlers
-    // silently ignore an `?entry=` they can't resolve, so a stale link lands on
-    // the list instead of an error page. The `fetch()` path below still 404s,
-    // which is what `app.js` falls back on.
+    // A missing entry redirects too rather than 404ing: the list handlers ignore
+    // an unresolvable `?entry=`, so a stale link lands on the list. The
+    // `fetch()` path below still 404s, which is what `app.js` falls back on.
     if is_document_navigation(&headers) {
         // Nothing to render on this path, so the write is dispatched here.
         if mark_read {
@@ -367,14 +357,10 @@ pub async fn entry_fragment(
     // Kept behind the render simply to stay off the critical path.
     //
     // This position used to be load-bearing: Load More re-queried the unread
-    // list, so an entry marked read here vanished from it, and the row `app.js`
-    // was waiting for in order to highlight the selection never arrived
-    // (`reading.feature`, "Reading past the loaded page" — issue #482). The
-    // window was thin enough that dispatching a few queries earlier lost it
-    // every time. Load More now paginates against the page's render-time
-    // snapshot, so an entry read during that page view stays listed and the
-    // ordering here no longer decides anything: the previously-breaking
-    // ordering was re-tested against that scenario and passes.
+    // list, so an entry marked read here vanished from it and the row `app.js`
+    // was waiting for never arrived (issue #482). Load More now paginates
+    // against the page's render-time snapshot, so the ordering no longer decides
+    // anything — the previously-breaking order was re-tested and passes.
     if mark_read {
         dispatch_mark_read_on_open(&state, user_id, entry_id);
     }
@@ -461,21 +447,17 @@ pub(crate) enum ContentView {
 }
 
 /// Build a `ReadingPaneView` from an already-loaded `EntryWithFeed`. The
-/// content sanitizer + summary lookup happen here so callers that already
-/// have the entry (e.g. `entry_fragment`, which loads it inside its write
-/// transaction) don't re-hit the DB for the entry itself. `has_save` /
-/// `has_kagi` come from `load_pane_action_flags`. Save / Fetch action
-/// feedback is delivered via flash (see `ReadingPaneWithFlash`), not
-/// inline status text.
+/// sanitizer and summary lookup happen here so callers that already hold the
+/// entry — `entry_fragment` loads it inside its write transaction — don't re-hit
+/// the DB. Save / Fetch feedback is delivered via flash, not inline status text.
 ///
 /// Summary resolution prefers the in-memory cache and falls back to the
-/// persistent `entry_summary` table so a server restart (or any other
-/// path that bypassed the cache) does not hide an already-completed
-/// summary on the next entry open.
+/// persistent `entry_summary` table, so a restart does not hide an
+/// already-completed summary on the next open.
 ///
 /// `view` picks between the stored fetched article and what the feed published.
-/// [`ContentView::Full`] is the default and falls back to the feed's own
-/// content when nothing has been fetched, so callers need not check first.
+/// [`ContentView::Full`] is the default and falls back to the feed's own content
+/// when nothing has been fetched, so callers need not check first.
 pub(crate) async fn build_reading_pane_view(
     state: &AppState,
     user_id: i64,
@@ -546,15 +528,14 @@ pub(crate) async fn build_reading_pane_view(
 }
 
 /// Resolve `(summary_text, summary_in_flight, summary_error)` for an entry.
-/// Reads the in-memory cache first; on miss or terminal-failed state falls back
-/// to the `entry_summary` table so a completed summary persisted in a previous
+/// Reads the in-memory cache first; on a miss or terminal-failed state falls
+/// back to the `entry_summary` table, so a summary persisted in a previous
 /// session is still surfaced.
 ///
 /// A completed summary is passed through [`sanitize_summary`] on the way out
-/// rather than on the way in, which is both how feed content is handled and
-/// what lets rows already sitting in the table benefit without a migration.
-/// Both templates that render one — the reading pane and the SSE-driven
-/// `_summary_fragment` — read it from here, so this is the whole surface.
+/// rather than in, which matches how feed content is handled and lets rows
+/// already in the table benefit without a migration. Both templates that render
+/// one read it from here, so this is the whole surface.
 async fn resolve_summary(
     state: &AppState,
     user_id: i64,
@@ -599,11 +580,10 @@ pub struct PaneStarFormView {
     pub is_starred: bool,
 }
 
-/// Multi-target action response template. Renders the updated entry row,
-/// (optionally) a `<template data-flash>` block for actions that want toast
-/// feedback (e.g. Mark Unread), and (optionally) a pane-star-form swap block
-/// (Star / Unstar — keeps the pane button label in sync with the new starred
-/// state).
+/// Multi-target action response template: the updated entry row, optionally a
+/// `<template data-flash>` block for actions that want toast feedback, and
+/// optionally a pane-star-form swap block that keeps the pane button's label in
+/// sync with the new starred state.
 #[derive(Template)]
 #[template(path = "_entry_actions_multi.html")]
 pub struct EntryActionMulti {
@@ -623,10 +603,9 @@ impl IntoResponse for EntryActionMulti {
     }
 }
 
-/// Multi-target response for opening an entry. Renders two `<template
-/// data-swap-target>` blocks: the reading pane and the (now-read) entry row.
-/// Returned by `GET /entries/{id}/fragment` so the title-link click both shows
-/// the entry AND clears its unread state from the list in one round trip. The
+/// Multi-target response for opening an entry: the reading pane and the
+/// now-read entry row. Returned by `GET /entries/{id}/fragment` so a title-link
+/// click both shows the entry and clears its unread state in one round trip. The
 /// sidebar's counts follow over SSE via `emit_sidebar`.
 #[derive(Template)]
 #[template(path = "_open_entry_multi.html")]
@@ -647,18 +626,16 @@ impl IntoResponse for OpenEntryMulti {
 }
 
 /// Answer an entry-action POST. The swap helper's `fetch()` gets the
-/// multi-target fragment it knows how to consume; a scriptless form submit is a
-/// top-level navigation, and every one of these fragments is blank as a
-/// document, so send the browser back to the list it came from instead. The
-/// action itself has already been applied by the caller either way.
+/// multi-target fragment; a scriptless form submit is a top-level navigation,
+/// and every one of these fragments is blank as a document, so the browser goes
+/// back to the list it came from. The action itself has already been applied.
 ///
 /// `flash` is the same message the fragment carries as `<template data-flash>`,
-/// handed over as a cookie so the page landed on renders it. Without this a
-/// scriptless action that changes nothing visible — Save is the pure case, its
-/// whole effect being on someone else's server — completes in total silence.
-/// Actions whose result is visible in the markup they return to (star, read,
-/// summarize) pass `None`, matching the swap helper, which deliberately raises
-/// no toast for them either.
+/// handed over as a cookie so the page landed on renders it. Without it a
+/// scriptless action that changes nothing visible — Save being the pure case,
+/// its whole effect on someone else's server — completes in total silence.
+/// Actions whose result is visible in the markup pass `None`, matching the swap
+/// helper, which raises no toast for them either.
 fn entry_action_response(
     fragment: impl IntoResponse,
     flash: Option<FlashMessage>,
@@ -867,14 +844,13 @@ async fn set_read_state(
     })
 }
 
-/// `POST /entries/{id}/summarize` — queue a summarization job for the entry
-/// and return the reading-pane fragment with `summary_in_flight = true` so the
-/// Summarize button is rendered disabled while the job is in flight.
+/// `POST /entries/{id}/summarize` — queue a summarization job and return the
+/// reading pane with `summary_in_flight = true`, so the Summarize button renders
+/// disabled while the job runs.
 ///
-/// Ownership is validated via `find_by_id_for_user` (returns 404 for entries
-/// not belonging to the user). The pending DB record is created before the
-/// cache is marked so the background worker always sees a consistent state.
-/// Kagi-config validation is deferred to the background worker.
+/// Ownership is validated via `find_by_id_for_user` (404 otherwise). The pending
+/// DB record is created before the cache is marked, so the background worker
+/// always sees a consistent state; Kagi-config validation is deferred to it.
 pub async fn summarize_entry_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -936,14 +912,13 @@ pub async fn summarize_entry_form(
     ))
 }
 
-/// `POST /entries/{id}/summarize/cancel` — cancel an in-flight / queued
+/// `POST /entries/{id}/summarize/cancel` — cancel an in-flight or queued
 /// summarization (or clear a failed one) and delete the record, returning the
 /// summary container to its empty state.
 ///
-/// Cancel (in-flight) and Clear (failed) share this endpoint: both mean "stop
-/// and remove this summary". A failed record simply has no live token, so the
-/// registry lookup misses and we just delete. Ownership is enforced by
-/// `find_by_id_for_user`'s join constraint (404 otherwise).
+/// Cancel and Clear share this endpoint: both mean "stop and remove this
+/// summary". A failed record has no live token, so the registry lookup misses
+/// and it is simply deleted. Ownership is enforced by `find_by_id_for_user`.
 pub async fn summarize_cancel_form(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -982,12 +957,11 @@ pub async fn summarize_cancel_form(
     ))
 }
 
-/// `POST /entries/{id}/fetch-full-content` — fetch the source article from
-/// the entry's `link`, sanitize, and return the reading pane with the
-/// article body replaced by the new HTML. The response sets
-/// `pane.is_full_content = true` so the template swaps "Fetch Full
-/// Content" for a "Show Original" link; clicking it re-renders the pane
-/// via `GET /entries/{id}/fragment` which restores the feed-supplied body.
+/// `POST /entries/{id}/fetch-full-content` — fetch the source article from the
+/// entry's `link`, sanitize it, and return the reading pane with the article body
+/// replaced. `pane.is_full_content = true` makes the template swap "Fetch Full
+/// Content" for "Show Original", which re-renders the pane via
+/// `GET /entries/{id}/fragment` and restores the feed-supplied body.
 ///
 /// Scriptless callers are turned away before the fetch — see below.
 pub async fn fetch_full_content_form(
@@ -1015,9 +989,9 @@ pub async fn fetch_full_content_form(
         Ok(extracted) => {
             // Store the *raw* extraction and let the pane sanitise it like any
             // other body. Persisting is what makes this survive a refresh, a
-            // second tab, and a scriptless page load — before it did not, so
-            // the scriptless path had to decline the request outright rather
-            // than claim a success the reader could see was not there.
+            // second tab and a scriptless page load; before it did not, so the
+            // scriptless path had to decline outright rather than claim a
+            // success the reader could see was not there.
             entry::set_full_content_for_user(&state.db, user_id, entry_id, &extracted.content)
                 .await?;
             ewf.entry.full_content = Some(extracted.content);

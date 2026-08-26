@@ -32,10 +32,9 @@ use services::{SidebarCache, SummaryCache, SummaryJob};
 
 /// Force the allocator to return freed pages to the OS.
 ///
-/// Bulk operations (OPML import, a full background sync cycle) allocate large
-/// transient buffers that mimalloc would otherwise hold for up to its purge
-/// delay. Calling this right after the bulk work collapses the resident spike
-/// to the steady-state footprint immediately, which matters on
+/// Bulk operations allocate large transient buffers that mimalloc would
+/// otherwise hold for up to its purge delay. Calling this right after the bulk
+/// work collapses the resident spike immediately, which matters on
 /// memory-constrained hosts.
 pub fn reclaim_memory() {
     // SAFETY: `mi_collect` is a thread-safe collection call with no
@@ -370,13 +369,12 @@ pub fn create_router(state: AppState) -> Router {
         .nest("/api/greader.php", handlers::greader::greader_routes())
         .route("/static/{*path}", get(handlers::static_assets::serve))
         .fallback(handlers::pages::not_found_page)
-        // Mark session-bearing responses `no-store` (OWASP Session Management
-        // Cheat Sheet, Web Content Caching) so a browser disk cache or shared
-        // proxy cannot replay a logged-in page. Layered inside `ETagLayer` so
-        // it observes the handler's own `Cache-Control` (if any) — the three
-        // deliberate public-caching call sites (static assets, feed, image
-        // proxy) — before ETag processing runs; see cache_control.rs for why
-        // `no-store` also makes ETag a no-op for the responses it does touch.
+        // Mark session-bearing responses `no-store` (OWASP: Web Content Caching)
+        // so a browser disk cache or shared proxy cannot replay a logged-in page.
+        // Layered inside `ETagLayer` so it observes the handler's own
+        // `Cache-Control` — the deliberate public-caching call sites — before
+        // ETag processing runs; see cache_control.rs for why `no-store` also
+        // makes ETag a no-op for the responses it does touch.
         .layer(axum::middleware::from_fn(
             middleware::cache_control::no_store_for_authenticated,
         ));
@@ -405,15 +403,14 @@ pub fn create_router(state: AppState) -> Router {
             middleware::csrf::anonymous_session,
         ))
         // Reissue the session + CSRF cookies' Max-Age on every authenticated
-        // request, so a still-in-use browser session keeps tracking the
-        // sliding server-side TTL instead of expiring on a fixed schedule.
-        // Their *value* changes only when this layer also performs the
-        // periodic token rotation the auth extractors ask for.
-        // Layered outside `anonymous_session` so it sees — and can
-        // correctly skip re-setting — the Set-Cookie's that layer and every
-        // handler beneath it emit (most importantly `logout`'s removal
-        // cookies), and inside `forward_auth`, which short-circuits with its
-        // own redirect without calling `next` on every path that mints a
+        // request, so a still-in-use browser session tracks the sliding
+        // server-side TTL instead of expiring on a fixed schedule. Their *value*
+        // changes only when this layer also performs the periodic token rotation.
+        //
+        // Layered outside `anonymous_session` so it sees — and can correctly skip
+        // re-setting — the Set-Cookies that layer and the handlers beneath emit,
+        // most importantly `logout`'s removals; and inside `forward_auth`, which
+        // short-circuits without calling `next` on every path that mints a
         // cookie, so this layer never doubles up with it.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -442,19 +439,15 @@ pub fn create_router(state: AppState) -> Router {
     // what each directive is doing and what is deliberately absent.
     let router = router.layer(axum::middleware::from_fn(middleware::set_security_headers));
 
-    // Strict-Transport-Security (OWASP Session Management Cheat Sheet,
-    // Transport Layer Security): only added when `Config` says the deployment
-    // is HTTPS (see `Config::hsts_header_value` for the derivation rule). The
-    // header value is built once here, where `config` is already in scope,
-    // rather than per response — and when it's `None` (the default), no layer
-    // is added at all, so a plain-HTTP deployment pays nothing for this.
-    // Applied last — i.e. outermost, over both `core` and `/events` — because
-    // `forward_auth` and the CSRF guards short-circuit with a response
-    // without calling `next` on several paths (the forward-auth redirect that
-    // mints the session cookie, its "not authorized" redirect, and both
-    // guards' 403 rejections), so a layer nested inside them would never see
-    // those responses; `/events` sits outside `core` entirely and needs the
-    // same outermost coverage.
+    // Strict-Transport-Security: only added when `Config` says the deployment is
+    // HTTPS. The header value is built once here, where `config` is in scope,
+    // rather than per response — and when it's `None` (the default) no layer is
+    // added at all, so a plain-HTTP deployment pays nothing.
+    //
+    // Applied last, i.e. outermost over both `core` and `/events`, because
+    // `forward_auth` and the CSRF guards short-circuit without calling `next` on
+    // several paths, so a layer nested inside them would never see those
+    // responses; `/events` sits outside `core` entirely.
     let router = if let Some(header_value) = state.config.hsts_header_value() {
         let value = axum::http::HeaderValue::from_str(&header_value)
             .expect("hsts_header_value only ever produces a valid header value");
@@ -466,12 +459,10 @@ pub fn create_router(state: AppState) -> Router {
         router
     };
 
-    // Per-request timing. Outermost — over the security headers, over both
-    // CSRF guards and `forward_auth` (all of which answer some requests
-    // without calling `next`), and over `/events` — so every response the
-    // process produces is timed exactly once. See middleware::request_log for
-    // what the duration does and does not include, and why the log records
-    // the matched route template rather than the request path.
+    // Per-request timing. Outermost — over the security headers, both CSRF guards
+    // and `forward_auth`, all of which answer some requests without calling
+    // `next`, and over `/events` — so every response is timed exactly once. See
+    // middleware::request_log for what the duration does and does not include.
     let router = router.layer(axum::middleware::from_fn(
         middleware::request_log::log_request_duration,
     ));

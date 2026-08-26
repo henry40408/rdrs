@@ -117,7 +117,6 @@ pub async fn edit_tag(
         let mut tx = state.db.begin().await?;
         let mut changed = 0_i64;
 
-        // Apply add tag
         if let Some(ref stream) = add_stream {
             match stream {
                 StreamId::Starred => {
@@ -130,7 +129,6 @@ pub async fn edit_tag(
             }
         }
 
-        // Apply remove tag
         if let Some(ref stream) = remove_stream {
             match stream {
                 StreamId::Read => {

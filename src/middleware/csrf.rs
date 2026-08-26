@@ -1,27 +1,22 @@
 //! First-line CSRF defence: reject state-changing requests that a browser
 //! reports, or reveals, to be cross-site.
 //!
-//! This is a header-only check with no token and no state — the synchronizer
-//! token layered on top (see [`crate::secret::derive_csrf`]) is the second line.
-//! It runs on every unsafe-method request across the whole router, but only
-//! ever *rejects* a request that is provably cross-site; anything it cannot
-//! classify is passed through, so it never breaks a legitimate caller:
+//! A header-only check with no token and no state — the synchronizer token
+//! layered on top is the second line. It runs on every unsafe-method request but
+//! only ever *rejects* a provably cross-site one, so it never breaks a
+//! legitimate caller:
 //!
-//! - **`Sec-Fetch-Site`** (sent by every current browser) is authoritative when
-//!   present. `same-origin`, `same-site`, and `none` (a direct navigation or a
-//!   user-typed URL) are allowed; only `cross-site` is rejected.
-//! - **`Origin`** is the fallback for the rare browser that omits
-//!   `Sec-Fetch-Site`. Its host is compared against the request's own `Host`;
-//!   a mismatch — or an opaque `Origin: null` — is rejected.
-//! - **Neither header** means a non-browser client (a native Google Reader app,
-//!   `curl`, a server-to-server call). Those authenticate by bearer token, not
-//!   an ambient cookie, so they are not exposed to CSRF and are allowed through.
+//! - **`Sec-Fetch-Site`** is authoritative when present: `same-origin`,
+//!   `same-site` and `none` are allowed, only `cross-site` is rejected.
+//! - **`Origin`** is the fallback for a browser that omits it. Its host is
+//!   compared against the request's own `Host`; a mismatch — or an opaque
+//!   `Origin: null` — is rejected.
+//! - **Neither header** means a non-browser client, which authenticates by
+//!   bearer token rather than an ambient cookie and so is not exposed to CSRF.
 //!
-//! Scheme and port are deliberately ignored in the `Origin`/`Host` comparison:
-//! behind a TLS-terminating reverse proxy the browser's `Origin` is `https://`
-//! while the forwarded `Host` carries no scheme, and the proxy commonly strips
-//! the port. Matching on host alone is what keeps the check working in that
-//! standard deployment without a configured public URL.
+//! Scheme and port are deliberately ignored in that comparison: behind a
+//! TLS-terminating proxy the browser's `Origin` is `https://` while the
+//! forwarded `Host` carries no scheme, and the proxy commonly strips the port.
 
 use axum::{
     body::Body,
@@ -40,20 +35,19 @@ use crate::models::session::{self, generate_token};
 use crate::secret::{derive_csrf, verify_csrf};
 
 /// Readable (non-`HttpOnly`) cookie carrying the CSRF token, so page JavaScript
-/// can echo it back as the `X-CSRF-Token` header or inject it into a form. It is
-/// *not* the credential the guard trusts — [`csrf_guard`] always re-derives the
-/// expected token from the signed session cookie — so exposing it to script is
-/// safe: a cross-origin page can neither read this cookie nor compute its value.
+/// can echo it back. It is *not* the credential the guard trusts — [`csrf_guard`]
+/// always re-derives the expected token from the signed session cookie — so
+/// exposing it to script is safe: a cross-origin page can neither read this
+/// cookie nor compute its value.
 pub const CSRF_COOKIE_NAME: &str = "csrf_token";
 
-/// `__Host-`-prefixed CSRF cookie name, used only when `Secure` is in effect
-/// (see [`csrf_cookie_name`]). Mirrors [`crate::middleware::auth::SESSION_COOKIE_NAME_HOST`]
-/// for the same OWASP *Cookies* reasoning — see that constant's doc comment
-/// for why this is defence in depth rather than a fix for an exploitable gap,
-/// and why the prefix cannot be used unconditionally.
+/// `__Host-`-prefixed CSRF cookie name, used only when `Secure` is in effect.
+/// Mirrors [`crate::middleware::auth::SESSION_COOKIE_NAME_HOST`] for the same
+/// reasoning — see that constant for why this is defence in depth and why the
+/// prefix cannot be used unconditionally.
 ///
-/// `__Host-` does not require `HttpOnly`, so prefixing this cookie does not
-/// conflict with it needing to stay script-readable.
+/// `__Host-` does not require `HttpOnly`, so it does not conflict with this
+/// cookie needing to stay script-readable.
 pub const CSRF_COOKIE_NAME_HOST: &str = "__Host-csrf_token";
 
 /// Which cookie name to *write* for the CSRF cookie, given whether `Secure`
@@ -78,10 +72,8 @@ const CSRF_FIELD: &str = "_csrf";
 const CSRF_SKIP_PREFIXES: &[&str] = &["/reader", "/accounts", "/api/greader.php"];
 
 /// Path prefixes for which no anonymous session is minted: static assets and
-/// health must stay cacheable (a `Set-Cookie` would poison shared caches), and
-/// the machine APIs get their cookie, if any, from a real page load. Every HTML
-/// page a form is rendered on lives outside these, so the token is always
-/// available where it is needed.
+/// health must stay cacheable, and the machine APIs get their cookie from a real
+/// page load. Every HTML page a form is rendered on lives outside these.
 const ANON_SKIP_PREFIXES: &[&str] = &[
     "/api",
     "/reader",
@@ -110,19 +102,17 @@ pub fn build_csrf_cookie(session_token: &str, secret: &[u8], secure: bool) -> Co
 }
 
 /// The synchronizer token to render into a server-side form, for the session
-/// this request carries. Empty when the request holds no readable session
-/// cookie at all, which for a browser only happens on the routes
-/// [`ANON_SKIP_PREFIXES`] excludes from [`anonymous_session`] — none of which
-/// render a form.
+/// this request carries. Empty when the request holds no readable session cookie
+/// at all, which for a browser only happens on the routes
+/// [`ANON_SKIP_PREFIXES`] excludes — none of which render a form.
 ///
 /// Derived the same way [`csrf_guard`] derives the value it *expects*: from the
-/// token in the session cookie, not from a `Session` row's `session_token`.
-/// The two diverge for the seconds-long grace interval after a rotation, and it
-/// is the cookie the browser will send back with the form.
+/// token in the session cookie, not from a `Session` row. The two diverge for
+/// the grace interval after a rotation, and it is the cookie the browser will
+/// send back with the form.
 ///
-/// Logged-in pages get this via [`PageAuthUser::csrf_token`][pau] instead,
-/// which the extractor has already computed; this is for the handful of
-/// anonymous pages that render a form (`/login`, `/setup`, `/invite/{token}`).
+/// Logged-in pages get this via [`PageAuthUser::csrf_token`][pau] instead; this
+/// is for the anonymous pages that render a form.
 ///
 /// [pau]: crate::middleware::auth::PageAuthUser::csrf_token
 pub fn csrf_token_from_jar(jar: &CookieJar, secret: &[u8]) -> String {
@@ -134,10 +124,9 @@ pub fn csrf_token_from_jar(jar: &CookieJar, secret: &[u8]) -> String {
 /// Removal cookie for a CSRF cookie carried under `name`, used to evict a
 /// leftover generation written under the name this deployment no longer uses.
 ///
-/// The `__Host-` removal carries `Secure` unconditionally — regardless of the
-/// current `cookie_secure` setting — because a browser silently discards a
-/// `__Host-` cookie that lacks it, which would make the removal a no-op and
-/// let the stale cookie survive. Same reasoning as `handlers::auth::logout`.
+/// The `__Host-` removal carries `Secure` unconditionally, regardless of the
+/// current setting: a browser silently discards a `__Host-` cookie that lacks
+/// it, which would make the removal a no-op and let the stale cookie survive.
 fn csrf_removal_cookie(name: &'static str) -> Cookie<'static> {
     Cookie::build((name, ""))
         .path("/")
@@ -153,12 +142,11 @@ pub async fn csrf_origin_guard(req: Request, next: Next) -> Response {
     if is_safe(req.method()) || !is_cross_site(&req) {
         return next.run(req).await;
     }
-    // Both CSRF layers answer with a bodyless 403, indistinguishable from one
-    // another in an access log; without these lines, telling a cross-site
-    // rejection apart from a token mismatch means reading the source and
-    // reasoning about headers by hand. The *response* stays bodyless on
-    // purpose — an attacker's page cannot read a cross-origin response anyway,
-    // and naming the failed check only helps someone probing the guard.
+    // Both CSRF layers answer with a bodyless 403, indistinguishable in an access
+    // log, so without these lines telling a cross-site rejection apart from a
+    // token mismatch means reading the source. The *response* stays bodyless on
+    // purpose — an attacker's page cannot read it anyway, and naming the failed
+    // check only helps someone probing the guard.
     tracing::warn!(
         event = "csrf.cross_site",
         method = %req.method(),
@@ -243,24 +231,21 @@ fn strip_port(authority: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Give a logged-out visitor a signed session cookie so every page — the login
-/// and register forms included — can carry a CSRF token, and make sure a
-/// readable [`CSRF_COOKIE_NAME`] cookie is present for whatever session the
-/// request ends up with.
+/// Give a logged-out visitor a signed session cookie so every page can carry a
+/// CSRF token, and make sure a readable [`CSRF_COOKIE_NAME`] cookie is present
+/// for whatever session the request ends up with.
 ///
 /// The token is signed but backs no `session` row, so the visitor stays
-/// unauthenticated (`find_by_token` finds nothing) while still holding a token
-/// the guard can verify. Both cookies are injected into *this* request as well
-/// as set on the response, so [`csrf_guard`] and the handler see them on the
-/// same round trip.
+/// unauthenticated while still holding a token the guard can verify. Both
+/// cookies are injected into *this* request as well as set on the response, so
+/// the guard and the handler see them on the same round trip.
 ///
-/// Layered *inside* `forward_auth` (see `crate::app`): when both would establish
-/// a session, forward-auth must win, so its `Set-Cookie` has to be the last one
-/// emitted. A request that already carries a valid session cookie keeps it —
-/// only its CSRF cookie is (re)written, and only when that cookie is missing or
-/// no longer derives from the session. That is what carries existing sessions
-/// across the upgrade that introduced this cookie, and what heals a browser
-/// whose CSRF cookie has drifted out of step.
+/// Layered *inside* `forward_auth`: when both would establish a session,
+/// forward-auth must win, so its `Set-Cookie` has to be last. A request that
+/// already carries a valid session cookie keeps it — only its CSRF cookie is
+/// rewritten, and only when missing or no longer derived from the session, which
+/// is what carries existing sessions across the upgrade that introduced this
+/// cookie and heals a browser whose cookie has drifted.
 pub async fn anonymous_session(
     State(state): State<AppState>,
     mut req: Request,
@@ -277,33 +262,26 @@ pub async fn anonymous_session(
     let jar = CookieJar::from_headers(req.headers());
 
     if let Some(token) = session_token_from_jar(&jar, secret) {
-        // A real (or already-anonymous) session: leave the session cookie
-        // untouched, but make sure the readable CSRF cookie the page will echo
-        // back actually *matches* it.
+        // A real (or already-anonymous) session: leave the session cookie alone,
+        // but make sure the readable CSRF cookie the page echoes back actually
+        // *matches* it.
         //
-        // This validates rather than merely detecting presence, and that is
-        // what makes a diverged browser heal itself. A cookie that is present
-        // but stale — left behind by a rotated session token, or by an upgrade
-        // that switched which name is written — used to satisfy the old
-        // presence check forever, so every unsafe request 403'd until the
-        // cookie expired (up to `SESSION_EXPIRY_DAYS`) with no in-app way out:
-        // logout is itself behind `csrf_guard`. Overwriting it is safe by
-        // construction — the CSRF cookie is never the credential, the guard
-        // always re-derives the expected token from the signed session cookie
-        // (see the note on `CSRF_COOKIE_NAME`), so re-minting hands an attacker
-        // nothing they could not already compute for their own session.
+        // Validating rather than merely detecting presence is what makes a
+        // diverged browser heal. A present-but-stale cookie — left by a rotated
+        // token, or by an upgrade that switched which name is written — used to
+        // satisfy the old presence check forever, so every unsafe request 403'd
+        // until it expired, with no in-app way out: logout is itself behind
+        // `csrf_guard`. Overwriting is safe by construction, since the CSRF
+        // cookie is never the credential.
         let name = csrf_cookie_name(secure);
         let matches_session = jar
             .get(name)
             .is_some_and(|c| verify_csrf(secret, &token, c.value()));
 
-        // A cookie under the name this deployment does *not* write is a
-        // leftover generation (from before the `__Host-` names arrived, or
-        // before an operator flipped `RDRS_COOKIE_SECURE`). Nothing refreshes
-        // it, so its value drifts away from the session, and `csrf.js` on an
-        // older page — or any reader that scans `document.cookie` in order —
-        // can pick it over the live one. Evict it instead of leaving it to
-        // expire on its own schedule.
+        // A cookie under the name this deployment does *not* write is a leftover
+        // generation. Nothing refreshes it, so its value drifts away from the
+        // session, and `csrf.js` on an older page — or any reader scanning
+        // `document.cookie` in order — can pick it over the live one.
         let stale_name = csrf_cookie_name(!secure);
         let stale = jar.get(stale_name).is_some();
 
@@ -337,17 +315,16 @@ pub async fn anonymous_session(
 /// Synchronizer-token CSRF guard, the second line behind [`csrf_origin_guard`].
 ///
 /// On every state-changing method it requires the request to prove it holds the
-/// session's token, taken from the `X-CSRF-Token` header or, failing that, the
-/// `_csrf` urlencoded form field (the body is buffered and rebuilt so the
-/// downstream handler still reads it). The expected token is re-derived from the
-/// signed session cookie via [`verify_csrf`] — a MAC over a known input — so this
-/// costs no database round trip and the readable CSRF cookie is never trusted as
-/// the credential.
+/// session's token, from the `X-CSRF-Token` header or the `_csrf` form field
+/// (the body is buffered and rebuilt so the handler still reads it). The
+/// expected token is re-derived from the signed session cookie via
+/// [`verify_csrf`] — a MAC over a known input — so this costs no database round
+/// trip and the readable cookie is never trusted as the credential.
 ///
 /// `multipart/form-data` bodies are passed through unread: the one multipart
-/// route (OPML import) validates the field itself, since buffering and
-/// re-streaming a file upload here would be wasteful. The Google Reader prefixes
-/// are skipped entirely — they authenticate by bearer token, not a cookie.
+/// route validates the field itself, since re-streaming a file upload here would
+/// be wasteful. The Google Reader prefixes are skipped entirely — they
+/// authenticate by bearer token.
 pub async fn csrf_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
     if is_safe(req.method()) {
         return next.run(req).await;
@@ -363,14 +340,12 @@ pub async fn csrf_guard(State(state): State<AppState>, req: Request, next: Next)
     // An unsigned or tampered session cookie never resolves, so no submitted
     // token could match it.
     //
-    // A request with *no* session cookie is passed through, not rejected. A CSRF
-    // attack necessarily rides the victim's session cookie — the browser attaches
-    // it automatically — so a cookie-less request cannot be a forged
-    // authenticated action: it reaches a handler that will reject it on its own
+    // A request with *no* session cookie is passed through rather than rejected.
+    // A CSRF attack necessarily rides the victim's cookie, which the browser
+    // attaches automatically, so a cookie-less request cannot be a forged
+    // authenticated action — it reaches a handler that rejects it on its own
     // `AuthUser` check. Login-CSRF, the one cookie-less case worth guarding, is
-    // already stopped by `csrf_origin_guard`. In the browser, `anonymous_session`
-    // means a page-driven POST always has a cookie by the time it is submitted,
-    // so this only ever relaxes direct, unauthenticated API calls.
+    // already stopped by `csrf_origin_guard`.
     let jar = CookieJar::from_headers(req.headers());
     let Some(session_token) = session_token_from_jar(&jar, secret) else {
         return next.run(req).await;
@@ -429,10 +404,9 @@ pub async fn csrf_guard(State(state): State<AppState>, req: Request, next: Next)
 /// Log a synchronizer-token rejection.
 ///
 /// The session is identified only by its salted [`crate::secret::audit_id`]
-/// hash, the same way the `rdrs::audit` events do — enough to see that one
-/// browser is failing every unsafe request (the signature of a CSRF cookie that
-/// has drifted out of step with its session), without putting a live session
-/// token in the log.
+/// hash, as the `rdrs::audit` events are — enough to see that one browser is
+/// failing every unsafe request, the signature of a CSRF cookie that has drifted
+/// out of step, without putting a live session token in the log.
 fn warn_token_mismatch(
     secret: &[u8],
     session_token: &str,

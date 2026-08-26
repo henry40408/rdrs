@@ -238,7 +238,6 @@ pub async fn start_authentication(
     // field is cleared rather than advertising a mode `login.js` does not honour.
     rcr.mediation = None;
 
-    // Store the auth state
     let state_json =
         serde_json::to_string(&auth_state).map_err(|e| AppError::Internal(e.to_string()))?;
     let challenge_bytes: Vec<u8> = rcr.public_key.challenge.as_ref().to_vec();
@@ -309,7 +308,6 @@ pub async fn finish_authentication(
         .await?
         .ok_or(AppError::PasskeyNotFound)?;
 
-    // Verify the user is not disabled
     let db_user = user::find_by_id(&state.db, stored_passkey.user_id)
         .await?
         .ok_or(AppError::UserNotFound)?;
@@ -339,7 +337,6 @@ pub async fn finish_authentication(
     // out by their own successful passkey sign-ins.
     state.login_rate_limiter.release(Bucket::Login, ip);
 
-    // Update the counter
     passkey_data.update_credential(&auth_result);
     let passkey_id = stored_passkey.id;
     let counter = auth_result.counter() as i64;

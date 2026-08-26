@@ -1,18 +1,6 @@
-//! Integration tests for entry-related handlers using `GReader` API endpoints.
-//!
-//! Tests cover:
-//! - Stream contents listing (GET /reader/api/0/stream/contents/*)
-//! - Item contents by ID (GET/POST /reader/api/0/stream/items/contents)
-//! - Edit tag (mark read/unread/star/unstar via POST /reader/api/0/edit-tag)
-//! - Mark all as read (POST /reader/api/0/mark-all-as-read)
-//! - Unread count (GET /reader/api/0/unread-count)
-//! - Subscription list (GET /reader/api/0/subscription/list)
-//! - Subscription edit (POST /reader/api/0/subscription/edit)
-//! - Tag list (GET /reader/api/0/tag/list)
-//! - Rename tag (POST /reader/api/0/rename-tag)
-//! - Disable tag (POST /reader/api/0/disable-tag)
-//! - RDRS-specific endpoints (neighbors, fetch-full-content, summarize, summary, save)
-//! - Cross-user access restrictions
+//! Integration tests for entry-related handlers via the `GReader` API endpoints,
+//! the RDRS-specific ones (neighbors, fetch-full-content, summarize, summary,
+//! save), and cross-user access restrictions.
 
 mod common;
 use common::default_test_config;
@@ -57,18 +45,15 @@ async fn create_test_app(config: Config) -> TestApp {
 
 /// Setup user, category, feed, and entries directly in database
 async fn setup_test_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
-    // Create user
     let password_hash = rdrs::auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = user::create_user(db, "testuser", &password_hash, Role::Admin)
         .await
         .unwrap();
 
-    // Create category
     let cat = category::create_category(db, user.id, "Test Category")
         .await
         .unwrap();
 
-    // Create feed
     let feed = feed::create_feed(
         db,
         &feed::CreateFeedParams {
@@ -122,18 +107,15 @@ async fn login(server: &mut TestServer) {
 
 /// Setup a second user's data in the database
 async fn setup_second_user_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
-    // Create second user
     let password_hash = rdrs::auth::hash_password("password456").unwrap();
     let user = user::create_user(db, "otheruser", &password_hash, Role::User)
         .await
         .unwrap();
 
-    // Create category for second user
     let cat = category::create_category(db, user.id, "Other User Category")
         .await
         .unwrap();
 
-    // Create feed for second user
     let feed = feed::create_feed(
         db,
         &feed::CreateFeedParams {
@@ -150,7 +132,6 @@ async fn setup_second_user_data(db: &Db) -> (i64, i64, i64, Vec<i64>) {
     .await
     .unwrap();
 
-    // Create entries for second user
     let mut entry_ids = Vec::new();
     for i in 1..=3 {
         let (e, _) = entry::upsert_entry(
@@ -231,9 +212,7 @@ async fn unstar_entry(server: &TestServer, entry_ids: &[i64]) {
     assert_eq!(response.text(), "OK");
 }
 
-// ============================================================================
-// Stream Contents Tests (Entry List)
-// ============================================================================
+// --- Stream Contents Tests (Entry List) ---
 
 #[tokio::test]
 async fn test_list_entries_with_data() {
@@ -326,7 +305,6 @@ async fn test_list_entries_with_continuation() {
     // Composite cursor `<sort_ts>|<id>` works correctly here since
     // id↔published_at order is monotonic.
 
-    // First page
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2")
@@ -418,7 +396,6 @@ async fn test_get_entry_by_id() {
     assert_eq!(items.len(), 1);
     assert!(items[0]["title"].as_str().unwrap().contains("Entry Title"));
     assert!(items[0]["summary"]["content"].is_string());
-    // Verify RDRS extension fields
     assert_eq!(items[0]["_entryId"], entry_ids[0]);
 }
 
@@ -466,9 +443,7 @@ async fn test_get_entries_by_id_post() {
     assert_eq!(items.len(), 3);
 }
 
-// ============================================================================
-// Entry Read/Unread Tests (via edit-tag)
-// ============================================================================
+// --- Entry Read/Unread Tests (via edit-tag) ---
 
 #[tokio::test]
 async fn test_mark_entry_read() {
@@ -478,7 +453,6 @@ async fn test_mark_entry_read() {
 
     mark_read(&app.server, &[entry_ids[0]]).await;
 
-    // Verify entry is now read via stream/items/contents
     let response = app
         .server
         .get(&format!(
@@ -508,13 +482,10 @@ async fn test_mark_entry_unread() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // First mark as read
     mark_read(&app.server, &[entry_ids[0]]).await;
 
-    // Then mark as unread
     mark_unread(&app.server, &[entry_ids[0]]).await;
 
-    // Verify entry is now unread
     let response = app
         .server
         .get(&format!(
@@ -542,10 +513,8 @@ async fn test_list_entries_unread_only() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Mark first two entries as read
     mark_read(&app.server, &[entry_ids[0], entry_ids[1]]).await;
 
-    // Get unread entries only using xt (exclude read)
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?xt=user/-/state/com.google/read")
@@ -557,9 +526,7 @@ async fn test_list_entries_unread_only() {
     assert_eq!(items.len(), 3);
 }
 
-// ============================================================================
-// Entry Star Tests (via edit-tag)
-// ============================================================================
+// --- Entry Star Tests (via edit-tag) ---
 
 #[tokio::test]
 async fn test_star_entry() {
@@ -569,7 +536,6 @@ async fn test_star_entry() {
 
     star_entry(&app.server, &[entry_ids[0]]).await;
 
-    // Verify entry is starred
     let response = app
         .server
         .get(&format!(
@@ -603,7 +569,6 @@ async fn test_unstar_entry() {
     // Unstar the entry
     unstar_entry(&app.server, &[entry_ids[0]]).await;
 
-    // Verify entry is unstarred
     let response = app
         .server
         .get(&format!(
@@ -634,7 +599,6 @@ async fn test_list_entries_starred_only() {
     // Star first entry
     star_entry(&app.server, &[entry_ids[0]]).await;
 
-    // Get starred entries only
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/starred")
@@ -653,10 +617,8 @@ async fn test_list_entries_read_only() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Mark first two entries as read
     mark_read(&app.server, &[entry_ids[0], entry_ids[1]]).await;
 
-    // Get read entries only
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/read")
@@ -668,9 +630,7 @@ async fn test_list_entries_read_only() {
     assert_eq!(items.len(), 2);
 }
 
-// ============================================================================
-// Mark All Read Tests
-// ============================================================================
+// --- Mark All Read Tests ---
 
 #[tokio::test]
 async fn test_mark_all_read() {
@@ -687,7 +647,6 @@ async fn test_mark_all_read() {
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 
-    // Verify all are read — unread stream should be empty
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?xt=user/-/state/com.google/read")
@@ -713,7 +672,6 @@ async fn test_mark_all_read_by_category() {
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 
-    // Verify all are read
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/label/Test%20Category?xt=user/-/state/com.google/read")
@@ -739,7 +697,6 @@ async fn test_mark_all_read_by_feed() {
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 
-    // Verify all are read
     let response = app
         .server
         .get("/reader/api/0/stream/contents/feed/https://example.com/feed.xml?xt=user/-/state/com.google/read")
@@ -756,10 +713,8 @@ async fn test_mark_read_batch_by_ids() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Mark first 3 entries as read by IDs using edit-tag
     mark_read(&app.server, &[entry_ids[0], entry_ids[1], entry_ids[2]]).await;
 
-    // Verify remaining 2 entries are still unread
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?xt=user/-/state/com.google/read")
@@ -776,7 +731,6 @@ async fn test_edit_tag_no_items_returns_error() {
     setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Send edit-tag with no i= params — should return 400
     let form_data: Vec<(&str, &str)> = vec![("a", "user/-/state/com.google/read")];
     let response = app
         .server
@@ -792,13 +746,11 @@ async fn test_mark_read_already_read() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Mark entry as read
     mark_read(&app.server, &[entry_ids[0]]).await;
 
     // Mark the same entry again — should succeed (idempotent)
     mark_read(&app.server, &[entry_ids[0]]).await;
 
-    // Verify still only 1 read entry in read stream
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/read")
@@ -837,9 +789,7 @@ async fn test_cannot_mark_read_by_ids_other_user() {
     response.assert_status_not_found();
 }
 
-// ============================================================================
-// Unread Count Tests
-// ============================================================================
+// --- Unread Count Tests ---
 
 #[tokio::test]
 async fn test_get_unread_count_with_data() {
@@ -881,7 +831,6 @@ async fn test_get_unread_count_after_marking_read() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Mark two entries as read
     mark_read(&app.server, &[entry_ids[0], entry_ids[1]]).await;
 
     let response = app.server.get("/reader/api/0/unread-count").await;
@@ -903,9 +852,7 @@ async fn test_get_unread_count_after_marking_read() {
     assert_eq!(cat_count["count"], 3);
 }
 
-// ============================================================================
-// Entry Neighbors Tests (RDRS-specific, kept as-is)
-// ============================================================================
+// --- Entry Neighbors Tests (RDRS-specific, kept as-is) ---
 
 #[tokio::test]
 async fn test_get_entry_neighbors() {
@@ -913,7 +860,6 @@ async fn test_get_entry_neighbors() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Get neighbors for middle entry
     let response = app
         .server
         .get(&format!("/api/entries/{}/neighbors", entry_ids[2]))
@@ -932,7 +878,6 @@ async fn test_get_entry_neighbors_first_entry() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Get neighbors for first entry
     let response = app
         .server
         .get(&format!("/api/entries/{}/neighbors", entry_ids[0]))
@@ -949,10 +894,8 @@ async fn test_get_entry_neighbors_unread_only() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Mark some entries as read
     mark_read(&app.server, &[entry_ids[0], entry_ids[2]]).await;
 
-    // Get neighbors with unread_only=true for a middle entry
     let response = app
         .server
         .get(&format!(
@@ -968,9 +911,7 @@ async fn test_get_entry_neighbors_unread_only() {
     assert!(body.get("next_id").is_some());
 }
 
-// ============================================================================
-// Subscription List Tests
-// ============================================================================
+// --- Subscription List Tests ---
 
 #[tokio::test]
 async fn test_subscription_list() {
@@ -986,7 +927,6 @@ async fn test_subscription_list() {
     assert_eq!(subscriptions.len(), 1);
     assert_eq!(subscriptions[0]["title"], "Test Feed");
     assert_eq!(subscriptions[0]["id"], "feed/https://example.com/feed.xml");
-    // Check category info
     let categories = subscriptions[0]["categories"].as_array().unwrap();
     assert_eq!(categories.len(), 1);
     assert_eq!(categories[0]["label"], "Test Category");
@@ -1012,7 +952,6 @@ async fn test_subscription_edit_update_title() {
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 
-    // Verify title was updated via subscription list
     let response = app.server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
 
@@ -1038,7 +977,6 @@ async fn test_subscription_unsubscribe() {
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 
-    // Verify feed is gone
     let response = app.server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
 
@@ -1046,9 +984,7 @@ async fn test_subscription_unsubscribe() {
     assert_eq!(body["subscriptions"].as_array().unwrap().len(), 0);
 }
 
-// ============================================================================
-// Tag List Tests
-// ============================================================================
+// --- Tag List Tests ---
 
 #[tokio::test]
 async fn test_tag_list() {
@@ -1088,7 +1024,6 @@ async fn test_rename_tag() {
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 
-    // Verify tag was renamed
     let response = app.server.get("/reader/api/0/tag/list").await;
     response.assert_status_ok();
 
@@ -1114,7 +1049,6 @@ async fn test_disable_tag() {
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 
-    // Verify tag is gone
     let response = app.server.get("/reader/api/0/tag/list").await;
     response.assert_status_ok();
 
@@ -1124,9 +1058,7 @@ async fn test_disable_tag() {
     assert!(!tag_ids.contains(&"user/-/label/Test Category"));
 }
 
-// ============================================================================
-// Combined Filter Tests
-// ============================================================================
+// --- Combined Filter Tests ---
 
 #[tokio::test]
 async fn test_list_entries_combined_filters() {
@@ -1137,7 +1069,6 @@ async fn test_list_entries_combined_filters() {
     // Star some entries
     star_entry(&app.server, &[entry_ids[0], entry_ids[1]]).await;
 
-    // Mark one starred entry as read
     mark_read(&app.server, &[entry_ids[0]]).await;
 
     // Filter: starred stream, exclude read — should find only the unread starred entry
@@ -1169,7 +1100,6 @@ async fn test_list_entries_oldest_first() {
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Get entries in oldest-first order
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?r=o")
@@ -1180,7 +1110,6 @@ async fn test_list_entries_oldest_first() {
     let items = body["items"].as_array().unwrap();
     assert_eq!(items.len(), 5);
 
-    // Verify oldest-first: published timestamps should be ascending
     let timestamps: Vec<i64> = items
         .iter()
         .map(|i| i["published"].as_i64().unwrap())
@@ -1193,9 +1122,7 @@ async fn test_list_entries_oldest_first() {
     }
 }
 
-// ============================================================================
-// Mark All Read with Timestamp Tests
-// ============================================================================
+// --- Mark All Read with Timestamp Tests ---
 
 #[tokio::test]
 async fn test_mark_all_read_with_timestamp() {
@@ -1203,12 +1130,9 @@ async fn test_mark_all_read_with_timestamp() {
     let (_user_id, _cat_id, _feed_id, _entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Entries are 1-5 hours old. Set a timestamp that is 2.5 hours ago.
-    // This means entries 3h, 4h, 5h old should be marked read
-    // (they are older than 2.5 hours, so older_than_days = 0 from integer division).
-    // Because older_than_days becomes 0 for anything < 1 day, all entries get marked.
-    // Use a timestamp far in the future to mark everything, effectively testing the
-    // ts parameter passes through.
+    // Entries are 1-5 hours old. `older_than_days` is integer division, so
+    // anything under a day rounds to 0 and every entry is marked — a timestamp
+    // far in the future simply confirms the `ts` parameter passes through.
     let now_usec = chrono::Utc::now().timestamp() * 1_000_000;
     let ts_str = now_usec.to_string();
     let form_data: Vec<(&str, &str)> = vec![
@@ -1225,9 +1149,7 @@ async fn test_mark_all_read_with_timestamp() {
     assert_eq!(response.text(), "OK");
 }
 
-// ============================================================================
-// GReader Item Response Format Tests
-// ============================================================================
+// --- GReader Item Response Format Tests ---
 
 #[tokio::test]
 async fn test_stream_contents_item_format() {
@@ -1273,16 +1195,13 @@ async fn test_stream_contents_item_format() {
     assert!(item["_starredAt"].is_null());
     assert!(item["_publishedAt"].is_string());
 
-    // Check origin
     assert_eq!(
         item["origin"]["streamId"],
         "feed/https://example.com/feed.xml"
     );
 }
 
-// ============================================================================
-// Cross-User Access Restriction Tests
-// ============================================================================
+// --- Cross-User Access Restriction Tests ---
 
 #[tokio::test]
 async fn test_cannot_access_other_user_category_entries() {
@@ -1292,7 +1211,6 @@ async fn test_cannot_access_other_user_category_entries() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to list entries by other user's category
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/label/Other%20User%20Category")
@@ -1308,7 +1226,6 @@ async fn test_cannot_access_other_user_feed_entries() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to list entries by other user's feed
     let response = app
         .server
         .get("/reader/api/0/stream/contents/feed/https://other.com/feed.xml")
@@ -1324,7 +1241,6 @@ async fn test_cannot_get_other_user_entry() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to get other user's entry — should return empty items
     let response = app
         .server
         .get(&format!(
@@ -1347,7 +1263,6 @@ async fn test_cannot_mark_other_user_entry_read() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to mark other user's entry as read — should return 404
     let mut form_data: Vec<(&str, String)> = vec![("i", other_entry_ids[0].to_string())];
     form_data.push(("a", "user/-/state/com.google/read".to_string()));
     let response = app
@@ -1366,7 +1281,6 @@ async fn test_cannot_mark_other_user_entry_unread() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to mark other user's entry as unread — should return 404
     let mut form_data: Vec<(&str, String)> = vec![("i", other_entry_ids[0].to_string())];
     form_data.push(("r", "user/-/state/com.google/read".to_string()));
     let response = app
@@ -1385,7 +1299,6 @@ async fn test_cannot_star_other_user_entry() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to star other user's entry — should return 404
     let mut form_data: Vec<(&str, String)> = vec![("i", other_entry_ids[0].to_string())];
     form_data.push(("a", "user/-/state/com.google/starred".to_string()));
     let response = app
@@ -1404,7 +1317,6 @@ async fn test_cannot_mark_all_read_other_user_feed() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to mark all read by other user's feed — should return 404
     let form_data: Vec<(&str, &str)> = vec![("s", "feed/https://other.com/feed.xml")];
     let response = app
         .server
@@ -1422,7 +1334,6 @@ async fn test_cannot_mark_all_read_other_user_category() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to mark all read by other user's category — should return 404
     let form_data: Vec<(&str, &str)> = vec![("s", "user/-/label/Other User Category")];
     let response = app
         .server
@@ -1440,7 +1351,6 @@ async fn test_cannot_get_other_user_entry_neighbors() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to get neighbors of other user's entry
     let response = app
         .server
         .get(&format!("/api/entries/{}/neighbors", other_entry_ids[0]))
@@ -1456,7 +1366,6 @@ async fn test_cannot_unsubscribe_other_user_feed() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to unsubscribe other user's feed — should return 404
     let form_data: Vec<(&str, &str)> = vec![
         ("ac", "unsubscribe"),
         ("s", "feed/https://other.com/feed.xml"),
@@ -1477,7 +1386,6 @@ async fn test_cannot_edit_other_user_feed() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to edit other user's feed — should return 404
     let form_data: Vec<(&str, &str)> = vec![
         ("ac", "edit"),
         ("s", "feed/https://other.com/feed.xml"),
@@ -1499,7 +1407,6 @@ async fn test_cannot_disable_other_user_category() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to disable other user's category — should return 404
     let form_data: Vec<(&str, &str)> = vec![("s", "user/-/label/Other User Category")];
     let response = app
         .server
@@ -1517,7 +1424,6 @@ async fn test_cannot_rename_other_user_category() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to rename other user's category — should return 404
     let form_data: Vec<(&str, &str)> = vec![
         ("s", "user/-/label/Other User Category"),
         ("dest", "user/-/label/Hacked Category"),
@@ -1538,7 +1444,6 @@ async fn test_cannot_fetch_full_content_other_user_entry() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to fetch full content of other user's entry
     let response = app
         .server
         .post(&format!(
@@ -1557,7 +1462,6 @@ async fn test_cannot_summarize_other_user_entry() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to summarize other user's entry
     let response = app
         .server
         .post(&format!("/api/entries/{}/summarize", other_entry_ids[0]))
@@ -1573,7 +1477,6 @@ async fn test_cannot_save_other_user_entry() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to save other user's entry
     let response = app
         .server
         .post(&format!("/api/entries/{}/save", other_entry_ids[0]))
@@ -1589,7 +1492,6 @@ async fn test_cannot_get_other_user_entry_summary() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to get summary of other user's entry
     let response = app
         .server
         .get(&format!("/api/entries/{}/summary", other_entry_ids[0]))
@@ -1605,7 +1507,6 @@ async fn test_cannot_delete_other_user_entry_summary() {
         setup_second_user_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to delete summary of other user's entry
     let response = app
         .server
         .delete(&format!("/api/entries/{}/summary", other_entry_ids[0]))
@@ -1613,9 +1514,7 @@ async fn test_cannot_delete_other_user_entry_summary() {
     response.assert_status_not_found();
 }
 
-// ============================================================================
-// Entry with No Link Tests (RDRS-specific, kept as-is)
-// ============================================================================
+// --- Entry with No Link Tests (RDRS-specific, kept as-is) ---
 
 #[tokio::test]
 async fn test_fetch_full_content_entry_no_link() {
@@ -1624,7 +1523,6 @@ async fn test_fetch_full_content_entry_no_link() {
     let no_link_entry_id = setup_entry_without_link(&app.db, feed_id).await;
     login(&mut app.server).await;
 
-    // Try to fetch full content of entry without link
     let response = app
         .server
         .post(&format!(
@@ -1644,7 +1542,6 @@ async fn test_summarize_entry_no_link() {
     let no_link_entry_id = setup_entry_without_link(&app.db, feed_id).await;
     login(&mut app.server).await;
 
-    // Try to summarize entry without link
     let response = app
         .server
         .post(&format!("/api/entries/{no_link_entry_id}/summarize"))
@@ -1662,7 +1559,6 @@ async fn test_save_entry_no_link() {
     let no_link_entry_id = setup_entry_without_link(&app.db, feed_id).await;
     login(&mut app.server).await;
 
-    // Try to save entry without link
     let response = app
         .server
         .post(&format!("/api/entries/{no_link_entry_id}/save"))
@@ -1673,9 +1569,7 @@ async fn test_save_entry_no_link() {
     assert!(body["error"].as_str().unwrap().contains("no link"));
 }
 
-// ============================================================================
-// Save/Summarize Without Config Tests (RDRS-specific, kept as-is)
-// ============================================================================
+// --- Save/Summarize Without Config Tests (RDRS-specific, kept as-is) ---
 
 #[tokio::test]
 async fn test_summarize_entry_no_kagi_config() {
@@ -1683,7 +1577,6 @@ async fn test_summarize_entry_no_kagi_config() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to summarize without Kagi configured
     let response = app
         .server
         .post(&format!("/api/entries/{}/summarize", entry_ids[0]))
@@ -1700,7 +1593,6 @@ async fn test_save_entry_no_services_config() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to save without any services configured
     let response = app
         .server
         .post(&format!("/api/entries/{}/save", entry_ids[0]))
@@ -1711,9 +1603,7 @@ async fn test_save_entry_no_services_config() {
     assert!(body["error"].as_str().unwrap().contains("No save services"));
 }
 
-// ============================================================================
-// Stream Item IDs Tests (item.rs coverage)
-// ============================================================================
+// --- Stream Item IDs Tests (item.rs coverage) ---
 
 #[tokio::test]
 async fn test_stream_item_ids() {
@@ -1895,7 +1785,6 @@ async fn test_stream_contents_with_continuation() {
 
     login(&mut app.server).await;
 
-    // First page: get 2 items
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?n=2")
@@ -1979,10 +1868,8 @@ async fn test_stream_contents_exclude_read() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Mark one entry as read
     mark_read(&app.server, &[entry_ids[0]]).await;
 
-    // Get stream contents excluding read entries
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?xt=user/-/state/com.google/read")
@@ -2013,7 +1900,6 @@ async fn test_stream_contents_include_starred() {
     // Star one entry
     star_entry(&app.server, &[entry_ids[2]]).await;
 
-    // Get stream contents with include tag for starred
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?it=user/-/state/com.google/starred")
@@ -2041,9 +1927,7 @@ async fn test_stream_item_ids_default_stream() {
     assert_eq!(item_refs.len(), 5);
 }
 
-// ============================================================================
-// User Info Tests (user.rs coverage)
-// ============================================================================
+// --- User Info Tests (user.rs coverage) ---
 
 #[tokio::test]
 async fn test_user_info() {
@@ -2104,7 +1988,6 @@ async fn test_unread_count_after_read() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Mark 3 entries as read
     mark_read(&app.server, &[entry_ids[0], entry_ids[1], entry_ids[2]]).await;
 
     let response = app.server.get("/reader/api/0/unread-count").await;
@@ -2126,9 +2009,7 @@ async fn test_unread_count_after_read() {
     assert_eq!(total_count["count"], 2);
 }
 
-// ============================================================================
-// Star/Unstar via Stream Tests (models/entry.rs coverage)
-// ============================================================================
+// --- Star/Unstar via Stream Tests (models/entry.rs coverage) ---
 
 #[tokio::test]
 async fn test_star_and_unstar_entry() {
@@ -2139,7 +2020,6 @@ async fn test_star_and_unstar_entry() {
     // Star an entry via edit-tag
     star_entry(&app.server, &[entry_ids[1]]).await;
 
-    // Verify it appears in the starred stream
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/starred")
@@ -2154,7 +2034,6 @@ async fn test_star_and_unstar_entry() {
     // Unstar the entry
     unstar_entry(&app.server, &[entry_ids[1]]).await;
 
-    // Verify it's no longer in the starred stream
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/starred")
@@ -2222,9 +2101,7 @@ async fn test_stream_contents_time_filter() {
     }
 }
 
-// ============================================================================
-// Entry Summary Tests (RDRS-specific, kept as-is)
-// ============================================================================
+// --- Entry Summary Tests (RDRS-specific, kept as-is) ---
 
 #[tokio::test]
 async fn test_get_entry_summary_not_found() {
@@ -2232,7 +2109,6 @@ async fn test_get_entry_summary_not_found() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Try to get summary for an entry that has no summary cached
     let response = app
         .server
         .get(&format!("/api/entries/{}/summary", entry_ids[0]))
@@ -2249,7 +2125,6 @@ async fn test_delete_entry_summary() {
     let (_user_id, _cat_id, _feed_id, entry_ids) = setup_test_data(&app.db).await;
     login(&mut app.server).await;
 
-    // Delete summary (even if none exists, should succeed)
     let response = app
         .server
         .delete(&format!("/api/entries/{}/summary", entry_ids[0]))
@@ -2260,9 +2135,7 @@ async fn test_delete_entry_summary() {
     assert_eq!(body["success"], true);
 }
 
-// ============================================================================
-// Summary Fragment Tests (SSE swap endpoint)
-// ============================================================================
+// --- Summary Fragment Tests (SSE swap endpoint) ---
 
 #[tokio::test]
 async fn summary_fragment_renders_completed_summary() {
@@ -2272,7 +2145,6 @@ async fn summary_fragment_renders_completed_summary() {
 
     let entry_id = entry_ids[0];
 
-    // Insert a completed summary directly in the DB.
     rdrs::models::entry_summary::upsert_pending(&app.db, user_id, entry_id)
         .await
         .unwrap();
@@ -2355,18 +2227,14 @@ async fn summary_fragment_404_for_other_users_entry() {
     assert_eq!(response.status_code(), axum::http::StatusCode::NOT_FOUND);
 }
 
-// ============================================================================
-// Fetched full content is persisted
-// ============================================================================
+// --- Fetched full content is persisted ---
 //
-// These store through the model rather than driving `POST
-// /entries/{id}/fetch-full-content` end to end, because `fetch_and_extract`
-// runs every URL through the SSRF guard in `utils::url_validation`, which
-// blocks loopback — so a wiremock server on 127.0.0.1 can never be the source.
-// (Feed-refresh tests can use wiremock because that path does not validate.)
-// Weakening a security control to make a test convenient would be the wrong
-// trade, so the handler's *failure* arm is covered in `no_js_test.rs` and its
-// success arm hands the extraction straight to the write asserted here.
+// These store through the model rather than driving the handler end to end,
+// because `fetch_and_extract` runs every URL through the SSRF guard, which
+// blocks loopback — so a wiremock server can never be the source. (Feed-refresh
+// tests can use wiremock because that path does not validate.) The handler's
+// *failure* arm is covered in `no_js_test.rs`, and its success arm hands the
+// extraction straight to the write asserted here.
 
 /// The article "Fetch Full Content" retrieves used to live only inside the
 /// response that fetched it: a refresh lost it, and a reader without JavaScript

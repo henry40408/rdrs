@@ -345,10 +345,8 @@ mod tests {
         let user_id = create_test_user(&db, "testuser").await;
         let entry_id = create_test_entry(&db, user_id).await;
 
-        // Create pending
         upsert_pending(&db, user_id, entry_id).await.unwrap();
 
-        // Set processing
         set_processing(&db, user_id, entry_id).await.unwrap();
         let summary = find_by_user_and_entry(&db, user_id, entry_id)
             .await
@@ -356,7 +354,6 @@ mod tests {
             .unwrap();
         assert_eq!(summary.status, SummaryStatus::Processing);
 
-        // Set completed
         set_completed(&db, user_id, entry_id, "This is the summary")
             .await
             .unwrap();
@@ -406,7 +403,6 @@ mod tests {
         let db = setup_db().await;
         let user_id = create_test_user(&db, "testuser").await;
 
-        // Create multiple entries
         let category_id = category::create_category(&db, user_id, "Tech")
             .await
             .unwrap()
@@ -446,7 +442,6 @@ mod tests {
             entry_ids.push(e.id);
         }
 
-        // Set different statuses
         upsert_pending(&db, user_id, entry_ids[0]).await.unwrap();
         upsert_pending(&db, user_id, entry_ids[1]).await.unwrap();
         set_completed(&db, user_id, entry_ids[1], "Summary")
@@ -483,7 +478,6 @@ mod tests {
         let user_id = create_test_user(&db, "testuser").await;
         let entry_id = create_test_entry(&db, user_id).await;
 
-        // Create and complete
         upsert_pending(&db, user_id, entry_id).await.unwrap();
         set_completed(&db, user_id, entry_id, "Summary")
             .await

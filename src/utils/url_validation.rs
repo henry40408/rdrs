@@ -40,7 +40,6 @@ pub fn validate_url(url: &Url) -> Result<(), UrlValidationError> {
         _ => return Err(UrlValidationError::InvalidScheme),
     }
 
-    // Get the host
     let host = url.host_str().ok_or(UrlValidationError::NoHost)?;
 
     // Block localhost and loopback addresses
@@ -57,7 +56,6 @@ pub fn validate_url(url: &Url) -> Result<(), UrlValidationError> {
         return Err(UrlValidationError::BlockedHost);
     }
 
-    // Try to parse as IP address and check for private ranges
     if let Ok(ip) = host.parse::<IpAddr>()
         && is_private_ip(&ip)
     {

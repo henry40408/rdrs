@@ -19,7 +19,6 @@ pub async fn fetch_feed_icon(
     site_url: Option<&str>,
     user_agent: &str,
 ) -> AppResult<Option<FetchedImage>> {
-    // Try icon_url first
     if let Some(url) = icon_url
         && let Ok(Some(img)) = fetch_image(url, user_agent).await
     {
@@ -32,7 +31,6 @@ pub async fn fetch_feed_icon(
         return Ok(Some(img));
     }
 
-    // Try logo_url
     if let Some(url) = logo_url
         && let Ok(Some(img)) = fetch_image(url, user_agent).await
     {
@@ -138,7 +136,6 @@ async fn fetch_favicon(site_url: &str, user_agent: &str) -> AppResult<Option<Fet
         return Ok(None);
     };
 
-    // Try /favicon.ico first
     let Ok(favicon_url) = base_url.join("/favicon.ico") else {
         return Ok(None);
     };
@@ -147,7 +144,6 @@ async fn fetch_favicon(site_url: &str, user_agent: &str) -> AppResult<Option<Fet
         return Ok(Some(img));
     }
 
-    // Try parsing HTML for link rel="icon"
     let retry_config = RetryConfig::icon();
     let site_url_owned = site_url.to_string();
 

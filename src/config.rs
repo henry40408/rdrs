@@ -15,18 +15,15 @@ pub const DEFAULT_USER_AGENT: &str = concat!(
 ///
 /// The field exists for the one case [`DEFAULT_USER_AGENT`] does not survive: a
 /// server that turns away anything not shaped like a browser. So the list is
-/// browser strings — the shape someone reaching for this field is after, which
-/// a blank box gives no hint of.
+/// browser strings, the shape a blank box gives no hint of.
 ///
-/// [`DEFAULT_USER_AGENT`] is deliberately **not** among them. Leaving the field
-/// empty already selects it, and picking it from a list would do something
-/// subtly worse: freeze today's `GIT_VERSION` into the feed's row, so the feed
-/// keeps announcing a version rdrs has long since moved past.
+/// [`DEFAULT_USER_AGENT`] is deliberately **not** among them: leaving the field
+/// empty already selects it, and picking it from a list would freeze today's
+/// `GIT_VERSION` into the feed's row.
 ///
-/// Every entry must survive `HeaderValue::from_str`, which is what
-/// `feed_sync::refresh_feed` puts it through — and that call drops the header
-/// on failure rather than erroring, so a bad suggestion would silently send no
-/// `User-Agent` at all. Enforced by
+/// Every entry must survive `HeaderValue::from_str` — `feed_sync::refresh_feed`
+/// *drops* the header on failure rather than erroring, so a bad suggestion would
+/// silently send no `User-Agent` at all. Enforced by
 /// `custom_user_agent_suggestions_are_valid_header_values`.
 pub const CUSTOM_USER_AGENT_SUGGESTIONS: &[&str] = &[
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -44,9 +41,8 @@ pub struct Config {
     /// for the domain-separated derivation; each use derives its own tag.
     pub secret: Vec<u8>,
     /// Whether [`Config::secret`] was randomly generated because `RDRS_SECRET`
-    /// was unset or too short, rather than configured. Drives the startup
-    /// warning — a generated key means every browser session ends and every
-    /// cached image-proxy URL breaks on each restart.
+    /// was unset or too short. Drives the startup warning: a generated key ends
+    /// every browser session and breaks every cached image-proxy URL on restart.
     pub secret_generated: bool,
     pub user_agent: String,
     pub webauthn_rp_id: String,
@@ -63,13 +59,9 @@ pub struct Config {
     pub auth_proxy_logout_url: Option<String>,
     /// Attempts allowed per client IP per [`Config::login_rate_limit_window_secs`],
     /// applied separately to each credential-accepting endpoint *class* (see
-    /// [`crate::middleware::rate_limit::Bucket`]: password login — including
-    /// `GReader` `ClientLogin` and passkey completion — registration, and
-    /// passkey ceremony start each keep their own budget). Separate budgets
-    /// stop a registration refused by configuration from also exhausting the
-    /// login budget for the same IP. `0` disables the limiter entirely — an
-    /// escape hatch for deployments that already throttle upstream (e.g.
-    /// behind an authenticating reverse proxy).
+    /// [`crate::middleware::rate_limit::Bucket`]), so a registration refused by
+    /// configuration cannot also exhaust the login budget for the same IP. `0`
+    /// disables the limiter entirely, for deployments that throttle upstream.
     pub login_rate_limit_attempts: u32,
     /// Fixed-window length, in seconds, for [`Config::login_rate_limit_attempts`].
     pub login_rate_limit_window_secs: u64,
@@ -77,11 +69,10 @@ pub struct Config {
     /// [`parse_hsts`] for the derivation rule and why an unrecognized value is
     /// a hard startup error rather than a silent "off".
     pub hsts: bool,
-    /// HSTS `max-age` in seconds. Defaults to 31536000 (one year, OWASP's
-    /// recommended value). `0` is a deliberate escape hatch rather than a synonym
-    /// for "off": serving `max-age=0` tells browsers to *forget* a previous HSTS
-    /// declaration, which is the supported way to recover from a mis-set one —
-    /// strictly more useful than simply omitting the header.
+    /// HSTS `max-age` in seconds, defaulting to OWASP's recommended one year.
+    /// `0` is an escape hatch rather than a synonym for "off": it tells browsers
+    /// to *forget* a previous declaration, which is the supported way to recover
+    /// from a mis-set one.
     pub hsts_max_age: u64,
     /// Whether the HSTS declaration includes `; includeSubDomains`. Defaults to
     /// on; see [`Config::hsts_header_value`] for the apex-domain caveat that
@@ -118,22 +109,19 @@ pub fn parse_trusted_networks(raw: &str) -> Result<Vec<IpNet>, String> {
 
 /// Whether the session cookie should carry the `Secure` attribute.
 ///
-/// An explicit `RDRS_COOKIE_SECURE` wins; otherwise the answer is derived from
-/// `RDRS_PUBLIC_BASE_URL`'s scheme. Deriving beats a standalone knob because a real
-/// deployment already has to set `RDRS_PUBLIC_BASE_URL` correctly (it drives the
-/// absolute image-proxy URLs), so an HTTPS install gets `Secure` without a
-/// second setting to forget — while a plain `http://` dev run keeps working.
-/// That last part matters: a browser silently drops a `Secure` cookie sent over
-/// HTTP, so defaulting it on would lock a developer out with no visible error.
+/// An explicit `RDRS_COOKIE_SECURE` wins; otherwise it is derived from
+/// `RDRS_PUBLIC_BASE_URL`'s scheme. Deriving beats a standalone knob because a
+/// real deployment already has to set that URL correctly, so an HTTPS install
+/// gets `Secure` without a second setting to forget — while a plain `http://`
+/// dev run keeps working. That last part matters: a browser silently drops a
+/// `Secure` cookie sent over HTTP, so defaulting it on would lock a developer
+/// out with no visible error. The override exists for TLS-terminating setups
+/// that cannot advertise their public URL here.
 ///
-/// The override exists for TLS-terminating setups that cannot advertise their
-/// public URL here, and for forcing the flag off while debugging.
-///
-/// Unlike the other boolean env vars, an unrecognized value is a hard error
-/// rather than a silent "off". Those default to `false`, so a typo there is a
-/// no-op; here the derived default can be `true`, so treating `RDRS_COOKIE_SECURE=yes`
-/// as "off" would quietly strip `Secure` from a correctly-configured HTTPS
-/// deployment — exactly the failure this setting exists to prevent.
+/// Unlike the other boolean env vars, an unrecognized value is a hard error:
+/// those default to `false`, so a typo is a no-op, but here the derived default
+/// can be `true` and reading `RDRS_COOKIE_SECURE=yes` as "off" would strip
+/// `Secure` from a correctly-configured HTTPS deployment.
 pub fn parse_cookie_secure(
     raw: Option<&str>,
     public_base_url: Option<&str>,
@@ -145,22 +133,17 @@ pub fn parse_cookie_secure(
 
 /// Whether `Strict-Transport-Security` should be sent on every response.
 ///
-/// An explicit `RDRS_HSTS` wins; otherwise the answer is derived from
-/// `RDRS_PUBLIC_BASE_URL`'s scheme — the same rule as [`parse_cookie_secure`],
-/// for the same reason: a real deployment already has to set
-/// `RDRS_PUBLIC_BASE_URL` correctly (it drives the image-proxy URLs), so an
-/// HTTPS install gets HSTS without a second setting to forget, while a plain
-/// `http://` internal deployment (no `RDRS_PUBLIC_BASE_URL`, or one starting
-/// `http://`) gets no header and cannot lock itself out.
+/// An explicit `RDRS_HSTS` wins; otherwise derived from
+/// `RDRS_PUBLIC_BASE_URL`'s scheme, the same rule and reasoning as
+/// [`parse_cookie_secure`]: an HTTPS install gets HSTS without a second setting
+/// to forget, while a plain `http://` deployment cannot lock itself out.
 ///
-/// HSTS is *sticky*: a browser that has seen the header refuses plain HTTP to
-/// this host for the whole `max-age`, and the server cannot instantly retract
-/// it. That makes an unrecognized value here strictly more dangerous than for
-/// most boolean settings — silently reading `RDRS_HSTS=yes` as "off" would
-/// leave a correctly-configured HTTPS deployment without the protection it
-/// asked for, while silently reading a typo as "on" could lock browsers out
-/// of a plain-HTTP deployment with no server-side way back. Either way,
-/// guessing is wrong; only `true`/`false`/`1`/`0` are accepted.
+/// HSTS is *sticky* — a browser that has seen the header refuses plain HTTP for
+/// the whole `max-age`, and the server cannot retract it — so an unrecognized
+/// value is more dangerous here than anywhere else. Reading a typo as "off"
+/// leaves an HTTPS deployment unprotected; reading it as "on" can lock browsers
+/// out of a plain-HTTP one with no server-side way back. Only
+/// `true`/`false`/`1`/`0` are accepted.
 pub fn parse_hsts(raw: Option<&str>, public_base_url: Option<&str>) -> Result<bool, String> {
     let derived = public_base_url
         .is_some_and(|u| u.trim_start().to_ascii_lowercase().starts_with("https://"));
@@ -168,12 +151,10 @@ pub fn parse_hsts(raw: Option<&str>, public_base_url: Option<&str>) -> Result<bo
 }
 
 /// Shared strict boolean parser behind [`parse_cookie_secure`] and
-/// [`parse_hsts`]: unset (or blank) falls back to `derived`; `true`/`1` and
-/// `false`/`0` (case-insensitive) are recognized; anything else is a hard
-/// startup error naming `var_name` rather than a silent fallback. Both
-/// callers have a derived default that can be `true`, which is exactly why
-/// they cannot use the lenient [`flag`] helper — see each function's own doc
-/// for the specific failure a silent "off" would cause.
+/// [`parse_hsts`]: unset or blank falls back to `derived`, `true`/`1` and
+/// `false`/`0` are recognized case-insensitively, anything else is a hard
+/// startup error naming `var_name`. Both callers have a derived default that
+/// can be `true`, which is why neither can use the lenient [`flag`] helper.
 fn parse_bool_derived(raw: Option<&str>, var_name: &str, derived: bool) -> Result<bool, String> {
     match raw.map(str::trim).filter(|s| !s.is_empty()) {
         Some(v) if v.eq_ignore_ascii_case("true") || v == "1" => Ok(true),
@@ -208,12 +189,10 @@ pub fn classify_backend(database_url: &str) -> Backend {
 
 /// Redact the password out of a `database_url` so it is safe to display.
 ///
-/// A `PostgreSQL` URL carries credentials inline
-/// (`postgres://user:secret@host/db`); the settings page renders the running
-/// instance's `DATABASE_URL`, so the password must never survive into the
-/// response. Only the password component is replaced — the scheme, user, host
-/// and database name stay legible, which is what the page is actually for.
-/// `SQLite` paths have no userinfo and pass through untouched.
+/// A `PostgreSQL` URL carries credentials inline, and the settings page renders
+/// the running instance's `DATABASE_URL`. Only the password component is
+/// replaced — scheme, user, host and database name stay legible, which is what
+/// the page is for. `SQLite` paths have no userinfo and pass through.
 pub fn redact_database_url(database_url: &str) -> String {
     let Some((scheme, rest)) = database_url.split_once("://") else {
         return database_url.to_string();
@@ -234,12 +213,10 @@ pub fn redact_database_url(database_url: &str) -> String {
     }
 }
 
-/// Resolve the `RDRS_SERVER_BIND` value into a [`SocketAddr`]. An unset or empty
-/// value yields the default `127.0.0.1:8080` (loopback only, so a bare-metal
-/// run is not exposed on all interfaces without opting in); any non-empty
-/// value must be a valid `host:port` socket address. The container image sets
-/// `RDRS_SERVER_BIND=0.0.0.0:8080` so a reverse proxy in a separate container can
-/// reach it.
+/// Resolve `RDRS_SERVER_BIND` into a [`SocketAddr`]. Unset or empty yields
+/// `127.0.0.1:8080`, so a bare-metal run is not exposed on all interfaces
+/// without opting in; anything else must be a valid `host:port`. The container
+/// image sets `0.0.0.0:8080` so a proxy in another container can reach it.
 pub fn parse_server_bind(raw: Option<&str>) -> Result<SocketAddr, String> {
     match raw {
         Some(v) if !v.is_empty() => v
@@ -250,14 +227,11 @@ pub fn parse_server_bind(raw: Option<&str>) -> Result<SocketAddr, String> {
 }
 
 /// Resolve `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS` into the attempt budget for
-/// [`Config::login_rate_limit_attempts`]. An unset or blank value yields the
-/// default of [`crate::middleware::rate_limit::LOGIN_MAX_ATTEMPTS`]; a
-/// non-empty value must parse as a `u32` (`0` is valid and disables the
-/// limiter — see the field doc). Unparseable input is a hard startup error
-/// rather than a silent fallback: silently keeping the default here would
-/// mean a typo (`RDRS_LOGIN_RATE_LIMIT_ATTEMPTS=5o`) leaves the protection
-/// looking configured while actually running on the default, exactly the
-/// failure mode `parse_cookie_secure` refuses for the same reason.
+/// [`Config::login_rate_limit_attempts`]. Unset or blank yields
+/// [`crate::middleware::rate_limit::LOGIN_MAX_ATTEMPTS`]; anything else must
+/// parse as a `u32` (`0` is valid and disables the limiter). Unparseable input
+/// is a hard startup error: silently keeping the default would leave a typo
+/// looking configured while the protection ran on defaults.
 fn parse_login_rate_limit_attempts(raw: Option<&str>) -> Result<u32, String> {
     match raw {
         Some(v) => v
@@ -267,15 +241,11 @@ fn parse_login_rate_limit_attempts(raw: Option<&str>) -> Result<u32, String> {
     }
 }
 
-/// Resolve `RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS` into the window length for
-/// [`Config::login_rate_limit_window_secs`]. Same rules as
-/// [`parse_login_rate_limit_attempts`]: unset/blank falls back to
-/// [`crate::middleware::rate_limit::LOGIN_WINDOW_SECS`], anything else must
-/// parse as a `u64` or startup fails. A parsed `0` is also rejected: the
-/// window elapses the instant it is recorded, so every attempt starts a
-/// fresh window and the limiter silently never throttles anything while
-/// still looking configured. `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS=0` is the
-/// correct way to disable the limiter on purpose.
+/// Resolve `RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS` into the window length. Same
+/// rules as [`parse_login_rate_limit_attempts`], plus a parsed `0` is rejected:
+/// the window elapses the instant it is recorded, so every attempt starts a
+/// fresh one and the limiter never throttles while still looking configured.
+/// `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS=0` is the way to disable it on purpose.
 fn parse_login_rate_limit_window_secs(raw: Option<&str>) -> Result<u64, String> {
     match raw {
         Some(v) => {
@@ -297,28 +267,23 @@ fn parse_login_rate_limit_window_secs(raw: Option<&str>) -> Result<u64, String> 
     }
 }
 
-/// Resolve the root signing key from a raw `RDRS_SECRET` value, returning the
-/// key bytes and whether they were generated rather than configured. A base64
-/// value is decoded; otherwise the raw bytes are used. Either way at least
-/// [`crate::secret::MIN_SECRET_LEN`] bytes are required — a shorter value is
-/// discarded in favour of a fresh random key rather than used as a guessable
-/// one.
+/// Resolve the root signing key from a raw `RDRS_SECRET`, returning the key
+/// bytes and whether they were generated rather than configured. A base64 value
+/// is decoded, otherwise the raw bytes are used; either way at least
+/// [`crate::secret::MIN_SECRET_LEN`] bytes are required, and a shorter value is
+/// discarded for a fresh random key rather than used as a guessable one.
 ///
-/// Unlike every other string setting this does *not* go through [`nonblank`]:
-/// trimming would change the key bytes for an existing deployment whose value
-/// happens to carry whitespace, rotating the key — which ends every browser
-/// session and breaks every image-proxy URL already cached by a Google Reader
-/// client.
+/// Deliberately not routed through [`nonblank`]: trimming would change the key
+/// bytes for a deployment whose value carries whitespace, rotating the key —
+/// ending every session and breaking every cached image-proxy URL.
 fn load_secret(raw: Option<String>) -> (Vec<u8>, bool) {
     use crate::secret::MIN_SECRET_LEN;
     if let Some(secret_str) = raw {
-        // Try to decode as base64 first
         if let Ok(decoded) = STANDARD.decode(&secret_str)
             && decoded.len() >= MIN_SECRET_LEN
         {
             return (decoded, false);
         }
-        // Use raw bytes if at least MIN_SECRET_LEN characters
         if secret_str.len() >= MIN_SECRET_LEN {
             return (secret_str.into_bytes(), false);
         }
@@ -330,14 +295,13 @@ fn load_secret(raw: Option<String>) -> (Vec<u8>, bool) {
     (secret, true)
 }
 
-/// Read `key` through `get` and normalize it: surrounding whitespace is
-/// trimmed, and a value that is empty afterwards counts as unset.
+/// Read `key` through `get` and normalize it: surrounding whitespace trimmed,
+/// and an empty result counts as unset.
 ///
-/// Every string-valued setting goes through here so `FOO=` or `FOO="  "` in a
-/// compose file means "not configured" rather than "configured to the empty
-/// string". The distinction is load-bearing for the settings that are disabled
-/// by being empty — a whitespace-only `RDRS_AUTH_PROXY_HEADER` would otherwise
-/// enable forward auth against a header name no proxy can send.
+/// Every string-valued setting goes through here, so `FOO=` in a compose file
+/// means "not configured". The distinction is load-bearing for settings
+/// disabled by being empty — a whitespace-only `RDRS_AUTH_PROXY_HEADER` would
+/// otherwise enable forward auth against a header no proxy can send.
 fn nonblank(get: &impl Fn(&str) -> Option<String>, key: &str) -> Option<String> {
     get(key)
         .map(|v| v.trim().to_string())
@@ -345,10 +309,9 @@ fn nonblank(get: &impl Fn(&str) -> Option<String>, key: &str) -> Option<String> 
 }
 
 /// Whether a boolean env var is on. `true` (any case) and `1` are the only
-/// accepted values; anything else — including a typo — reads as off, which is
-/// safe because every setting using this defaults to off anyway.
-/// `RDRS_COOKIE_SECURE` deliberately does *not* use this: its default can be `true`,
-/// so it rejects unrecognized values instead. See [`parse_cookie_secure`].
+/// accepted values; anything else reads as off, which is safe because every
+/// setting using this defaults to off. `RDRS_COOKIE_SECURE` deliberately does
+/// not — its default can be `true`. See [`parse_cookie_secure`].
 fn flag(get: &impl Fn(&str) -> Option<String>, key: &str) -> bool {
     nonblank(get, key).is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1")
 }
@@ -356,13 +319,11 @@ fn flag(get: &impl Fn(&str) -> Option<String>, key: &str) -> bool {
 /// Every variable renamed by the `RDRS_` prefix migration, old name → new name.
 ///
 /// `IMAGE_PROXY_SECRET` is the one entry that is not a straight prefixing: it
-/// became `RDRS_SECRET` because the key no longer signs only image-proxy URLs.
+/// became `RDRS_SECRET` once the key stopped signing only image-proxy URLs.
 ///
-/// `DATABASE_URL` is deliberately absent: it is a genuine cross-tool convention
-/// (Twelve-Factor, Heroku/Railway/Render, sqlx, Diesel), and pingward keeps it
-/// bare for the same reason. The rest of this list only *looks* generic —
-/// `USER_AGENT` and `SERVER_BIND` in particular are rdrs's own names, which is
-/// exactly what makes them collide in a shared compose file.
+/// `DATABASE_URL` is deliberately absent — it is a genuine cross-tool
+/// convention. The rest only *look* generic; `USER_AGENT` and `SERVER_BIND` are
+/// rdrs's own names, which is what makes them collide in a shared compose file.
 pub const RENAMED_VARS: &[(&str, &str)] = &[
     ("SERVER_BIND", "RDRS_SERVER_BIND"),
     // `SIGNUP_ENABLED` is deliberately absent — see `RETIRED_VARS`. Renaming it
@@ -392,18 +353,15 @@ pub const RENAMED_VARS: &[(&str, &str)] = &[
 /// Variables that no longer configure anything, with what replaced them.
 ///
 /// Distinct from [`RENAMED_VARS`]: there is no new name to move the value to,
-/// the feature itself is gone. Still a startup refusal rather than a shrug,
-/// and for a sharper reason than a rename — `RDRS_SIGNUP_ENABLED=true` reads
-/// as "anyone may sign up", and silently ignoring it would leave an operator
-/// believing a public registration form exists when the endpoint has been
-/// removed. Failing once, loudly, is the only outcome that cannot be
-/// misunderstood.
+/// the feature itself is gone. Still a startup refusal, and for a sharper
+/// reason than a rename — `RDRS_SIGNUP_ENABLED=true` reads as "anyone may sign
+/// up", and ignoring it would leave an operator believing a public registration
+/// form exists when the endpoint has been removed.
 ///
 /// The pre-prefix `SIGNUP_ENABLED` is listed here rather than in
-/// [`RENAMED_VARS`], even though it *was* also renamed: [`reject_legacy_vars`]
+/// [`RENAMED_VARS`], even though it was also renamed: [`reject_legacy_vars`]
 /// runs first, so a rename entry would send the operator to
-/// `RDRS_SIGNUP_ENABLED` only for the next boot to refuse that too. One
-/// refusal, naming the feature that went away, is the whole point.
+/// `RDRS_SIGNUP_ENABLED` only for the next boot to refuse that too.
 pub const RETIRED_VARS: &[(&str, &str)] = &[
     ("RDRS_SIGNUP_ENABLED", SIGNUP_RETIRED),
     ("SIGNUP_ENABLED", SIGNUP_RETIRED),
@@ -435,16 +393,14 @@ pub fn reject_retired_vars(get: &impl Fn(&str) -> Option<String>) -> Result<(), 
 
 /// Refuse to start when a pre-prefix variable name still carries a value.
 ///
-/// Ignoring the old name would be the worst of the three options: an operator
-/// who upgrades without editing their compose file would get a *working* server
-/// — running on defaults, so a fresh empty database at `rdrs.sqlite3`, signup
-/// off, and a regenerated secret — instead of their actual deployment. A
-/// warning fares little better, since the same wrong server comes up and the
-/// line scrolls past. Failing names every variable that has to move, once.
+/// Ignoring the old name is the worst of the three options: an operator who
+/// upgrades without editing their compose file gets a *working* server running
+/// on defaults — a fresh empty database, signup off, a regenerated secret —
+/// instead of their actual deployment. A warning fares little better, since the
+/// same wrong server comes up and the line scrolls past.
 ///
-/// Only a value that survives [`nonblank`] counts: `FOO=` left behind in a
-/// compose file configured nothing before the rename either, so it is not worth
-/// blocking a boot over.
+/// Only a value that survives [`nonblank`] counts: `FOO=` configured nothing
+/// before the rename either.
 pub fn reject_legacy_vars(get: &impl Fn(&str) -> Option<String>) -> Result<(), String> {
     let stale: Vec<String> = RENAMED_VARS
         .iter()
@@ -470,11 +426,10 @@ impl Config {
 
     /// Build the config from an arbitrary key→value lookup.
     ///
-    /// `from_env` is the one-line adapter over the real environment; every test
-    /// passes a closure instead. That keeps config tests pure — mutating the
-    /// process environment is `unsafe` under edition 2024 and only survives
-    /// because nextest forks per test, which is a property of the runner rather
-    /// than of the code being tested.
+    /// `from_env` is the one-line adapter over the real environment; tests pass
+    /// a closure instead. That keeps config tests pure — mutating the process
+    /// environment is `unsafe` under edition 2024 and only survives because
+    /// nextest forks per test, a property of the runner rather than the code.
     pub fn from_map(get: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
         reject_legacy_vars(&get)?;
         reject_retired_vars(&get)?;
@@ -572,15 +527,12 @@ impl Config {
 
     /// The originating client IP. `X-Forwarded-For` / `X-Real-IP` are honoured
     /// ONLY when the TCP peer is a trusted proxy (`is_trusted_peer`); otherwise
-    /// they are attacker-controlled and ignored, and the peer address is used.
+    /// they are attacker-controlled and the peer address is used.
     ///
     /// `X-Forwarded-For` is read RIGHT-to-left: each hop *appends* the address
-    /// it saw (`client, proxy1, proxy2, ...`), which is how common append-mode
-    /// reverse proxies populate it (nginx's `$proxy_add_x_forwarded_for`,
-    /// Traefik, Caddy). The real client is therefore the right-most entry that
-    /// is not itself one of our trusted proxies; entries to its left are
-    /// client-supplied and must not be believed. Taking the left-most entry
-    /// instead would let any client forge its own logged IP.
+    /// it saw, so the real client is the right-most entry that is not itself one
+    /// of our trusted proxies. Taking the left-most instead would let any client
+    /// forge its own logged IP.
     pub fn client_ip(&self, peer: Option<IpAddr>, headers: &axum::http::HeaderMap) -> IpAddr {
         let Some(peer) = peer else {
             return IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
@@ -590,11 +542,9 @@ impl Config {
         if !self.is_trusted_peer(peer) {
             return peer;
         }
-        // `X-Forwarded-For` is "client, proxy1, proxy2, ..." where each hop APPENDS
-        // the address it saw. The real client is the RIGHT-MOST entry that is not
-        // one of our own trusted proxies; entries to its left are client-supplied
-        // and must not be believed. (Leftmost is forgeable under append-mode
-        // proxies like nginx's `$proxy_add_x_forwarded_for`.)
+        // Each hop APPENDS the address it saw, so the real client is the
+        // RIGHT-MOST entry that is not one of our own trusted proxies; leftmost
+        // is forgeable under append-mode proxies.
         if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
             for part in xff.rsplit(',') {
                 let Ok(ip) = part.trim().parse::<IpAddr>() else {
@@ -646,11 +596,10 @@ impl Config {
 
     /// Whether the one-time first-run setup page is still open.
     ///
-    /// True only while the instance has no accounts at all. There is nothing
-    /// to enumerate at that point — no username exists — which is what makes
-    /// an anonymous account-creating endpoint acceptable here and nowhere
-    /// else. The moment the first account exists this closes for good, and
-    /// every later account is created by an admin.
+    /// True only while the instance has no accounts at all. There is nothing to
+    /// enumerate at that point, which is what makes an anonymous
+    /// account-creating endpoint acceptable here and nowhere else. It closes for
+    /// good the moment the first account exists.
     pub fn can_setup(&self, user_count: i64) -> bool {
         user_count == 0
     }
@@ -658,16 +607,15 @@ impl Config {
     /// Whether an admin may create *another* account.
     ///
     /// `RDRS_MULTI_USER_ENABLED` keeps its meaning from the self-service era —
-    /// "is this a single-user deployment?" — it just governs the admin's
-    /// button now instead of a public form.
+    /// "is this a single-user deployment?" — it just governs the admin's button
+    /// now instead of a public form.
     pub fn can_create_account(&self, user_count: i64) -> bool {
         user_count == 0 || self.multi_user_enabled
     }
 
-    /// A startup warning about `WebAuthn` relying-party config that would silently
-    /// break passkeys in a real deployment, or `None` when the config looks
-    /// deployable. Returns a message when the RP origin still points at
-    /// `localhost` (the default), or when it disagrees with `RDRS_PUBLIC_BASE_URL`.
+    /// A startup warning about `WebAuthn` relying-party config that would
+    /// silently break passkeys in a real deployment: the RP origin still points
+    /// at `localhost`, or disagrees with `RDRS_PUBLIC_BASE_URL`.
     pub fn webauthn_rp_warning(&self) -> Option<String> {
         if self.webauthn_rp_origin.contains("localhost") {
             return Some(format!(
@@ -691,10 +639,8 @@ impl Config {
     /// The HSTS header value, or `None` when the header must not be sent.
     ///
     /// Deliberately **never contains `preload`**: entering the preload list is
-    /// effectively irreversible (removal means petitioning hstspreload.org and
-    /// waiting months for browser releases to roll over), so it must never follow
-    /// from a default. An operator who wants preload can add it at their reverse
-    /// proxy.
+    /// effectively irreversible, so it must never follow from a default. An
+    /// operator who wants it can add it at their reverse proxy.
     pub fn hsts_header_value(&self) -> Option<String> {
         if !self.hsts {
             return None;
@@ -707,12 +653,10 @@ impl Config {
     }
 
     /// A startup warning about the credential rate limiter running without a
-    /// trusted-proxy list, or `None` when the config looks deployable. Fires
-    /// when the limiter is enabled but `RDRS_TRUSTED_PROXY_NETWORKS` is empty:
-    /// [`Config::client_ip`] then falls back to the TCP peer for every
-    /// request, so behind a reverse proxy every visitor collapses into the
-    /// proxy's one address and a single abuser can exhaust the shared bucket
-    /// and lock out every real user.
+    /// trusted-proxy list. [`Config::client_ip`] then falls back to the TCP peer
+    /// for every request, so behind a reverse proxy every visitor collapses into
+    /// the proxy's one address and a single abuser can lock out every real
+    /// user.
     pub fn rate_limit_proxy_warning(&self) -> Option<String> {
         if self.login_rate_limit_attempts > 0 && self.trusted_proxy_networks.is_empty() {
             return Some(
@@ -857,11 +801,10 @@ mod tests {
     }
 
     /// The `<datalist>` promise for the per-feed user agent. `refresh_feed`
-    /// builds the header with `HeaderValue::from_str` and *drops it on
-    /// failure* rather than erroring, so a suggestion that cannot become a
-    /// header value would leave the feed sending no `User-Agent` at all —
-    /// silently, and only for the operator who picked it out of the browser's
-    /// own dropdown.
+    /// builds the header with `HeaderValue::from_str` and *drops it on failure*,
+    /// so a suggestion that cannot become a header value would leave the feed
+    /// sending no `User-Agent` at all — silently, and only for the operator who
+    /// picked it out of the dropdown.
     #[test]
     fn custom_user_agent_suggestions_are_valid_header_values() {
         assert!(!CUSTOM_USER_AGENT_SUGGESTIONS.is_empty());
@@ -1302,12 +1245,9 @@ mod tests {
         assert_eq!(cfg.client_ip(Some(peer), &headers), peer);
     }
 
-    /// KEY test: an append-mode proxy (nginx `$proxy_add_x_forwarded_for`,
-    /// Traefik, Caddy) appends the real client to the RIGHT of whatever the
-    /// client itself sent. A client that pre-populates the header with a
-    /// spoofed value (`8.8.8.8`) must not have that value believed — the
-    /// right-most, non-trusted entry (`203.0.113.9`, appended by our proxy)
-    /// is the real client.
+    /// KEY test: an append-mode proxy appends the real client to the RIGHT of
+    /// whatever the client itself sent, so a pre-populated spoof (`8.8.8.8`)
+    /// must not be believed — the right-most non-trusted entry is the client.
     #[test]
     fn test_client_ip_appendmode_spoof_uses_rightmost_untrusted() {
         let cfg = Config {
@@ -1511,10 +1451,8 @@ mod tests {
 
     #[test]
     fn test_login_rate_limit_zero_window_is_a_hard_error() {
-        // A zero-second window elapses instantly, so every attempt starts a
-        // fresh window and the limiter never actually throttles anything —
+        // A zero-second window elapses instantly, so the limiter never throttles
         // while `RDRS_LOGIN_RATE_LIMIT_ATTEMPTS` still reads as configured.
-        // That must fail startup rather than boot a silently-disabled limiter.
         let err =
             Config::from_map(|k| (k == "RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS").then(|| "0".into()))
                 .expect_err("a zero RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS must fail startup");

@@ -146,7 +146,6 @@ mod tests {
         assert!(proxy_url.starts_with("/api/proxy/image?url="));
         assert!(proxy_url.contains("&s="));
 
-        // Verify the signature part
         let parts: Vec<&str> = proxy_url.split("&s=").collect();
         assert_eq!(parts.len(), 2);
         let signature = parts[1];
@@ -163,7 +162,6 @@ mod tests {
         assert!(proxy_url.starts_with("https://my-instance.com/api/proxy/image?url="));
         assert!(proxy_url.contains("&s="));
 
-        // Verify signature still works
         let parts: Vec<&str> = proxy_url.split("&s=").collect();
         assert_eq!(parts.len(), 2);
         let signature = parts[1];
@@ -237,11 +235,9 @@ mod tests {
         assert!(proxy_url.contains("&s="));
         assert!(proxy_url.contains("&r="));
 
-        // Verify the encoded referrer
         let encoded_referrer = URL_SAFE_NO_PAD.encode(referrer);
         assert!(proxy_url.contains(&format!("&r={encoded_referrer}")));
 
-        // Verify the signature
         let parts: Vec<&str> = proxy_url.split('&').collect();
         let sig = parts[1].strip_prefix("s=").unwrap();
         assert!(verify_signature_with_referrer(url, referrer, sig, secret));
@@ -260,7 +256,6 @@ mod tests {
         assert!(proxy_url.contains("&s="));
         assert!(proxy_url.contains("&r="));
 
-        // Verify signature still works
         let parts: Vec<&str> = proxy_url.split('&').collect();
         let sig = parts[1].strip_prefix("s=").unwrap();
         assert!(verify_signature_with_referrer(url, referrer, sig, secret));

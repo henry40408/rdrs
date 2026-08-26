@@ -59,7 +59,6 @@ pub async fn stream_contents(
     // together returning the user's entire entry set in one response.
     let count = query.n.unwrap_or(20).clamp(0, 1000);
 
-    // Build filter from stream ID and query params
     let filter = build_entry_filter(&stream_id, &query);
     let sort_order = match stream_id {
         StreamId::Read => entry::EntrySortOrder::ReadAt,
@@ -99,7 +98,6 @@ pub async fn stream_contents(
         effective_filter.category_id = Some(cat.id);
     }
 
-    // Fetch entries with continuation-based pagination
     let entries =
         entry::list_by_user_with_continuation(&state.db, user_id, &effective_filter, &pagination)
             .await?;
@@ -415,7 +413,6 @@ fn build_entry_filter_from_params(
 ) -> entry::EntryFilter {
     let mut filter = entry::EntryFilter::default();
 
-    // Apply stream ID filter
     match stream_id {
         StreamId::Read => filter.read_only = true,
         StreamId::Starred => filter.starred_only = true,
@@ -425,7 +422,6 @@ fn build_entry_filter_from_params(
         StreamId::ReadingList | StreamId::Label(_) | StreamId::Feed(_) => {}
     }
 
-    // Apply exclude tag
     if let Some(xt_str) = xt
         && let Ok(xt_stream) = StreamId::parse(xt_str)
     {
@@ -436,7 +432,6 @@ fn build_entry_filter_from_params(
         }
     }
 
-    // Apply include tag
     if let Some(it_str) = it
         && let Ok(it_stream) = StreamId::parse(it_str)
     {
@@ -479,7 +474,6 @@ fn entry_with_feed_to_greader_item(
 ) -> GReaderItem {
     let e = &ewf.entry;
 
-    // Build categories array
     let mut categories = vec!["user/-/state/com.google/reading-list".to_string()];
 
     if e.read_at.is_some() {

@@ -1,32 +1,29 @@
 //! Keyed derivation for everything rdrs signs.
 //!
 //! One process-wide root key — `RDRS_SECRET`, or a random one generated at boot
-//! — backs every signature rdrs produces. Each use derives its own tag through a
+//! — backs every signature. Each use derives its own tag through a
 //! domain-separation prefix, so a value minted for one purpose can never be
 //! replayed as another:
 //!
 //! - [`DOMAIN_IMAGE`] signs image-proxy URLs, binding the upstream URL (and
-//!   referrer, when present) so the proxy cannot be turned into an open relay;
+//!   referrer, when present) so the proxy cannot become an open relay;
 //! - [`DOMAIN_GREADER_TOKEN`] signs the Google Reader `T` post token;
-//! - [`DOMAIN_SESSION`] signs the session cookie, so `<token>.<hmac>` is
-//!   rejected before any database work and a leaked `session.session_token` is
-//!   not usable on its own;
-//! - [`DOMAIN_AUDIT`] derives the `sid` printed into `services::audit` log
-//!   lines — a one-way, salted stand-in for the token, never the token itself.
+//! - [`DOMAIN_SESSION`] signs the session cookie, so `<token>.<hmac>` is rejected
+//!   before any database work and a leaked `session.session_token` is not usable
+//!   on its own;
+//! - [`DOMAIN_AUDIT`] derives the `sid` printed into audit log lines.
 //!
-//! The prefixes are not decoration. Two uses that MAC the same message under
-//! the same key produce the same tag, and the CSRF token that will join this
-//! module derives from the session token too — without domain separation, the
-//! token printed into every rendered form *would be* the cookie's signature.
+//! The prefixes are not decoration: two uses that MAC the same message under the
+//! same key produce the same tag, and the CSRF token derives from the session
+//! token — without domain separation, the token printed into every rendered form
+//! *would be* the cookie's signature.
 //!
 //! Rotating the root key — including the implicit rotation of a restart with no
-//! `RDRS_SECRET` set — invalidates every signature at once. Browser sessions
-//! end, and image-proxy URLs already embedded in a Google Reader client's cached
-//! entry HTML break until that client re-syncs. Native `GReader` `ClientLogin`
-//! tokens are also unaffected by a key rotation: like session tokens, they are
-//! matched against the database rather than signed — but they live in their own
-//! `api_token` table (`models::api_token`), independent of `session`, so a
-//! leaked `GReader` token is not a leaked web session.
+//! `RDRS_SECRET` set — invalidates every signature at once. Browser sessions end,
+//! and image-proxy URLs already embedded in a client's cached entry HTML break
+//! until it re-syncs. `GReader` `ClientLogin` tokens are unaffected: like session
+//! tokens they are matched against the database rather than signed, and they live
+//! in their own `api_token` table, so a leaked one is not a leaked web session.
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -45,11 +42,10 @@ pub const DOMAIN_CSRF: &[u8] = b"csrf:";
 pub const DOMAIN_AUDIT: &[u8] = b"audit:";
 /// Domain-separation prefix for account-invite tokens.
 ///
-/// Used to *store* an invite rather than to sign one: `user_invite.token_hash`
-/// holds the tag, and redemption re-derives it from the token in the URL. That
-/// keeps a database copy on its own useless for minting links — an attacker
-/// would need `RDRS_SECRET` too — and it means the column can be compared with
-/// an ordinary indexed lookup instead of scanning and verifying row by row.
+/// Used to *store* an invite rather than sign one: `user_invite.token_hash` holds
+/// the tag, and redemption re-derives it from the token in the URL. That keeps a
+/// database copy useless on its own for minting links, and lets the column be
+/// compared with an ordinary indexed lookup rather than a row-by-row scan.
 pub const DOMAIN_INVITE: &[u8] = b"invite:";
 
 /// Separates the session token from its signature in the cookie value.
@@ -63,11 +59,10 @@ const SIG_SEPARATOR: char = '.';
 pub const MIN_SECRET_LEN: usize = 16;
 
 /// Keyed MAC over `domain` followed by each part, ready to finalize or verify.
-///
 /// The parts are fed in order with no separator, so a caller passing more than
-/// one must ensure the concatenation is unambiguous — either by fixing the
-/// length of every part but the last, or by choosing parts that cannot straddle
-/// a boundary.
+/// one must ensure the concatenation is unambiguous — either by fixing the length
+/// of every part but the last, or by choosing parts that cannot straddle a
+/// boundary.
 fn mac(secret: &[u8], domain: &[u8], parts: &[&[u8]]) -> HmacSha256 {
     let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts a key of any length");
     mac.update(domain);
@@ -121,10 +116,8 @@ pub fn sign_session(secret: &[u8], token: &str) -> String {
 }
 
 /// Recover the session token from a cookie value, or `None` when the value is
-/// malformed or its signature does not verify.
-///
-/// This runs before the database is touched, so a forged or truncated cookie
-/// costs one HMAC rather than a query.
+/// malformed or its signature does not verify. Runs before the database is
+/// touched, so a forged or truncated cookie costs one HMAC rather than a query.
 pub fn verify_session(secret: &[u8], cookie_value: &str) -> Option<String> {
     let (token, sig) = cookie_value.rsplit_once(SIG_SEPARATOR)?;
     let sig = hex_decode(sig)?;
@@ -135,10 +128,10 @@ pub fn verify_session(secret: &[u8], cookie_value: &str) -> Option<String> {
 /// hidden `_csrf` field and accept back as the `X-CSRF-Token` header.
 ///
 /// Derived from the session token under [`DOMAIN_CSRF`], so it needs no column
-/// of its own and no database round trip — and, crucially, cannot equal the
-/// session cookie's own signature, which shares the key but not the domain.
-/// A session token with no row behind it still yields a valid token, which is
-/// what lets a pre-auth page (login, register) carry one.
+/// and no database round trip — and cannot equal the session cookie's own
+/// signature, which shares the key but not the domain. A session token with no
+/// row behind it still yields a valid token, which is what lets a pre-auth page
+/// carry one.
 pub fn derive_csrf(secret: &[u8], session_token: &str) -> String {
     hex_encode(&tag(secret, DOMAIN_CSRF, &[session_token.as_bytes()]))
 }
@@ -153,15 +146,14 @@ pub fn verify_csrf(secret: &[u8], session_token: &str, submitted: &str) -> bool 
 }
 
 /// A session/token identifier for audit logs: HMAC-SHA256 salted with the root
-/// key, truncated to the first 8 bytes and hex-encoded (16 chars). Enough to
-/// correlate events belonging to one session, impossible to invert back to the
-/// token, and not comparable across deployments because each has its own
-/// `RDRS_SECRET`.
+/// key, truncated to 8 bytes and hex-encoded. Enough to correlate events
+/// belonging to one session, impossible to invert, and not comparable across
+/// deployments.
 ///
 /// The root key *is* the salt, which satisfies OWASP's "hashed with a salt"
-/// requirement without introducing another setting. The cost is that rotating
-/// `RDRS_SECRET` breaks correlation with older log lines — consistent with the
-/// fact that rotating that key already ends every session.
+/// requirement without another setting. The cost is that rotating `RDRS_SECRET`
+/// breaks correlation with older lines — consistent with it already ending every
+/// session.
 pub fn audit_id(secret: &[u8], token: &str) -> String {
     hex_encode(&tag(secret, DOMAIN_AUDIT, &[token.as_bytes()])[..8])
 }

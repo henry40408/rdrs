@@ -1,13 +1,8 @@
-// static/js/setup.js — the one-time /setup form.
+// static/js/setup.js — the one-time /setup form, extracted from an inline
+// <script> so the page survives a strict `script-src 'self'`.
 //
-// Extracted from an inline <script> so the page survives a strict
-// `script-src 'self'` (see middleware::security_headers). `window.flash` comes
-// from components/rdrs-flash.js, which base.html loads ahead of this module.
-//
-// This page exists only while the instance has no accounts. Every later
-// account is created by an admin and given its password through
-// /invite/{token}, which is a plain server-rendered form and needs no
-// JavaScript at all.
+// This page exists only while the instance has no accounts; every later account
+// is created by an admin through /invite/{token}, a plain server-rendered form.
 
 const form = document.getElementById('setup-form');
 if (form) {

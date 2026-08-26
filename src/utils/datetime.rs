@@ -116,17 +116,13 @@ pub fn normalize_timezone_format(text: &str) -> String {
 /// distinguished from a valid one (e.g. aggregates over timestamps, where the
 /// `Utc::now()` fallback would silently corrupt the result).
 pub fn try_parse_datetime(s: &str) -> Option<DateTime<Utc>> {
-    // Try RFC 3339 first (standard format)
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
-        // Then try SQL datetime format
         .or_else(|_| {
             chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| dt.and_utc())
         })
-        // Then try dateparser for various formats (RFC 2822, localized dates, etc.)
         .or_else(|_| dateparser::parse(s).map(|dt| dt.with_timezone(&Utc)))
         .ok()
-        // Then try Chinese date format
         .or_else(|| parse_chinese_datetime(s))
 }
 
@@ -141,7 +137,6 @@ pub fn parse_datetime(s: &str) -> DateTime<Utc> {
 /// - ISO 8601 style timezone in RFC 2822 dates (+08:00 -> +0800)
 /// - Chinese date formats (e.g., "週二, 6 一月 2026 14:28:00 +0000")
 pub fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
-    // Try standard parsing first (via dateparser)
     dateparser::parse(text)
         .map(|dt| dt.with_timezone(&Utc))
         .ok()
@@ -156,7 +151,6 @@ pub fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
                     .ok()
             }
         })
-        // Then try Chinese date format
         .or_else(|| parse_chinese_datetime(text))
 }
 

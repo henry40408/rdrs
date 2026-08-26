@@ -683,7 +683,6 @@ mod tests {
             .unwrap();
         assert_eq!(result.new_entries, 1, "g1 should be skipped");
 
-        // Verify g1 was not inserted
         let found = entry::find_by_guid_and_feed(&pool, "g1", feed_id)
             .await
             .unwrap();

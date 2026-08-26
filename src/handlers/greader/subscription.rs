@@ -211,7 +211,6 @@ pub async fn subscription_edit(
                 f.category_id
             };
 
-            // Use new values if provided, otherwise keep existing
             let effective_description = description.as_deref().or(f.description.as_deref());
             let effective_site_url = site_url.as_deref().or(f.site_url.as_deref());
             let effective_user_agent = custom_user_agent
@@ -305,7 +304,6 @@ pub async fn quickadd(
     let discovered = feed_discovery::discover_feed(&url, &user_agent).await?;
     let feed_url = discovered.feed_url.clone();
 
-    // Check if already subscribed
     if feed::find_by_url_for_user(&state.db, &discovered.feed_url, user_id)
         .await?
         .is_some()

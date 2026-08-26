@@ -1,25 +1,19 @@
 //! Structured audit events for the session lifecycle.
 //!
-//! OWASP's Session Management Cheat Sheet ("Logging Sessions Life Cycle") asks
-//! for creation, renewal, and destruction of session IDs, privilege-level
-//! changes within a session, and invalid-session activity to be logged with a
-//! timestamp, source IP, and user agent — and for the session ID itself to be
-//! stored in logs only as a salted hash, never in the clear. This module is
-//! the single place that shape gets applied: every call site goes through
-//! [`AUDIT_TARGET`] and the same field names, so an operator's `RUST_LOG`
-//! filter or SIEM query written against one event works for all of them.
+//! OWASP's "Logging Sessions Life Cycle" asks for creation, renewal and
+//! destruction of session IDs, privilege-level changes, and invalid-session
+//! activity to be logged with a timestamp, source IP and user agent — and for
+//! the session ID to appear only as a salted hash. This module is the single
+//! place that shape gets applied: every call site goes through [`AUDIT_TARGET`]
+//! and the same field names, so a `RUST_LOG` filter or SIEM query written
+//! against one event works for all of them.
 //!
-//! Every event that carries a session or token identifier hashes it through
-//! [`crate::secret::audit_id`] first — the raw token must never reach a log
-//! line. `tracing` supplies the timestamp, so none of these functions add one
-//! of their own.
+//! Every identifier is hashed through [`crate::secret::audit_id`] first; the raw
+//! token must never reach a log line. `tracing` supplies the timestamp.
 //!
-//! **Deliberately out of scope:** OWASP also mentions logging session
-//! *usage*, but that is an access log, which rdrs does not have; recording
-//! every authenticated request here would multiply I/O for a stream nobody
-//! asked for. This module only fires on a lifecycle transition — created,
-//! renewed, destroyed, or a masquerade privilege change — never on ordinary
-//! use of an already-valid session.
+//! **Deliberately out of scope:** OWASP also mentions logging session *usage*,
+//! but that is an access log, which rdrs does not have. This module only fires
+//! on a lifecycle transition, never on ordinary use of a valid session.
 
 use chrono::{DateTime, Utc};
 
@@ -45,11 +39,10 @@ pub fn session_created(secret: &[u8], token: &str, user_id: i64, method: &str, i
     );
 }
 
-/// A `GReader` `ClientLogin` request minted a new `api_token` row. Kept
-/// distinct from [`session_created`]: `ClientLogin` never touches the
-/// `session` table (see the module doc on `secret.rs` — an `api_token` is an
-/// independently-revocable grant, not a web session), so labelling this a
-/// `session.created` event would misreport which table actually changed.
+/// A `GReader` `ClientLogin` request minted a new `api_token` row. Kept distinct
+/// from [`session_created`]: `ClientLogin` never touches the `session` table, so
+/// labelling this a `session.created` event would misreport which table
+/// changed.
 pub fn api_token_created(
     secret: &[u8],
     token: &str,
@@ -83,10 +76,9 @@ pub fn session_renewed(secret: &[u8], token: &str, user_id: i64, new_expires_at:
 }
 
 /// A session's token was replaced by the periodic rotation (OWASP's "Renewal
-/// Timeout"). The session itself continues; only the credential naming it
-/// changed, so `sid` and `new_sid` bracket the swap the same way the
-/// masquerade events do — without the pair, every rotation would look like an
-/// unrelated session appearing in the log.
+/// Timeout"). The session continues; only the credential naming it changed, so
+/// `sid` and `new_sid` bracket the swap — without the pair, every rotation would
+/// look like an unrelated session appearing in the log.
 pub fn session_token_rotated(secret: &[u8], token: &str, new_token: &str) {
     tracing::info!(
         target: AUDIT_TARGET,
@@ -110,11 +102,10 @@ pub fn session_destroyed(secret: &[u8], token: &str, user_id: i64, reason: &str)
     );
 }
 
-/// Every session belonging to a user was deleted in one operation — a
-/// password change, "sign out other sessions", or an admin disabling the
-/// account. `count` is `None` when the model layer does not report how many
-/// rows were affected; the audit line still records that a bulk revocation
-/// happened, just not its exact size.
+/// Every session belonging to a user was deleted in one operation — a password
+/// change, "sign out other sessions", or an admin disabling the account. `count`
+/// is `None` when the model layer does not report the row count; the line still
+/// records that a bulk revocation happened.
 pub fn sessions_destroyed_bulk(user_id: i64, reason: &str, count: Option<u64>) {
     tracing::info!(
         target: AUDIT_TARGET,
@@ -142,16 +133,13 @@ pub fn api_tokens_destroyed(user_id: i64, reason: &str, count: Option<u64>) {
 }
 
 /// An admin started masquerading as another user — a privilege-level change
-/// within the existing session. OWASP's "privilege level changes within the
-/// session" bullet, and the least skippable event in this module: before it,
-/// an admin acting as another user left no trace at all.
+/// within the existing session, and the least skippable event in this module:
+/// before it, an admin acting as another user left no trace at all.
 ///
-/// Entering a masquerade rotates the session token (see
-/// [`crate::models::session::start_masquerade`]), so this event names both
-/// sides of the swap: `sid` is the session as it was known up to this point,
-/// `new_sid` the identifier every later event on the same session will carry.
-/// Without the pair, rotation would silently break the log's session
-/// correlation exactly where an auditor most needs it to hold.
+/// Entering a masquerade rotates the session token, so this event names both
+/// sides of the swap: `sid` as the session was known up to this point, `new_sid`
+/// what every later event will carry. Without the pair, rotation would silently
+/// break the log's session correlation exactly where an auditor needs it.
 pub fn masquerade_started(
     secret: &[u8],
     token: &str,
@@ -196,14 +184,12 @@ pub fn masquerade_stopped(
     );
 }
 
-/// A passkey was registered — a new, independently usable credential for the
-/// account, and the highest-consequence self-service change rdrs offers: it
-/// survives a password change, which revokes every session and API token but
-/// does not touch passkeys.
+/// A passkey was registered — a new, independently usable credential, and the
+/// highest-consequence self-service change rdrs offers: it survives a password
+/// change, which revokes every session and API token but not passkeys.
 ///
 /// Logged with the `ip`/`user_agent` of the request that added it, so a
-/// credential planted from a session the owner did not recognise can be traced
-/// back to when and from where.
+/// credential planted from an unrecognised session can be traced.
 pub fn passkey_registered(
     secret: &[u8],
     token: &str,
@@ -254,11 +240,10 @@ pub fn session_reauthenticated(secret: &[u8], token: &str, user_id: i64, method:
     );
 }
 
-/// A login attempt failed. `username_len` is deliberately the *length* of the
-/// attempted username, never the username itself: a very common user error is
-/// typing a password into the username field, and accepting only a `usize`
-/// here makes writing a password to the log impossible at the type level.
-/// `reason` is one of `"unknown_user"`, `"bad_password"`, `"disabled"`.
+/// A login attempt failed. `username_len` is deliberately the *length*, never
+/// the username: typing a password into the username field is a common error,
+/// and accepting only a `usize` makes writing one to the log impossible at the
+/// type level. `reason` is `"unknown_user"`, `"bad_password"` or `"disabled"`.
 pub fn login_failed(username_len: usize, reason: &str, ip: &str, ua: &str) {
     tracing::info!(
         target: AUDIT_TARGET,
@@ -287,13 +272,11 @@ pub fn login_rate_limited(endpoint: &str, bucket: &str, ip: &str) {
 
 /// An admin issued a one-time link that can set an account's password.
 ///
-/// This is a credential-granting act — whoever holds the link can take the
-/// account — so it is audited like one. The token appears only as its salted
-/// `audit_id`, never in the clear: an audit log that leaked working invite
-/// links would be worse than no log. `reason` distinguishes a new account
-/// (`"account_created"`) from an admin-issued reset of an existing one
-/// (`"password_reset"`), which are the same mechanism aimed at different
-/// states.
+/// A credential-granting act — whoever holds the link can take the account — so
+/// it is audited like one. The token appears only as its salted `audit_id`: an
+/// audit log leaking working invite links would be worse than no log. `reason`
+/// distinguishes a new account from an admin-issued reset, the same mechanism
+/// aimed at different states.
 pub fn invite_issued(
     secret: &[u8],
     token: &str,
@@ -363,13 +346,11 @@ pub fn account_created(user_id: i64, actor_user_id: i64, username_len: usize, ro
 mod tests {
     use super::*;
 
-    // This repo has no `tracing-test` (and must not gain one), so log output
-    // itself is not asserted here. What is checkable without it: every
-    // emitter compiles and accepts the documented argument shapes, and the
-    // reason/method strings each call site is expected to pass are pinned as
-    // plain values here so a rename at a call site shows up as a diff in this
-    // file too. The real guarantee this module offers is the type signature
-    // of `login_failed` — see its doc comment.
+    // This repo has no `tracing-test` (and must not gain one), so log output is
+    // not asserted here. What is checkable without it: every emitter compiles and
+    // accepts the documented argument shapes, and the reason/method strings are
+    // pinned as plain values so a rename at a call site shows up as a diff here
+    // too. The real guarantee is the type signature of `login_failed`.
 
     const SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
 

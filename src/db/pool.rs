@@ -39,16 +39,14 @@ pub enum Priority {
     Background,
 }
 
-/// `SQLite` write-priority scheduler. `SQLite` serializes writers, so a background
-/// batch (a feed-sync entry upsert, a retention delete run) can make an
-/// interactive click wait on the single write lock. This restores the priority
-/// the pre-sqlx actor gave: background DB operations yield at their boundary
-/// while any interactive operation is in flight.
+/// `SQLite` write-priority scheduler. `SQLite` serializes writers, so a
+/// background batch can make an interactive click wait on the single write lock.
+/// This restores the priority the pre-sqlx actor gave: background operations
+/// yield at their boundary while any interactive one is in flight.
 ///
-/// It is a thin admission gate, not a queue: `User` ops increment `inflight`
-/// for their duration; `Background` ops await `inflight == 0` before running.
-/// `PostgreSQL` has real writer concurrency (MVCC), so its handles never touch
-/// this — the gate is a no-op there.
+/// A thin admission gate, not a queue: `User` ops increment `inflight` for their
+/// duration, `Background` ops await `inflight == 0`. `PostgreSQL` has real
+/// writer concurrency, so the gate is a no-op there.
 #[derive(Default)]
 struct SqliteSched {
     /// Count of in-flight `User`-priority operations.
@@ -97,11 +95,10 @@ impl Drop for UserGuard {
 /// A boot-time-selected database handle: a backend pool plus a scheduling
 /// [`Priority`] and a shared `SQLite` write scheduler. Every query dispatches on
 /// the inner two-armed enum via the `query_*!` macros, which consult the
-/// priority/scheduler so background work yields to interactive work on `SQLite`.
+/// priority so background work yields to interactive work on `SQLite`.
 ///
-/// Cloning is cheap (pool + `Arc` handles) and preserves the priority; use
-/// [`Db::background`] to derive a background-priority handle sharing the same
-/// pool and scheduler.
+/// Cloning is cheap and preserves the priority; use [`Db::background`] to derive
+/// a background-priority handle over the same pool and scheduler.
 #[derive(Clone)]
 pub struct Db {
     inner: DbInner,
@@ -110,14 +107,13 @@ pub struct Db {
 }
 
 /// A backend-tagged transaction, the unit-of-work boundary for operations that
-/// compose several model calls atomically (OPML import, entry upserts, `GReader`
-/// tag edits). Inner model calls execute against `&mut Tx` via the `*_tx!`
-/// macros. Obtained from [`Db::begin`]; finished with [`Tx::commit`] or
-/// [`Tx::rollback`] (a dropped `Tx` rolls back).
+/// compose several model calls atomically. Inner model calls execute against
+/// `&mut Tx` via the `*_tx!` macros. Obtained from [`Db::begin`]; finished with
+/// [`Tx::commit`] or [`Tx::rollback`] (a dropped `Tx` rolls back).
 ///
 /// The optional `_guard` on the `SQLite` variant holds the write-priority
-/// admission for the whole transaction: acquired at [`Db::begin`] (a background
-/// tx waits for interactive idle first) and released when the tx is dropped.
+/// admission for the whole transaction: acquired at [`Db::begin`], where a
+/// background tx waits for interactive idle first, and released on drop.
 pub enum Tx<'c> {
     Sqlite {
         tx: sqlx::Transaction<'c, Sqlite>,
@@ -133,11 +129,10 @@ impl Db {
     pub async fn connect(url: &str, backend: Backend) -> Result<Self, sqlx::Error> {
         let db = match backend {
             Backend::Sqlite => {
-                // `url` is a bare file path here (e.g. "rdrs.sqlite3"), not a
-                // sqlite: URL, so build options from the filename directly.
-                // Tuning mirrors the pre-sqlx actor: WAL + synchronous=NORMAL is
-                // durable-to-checkpoint and skips a per-commit fsync; the cache /
-                // mmap / temp_store / busy_timeout pragmas match the old values.
+                // `url` is a bare file path here, not a sqlite: URL, so options
+                // are built from the filename directly. Tuning mirrors the
+                // pre-sqlx actor: WAL + synchronous=NORMAL is durable-to-
+                // checkpoint and skips a per-commit fsync.
                 let opts = SqliteConnectOptions::from_str(&format!("sqlite://{url}"))
                     .unwrap_or_else(|_| SqliteConnectOptions::new().filename(url))
                     .create_if_missing(true)
@@ -155,13 +150,11 @@ impl Db {
             }
             Backend::Postgres => {
                 // Pin every pooled connection to UTC. Entry timestamps are
-                // written with `now()` / naive `%Y-%m-%d %H:%M:%S` string binds
-                // and the composite pagination cursor compares them as strings
-                // via `to_char(col, 'YYYY-MM-DD HH24:MI:SS')`. All three are
-                // interpreted in the session `TimeZone`, so pinning it to UTC
-                // makes the PG cursor strings byte-identical to SQLite's
-                // `datetime('now')` TEXT — a divergent server default would
-                // otherwise shift the cursor and corrupt pagination order.
+                // written with `now()` / naive string binds and the composite
+                // cursor compares them as strings via `to_char(...)`, all three
+                // interpreted in the session `TimeZone` — so pinning it makes the
+                // PG cursor strings byte-identical to SQLite's TEXT. A divergent
+                // server default would shift the cursor and corrupt pagination.
                 let opts = PgConnectOptions::from_str(url)?;
                 let pool = PgPoolOptions::new()
                     .after_connect(|conn, _meta| {
@@ -227,10 +220,10 @@ impl Db {
     }
 
     /// Acquire this handle's write-priority admission for one operation. On
-    /// `SQLite` a `User` op returns a guard tracking it as in-flight; a
-    /// `Background` op first waits for interactive idle. On `PostgreSQL` (real
-    /// writer concurrency) this is a no-op. The `query_*!` macros hold the
-    /// returned guard across the query; [`Db::begin`] holds it across the tx.
+    /// `SQLite` a `User` op returns a guard tracking it as in-flight and a
+    /// `Background` op first waits for interactive idle; on `PostgreSQL` this is
+    /// a no-op. The `query_*!` macros hold the guard across the query,
+    /// [`Db::begin`] across the tx.
     pub async fn admit(&self) -> Option<UserGuard> {
         if matches!(self.inner, DbInner::Sqlite(_)) {
             match self.priority {
@@ -261,19 +254,15 @@ impl Db {
         Ok(match &self.inner {
             DbInner::Sqlite(pool) => Tx::Sqlite {
                 // BEGIN IMMEDIATE takes the write lock up front, so a second
-                // writer blocks here — where the connection's `busy_timeout`
-                // applies and makes it wait — instead of the default DEFERRED
-                // behaviour, which starts as a reader and only tries to promote
-                // to a writer at the first write. That promotion, when another
-                // writer already holds the lock, returns SQLITE_BUSY ("database
-                // is locked") *immediately*: SQLite skips the busy handler there
-                // to avoid a deadlock, so the 5 s timeout cannot paper over it.
-                // Every `begin()` here is a write unit-of-work (upserts, OPML
-                // import, GReader tag edits), and the write-priority gate only
-                // orders user-vs-background — not the up-to-4 concurrent
-                // background feed syncs that race here — so DEFERRED let those
-                // collide. Read-only work uses the `query_*!` macros, never
-                // `begin()`, so nothing pays for an unnecessary write lock.
+                // writer blocks here — where `busy_timeout` applies — instead of
+                // the default DEFERRED behaviour, which starts as a reader and
+                // only tries to promote at the first write. That promotion
+                // returns SQLITE_BUSY *immediately* when another writer holds the
+                // lock: SQLite skips the busy handler there to avoid a deadlock,
+                // so the timeout cannot paper over it. Every `begin()` here is a
+                // write unit-of-work, and the write-priority gate only orders
+                // user-vs-background, not the up-to-4 concurrent feed syncs that
+                // race here. Read-only work uses the `query_*!` macros.
                 tx: pool.begin_with("BEGIN IMMEDIATE").await?,
                 _guard: guard,
             },
@@ -337,18 +326,14 @@ pub fn is_unique_violation(e: &sqlx::Error) -> bool {
 }
 
 /// Rewrite the `SQLite`-dialect fragments in a macro `$sql` literal to their
-/// `PostgreSQL` equivalents at dispatch time. Applied *only* in the Postgres arm
-/// of the `query_*!` / `db_execute!` macros so a model writes one SQL literal
-/// that runs correctly on both backends.
+/// `PostgreSQL` equivalents at dispatch time, so a model writes one SQL literal
+/// that runs on both backends. Applied *only* in the Postgres arm.
 ///
-/// Currently rewrites the `SQLite` scalar `datetime('now')` — which yields the
-/// `%Y-%m-%d %H:%M:%S` TEXT that the composite pagination cursor and the
-/// timestamp-column DEFAULTs depend on — to `PostgreSQL` `now()` (a `timestamptz`
-/// that, under the connection's pinned `TimeZone=UTC`, encodes to the same
-/// instant). The exact literal token is matched, so the comma-modifier forms
-/// (`datetime('now', '-25 hours')`, `datetime('now', $2)`) are deliberately
-/// left untouched — those need interval arithmetic and are handled with
-/// explicit `Dialect` forks at their call sites.
+/// Currently rewrites the scalar `datetime('now')` — whose TEXT format the
+/// composite cursor and the column DEFAULTs depend on — to `now()`, which under
+/// the connection's pinned `TimeZone=UTC` encodes to the same instant. The exact
+/// literal token is matched, so the comma-modifier forms are deliberately left
+/// untouched: those need interval arithmetic and get explicit `Dialect` forks.
 #[doc(hidden)]
 pub fn pg_rewrite(sql: &str) -> String {
     sql.replace("datetime('now')", "now()")
@@ -356,20 +341,17 @@ pub fn pg_rewrite(sql: &str) -> String {
 
 // --- dispatch macros -------------------------------------------------------
 //
-// These collapse the two-arm `match db { Sqlite(..) => .., Postgres(..) => .. }`
-// so a model function writes its SQL and binds exactly once. The same `$sql`
-// literal and `$bind` list are used for both backends; placeholders are `$N`
-// (a SQLite superset PostgreSQL requires) and `RETURNING` is used in place of
-// `last_insert_rowid()`. Bind arguments are evaluated in *both* arms, so pass
-// `Copy` values or references (`&str`, `i64`, `DateTime<Utc>`, `&[u8]`).
+// These collapse the two-arm backend match so a model function writes its SQL and
+// binds exactly once. The same `$sql` literal and `$bind` list serve both;
+// placeholders are `$N` (a SQLite superset PostgreSQL requires) and `RETURNING`
+// stands in for `last_insert_rowid()`. Bind arguments are evaluated in *both*
+// arms, so pass `Copy` values or references.
 //
-// The Postgres arm runs `$sql` through `pg_rewrite` (see above) so SQLite-only
-// scalars like `datetime('now')` become their PG equivalents; the SQLite arm
-// uses the literal verbatim to keep its prepared-statement cache keyed on it.
+// The Postgres arm runs `$sql` through `pg_rewrite`; the SQLite arm uses the
+// literal verbatim to keep its prepared-statement cache keyed on it.
 //
-// `$ty` must derive `sqlx::FromRow` (its generated impl is row-generic, so one
-// derive serves both `SqliteRow` and `PgRow`). Each macro has a `_tx` sibling
-// that runs against `&mut Tx` for transactional composition.
+// `$ty` must derive `sqlx::FromRow`, whose generated impl is row-generic. Each
+// macro has a `_tx` sibling for transactional composition.
 
 // Each non-tx macro binds `$db` once, takes the write-priority admission
 // (`admit()` — a User op registers as in-flight; a Background op waits for SQLite
@@ -738,11 +720,10 @@ mod tests {
 
     // Regression: a full bucket runs up to 4 background feed syncs at once, each
     // opening a write transaction. Under the default `BEGIN DEFERRED` their
-    // read→write promotions race and SQLite returns SQLITE_BUSY ("database is
-    // locked") that `busy_timeout` cannot retry; `begin()` uses `BEGIN
-    // IMMEDIATE` so they queue on the write lock instead. This needs a *file*
-    // database — the in-memory pool is a single shared connection and so cannot
-    // exhibit the multi-connection contention this guards against.
+    // read→write promotions race and SQLite returns a SQLITE_BUSY that
+    // `busy_timeout` cannot retry; `begin()` uses `BEGIN IMMEDIATE` so they queue
+    // instead. Needs a *file* database — the in-memory pool is a single shared
+    // connection and cannot exhibit this contention.
     #[tokio::test]
     async fn concurrent_write_transactions_do_not_lock() {
         let dir = tempfile::tempdir().unwrap();
@@ -766,11 +747,10 @@ mod tests {
             set.spawn(async move {
                 let mut tx = bg.begin().await?;
                 if let Tx::Sqlite { tx: sqtx, .. } = &mut tx {
-                    // Read *then* write inside the transaction — the pattern a
-                    // feed sync uses. Under DEFERRED the SELECT takes a read
-                    // snapshot and the INSERT then races to promote to a writer,
-                    // which is what surfaces the lock; IMMEDIATE already holds
-                    // the write lock so there is no promotion to lose.
+                    // Read *then* write inside the transaction, the pattern a
+                    // feed sync uses: under DEFERRED the SELECT takes a read
+                    // snapshot and the INSERT races to promote, which is what
+                    // surfaces the lock. IMMEDIATE already holds it.
                     let _n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM probe")
                         .fetch_one(&mut **sqtx)
                         .await?;

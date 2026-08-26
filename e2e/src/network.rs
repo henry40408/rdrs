@@ -1,26 +1,23 @@
-//! Request interception — Playwright's `page.route`, on the CDP `Fetch`
-//! domain.
+//! Request interception — Playwright's `page.route`, on the CDP `Fetch` domain.
 //!
-//! Two things in this suite need to change what the network does rather than
-//! merely observe it:
+//! Two things need to change what the network does rather than merely observe it:
 //!
-//! * The **no-JS walkthrough** aborts every `*.js` request, on top of switching
-//!   scripting off. Disabling scripting alone leaves the requests in flight,
-//!   and the walkthrough exists to prove the pages work when the scripts are
-//!   never *delivered* — a stricter thing, and a CI gate since #490.
-//! * The **stale-response scenarios** hold one fragment response back for
-//!   600 ms so a second click can overtake it. What they assert is that the
-//!   slow, stale response never overwrites the entry the reader picked
-//!   afterwards.
+//! * The **no-JS walkthrough** aborts every `*.js` request on top of switching
+//!   scripting off. Disabling scripting alone leaves the requests in flight, and
+//!   the walkthrough exists to prove the pages work when the scripts are never
+//!   *delivered* — a stricter thing, and a CI gate since #490.
+//! * The **stale-response scenarios** hold one fragment response back for 600 ms
+//!   so a second click can overtake it, asserting that the slow, stale response
+//!   never overwrites the entry the reader picked afterwards.
 //!
 //! `WebDriver` has no equivalent, so this drives CDP directly. It needs
 //! thirtyfour's `cdp-events` feature: commands go out over the ordinary
-//! `WebDriver` connection, but `Fetch.requestPaused` has to be *received*, which
-//! only the WebSocket transport can do.
+//! connection, but `Fetch.requestPaused` has to be *received*, which only the
+//! WebSocket transport can do.
 //!
 //! Every paused request must be answered — continued, failed or fulfilled — or
-//! the page hangs waiting on it. The dispatcher below answers each one exactly
-//! once, and requests matching no rule are continued unmodified.
+//! the page hangs waiting on it. The dispatcher answers each exactly once, and
+//! requests matching no rule are continued unmodified.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -55,11 +52,9 @@ pub enum Action {
     /// The delay is served without blocking other requests: the dispatcher
     /// hands each paused request to its own task.
     Delay(Duration),
-    /// Hold it until the scenario says otherwise, then let it through.
-    ///
-    /// The open-ended form of [`Action::Delay`], for the races whose second
-    /// half is triggered by something other than the clock — the summary
-    /// fragment held until the pane has moved on.
+    /// Hold it until the scenario says otherwise, then let it through. The
+    /// open-ended form of [`Action::Delay`], for races whose second half is
+    /// triggered by something other than the clock.
     Hold(watch::Receiver<bool>),
     /// Answer it here, without going to the network at all — Playwright's
     /// `route.fulfill`.
@@ -82,11 +77,9 @@ struct Rule {
     signal: Arc<Notify>,
 }
 
-/// A live CDP attachment to one browser: request rules, plus a log of the
-/// status code every top-level document answered with.
-///
-/// Dropping it stops both listeners; the browser is closed at the end of the
-/// scenario anyway, so `Fetch` is never explicitly disabled.
+/// A live CDP attachment to one browser: request rules, plus a log of the status
+/// code every top-level document answered with. Dropping it stops both
+/// listeners, and the browser is closed at the end of the scenario anyway.
 #[derive(Debug)]
 pub struct Network {
     rules: Arc<Mutex<Vec<Rule>>>,
@@ -104,11 +97,6 @@ pub struct Document {
 
 impl Network {
     /// Attaches to a browser and starts answering paused requests.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the CDP WebSocket cannot be opened, or a domain refused to
-    /// enable.
     pub async fn attach(driver: &WebDriver) -> Result<Self> {
         let session = Arc::new(
             driver
@@ -230,9 +218,8 @@ impl Network {
                                 tokio::time::sleep(delay).await;
                                 // The send can fail: while the request was
                                 // held, the page's own stale-response guard may
-                                // have aborted it. That is the post-fix
-                                // behaviour the scenario is asserting, not an
-                                // error.
+                                // have aborted it — the post-fix behaviour the
+                                // scenario asserts, not an error.
                                 let _ = session.send(continue_request(&event)).await;
                             }
                             Action::Hold(mut release) => {
@@ -267,10 +254,8 @@ impl Network {
         })
     }
 
-    /// The status code the most recent navigation to a URL containing
-    /// `needle` answered with.
-    ///
-    /// Stands in for the `Response` object `page.goto()` returns. Reads the
+    /// The status code the most recent navigation to a URL containing `needle`
+    /// answered with — the `Response` object `page.goto()` returns. Reads the
     /// *last* match, because a link followed twice logs twice.
     pub async fn document_status(&self, needle: &str) -> Option<u32> {
         self.documents
@@ -283,22 +268,13 @@ impl Network {
     }
 
     /// Adds a rule for every method, returning a handle for waiting on and
-    /// counting its requests.
-    ///
-    /// Rules are tried in the order they were added, first match wins.
-    ///
-    /// # Errors
-    ///
-    /// Fails when `pattern` is not a valid regular expression.
+    /// counting its requests. Rules are tried in the order added, first match
+    /// wins.
     pub async fn route(&self, pattern: &str, action: Action) -> Result<RouteHandle> {
         self.route_method(pattern, None, action).await
     }
 
     /// Adds a rule scoped to one HTTP method.
-    ///
-    /// # Errors
-    ///
-    /// Fails when `pattern` is not a valid regular expression.
     pub async fn route_method(
         &self,
         pattern: &str,
@@ -327,10 +303,6 @@ impl Network {
     }
 
     /// Holds every matching request open until the handle is released.
-    ///
-    /// # Errors
-    ///
-    /// Fails when `pattern` is not a valid regular expression.
     pub async fn hold(&self, pattern: &str) -> Result<RouteHandle> {
         let (release, gate) = watch::channel(false);
         let mut handle = self.route(pattern, Action::Hold(gate)).await?;
@@ -368,10 +340,6 @@ impl RouteHandle {
     }
 
     /// Waits until a matching request has been intercepted.
-    ///
-    /// # Errors
-    ///
-    /// Fails when none arrives within `timeout`.
     pub async fn wait_for_arrival(&self, timeout: Duration) -> Result<()> {
         self.wait_until(timeout, || self.arrived() > 0)
             .await
@@ -379,10 +347,6 @@ impl RouteHandle {
     }
 
     /// Waits until a matching request has been answered.
-    ///
-    /// # Errors
-    ///
-    /// Fails when nothing settles within `timeout`.
     pub async fn wait_for_settled(&self, timeout: Duration) -> Result<()> {
         self.wait_until(timeout, || self.hits() > 0)
             .await
@@ -390,10 +354,6 @@ impl RouteHandle {
     }
 
     /// Lets a held request through.
-    ///
-    /// # Errors
-    ///
-    /// Fails when this handle did not come from [`Network::hold`].
     pub fn release(&self) -> Result<()> {
         let release = self
             .release
@@ -405,11 +365,9 @@ impl RouteHandle {
         Ok(())
     }
 
-    /// Polls `done` between notifications.
-    ///
-    /// The check comes first each time round, because `Notify` drops a
-    /// notification sent before anyone was waiting — the common case when the
-    /// request settles faster than the step that follows it.
+    /// Polls `done` between notifications. The check comes first each time round,
+    /// because `Notify` drops a notification sent before anyone was waiting — the
+    /// common case when the request settles faster than the next step.
     async fn wait_until(&self, timeout: Duration, done: impl Fn() -> bool) -> Result<()> {
         tokio::time::timeout(timeout, async {
             loop {

@@ -1,12 +1,11 @@
 //! WHERE-clause and index-hint builders for the entry list and continuation
-//! queries. Pure SQL-fragment construction over the `EntryFilter` / cursor
-//! types — no database access — extracted from `entry/mod.rs` to keep the
-//! query-shaping logic in one focused place.
+//! queries — pure SQL-fragment construction over the `EntryFilter` / cursor
+//! types, no database access.
 //!
 //! These build a SQL string with `$N` placeholders plus a parallel `Vec<Bind>`
-//! of values, applied positionally at execution time (see `entry/mod.rs`). The
-//! backend `Dialect` selects the few divergent fragments (case-insensitive
-//! `LIKE`, epoch extraction, the SQLite-only `INDEXED BY` hint).
+//! applied positionally at execution time. The backend `Dialect` selects the few
+//! divergent fragments: case-insensitive `LIKE`, epoch extraction, and the
+//! SQLite-only `INDEXED BY` hint.
 
 use chrono::{DateTime, Utc};
 
@@ -85,18 +84,16 @@ impl Dialect {
         }
     }
 
-    /// Render a timestamp column/expression as the `%Y-%m-%d %H:%M:%S` TEXT.
-    /// On `SQLite` the columns already store exactly that TEXT, so the
-    /// expression passes through. On `PostgreSQL` the columns are `TIMESTAMPTZ`,
-    /// so wrap in `to_char(expr, 'YYYY-MM-DD HH24:MI:SS')`; under the pinned
-    /// `TimeZone=UTC` this reproduces the string `SQLite` stores.
+    /// Render a timestamp column as the `%Y-%m-%d %H:%M:%S` TEXT. `SQLite`
+    /// columns already store exactly that, so the expression passes through;
+    /// `PostgreSQL` columns are `TIMESTAMPTZ` and need `to_char(...)`, which
+    /// under the pinned `TimeZone=UTC` reproduces the same string.
     ///
-    /// Used for reading a timestamp column back *as* the cursor string
-    /// (`fetch_sort_ts`, neighbour lookup) and as the non-sargable **fallback**
-    /// for the cursor/`read_after` WHERE comparison when the bound value can't be
-    /// parsed to a `timestamptz`. The fast path binds the value as a `timestamptz`
-    /// (`Bind::Ts`) and compares the raw column so the timestamp index drives a
-    /// range scan — see `parse_cursor_ts` and `apply_continuation_condition`.
+    /// Used for reading a timestamp back *as* the cursor string, and as the
+    /// non-sargable **fallback** for the cursor / `read_after` comparison when
+    /// the bound value can't be parsed to a `timestamptz`. The fast path binds it
+    /// as a `timestamptz` and compares the raw column, so the timestamp index
+    /// drives a range scan.
     pub(super) fn cursor_ts(self, expr: &str) -> String {
         match self {
             Dialect::Sqlite => expr.to_string(),
@@ -104,12 +101,10 @@ impl Dialect {
         }
     }
 
-    /// A timestamp `N` days in the past, where `N` is given by the SQL
-    /// expression `days_expr` (an integer literal like `30`, or an integer
-    /// column like `us.retention_read_days`). Used by the read-retention and
-    /// snapshot-window predicates, which compare a stored timestamp against this
-    /// cutoff. `SQLite` builds it with `datetime('now', '-N days')` (concatenating
-    /// the count in); `PostgreSQL` uses `now() - make_interval(days => N)`.
+    /// A timestamp `N` days in the past, where `N` is the SQL expression
+    /// `days_expr` — an integer literal or column. Used by the read-retention and
+    /// snapshot-window predicates. `SQLite` builds it with
+    /// `datetime('now', '-N days')`, `PostgreSQL` with `now() - make_interval(...)`.
     pub(super) fn days_ago(self, days_expr: &str) -> String {
         match self {
             Dialect::Sqlite => format!("datetime('now', '-' || ({days_expr}) || ' days')"),
@@ -149,14 +144,11 @@ pub(super) fn is_no_entry_side_predicate(filter: &EntryFilter) -> bool {
         && filter.query.is_none()
 }
 
-/// `SQLite` index hint (a leading `" INDEXED BY ..."` fragment, or `""`) for
-/// queries that `ORDER BY COALESCE(published_at, created_at)`. Shared by
-/// `list_by_user` and `find_neighbors` so both pin the same index for the
-/// published-order pages. Without it the planner walks `category -> feed ->
-/// entry` over every row on a single-user instance that owns ~100% of entries.
-/// Each branch maps to a partial/sort index added in schema migrations v4/v5:
-/// `idx_entry_starred_sort` / `idx_entry_read_sort` for the filtered list
-/// pages, `idx_entry_sort_ts` for the unfiltered case.
+/// `SQLite` index hint (a leading `" INDEXED BY ..."`, or `""`) for queries that
+/// `ORDER BY COALESCE(published_at, created_at)`. Shared by `list_by_user` and
+/// `find_neighbors` so both pin the same index. Without it the planner walks
+/// `category -> feed -> entry` over every row on a single-user instance. Each
+/// branch maps to a partial/sort index from migrations v4/v5.
 ///
 /// Returns the raw `SQLite` hint; callers pass it through [`Dialect::index_hint`]
 /// so `PostgreSQL` drops it.
@@ -196,13 +188,12 @@ pub(super) fn apply_filter_conditions(
 
     if filter.unread_only {
         if let Some(ref read_after) = filter.read_after {
-            // Snapshot semantics: entries read during the current page view
-            // (read_at at-or-after the page's render instant) stay in the
-            // unread navigation set. `>=` (not `>`) so a same-second
-            // open-after-load still counts as in-snapshot. `read_after` is the
-            // `%Y-%m-%d %H:%M:%S` snapshot string; on PG bind it as a
-            // `timestamptz` and compare the raw column (sargable), falling back
-            // to `to_char` if unparseable. SQLite compares raw TEXT directly.
+            // Snapshot semantics: entries read during the current page view stay
+            // in the unread navigation set. `>=` rather than `>`, so a
+            // same-second open-after-load still counts as in-snapshot. On PG the
+            // snapshot string is bound as a `timestamptz` and compared against
+            // the raw column (sargable), falling back to `to_char` if
+            // unparseable; SQLite compares raw TEXT directly.
             let idx = binds.len() + 1;
             let pg_ts = (dialect == Dialect::Postgres)
                 .then(|| parse_cursor_ts(read_after))
@@ -383,9 +374,9 @@ pub(super) fn apply_time_conditions(
 
 /// Apply continuation-based pagination condition.
 ///
-/// Composite cursor uses the V2 bounded-OR form, which the `SQLite` planner
-/// can convert to an indexed range scan even when `sort_ts` is an expression
-/// (`COALESCE(...)`). See `PoC` at `docs/superpowers/specs/2026-04-26-composite-cursor-pagination-design.md`.
+/// The composite cursor uses the V2 bounded-OR form, which the `SQLite` planner
+/// can convert to an indexed range scan even when `sort_ts` is a `COALESCE(...)`
+/// expression.
 pub(super) fn apply_continuation_condition(
     conditions: &mut Vec<String>,
     binds: &mut Vec<Bind>,
@@ -406,12 +397,11 @@ pub(super) fn apply_continuation_condition(
                 EntrySortOrder::PublishedAt => "COALESCE(e.published_at, e.created_at)",
             };
             // Prefer a sargable comparison: on PG bind the cursor as a
-            // `timestamptz` and compare the RAW timestamp column so the planner
-            // uses the timestamp index as a range scan (a `to_char(col)`
-            // predicate is not sargable — it filters half the table at depth).
-            // Fall back to the correct-but-slower `to_char` string comparison if
-            // the cursor can't be parsed. SQLite compares the raw TEXT column
-            // against the cursor string directly (`cursor_ts` is a no-op there).
+            // `timestamptz` and compare the RAW column so the planner uses the
+            // timestamp index as a range scan — a `to_char(col)` predicate is not
+            // sargable and filters half the table at depth. Falls back to the
+            // correct-but-slower string comparison when the cursor cannot be
+            // parsed. SQLite compares the raw TEXT directly.
             let pg_ts = (dialect == Dialect::Postgres)
                 .then(|| parse_cursor_ts(sort_ts))
                 .flatten();
