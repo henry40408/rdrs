@@ -372,6 +372,19 @@ otherwise just re-authenticate them).
      status and build version unauthenticated, so scope the rule to your
      monitoring source if that disclosure matters.)
 
+   - The PWA's public surface — `/static/...`, `/favicon...`,
+     `/apple-touch-icon.png`, `/sw.js` and `/offline` — if you want the app to
+     stay installable. The icons a web app manifest names are downloaded by the
+     browser's install machinery rather than by the page, and that fetch is not
+     governed by the `crossorigin` attribute on the `<link rel="manifest">`, so
+     an SSO gate leaves the install prompt without an icon. These paths hold no
+     user data and RDRS already serves them without a session: `/static`,
+     `/favicon`, `/sw.js` and `/offline` are skipped by its session, CSRF and
+     forward-auth layers outright (`SKIP_PREFIXES` in
+     `src/middleware/forward_auth.rs`), and that cookie-free guarantee is
+     precisely what makes `/static/` the only thing the service worker is
+     allowed to cache.
+
    Everything else stays behind SSO. In particular, do **not** bypass
    `/api/feeds/{id}/icon`: that endpoint is guarded by RDRS's own session
    check, so a bypass would only strip a defense layer — native GReader clients
@@ -391,6 +404,11 @@ otherwise just re-authenticate them).
            - '^/api/greader\.php/.*'   # FreshRSS-compatible prefix
            - '^/api/proxy/.*'          # HMAC-signed image proxy (avoids broken images)
            - '^/health$'               # liveness / uptime probes (no SSO session)
+           - '^/static/.*'             # PWA: manifest, icons, CSS and JS
+           - '^/favicon.*'
+           - '^/apple-touch-icon\.png$'
+           - '^/sw\.js$'               # service worker
+           - '^/offline$'              # its offline fallback page
        - domain: rdrs.example.com
          policy: one_factor            # everything else goes through SSO
    ```
