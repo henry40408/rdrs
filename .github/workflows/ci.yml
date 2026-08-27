@@ -160,9 +160,12 @@ jobs:
           key: ${{ runner.os }}-chromedriver-${{ hashFiles('e2e/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-chromedriver-
 
+      # `--lib` alongside the cucumber suite: the retry helpers in `src/wait.rs`
+      # carry unit tests that need no browser, and selecting only `--test e2e`
+      # would compile them and never run them.
       - name: Run E2E tests
         working-directory: e2e
-        run: cargo test --test e2e
+        run: cargo test --lib --test e2e
 
       # Browser-level CSP check. It lives here rather than in its own job so it
       # inherits the Rust build this job has already paid for; a standalone job

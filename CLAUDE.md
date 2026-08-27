@@ -25,7 +25,9 @@ run at the root would otherwise compile thirtyfour and drive a real browser.
 That also means the root's `cargo fmt --all` and `cargo clippy` do not reach it,
 so CI lints it as a separate step and so should you.
 
-- Run all: `cargo test --test e2e`. One feature, while working on it:
+- Run all: `cargo test --lib --test e2e` — `--lib` picks up the browser-free
+  unit tests on the wait helpers, which `--test e2e` alone would compile and
+  skip. One feature, while working on it:
   `RDRS_E2E_FEATURES=features/reading.feature cargo test --test e2e`.
 - Format / lint (CI gates): `cargo fmt --all -- --check` and
   `cargo clippy --all-targets -- -D warnings`, from `e2e/`.

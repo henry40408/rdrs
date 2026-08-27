@@ -198,3 +198,100 @@ where
         tokio::time::sleep(WAIT_INTERVAL).await;
     }
 }
+
+/// Runs `action` again while the page keeps moving out from under it.
+///
+/// The acting counterpart to the polls above. They forgive a stale reference
+/// while waiting for the page to *report* something; this forgives one in a
+/// step that is trying to *do* something. Finding an element and clicking it
+/// are two round trips, and the app swaps whole regions in between — every
+/// `rdrs:swap-complete` refetches the sidebar, and an SSE `sidebar` event does
+/// it again unprompted — so a handle can be detached before the click reaches
+/// it. That is the page being busy, exactly as it is for a read, and it is the
+/// one error worth another attempt.
+///
+/// `action` has to find what it acts on *inside* the closure. Given a handle
+/// captured beforehand it just replays the same dead reference until the
+/// deadline.
+///
+/// # Errors
+///
+/// Fails with whatever `action` failed with: immediately when that is anything
+/// but a stale reference, and once the page has refused to hold still for
+/// [`WAIT_TIMEOUT`] when it is.
+pub async fn despite_swaps<T, F, Fut>(what: &str, mut action: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    loop {
+        match action().await {
+            Ok(value) => return Ok(value),
+            Err(error) if is_stale(&error) => {
+                if Instant::now() >= deadline {
+                    return Err(error.context(format!(
+                        "{what}: the page swapped it away every time for {WAIT_TIMEOUT:?}"
+                    )));
+                }
+            }
+            Err(error) => return Err(error),
+        }
+        tokio::time::sleep(WAIT_INTERVAL).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use thirtyfour::error::WebDriverErrorInfo;
+
+    use super::*;
+
+    /// The error a driver reports for a handle whose node has been replaced.
+    fn stale_reference() -> anyhow::Error {
+        WebDriverError::from(WebDriverErrorInner::StaleElementReference(
+            WebDriverErrorInfo::new("stale element reference".to_owned()),
+        ))
+        .into()
+    }
+
+    #[tokio::test]
+    async fn despite_swaps_retries_until_the_page_holds_still() {
+        let attempts = Cell::new(0);
+
+        let result = despite_swaps("clicking through a swap", || async {
+            attempts.set(attempts.get() + 1);
+            if attempts.get() < 3 {
+                Err(stale_reference())
+            } else {
+                Ok(attempts.get())
+            }
+        })
+        .await;
+
+        assert_eq!(
+            result.expect("a swap mid-action is the page being busy, not a fault"),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn despite_swaps_reports_anything_else_at_once() {
+        // The counterpart the retry must not swallow: waiting out the full
+        // timeout on a button that is simply absent would trade a clear failure
+        // for a slow, unexplained one.
+        let attempts = Cell::new(0);
+
+        let error = despite_swaps("clicking a button that is not there", || async {
+            attempts.set(attempts.get() + 1);
+            Err::<(), _>(anyhow::anyhow!("the page has no `Cancel` button"))
+        })
+        .await
+        .expect_err("a missing button is not something to wait for");
+
+        assert_eq!(attempts.get(), 1, "a real fault must not be retried");
+        assert!(error.to_string().contains("no `Cancel` button"));
+    }
+}

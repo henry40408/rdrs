@@ -5,7 +5,7 @@ use cucumber::gherkin::Step;
 use cucumber::{then, when};
 use rdrs_e2e::dom::{Dom, TextContent, Within, click_when_ready};
 use rdrs_e2e::first_column;
-use rdrs_e2e::wait::{eventually, eventually_eq};
+use rdrs_e2e::wait::{despite_swaps, eventually, eventually_eq};
 use rdrs_e2e::world::RdrsWorld;
 
 const CARD: &str = "[data-summarizer-card]";
@@ -23,13 +23,16 @@ async fn enter_urls(world: &mut RdrsWorld, step: &Step) -> Result<()> {
 
 #[when("I submit the summarizer form")]
 async fn submit_summarizer(world: &mut RdrsWorld) -> Result<()> {
-    let form = world.driver()?.test_id("summarizer-form").await?;
-    let button = form
-        .button_named("Summarize")
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("the summarizer form has no Summarize button"))?;
-    click_when_ready(&button).await?;
-    Ok(())
+    let driver = world.driver()?;
+    despite_swaps("submitting the summarizer form", || async {
+        let form = driver.test_id("summarizer-form").await?;
+        let button = form
+            .button_named("Summarize")
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("the summarizer form has no Summarize button"))?;
+        click_when_ready(&button).await
+    })
+    .await
 }
 
 #[then(expr = "I should see {int} summary cards")]
@@ -71,13 +74,16 @@ async fn copy_first_card(world: &mut RdrsWorld) -> Result<()> {
     // permission keeps `navigator.clipboard.writeText` from rejecting in a
     // headless browser.
     world.browser()?.grant_clipboard().await?;
-    let card = world.driver()?.css(CARD).await?;
-    let button = card
-        .button_named("Copy summary")
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("the card has no copy button"))?;
-    click_when_ready(&button).await?;
-    Ok(())
+    let driver = world.driver()?;
+    despite_swaps("copying the first summary card", || async {
+        let card = driver.css(CARD).await?;
+        let button = card
+            .button_named("Copy summary")
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("the card has no copy button"))?;
+        click_when_ready(&button).await
+    })
+    .await
 }
 
 #[then(expr = "the first summary card's copy button reads {string}")]
