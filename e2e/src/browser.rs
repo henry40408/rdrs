@@ -219,6 +219,40 @@ impl Browser {
         Ok(())
     }
 
+    /// Cuts the browser off from the network — the "Offline" checkbox in the
+    /// browser's own developer tools.
+    ///
+    /// Not [`crate::network::Action::Abort`], which is what the no-JS
+    /// walkthrough uses: CDP request interception is attached to the *page*
+    /// target, and the requests that have to fail here are issued by the service
+    /// worker, which is a target of its own. Network conditions apply to the
+    /// whole browser context and so reach both.
+    ///
+    /// # Errors
+    ///
+    /// Fails when either CDP command is refused.
+    pub async fn set_offline(&self, offline: bool) -> Result<()> {
+        // `emulateNetworkConditions` is a no-op until the domain is enabled.
+        self.driver
+            .cdp()
+            .send_raw("Network.enable", serde_json::json!({}))
+            .await?;
+        self.driver
+            .cdp()
+            .send_raw(
+                "Network.emulateNetworkConditions",
+                serde_json::json!({
+                    "offline": offline,
+                    "latency": 0,
+                    // -1 disables throttling; only the offline flag matters here.
+                    "downloadThroughput": -1,
+                    "uploadThroughput": -1,
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Grants clipboard access. Without it `navigator.clipboard.writeText`
     /// rejects in a headless browser and the copy button never reaches its
     /// "Copied" state.

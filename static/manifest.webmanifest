@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "RDRS - RSS Reader",
+  "short_name": "RDRS",
+  "description": "A self-hosted RSS/Atom feed reader. Privacy-focused, lightweight, and designed for personal use.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#F2F1ED",
+  "background_color": "#F2F1ED",
+  "icons": [
+    {
+      "src": "/static/icons/icon-192.png?v=__RDRS_ASSET_VERSION__",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/icon-512.png?v=__RDRS_ASSET_VERSION__",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/maskable-icon-512.png?v=__RDRS_ASSET_VERSION__",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

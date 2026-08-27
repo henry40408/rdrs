@@ -71,9 +71,11 @@ const CSRF_FIELD: &str = "_csrf";
 /// ambient cookie, so a browser CSRF cannot forge those calls.
 const CSRF_SKIP_PREFIXES: &[&str] = &["/reader", "/accounts", "/api/greader.php"];
 
-/// Path prefixes for which no anonymous session is minted: static assets and
-/// health must stay cacheable, and the machine APIs get their cookie from a real
-/// page load. Every HTML page a form is rendered on lives outside these.
+/// Path prefixes for which no anonymous session is minted: static assets, the
+/// service worker and health must stay cacheable, and the machine APIs get their
+/// cookie from a real page load. Every HTML page a form is rendered on lives
+/// outside these — `/offline` is the one HTML page listed, and it carries a link
+/// rather than a form precisely so it can.
 const ANON_SKIP_PREFIXES: &[&str] = &[
     "/api",
     "/reader",
@@ -81,6 +83,8 @@ const ANON_SKIP_PREFIXES: &[&str] = &[
     "/static",
     "/favicon",
     "/health",
+    "/sw.js",
+    "/offline",
 ];
 
 /// Upper bound on a buffered request body when reading the `_csrf` field. Browser

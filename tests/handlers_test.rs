@@ -2343,6 +2343,127 @@ async fn test_static_font_not_found() {
     response.assert_status_not_found();
 }
 
+// --- PWA Tests ---
+
+/// Every `Set-Cookie` on a response, as raw header values.
+fn set_cookie_header_values(response: &axum_test::TestResponse) -> Vec<String> {
+    response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|v| v.to_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn test_manifest_is_served_as_a_manifest() {
+    let server = create_test_server(default_test_config()).await;
+
+    let response = server.get("/static/manifest.webmanifest").await;
+    response.assert_status_ok();
+
+    // Not `application/javascript`, which is what the serve table's fall-through
+    // would hand out. With `nosniff` on every response, that mislabelling makes
+    // the browser reject the manifest and the app stops being installable.
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "application/manifest+json"
+    );
+    assert_eq!(
+        response.headers().get("cache-control").unwrap(),
+        expected_static_cache_control()
+    );
+    assert!(
+        set_cookie_header_values(&response).is_empty(),
+        "the manifest is publicly cacheable and must never carry Set-Cookie"
+    );
+}
+
+#[tokio::test]
+async fn test_pwa_icons_are_served_as_png() {
+    let server = create_test_server(default_test_config()).await;
+
+    for path in [
+        "/static/icons/icon-192.png",
+        "/static/icons/icon-512.png",
+        "/static/icons/maskable-icon-512.png",
+    ] {
+        let response = server.get(path).await;
+        response.assert_status_ok();
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "image/png",
+            "{path} content type"
+        );
+        let body = response.into_bytes();
+        // PNG magic — proves build.rs actually rendered these rather than
+        // embedding something the manifest would then fail to decode.
+        assert_eq!(&body[1..4], b"PNG", "{path} must be a real PNG");
+    }
+}
+
+#[tokio::test]
+async fn test_service_worker_is_served_from_the_root_without_cookies() {
+    let server = create_test_server(default_test_config()).await;
+
+    // Root, not `/static/js/`: a worker's scope is the directory it came from,
+    // and only a root-scoped one sees the navigations it exists to catch.
+    let response = server.get("/sw.js").await;
+    response.assert_status_ok();
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "application/javascript"
+    );
+    // The URL carries no `?v=` stamp, so it is the one asset whose body changes
+    // under a fixed URL — `immutable` here would pin one build's worker for a
+    // year with nothing left to invalidate.
+    assert_eq!(response.headers().get("cache-control").unwrap(), "no-cache");
+    assert!(
+        set_cookie_header_values(&response).is_empty(),
+        "the worker script must stay cookie-free to be publicly cacheable"
+    );
+}
+
+#[tokio::test]
+async fn test_offline_page_is_public_and_needs_no_auth() {
+    let server = create_test_server(default_test_config()).await;
+
+    let response = server.get("/offline").await;
+    response.assert_status_ok();
+    assert_eq!(
+        response.headers().get("cache-control").unwrap(),
+        "public, max-age=3600"
+    );
+    assert!(
+        set_cookie_header_values(&response).is_empty(),
+        "the offline page is publicly cacheable and must never carry Set-Cookie"
+    );
+    assert!(response.text().contains("You are offline"));
+}
+
+#[tokio::test]
+async fn test_offline_page_stays_public_for_a_signed_in_reader() {
+    let mut server = create_test_server(default_test_config()).await;
+    setup_authenticated_user(&mut server).await;
+
+    // The interesting case. The service worker precaches this page from inside a
+    // signed-in session, and the Cache API honours no `Cache-Control` at all —
+    // so if the usual session handling turned this into a `no-store`,
+    // `Vary: Cookie` response with a session cookie riding along, that cookie
+    // would be stored on disk and replayed to whoever opens the app next.
+    let response = server.get("/offline").await;
+    response.assert_status_ok();
+    assert_eq!(
+        response.headers().get("cache-control").unwrap(),
+        "public, max-age=3600",
+        "a signed-in request must not turn the offline page into a private one"
+    );
+    assert!(
+        set_cookie_header_values(&response).is_empty(),
+        "no session cookie may ride on a response the worker will cache"
+    );
+}
+
 // --- Health Check Tests ---
 
 #[tokio::test]

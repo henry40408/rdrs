@@ -616,6 +616,63 @@ async fn test_favicon_links_carry_the_build_stamp() {
 }
 
 #[tokio::test]
+async fn test_pages_link_the_manifest_and_declare_a_theme_color() {
+    // Sibling of the favicon stamp test above: the manifest is embedded in the
+    // binary the same way, so a bare URL would let a cached copy — and with it a
+    // whole release's icon set — outlive the upgrade that replaced it.
+    //
+    // `pwa.js` is asserted on a signed-in page only. It is mounted from
+    // app_layout.html rather than base.html on purpose, so /login never
+    // registers a worker; `test_login_page_registers_no_service_worker` holds
+    // the other end of that.
+    let mut app = create_test_app(default_test_config()).await;
+    setup_users(&app.db).await;
+    login(&mut app.server, "admin").await;
+
+    let body = app.server.get("/user-settings").await.text();
+
+    assert!(
+        body.contains(&format!(
+            "/static/manifest.webmanifest?v={}",
+            rdrs::GIT_VERSION
+        )),
+        "the manifest link must be version-stamped"
+    );
+    assert!(
+        body.contains(&format!("/static/js/pwa.js?v={}", rdrs::GIT_VERSION)),
+        "signed-in pages must load the service-worker registration"
+    );
+    // Two, not one: the manifest's single `theme_color` cannot follow the
+    // reader's colour scheme, so a light chrome bar would frame the dark theme.
+    for scheme in ["light", "dark"] {
+        assert!(
+            body.contains(&format!("(prefers-color-scheme: {scheme})")),
+            "a theme-color is missing for the {scheme} scheme"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_login_page_registers_no_service_worker() {
+    // A reader who never gets past sign-in has no use for an installed app, and
+    // registering there would make them pay the worker's install fetches for a
+    // page they see once. The manifest still ships, so the browser can theme
+    // the page it is on.
+    let app = create_test_app(default_test_config()).await;
+
+    let body = app.server.get("/login").await.text();
+
+    assert!(
+        !body.contains("pwa.js"),
+        "the sign-in page must not register a service worker"
+    );
+    assert!(
+        body.contains("/static/manifest.webmanifest"),
+        "the manifest belongs on every page, signed in or not"
+    );
+}
+
+#[tokio::test]
 async fn test_session_revoke_is_user_scoped() {
     // Sibling of `test_api_token_revoke_is_user_scoped`: the session id now
     // travels to the browser so the revoke-one form can name it, which is only

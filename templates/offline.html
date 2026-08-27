@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}Offline - RDRS{% endblock %}
+
+{% block body %}
+{# Served from the service worker's cache when a navigation cannot reach the
+   network, so it must stay true for every visitor and every moment: no user
+   data, no counts, no flash. The way out is an ordinary link rather than a
+   scripted retry — the page has to work when the scripts it would need are the
+   very thing that failed to load. #}
+<div class="auth-layout">
+    <div class="auth-card" data-testid="offline-page">
+        <h1>rdrs</h1>
+        <p class="offline-message">You are offline.</p>
+        <p class="offline-message muted">Feeds and articles live on the server, so there is nothing to read until the connection is back.</p>
+        <div class="link">
+            <a href="/">Try again</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

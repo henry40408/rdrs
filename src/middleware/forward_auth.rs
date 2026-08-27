@@ -19,7 +19,9 @@ use crate::utils::http::request_user_agent;
 
 /// Path prefixes that must never trigger forward-auth auto-login: machine
 /// endpoints (`GReader` native clients, JSON/passkey APIs, SSE, static assets)
-/// authenticate by their own means.
+/// authenticate by their own means, and the two PWA paths must stay cookie-free
+/// so they can be cached publicly — `/offline` renders the same for everyone, so
+/// there is nobody to log in as.
 const SKIP_PREFIXES: &[&str] = &[
     "/api",
     "/reader",
@@ -28,6 +30,8 @@ const SKIP_PREFIXES: &[&str] = &[
     "/static",
     "/favicon",
     "/health",
+    "/sw.js",
+    "/offline",
 ];
 
 /// Parse a comma-separated groups header into trimmed, non-empty names.

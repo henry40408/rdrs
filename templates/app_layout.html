@@ -16,6 +16,10 @@
        `data-hide-on-error` attributes that replaced inline `on*` handlers when
        the strict CSP landed. #}
     <script type="module" src="/static/js/behaviors.js?v={{ layout.git_version }}"></script>
+    {# Service-worker registration. Here rather than in base.html so /login and
+       /setup never register one — see static/js/pwa.js. No modulepreload: it
+       runs on `load` and must not compete with the modules that paint. #}
+    <script type="module" src="/static/js/pwa.js?v={{ layout.git_version }}"></script>
     {% block page_script %}{% endblock %}
 {% endblock %}
 
