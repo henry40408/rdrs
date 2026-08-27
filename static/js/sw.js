@@ -22,6 +22,10 @@
  * forward-auth layers) and their URLs carry the build's `?v=` stamp under an
  * `immutable` header, so a cache entry can never be stale for its URL. The whole
  * cache is dropped on activate anyway, keyed by the same version.
+ *
+ * That argument rests entirely on the stamp changing when the bytes do, which is
+ * not true of a development build — see [`CACHE_STATIC_ASSETS`], which turns
+ * this half off for exactly that case.
  */
 
 const VERSION = '__RDRS_ASSET_VERSION__';
@@ -29,11 +33,33 @@ const CACHE = `rdrs-shell-${VERSION}`;
 const OFFLINE_URL = '/offline';
 
 /**
+ * Whether `/static/` responses may be kept. Substituted server-side.
+ *
+ * False for a build from a working tree with uncommitted changes. `git describe
+ * --dirty` gives every such build the *same* version string, so the `?v=` stamp
+ * — and with it this cache's key — is identical across consecutive edits and can
+ * never notice a rebuild. The server already drops those responses to
+ * `no-cache` for exactly that reason (`cache_control_for` in
+ * `static_assets.rs`); without the same opt-out here the worker would hand the
+ * stale copy straight back, and editing a stylesheet would appear to do nothing.
+ *
+ * Decided in Rust, off that same function, rather than re-derived from the
+ * version string here: two copies of one rule is how they drift apart. Written
+ * as a comparison so this file is still valid JavaScript before substitution.
+ *
+ * Only *runtime* caching is affected. The precache below still runs, so the
+ * offline page stays testable locally — it is then a snapshot from first load,
+ * and iterating on `offline.html` itself needs the worker unregistered.
+ */
+const CACHE_STATIC_ASSETS = '__RDRS_CACHE_STATIC__' === 'true';
+
+/**
  * The minimum needed to render a legible offline page: the page itself and the
  * stylesheet. Deliberately not the whole app shell — `app.js` and friends are
  * only reachable from navigations, which fail offline, so precaching them would
  * buy nothing and cost every visitor the download up front. Everything else
- * under `/static/` lands in the same cache on first use instead.
+ * under `/static/` lands in the same cache on first use instead, when
+ * [`CACHE_STATIC_ASSETS`] allows it.
  */
 const PRECACHE_URLS = [OFFLINE_URL, `/static/css/app.css?v=${VERSION}`];
 
@@ -112,7 +138,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(handleNavigation(event));
     return;
   }
-  if (url.pathname.startsWith('/static/')) {
+  if (CACHE_STATIC_ASSETS && url.pathname.startsWith('/static/')) {
     event.respondWith(handleStaticAsset(request));
   }
   // Anything else falls through to the network untouched — see the module note

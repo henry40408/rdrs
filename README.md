@@ -30,6 +30,7 @@ Privacy-focused, lightweight, and designed for personal use.
 - **Google Reader API** - Compatible with GReader clients (FeedMe, Read You, etc.)
 - **Multi-User Support** - Role-based access control with admin panel
 - **Session Management** - View active sessions (device, IP, last active) and sign out other devices from Settings; GReader API tokens are tracked and revocable separately from browser sessions
+- **Installable (PWA)** - Add to your home screen or dock and run it in its own window; a lost connection shows RDRS's own offline page instead of the browser's error. Nothing you read is stored on the device
 - **Docker Ready** - Single-binary deployment with all assets embedded, multi-platform container images
 
 ## Quick Start
@@ -431,6 +432,28 @@ Connect RDRS to your Linkding instance to save articles for later:
 1. Go to Settings
 2. Enter your Linkding URL and API token
 3. Use the "Save" button on any entry
+
+### Install as an App
+
+RDRS ships a web app manifest and a service worker, so it can be installed from
+the browser and run in its own window:
+
+- **Desktop Chrome / Edge** — the install icon at the right of the address bar
+- **Android Chrome** — ⋮ → *Install app*
+- **iOS Safari** — Share → *Add to Home Screen*
+
+The prompt appears once you are signed in. The sign-in page deliberately
+registers no service worker, so a browser that never gets past it stays a plain
+browser.
+
+**There is no offline reading.** Feeds and articles live on the server and are
+never written to the device — the service worker keeps only the static assets
+(CSS, JavaScript, fonts, icons) and a small offline page, so a navigation with
+no connection lands somewhere legible rather than on the browser's error page.
+
+Browsers only allow service workers on a secure origin, so installing works on
+`http://localhost` for a local trial and needs HTTPS anywhere else. See
+[Production Notes](#production-notes) for putting RDRS behind TLS.
 
 ## Docker
 

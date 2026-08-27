@@ -666,7 +666,14 @@ worker as an *allowlist*, which cannot drift as routes are added:
   The response is never stored.
 - **Same-origin `GET`s under `/static/`** — cache-first, populated on first use.
   Safe because those URLs are cookie-free, version-stamped and `immutable`, and
-  the whole cache is keyed by build version and dropped on activate.
+  the whole cache is keyed by build version and dropped on activate. Turned off
+  for a build from a dirty working tree: `git describe --dirty` gives every such
+  build the same version string, so the `?v=` URL cannot tell one rebuild from
+  the next and the worker would serve a stale stylesheet back. `cache_control_for`
+  already drops those responses to `no-cache` for that reason, and
+  `worker_may_cache_static` derives the worker's half of the decision *from that
+  function* — the Cache API ignores `Cache-Control`, so the worker has to be told
+  separately, and two copies of the rule would drift.
 - **Everything else** — `/api/*`, `/events`, feed icons, proxied images — passes
   straight through and is never written anywhere.
 

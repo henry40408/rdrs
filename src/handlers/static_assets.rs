@@ -122,6 +122,23 @@ const SERVICE_WORKER: &str = include_str!("../../static/js/sw.js");
 /// that imports it (the `debounce` regression).
 const ASSET_VERSION_PLACEHOLDER: &str = "__RDRS_ASSET_VERSION__";
 
+/// Token in the service-worker source that carries [`worker_may_cache_static`]'s
+/// answer into the script, substituted with `"true"` or `"false"` at serve time.
+const STATIC_CACHE_PLACEHOLDER: &str = "__RDRS_CACHE_STATIC__";
+
+/// Whether the service worker may keep `/static/` responses in the Cache API.
+///
+/// Derived from [`cache_control_for`] rather than from `GIT_VERSION` directly,
+/// because it is the *same* decision and two copies of one rule drift. That
+/// function drops to `no-cache` for a build from a dirty working tree: the
+/// version suffix is identical across consecutive edits, so the `?v=` URL — and
+/// so any cache keyed by it — cannot tell one build from the next. The Cache API
+/// ignores `Cache-Control` entirely, so the worker has to be told separately or
+/// it would serve the stale copy back and undo the escape hatch.
+fn worker_may_cache_static() -> bool {
+    cache_control_for() != "no-cache"
+}
+
 fn content_type_for(path: &str) -> &'static str {
     match std::path::Path::new(path)
         .extension()
@@ -170,7 +187,16 @@ pub async fn service_worker() -> Response {
             (header::CONTENT_TYPE, "application/javascript"),
             (header::CACHE_CONTROL, "no-cache"),
         ],
-        SERVICE_WORKER.replace(ASSET_VERSION_PLACEHOLDER, crate::GIT_VERSION),
+        SERVICE_WORKER
+            .replace(ASSET_VERSION_PLACEHOLDER, crate::GIT_VERSION)
+            .replace(
+                STATIC_CACHE_PLACEHOLDER,
+                if worker_may_cache_static() {
+                    "true"
+                } else {
+                    "false"
+                },
+            ),
     )
         .into_response()
 }
@@ -348,6 +374,15 @@ mod tests {
         );
     }
 
+    /// The worker script as it is actually served, placeholders substituted.
+    async fn served_worker_body() -> String {
+        let resp = service_worker().await;
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
     /// `immutable` on a URL that carries no `?v=` would pin one build's worker
     /// forever, and the URL is unstamped on purpose — see [`service_worker`].
     #[tokio::test]
@@ -363,10 +398,7 @@ mod tests {
             "application/javascript"
         );
 
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let body = String::from_utf8(bytes.to_vec()).unwrap();
+        let body = served_worker_body().await;
 
         // The version travels in the body rather than the URL, so this is the
         // only thing that tells a browser a new worker is due.
@@ -377,6 +409,31 @@ mod tests {
         assert!(
             body.contains(crate::GIT_VERSION),
             "worker body must carry the build version"
+        );
+    }
+
+    /// The worker's runtime cache must be on exactly when the server is still
+    /// marking `/static/` immutable.
+    ///
+    /// A build from a dirty tree stamps every `?v=` URL identically across
+    /// consecutive edits, which is why [`cache_control_for`] drops to
+    /// `no-cache` there — and the Cache API honours no such header, so a worker
+    /// left caching would hand the stale copy straight back and quietly undo
+    /// the escape hatch. Whichever build this test runs on, the two must agree.
+    #[tokio::test]
+    async fn service_worker_static_cache_tracks_the_asset_cache_control() {
+        let body = served_worker_body().await;
+
+        assert!(
+            !body.contains(STATIC_CACHE_PLACEHOLDER),
+            "placeholder was not substituted"
+        );
+
+        let expected = format!("'{}' === 'true'", worker_may_cache_static());
+        assert!(
+            body.contains(&expected),
+            "assets are served `{}`, so the worker should carry `{expected}`",
+            cache_control_for()
         );
     }
 
