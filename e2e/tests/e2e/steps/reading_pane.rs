@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{Result, ensure};
 use cucumber::{then, when};
 use rdrs_e2e::dom::{Dom, TextContent, Within, click_when_ready};
-use rdrs_e2e::wait::{eventually, eventually_eq, settles};
+use rdrs_e2e::wait::{despite_swaps, eventually, eventually_eq, settles};
 use rdrs_e2e::world::RdrsWorld;
 
 use super::entries::{entry_id, entry_row};
@@ -371,13 +371,16 @@ async fn nested_pre_padding(world: &mut RdrsWorld) -> Result<()> {
 #[when(expr = "I click {string}")]
 #[when(expr = "I click the {string} button")]
 async fn click_button(world: &mut RdrsWorld, label: String) -> Result<()> {
-    let body = world.driver()?.css("body").await?;
-    let button = body
-        .button_named(&label)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("the page has no `{label}` button"))?;
-    click_when_ready(&button).await?;
-    Ok(())
+    let driver = world.driver()?;
+    despite_swaps(&format!("clicking the `{label}` button"), || async {
+        let body = driver.css("body").await?;
+        let button = body
+            .button_named(&label)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("the page has no `{label}` button"))?;
+        click_when_ready(&button).await
+    })
+    .await
 }
 
 #[when("I click the reading-pane star button")]
@@ -467,12 +470,19 @@ async fn see_summary_action(world: &mut RdrsWorld, label: String) -> Result<()> 
 
 #[when(expr = "I click the {string} summary action")]
 async fn click_summary_action(world: &mut RdrsWorld, label: String) -> Result<()> {
-    let container = world.driver()?.css("#rp-summary-container").await?;
-    let button = container
-        .button_named(&label)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("the summary panel has no `{label}` action"))?;
-    click_when_ready(&button).await?;
+    let driver = world.driver()?;
+    despite_swaps(
+        &format!("clicking the `{label}` summary action"),
+        || async {
+            let container = driver.css("#rp-summary-container").await?;
+            let button = container
+                .button_named(&label)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("the summary panel has no `{label}` action"))?;
+            click_when_ready(&button).await
+        },
+    )
+    .await?;
     // Waits for the `#rp-summary-container` swap to settle rather than for the
     // network to go idle, which the app's background sidebar polling makes
     // unreliable.
