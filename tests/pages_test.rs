@@ -653,6 +653,30 @@ async fn test_pages_link_the_manifest_and_declare_a_theme_color() {
 }
 
 #[tokio::test]
+async fn test_manifest_link_is_fetched_with_credentials() {
+    // Without `crossorigin`, a manifest is fetched with credentials omitted, so
+    // a cookie-authenticating reverse proxy in front of rdrs sees every manifest
+    // request as signed out and answers it with a redirect to its own login
+    // origin. The browser reports that only as `TypeError: NetworkError` and the
+    // app quietly stops being installable, while everything around it keeps
+    // working — including the service worker, which `register()` fetches with
+    // same-origin credentials — so nothing else points at the cause. Costs
+    // nothing same-origin, where no CORS headers are required.
+    let app = create_test_app(default_test_config()).await;
+
+    let body = app.server.get("/login").await.text();
+
+    let link = body
+        .split('<')
+        .find(|tag| tag.starts_with("link") && tag.contains(r#"rel="manifest""#))
+        .expect("every page links the manifest");
+    assert!(
+        link.contains(r#"crossorigin="use-credentials""#),
+        "the manifest link must request credentials, got: <{link}"
+    );
+}
+
+#[tokio::test]
 async fn test_login_page_registers_no_service_worker() {
     // A reader who never gets past sign-in has no use for an installed app, and
     // registering there would make them pay the worker's install fetches for a

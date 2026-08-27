@@ -14,8 +14,14 @@
        binary too, and its own icon URLs are rewritten with this same version at
        serve time. The service worker that goes with it is registered from
        app_layout.html, not here: see static/js/pwa.js for why the sign-in page
-       is left out. #}
-    <link rel="manifest" href="/static/manifest.webmanifest?v={{ git_version }}">
+       is left out.
+
+       `crossorigin` is what makes the request carry cookies: a manifest is
+       otherwise fetched with credentials omitted, which a cookie-authenticating
+       reverse proxy reads as signed out and answers with a redirect to its own
+       login origin — surfacing only as `TypeError: NetworkError` with the app
+       no longer installable. Free same-origin, where no CORS headers apply. #}
+    <link rel="manifest" href="/static/manifest.webmanifest?v={{ git_version }}" crossorigin="use-credentials">
     {# Colours the browser and OS chrome around the app. Two entries rather than
        the manifest's single `theme_color`, because that one value cannot follow
        the reader's colour scheme and a light bar above the dark theme is worse
