@@ -2620,6 +2620,12 @@ summary {
     color: var(--color-text-muted);
 }
 
+/* /offline reuses the auth card, but reads as a status message rather than a
+   form, so its prose is centred under the wordmark instead of ranged left. */
+.offline-message {
+    text-align: center;
+}
+
 /* "or use password" divider on the auth screens. */
 .auth-divider {
     text-align: center;

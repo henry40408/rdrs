@@ -60,7 +60,7 @@ src/
 │   ├── entries.rs       # Entry SSR fragments + form actions (read/star/summarize/save)
 │   ├── entry.rs         # Per-entry JSON endpoints (summary, neighbors, full content)
 │   ├── favicon.rs       # Favicon serving (embedded at compile time)
-│   ├── static_assets.rs # Static JS assets (embedded at compile time)
+│   ├── static_assets.rs # Static assets, the web app manifest and `/sw.js` (embedded at compile time)
 │   ├── proxy.rs         # Image proxy
 │   ├── health.rs        # Health check endpoint
 │   ├── events.rs        # SSE live-update stream
@@ -622,6 +622,72 @@ In-memory, per-user caches reduce repeated work on hot read paths:
   runs the handlers carrying those bust hooks.
 - **Page cache** (`page_cache.rs`) — a thin helper around `moka::sync::Cache`
   giving page handlers per-user, TTL-bounded caches for their rendered payloads.
+
+### Progressive Web App
+
+The app is installable and survives a lost connection, without giving up the
+SSR-first model. There is no offline reading and no client-side data store: the
+whole point of the design below is that nothing belonging to a reader is ever
+written to disk by the browser.
+
+**Manifest.** `static/manifest.webmanifest`, linked from `base.html` with the
+usual `?v=` build stamp and served from under `/static/` — that prefix is
+already skipped by the session, CSRF and forward-auth layers, so the response is
+guaranteed free of `Set-Cookie` and safe under the `immutable` header. It is
+served as `application/manifest+json`; the serve table's fall-through is
+`application/javascript`, and with `nosniff` on every response a mislabelled
+manifest is rejected outright rather than merely mis-typed. `start_url` and
+`scope` are absolute, because a relative value would resolve against the
+manifest's own URL and scope the app to `/static/`.
+
+**Icons.** `build.rs` renders `icon-192.png`, `icon-512.png` and
+`maskable-icon-512.png` from the same `favicon.svg` as the favicons, into
+`OUT_DIR`, and `static_assets.rs` embeds them. The maskable one is drawn at 80%
+scale on an opaque `#1A0E08` field so the launcher's crop takes background
+rather than artwork.
+
+**Service worker.** `static/js/sw.js`, served from `/sw.js` by
+`static_assets::service_worker` — a worker's scope is the directory it was
+served from, so only a root-served one sees navigations. Two consequences
+follow: the URL carries no `?v=` stamp (a stamped one would register a *new*
+worker per deploy instead of updating the existing one), so the build version
+travels inside the script body and the response is `no-cache`, not `immutable`.
+
+Registration lives in `static/js/pwa.js`, loaded from `app_layout.html` rather
+than `base.html`, so `/login` and `/setup` never register one.
+
+**What the worker does, and what it must never do.** Every signed-in response is
+`Cache-Control: no-store` + `Vary: Cookie`, and the Cache API honours neither —
+`cache.put` stores whatever it is handed. The rule is therefore enforced in the
+worker as an *allowlist*, which cannot drift as routes are added:
+
+- **Navigations** — network-first (with navigation preload, to pay back the
+  latency the worker itself adds), falling back to the precached `/offline` page.
+  The response is never stored.
+- **Same-origin `GET`s under `/static/`** — cache-first, populated on first use.
+  Safe because those URLs are cookie-free, version-stamped and `immutable`, and
+  the whole cache is keyed by build version and dropped on activate. Turned off
+  for a build from a dirty working tree: `git describe --dirty` gives every such
+  build the same version string, so the `?v=` URL cannot tell one rebuild from
+  the next and the worker would serve a stale stylesheet back. `cache_control_for`
+  already drops those responses to `no-cache` for that reason, and
+  `worker_may_cache_static` derives the worker's half of the decision *from that
+  function* — the Cache API ignores `Cache-Control`, so the worker has to be told
+  separately, and two copies of the rule would drift.
+- **Everything else** — `/api/*`, `/events`, feed icons, proxied images — passes
+  straight through and is never written anywhere.
+
+The precache is deliberately just `/offline` and `app.css`: the rest of the app
+shell is only reachable from navigations, which fail offline, so precaching it
+would buy nothing and cost every visitor the download up front.
+
+**Offline page.** `GET /offline` (`pages::offline_page`) renders `offline.html`
+with no auth extractor and no user data, and answers `public, max-age=3600`.
+That header is load-bearing twice: it keeps `middleware::cache_control` from
+stamping `no-store` on a request that carries a session, and it is what tells
+`slide_session_cookie` the response is publicly cacheable and must not have a
+session cookie appended. `/sw.js` and `/offline` are both in all three
+middleware skip lists for the same reason.
 
 ### External Services
 

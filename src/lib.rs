@@ -368,6 +368,13 @@ pub fn create_router(state: AppState) -> Router {
         .merge(handlers::greader::greader_routes())
         .nest("/api/greader.php", handlers::greader::greader_routes())
         .route("/static/{*path}", get(handlers::static_assets::serve))
+        // PWA. `/sw.js` sits at the root because a worker's scope is the
+        // directory it was served from, and `/offline` beside it because the
+        // worker precaches it as the fallback for a navigation that never
+        // reaches us. Both are in the session, CSRF and forward-auth skip lists
+        // so they stay cookie-free and publicly cacheable.
+        .route("/sw.js", get(handlers::static_assets::service_worker))
+        .route("/offline", get(handlers::pages::offline_page))
         .fallback(handlers::pages::not_found_page)
         // Mark session-bearing responses `no-store` (OWASP: Web Content Caching)
         // so a browser disk cache or shared proxy cannot replay a logged-in page.

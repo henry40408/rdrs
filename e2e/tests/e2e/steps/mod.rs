@@ -20,6 +20,7 @@ pub mod morph;
 pub mod onboarding;
 pub mod organize;
 pub mod preferences;
+pub mod pwa;
 pub mod reading_pane;
 pub mod responsive;
 pub mod scoped_search;

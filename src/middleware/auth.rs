@@ -136,7 +136,7 @@ impl RotationSlot {
 /// publicly cacheable and are not listed here, since `/api` at large must still
 /// be slid. Those are caught on the way out — see
 /// [`response_is_publicly_cacheable`].
-const SLIDE_SKIP_PREFIXES: &[&str] = &["/static", "/favicon", "/health"];
+const SLIDE_SKIP_PREFIXES: &[&str] = &["/static", "/favicon", "/health", "/sw.js", "/offline"];
 
 /// Reissue the session and CSRF cookies on every authenticated request so their
 /// `Max-Age` — aligned with the sliding session TTL rather than the old 90-day

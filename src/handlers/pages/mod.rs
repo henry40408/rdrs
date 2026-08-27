@@ -1,7 +1,7 @@
 use askama::Template;
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
 };
 
@@ -563,6 +563,50 @@ pub fn resolve_statistics_period(query: &StatisticsQuery) -> (String, String, St
             "7d".to_string(),
         ),
     }
+}
+
+/// The page the service worker hands back when a navigation cannot reach the
+/// network. See `static/js/sw.js`.
+///
+/// `git_version` is its only field, and that is the point: the worker stores
+/// this response in the Cache API, which honours no `Cache-Control` directive at
+/// all, so anything user-specific rendered here would outlive the session that
+/// fetched it and be shown to whoever opens the app next.
+#[derive(Template)]
+#[template(path = "offline.html")]
+pub struct OfflineTemplate {
+    pub git_version: &'static str,
+}
+
+impl IntoResponse for OfflineTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Freshness for `/offline`. Short and shared rather than `immutable`: the URL
+/// carries no build stamp, so a long-lived entry would pin one release's copy
+/// with nothing left to change.
+const OFFLINE_CACHE_CONTROL: &str = "public, max-age=3600";
+
+/// `GET /offline`
+///
+/// Takes no auth extractor — it renders the same for a signed-out visitor as for
+/// an admin. The explicit `Cache-Control` is load-bearing twice over: it keeps
+/// `middleware::cache_control` from stamping the `no-store` a session-bearing
+/// request would otherwise earn, and it is what tells `slide_session_cookie`
+/// this response is publicly cacheable and must not carry a session cookie.
+pub async fn offline_page() -> Response {
+    (
+        [(header::CACHE_CONTROL, OFFLINE_CACHE_CONTROL)],
+        OfflineTemplate {
+            git_version: crate::GIT_VERSION,
+        },
+    )
+        .into_response()
 }
 
 #[derive(Template)]

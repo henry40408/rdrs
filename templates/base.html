@@ -10,6 +10,24 @@
     <link rel="icon" href="/favicon.ico?v={{ git_version }}" sizes="32x32">
     <link rel="icon" href="/favicon.svg?v={{ git_version }}" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v={{ git_version }}">
+    {# Installability. Stamped like the icons — the manifest is embedded in the
+       binary too, and its own icon URLs are rewritten with this same version at
+       serve time. The service worker that goes with it is registered from
+       app_layout.html, not here: see static/js/pwa.js for why the sign-in page
+       is left out. #}
+    <link rel="manifest" href="/static/manifest.webmanifest?v={{ git_version }}">
+    {# Colours the browser and OS chrome around the app. Two entries rather than
+       the manifest's single `theme_color`, because that one value cannot follow
+       the reader's colour scheme and a light bar above the dark theme is worse
+       than either. Values are `--color-paper`, the colour `body` actually
+       paints, so the chrome continues the page instead of framing it.
+
+       Follows the *system* scheme, not the `data-theme` override: a media query
+       is all a `<meta>` can express. A reader who has forced the non-system
+       theme in preferences gets chrome matching the other one — visible only in
+       standalone mode, and the alternative is no theming at all. #}
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F1ED">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#131416">
     {# "Wire Room" type system, self-hosted (see @font-face in app.css and the
        vendored woff2 under static/fonts/). Newsreader = variable optical-size
        serif (display + reading); Archivo = UI sans; IBM Plex Mono = data / mono
