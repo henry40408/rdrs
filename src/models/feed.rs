@@ -665,7 +665,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Delete the category
         category::delete_category(&db, category_id, user_id)
             .await
             .unwrap();

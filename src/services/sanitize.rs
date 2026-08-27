@@ -87,14 +87,12 @@ const LAZY_SRC_ATTRS: &[&str] = &["data-src", "data-lazy-src", "data-original"];
 
 /// ASCII-case-insensitive substring test, for the pre-pass gates below.
 ///
-/// They have to be case-insensitive: HTML tag and attribute names are, and so
-/// are the parsers each gate stands in front of, so a feed that ships `<IMG
-/// DATA-SRC=...>` must not slip past a lowercase-only check and silently lose
-/// its pass. `needle` must already be lowercase.
+/// Case-insensitive because HTML tag and attribute names are, as are the parsers
+/// each gate fronts: a feed shipping `<IMG DATA-SRC=...>` must not slip past a
+/// lowercase-only check and silently lose its pass. `needle` must be lowercase.
 ///
-/// Scanning a few KiB for a short needle costs microseconds against the
-/// hundreds a parse costs, so this is worth paying on every document to skip
-/// the parse on most of them.
+/// Scanning a few KiB for a short needle costs microseconds against the hundreds
+/// a parse costs, so it is worth paying on every document.
 fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
     debug_assert!(needle.bytes().all(|b| !b.is_ascii_uppercase()));
     let (h, n) = (haystack.as_bytes(), needle.as_bytes());
@@ -126,19 +124,16 @@ fn style_dim(style: &str, prop: &str) -> Option<String> {
 
 /// Pre-ammonia pass: drop `aria-hidden="true"` subtrees, content included.
 ///
-/// Ammonia strips `class`, `style` and `aria-hidden` alike, so any markup the
-/// source site only kept off-screen through its own stylesheet lands in the
-/// reading pane as literal text — no CSS of ours can hide it afterwards,
-/// because the hook it was hidden by is gone. The loudest example is the
-/// line-number gutter VitePress/Shiki emits beside every code block
-/// (`<div class="line-numbers-wrapper" aria-hidden="true">`, one `<span>` and
-/// one `<br>` per line, absolutely positioned over the block): stripped of its
-/// class it renders as a column of bare numbers *below* the code, once per
-/// block.
+/// Ammonia strips `class`, `style` and `aria-hidden` alike, so markup the source
+/// site only kept off-screen through its own stylesheet lands in the reading
+/// pane as literal text — no CSS of ours can hide it, because the hook it was
+/// hidden by is gone. The loudest example is the line-number gutter
+/// VitePress/Shiki emits beside every code block: stripped of its class it
+/// renders as a column of bare numbers below the code, once per block.
 ///
 /// `aria-hidden="true"` is the author stating the subtree carries nothing a
-/// reader needs — the same signal Readability uses to skip a node — so honour it
-/// generically instead of blocklisting per-site class names.
+/// reader needs — the same signal Readability uses — so honour it generically
+/// rather than blocklisting per-site class names.
 fn drop_aria_hidden(html: &str) -> Cow<'_, str> {
     if aria_hidden_gate(html) {
         drop_aria_hidden_inner(html)
@@ -195,9 +190,8 @@ fn harvest_image_dimensions(html: &str) -> Cow<'_, str> {
 ///
 /// `<image` is accepted alongside `<img` on purpose. HTML tree construction
 /// rewrites a stray `<image>` start tag to `img`, and while `lol_html` tokenises
-/// rather than building a tree, that is an implementation detail of a
-/// dependency rather than a guarantee — cheaper to admit the tag than to
-/// depend on it not being adjusted.
+/// rather than building a tree, that is a dependency's implementation detail —
+/// cheaper to admit the tag than to depend on it not being adjusted.
 fn harvest_gate(html: &str) -> bool {
     (contains_ignore_ascii_case(html, "<img") || contains_ignore_ascii_case(html, "<image"))
         && (contains_ignore_ascii_case(html, "style")
@@ -241,11 +235,11 @@ fn harvest_image_dimensions_inner(html: &str) -> Cow<'_, str> {
 
 /// Promote lazy-loaded image URLs into `src` before sanitization.
 ///
-/// Many sites (e.g. `WordPress` with lazy-load plugins) ship a `data:` SVG
-/// placeholder in `src` and keep the real URL in a `data-*` attribute. Ammonia
-/// later drops both the `data:` src (disallowed scheme) and the unknown `data-*`
-/// attribute, leaving an empty `<img>` and making images disappear. Running this
-/// first moves the real URL into `src` so the rest of the pipeline can proxy it.
+/// Many sites ship a `data:` SVG placeholder in `src` and keep the real URL in a
+/// `data-*` attribute. Ammonia later drops both — disallowed scheme, unknown
+/// attribute — leaving an empty `<img>` and making images disappear. Running
+/// this first moves the real URL into `src` so the rest of the pipeline can
+/// proxy it.
 fn promote_lazy_images(html: &str) -> Cow<'_, str> {
     if lazy_gate(html) {
         promote_lazy_images_inner(html)
@@ -255,14 +249,13 @@ fn promote_lazy_images(html: &str) -> Cow<'_, str> {
 }
 
 /// Gate for [`promote_lazy_images`]: a promotion needs one of
-/// [`LAZY_SRC_ATTRS`] to be present, so without any of them the pass cannot
-/// change a byte. Worth gating harder than the other two — this one builds a
-/// full scraper DOM *and* compiles a CSS selector per call, and on a real
-/// corpus fewer than 2% of entries carry a lazy attribute at all.
+/// [`LAZY_SRC_ATTRS`], so without any of them the pass cannot change a byte.
+/// Worth gating harder than the other two — this one builds a full scraper DOM
+/// *and* compiles a CSS selector per call, and on a real corpus fewer than 2% of
+/// entries carry a lazy attribute at all.
 ///
-/// Note this gate does *not* mention `<img`: html5ever rewrites a stray
-/// `<image>` start tag to `img`, so keying on the attribute rather than the
-/// tag sidesteps the question entirely.
+/// It deliberately does not mention `<img`: html5ever rewrites a stray `<image>`
+/// start tag to `img`, so keying on the attribute sidesteps the question.
 fn lazy_gate(html: &str) -> bool {
     LAZY_SRC_ATTRS
         .iter()
@@ -380,23 +373,21 @@ fn strip_tracking_params_from_url(href: &str) -> Option<String> {
 
 /// Strip tracking query parameters from an outbound entry/display URL, always
 /// returning an owned `String`. Unlike [`strip_tracking_params_from_url`],
-/// inputs with nothing to strip (or non-http(s) URLs) are returned unchanged
-/// rather than `None`. Used to clean the entry `link` shown in the UI and handed
-/// to the summarizer / bookmark services, mirroring the tracking-param removal
-/// already applied to links inside article content.
+/// inputs with nothing to strip (or non-http(s) URLs) come back unchanged rather
+/// than `None`. Cleans the entry `link` shown in the UI and handed to the
+/// summarizer and bookmark services.
 pub fn strip_tracking_params(url: &str) -> String {
     strip_tracking_params_from_url(url).unwrap_or_else(|| url.to_string())
 }
 
-/// Consolidated post-ammonia rewrite: a single streaming `lol_html` pass that
-/// folds the former four `parse_fragment`-based passes (remove tracking pixels,
-/// strip tracking params, rewrite image URLs to the signed proxy, add link
-/// privacy attributes) into one parse of the (already-sanitized) HTML.
+/// Consolidated post-ammonia rewrite: one streaming `lol_html` pass folding the
+/// former four `parse_fragment` passes — remove tracking pixels, strip tracking
+/// params, rewrite image URLs to the signed proxy, add link privacy attributes —
+/// into a single parse of the already-sanitized HTML.
 ///
-/// `lol_html` exposes attribute values verbatim (it neither decodes `&amp;` on
-/// read nor re-encodes `&` on write), so we normalize `&amp;` to `&` before
-/// parsing a URL — ammonia emits `&amp;` for query separators, and `Url::parse`
-/// needs the raw `&` to split query pairs correctly.
+/// `lol_html` exposes attribute values verbatim, so `&amp;` is normalized to `&`
+/// before parsing a URL: ammonia emits `&amp;` for query separators and
+/// `Url::parse` needs the raw `&` to split query pairs.
 fn rewrite_post_ammonia(
     html: &str,
     secret: &[u8],
@@ -433,12 +424,10 @@ fn rewrite_post_ammonia(
             };
             // Fail closed. This branch cannot produce a working image either
             // way: a path-relative src resolves against *our* origin and 404s,
-            // and a protocol-relative one (`//evil.tld/x.gif`) resolves to the
-            // author's host — fetched directly, outside the proxy, leaking the
-            // reader's IP and a read receipt. Dropping it costs nothing and
-            // makes "every image goes through the proxy" an invariant rather
-            // than something that merely usually holds. Callers should pass a
-            // base (see `EntryWithFeed::content_base_url`) so this stays rare.
+            // and a protocol-relative one resolves to the author's host —
+            // fetched outside the proxy, leaking the reader's IP and a read
+            // receipt. Dropping it makes "every image goes through the proxy" an
+            // invariant. Callers should pass a base so this stays rare.
             let Some(url) = absolute_url else {
                 el.remove();
                 return Ok(());
@@ -490,23 +479,20 @@ const SUMMARY_TAGS: &[&str] = &[
 
 /// Reduce a model-written summary to inline prose markup.
 ///
-/// The summary is written by Kagi from an article nobody here controls, so it
-/// is attacker-influenced in exactly the way feed content is — and it reaches
-/// the page through `|safe`. Our CSP already refuses what a `<style>` or an
-/// `on*=` handler in it would try to do, but until now CSP was the *only* thing
-/// between an injected tag and the reading pane. This makes it the second of
-/// two, on the same reasoning that gives feed content a sanitizer despite the
-/// same CSP covering it.
+/// The summary is written by Kagi from an article nobody here controls, so it is
+/// attacker-influenced exactly as feed content is — and it reaches the page
+/// through `|safe`. Our CSP already refuses what a `<style>` or an `on*=` in it
+/// would try, but until now CSP was the *only* thing between an injected tag and
+/// the reading pane.
 ///
-/// `a` is deliberately absent, unlike in [`sanitize_html`]. A summary is prose
+/// `a` is deliberately absent, unlike in [`sanitize_html`]: a summary is prose
 /// *about* an article, so a link inside it serves no reader — while a link
 /// inside a box the UI presents as trustworthy is a ready-made phishing
-/// primitive. Dropping the tag keeps the anchor's text, so only the
-/// linkification is lost.
+/// primitive. Dropping the tag keeps the anchor's text.
 ///
-/// Escaping is the quieter half of the win: a plain-text summary containing
-/// `5 < 10` renders as written afterwards, where today the bare `<` opens a
-/// bogus tag and swallows whatever follows it.
+/// Escaping is the quieter half of the win: a summary containing `5 < 10` now
+/// renders as written, where the bare `<` used to open a bogus tag and swallow
+/// what followed.
 pub fn sanitize_summary(summary: &str) -> String {
     Builder::default()
         .tags(SUMMARY_TAGS.iter().copied().collect())
@@ -519,11 +505,11 @@ pub fn sanitize_summary(summary: &str) -> String {
 /// `target`/`referrerpolicy`, and **every image routed through the signed image
 /// proxy**.
 ///
-/// `base_url` is part of that last guarantee, not a nicety. An image `src` that
+/// `base_url` is part of that last guarantee, not a nicety: an image `src` that
 /// cannot be resolved to an absolute `http(s)` URL is dropped rather than passed
-/// through, so a caller that omits the base silently loses relative images —
-/// pass [`crate::models::entry::EntryWithFeed::content_base_url`], which always
-/// yields one. `None` is for callers with genuinely no document to resolve
+/// through, so a caller that omits the base silently loses relative images. Pass
+/// [`crate::models::entry::EntryWithFeed::content_base_url`], which always
+/// yields one; `None` is for callers with genuinely no document to resolve
 /// against, and for tests.
 pub fn sanitize_html(
     content: &str,
@@ -1145,9 +1131,9 @@ mod tests {
     fn protocol_relative_image_never_escapes_the_proxy() {
         // `//evil.tld/x.gif` reads as relative to a check that only tests for an
         // `http(s)://` prefix, but is absolute to a browser. Left unrewritten it
-        // is fetched straight from the author's host — the reader's IP and a
-        // read receipt with it — which our CSP stops but a third-party GReader
-        // client's webview does not.
+        // is fetched straight from the author's host — the reader's IP and a read
+        // receipt with it — which our CSP stops but a third-party client's
+        // webview does not.
         let input = r#"<img src="//evil.tld/x.gif">"#;
 
         let no_base = sanitize_html(input, TEST_SECRET, None, None, None);
@@ -1281,11 +1267,9 @@ mod tests {
 
     #[test]
     fn test_sanitize_tracking_pixel_with_gt_in_src() {
-        // A tracking pixel whose src contains a literal `>` (e.g. an encoded
-        // query string) must still be removed cleanly. The previous substring-
-        // scanning pass keyed off the first `>` and could mis-bound such a tag;
-        // the lol_html pass parses the tag structurally, so the `>` inside the
-        // attribute value is handled correctly.
+        // A tracking pixel whose src contains a literal `>` must still be removed
+        // cleanly. The previous substring-scanning pass keyed off the first `>`
+        // and could mis-bound such a tag; the lol_html pass parses structurally.
         let input = r#"<p>keep</p><img src="https://pixel.tracker.com/p.gif?q=a>b" width="1" height="1"><p>tail</p>"#;
         let output = sanitize_html(input, TEST_SECRET, None, None, None);
         assert!(
@@ -1409,9 +1393,8 @@ mod tests {
     }
 
     /// Documents chosen to sit near the edges of the three gates: tag- and
-    /// attribute-name casing, an `<image>` start tag (which HTML tree
-    /// construction rewrites to `img`), hint attributes without an image,
-    /// images without hints, markup inside comments, and `data-original`
+    /// attribute-name casing, an `<image>` start tag, hint attributes without an
+    /// image, images without hints, markup inside comments, and `data-original`
     /// against its `data-original-width` near-namesake.
     const GATE_CORPUS: &[&str] = &[
         "",
@@ -1435,10 +1418,9 @@ mod tests {
     ];
 
     /// The gates are only sound if each is a *superset* of the pass it fronts:
-    /// whenever a gate says "skip", running the pass anyway must be a no-op.
-    /// This asserts exactly that, so a pass that grows a new trigger without
-    /// its gate growing to match fails here instead of silently ceasing to
-    /// fire — which is the failure mode a substring gate actually risks.
+    /// whenever a gate says "skip", running the pass anyway must be a no-op. So a
+    /// pass that grows a new trigger without its gate growing to match fails here
+    /// instead of silently ceasing to fire.
     #[test]
     fn gates_are_supersets_of_the_passes_they_front() {
         for doc in GATE_CORPUS {

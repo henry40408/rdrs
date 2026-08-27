@@ -1,57 +1,42 @@
-//! Stop a browser disk cache or a shared/intermediate proxy from retaining a
-//! session-bearing response — OWASP Session Management Cheat Sheet, *Web
-//! Content Caching*: "the previous user's inbox" must not be able to reappear
-//! via the back button or a cache hit on a shared machine.
+//! Stop a browser disk cache or a shared proxy from retaining a session-bearing
+//! response — OWASP's *Web Content Caching*: "the previous user's inbox" must not
+//! reappear via the back button or a cache hit on a shared machine.
 //!
 //! [`no_store_for_authenticated`] is response-oriented rather than a path
-//! allowlist: it only fills in `Cache-Control` when the response has none, so
-//! it never fights the three places in this codebase that set one on purpose
-//! (all of which must keep working unchanged) — `handlers/static_assets.rs`'s
-//! long-lived immutable/`no-cache` asset headers, `handlers/feed.rs`'s
-//! `public, max-age=86400`, and `handlers/proxy.rs`'s image cache headers,
-//! including its pass-through of whatever `Cache-Control` the upstream image
-//! server sent. It also does nothing to a request that carries no session
-//! cookie at all, so `/static`, `/health`, favicons and anonymous
-//! image-proxy fetches stay cacheable.
+//! allowlist: it only fills in `Cache-Control` when the response has none, so it
+//! never fights the three places that set one on purpose — the immutable static
+//! assets, the feed icon's `public, max-age=86400`, and the image proxy's
+//! headers including its upstream pass-through. It also does nothing to a
+//! request carrying no session cookie, so `/static`, `/health`, favicons and
+//! anonymous proxy fetches stay cacheable.
 //!
-//! **Header value:** `no-store` alone. `no-store` already subsumes
-//! `no-cache` and `max-age=0` (a cache honouring `no-store` never stores the
-//! response in the first place, so those two directives would add nothing);
-//! do not "complete the OWASP list" by appending them. `Pragma: no-cache` is
-//! also deliberately omitted — it is a fossil that only ever meant anything
-//! to an HTTP/1.0 cache, and rdrs is served over HTTP/1.1+ by axum/hyper.
+//! **Header value:** `no-store` alone. It already subsumes `no-cache` and
+//! `max-age=0`, so do not "complete the OWASP list" by appending them.
+//! `Pragma: no-cache` is a fossil that only ever meant anything to an HTTP/1.0
+//! cache.
 //!
-//! **`Vary: Cookie`** is set alongside `no-store`, appended to any existing
-//! `Vary` rather than overwriting it. Without it, a shared proxy that (against
-//! the `no-store` instruction, or upstream of a cache that respects it) keys
-//! a cached variant by URL alone could conflate the with-cookie and
-//! without-cookie responses for the same path.
+//! **`Vary: Cookie`** is appended to any existing `Vary` rather than overwriting
+//! it. Without it, a shared proxy keying a cached variant by URL alone could
+//! conflate the with-cookie and without-cookie responses for one path.
 //!
-//! Two consequences worth calling out, the second one especially:
+//! Two consequences worth calling out, the second especially:
 //!
 //! - [`anonymous_session`](super::csrf::anonymous_session) mints a DB-less
-//!   signed session cookie for every logged-out HTML page, so anonymous HTML
-//!   gets `no-store` too. That's fine — a login form shouldn't be cached
-//!   either — but it means this middleware is effectively always on for HTML.
-//! - **`no-store` makes `ETag` useless for authenticated responses.** A
-//!   browser keeps no copy of a `no-store` response, so it never has anything
-//!   to send `If-None-Match` against next time, and `ETagLayer`'s hashing work
-//!   becomes pure cost for those responses. This is a deliberate trade: rdrs
-//!   is SSR-first with small pages, and `services/page_cache.rs` /
-//!   `sidebar_cache.rs` already absorb the repeated *server-side* work, so the
-//!   only thing given up is a few KB of conditional-request savings on the
-//!   wire — far cheaper than a logged-in page leaking on a shared machine.
+//!   signed cookie for every logged-out HTML page, so anonymous HTML gets
+//!   `no-store` too — fine for a login form, but it means this is effectively
+//!   always on for HTML.
+//! - **`no-store` makes `ETag` useless for authenticated responses.** A browser
+//!   keeps no copy, so it never has anything to send `If-None-Match` against,
+//!   and `ETagLayer`'s hashing becomes pure cost. A deliberate trade: rdrs is
+//!   SSR-first with small pages and the server-side caches already absorb the
+//!   repeated work, so the only loss is a few KB of conditional-request savings.
 //!   Do not read the resulting dead `ETag` header as a bug to clean up.
 //!
-//! This middleware is layered *inside* `ETagLayer` deliberately, so it
-//! observes the handler's own `Cache-Control` (if any) before `ETag`
-//! processing runs. One consequence: it never sees a response returned by
-//! one of the outer layers that short-circuits without calling `next` — the
-//! `forward_auth` redirects or the CSRF-guard 403s — nor `/events`, which
-//! sits outside this stack entirely. That's acceptable here: those are
-//! 302/403 responses, and neither is heuristically cacheable without
-//! explicit freshness information, so there is nothing for this middleware
-//! to correct.
+//! Layered *inside* `ETagLayer`, so it observes the handler's own
+//! `Cache-Control` before `ETag` processing runs. It therefore never sees a
+//! response returned by an outer layer that short-circuits without calling
+//! `next`, nor `/events` — acceptable, since those are 302/403 responses and
+//! neither is heuristically cacheable without explicit freshness information.
 
 use axum::{
     extract::Request,
@@ -64,27 +49,23 @@ use axum_extra::extract::CookieJar;
 use crate::middleware::{SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST};
 
 /// Fill in `Cache-Control: no-store` (+ `Vary: Cookie`) on a response to a
-/// request carrying a session cookie, unless the handler already set its own
-/// `Cache-Control` — see the module docs for the full rationale.
+/// request carrying a session cookie, unless the handler already set its own —
+/// see the module docs for the full rationale.
 ///
-/// Cookie detection is a **name-presence check only**: it does not verify the
-/// HMAC signature or touch the database. This middleware runs on every
-/// request, so its cost must be near zero; the cost of a false positive here
-/// is merely one extra `no-store` on a response that turns out to belong to
-/// an expired or tampered cookie, which is harmless.
+/// Cookie detection is a **name-presence check only**: no signature check, no
+/// database. This runs on every request, so its cost must be near zero, and a
+/// false positive is merely one extra `no-store` on a response belonging to an
+/// expired or tampered cookie.
 pub async fn no_store_for_authenticated(req: Request, next: Next) -> Response {
     let session_cookie_present = has_session_cookie(req.headers());
     let response = next.run(req).await;
     apply(session_cookie_present, response)
 }
 
-/// Whether `headers` carries a `Cookie` entry under either session cookie
-/// name — the unprefixed [`SESSION_COOKIE_NAME`] or the `__Host-`-prefixed
-/// [`SESSION_COOKIE_NAME_HOST`] introduced alongside `Secure` deployments.
-/// Both must be checked: which name is in play depends on the deployment's
-/// `cookie_secure` setting, and this middleware has no access to that
-/// decision (nor does it need it — presence under either name is enough to
-/// mark the response `no-store`).
+/// Whether `headers` carries a `Cookie` entry under either session cookie name.
+/// Both must be checked: which one is in play depends on the deployment's
+/// `cookie_secure` setting, which this middleware has no access to — nor needs,
+/// since presence under either name is enough to mark the response `no-store`.
 fn has_session_cookie(headers: &HeaderMap) -> bool {
     let jar = CookieJar::from_headers(headers);
     jar.get(SESSION_COOKIE_NAME).is_some() || jar.get(SESSION_COOKIE_NAME_HOST).is_some()
@@ -112,23 +93,18 @@ fn apply(session_cookie_present: bool, mut response: Response) -> Response {
     response
 }
 
-/// `Cookie` merged into whatever `Vary` the response already carries, or
-/// `None` when the response should be left exactly as it is.
+/// `Cookie` merged into whatever `Vary` the response already carries, or `None`
+/// when the response should be left exactly as it is.
 ///
-/// Three things this must not do, each of which the obvious one-line
-/// `format!("{existing}, Cookie")` gets wrong:
+/// Three things the obvious `format!("{existing}, Cookie")` gets wrong:
 ///
-/// * **Drop sibling headers.** A response may carry several `Vary` lines;
-///   HTTP treats them as one comma-separated list. Reading only the first
-///   (`HeaderMap::get`) and then `insert`ing the result replaces *all* of
-///   them, silently losing every line but the first. Hence `get_all` at the
-///   call site and the join here.
-/// * **Repeat itself.** A handler that already set `Vary: Cookie` would
-///   otherwise get `Vary: Cookie, Cookie`. Harmless to a cache, which reads
-///   `Vary` as a set, but it is noise in every response we touch.
-/// * **Narrow `*`.** `Vary: *` already means "never serve this from a shared
-///   cache without revalidating"; rewriting it to `*, Cookie` says nothing
-///   new, so it is left alone.
+/// * **Dropping sibling headers.** A response may carry several `Vary` lines,
+///   which HTTP treats as one list. Reading only the first and then `insert`ing
+///   replaces *all* of them.
+/// * **Repeating itself.** A handler that already set `Vary: Cookie` would get
+///   `Vary: Cookie, Cookie` — harmless to a cache, but noise.
+/// * **Narrowing `*`.** `Vary: *` already means "never serve this from a shared
+///   cache without revalidating", so it is left alone.
 fn merged_vary(existing: &[HeaderValue]) -> Option<HeaderValue> {
     if existing.is_empty() {
         return Some(HeaderValue::from_static("Cookie"));

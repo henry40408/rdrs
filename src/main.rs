@@ -101,7 +101,6 @@ async fn main() {
 
     let webauthn = auth::create_webauthn(&config).expect("Failed to create WebAuthn");
 
-    // Create cancellation token for graceful shutdown
     let cancel_token = CancellationToken::new();
 
     // Event bus for SSE live updates (sidebar + summary). Capacity covers a
@@ -109,20 +108,16 @@ async fn main() {
     // recovers via a sidebar resync signal.
     let events = services::EventBus::new(256);
 
-    // Create summary cache (max 1000 entries, 24 hour TTL)
     let summary_cache = services::create_summary_cache(1000, 24);
 
-    // Create summary worker channel (buffer size 100)
     let (summary_tx, summary_rx) = services::create_summary_channel(100);
 
-    // Create sidebar cache
     let sidebar_cache = Arc::new(services::SidebarCache::default());
 
     // Per-entry cancellation tokens for summary jobs (cancel/abort support)
     let summary_cancels: rdrs::services::CancelRegistry =
         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
-    // Start summary worker
     let summary_worker_handle = services::start_summary_worker(
         summary_rx,
         summary_cache.clone(),
@@ -178,7 +173,6 @@ async fn main() {
         )),
     };
 
-    // Start background sync task
     let background_handle = services::start_background_sync(
         db.clone(),
         config.user_agent.clone(),
@@ -219,7 +213,6 @@ async fn main() {
     // Cancel background tasks (idempotent — already cancelled above).
     cancel_token.cancel();
 
-    // Wait for background tasks to complete (with timeout)
     tracing::info!(
         event = "shutdown.waiting",
         timeout_s = 30,

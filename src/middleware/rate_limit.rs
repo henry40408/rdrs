@@ -1,49 +1,35 @@
 //! Rate limiting for credential-accepting endpoints, in two dimensions.
 //!
-//! OWASP's Authentication Cheat Sheet (anti-automation controls) and ASVS
-//! V2.2.1 both call for throttling repeated authentication attempts from a
-//! single source. The limiter here is deliberately simple — in-memory fixed
-//! windows keyed by ([`Bucket`], subject) — because its only job is to make
-//! credential stuffing and password spraying expensive *before* the request
-//! reaches a database query or an Argon2 `verify_password` call. Argon2 is
-//! tuned to be slow on purpose; a limiter that runs after hashing would still
-//! let an attacker choose how much CPU the server spends per guess.
+//! OWASP's Authentication Cheat Sheet and ASVS V2.2.1 both call for throttling
+//! repeated authentication attempts. The limiter is deliberately simple —
+//! in-memory fixed windows keyed by ([`Bucket`], subject) — because its only job
+//! is to make credential stuffing expensive *before* the request reaches a
+//! database query or an Argon2 `verify_password`. Argon2 is slow on purpose, and
+//! a limiter running after hashing would let an attacker choose how much CPU the
+//! server spends per guess.
 //!
 //! # Why two dimensions
 //!
-//! Throttling by client IP alone stops one host from grinding through a
-//! dictionary, and nothing else: an attacker spraying a single account from a
-//! thousand addresses gets the full per-IP budget from each of them. The same
-//! cheat sheet is explicit about it — "the counter of failed logins should be
-//! associated with the account itself, rather than the source IP address, in
-//! order to prevent an attacker from making login attempts from a large
-//! number of different IP addresses". So the password paths charge *both* a
-//! per-IP budget and a per-account one ([`RateLimiter::try_acquire`] and
-//! [`RateLimiter::try_acquire_account`]).
+//! Throttling by client IP alone stops one host grinding through a dictionary
+//! and nothing else: a spray from a thousand addresses gets the full per-IP
+//! budget from each. So the password paths charge both a per-IP and a
+//! per-account budget.
 //!
 //! The account budget is deliberately the wider of the two
-//! ([`ACCOUNT_ATTEMPT_MULTIPLIER`]×) because it is the one an attacker can
-//! aim at someone else. A tight per-account limit is a denial-of-service
-//! primitive: anyone who knows a username could keep its owner logged out for
-//! free. Making it wide enough that no human ever reaches it, while still far
-//! below what a distributed spray needs, keeps the control useful without
-//! handing out that lever. Both windows are the same length, so a legitimate
-//! user caught behind an attack recovers as soon as it stops rather than
-//! serving a longer sentence than the attacker.
+//! ([`ACCOUNT_ATTEMPT_MULTIPLIER`]×) because it is the one an attacker can aim
+//! at someone else: a tight per-account limit is a denial-of-service primitive,
+//! letting anyone who knows a username keep its owner logged out. Both windows
+//! are the same length, so a legitimate user caught behind an attack recovers as
+//! soon as it stops.
 //!
 //! # Why not `check()` + `record()`
 //!
-//! An earlier design split the decision into two calls: `check(ip) -> bool`
-//! to ask "is this IP still under budget?", then, once the handler decided to
-//! proceed, `record(ip)` to count the attempt. That shape has a race: two
-//! concurrent requests from the same IP can both call `check` before either
-//! calls `record`, both observe the pre-attack count, and both proceed — the
-//! limit is enforced in wall-clock time but not against concurrency. Under a
-//! real credential-stuffing tool, which fires requests in parallel precisely
-//! to exploit this kind of gap, the limiter would do nothing.
-//! [`RateLimiter::try_acquire`] holds the lock for the entire
-//! check-and-increment, so concurrent callers are serialized against the same
-//! counter and cannot all observe the same pre-attempt state.
+//! Splitting the decision in two races: concurrent requests from one IP can both
+//! `check` before either `record`s, both observe the pre-attack count and both
+//! proceed — enforced in wall-clock time but not against concurrency, which is
+//! exactly what a parallel stuffing tool exploits.
+//! [`RateLimiter::try_acquire`] holds the lock across the whole
+//! check-and-increment instead.
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 use std::net::IpAddr;
@@ -57,27 +43,23 @@ pub const LOGIN_WINDOW_SECS: u64 = 60;
 
 /// How much wider the per-account budget is than the per-IP one.
 ///
-/// The per-account window exists to cap a spray that arrives from many
-/// addresses at once, not to police one person's typing. Four times the per-IP
-/// budget (20 attempts a minute by default) is far beyond anything a user
-/// reaches by hand — a mistyped password is refunded on the next success
-/// anyway — while still cutting a distributed attack from "unbounded" to a
-/// fixed rate per account. See the module docs on why this must not be tight.
+/// The per-account window exists to cap a spray arriving from many addresses at
+/// once, not to police one person's typing. Four times the per-IP budget is far
+/// beyond anything a user reaches by hand — a mistyped password is refunded on
+/// the next success anyway — while still cutting a distributed attack to a fixed
+/// rate per account. See the module docs on why this must not be tight.
 pub const ACCOUNT_ATTEMPT_MULTIPLIER: u32 = 4;
 
-/// Number of counter slots. Fixed at construction, so the limiter's memory is
-/// constant regardless of how wide an attack fans out — there is no capacity
-/// edge case left to bypass (a previous capped-`HashMap` design admitted an
-/// unrecorded, and therefore unthrottled, request whenever a new IP arrived
-/// at capacity).
+/// Number of counter slots. Fixed at construction, so memory is constant however
+/// wide an attack fans out and there is no capacity edge left to bypass: a
+/// previous capped-`HashMap` design admitted an unrecorded, and therefore
+/// unthrottled, request whenever a new IP arrived at capacity.
 const SLOTS: usize = 16_384;
 
-/// Which budget an attempt is charged against.
-///
-/// Separate buckets stop abuse of one endpoint from locking users out of
-/// another — in particular a registration refused by configuration must never
-/// consume the password-login budget, which would turn a misconfigured signup
-/// page into a denial of authentication.
+/// Which budget an attempt is charged against. Separate buckets stop abuse of
+/// one endpoint from locking users out of another — in particular a registration
+/// refused by configuration must never consume the password-login budget, which
+/// would turn a misconfigured signup page into a denial of authentication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Bucket {
     /// Password and passkey *completion* — anything that verifies a credential.
@@ -91,18 +73,17 @@ pub enum Bucket {
     /// gets its own budget rather than spending the login one.
     PasskeyProbe,
     /// "Change password", which verifies the *current* password. The caller
-    /// already holds a session for the account, so this is not a way in from
-    /// outside — but an unthrottled Argon2 verify still lets a hijacked
-    /// session brute-force the original password (valuable for credential
-    /// reuse elsewhere) and lets any logged-in user spend server CPU at will.
+    /// already holds a session, so this is no way in from outside — but an
+    /// unthrottled Argon2 verify lets a hijacked session brute-force the
+    /// original password and lets any logged-in user spend server CPU at will.
     PasswordChange,
 }
 
 /// The outcome of [`RateLimiter::try_acquire`].
 ///
-/// Deliberately not a `bool`: the caller needs the remaining window length to
-/// put in a `Retry-After` header, and computing that in a second call would
-/// both take the lock twice and race with a window that resets in between.
+/// Deliberately not a `bool`: the caller needs the remaining window length for
+/// `Retry-After`, and computing it in a second call would take the lock twice
+/// and race with a window that resets in between.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
     /// The attempt was reserved and may proceed.
@@ -128,29 +109,24 @@ impl Decision {
 
 /// One fixed-window counter array, addressed by an arbitrary hashable key.
 ///
-/// Each slot records `(attempts_in_window, window_started_at)`. A window
-/// resets lazily — on the next attempt after it has elapsed — rather than via
-/// a background sweep, so the limiter needs no timer task of its own.
+/// Each slot records `(attempts_in_window, window_started_at)`. A window resets
+/// lazily on the next attempt after it elapses, so the limiter needs no timer.
 ///
 /// # Collisions
 ///
-/// The slot array is addressed by a process-random keyed hash, not by an
-/// exact-match table, so two distinct keys may land on the same slot. The
-/// effect is bounded and asymmetric: colliding keys can only *over*-throttle
-/// each other (they share one counter), and because [`RandomState`] is seeded
-/// per process an attacker cannot predict or deliberately provoke a collision
-/// with a chosen victim. A [`Window::release`] from one colliding key
-/// decrements the other's count too — a mild, bounded under-throttle, not a
-/// bypass.
+/// The slot array is addressed by a process-random keyed hash, so two distinct
+/// keys may share a slot. The effect is bounded and asymmetric: colliding keys
+/// can only *over*-throttle each other, and because [`RandomState`] is seeded
+/// per process an attacker cannot provoke a collision with a chosen victim. A
+/// [`Window::release`] from one colliding key decrements the other's count too —
+/// a mild under-throttle, not a bypass.
 ///
 /// # Fixed, not sliding, window
 ///
-/// The window resets lazily on the first attempt after it elapses, so a
-/// client can spend its full budget at the end of one window and again at the
-/// start of the next: up to `2 × max_attempts` in a short span across the
-/// boundary. That is acceptable for an anti-automation control whose job is
-/// to make bulk guessing expensive, and it keeps the limiter allocation-free
-/// after construction.
+/// A client can spend its full budget at the end of one window and again at the
+/// start of the next: up to `2 × max_attempts` across the boundary. Acceptable
+/// for an anti-automation control whose job is to make bulk guessing expensive,
+/// and it keeps the limiter allocation-free after construction.
 #[derive(Debug)]
 struct Window {
     slots: Mutex<Box<[(u32, Instant)]>>,
@@ -175,11 +151,10 @@ impl Window {
 
     /// Lock the slot array, tolerating poison.
     ///
-    /// A panic while holding the lock must not take the login path down with
-    /// it: the counters are advisory (losing one is a minor availability
-    /// blip, not a security hole), so recovering the inner slice is strictly
-    /// better than poisoning every subsequent attempt and locking every
-    /// client out of authentication because of an unrelated bug.
+    /// A panic while holding the lock must not take the login path down with it:
+    /// the counters are advisory, so recovering the inner slice beats poisoning
+    /// every subsequent attempt and locking every client out of authentication
+    /// because of an unrelated bug.
     fn guard(&self) -> MutexGuard<'_, Box<[(u32, Instant)]>> {
         self.slots.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -240,14 +215,13 @@ impl Window {
     }
 }
 
-/// A fixed-window rate limiter over two independent subject spaces: the
-/// client IP a request arrived from, and the account name it names.
+/// A fixed-window rate limiter over two independent subject spaces: the client
+/// IP a request arrived from, and the account name it names.
 ///
-/// The two get their own slot arrays rather than sharing one keyed by an
-/// either-or enum, so an address can never collide with an account and
-/// throttle it by accident — the spaces are populated by different parties
-/// (one by the network, one by whoever is typing) and keeping them apart
-/// means a busy proxy address cannot degrade anyone's ability to log in.
+/// Each gets its own slot array rather than sharing one keyed by an either-or
+/// enum, so an address can never collide with an account and throttle it by
+/// accident. The spaces are populated by different parties, and keeping them
+/// apart means a busy proxy address cannot degrade anyone's ability to log in.
 #[derive(Debug)]
 pub struct RateLimiter {
     per_ip: Window,
@@ -256,12 +230,10 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     /// Build a limiter allowing `max_attempts` per `window_secs`-second fixed
-    /// window per `(bucket, ip)`, and [`ACCOUNT_ATTEMPT_MULTIPLIER`] times
-    /// that per `(bucket, account)` over the same window.
-    /// `max_attempts == 0` disables both dimensions entirely (see
-    /// [`RateLimiter::try_acquire`]) — the documented escape hatch for
-    /// internal deployments (e.g. behind an already-authenticating reverse
-    /// proxy) where this protection would only get in the way.
+    /// window per `(bucket, ip)`, and [`ACCOUNT_ATTEMPT_MULTIPLIER`] times that
+    /// per `(bucket, account)` over the same window. `max_attempts == 0` disables
+    /// both dimensions — the documented escape hatch for deployments behind an
+    /// already-authenticating reverse proxy.
     pub fn new(max_attempts: u32, window_secs: u64) -> Self {
         Self {
             per_ip: Window::new(max_attempts, window_secs),
@@ -275,44 +247,39 @@ impl RateLimiter {
         }
     }
 
-    /// Reserve an attempt for `(bucket, ip)`, returning whether it may
-    /// proceed.
+    /// Reserve an attempt for `(bucket, ip)`, returning whether it may proceed.
     ///
-    /// Call this *before* any database query or password verification for
-    /// the request; that ordering is the entire point of the limiter. On
-    /// [`Decision::Allowed`], the caller has spent one of `(bucket, ip)`'s
-    /// attempts for this window — if the credential check goes on to succeed,
-    /// call [`RateLimiter::release`] to hand it back.
+    /// Call this *before* any database query or password verification; that
+    /// ordering is the entire point of the limiter. On [`Decision::Allowed`] the
+    /// caller has spent one of this window's attempts — if the credential check
+    /// goes on to succeed, call [`RateLimiter::release`] to hand it back.
     pub fn try_acquire(&self, bucket: Bucket, ip: IpAddr) -> Decision {
         self.per_ip.try_acquire((bucket, ip))
     }
 
-    /// Hand back the attempt reserved by [`RateLimiter::try_acquire`], after
-    /// a *successful* credential check for `(bucket, ip)`.
+    /// Hand back the attempt reserved by [`RateLimiter::try_acquire`], after a
+    /// *successful* credential check for `(bucket, ip)`.
     ///
-    /// A legitimate user who signs in repeatedly — a new device, a cleared
-    /// cookie jar, an integration test exercising login in a loop — must
-    /// never be locked out by their own successful attempts. An attacker,
-    /// whose every attempt fails by definition, never calls this and so gets
-    /// no refund. If the slot's window has already expired or was never
-    /// incremented (e.g. the limiter is disabled), this is a harmless no-op:
-    /// `saturating_sub` floors the count at zero rather than wrapping.
+    /// A legitimate user who signs in repeatedly — a new device, a cleared cookie
+    /// jar, a test looping over login — must never be locked out by their own
+    /// successes. An attacker, whose every attempt fails by definition, never
+    /// calls this. An expired or never-incremented slot is a harmless no-op:
+    /// `saturating_sub` floors at zero rather than wrapping.
     pub fn release(&self, bucket: Bucket, ip: IpAddr) {
         self.per_ip.release((bucket, ip));
     }
 
-    /// Reserve an attempt against the *account* named by the request,
-    /// independent of where it came from.
+    /// Reserve an attempt against the *account* named by the request, independent
+    /// of where it came from.
     ///
     /// This is the dimension that survives a distributed attack: an attacker
-    /// rotating through addresses gets a fresh per-IP budget each time but
-    /// keeps drawing on the same account budget. Charge it alongside
-    /// [`RateLimiter::try_acquire`], before any lookup or verification, and
-    /// pass the username exactly as it will be looked up (the key is
-    /// case-sensitive, matching `user::find_by_username`).
+    /// rotating addresses gets a fresh per-IP budget each time but keeps drawing
+    /// on the same account budget. Charge it alongside
+    /// [`RateLimiter::try_acquire`], before any lookup, and pass the username
+    /// exactly as it will be looked up — the key is case-sensitive.
     ///
-    /// The account name is only ever hashed into a slot index — it is not
-    /// retained — so this adds no store of who has been trying to log in.
+    /// The account name is only hashed into a slot index, never retained, so this
+    /// adds no store of who has been trying to log in.
     pub fn try_acquire_account(&self, bucket: Bucket, username: &str) -> Decision {
         self.per_account.try_acquire((bucket, username))
     }
@@ -362,11 +329,10 @@ mod tests {
 
     #[test]
     fn window_expiry_resets_the_counter() {
-        // A zero-second window is elapsed the instant it is recorded, so even
-        // a limit of 1 never actually throttles anything. `Config` rejects a
-        // zero `RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS` at startup (see
-        // `parse_login_rate_limit_window_secs`), so this shape is only
-        // reachable here, exercising the limiter directly.
+        // A zero-second window is elapsed the instant it is recorded, so even a
+        // limit of 1 never throttles. `Config` rejects a zero
+        // `RDRS_LOGIN_RATE_LIMIT_WINDOW_SECS` at startup, so this shape is only
+        // reachable by driving the limiter directly.
         let limiter = RateLimiter::new(1, 0);
         let ip = ipv4(2);
         assert!(allowed(limiter.try_acquire(Bucket::Login, ip)));
@@ -411,13 +377,11 @@ mod tests {
 
     #[test]
     fn spray_does_not_unthrottle_anyone() {
-        // Regression for the old capped-HashMap design: at capacity, a brand
-        // new IP was admitted *without being recorded*, leaving it
-        // unthrottled forever rather than just for one request. The
-        // fixed-size slot array has no such capacity edge, but this proves it
-        // end to end: a throttled victim stays throttled through a wide
-        // spray, and a fresh IP arriving after the spray still gets throttled
-        // once it exhausts its own budget.
+        // Regression for the old capped-HashMap design: at capacity a brand new
+        // IP was admitted *without being recorded*, leaving it unthrottled
+        // forever. The fixed-size slot array has no such edge, but this proves it
+        // end to end — a throttled victim stays throttled through a wide spray,
+        // and a fresh IP arriving after it still gets throttled.
         let limiter = RateLimiter::new(2, 60);
 
         let victim = ipv4(200);
@@ -442,14 +406,11 @@ mod tests {
             "victim must remain throttled after an unrelated spray"
         );
 
-        // A fresh IP that never appeared in the spray must still be
-        // throttled — the defect-2 failure mode was this address getting
-        // unlimited attempts forever. It may share a slot with a sprayed
-        // address (a 50,000-key spray into 16,384 slots guarantees
-        // collisions — see the collision note on the struct docs), so it can
-        // be throttled sooner than its own two-attempt budget; the only
-        // thing this asserts is that it is throttled at all within a few
-        // attempts, never indefinitely admitted.
+        // A fresh IP that never appeared in the spray must still be throttled;
+        // the old failure mode was this address getting unlimited attempts
+        // forever. It may share a slot with a sprayed address (50,000 keys into
+        // 16,384 slots guarantees collisions), so it can be throttled sooner than
+        // its own budget — all this asserts is that it is throttled at all.
         let fresh = ipv4(201);
         let throttled = (0..5).any(|_| !allowed(limiter.try_acquire(Bucket::Login, fresh)));
         assert!(

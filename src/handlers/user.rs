@@ -153,11 +153,10 @@ pub struct SidebarResponse {
     pub sidebar_hide_read: bool,
 }
 
-/// Raw chrome data needed for every authenticated page render: theme,
-/// sidebar categories with unread counts, and (when masquerading) the
-/// admin flag of the original session user. Bundled in one struct so all
-/// of it can be fetched in a single `read_user` closure (one channel
-/// round-trip, one actor turn) instead of 2-3 sequential awaits.
+/// Raw chrome data needed for every authenticated page render: theme, sidebar
+/// categories with unread counts, and (when masquerading) the admin flag of the
+/// original session user. Bundled so all of it can be fetched in a single
+/// `read_user` closure instead of 2-3 sequential awaits.
 #[derive(Default, Clone)]
 pub struct ChromeData {
     pub theme: Option<String>,
@@ -170,15 +169,13 @@ pub struct ChromeData {
     pub original_user_is_admin: Option<bool>,
 }
 
-/// Fetch all per-page chrome data for `user_id`. Backed by an in-memory
-/// per-user cache (`state.sidebar_cache`): cache hits return without a
-/// single DB call on the hot path. Cache misses fetch theme +
-/// categories + unread counts in one `read_user` closure, populate the
-/// cache, and return.
+/// Fetch all per-page chrome data for `user_id`, backed by an in-memory per-user
+/// cache: hits return without a single DB call, misses fetch theme, categories
+/// and unread counts in one `read_user` closure.
 ///
-/// `original_user_id` (only `Some` when the session is masquerading) is
-/// never cached — it depends on the *session*, not on `user_id` — so a
-/// masquerading request adds one extra `read_user` lookup.
+/// `original_user_id` — only `Some` while masquerading — is never cached, since
+/// it depends on the *session* rather than on `user_id`, so a masquerading
+/// request adds one extra lookup.
 pub async fn read_chrome_data(
     state: &AppState,
     user_id: i64,
@@ -252,13 +249,10 @@ pub async fn read_chrome_data(
     };
 
     // Skip caching the "no content yet" state — an account with no feeds and no
-    // unread (e.g. a brand-new account whose only category is the auto-seeded
-    // empty "Uncategorized"). Such accounts pay a trivial extra query per page
-    // load until they add their first feed; the cache populates normally after
-    // that. The benefit: the empty state is the most likely-to-go-stale entry —
-    // anything added via a path that bypasses our handler bust hooks (e.g. E2E
-    // tests that seed straight into SQLite) would otherwise be hidden behind a
-    // stale cache for up to the 60 s TTL.
+    // unread. Such accounts pay a trivial extra query per page load until they
+    // add their first feed. The benefit: the empty state is the most
+    // likely-to-go-stale entry, and anything added via a path that bypasses the
+    // bust hooks would otherwise be hidden behind it for up to the 60 s TTL.
     if has_feeds || fresh.total_unread > 0 {
         state
             .sidebar_cache
@@ -349,15 +343,14 @@ pub struct SidebarFeedsResponse {
     pub feeds: Vec<SidebarFeedDto>,
 }
 
-/// `GET /api/sidebar/categories/{id}/feeds` — the feeds the sidebar shows
-/// under the category the reader is currently in.
+/// `GET /api/sidebar/categories/{id}/feeds` — the feeds the sidebar shows under
+/// the category the reader is currently in.
 ///
 /// Deliberately *not* folded into `/api/sidebar`: that payload is embedded in
-/// every logged-in document (which is `no-store`), so carrying every feed of a
+/// every logged-in document, which is `no-store`, so carrying every feed of a
 /// several-hundred-feed account would be paid on every page load to render one
-/// category's worth. Only the open category's feeds are ever displayed, so only
-/// those are fetched — the client caches per category and revalidates on the
-/// same `rdrs:sidebar-stale` signal the badges use.
+/// category's worth. The client caches per category and revalidates on the same
+/// `rdrs:sidebar-stale` signal the badges use.
 ///
 /// Ownership is enforced twice over: the category lookup is scoped to the
 /// caller, and the count query keeps `user_id` in its WHERE clause.
@@ -456,11 +449,8 @@ pub async fn update_theme(
 }
 
 // ============================================================================
-// Form-action handlers for the SSR /user-settings page (PR-4 Task 1).
-// Each accepts application/x-www-form-urlencoded bodies and returns a
-// FlashRedirect response (303 See Other + flash cookie + Location).
-// The existing JSON PUT endpoints continue to work alongside these until
-// PR-4 Task 3 deletes them.
+// Form-action handlers for the SSR /user-settings page. Each accepts a
+// urlencoded body and returns a FlashRedirect (303 + flash cookie + Location).
 // ============================================================================
 
 #[derive(Debug, Deserialize)]
@@ -481,16 +471,14 @@ pub async fn change_password_form(
         return FlashRedirect::error("/user-settings", "New passwords do not match.");
     }
 
-    // Reserved here rather than at the top of the handler: the check above is
-    // a pure string comparison, and a user fumbling "new passwords do not
-    // match" should not spend a credential-attempt budget. What needs guarding
-    // is everything below — the Argon2 `verify_password`, and the strength
-    // estimate, which costs ~79ms on a 128-character worst case (measured in
-    // release). The caller already holds a session for this account, so this
-    // is not a way in from outside, but leaving either unthrottled would let a
-    // hijacked session brute-force the *original* password (useful for
-    // credential reuse elsewhere) and let any logged-in user spend server CPU
-    // at will.
+    // Reserved here rather than at the top of the handler: the check above is a
+    // pure string comparison, and a user fumbling "new passwords do not match"
+    // should not spend a credential-attempt budget. What needs guarding is
+    // everything below — the Argon2 verify, and the strength estimate, which
+    // costs ~79ms on a 128-character worst case (measured in release). The caller
+    // already holds a session, so this is no way in from outside, but leaving
+    // either unthrottled would let a hijacked session brute-force the *original*
+    // password and let any logged-in user spend server CPU at will.
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let ip = state.config.client_ip(peer, &headers);
     if let Some(retry_after_secs) = state
@@ -513,12 +501,11 @@ pub async fn change_password_form(
     }
 
     // Shown as-is rather than reworded into "New <lowercased message>": the
-    // policy answers with zxcvbn's own feedback ("Repeats like 'aaa' are easy
-    // to guess. Add another word or two"), and lowercasing a sentence that
-    // names a pattern mangles it. Only the full stop is normalised. A
-    // rejection here keeps its reservation — the estimate is the work being
-    // paid for, and refunding it would restore the free-CPU path the limiter
-    // was moved above this check to close.
+    // policy answers with zxcvbn's own feedback, and lowercasing a sentence that
+    // names a pattern mangles it. Only the full stop is normalised. A rejection
+    // keeps its reservation — the estimate is the work being paid for, and
+    // refunding it would restore the free-CPU path the limiter was moved above
+    // this check to close.
     if let Err(AppError::Validation(msg)) =
         validate_password_strength(&req.new_password, &[&auth_user.user.username])
     {
@@ -566,12 +553,10 @@ pub async fn change_password_form(
     }
 }
 
-/// "Sign out other sessions" deliberately does **not** touch API tokens: this
-/// button means "browser sessions on my other devices/tabs", and a user
-/// clicking it would not expect their phone's RSS app to silently stop
-/// syncing as a side effect. Revoking `GReader` tokens is a separate, explicit
-/// action (`revoke_all_api_tokens_form` below) — do not "fix" this by folding
-/// the two together.
+/// "Sign out other sessions" deliberately does **not** touch API tokens: the
+/// button means "browser sessions on my other devices", and a user clicking it
+/// would not expect their phone's RSS app to stop syncing as a side effect.
+/// Revoking `GReader` tokens is a separate, explicit action below.
 pub async fn revoke_other_sessions_form(
     State(state): State<AppState>,
     auth_user: AuthUser,
@@ -613,11 +598,10 @@ pub async fn revoke_other_sessions_form(
 /// is guessed.
 ///
 /// The caller's own session is not reachable here: the settings page renders no
-/// Revoke control for it. That is a UI affordance, not a guarantee, so the
-/// check is repeated server-side — a hand-crafted POST that names the current
+/// Revoke control for it. That is a UI affordance rather than a guarantee, so
+/// the check is repeated server-side — a hand-crafted POST naming the current
 /// session would otherwise sign the user out through a path that reports
 /// "Session revoked." and redirects to a page they can no longer load.
-/// "Sign out" is the deliberate way to do that.
 pub async fn revoke_session_form(
     State(state): State<AppState>,
     auth_user: AuthUser,

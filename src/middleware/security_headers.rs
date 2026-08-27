@@ -3,81 +3,63 @@
 //! [`set_security_headers`] carries the fixed set — CSP, `X-Content-Type-Options`,
 //! `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options`,
 //! `Cross-Origin-Opener-Policy` — and is always installed. [`set_hsts`] carries
-//! `Strict-Transport-Security` alone, because that one is conditional on the
+//! `Strict-Transport-Security` alone, since that one is conditional on the
 //! deployment being HTTPS.
 //!
-//! Both share the same two rules, for the same reasons:
+//! Both share the same two rules:
 //!
 //! - **No skip list, and there must not be one.** These are declarations about
-//!   the *host* and its resources, not about any one response, so they go on
-//!   every response — `/static`, `/health`, favicons, the image proxy included.
-//!   `nosniff` on a proxied image is exactly where it earns its keep, and a
-//!   browser that never saw HSTS on `/health` would have no reason to upgrade a
-//!   plain-HTTP request to it.
-//! - **Applied outermost** in [`crate::create_router`], around the whole router
-//!   and over both `core` and `/events`, rather than alongside the other
-//!   response layers. `forward_auth` and the CSRF guards return a response
-//!   without calling `next` on several paths (a redirect, a rejection); nested
-//!   any further in, these would silently miss those responses.
+//!   the *host*, not about any one response, so they go on every response —
+//!   `/static`, `/health`, favicons and the image proxy included. `nosniff` on a
+//!   proxied image is exactly where it earns its keep.
+//! - **Applied outermost** in [`crate::create_router`], because `forward_auth`
+//!   and the CSRF guards return a response without calling `next` on several
+//!   paths; nested any further in, these would miss those responses.
 //!
-//! If a response **already carries** one of these headers — most likely because
-//! a reverse proxy added it — that value is left alone rather than overwritten.
+//! A header a response already carries — most likely from a reverse proxy — is
+//! left alone rather than overwritten.
 //!
 //! ## The Content-Security-Policy
 //!
 //! `script-src 'self'` with no `'unsafe-inline'` is the point of the whole
 //! policy, and it is only enforceable because no template ships an inline
-//! `<script>` or an `on*=` handler attribute any more: the three inline blocks
-//! became `static/js/{login,register,search}.js`, and every `onsubmit` /
-//! `onclick` / `onchange` / `onerror` became a `data-` attribute driven by a
-//! delegated listener in `static/js/behaviors.js` (banner dismiss in
-//! `components/rdrs-flash.js`). Reintroducing either would not fail a build —
-//! it would silently stop working in the browser, so don't.
+//! `<script>` or an `on*=` handler any more: those became modules under
+//! `static/js/` and `data-` attributes driven by delegated listeners.
+//! Reintroducing either would not fail a build — it would silently stop working
+//! in the browser.
 //!
-//! `style-src 'self'` is equally strict, which means **no markup anywhere may
-//! carry a `style` attribute** — not templates, and not HTML that JavaScript
-//! builds and assigns to `innerHTML`, since the parser checks those the same
-//! way. Three patterns replaced the ones that used to:
+//! `style-src 'self'` is equally strict, so **no markup anywhere may carry a
+//! `style` attribute** — not templates, and not HTML that JavaScript assigns to
+//! `innerHTML`, which the parser checks the same way. Static declarations became
+//! classes, `style="display:none"` became the `hidden` attribute, and the
+//! per-datum bar geometry on /statistics became a `pct-N` class. Writing to
+//! `element.style` *from script* is untouched, since CSP polices markup rather
+//! than the CSSOM.
 //!
-//! - static declarations (`display:inline`, a font size) became classes in
-//!   `app.css`;
-//! - `style="display:none"` on an element JavaScript later reveals became the
-//!   `hidden` attribute, toggled through the `.hidden` property;
-//! - the per-datum bar geometry on /statistics became a `pct-N` class off a
-//!   0–100 scale in `app.css`, chosen by `bar_percent` in `handlers::pages`.
+//! `_icon_sprite.html` is the one place that needs collapsing without CSS — a
+//! bare `<svg>` renders at 300x150 — and uses SVG presentation attributes, which
+//! are not `style` attributes.
 //!
-//! Writing to `element.style` **from script** is untouched by this — CSP polices
-//! markup, not the CSSOM — so the sidebar's show/hide logic still does that.
+//! `img-src 'self' data:` covers the three real sources: same-origin feed icons,
+//! remote article images rewritten to the same-origin proxy, and the `data:` SVG
+//! chevron `app.css` uses. It assumes `RDRS_PUBLIC_BASE_URL` names the origin the
+//! browser actually uses, already a hard requirement for the cookie's `Secure`
+//! flag and for HSTS.
 //!
-//! `_icon_sprite.html` is the one place that needs collapsing without CSS (a
-//! bare `<svg>` renders at 300x150); it uses SVG presentation attributes, which
-//! are not `style` attributes and not covered by the policy.
-//!
-//! `img-src 'self' data:` covers the three real sources — same-origin feed
-//! icons, remote article images rewritten to the same-origin `/api/proxy/image`
-//! (see [`crate::services::image_proxy`]), and the `data:` SVG chevron that
-//! `app.css` uses as a `<select>` background. It assumes `RDRS_PUBLIC_BASE_URL`
-//! names the origin the browser actually uses, since that is what the reading
-//! pane stamps into proxy URLs — already a hard requirement for the session
-//! cookie's `Secure` flag and for HSTS.
-//!
-//! `frame-ancestors 'none'` is the modern half of the clickjacking defence and
-//! `X-Frame-Options: DENY` the legacy half; both are sent because the older
+//! `frame-ancestors 'none'` and `X-Frame-Options: DENY` are the modern and
+//! legacy halves of the clickjacking defence; both are sent because the older
 //! header is the only one pre-CSP3 browsers honour.
 //!
 //! ## What is deliberately absent
 //!
 //! **`Cross-Origin-Resource-Policy`.** `same-origin` would break third-party
-//! Google Reader clients: the `GReader` item feed hands out absolute
-//! `/api/proxy/image` URLs (see [`crate::handlers::greader`]), and a native
-//! client rendering that HTML in a webview fetches them as cross-origin
-//! no-cors requests, which CORP would reject. Article images would silently
-//! vanish in every such client.
+//! Google Reader clients: the item feed hands out absolute proxy URLs, and a
+//! native client rendering that HTML in a webview fetches them as cross-origin
+//! no-cors requests. Article images would silently vanish.
 //!
-//! **`publickey-credentials-get` / `-create` in `Permissions-Policy`.** A
-//! `Permissions-Policy` header only overrides the features it names; anything
-//! unlisted keeps its default allowlist, which for both of these is `self`.
-//! Naming them to deny would break passkey sign-in and enrolment.
+//! **`publickey-credentials-get` / `-create` in `Permissions-Policy`.** The
+//! header only overrides the features it names, and both default to `self`, so
+//! naming them to deny would break passkey sign-in and enrolment.
 
 use std::sync::LazyLock;
 
@@ -117,11 +99,10 @@ const PERMISSIONS_POLICY: &str = "accelerometer=(), \
      xr-spatial-tracking=()";
 
 /// `strict-origin-when-cross-origin` rather than `no-referrer`: the entry-action
-/// redirect in [`crate::handlers::entries`] recovers which list the user came
-/// from out of the same-origin `Referer`, and `no-referrer` would strip it and
-/// send every action back to the default list. This value keeps the full URL
-/// same-origin while cross-origin navigations leak only the bare origin — which
-/// external article links already avoid entirely via `rel="noreferrer"`.
+/// redirect recovers which list the reader came from out of the same-origin
+/// `Referer`, and `no-referrer` would send every action back to the default
+/// list. Cross-origin navigations still leak only the bare origin, and external
+/// article links avoid it entirely via `rel="noreferrer"`.
 const REFERRER_POLICY: &str = "strict-origin-when-cross-origin";
 
 /// Built once. `HeaderName::from_static` is not a `const fn`, and the two
@@ -172,18 +153,14 @@ fn apply_static(mut response: Response) -> Response {
 }
 
 /// Per-layer state for [`set_hsts`]: just the precomputed header value. A
-/// dedicated state type (rather than a field on [`crate::AppState`]) keeps
-/// this middleware self-contained — it needs nothing else, and every other
-/// consumer of `AppState` would otherwise gain a field it never reads.
+/// dedicated state type keeps this middleware self-contained, rather than giving
+/// every other consumer of [`crate::AppState`] a field it never reads.
 ///
 /// **Whether the layer exists at all is decided once**, in
-/// [`crate::create_router`], from [`crate::Config::hsts_header_value`] — a
-/// plain-HTTP deployment (the default; see that method and
-/// [`crate::config::parse_hsts`]) adds no layer and pays literally nothing
-/// per request. When it does exist, the header value is a [`HeaderValue`]
-/// built once at router-construction time and cloned per response, so the
-/// allocation in `Config::hsts_header_value` (which returns a `String`) never
-/// runs on the hot path.
+/// [`crate::create_router`], from [`crate::Config::hsts_header_value`]: a
+/// plain-HTTP deployment adds no layer and pays nothing per request. When it
+/// does exist the value is a [`HeaderValue`] built at router-construction time
+/// and cloned per response, so the allocation never runs on the hot path.
 #[derive(Clone)]
 pub struct HstsState(HeaderValue);
 
@@ -316,10 +293,9 @@ mod tests {
 
     /// Collect every inline `on*="…"` handler attribute in a template.
     ///
-    /// Matches generically rather than against a fixed list of event names, so
-    /// an `onpointerdown` nobody thought of is caught too. A prose word that
-    /// merely starts with "on" is excluded by requiring an `=` immediately
-    /// after the run of lowercase letters.
+    /// Matches generically rather than against a fixed list of event names, so an
+    /// `onpointerdown` nobody thought of is caught too. A prose word merely
+    /// starting with "on" is excluded by requiring an `=` right after.
     fn inline_handler_attributes(html: &str) -> Vec<String> {
         let mut found = Vec::new();
         for (i, _) in html.match_indices("on") {
@@ -372,15 +348,14 @@ mod tests {
     }
 
     /// `script-src 'self'` and `style-src 'self'` are only a real defence while
-    /// the markup holds up its end: an inline `<script>`, an `on*=` attribute or
-    /// a `style=` attribute is not a build error, it just silently stops working
-    /// in the browser. This walks every template and every file that builds
-    /// markup for `innerHTML`, so the policy and the markup cannot drift.
+    /// the markup holds up its end: an inline `<script>`, an `on*=` or a `style=`
+    /// attribute is not a build error, it just silently stops working. This walks
+    /// every template and every file that builds markup for `innerHTML`, so the
+    /// policy and the markup cannot drift.
     ///
-    /// Note the JS half: markup a script assigns to `innerHTML` is parsed by the
-    /// same parser and policed the same way, including inside a shadow root.
-    /// Writing to `element.style` from script is a CSSOM operation and stays
-    /// allowed, which is why this looks for `style="` and not `style`.
+    /// Markup a script assigns to `innerHTML` is parsed and policed the same way,
+    /// including inside a shadow root. Writing to `element.style` is a CSSOM
+    /// operation and stays allowed, which is why this looks for `style="`.
     #[test]
     fn no_markup_ships_inline_script_handler_or_style() {
         let templates = source_files(concat!(env!("CARGO_MANIFEST_DIR"), "/templates"), &["html"]);

@@ -1,14 +1,6 @@
-//! Integration tests for Google Reader API endpoints.
-//!
-//! Tests cover:
-//! - POST /accounts/ClientLogin (authentication)
-//! - GET /reader/api/0/subscription/list (subscription listing)
-//! - POST /reader/api/0/subscription/edit (edit/remove subscriptions)
-//! - GET /reader/api/0/stream/contents/{stream} (stream contents)
-//! - GET /reader/api/0/stream/items/ids (item IDs)
-//! - POST /reader/api/0/edit-tag (read/star tags)
-//! - POST /reader/api/0/mark-all-as-read (mark all read)
-//! - GET /reader/api/0/unread-count (unread counts)
+//! Integration tests for the Google Reader API endpoints: `ClientLogin`,
+//! subscription list/edit, stream contents and item IDs, edit-tag,
+//! mark-all-as-read and unread-count.
 
 mod common;
 use common::default_test_config;
@@ -75,7 +67,6 @@ async fn setup_authenticated_user(app: &TestApp) -> i64 {
         .await
         .assert_status_ok();
 
-    // Get user_id from DB
     rdrs::models::user::find_by_username(&app.db, "testuser")
         .await
         .unwrap()
@@ -131,9 +122,7 @@ async fn create_test_entries(db: &Db, feed_id: i64, count: usize) -> Vec<i64> {
     ids
 }
 
-// ============================================================================
-// ClientLogin Tests
-// ============================================================================
+// --- ClientLogin Tests ---
 
 #[tokio::test]
 async fn test_client_login_success() {
@@ -194,7 +183,6 @@ async fn test_client_login_token_used_for_api() {
     let app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&app).await;
 
-    // Get auth token via ClientLogin
     let form = vec![
         ("Email", "testuser".to_string()),
         ("Passwd", "vulture-mango-77-quilt".to_string()),
@@ -206,7 +194,6 @@ async fn test_client_login_token_used_for_api() {
         .find_map(|line| line.strip_prefix("Auth="))
         .unwrap();
 
-    // Use the token to access a protected endpoint via the Authorization header
     let response = app
         .server
         .get("/reader/api/0/subscription/list")
@@ -394,11 +381,10 @@ async fn test_post_token_works_for_both_credential_kinds() {
         "post tokens for different credentials must not collide"
     );
 
-    // A post token minted under one credential is not accepted under the
-    // other. Cookie-authenticated requests skip the POST-token check entirely
-    // (SameSite already protects them — see `verify_post_token_if_needed`),
-    // so the only way to observe a rejection is through a header-authenticated
-    // (ApiToken) mutation request, submitting the mismatched token as `T`.
+    // A post token minted under one credential is not accepted under the other.
+    // Cookie-authenticated requests skip the POST-token check entirely, since
+    // SameSite already protects them, so the only way to observe a rejection is
+    // a header-authenticated mutation submitting the mismatched token as `T`.
     let unknown_feed_form_wrong_token = vec![
         ("ac", "edit".to_string()),
         (
@@ -543,9 +529,7 @@ async fn test_client_login_rate_limit_applies_to_greader_php_prefix() {
     assert_eq!(response.status_code(), StatusCode::TOO_MANY_REQUESTS);
 }
 
-// ============================================================================
-// Subscription List Tests
-// ============================================================================
+// --- Subscription List Tests ---
 
 #[tokio::test]
 async fn test_subscription_list_empty() {
@@ -580,9 +564,7 @@ async fn test_subscription_list_with_feeds() {
     assert_eq!(categories[0]["label"].as_str().unwrap(), "Tech");
 }
 
-// ============================================================================
-// Subscription Edit Tests
-// ============================================================================
+// --- Subscription Edit Tests ---
 
 #[tokio::test]
 async fn test_subscription_edit_unsubscribe() {
@@ -592,7 +574,6 @@ async fn test_subscription_edit_unsubscribe() {
     let feed_url = "https://example.com/tech.xml";
     create_test_feed(&app.db, user_id, "Tech", feed_url).await;
 
-    // Verify feed exists
     let response = app.server.get("/reader/api/0/subscription/list").await;
     let body: serde_json::Value = response.json();
     assert_eq!(body["subscriptions"].as_array().unwrap().len(), 1);
@@ -609,7 +590,6 @@ async fn test_subscription_edit_unsubscribe() {
         .await;
     response.assert_status_ok();
 
-    // Verify empty
     let response = app.server.get("/reader/api/0/subscription/list").await;
     let body: serde_json::Value = response.json();
     assert!(body["subscriptions"].as_array().unwrap().is_empty());
@@ -636,16 +616,13 @@ async fn test_subscription_edit_rename() {
         .await;
     response.assert_status_ok();
 
-    // Verify title changed
     let response = app.server.get("/reader/api/0/subscription/list").await;
     let body: serde_json::Value = response.json();
     let subs = body["subscriptions"].as_array().unwrap();
     assert_eq!(subs[0]["title"].as_str().unwrap(), "New Title");
 }
 
-// ============================================================================
-// Stream Contents Tests
-// ============================================================================
+// --- Stream Contents Tests ---
 
 #[tokio::test]
 async fn test_stream_contents_reading_list() {
@@ -667,7 +644,6 @@ async fn test_stream_contents_reading_list() {
     let items = body["items"].as_array().unwrap();
     assert_eq!(items.len(), 3);
 
-    // Verify item structure
     assert!(items[0]["id"].as_str().is_some());
     assert!(items[0]["title"].as_str().is_some());
 }
@@ -804,9 +780,7 @@ async fn test_stream_contents_starred_empty() {
     assert!(items.is_empty());
 }
 
-// ============================================================================
-// Stream Items IDs Tests
-// ============================================================================
+// --- Stream Items IDs Tests ---
 
 #[tokio::test]
 async fn test_stream_items_ids() {
@@ -829,9 +803,7 @@ async fn test_stream_items_ids() {
     assert!(item_refs[0]["id"].as_str().is_some());
 }
 
-// ============================================================================
-// Edit Tag Tests (read/star)
-// ============================================================================
+// --- Edit Tag Tests (read/star) ---
 
 #[tokio::test]
 async fn test_edit_tag_mark_read() {
@@ -843,7 +815,6 @@ async fn test_edit_tag_mark_read() {
     let entry_ids = create_test_entries(&app.db, feed_id, 1).await;
     let item_id = format!("tag:google.com,2005:reader/item/{:016x}", entry_ids[0]);
 
-    // Mark as read
     let form = vec![
         ("i", item_id.clone()),
         ("a", "user/-/state/com.google/read".to_string()),
@@ -852,7 +823,6 @@ async fn test_edit_tag_mark_read() {
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 
-    // Verify unread count is 0
     let response = app.server.get("/reader/api/0/unread-count").await;
     let body: serde_json::Value = response.json();
     let counts = body["unreadcounts"].as_array().unwrap();
@@ -962,7 +932,6 @@ async fn test_edit_tag_star_and_unstar() {
         .await
         .assert_status_ok();
 
-    // Verify starred stream has 1 item
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/starred")
@@ -981,7 +950,6 @@ async fn test_edit_tag_star_and_unstar() {
         .await
         .assert_status_ok();
 
-    // Verify starred stream is empty
     let response = app
         .server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/starred")
@@ -990,9 +958,7 @@ async fn test_edit_tag_star_and_unstar() {
     assert_eq!(body["items"].as_array().unwrap().len(), 0);
 }
 
-// ============================================================================
-// Mark All As Read Tests
-// ============================================================================
+// --- Mark All As Read Tests ---
 
 #[tokio::test]
 async fn test_mark_all_as_read() {
@@ -1003,7 +969,6 @@ async fn test_mark_all_as_read() {
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
     create_test_entries(&app.db, feed_id, 5).await;
 
-    // Verify we have 5 unread entries
     let response = app.server.get("/reader/api/0/unread-count").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
@@ -1015,7 +980,6 @@ async fn test_mark_all_as_read() {
         .unwrap();
     assert_eq!(reading_list["count"].as_i64().unwrap(), 5);
 
-    // Mark all as read
     let form = vec![("s", "user/-/state/com.google/reading-list".to_string())];
     let response = app
         .server
@@ -1024,7 +988,6 @@ async fn test_mark_all_as_read() {
         .await;
     response.assert_status_ok();
 
-    // Verify all are read (0 unread)
     let response = app.server.get("/reader/api/0/unread-count").await;
     let body: serde_json::Value = response.json();
     let reading_list = body["unreadcounts"]
@@ -1098,7 +1061,6 @@ async fn test_edit_tag_affected_count_excludes_already_read() {
         form
     };
 
-    // Mark the first entry only.
     let response = app
         .server
         .post("/reader/api/0/edit-tag")
@@ -1122,9 +1084,7 @@ async fn test_edit_tag_affected_count_excludes_already_read() {
     );
 }
 
-// ============================================================================
-// Unread Count Tests
-// ============================================================================
+// --- Unread Count Tests ---
 
 #[tokio::test]
 async fn test_unread_count_empty() {
@@ -1163,9 +1123,7 @@ async fn test_unread_count_with_entries() {
     assert_eq!(reading_list["count"].as_i64().unwrap(), 3);
 }
 
-// ============================================================================
-// Unauthenticated Access Tests
-// ============================================================================
+// --- Unauthenticated Access Tests ---
 
 #[tokio::test]
 async fn test_unauthenticated_access_denied() {
@@ -1205,18 +1163,14 @@ async fn test_unauthenticated_access_denied() {
     assert_eq!(response.status_code(), StatusCode::UNAUTHORIZED);
 }
 
-// ============================================================================
-// RSS fixture used by wiremock-based subscribe/quickadd tests
-// ============================================================================
+// --- RSS fixture used by wiremock-based subscribe/quickadd tests ---
 
 const RSS_FIXTURE: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel>
   <title>Mock Feed</title><description>D</description><link>https://e</link>
   <item><guid>m1</guid><title>One</title><link>https://e/1</link><description>c1</description></item>
 </channel></rss>"#;
 
-// ============================================================================
-// Part A — pure validation / edit tests (no network required)
-// ============================================================================
+// --- Part A — pure validation / edit tests (no network required) ---
 
 #[tokio::test]
 async fn test_subscription_subscribe_missing_stream_id() {
@@ -1295,7 +1249,6 @@ async fn test_subscription_edit_add_label_moves_category() {
     let feed_url = "https://example.com/feed-to-move.xml";
     create_test_feed(&app.db, user_id, "OldCat", feed_url).await;
 
-    // Move to a new category via ac=edit + a=user/-/label/NewCat
     let form = vec![
         ("ac", "edit".to_string()),
         ("s", format!("feed/{feed_url}")),
@@ -1322,9 +1275,7 @@ async fn test_subscription_edit_add_label_moves_category() {
     assert_eq!(cat_name, "NewCat");
 }
 
-// ============================================================================
-// Part B — wiremock subscribe / quickadd success tests
-// ============================================================================
+// --- Part B — wiremock subscribe / quickadd success tests ---
 
 #[tokio::test]
 async fn test_subscription_subscribe_success() {
@@ -1354,7 +1305,6 @@ async fn test_subscription_subscribe_success() {
         .await;
     response.assert_status_ok();
 
-    // Verify feed row exists in the DB for this user
     let feed_exists = feed::find_by_url_for_user(&app.db, &feed_url, user_id)
         .await
         .unwrap()
@@ -1391,7 +1341,6 @@ async fn test_subscription_subscribe_with_label() {
         .await;
     response.assert_status_ok();
 
-    // Verify feed is under the "Tech" category
     let f = feed::find_by_url_for_user(&app.db, &feed_url, user_id)
         .await
         .unwrap()
@@ -1474,10 +1423,10 @@ async fn test_quickadd_success() {
 // ============================================================================
 // SSE: GReader writes must announce sidebar changes
 //
-// These mutations arrive from an external client (FeedMe, Read You, ...), so no
-// browser swap happens that a page could hang a refresh off. Without an
-// `emit_sidebar` an open tab keeps rendering the pre-change counts until it is
-// reloaded — busting the cache alone only helps the *next* request.
+// These mutations arrive from an external client, so no browser swap happens
+// that a page could hang a refresh off. Without an `emit_sidebar` an open tab
+// keeps rendering the pre-change counts until it is reloaded — busting the cache
+// alone only helps the *next* request.
 // ============================================================================
 
 /// Assert the next event on `sub` is a Sidebar event for `user_id`.

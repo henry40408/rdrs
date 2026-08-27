@@ -29,9 +29,7 @@ pub use time_format::{
     format_relative_time_compact,
 };
 
-// ============================================================================
-// Entries-family shared view structs (PR-10)
-// ============================================================================
+// --- Entries-family shared view structs (PR-10) ---
 
 /// Uppercased first character of a feed title, for the favicon letter-chip
 /// fallback shown when a feed has no icon. Returns "?" for an empty title.
@@ -95,11 +93,9 @@ impl EntryRowView {
     }
 }
 
-/// View-model for the reading pane (`_reading_pane.html`).
-/// `has_kagi` / `has_save` gate the conditional Summarize / Save buttons.
-/// Action feedback (Save / Fetch Full Content) is delivered as a flash
-/// message via the swap helper's `<template data-flash>` block — see
-/// `_reading_pane_with_flash.html`.
+/// View-model for the reading pane (`_reading_pane.html`). `has_kagi` /
+/// `has_save` gate the conditional Summarize / Save buttons; action feedback is
+/// delivered as a flash via the swap helper's `<template data-flash>` block.
 #[derive(Debug, Clone)]
 pub struct ReadingPaneView {
     pub id: i64,
@@ -123,13 +119,9 @@ pub struct ReadingPaneView {
     pub summary_error: Option<String>,
     pub has_kagi: bool,
     pub has_save: bool,
-    /// `true` when `content_html` holds the fetched article rather than what
-    /// the feed published. The pane swaps "Fetch Full Content" for an
-    /// "Original" link so the reader can revert.
-    ///
-    /// Since the article is stored, this is now true on any later render too —
-    /// a refresh, a new tab, a scriptless page load — not only in the response
-    /// that fetched it.
+    /// `true` when `content_html` holds the fetched article rather than what the
+    /// feed published, so the pane swaps "Fetch Full Content" for an "Original"
+    /// link. The article is stored, so this is true on any later render too.
     pub is_full_content: bool,
     /// `true` when an article has been fetched for this entry, whichever body
     /// is currently rendered. Lets the pane offer a way *back* to the fetched
@@ -205,13 +197,11 @@ pub struct EntriesLayoutContext {
     /// for the 4 entries-tabs (`active = "all" | "read" | "starred" |
     /// "summarized"`), false for `/` (unread) since unread is not a tab.
     pub show_tab_bar: bool,
-    /// When `Some(stream_id)`, render the "Mark as Read..." dropdown
-    /// above the list with the given `GReader` stream as its scope. The
-    /// `<select>` carries `data-mark-read-scope` so `app.js` picks up
-    /// the scope dynamically. Stream IDs follow `GReader` format:
-    /// `user/-/state/com.google/reading-list` for global bulk,
-    /// `feed/<feed_url>` for per-feed, `user/-/label/<category_name>`
-    /// for per-category. `None` means the dropdown is not rendered.
+    /// When `Some(stream_id)`, render the "Mark as Read..." dropdown above the
+    /// list with the given `GReader` stream as its scope. The `<select>` carries
+    /// `data-mark-read-scope` so `app.js` picks the scope up dynamically:
+    /// `user/-/state/com.google/reading-list` for global bulk, `feed/<feed_url>`
+    /// per feed, `user/-/label/<category_name>` per category.
     pub mark_as_read_scope: Option<String>,
     /// Breadcrumb trail rendered above the page title. Empty for the routes
     /// that don't need one (all 5 PR-10 entries-family pages).
@@ -242,10 +232,8 @@ pub struct EntriesLayoutContext {
     /// untouched). Only the feed + category entries pages set this true.
     pub show_mark_above: bool,
     /// When `true` and the list is empty, the shared layout renders the
-    /// getting-started onboarding block (welcome + 3 steps + "Add your first
-    /// feed" / "Import OPML" CTAs) instead of the plain empty-state text. Set
-    /// only by the landing page (`/`) when the account has no feeds; every
-    /// other route leaves it `false`.
+    /// getting-started onboarding block instead of the plain empty-state text.
+    /// Set only by the landing page when the account has no feeds.
     pub onboarding: bool,
     /// UTC instant captured when the page was rendered; see `snapshot_now()`.
     pub snapshot_at: String,
@@ -321,11 +309,9 @@ pub(crate) async fn build_entries_page(
             reason = "`page_size` is a small positive constant (PAGE_SIZE = 50)"
         )]
         let kept_len = rows.len().min(page_size as usize);
-        // Derive the next cursor from the last *kept* row when an extra
-        // (sentinel) row was returned. Mirrors greader/item.rs.
-        // Next cursor comes from the last KEPT row (the sentinel row beyond
-        // page_size is dropped). `.take(kept_len).next_back()` avoids an
-        // index subtraction and is None-safe when there are no rows.
+        // The next cursor comes from the last KEPT row — the sentinel row beyond
+        // page_size is dropped. `.take(kept_len).next_back()` avoids an index
+        // subtraction and is None-safe. Mirrors greader/item.rs.
         let next = if rows.len() as i64 > page_size {
             match rows.iter().take(kept_len).next_back() {
                 Some(e) => entry::fetch_sort_ts(&state.db, e.entry.id, sort)
@@ -364,12 +350,10 @@ pub struct EntriesQuery {
     /// path-based modes). Any other value (or absence) is treated as
     /// "no filter" (show all).
     pub status: Option<String>,
-    /// Deep-link target: when present, the list handler pre-populates the
-    /// reading pane with this entry. Honored by every list page (unread,
-    /// /entries, read/starred/summarized, /feeds/{id}/entries,
-    /// /categories/{id}/entries). Read-only: does not mark the entry read
-    /// (use POST /entries/{id}/read for that). Silently ignored when the
-    /// entry doesn't exist or belongs to another user.
+    /// Deep-link target: the list handler pre-populates the reading pane with
+    /// this entry. Honored by every list page. Read-only — it does not mark the
+    /// entry read — and silently ignored when the entry doesn't exist or belongs
+    /// to another user.
     pub entry: Option<i64>,
     /// Scoped-search keyword (category/feed pages only). Empty/whitespace ⇒ no filter.
     pub q: Option<String>,
@@ -379,32 +363,26 @@ pub struct EntriesQuery {
     /// Without it, an unread list paginates against a moving target: the reader
     /// opens an entry, it becomes read, and the next page silently drops it —
     /// including the entry they are *currently reading*, whose row `app.js` is
-    /// waiting for in order to highlight it (see the neighbours navigation,
-    /// which has always echoed the same snapshot for the same reason).
+    /// waiting for in order to highlight it.
     ///
     /// Ignored unless the view is unread-only, and harmless when garbage: it
     /// only ever widens which of the reader's *own* entries stay listed.
     pub snapshot: Option<String>,
-    /// When `Some(1)`, return the category-switch pane fragment
-    /// (`EntriesPaneFragmentTemplate`) instead of the full document: the whole
-    /// left column plus an emptied reading pane. Only
-    /// `/categories/{id}/entries` honors it — it is the one navigation `app.js`
-    /// performs in place. Deliberately separate from `fragment`, whose two
-    /// existing modes (Load-More append, search refresh) both keep the header.
+    /// When `Some(1)`, return the category-switch pane fragment instead of the
+    /// full document: the whole left column plus an emptied reading pane. Only
+    /// `/categories/{id}/entries` honors it. Deliberately separate from
+    /// `fragment`, whose two modes both keep the header.
     pub pane: Option<u8>,
 }
 
 /// Best-effort builder for the `?entry={id}` deep-link reading pane.
 ///
-/// Looks up the entry, verifies ownership (`find_by_id_for_user` enforces
-/// the join on `user_id`), reads the save / Kagi flags, and renders a
-/// `ReadingPaneView`. Any failure (entry missing, wrong owner, DB / sanitize
-/// hiccup) returns `None` so the list page still renders with an empty
-/// pane — mirroring the page's normal "no entry selected" state.
+/// Any failure — entry missing, wrong owner, DB or sanitize hiccup — returns
+/// `None` so the list page still renders with an empty pane, mirroring the
+/// page's normal "no entry selected" state.
 ///
-/// Read-only by design: deep links do NOT mark the entry as read. The
-/// canonical mark-as-read path remains the entry-row click, which fetches
-/// `GET /entries/{id}/fragment` and runs the write transaction inside
+/// Read-only by design: deep links do NOT mark the entry as read. That stays
+/// with the entry-row click, which runs the write transaction inside
 /// `entry_fragment`.
 async fn maybe_build_reading_pane(
     state: &AppState,
@@ -445,11 +423,10 @@ pub(crate) struct EntriesFragmentTemplate {
     pub status_filter: Option<String>,
     /// Forwarded into the Load-More form so paged fetches keep the search filter.
     pub q: Option<String>,
-    /// The page's snapshot, forwarded into the next Load-More form so every
-    /// page of one reading session paginates against the same boundary. Echoed
-    /// rather than re-stamped on purpose: re-stamping would move the boundary
-    /// forward one page at a time and reintroduce the dropped-row bug for
-    /// whatever was read since. See [`EntriesQuery::snapshot`].
+    /// The page's snapshot, forwarded into the next Load-More form so every page
+    /// of one reading session paginates against the same boundary. Echoed rather
+    /// than re-stamped: re-stamping would move the boundary forward one page at
+    /// a time and reintroduce the dropped-row bug. See [`EntriesQuery::snapshot`].
     pub snapshot: Option<String>,
     /// See [`crate::middleware::auth::PageAuthUser::csrf_token`]. The appended
     /// rows carry the same star / mark-read forms the full page renders.
@@ -465,11 +442,10 @@ impl IntoResponse for EntriesFragmentTemplate {
     }
 }
 
-/// Search-refresh fragment for the scoped-search box: multi-target templates that
-/// replace `[data-entries-list]` and the `[data-mark-matching-slot]` button in place.
-/// Distinct from `EntriesFragmentTemplate` (Load-More append). Reuses
-/// `EntriesLayoutContext` so `_entries_list_body.html` / `_mark_matching_button.html`
-/// render exactly as on the full page.
+/// Search-refresh fragment for the scoped-search box: multi-target templates
+/// replacing `[data-entries-list]` and the `[data-mark-matching-slot]` button in
+/// place. Distinct from `EntriesFragmentTemplate` (Load-More append), and reuses
+/// `EntriesLayoutContext` so the includes render exactly as on the full page.
 #[derive(Template)]
 #[template(path = "_entries_refresh_fragment.html")]
 pub(crate) struct EntriesRefreshFragmentTemplate {
@@ -672,9 +648,8 @@ impl IntoResponse for SetupTemplate {
 /// `GET /setup` — the first-run form, and only that.
 ///
 /// Once any account exists this redirects to `/login` rather than rendering a
-/// disabled form: the page has no second purpose, and leaving it reachable
-/// would invite the "is registration open?" question the invite flow exists to
-/// retire.
+/// disabled form: leaving it reachable would invite the "is registration open?"
+/// question the invite flow exists to retire.
 pub async fn setup_page(
     State(state): State<AppState>,
     jar: axum_extra::extract::CookieJar,
@@ -705,11 +680,10 @@ pub async fn setup_page(
 
 /// The anonymous "set your password" page behind an invite link.
 ///
-/// One template with three shapes, deliberately: a form, a dead end, and a
-/// throttled notice. Keeping them in one type is what makes it hard to give
-/// the dead end an accidentally distinguishing detail — there is a single
-/// place where "invalid" is rendered, and it carries no username, no reason,
-/// and no hint at which of unknown / expired / already-used applies.
+/// One template with three shapes — a form, a dead end, and a throttled notice
+/// — deliberately: a single place renders "invalid", so it is hard to give the
+/// dead end an accidentally distinguishing detail. It carries no username, no
+/// reason, and no hint at which of unknown / expired / already-used applies.
 #[derive(Template)]
 #[template(path = "invite.html")]
 pub struct InviteTemplate {
@@ -784,16 +758,13 @@ impl IntoResponse for InviteTemplate {
     }
 }
 
-/// Serves `/` (unread) rendered fully server-side. Unread entries are fetched
-/// from the DB, mapped to `EntryRowView`s, and rendered via `_entries_layout.html`
-/// which includes `_entry_row.html` per row. The reading pane is an empty
-/// placeholder until the user selects an entry (swap via `app.js`).
+/// Serves `/` (unread) rendered fully server-side, via `_entries_layout.html`.
+/// The reading pane is an empty placeholder until the reader selects an entry.
 ///
-/// When `?fragment=1&after=<offset>` is present the handler returns a
-/// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`);
-/// `?fragment=1` without a cursor returns the list-refresh fragment that
-/// the bulk mark-as-read paths ("Mark Above as Read" and the "Mark as Read..."
-/// age dropdown) swap in place of a reload.
+/// `?fragment=1&after=<offset>` returns an `EntriesFragmentTemplate`
+/// (prefix-rerender from 0 to `after + page_size`); `?fragment=1` without a
+/// cursor returns the list-refresh fragment the bulk mark-as-read paths swap in
+/// place of a reload.
 pub async fn unread_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -913,21 +884,14 @@ pub async fn unread_page(
         .into_response()
 }
 
-/// Serves `/admin` rendered fully server-side. The user table is rendered
-/// directly from the DB via Askama, with self-detection in the handler so
-/// the template can hide destructive actions on rows that match either the
-/// effective admin or the original admin (under masquerade). Each row's
-/// action buttons are `<form>` elements posting to the `/admin/users/{id}/*`
-/// form-action endpoints added in PR-5 T1.
 /// Pull a one-time invite link out of the flash, if the last action left one.
 ///
 /// `handlers::admin` puts the bare URL in the flash and nothing else, so this
-/// recognises it by shape rather than by parsing a sentence. The message is
-/// then *replaced* rather than dropped: the link belongs in its own block on
-/// the page (it is long, it is copied, and it is shown exactly once), not in a
-/// banner that fades — but `Flash`'s response hook only clears the cookie when
-/// messages remain, so removing the last one outright would leave the link in
-/// the jar to reappear on the next page load.
+/// recognises it by shape rather than by parsing a sentence. The message is then
+/// *replaced* rather than dropped: the link belongs in its own block on the page
+/// — it is long, copied, and shown exactly once — but `Flash`'s response hook
+/// only clears the cookie when messages remain, so removing the last one would
+/// leave the link in the jar to reappear on the next page load.
 fn extract_invite_link(flash: &mut Flash) -> Option<String> {
     let link = flash
         .messages
@@ -1459,12 +1423,9 @@ pub async fn feeds_import_page(
     )
 }
 
-/// Serves `/entries` rendered fully server-side. All entries (no filter) are
-/// fetched and rendered via `_entries_layout.html`. The reading pane is an empty
-/// placeholder until the user selects an entry.
-///
-/// When `?fragment=1&after=<offset>` is present the handler returns a
-/// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`).
+/// Serves `/entries` (no filter) rendered fully server-side. `?fragment=1&after=N`
+/// returns an `EntriesFragmentTemplate` (prefix-rerender from 0 to
+/// `after + page_size`).
 pub async fn entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -1598,9 +1559,8 @@ pub async fn entry_page(
     Redirect::to(&redirect_url)
 }
 
-/// Serves `/settings` rendered fully server-side. The read-only server
-/// config table is populated directly from `state.config` via Askama —
-/// no JS executes for this page apart from the shared chrome scripts.
+/// Serves `/settings` rendered fully server-side, populated directly from
+/// `state.config`.
 ///
 /// Admin-only: the table exposes deployment internals (database target, bind
 /// address, trusted proxy networks, forward-auth header names) that a regular
@@ -1655,11 +1615,9 @@ pub async fn settings_page(
     )
 }
 
-/// Serves `/entries/read` rendered fully server-side. Read-only entries are
-/// fetched and rendered via `_entries_layout.html`.
-///
-/// When `?fragment=1&after=<offset>` is present the handler returns a
-/// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`).
+/// Serves `/entries/read` rendered fully server-side. `?fragment=1&after=N`
+/// returns an `EntriesFragmentTemplate` (prefix-rerender from 0 to
+/// `after + page_size`).
 pub async fn read_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -1750,11 +1708,9 @@ pub async fn read_entries_page(
         .into_response()
 }
 
-/// Serves `/entries/starred` rendered fully server-side. Starred entries are
-/// fetched and rendered via `_entries_layout.html`.
-///
-/// When `?fragment=1&after=<offset>` is present the handler returns a
-/// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`).
+/// Serves `/entries/starred` rendered fully server-side. `?fragment=1&after=N`
+/// returns an `EntriesFragmentTemplate` (prefix-rerender from 0 to
+/// `after + page_size`).
 pub async fn starred_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -1845,11 +1801,9 @@ pub async fn starred_entries_page(
         .into_response()
 }
 
-/// Serves `/entries/summarized` rendered fully server-side. Entries that have
-/// an associated summary are fetched and rendered via `_entries_layout.html`.
-///
-/// When `?fragment=1&after=<offset>` is present the handler returns a
-/// `EntriesFragmentTemplate` (prefix-rerender from 0 to `after + page_size`).
+/// Serves `/entries/summarized` rendered fully server-side.
+/// `?fragment=1&after=N` returns an `EntriesFragmentTemplate` (prefix-rerender
+/// from 0 to `after + page_size`).
 pub async fn summarized_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -2024,11 +1978,10 @@ pub async fn category_entries_page(
         return Ok((flash, fragment).into_response());
     }
 
-    // Computed from a dedicated filter (scope + search + unread_only), not the
-    // tab-influenced `filter` above: `mark_read_by_filter` only ever touches
-    // `read_at IS NULL` rows regardless of the active status tab, so the count
-    // shown next to the "Mark N matching" button must match that, not the
-    // active tab's rows. See mark_read_scoped's fresh EntryFilter below.
+    // From a dedicated filter, not the tab-influenced `filter` above:
+    // `mark_read_by_filter` only ever touches `read_at IS NULL` rows regardless
+    // of the active status tab, so the count beside "Mark N matching" must match
+    // that rather than the tab's rows.
     let matching_count = if let Some(ref s) = search {
         let mark_filter = entry::EntryFilter {
             category_id: Some(id),
@@ -2092,12 +2045,10 @@ pub async fn category_entries_page(
         active_feed_id: None,
         filter_tabs,
         status_filter,
-        // Hidden while a scoped search is active: "Mark Above as Read" marks
-        // the rows currently in the DOM, which under a search means only the
-        // matches — indistinguishable at a glance from the "Mark N matching as
-        // Read" button above it, and one of the two reads as "everything older
-        // than here". One control per meaning; the matching button is the one
-        // that belongs to a filtered list.
+        // Hidden while a scoped search is active: "Mark Above as Read" marks the
+        // rows in the DOM, which under a search means only the matches —
+        // indistinguishable at a glance from "Mark N matching as Read" above it,
+        // while one of the two reads as "everything older than here".
         show_mark_above: search.is_none(),
         onboarding: false,
         snapshot_at: snapshot_now(),
@@ -2159,11 +2110,10 @@ pub struct SearchQuery {
     pub q: Option<String>,
 }
 
-/// Serves `/search` rendered fully server-side. With no `?q=`, shows an empty
-/// search form. With a non-empty `q`, runs `entry::list_by_user` filtered on
-/// the search term (LIKE `%q%` over title + content, case-insensitive),
-/// limited to 50 results sorted by `published_at` DESC. No pagination —
-/// reading-pane integration arrives in PR-10's swap helper.
+/// Serves `/search` rendered fully server-side. An empty `?q=` shows the bare
+/// form; a non-empty one runs `entry::list_by_user` filtered on the term (LIKE
+/// `%q%` over title and content, case-insensitive), capped at 50 results sorted
+/// by `published_at` DESC with no pagination.
 pub async fn search_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -2251,9 +2201,8 @@ pub async fn search_page(
 
 /// Strip HTML tags (including `<script>` / `<style>` bodies) and collapse
 /// whitespace into a single line of plain text.
-/// `GET /feeds/{id}/entries` — SSR list of entries from a single feed.
-/// Supports the `?fragment=1&after=N` Load-More overload like the other
-/// entries-family pages.
+/// `GET /feeds/{id}/entries` — SSR list of entries from a single feed, with the
+/// same `?fragment=1&after=N` Load-More overload as the other list pages.
 pub async fn feed_entries_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,
@@ -2352,11 +2301,10 @@ pub async fn feed_entries_page(
         return Ok((flash, fragment).into_response());
     }
 
-    // Computed from a dedicated filter (scope + search + unread_only), not the
-    // tab-influenced `filter` above: `mark_read_by_filter` only ever touches
-    // `read_at IS NULL` rows regardless of the active status tab, so the count
-    // shown next to the "Mark N matching" button must match that, not the
-    // active tab's rows. See mark_read_scoped's fresh EntryFilter below.
+    // From a dedicated filter, not the tab-influenced `filter` above:
+    // `mark_read_by_filter` only ever touches `read_at IS NULL` rows regardless
+    // of the active status tab, so the count beside "Mark N matching" must match
+    // that rather than the tab's rows.
     let matching_count = if let Some(ref s) = search {
         let mark_filter = entry::EntryFilter {
             feed_id: Some(id),
@@ -2572,12 +2520,10 @@ async fn mark_read_scoped(
         }
     });
 
-    // Guard against a blank/whitespace `q`: without this, an empty search
-    // would build an `EntryFilter` with `search: None`, which matches every
-    // entry in the category/feed — mass-marking the whole scope as read.
-    // This POST endpoint is reachable directly (curl/replay) regardless of
-    // the template only rendering the button when a search is active, so
-    // the guard has to live here, not just in the UI.
+    // Without this guard a blank `q` builds an `EntryFilter` with `search: None`,
+    // which matches every entry in the scope and mass-marks it read. The endpoint
+    // is reachable directly regardless of when the template renders the button,
+    // so the guard has to live here.
     let Some(search) = search else {
         let redirect = build_scoped_redirect(base_path, None, status.as_deref());
         return FlashRedirect::info(&redirect, "No search term — nothing marked.").into_response();
@@ -2761,14 +2707,11 @@ pub async fn build_app_layout(
     }
 }
 
-/// Per-route template for `/settings`. Renders the full server-config
-/// table directly via Askama from fields populated out of `state.config`.
-/// The shared chrome (sidebar, flash bootstrap, theme) lives in `layout`.
+/// Per-route template for `/settings`, rendering the server-config table from
+/// fields populated out of `state.config`. The shared chrome lives in `layout`.
 ///
-/// `git_version` is duplicated here (in addition to `layout.git_version`)
-/// because `base.html` references the bare `{{ git_version }}` outside of
-/// the blocks owned by `app_layout.html`. Task 4 will move that chrome
-/// into `app_layout.html` and let the duplication go away.
+/// `git_version` is duplicated here because `base.html` references the bare
+/// `{{ git_version }}` outside the blocks owned by `app_layout.html`.
 #[derive(Template)]
 #[template(path = "settings.html")]
 pub struct SettingsTemplate {
@@ -2805,9 +2748,8 @@ impl IntoResponse for SettingsTemplate {
 /// A single card in the "Active Sessions" list on `/user-settings`. `id` is
 /// exposed because the revoke-one form posts it in the URL path, on the same
 /// reasoning as [`ApiTokenRow`]: `session::delete_user_session_by_id` re-checks
-/// ownership server-side via its `user_id` scoping, so the id is an addressing
-/// handle, not a capability. `session_token` stays server-side — that one *is*
-/// a bearer credential.
+/// ownership server-side, so the id is an addressing handle, not a capability.
+/// `session_token` stays server-side — that one *is* a bearer credential.
 pub struct SessionRow {
     pub id: i64,
     pub created_at: String,
@@ -2822,10 +2764,9 @@ pub struct SessionRow {
 }
 
 /// A single row in the "`GReader` API Tokens" table on `/user-settings`. Unlike
-/// `SessionRow`, this exposes `id` — the revoke-one form posts it in the URL
-/// path, and `revoke_api_token_form` re-checks ownership server-side via
-/// `api_token::delete_token`'s `user_id` scoping, so leaking the id here is
-/// not itself a privilege grant.
+/// `SessionRow` this exposes `id`, because the revoke-one form posts it in the
+/// URL path and `revoke_api_token_form` re-checks ownership server-side via
+/// `api_token::delete_token`'s `user_id` scoping.
 pub struct ApiTokenRow {
     pub id: i64,
     pub label: String,
@@ -2935,10 +2876,9 @@ pub struct AdminTemplate {
     /// refusal.
     pub can_create_account: bool,
     /// Whether this session has to confirm its password before it can change
-    /// accounts (see `handlers::admin::require_recent_authentication`).
-    /// Rendered as an inline confirmation form rather than left for the POST
-    /// to discover, so an admin learns the window has lapsed *before* clicking
-    /// a destructive button rather than after.
+    /// accounts. Rendered as an inline confirmation form rather than left for
+    /// the POST to discover, so an admin learns the window has lapsed *before*
+    /// clicking a destructive button.
     pub needs_reauth: bool,
 }
 
@@ -2951,12 +2891,10 @@ impl IntoResponse for AdminTemplate {
     }
 }
 
-/// One bar in the daily-read chart, with pre-computed bar height + labels.
-///
-/// A bar may span more than one day once the range is bucketed (see
-/// [`crate::models::statistics::bucket_daily_counts`]); `date_label` is the
-/// human-facing span shown in the tooltip, while `short_label` is the compact
-/// axis label under the bar.
+/// One bar in the daily-read chart, with pre-computed height and labels. A bar
+/// may span more than one day once the range is bucketed (see
+/// [`crate::models::statistics::bucket_daily_counts`]), so `date_label` is the
+/// human-facing span for the tooltip and `short_label` the compact axis label.
 pub struct DailyReadView {
     pub date_label: String,
     pub count: i64,
@@ -2988,12 +2926,9 @@ pub struct FeedStatsView {
 
 /// `count` as a whole percentage of `max`, for the statistics bar charts.
 ///
-/// Whole numbers because the template selects a `pct-N` utility class instead
-/// of writing an inline `style` attribute — `style-src 'self'` rejects those.
-/// A hundred and one buckets is finer than a bar chart can show anyway.
-///
-/// Any non-zero count floors at 1% so a rare-but-present bucket stays visible
-/// instead of rounding away to nothing.
+/// Whole numbers because the template selects a `pct-N` utility class instead of
+/// an inline `style` attribute, which `style-src 'self'` rejects. Any non-zero
+/// count floors at 1% so a rare-but-present bucket stays visible.
 fn bar_percent(count: i64, max: i64) -> u8 {
     if max <= 0 || count <= 0 {
         return 0;
@@ -3190,18 +3125,15 @@ pub struct FeedEditView {
     pub referrer_suggestions: Vec<String>,
 }
 
-/// The origins worth offering as this feed's `Referer`, most specific first
-/// and deduplicated.
+/// The origins worth offering as this feed's `Referer`, most specific first and
+/// deduplicated.
 ///
-/// The site the feed describes leads: the images that need a `Referer` at all
-/// are the ones the articles embed, and those are served by the site, not by
-/// wherever the XML happens to be hosted. The feed URL's own origin follows,
-/// and is usually the same — when it is, the list is one entry, which is the
-/// honest answer rather than the same value printed twice.
+/// The site the feed describes leads: the images that need a `Referer` are the
+/// ones the articles embed, served by the site rather than by wherever the XML
+/// is hosted. The feed URL's own origin follows, and is usually the same — when
+/// it is, one entry is the honest answer.
 ///
-/// Non-HTTP schemes are skipped: a `Referer` is only ever sent on an HTTP
-/// request, so a `file:` or `data:` origin could not be used even if a feed
-/// row somehow held one.
+/// Non-HTTP schemes are skipped: a `Referer` is only sent on an HTTP request.
 fn referrer_suggestions(site_url: Option<&str>, feed_url: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for candidate in [site_url, Some(feed_url)].into_iter().flatten() {
@@ -3696,12 +3628,10 @@ pub async fn statistics_page(
     )
 }
 
-/// Serves `/categories` rendered fully server-side. The category list is
-/// loaded directly from the DB (`category::list_by_user` + per-category
-/// feed counts derived from `feed::list_by_user`). Each row carries its
-/// own POST forms targeting `/categories/{id}/rename` and
-/// `/categories/{id}/delete` (PR-7 T1 form-action endpoints), and a
-/// top-of-page POST form targets `/categories` for creation.
+/// Serves `/categories` rendered fully server-side, from `category::list_by_user`
+/// plus per-category feed counts derived from `feed::list_by_user`. Each row
+/// carries its own POST forms for rename and delete, and a top-of-page form
+/// targets `/categories` for creation.
 pub async fn categories_page(
     auth_user: PageAuthUser,
     State(state): State<AppState>,

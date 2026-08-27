@@ -130,7 +130,6 @@ async fn seed_entries(db: &Db, admin_id: i64) {
         .unwrap();
         entry_ids.push(e.id);
     }
-    // Mark 3 as read
     for id in &entry_ids[..3] {
         rdrs::db_execute!(
             db,

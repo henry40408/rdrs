@@ -1,28 +1,23 @@
 // static/js/behaviors.js — the declarative markup behaviours that used to be
 // inline `on*` attributes.
 //
-// A strict `script-src 'self'` (no `'unsafe-inline'`, see
-// middleware::security_headers) blocks every inline event-handler attribute, so
-// `onsubmit="return confirm(…)"` and friends stop firing — silently, and in the
-// *unsafe* direction: a destructive form would submit with no confirmation at
-// all. Each one is re-expressed here as a `data-` attribute plus one delegated
-// listener, which also means a swapped-in fragment (see `installSwap` in
-// app.js) picks the behaviour up for free instead of shipping a fresh handler.
+// A strict `script-src 'self'` (middleware::security_headers) blocks inline
+// event-handler attributes silently and in the *unsafe* direction: a
+// destructive form would submit with no confirmation at all. Each one is
+// re-expressed as a `data-` attribute plus one delegated listener, which also
+// means a swapped-in fragment picks the behaviour up for free.
 //
-// Loaded from app_layout.html, so it covers the whole logged-in surface. The
-// /login and /register pages extend base.html directly and carry none of these
-// attributes; the one behaviour they do share — dismissing a server-rendered
-// flash banner — lives in components/rdrs-flash.js, which base.html loads.
+// Loaded from app_layout.html. /login and /register extend base.html directly
+// and carry none of these attributes; the flash-dismiss behaviour they do share
+// lives in components/rdrs-flash.js.
 
 /**
  * `data-confirm="<message>"` on a <form>: ask before submitting, and cancel the
  * submit when the user declines.
  *
- * Capture phase on purpose. The bubble-phase form-swap handler in app.js would
- * otherwise have already fired for a `data-swap` form by the time a
- * bubble-phase listener here could cancel it, so a declined confirm would still
- * issue the request. Capturing lets `stopPropagation()` cut the event off
- * before any other listener sees it.
+ * Capture phase on purpose: the bubble-phase form-swap handler in app.js would
+ * already have issued the request by the time a bubble-phase listener here
+ * could cancel it.
  */
 function installConfirm() {
     document.addEventListener(
@@ -45,8 +40,8 @@ function installConfirm() {
  * selection changes, for filter bars that have no Apply button.
  *
  * `requestSubmit()` rather than `submit()` — the latter skips the `submit`
- * event entirely, which would bypass csrf.js's `_csrf` injection if one of
- * these forms ever became a POST.
+ * event, bypassing csrf.js's `_csrf` injection if one of these ever became a
+ * POST.
  */
 function installSubmitOnChange() {
     document.addEventListener('change', (event) => {
@@ -62,10 +57,9 @@ function installSubmitOnChange() {
  * `data-hide-on-error` on an <img>: hide the element when the image fails to
  * load, so a feed whose cached icon 404s doesn't render a broken-image glyph.
  *
- * Two mechanisms, because this module is a deferred ES module and so runs
- * *after* the document has parsed: the listener catches images still in flight,
- * and the sweep catches any that already failed. `error` does not bubble, hence
- * the capture-phase registration.
+ * Two mechanisms, because a deferred ES module runs after the document has
+ * parsed: the listener catches images still in flight, the sweep catches any
+ * that already failed. `error` does not bubble, hence capture phase.
  */
 function installHideOnError() {
     document.addEventListener(
@@ -81,8 +75,7 @@ function installHideOnError() {
 
     for (const img of document.querySelectorAll('img[data-hide-on-error]')) {
         // `complete` with a zero intrinsic width is the standard "finished, and
-        // failed" signal — a successfully decoded image always reports a
-        // non-zero naturalWidth.
+        // failed" signal.
         if (img.complete && img.naturalWidth === 0) img.hidden = true;
     }
 }

@@ -243,7 +243,6 @@ async fn test_existing_user_role_recomputed_on_login() {
         .add_header("Remote-Groups", "users")
         .await;
 
-    // Login must succeed with a session cookie.
     assert!(res.status_code().is_redirection());
     assert!(res.maybe_cookie("session_token").is_some());
 
@@ -322,7 +321,6 @@ async fn test_admin_page_sidebar_bootstrap_reports_via_forward_auth() {
         .add_header("Remote-Groups", "admins")
         .await;
 
-    // Fetch /admin with the proxy header present.
     let res = server
         .get("/admin")
         .add_header("Remote-User", "heidi")

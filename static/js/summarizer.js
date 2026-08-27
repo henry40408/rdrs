@@ -1,12 +1,10 @@
-// Summarizer page: drive queued cards one at a time. Progressive enhancement —
-// without JS the server-rendered "Queued" cards simply stay put.
+// Progressive enhancement: without JS the server-rendered "Queued" cards stay.
 const results = document.querySelector('[data-summarizer-results]');
 if (results) {
-  // A single serial runner keeps exactly one request in flight at a time, so
-  // there is never more than one AbortController to track — Retry can re-queue
-  // a card without clobbering the in-flight card's controller.
-  let running = false; // a walk is in progress
-  let currentController = null; // AbortController for the single in-flight fetch
+  // One request in flight at a time, so there is never more than one
+  // AbortController to track and Retry can re-queue a card without clobbering it.
+  let running = false;
+  let currentController = null;
 
   const CANCEL_ACTIONS =
     '<button type="button" class="rp-action" data-sz-cancel aria-label="Cancel summarization"><span class="action-label">Cancel</span></button>';
@@ -45,8 +43,7 @@ if (results) {
     setStatus(card, message);
   };
 
-  // Summarize one card. Returns true if the walk should continue, false if the
-  // request was cancelled (which halts the remaining queue).
+  // True to continue the walk, false when cancellation halts the queue.
   const summarizeCard = async (card) => {
     const url = card.dataset.summarizerUrl;
     const index = card.dataset.summarizerIndex;
@@ -65,7 +62,7 @@ if (results) {
       tmp.innerHTML = html.trim();
       const fresh = tmp.firstElementChild;
       if (fresh) {
-        // Server fragment is already a completed/error card — swap it in.
+        // The fragment is already a completed/error card.
         card.replaceWith(fresh);
       } else {
         // Malformed/empty fragment: don't leave the card stuck on the spinner.
@@ -80,15 +77,13 @@ if (results) {
       setRecoverable(card, 'Network error — Retry to try again.');
       return true; // recoverable, but keep going with the rest
     } finally {
-      // Only clear if this invocation still owns the slot (it always should,
-      // since the runner is serial — guard is defensive).
+      // Defensive: the serial runner means this should always own the slot.
       if (currentController === controller) currentController = null;
     }
   };
 
-  // Serial runner: process queued cards top-to-bottom. Re-entrant-safe — a
-  // second call while a walk is active is a no-op; the caller's newly-queued
-  // card is picked up by the running loop (it re-queries each iteration).
+  // Re-entrant-safe: a second call during a walk is a no-op, and the newly
+  // queued card is picked up by the running loop, which re-queries each pass.
   const runQueue = async () => {
     if (running) return;
     running = true;
@@ -98,8 +93,8 @@ if (results) {
         if (!next) break;
         const keepGoing = await summarizeCard(next);
         if (!keepGoing) {
-          // Cancelled: stop auto-processing, but don't strand the remaining
-          // queued cards without controls — make each individually recoverable.
+          // Stop auto-processing, but leave every queued card recoverable
+          // rather than stranded without controls.
           results
             .querySelectorAll('[data-summarizer-card][data-state="queued"]')
             .forEach((c) => setRecoverable(c, 'Stopped — Retry to run this one.'));
@@ -138,8 +133,7 @@ if (results) {
       const card = copy.closest('[data-summarizer-card]');
       const body = card?.querySelector('[data-sz-body]');
       if (body) {
-        // Mirror the entry-summary copy: title + URL + summary, so the copied
-        // text keeps the source context, not just the bare summary body.
+        // Mirrors the entry-summary copy, so the text keeps its source context.
         const title = (card.querySelector('[data-sz-title]')?.textContent || '').trim();
         const url = (card.dataset.summarizerUrl || '').trim();
         const summary = body.textContent.trim();
@@ -149,8 +143,7 @@ if (results) {
         parts.push(summary);
         try {
           await navigator.clipboard.writeText(parts.join('\n\n'));
-          // Mirror the entry-summary copy feedback: swap only the label span's
-          // text to "Copied!" (leaving any icon span intact) and restore it.
+          // Only the label span, so any icon span survives.
           const label = copy.querySelector('.action-label') || copy;
           const original = label.textContent;
           label.textContent = 'Copied!';

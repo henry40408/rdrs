@@ -1,21 +1,15 @@
 // <rdrs-kb-help> — Keyboard shortcut help overlay (Shadow DOM)
 //
 // The shadow stylesheet references design tokens with no `var(--x, fallback)`
-// defaults, on purpose. Custom properties inherit across the shadow boundary,
-// and app.css is a render-blocking <link> in <head> that defines every token
-// used here — so a fallback can only ever fire in a scenario where the whole
-// app is already unstyled. Meanwhile each fallback is a second copy of a token
-// that nothing keeps in sync, and it silently freezes the *light* half of a
-// `light-dark()` pair. Four of them had already drifted from app.css before
-// they were removed (--color-overlay, --font-ui, --font-display, --font-mono).
-// Don't reintroduce them: add the token to app.css instead.
+// defaults, on purpose: custom properties inherit across the shadow boundary and
+// app.css defines every token used here, so a fallback can only fire when the
+// whole app is already unstyled. Each one is an unsynced second copy that also
+// freezes the *light* half of a `light-dark()` pair — four had already drifted
+// before removal. Add the token to app.css instead of reintroducing them.
 
-// The shadow styles are adopted as a constructable stylesheet rather than
-// injected as an inline style element. Markup parsed into a shadow root is
-// policed by `style-src` exactly like markup in the document, and the app's
-// Content-Security-Policy is `style-src 'self'` — an inline style element
-// here would simply not apply. The CSSOM route is not markup, so it is
-// unaffected; see src/middleware/security_headers.rs.
+// Adopted as a constructable stylesheet rather than an inline style element:
+// markup parsed into a shadow root is policed by `style-src` like any other, and
+// `style-src 'self'` would simply not apply it. The CSSOM route is not markup.
 const HELP_STYLES = new CSSStyleSheet();
 HELP_STYLES.replaceSync(`
 :host {
@@ -161,10 +155,9 @@ class RdrsKbHelp extends HTMLElement {
         });
         this.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
-            // Stop the event here: it would otherwise bubble on to the
-            // document-level entries handler, whose `help.isVisible` guard
-            // re-checks AFTER hide() has flipped it — and then closes the
-            // reading pane too.
+            // Otherwise it bubbles to the document-level entries handler, whose
+            // `help.isVisible` guard re-checks after hide() flipped it — and the
+            // reading pane closes too.
             e.preventDefault();
             e.stopPropagation();
             this.hide();
@@ -172,13 +165,11 @@ class RdrsKbHelp extends HTMLElement {
     }
 
     _kbd(keyStr) {
-        // Render key string as <kbd> elements, splitting on ' / ', ' + ', and spaces for combos
+        // Split on ' / ', ' + ' and spaces so combos render as separate <kbd>s.
         return keyStr.split(' / ').map(part => {
             if (part.includes('+')) {
-                // e.g. "Shift+Space" → <kbd>Shift</kbd>+<kbd>Space</kbd>
                 return part.split('+').map(k => `<kbd>${k}</kbd>`).join('+');
             }
-            // e.g. "g g" → <kbd>g</kbd> <kbd>g</kbd>
             return part.split(' ').map(k => `<kbd>${k}</kbd>`).join(' ');
         }).join(' / ');
     }

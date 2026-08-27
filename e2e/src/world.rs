@@ -1,16 +1,13 @@
 //! The Cucumber world: one browser session and one throwaway account per
 //! scenario.
 //!
-//! The session cannot be opened in `new`, because whether the page's scripts
-//! run is decided by the scenario's `@nojs` tag and `World::new` never sees it.
-//! A `before` hook opens it instead, which is also the only order that works:
-//! `Emulation.setScriptExecutionDisabled` applies to the next document, so it
-//! has to be issued before the first navigation.
+//! The session cannot be opened in `new`, because whether the page's scripts run
+//! is decided by the scenario's `@nojs` tag and `World::new` never sees it. A
+//! `before` hook opens it instead, which is also the only order that works:
+//! `Emulation.setScriptExecutionDisabled` applies to the next document.
 //!
-//! `support/fixtures.js` built the same state out of worker-scoped Playwright
-//! fixtures. The server, its database and the mock upstreams are now
-//! process-wide (see `server.rs`); what stays per-scenario is the account and
-//! the browser.
+//! The server, its database and the mock upstreams are process-wide (see
+//! `server.rs`); what stays per-scenario is the account and the browser.
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -31,18 +28,15 @@ static POOL: OnceLock<Pool> = OnceLock::new();
 
 /// A set of interchangeable servers, one borrowed per running scenario.
 ///
-/// Playwright ran one server per worker. Cucumber has no worker concept, so
-/// the first cut here shared a single server for the whole run — which fails
-/// on one specific thing: **the summary worker drains its queue one job at a
-/// time, per server** (Kagi is rate-limited per key, so concurrency there
-/// would only buy 429s), and its database work runs at background priority so
-/// it yields to every interactive request. Four scenarios summarising against
-/// one server therefore queue behind each other for longer than any sensible
-/// assertion waits.
+/// Cucumber has no worker concept, so the first cut shared a single server for
+/// the whole run — which fails on one thing: **the summary worker drains its
+/// queue one job at a time, per server** (Kagi is rate-limited per key), and its
+/// database work runs at background priority so it yields to every interactive
+/// request. Four scenarios summarising against one server queue behind each
+/// other for longer than any sensible assertion waits.
 ///
-/// A pool sized to the concurrency limit restores what per-worker servers
-/// gave: a scenario holds a server for its whole run, so no two scenarios ever
-/// share one queue.
+/// A pool sized to the concurrency limit restores what per-worker servers gave:
+/// a scenario holds a server for its whole run.
 struct Pool {
     /// Servers not currently lent out.
     free: std::sync::Mutex<Vec<Endpoints>>,
@@ -182,22 +176,16 @@ impl RdrsWorld {
         (self.user.username.clone(), self.user.password.clone())
     }
 
-    /// The one-time link issued for this account.
-    ///
-    /// # Errors
-    ///
-    /// Fails when no step has asked an admin to create the account.
+    /// The one-time link issued for this account, or an error when no step has
+    /// asked an admin to create it.
     pub fn invite_path(&self) -> Result<String> {
         self.invite_path
             .clone()
             .context("no invite link: no step created an account for this scenario")
     }
 
-    /// The second account this scenario created.
-    ///
-    /// # Errors
-    ///
-    /// Fails when no step registered one.
+    /// The second account this scenario created, or an error when no step
+    /// registered one.
     pub fn other_username(&self) -> Result<String> {
         self.other_username
             .clone()
@@ -205,20 +193,12 @@ impl RdrsWorld {
     }
 
     /// Opens the session for a scenario.
-    ///
-    /// # Errors
-    ///
-    /// Fails when no browser session can be started.
     pub async fn open(&mut self, scripting: Scripting) -> Result<()> {
         self.browser = Some(Browser::open(scripting).await?);
         Ok(())
     }
 
     /// Ends the session, if one was opened.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the driver refuses to close.
     pub async fn close(&mut self) -> Result<()> {
         if let Some(browser) = self.browser.take() {
             browser.quit().await?;
@@ -226,11 +206,8 @@ impl RdrsWorld {
         Ok(())
     }
 
-    /// The scenario's browser.
-    ///
-    /// # Errors
-    ///
-    /// Fails when no session was opened — a `before` hook that did not run.
+    /// The scenario's browser, or an error when no session was opened — a
+    /// `before` hook that did not run.
     pub fn browser(&self) -> Result<&Browser> {
         self.browser
             .as_ref()
@@ -238,10 +215,6 @@ impl RdrsWorld {
     }
 
     /// The scenario's browser, mutably, for the emulations that latch.
-    ///
-    /// # Errors
-    ///
-    /// Fails when no session was opened.
     pub fn browser_mut(&mut self) -> Result<&mut Browser> {
         self.browser
             .as_mut()
@@ -249,10 +222,6 @@ impl RdrsWorld {
     }
 
     /// The scenario's driver.
-    ///
-    /// # Errors
-    ///
-    /// Fails when no session was opened.
     pub fn driver(&self) -> Result<&WebDriver> {
         Ok(self.browser()?.driver())
     }
@@ -285,10 +254,6 @@ impl RdrsWorld {
     }
 
     /// The row id of this scenario's account, resolving it on first use.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the account has not been created yet.
     pub async fn user_id(&mut self) -> Result<i64> {
         if let Some(id) = self.user_id {
             return Ok(id);
@@ -299,10 +264,6 @@ impl RdrsWorld {
     }
 
     /// Navigates to a path on the server under test.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the navigation is refused.
     pub async fn goto(&self, path: &str) -> Result<()> {
         let url = format!("{}{path}", self.base_url());
         self.driver()?.goto(&url).await?;
@@ -310,10 +271,6 @@ impl RdrsWorld {
     }
 
     /// The current URL's path and query, the shape the steps assert against.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the driver cannot report a URL.
     pub async fn path(&self) -> Result<String> {
         let url = self.driver()?.current_url().await?;
         Ok(match url.query() {
@@ -322,16 +279,10 @@ impl RdrsWorld {
         })
     }
 
-    /// Waits for the browser to land on `expected`, Playwright's
-    /// `waitForURL`.
+    /// Waits for the browser to land on `expected`, Playwright's `waitForURL`.
     ///
     /// Compares path and query rather than the whole URL: the server's port is
-    /// ephemeral, so the old assertions' `${serverUrl}/…` has no stable form
-    /// here.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the URL has not settled on `expected` in time.
+    /// ephemeral, so the old assertions' `${serverUrl}/…` has no stable form.
     pub async fn expect_path(&self, expected: &str) -> Result<()> {
         crate::wait::eventually_eq(&format!("URL is {expected}"), expected.to_owned(), || {
             self.path()
@@ -340,20 +291,12 @@ impl RdrsWorld {
     }
 
     /// Resizes the viewport.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the CDP command is refused.
     pub async fn resize(&mut self, viewport: Viewport) -> Result<()> {
         self.browser_mut()?.set_viewport(viewport).await
     }
 
-    /// Holds every request matching `pattern` for `delay`, then lets it
-    /// through — Playwright's `page.route` with a sleep.
-    ///
-    /// # Errors
-    ///
-    /// Fails when CDP cannot be attached, or the pattern is invalid.
+    /// Holds every request matching `pattern` for `delay`, then lets it through —
+    /// Playwright's `page.route` with a sleep.
     pub async fn delay_requests(&mut self, pattern: &str, delay: Duration) -> Result<RouteHandle> {
         self.route(pattern, Action::Delay(delay)).await
     }
@@ -361,13 +304,9 @@ impl RdrsWorld {
     /// Answers every request to the seeded entries' origin with a stub page.
     ///
     /// The shortcut that opens an entry's link in a new tab asserts on *which*
-    /// URL it targets, not that the page loads — and `https://example.com`
-    /// fails DNS resolution on a machine without internet, which collapses the
-    /// popup's URL to `chrome-error://chromewebdata/`.
-    ///
-    /// # Errors
-    ///
-    /// Fails when CDP cannot be attached.
+    /// URL it targets, not that the page loads — and `https://example.com` fails
+    /// DNS resolution on a machine without internet, which collapses the popup's
+    /// URL to `chrome-error://chromewebdata/`.
     pub async fn stub_external_pages(&mut self) -> Result<()> {
         self.route(
             r"^https://example\.com/",
@@ -381,13 +320,8 @@ impl RdrsWorld {
     }
 
     /// GETs from the server as the signed-in browser, returning the body.
-    ///
     /// `page.request.get` in the JavaScript suite — used for the OPML export,
     /// which is a download rather than a page.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the request cannot be sent, or answers 4xx/5xx.
     pub async fn get_as_user(&self, path: &str) -> Result<String> {
         let (jar, csrf) = self.browser_credentials().await?;
         let response = reqwest::Client::builder()
@@ -426,10 +360,6 @@ impl RdrsWorld {
 
     /// Holds every request matching `pattern` open until the handle is
     /// released.
-    ///
-    /// # Errors
-    ///
-    /// Fails when CDP cannot be attached, or the pattern is invalid.
     pub async fn hold_requests(&mut self, pattern: &str) -> Result<RouteHandle> {
         self.attach_network().await?;
         self.network
@@ -441,10 +371,6 @@ impl RdrsWorld {
 
     /// Counts matching requests of one method without changing them —
     /// Playwright's `page.on("request", …)`.
-    ///
-    /// # Errors
-    ///
-    /// Fails when CDP cannot be attached, or the pattern is invalid.
     pub async fn watch_requests(&mut self, pattern: &str, method: &str) -> Result<RouteHandle> {
         self.attach_network().await?;
         self.network
@@ -477,17 +403,10 @@ impl RdrsWorld {
 
     /// POSTs to the server as the signed-in browser, out of band.
     ///
-    /// `page.request.post` in the JavaScript suite: it shares the browser's
-    /// session cookie but bypasses the page's own patched `fetch`, so it must
-    /// attach the CSRF token itself — exactly what `csrf.js` does in the real
-    /// UI, echoing the readable `csrf_token` cookie back as `X-CSRF-Token`.
-    ///
-    /// Used to fire a mutation the page did not initiate, so the SSE event it
-    /// emits is the only thing that can update the open page.
-    ///
-    /// # Errors
-    ///
-    /// Fails when the request cannot be sent, or answers 4xx/5xx.
+    /// It shares the browser's session cookie but bypasses the page's own patched
+    /// `fetch`, so it must attach the CSRF token itself — exactly what `csrf.js`
+    /// does in the real UI. Used to fire a mutation the page did not initiate, so
+    /// the SSE event it emits is the only thing that can update the open page.
     pub async fn post_as_user(&self, path: &str) -> Result<()> {
         let (jar, csrf) = self.browser_credentials().await?;
         let response = reqwest::Client::builder()

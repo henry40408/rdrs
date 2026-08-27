@@ -309,7 +309,6 @@ pub async fn recover_incomplete_jobs(
     }
 
     for (user_id, entry_id, entry_link) in incomplete {
-        // Set pending in cache to track the job
         cache.set_pending(user_id, entry_id);
 
         let job = SummaryJob {
@@ -451,7 +450,6 @@ mod tests {
             EventBus::new(8),
         );
 
-        // Drop the sender to close the channel
         drop(tx);
 
         // Worker should stop
@@ -474,7 +472,6 @@ mod tests {
     async fn test_recover_incomplete_jobs_with_pending() {
         let db = setup_test_db().await;
 
-        // Create test data with a pending summary
         let user_id = user::create_user(&db, "testuser", "hash", Role::User)
             .await
             .unwrap()
@@ -514,7 +511,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Create a pending summary
         entry_summary::upsert_pending(&db, user_id, entry_obj.id)
             .await
             .unwrap();
@@ -525,11 +521,9 @@ mod tests {
         let count = recover_incomplete_jobs(db, tx, cache.clone()).await;
         assert_eq!(count, 1);
 
-        // Verify job was queued
         let job = rx.try_recv().unwrap();
         assert_eq!(job.entry_link, "https://example.com/article");
 
-        // Verify cache was updated
         let status = cache.get(job.user_id, job.entry_id);
         assert!(status.is_some());
     }
@@ -538,7 +532,6 @@ mod tests {
     async fn test_recover_incomplete_jobs_with_processing() {
         let db = setup_test_db().await;
 
-        // Create test data with a processing (stuck) summary
         let user_id = user::create_user(&db, "testuser", "hash", Role::User)
             .await
             .unwrap()
@@ -578,7 +571,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Create a processing summary (simulates a crashed worker)
         entry_summary::upsert_pending(&db, user_id, entry_obj.id)
             .await
             .unwrap();
@@ -592,7 +584,6 @@ mod tests {
         let count = recover_incomplete_jobs(db, tx, cache).await;
         assert_eq!(count, 1);
 
-        // Verify job was queued
         let job = rx.try_recv().unwrap();
         assert_eq!(job.entry_link, "https://example.com/article2");
     }
@@ -724,7 +715,6 @@ mod tests {
         let db = setup_test_db().await;
         let cancel_token = CancellationToken::new();
 
-        // Create test user for the jobs
         user::create_user(&db, "testuser", "hash", Role::User)
             .await
             .unwrap();
@@ -739,7 +729,6 @@ mod tests {
             EventBus::new(8),
         );
 
-        // Send multiple jobs
         for i in 1..=3 {
             tx.send(SummaryJob {
                 user_id: 1,
@@ -750,7 +739,6 @@ mod tests {
             .unwrap();
         }
 
-        // Give worker a moment to start processing
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Cancel the worker

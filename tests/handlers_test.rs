@@ -1,12 +1,5 @@
-//! Integration tests for `GReader` API, Feed, Entry handlers
-//!
-//! This test file covers:
-//! - handlers/greader/tag.rs (category CRUD via rename-tag, disable-tag, tag/list)
-//! - handlers/greader/subscription.rs (feed management via subscription/edit, OPML import/export)
-//! - handlers/greader/item.rs (entry listing via stream/contents, edit-tag, mark-all-as-read)
-//! - handlers/greader/user.rs (unread-count)
-//! - handlers/user.rs (settings management)
-//! - handlers/pages.rs (page rendering)
+//! Integration tests for the `GReader` API, feed, entry, user-settings and
+//! page handlers.
 
 mod common;
 use common::{default_test_config, flash_text};
@@ -148,9 +141,7 @@ async fn get_folder_tag_names(server: &TestServer) -> Vec<String> {
         .collect()
 }
 
-// ============================================================================
-// Category Handler Tests (via GReader tag endpoints)
-// ============================================================================
+// --- Category Handler Tests (via GReader tag endpoints) ---
 
 #[tokio::test]
 async fn test_create_category() {
@@ -165,7 +156,6 @@ async fn test_create_category() {
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 
-    // Verify via tag/list
     let names = get_folder_tag_names(&server).await;
     assert!(names.contains(&"Tech News".to_string()));
 }
@@ -211,7 +201,6 @@ async fn test_list_categories() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    // Create some categories
     create_category(&server, "Tech").await;
     create_category(&server, "News").await;
     create_category(&server, "Sports").await;
@@ -236,7 +225,6 @@ async fn test_get_category() {
 
     create_category(&server, "Test Category").await;
 
-    // Verify the category appears in tag/list
     let names = get_folder_tag_names(&server).await;
     assert!(names.contains(&"Test Category".to_string()));
 }
@@ -248,7 +236,6 @@ async fn test_update_category() {
 
     create_category(&server, "Old Name").await;
 
-    // Rename via rename-tag
     let form = vec![
         ("s", "user/-/label/Old Name".to_string()),
         ("dest", "user/-/label/New Name".to_string()),
@@ -257,7 +244,6 @@ async fn test_update_category() {
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 
-    // Verify the rename happened
     let names = get_folder_tag_names(&server).await;
     assert!(!names.contains(&"Old Name".to_string()));
     assert!(names.contains(&"New Name".to_string()));
@@ -270,7 +256,6 @@ async fn test_update_category_empty_name() {
 
     create_category(&server, "Test").await;
 
-    // Rename with empty destination label should fail
     let form = vec![
         ("s", "user/-/label/Test".to_string()),
         ("dest", "user/-/label/".to_string()),
@@ -286,20 +271,16 @@ async fn test_delete_category() {
 
     create_category(&server, "To Delete").await;
 
-    // Delete via disable-tag
     let form = vec![("s", "user/-/label/To Delete".to_string())];
     let response = server.post("/reader/api/0/disable-tag").form(&form).await;
     response.assert_status_ok();
     assert_eq!(response.text(), "OK");
 
-    // Verify it's gone
     let names = get_folder_tag_names(&server).await;
     assert!(!names.contains(&"To Delete".to_string()));
 }
 
-// ============================================================================
-// Feed Handler Tests (via GReader subscription endpoints)
-// ============================================================================
+// --- Feed Handler Tests (via GReader subscription endpoints) ---
 
 #[tokio::test]
 async fn test_list_feeds_empty() {
@@ -417,7 +398,6 @@ async fn test_move_feed_to_different_category() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    // Import a feed to create it
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
     <body>
@@ -433,7 +413,6 @@ async fn test_move_feed_to_different_category() {
         .await;
     response.assert_status_ok();
 
-    // Move feed to a new category via subscription/edit ac=edit
     let form: Vec<(&str, &str)> = vec![
         ("ac", "edit"),
         ("s", "feed/https://move.example.com/feed.xml"),
@@ -445,7 +424,6 @@ async fn test_move_feed_to_different_category() {
         .await;
     response.assert_status_ok();
 
-    // Verify subscription/list shows the new category
     let response = server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
@@ -483,7 +461,6 @@ async fn test_update_feed_to_other_user_category() {
     // User 1 creates a category
     create_category(&server, "MoveFeedUser1 Category").await;
 
-    // Logout user1
     server.delete("/api/session").await.assert_status_ok();
 
     // User 2 exists
@@ -505,7 +482,6 @@ async fn test_update_feed_to_other_user_category() {
     __login.assert_status_ok();
     common::apply_csrf(&mut server, &__login);
 
-    // Import a feed for user2
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
     <body>
@@ -575,7 +551,6 @@ async fn test_delete_feed_other_user() {
         .await
         .assert_status_ok();
 
-    // Logout user1
     app.server.delete("/api/session").await.assert_status_ok();
 
     // User2 registers and logs in
@@ -611,9 +586,7 @@ async fn test_delete_feed_other_user() {
     response.assert_status_not_found();
 }
 
-// ============================================================================
-// OPML Tests (via GReader subscription/export and subscription/import)
-// ============================================================================
+// --- OPML Tests (via GReader subscription/export and subscription/import) ---
 
 #[tokio::test]
 async fn test_export_opml_empty() {
@@ -640,7 +613,6 @@ async fn test_export_opml_with_feeds() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    // Import feeds to create data
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
     <body>
@@ -689,14 +661,12 @@ async fn test_import_opml_valid() {
     let body = response.text();
     assert_eq!(body, "OK");
 
-    // Verify via subscription/list that the feed was created
     let response = server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
     let subscriptions = body["subscriptions"].as_array().unwrap();
     assert_eq!(subscriptions.len(), 1);
 
-    // Verify via tag/list that the category was created
     let names = get_folder_tag_names(&server).await;
     assert!(names.contains(&"Tech".to_string()));
 }
@@ -742,21 +712,18 @@ async fn test_import_opml_duplicate_feeds_skipped() {
   </body>
 </opml>"#;
 
-    // First import
     let response = server
         .post("/reader/api/0/subscription/import")
         .text(opml_content)
         .await;
     response.assert_status_ok();
 
-    // Second import - duplicates should be skipped
     let response = server
         .post("/reader/api/0/subscription/import")
         .text(opml_content)
         .await;
     response.assert_status_ok();
 
-    // Verify only 1 feed exists (not duplicated)
     let response = server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
@@ -788,7 +755,6 @@ async fn test_import_opml_multiple_categories() {
         .await;
     response.assert_status_ok();
 
-    // Verify 3 feeds
     let response = server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
@@ -799,9 +765,7 @@ async fn test_import_opml_multiple_categories() {
     assert_eq!(count, 3);
 }
 
-// ============================================================================
-// Entry Handler Tests (via GReader stream/contents and edit-tag)
-// ============================================================================
+// --- Entry Handler Tests (via GReader stream/contents and edit-tag) ---
 
 #[tokio::test]
 async fn test_list_entries_empty() {
@@ -846,13 +810,11 @@ async fn test_list_entries_with_filters() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    // Test unread_only filter via xt=read
     let response = server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?xt=user/-/state/com.google/read")
         .await;
     response.assert_status_ok();
 
-    // Test starred_only filter via it=starred
     let response = server
         .get("/reader/api/0/stream/contents/user/-/state/com.google/reading-list?it=user/-/state/com.google/starred")
         .await;
@@ -1058,7 +1020,6 @@ async fn test_entries_filter_by_valid_category() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    // Create a category
     create_category(&server, "TestCategory").await;
 
     // Filter entries by this category (should be empty but return 200)
@@ -1068,16 +1029,11 @@ async fn test_entries_filter_by_valid_category() {
     response.assert_status_ok();
 }
 
-// ============================================================================
-// User Settings Handler Tests
-// ============================================================================
+// --- User Settings Handler Tests ---
 //
-// JSON PUT/GET endpoints for password, settings, linkding, and kagi were
-// removed in PR-4 Task 3 in favour of SSR form-action endpoints
-// (POST /user-settings/{password,preferences,linkding,kagi}). Coverage
-// for those flows lives in test_change_password_form_*,
-// test_update_preferences_form*, test_update_linkding_form, and
-// test_update_kagi_form below.
+// The JSON PUT/GET endpoints were replaced by SSR form actions (POST
+// /user-settings/{password,preferences,linkding,kagi}); coverage for those
+// lives in the test_*_form* tests below.
 
 #[tokio::test]
 async fn test_get_theme_default() {
@@ -1111,7 +1067,6 @@ async fn test_update_theme_dark() {
 
     response.assert_status_ok();
 
-    // Verify the theme was saved
     let response = server.get("/api/user/settings/theme").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
@@ -1130,7 +1085,6 @@ async fn test_update_theme_light() {
 
     response.assert_status_ok();
 
-    // Verify the theme was saved
     let response = server.get("/api/user/settings/theme").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
@@ -1142,14 +1096,12 @@ async fn test_update_theme_system() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    // First set a theme
     server
         .put("/api/user/settings/theme")
         .json(&json!({ "theme": "dark" }))
         .await
         .assert_status_ok();
 
-    // Then reset to system (null)
     let response = server
         .put("/api/user/settings/theme")
         .json(&json!({ "theme": null }))
@@ -1157,7 +1109,6 @@ async fn test_update_theme_system() {
 
     response.assert_status_ok();
 
-    // Verify the theme was reset
     let response = server.get("/api/user/settings/theme").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
@@ -1189,9 +1140,7 @@ async fn test_update_theme_unauthorized() {
     response.assert_status_unauthorized();
 }
 
-// ============================================================================
-// Page Handler Tests
-// ============================================================================
+// --- Page Handler Tests ---
 
 #[tokio::test]
 async fn test_categories_page() {
@@ -1319,9 +1268,7 @@ async fn test_settings_page_unauthorized() {
     response.assert_status_see_other();
 }
 
-// ============================================================================
-// Cross-User Isolation Tests
-// ============================================================================
+// --- Cross-User Isolation Tests ---
 
 #[tokio::test]
 async fn test_category_isolation_between_users() {
@@ -1350,7 +1297,6 @@ async fn test_category_isolation_between_users() {
 
     create_category(&server, "User1 Category").await;
 
-    // Logout
     server.delete("/api/session").await.assert_status_ok();
 
     // User 2 should not see User 1's category
@@ -1372,9 +1318,7 @@ async fn test_category_isolation_between_users() {
     assert_eq!(names, vec!["Uncategorized".to_string()]);
 }
 
-// ============================================================================
-// Edge Case Tests
-// ============================================================================
+// --- Edge Case Tests ---
 
 #[tokio::test]
 async fn test_create_category_with_whitespace_name() {
@@ -1417,7 +1361,6 @@ async fn test_update_category_with_whitespace_name() {
     let response = server.post("/reader/api/0/rename-tag").form(&form).await;
     response.assert_status_ok();
 
-    // Verify the rename happened
     let response = server.get("/reader/api/0/tag/list").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
@@ -1431,9 +1374,7 @@ async fn test_update_category_with_whitespace_name() {
     assert!(!folder_ids.contains(&"user/-/label/Original"));
 }
 
-// ============================================================================
-// Additional Feed Icon Tests
-// ============================================================================
+// --- Additional Feed Icon Tests ---
 
 #[tokio::test]
 async fn test_get_feed_icon_unauthorized() {
@@ -1447,7 +1388,6 @@ async fn test_get_feed_icon_unauthorized() {
 async fn test_get_feed_icon_no_icon() {
     let mut app = create_test_app(default_test_config()).await;
 
-    // Create user and a feed (via OPML import) that has no icon
     let hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
     rdrs::models::user::create_user(&app.db, "iconuser", &hash, Role::User)
         .await
@@ -1464,7 +1404,6 @@ async fn test_get_feed_icon_no_icon() {
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
 
-    // Import a feed via GReader OPML import
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
     <body>
@@ -1479,7 +1418,6 @@ async fn test_get_feed_icon_no_icon() {
         .await
         .assert_status_ok();
 
-    // Get feed ID from subscription/list iconUrl field
     let response = app.server.get("/reader/api/0/subscription/list").await;
     let body: serde_json::Value = response.json();
     let subscriptions = body["subscriptions"].as_array().unwrap();
@@ -1507,10 +1445,8 @@ async fn test_get_feed_icon_no_icon() {
 #[tokio::test]
 async fn test_favicon_cache_control_is_version_gated() {
     // The icons are `include_bytes!`d into the binary, so they change with the
-    // build. `base.html` stamps its <link>s with ?v=, and only those may be
-    // pinned long-term — a bare /favicon.ico (browser probe, crawler, iOS
-    // fetching apple-touch-icon.png with no <link>) has no URL left to change
-    // on upgrade and must stay short-lived.
+    // build. Only the `?v=`-stamped <link>s in `base.html` may be pinned
+    // long-term — a bare /favicon.ico has no URL left to change on upgrade.
     let server = create_test_server(default_test_config()).await;
 
     let bare = server.get("/favicon.ico").await;
@@ -1531,12 +1467,10 @@ async fn test_favicon_cache_control_is_version_gated() {
 
 #[tokio::test]
 async fn test_get_feed_icon_is_privately_cached() {
-    // The handler sets its own `Cache-Control`, which makes
-    // `no_store_for_authenticated` step aside — no `Vary: Cookie` is added. So
-    // the directive itself has to keep this auth-scoped response out of shared
-    // storage, or a proxy keyed on the URL alone could serve feed N's icon to
-    // someone with no access to it. `private` still allows the day-long browser
-    // cache this header exists for.
+    // The handler sets its own `Cache-Control`, so `no_store_for_authenticated`
+    // steps aside and adds no `Vary: Cookie`. The directive itself therefore has
+    // to keep this auth-scoped response out of shared storage, or a proxy keyed
+    // on the URL alone could serve feed N's icon to someone with no access.
     let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
@@ -1562,15 +1496,11 @@ async fn test_get_feed_icon_is_privately_cached() {
     );
 }
 
-// ============================================================================
-// Passkey Handler Tests
-// ============================================================================
+// --- Passkey Handler Tests ---
 
 /// Attach a session created straight in the database as this server's default
-/// cookie, plus the CSRF header derived from it.
-///
-/// Needed where the login endpoint is unavailable — `disable_local_auth` — so
-/// the test can still exercise an authenticated path. The signing key is
+/// cookie, plus the CSRF header derived from it. Needed where the login endpoint
+/// is unavailable (`disable_local_auth`). The signing key is
 /// `default_test_config`'s all-zero secret.
 fn apply_session_cookie(server: &mut TestServer, token: &str) {
     let secret = vec![0u8; 32];
@@ -1724,9 +1654,8 @@ async fn test_passkey_register_finish_unauthorized() {
 async fn test_passkey_auth_start_no_passkeys() {
     // An instance with nothing enrolled must answer exactly like one that has
     // passkeys: a challenge. The handler used to reject with "No passkeys
-    // registered", which told any unauthenticated caller whether this
-    // deployment had accounts using them. The ceremony simply finds nothing
-    // to sign with on the client side instead.
+    // registered", telling any unauthenticated caller whether this deployment
+    // had accounts using them.
     let server = create_test_server(default_test_config()).await;
 
     let response = server.post("/api/passkey/auth/start").await;
@@ -1898,12 +1827,10 @@ async fn test_reauth_refused_when_local_auth_disabled() {
 async fn test_passkey_auth_start_with_invalid_passkey_data() {
     let app = create_test_app(default_test_config()).await;
 
-    // Create user and passkey with invalid public_key JSON
     let password_hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
         .unwrap();
-    // Insert passkey with invalid JSON in public_key
     rdrs::db_execute!(
         &app.db,
         "INSERT INTO passkey (user_id, credential_id, public_key, counter, name) VALUES ($1, $2, $3, $4, $5)",
@@ -1930,7 +1857,6 @@ async fn test_passkey_register_finish_empty_name() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    // First start registration to create a challenge
     server.post("/api/passkey/register/start").await;
 
     // Try to finish with empty name - this should fail validation before checking credential
@@ -1960,7 +1886,6 @@ async fn test_passkey_register_finish_no_challenge() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    // Try to finish registration without starting (no challenge exists)
     let response = server
         .post("/api/passkey/register/finish")
         .json(&json!({
@@ -1986,7 +1911,6 @@ async fn test_passkey_register_finish_no_challenge() {
 async fn test_list_passkeys_with_data() {
     let mut app = create_test_app(default_test_config()).await;
 
-    // Create user and passkey
     let password_hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
@@ -2003,7 +1927,6 @@ async fn test_list_passkeys_with_data() {
     )
     .unwrap();
 
-    // Login
     let __login = app
         .server
         .post("/api/session")
@@ -2028,7 +1951,6 @@ async fn test_list_passkeys_with_data() {
 async fn test_rename_passkey_success() {
     let mut app = create_test_app(default_test_config()).await;
 
-    // Create user and passkey
     let password_hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
@@ -2045,7 +1967,6 @@ async fn test_rename_passkey_success() {
     )
     .unwrap();
 
-    // Login
     let __login = app
         .server
         .post("/api/session")
@@ -2064,7 +1985,6 @@ async fn test_rename_passkey_success() {
         .await;
     response.assert_status(StatusCode::NO_CONTENT);
 
-    // Verify rename
     let response = app.server.get("/api/passkeys").await;
     let body: serde_json::Value = response.json();
     assert_eq!(body["passkeys"][0]["name"], "New Name");
@@ -2074,7 +1994,6 @@ async fn test_rename_passkey_success() {
 async fn test_delete_passkey_success() {
     let mut app = create_test_app(default_test_config()).await;
 
-    // Create user and passkey
     let password_hash = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user = rdrs::models::user::create_user(&app.db, "testuser", &password_hash, Role::User)
         .await
@@ -2091,7 +2010,6 @@ async fn test_delete_passkey_success() {
     )
     .unwrap();
 
-    // Login
     let __login = app
         .server
         .post("/api/session")
@@ -2109,21 +2027,17 @@ async fn test_delete_passkey_success() {
         .await;
     response.assert_status(StatusCode::NO_CONTENT);
 
-    // Verify deletion
     let response = app.server.get("/api/passkeys").await;
     let body: serde_json::Value = response.json();
     assert_eq!(body["passkeys"].as_array().unwrap().len(), 0);
 }
 
-// ============================================================================
-// Cross-User Passkey Isolation Tests
-// ============================================================================
+// --- Cross-User Passkey Isolation Tests ---
 
 #[tokio::test]
 async fn test_passkey_rename_other_user() {
     let mut app = create_test_app(default_test_config()).await;
 
-    // Create two users, each with a passkey
     let hash1 = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user1 = rdrs::models::user::create_user(&app.db, "pkuser1", &hash1, Role::User)
         .await
@@ -2144,7 +2058,6 @@ async fn test_passkey_rename_other_user() {
         .await
         .unwrap();
 
-    // Login as user2
     let __login = app
         .server
         .post("/api/session")
@@ -2169,7 +2082,6 @@ async fn test_passkey_rename_other_user() {
 async fn test_passkey_delete_other_user() {
     let mut app = create_test_app(default_test_config()).await;
 
-    // Create two users, user1 has a passkey
     let hash1 = auth::hash_password("vulture-mango-77-quilt").unwrap();
     let user1 = rdrs::models::user::create_user(&app.db, "pkdeluser1", &hash1, Role::User)
         .await
@@ -2190,7 +2102,6 @@ async fn test_passkey_delete_other_user() {
         .await
         .unwrap();
 
-    // Login as user2
     let __login = app
         .server
         .post("/api/session")
@@ -2210,9 +2121,7 @@ async fn test_passkey_delete_other_user() {
     response.assert_status_not_found();
 }
 
-// ============================================================================
-// Favicon Handler Tests
-// ============================================================================
+// --- Favicon Handler Tests ---
 
 #[tokio::test]
 async fn test_favicon_ico() {
@@ -2311,9 +2220,7 @@ async fn test_apple_touch_icon() {
     }
 }
 
-// ============================================================================
-// Static Assets Handler Tests
-// ============================================================================
+// --- Static Assets Handler Tests ---
 
 #[tokio::test]
 async fn test_static_js_serves_known_file() {
@@ -2436,9 +2343,7 @@ async fn test_static_font_not_found() {
     response.assert_status_not_found();
 }
 
-// ============================================================================
-// Health Check Tests
-// ============================================================================
+// --- Health Check Tests ---
 
 #[tokio::test]
 async fn test_health_check() {
@@ -2461,16 +2366,13 @@ async fn test_health_check_no_auth_required() {
     response.assert_status_ok();
 }
 
-// ============================================================================
-// Subscription Handler Coverage Tests
-// ============================================================================
+// --- Subscription Handler Coverage Tests ---
 
 #[tokio::test]
 async fn test_subscription_list_with_feeds() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    // Import a feed via OPML
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
     <body>
@@ -2495,7 +2397,6 @@ async fn test_subscription_list_with_feeds() {
     assert_eq!(subscriptions.len(), 1);
 
     let sub = &subscriptions[0];
-    // Verify all expected fields exist
     assert_eq!(sub["id"], "feed/https://sublist.example.com/feed.xml");
     assert!(sub["title"].is_string(), "title should be a string");
     assert!(
@@ -2509,7 +2410,6 @@ async fn test_subscription_list_with_feeds() {
         "iconUrl field should be present"
     );
 
-    // Verify category structure
     let categories = sub["categories"].as_array().unwrap();
     assert_eq!(categories.len(), 1);
     assert_eq!(categories[0]["label"], "SubListCat");
@@ -2571,7 +2471,6 @@ async fn test_subscribed_true() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    // Import a feed via OPML
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
     <body>
@@ -2587,7 +2486,6 @@ async fn test_subscribed_true() {
         .await
         .assert_status_ok();
 
-    // Check subscribed → "true"
     let response = server
         .get("/reader/api/0/subscribed?s=feed/https://subdtrue.example.com/feed.xml")
         .await;
@@ -2660,7 +2558,6 @@ async fn test_import_opml_with_existing_category() {
     // Pre-create a category via rename-tag
     create_category(&server, "PreExistingCat").await;
 
-    // Import OPML with a feed in the same category name
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
     <body>
@@ -2686,7 +2583,6 @@ async fn test_import_opml_with_existing_category() {
         matching.len()
     );
 
-    // Verify the feed was created under the existing category
     let response = server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
@@ -2700,7 +2596,6 @@ async fn test_subscription_edit_edit_title() {
     let mut server = create_test_server(default_test_config()).await;
     setup_authenticated_user(&mut server).await;
 
-    // Import a feed via OPML
     let opml_content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
     <body>
@@ -2728,7 +2623,6 @@ async fn test_subscription_edit_edit_title() {
         .await;
     response.assert_status_ok();
 
-    // Verify the title was changed via subscription/list
     let response = server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
     let body: serde_json::Value = response.json();
@@ -2737,15 +2631,12 @@ async fn test_subscription_edit_edit_title() {
     assert_eq!(subscriptions[0]["title"], "NewTitle");
 }
 
-// ============================================================================
-// Auth Handler Coverage Tests (ClientLogin, token, preference, friend)
-// ============================================================================
+// --- Auth Handler Coverage Tests (ClientLogin, token, preference, friend) ---
 
 #[tokio::test]
 async fn test_client_login_success() {
     let server = create_test_server(default_test_config()).await;
 
-    // Register a user first
     server
         .post("/api/setup")
         .json(&json!({
@@ -2779,7 +2670,6 @@ async fn test_client_login_success() {
 async fn test_client_login_wrong_password() {
     let server = create_test_server(default_test_config()).await;
 
-    // Register a user
     server
         .post("/api/setup")
         .json(&json!({
@@ -2809,7 +2699,6 @@ async fn test_client_login_nonexistent_user() {
 async fn test_greader_auth_header() {
     let server = create_test_server(default_test_config()).await;
 
-    // Register user
     server
         .post("/api/setup")
         .json(&json!({
@@ -2819,7 +2708,6 @@ async fn test_greader_auth_header() {
         .await
         .assert_status(StatusCode::CREATED);
 
-    // Get auth token via ClientLogin
     let form: Vec<(&str, &str)> = vec![("Email", "testuser"), ("Passwd", "vulture-mango-77-quilt")];
     let response = server.post("/accounts/ClientLogin").form(&form).await;
     response.assert_status_ok();
@@ -2832,7 +2720,6 @@ async fn test_greader_auth_header() {
         .strip_prefix("Auth=")
         .unwrap();
 
-    // Use the auth token in Authorization header to call user-info
     let auth_header_value = format!("GoogleLogin auth={auth_token}");
     let response = server
         .get("/reader/api/0/user-info")
@@ -2851,7 +2738,6 @@ async fn test_greader_auth_header() {
 async fn test_greader_invalid_auth_header() {
     let server = create_test_server(default_test_config()).await;
 
-    // Use an invalid auth token in Authorization header → 401
     let response = server
         .get("/reader/api/0/user-info")
         .add_header(
@@ -2916,9 +2802,8 @@ async fn test_friend_list() {
 }
 
 // ============================================================================
-// Form-action handlers for the SSR /user-settings page (PR-4 T1).
-// Each endpoint accepts application/x-www-form-urlencoded bodies and returns
-// 303 See Other with a flash cookie + Location header.
+// Form-action handlers for the SSR /user-settings page. Each accepts a
+// urlencoded body and answers 303 with a flash cookie plus Location.
 // ============================================================================
 
 #[tokio::test]
@@ -3115,13 +3000,11 @@ async fn test_revoke_other_sessions_form_keeps_current_deletes_others() {
 
 #[tokio::test]
 async fn test_revoke_other_sessions_form_unauthenticated_rejected() {
-    // `/user-settings/*` is not under the CSRF/anonymous-session skip prefixes
-    // (unlike `/api/*`), so `anonymous_session` mints a signed session cookie
-    // for this request and `csrf_guard` then requires a matching token. A bare
-    // POST with no cookie jar and no `_csrf` field never has one, so this is
-    // rejected as 403 Forbidden by the CSRF guard before the `AuthUser`
-    // extractor (which would otherwise 401) ever runs. This doubles as the
-    // CSRF-missing coverage for this endpoint.
+    // `/user-settings/*` is not under the CSRF skip prefixes, so
+    // `anonymous_session` mints a signed session cookie and `csrf_guard` then
+    // requires a matching token. A bare POST never has one, so it is 403'd
+    // before the `AuthUser` extractor (which would 401) ever runs — which
+    // doubles as this endpoint's CSRF-missing coverage.
     let server = create_test_server(default_test_config()).await;
 
     let response = server.post("/user-settings/sessions/revoke-others").await;
@@ -3131,12 +3014,10 @@ async fn test_revoke_other_sessions_form_unauthenticated_rejected() {
 
 #[tokio::test]
 async fn test_revoke_other_sessions_form_blocked_while_masquerading() {
-    // `start_masquerade` mutates the admin's own session row in place
-    // (user_id -> target, original_user_id -> admin, rotated token/cookie), so
-    // while masquerading, the effective session belongs to the target. The
-    // revoke-others action must refuse to run in that state — otherwise an
-    // admin masquerading as a user would silently delete that user's real
-    // sessions on their own devices.
+    // `start_masquerade` mutates the admin's own session row in place, so while
+    // masquerading the effective session belongs to the target. Revoke-others
+    // must refuse in that state, or an admin would silently delete the target's
+    // real sessions on their own devices.
     let mut app = create_test_app(default_test_config()).await;
     setup_admin_user(&mut app.server).await;
     register_target_user(&app.db).await;
@@ -3338,13 +3219,12 @@ async fn test_password_change_revokes_api_tokens() {
 #[tokio::test]
 async fn test_password_change_is_rate_limited() {
     // Changing a password verifies the *current* one with Argon2. The caller
-    // already holds a session, so this is not a way in from outside — but
-    // unthrottled it lets a hijacked session brute-force the original
-    // password, and lets any logged-in user spend server CPU at will.
+    // already holds a session, so this is no way in from outside — but
+    // unthrottled it lets a hijacked session brute-force the original password.
     //
-    // Asserted the strong way: once the budget is spent, even the CORRECT
-    // current password is refused. That can only hold if the limiter runs
-    // *before* `verify_password`.
+    // Asserted the strong way: once the budget is spent even the CORRECT
+    // password is refused, which can only hold if the limiter runs *before*
+    // `verify_password`.
     let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
@@ -3527,9 +3407,7 @@ async fn test_revoke_all_api_tokens_flash_counts_the_tokens() {
     );
 }
 
-// ============================================================================
-// Form-action admin endpoint tests (PR-5 T1)
-// ============================================================================
+// --- Form-action admin endpoint tests (PR-5 T1) ---
 
 /// Helper to register the first user (becomes admin) and login.
 async fn setup_admin_user(server: &mut TestServer) {
@@ -3553,12 +3431,9 @@ async fn setup_admin_user(server: &mut TestServer) {
     common::apply_csrf(server, &login);
 }
 
-/// Helper to register a second (regular) user without logging in.
-/// Seed the second account these tests act on.
-///
-/// Straight into the database rather than through the admin create + invite
-/// redeem pair: those endpoints have their own tests, and every caller here
-/// only needs the account to exist.
+/// Seed the second account these tests act on, straight into the database
+/// rather than through the admin create + invite redeem pair: those endpoints
+/// have their own tests, and every caller here only needs the account to exist.
 async fn register_target_user(db: &Db) {
     common::seed_account(db, "target", "vulture-mango-77-quilt", rdrs::Role::User).await;
 }
@@ -3598,7 +3473,6 @@ async fn test_update_status_form_disables_user() {
     register_target_user(&app.db).await;
     let server = app.server;
 
-    // Disable target (id=2)
     let response = server
         .post("/admin/users/2/status")
         .form(&json!({ "disabled": "true" }))
@@ -3608,7 +3482,6 @@ async fn test_update_status_form_disables_user() {
     let location = response.header(header::LOCATION);
     assert_eq!(location, "/admin");
 
-    // Verify the user is now disabled — login should fail
     let login_resp = server
         .post("/api/session")
         .json(&json!({
@@ -3626,7 +3499,6 @@ async fn test_start_masquerade_form_redirects_to_root() {
     register_target_user(&app.db).await;
     let server = app.server;
 
-    // Start masquerade as target (id=2)
     let response = server.post("/admin/users/2/masquerade").await;
 
     response.assert_status(StatusCode::SEE_OTHER);
@@ -3641,7 +3513,6 @@ async fn test_delete_user_form_succeeds() {
     register_target_user(&app.db).await;
     let server = app.server;
 
-    // Delete target (id=2)
     let response = server.post("/admin/users/2/delete").await;
 
     response.assert_status(StatusCode::SEE_OTHER);
@@ -3682,9 +3553,7 @@ async fn test_update_role_form_self_protection() {
     assert!(!body.contains("promote"));
 }
 
-// ============================================================================
-// /categories form-action POST endpoint tests (SSR PR-7 T1)
-// ============================================================================
+// --- /categories form-action POST endpoint tests (SSR PR-7 T1) ---
 
 #[tokio::test]
 async fn test_create_category_form_succeeds() {
@@ -3701,7 +3570,6 @@ async fn test_create_category_form_succeeds() {
     let location = response.header(header::LOCATION);
     assert_eq!(location, "/categories");
 
-    // Verify the category exists in the DB
     let count: i64 = rdrs::query_scalar!(
         &app.db,
         i64,
@@ -3732,7 +3600,6 @@ async fn test_create_category_form_empty_name() {
     let location = response.header(header::LOCATION);
     assert_eq!(location, "/categories");
 
-    // Confirm nothing was inserted
     let count: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT COUNT(*) FROM category").unwrap();
     // Only the seeded "Uncategorized" remains; the empty name created nothing.
     assert_eq!(
@@ -3746,14 +3613,12 @@ async fn test_rename_category_form_succeeds() {
     let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
-    // Create a category via the new form endpoint
     app.server
         .post("/categories")
         .form(&json!({ "name": "OldName" }))
         .await
         .assert_status(StatusCode::SEE_OTHER);
 
-    // Fetch the inserted ID
     let cat_id: i64 = rdrs::query_scalar!(
         &app.db,
         i64,
@@ -3762,7 +3627,6 @@ async fn test_rename_category_form_succeeds() {
     )
     .unwrap();
 
-    // Rename it
     let response = app
         .server
         .post(&format!("/categories/{cat_id}/rename"))
@@ -3773,7 +3637,6 @@ async fn test_rename_category_form_succeeds() {
     let location = response.header(header::LOCATION);
     assert_eq!(location, "/categories");
 
-    // Verify the rename in the DB
     let new_name: String = rdrs::query_scalar!(
         &app.db,
         String,
@@ -3789,14 +3652,12 @@ async fn test_delete_category_form_succeeds() {
     let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
 
-    // Create a category via the new form endpoint
     app.server
         .post("/categories")
         .form(&json!({ "name": "ToDelete" }))
         .await
         .assert_status(StatusCode::SEE_OTHER);
 
-    // Fetch the inserted ID
     let cat_id: i64 = rdrs::query_scalar!(
         &app.db,
         i64,
@@ -3805,7 +3666,6 @@ async fn test_delete_category_form_succeeds() {
     )
     .unwrap();
 
-    // Delete it
     let response = app
         .server
         .post(&format!("/categories/{cat_id}/delete"))
@@ -3815,7 +3675,6 @@ async fn test_delete_category_form_succeeds() {
     let location = response.header(header::LOCATION);
     assert_eq!(location, "/categories");
 
-    // Verify it's gone from the DB
     let count: i64 = rdrs::query_scalar!(
         &app.db,
         i64,
@@ -3826,9 +3685,7 @@ async fn test_delete_category_form_succeeds() {
     assert_eq!(count, 0, "category should be deleted from the DB");
 }
 
-// ============================================================================
-// /feeds form-action POST endpoint tests (SSR PR-8 T1)
-// ============================================================================
+// --- /feeds form-action POST endpoint tests (SSR PR-8 T1) ---
 
 /// Helper: insert a feed directly via the model (skips network discovery).
 /// Returns (`category_id`, `feed_id`).
@@ -3944,7 +3801,6 @@ async fn test_edit_feed_form_changes_category() {
     setup_authenticated_user(&mut app.server).await;
     let (_cat_a, feed_id) = insert_test_feed(&app, "Tech", "https://example.com/feed.xml").await;
 
-    // Add a second category for the same user.
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat_b_id = rdrs::models::category::create_category(&app.db, user_id, "Other")
         .await
@@ -4002,7 +3858,6 @@ async fn test_delete_feed_form_succeeds() {
 async fn test_delete_feed_form_not_owned() {
     let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
-    // Insert a feed under another user (not the logged-in one).
     let other_user = rdrs::models::user::create_user(&app.db, "other", "x", Role::User)
         .await
         .unwrap();
@@ -4049,7 +3904,6 @@ async fn test_delete_feed_form_not_owned() {
 async fn test_refresh_feed_form_not_owned() {
     let mut app = create_test_app(default_test_config()).await;
     setup_authenticated_user(&mut app.server).await;
-    // Insert a feed under another user.
     let other_user = rdrs::models::user::create_user(&app.db, "other2", "x", Role::User)
         .await
         .unwrap();
@@ -4139,9 +3993,7 @@ async fn test_import_opml_form_succeeds() {
     assert_eq!(feed_count, 1);
 }
 
-// ============================================================================
-// GET /entries/{id}/fragment — PR-10 T3
-// ============================================================================
+// --- GET /entries/{id}/fragment — PR-10 T3 ---
 
 /// Isolated app factory used by the fragment tests so they don't share the
 /// `test_handlers_app` `SQLite` in-memory database with the rest of the suite.
@@ -4175,7 +4027,6 @@ async fn create_test_app_named(config: Config, _name: &str) -> TestApp {
 async fn test_entry_fragment_renders_reading_pane() {
     let mut app = create_test_app_named(default_test_config(), "test_entry_fragment_happy").await;
 
-    // Register and log in as alice.
     app.server
         .post("/api/setup")
         .json(&json!({ "username": "alice_frag", "password": "vulture-mango-77-quilt" }))
@@ -4189,7 +4040,6 @@ async fn test_entry_fragment_renders_reading_pane() {
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
 
-    // Seed: category + feed + entry with content.
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
         .await
@@ -4308,12 +4158,11 @@ async fn test_entry_fragment_renders_reading_pane() {
     assert!(read_at.is_some(), "entry must be marked read after open");
 }
 
-/// A real top-level browser navigation to the partial-only `/fragment` route
-/// (carrying `Sec-Fetch-Dest: document`) must redirect to the full entries
-/// page rather than serving the bare `<template>` blocks — which render as a
-/// blank page. Opening still marks the entry read on the way out: the reader
-/// opened it, and a scriptless click is the same intent as the `fetch()` the
-/// swap helper would have sent.
+/// A real top-level navigation to the partial-only `/fragment` route (carrying
+/// `Sec-Fetch-Dest: document`) must redirect to the full entries page rather
+/// than serving bare `<template>` blocks, which render blank. It still marks the
+/// entry read on the way out: a scriptless click is the same intent as the
+/// `fetch()` the swap helper would have sent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_redirects_on_top_level_navigation() {
     let mut app = create_test_app_named(default_test_config(), "test_entry_fragment_doc_nav").await;
@@ -4546,12 +4395,11 @@ async fn test_entry_fragment_speculative_load_does_not_mark_read() {
 }
 
 /// A top-level navigation to `/entries/{id}/fragment` carrying a `Referer` from
-/// a scoped list page must redirect back into that scope (preserving its
-/// filters) with the pane pre-opened — not dump the user into All Entries. An
-/// id that resolves to nothing still redirects rather than 404ing (the list
-/// silently ignores an unresolvable `?entry=`), so the id need not exist.
-/// Regression for "clicking an Unread/category/feed entry jumps to All
-/// Entries" when `app.js` is stale-cached and clicks fall through to navigation.
+/// a scoped list page must redirect back into that scope with the pane
+/// pre-opened, not dump the reader into All Entries. An id that resolves to
+/// nothing still redirects rather than 404s, since the list ignores an
+/// unresolvable `?entry=`. Regression for the jump-to-All-Entries bug when
+/// `app.js` is stale-cached and clicks fall through to navigation.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entry_fragment_document_nav_preserves_referer_scope() {
     let mut app =
@@ -4621,7 +4469,6 @@ async fn test_proxy_image_304_on_if_none_match() {
 async fn test_entry_fragment_404_for_other_user() {
     let mut app = create_test_app_named(default_test_config(), "test_entry_fragment_404").await;
 
-    // Register alice (will be logged in).
     app.server
         .post("/api/setup")
         .json(&json!({ "username": "alice_404", "password": "vulture-mango-77-quilt" }))
@@ -4686,15 +4533,12 @@ async fn test_entry_fragment_404_for_other_user() {
     );
 }
 
-// ============================================================================
-// POST /entries/{id}/star — PR-10 T4
-// ============================================================================
+// --- POST /entries/{id}/star — PR-10 T4 ---
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_star_entry_form_is_idempotent_mark_starred() {
     let mut app = create_test_app_named(default_test_config(), "test_star_entry_form").await;
 
-    // Register and log in as alice.
     app.server
         .post("/api/setup")
         .json(&json!({ "username": "alice_star", "password": "vulture-mango-77-quilt" }))
@@ -4708,7 +4552,6 @@ async fn test_star_entry_form_is_idempotent_mark_starred() {
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
 
-    // Seed: category + feed + one unread, unstarred entry.
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
         .await
@@ -4869,15 +4712,12 @@ async fn test_unstar_entry_form_is_idempotent_mark_unstarred() {
     );
 }
 
-// ============================================================================
-// POST /entries/{id}/read — PR-10 T4
-// ============================================================================
+// --- POST /entries/{id}/read — PR-10 T4 ---
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_read_entry_form_is_idempotent_mark_read() {
     let mut app = create_test_app_named(default_test_config(), "test_read_entry_form").await;
 
-    // Register and log in as alice.
     app.server
         .post("/api/setup")
         .json(&json!({ "username": "alice_read", "password": "vulture-mango-77-quilt" }))
@@ -4891,7 +4731,6 @@ async fn test_read_entry_form_is_idempotent_mark_read() {
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
 
-    // Seed: category + feed + one unread entry.
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
         .await
@@ -5057,15 +4896,12 @@ async fn test_unread_entry_form_is_idempotent_mark_unread() {
     );
 }
 
-// ============================================================================
-// POST /entries/{id}/star — cross-tenant 404 (PR-10 review)
-// ============================================================================
+// --- POST /entries/{id}/star — cross-tenant 404 (PR-10 review) ---
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_star_entry_form_404_for_other_user() {
     let mut app = create_test_app_named(default_test_config(), "test_star_entry_form_404").await;
 
-    // Register + login alice (session cookie is now alice's).
     app.server
         .post("/api/setup")
         .json(&json!({ "username": "alice_s404", "password": "vulture-mango-77-quilt" }))
@@ -5140,15 +4976,12 @@ async fn test_star_entry_form_404_for_other_user() {
     );
 }
 
-// ============================================================================
-// POST /entries/{id}/read — cross-tenant 404 (PR-10 review)
-// ============================================================================
+// --- POST /entries/{id}/read — cross-tenant 404 (PR-10 review) ---
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_read_entry_form_404_for_other_user() {
     let mut app = create_test_app_named(default_test_config(), "test_read_entry_form_404").await;
 
-    // Register + login alice (session cookie is now alice's).
     app.server
         .post("/api/setup")
         .json(&json!({ "username": "alice_r404", "password": "vulture-mango-77-quilt" }))
@@ -5223,16 +5056,13 @@ async fn test_read_entry_form_404_for_other_user() {
     );
 }
 
-// POST /entries/{id}/summarize — PR-10 T5
-//
-// The handler returns a small multi-target swap that only updates the
-// `#rp-summary-container` block (not the whole reading pane), so a
-// Fetch-Full-Content view keeps its externally-fetched article body.
+// POST /entries/{id}/summarize returns a small multi-target swap that only
+// updates `#rp-summary-container`, so a Fetch-Full-Content view keeps its
+// externally-fetched article body.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_summarize_entry_form_renders_summary_pending_fragment() {
     let mut app = create_test_app_named(default_test_config(), "test_summarize_entry_form").await;
 
-    // Register and log in as alice.
     app.server
         .post("/api/setup")
         .json(&json!({ "username": "alice_sum", "password": "vulture-mango-77-quilt" }))
@@ -5246,7 +5076,6 @@ async fn test_summarize_entry_form_renders_summary_pending_fragment() {
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
 
-    // Seed: category + feed + entry with a link.
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "T")
         .await
@@ -5305,15 +5134,12 @@ async fn test_summarize_entry_form_renders_summary_pending_fragment() {
     );
 }
 
-// ============================================================================
-// GET /entries?fragment=1&after=... — PR-10 T6 Load-More fragment
-// ============================================================================
+// --- GET /entries?fragment=1&after=... — PR-10 T6 Load-More fragment ---
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_entries_load_more_returns_row_fragments() {
     let mut app = create_test_app_named(default_test_config(), "test_load_more_fragment").await;
 
-    // Register and log in as alice.
     app.server
         .post("/api/setup")
         .json(&json!({ "username": "alice_lm", "password": "vulture-mango-77-quilt" }))
@@ -5327,7 +5153,6 @@ async fn test_entries_load_more_returns_row_fragments() {
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
 
-    // Seed: category + feed + 75 entries.
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "LoadMore Cat")
         .await
@@ -5404,9 +5229,7 @@ async fn test_entries_load_more_returns_row_fragments() {
     );
 }
 
-// ============================================================================
-// handlers/feeds.rs — additional branch coverage (Part A: pure-DB tests)
-// ============================================================================
+// --- handlers/feeds.rs — additional branch coverage (Part A: pure-DB tests) ---
 
 #[tokio::test]
 async fn test_edit_feed_form_empty_url() {
@@ -5436,7 +5259,6 @@ async fn test_edit_feed_form_empty_url() {
         format!("/feeds/{feed_id}/edit")
     );
 
-    // Verify url unchanged in DB.
     let url: String = rdrs::query_scalar!(
         &app.db,
         String,
@@ -5478,7 +5300,6 @@ async fn test_edit_feed_form_other_users_feed() {
     let mut app = create_test_app_named(default_test_config(), "test_edit_other_user_feed").await;
     setup_authenticated_user(&mut app.server).await;
 
-    // Seed a feed under a different user (not testuser).
     let other_user = rdrs::models::user::create_user(&app.db, "other_editfeed", "x", Role::User)
         .await
         .unwrap();
@@ -5544,7 +5365,6 @@ async fn test_edit_feed_form_category_not_owned() {
     )
     .await;
 
-    // Create a category that belongs to a different user.
     let other_user = rdrs::models::user::create_user(&app.db, "other_catowner", "x", Role::User)
         .await
         .unwrap();
@@ -5590,7 +5410,6 @@ async fn test_edit_feed_form_blank_http_settings_clear_them() {
     let mut app = create_test_app_named(default_test_config(), "test_edit_feed_clear_ua").await;
     setup_authenticated_user(&mut app.server).await;
 
-    // Seed a feed and set both HTTP overrides on it directly.
     let (cat_id, feed_id) =
         insert_test_feed(&app, "Tech", "https://clear-ua.example.com/feed.xml").await;
     rdrs::db_execute!(
@@ -5902,9 +5721,7 @@ async fn test_import_opml_form_flash_reports_counts() {
     );
 }
 
-// ============================================================================
-// handlers/feeds.rs — Part B: wiremock success-arm tests
-// ============================================================================
+// --- handlers/feeds.rs — Part B: wiremock success-arm tests ---
 
 const RSS_FIXTURE: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel>
   <title>Mock Feed</title><description>Mock Desc</description><link>https://e</link>
@@ -5919,7 +5736,6 @@ async fn test_create_feed_form_success() {
     let mut app = create_test_app_named(default_test_config(), "test_create_feed_success").await;
     setup_authenticated_user(&mut app.server).await;
 
-    // Get the owned category id (the seeded "Uncategorized").
     let cat_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM category LIMIT 1").unwrap();
 
     let mock_server = MockServer::start().await;
@@ -6096,9 +5912,7 @@ async fn test_fetch_metadata_form_success() {
     assert_eq!(description, "Mock Desc");
 }
 
-// ============================================================================
-// SSE /events endpoint auth-gate test
-// ============================================================================
+// --- SSE /events endpoint auth-gate test ---
 
 #[tokio::test]
 async fn events_endpoint_requires_auth() {
@@ -6109,9 +5923,7 @@ async fn events_endpoint_requires_auth() {
     response.assert_status(StatusCode::SEE_OTHER);
 }
 
-// ============================================================================
-// middleware/cache_control.rs — no-store wiring through the real router
-// ============================================================================
+// --- middleware/cache_control.rs — no-store wiring through the real router ---
 
 #[tokio::test]
 async fn test_authenticated_page_is_no_store() {
@@ -6151,24 +5963,15 @@ async fn test_static_asset_keeps_its_cache_control() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_image_proxy_keeps_upstream_cache_control() {
-    // A genuine upstream fetch can't be exercised here: `utils/url_validation`
-    // (the shared SSRF guard the proxy runs every origin URL through) rejects
-    // loopback/private addresses unconditionally and has no test escape
-    // hatch, and every mock HTTP server available to this suite (wiremock
-    // included) binds to one. `choose_cache_control`'s upstream-forwarding
-    // logic itself is exercised directly in handlers/proxy.rs's own unit
-    // tests (`test_choose_cache_control_mirrors_origin`). What this test adds
-    // is the piece those unit tests can't cover: that the cache_control
-    // *middleware* — which runs after the handler, on every response — does
-    // not clobber whatever `Cache-Control` the proxy handler already set,
-    // even on an authenticated request where rule 3 ("has a session cookie")
-    // would otherwise apply. The proxy's ETag/If-None-Match short-circuit
-    // (see `test_proxy_image_304_on_if_none_match`) is a real, SSRF-free
-    // response path that carries the handler's own `Cache-Control`
-    // (`DEFAULT_CACHE_CONTROL`, the same constant `choose_cache_control`
-    // falls back to when upstream sends none) and is reachable through the
-    // full router, so it stands in for "the proxy already set a
-    // Cache-Control" here.
+    // A genuine upstream fetch can't be exercised here: the shared SSRF guard
+    // rejects loopback/private addresses with no test escape hatch, and every
+    // mock HTTP server available binds to one. `choose_cache_control` itself is
+    // covered by handlers/proxy.rs's unit tests; what this adds is that the
+    // cache_control *middleware*, which runs after the handler on every
+    // response, does not clobber the `Cache-Control` the proxy already set —
+    // even on an authenticated request, where rule 3 would otherwise apply. The
+    // ETag/If-None-Match short-circuit is a real SSRF-free path carrying the
+    // handler's own header, so it stands in for the upstream case.
     let mut app =
         create_test_app_named(default_test_config(), "test_proxy_keeps_upstream_cc").await;
     // Authenticated on purpose: this is the case where the cache_control
@@ -6242,9 +6045,7 @@ async fn test_health_endpoint_stays_cacheable() {
     );
 }
 
-// ============================================================================
-// Strict-Transport-Security (HSTS) tests
-// ============================================================================
+// --- Strict-Transport-Security (HSTS) tests ---
 
 #[tokio::test]
 async fn test_hsts_header_present_when_public_base_url_is_https() {
@@ -6267,11 +6068,10 @@ async fn test_hsts_header_present_when_public_base_url_is_https() {
 
 #[tokio::test]
 async fn test_hsts_header_absent_by_default() {
-    // The most important test in this task: a plain-HTTP deployment (the
-    // default — no RDRS_PUBLIC_BASE_URL, no RDRS_HSTS override) must never be
-    // told to enforce HTTPS. HSTS is sticky and cannot be retracted quickly,
-    // so sending it here by accident would lock browsers out of a working
-    // plain-HTTP install.
+    // A plain-HTTP deployment — the default, with no RDRS_PUBLIC_BASE_URL and no
+    // RDRS_HSTS override — must never be told to enforce HTTPS: HSTS is sticky
+    // and cannot be retracted quickly, so sending it by accident would lock
+    // browsers out of a working install.
     let server = create_test_server(default_test_config()).await;
 
     let response = server.get("/health").await;
@@ -6312,13 +6112,11 @@ async fn test_hsts_header_on_static_and_health() {
 
 #[tokio::test]
 async fn test_existing_hsts_header_is_not_overwritten() {
-    // No handler in the real app sets Strict-Transport-Security itself — the
-    // realistic source of a pre-existing header is a TLS-terminating reverse
-    // proxy in front of rdrs, which this suite has no way to stand up. This
-    // test instead wires the exact same exported `set_hsts` middleware
-    // `create_router` uses around a bare handler that stands in for the
-    // proxy by setting the header itself, and confirms the middleware leaves
-    // it alone rather than overwriting it with its own value.
+    // No handler sets Strict-Transport-Security itself — the realistic source of
+    // a pre-existing header is a TLS-terminating reverse proxy, which this suite
+    // cannot stand up. So the exported `set_hsts` middleware is wired around a
+    // bare handler standing in for the proxy, to confirm the middleware leaves
+    // an existing value alone.
     async fn proxy_set_header() -> impl axum::response::IntoResponse {
         (
             [(
@@ -6460,9 +6258,8 @@ async fn security_headers_are_sent_on_a_csrf_rejected_response() {
 #[tokio::test]
 async fn test_existing_security_header_is_not_overwritten() {
     // As with HSTS, the realistic source of a pre-existing header is a reverse
-    // proxy in front of rdrs, which this suite cannot stand up. Wire the same
-    // exported middleware around a handler that stands in for the proxy and
-    // confirm its value survives — while the headers it did not set are still
+    // proxy this suite cannot stand up, so the same exported middleware is wired
+    // around a handler standing in for it. The headers it did not set are still
     // filled in.
     async fn proxy_set_header() -> impl axum::response::IntoResponse {
         (
@@ -6491,9 +6288,8 @@ async fn test_existing_security_header_is_not_overwritten() {
 }
 
 // ============================================================================
-// Admin re-authentication (OWASP: require re-authentication for sensitive
-// features). Every route that changes another account is behind the same
-// `REAUTH_WINDOW_MINUTES` window that already guards passkey enrolment.
+// Admin re-authentication. Every route that changes another account is behind
+// the same `REAUTH_WINDOW_MINUTES` window that guards passkey enrolment.
 // ============================================================================
 
 /// The four account-changing admin actions must all refuse a session whose
@@ -6566,11 +6362,9 @@ async fn confirming_the_password_reopens_the_admin_window() {
 
 #[tokio::test]
 async fn a_wrong_password_does_not_reopen_the_admin_window() {
-    // The confirmation is a real credential check, not a click-through: a
-    // session that cannot produce the password stays locked out of account
-    // changes. Both responses are the same 303 to /admin (the flash cookie
-    // carries the difference), so the assertion that matters is the account
-    // state afterwards.
+    // The confirmation is a real credential check, not a click-through. Both
+    // responses are the same 303 to /admin (the flash cookie carries the
+    // difference), so the assertion that matters is the account state after.
     let mut app = create_test_app(default_test_config()).await;
     setup_admin_user(&mut app.server).await;
     register_target_user(&app.db).await;
@@ -6648,14 +6442,13 @@ async fn the_admin_page_asks_for_confirmation_only_once_the_window_lapses() {
 
 #[tokio::test]
 async fn password_fields_advertise_the_server_side_policy() {
-    // The browser's own `minlength`/`maxlength` hints are generated from the
-    // same constants the handler validates against, so the two cannot drift
-    // into a form that submits only to be rejected (or vice versa).
+    // The browser's `minlength`/`maxlength` hints are generated from the same
+    // constants the handler validates against, so the two cannot drift into a
+    // form that submits only to be rejected.
+    //
     // Two servers on purpose: /setup is only served while the instance has no
-    // accounts, and loading any page first mints an anonymous CSRF cookie that
-    // the synchronizer-token guard would then expect on the POST
-    // `setup_admin_user` sends. Separate jars keep this test about the form
-    // attributes.
+    // accounts, and loading any page first mints an anonymous CSRF cookie the
+    // guard would then expect on the POST.
     let setup_only = create_test_app(default_test_config()).await;
     let setup = setup_only.server.get("/setup").await;
     setup.assert_status_ok();
@@ -6685,11 +6478,9 @@ async fn password_fields_advertise_the_server_side_policy() {
 }
 
 // ============================================================================
-// Admin-created accounts and the one-time link that activates them.
-//
-// This replaces self-service registration outright: there is no anonymous
-// endpoint that accepts a username any more, so there is nothing to ask about
-// who has an account.
+// Admin-created accounts and the one-time link that activates them. This
+// replaces self-service registration outright: no anonymous endpoint accepts a
+// username any more, so there is nothing to ask about who has an account.
 // ============================================================================
 
 /// Pull the `/invite/{token}` path out of the flash cookie the create-account

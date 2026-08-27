@@ -1,21 +1,19 @@
 //! The Playwright vocabulary the steps were written in, rebuilt on `WebDriver`.
 //!
-//! Almost every step in the JavaScript suite was some composition of
-//! `page.getByTestId(...)` with `fill`, `click` or an auto-retrying
-//! `expect(...)`. `WebDriver` has no retry layer, so each of those becomes an
-//! `ElementQuery` with an explicit wait here rather than at 900 call sites.
+//! Almost every step was some composition of `page.getByTestId(...)` with
+//! `fill`, `click` or an auto-retrying `expect(...)`. `WebDriver` has no retry
+//! layer, so each becomes an `ElementQuery` with an explicit wait here rather
+//! than at 900 call sites.
 //!
 //! Two conventions carried over from the sibling port:
 //!
-//! * **Presence and visibility are different questions.** Playwright's
-//!   `toBeVisible()` waits for a *displayed* element and `toHaveCount(0)` waits
-//!   for the absence of *any*, displayed or not. [`Dom::expect_visible`] and
-//!   [`Dom::expect_absent`] keep that distinction; conflating them turns a
-//!   `display: none` regression into a pass.
+//! * **Presence and visibility are different questions.** `toBeVisible()` waits
+//!   for a *displayed* element, `toHaveCount(0)` for the absence of *any*.
+//!   Conflating them turns a `display: none` regression into a pass.
 //! * **Asking about an absence must not wait.** A query that expects nothing is
-//!   answered by the page as it stands, so the "not there" helpers use
-//!   `nowait` and the caller wraps them in [`crate::wait::eventually`] when the
-//!   absence is something the page has to *become*.
+//!   answered by the page as it stands, so those helpers use `nowait` and the
+//!   caller wraps them in [`crate::wait::eventually`] when the absence is
+//!   something the page has to *become*.
 
 use std::time::Instant;
 
@@ -76,11 +74,9 @@ pub trait Dom {
     /// Stands in for `getByRole("heading", { name, exact: true })`.
     async fn heading_opt(&self, name: &str) -> Result<Option<WebElement>>;
 
-    /// Replaces the contents of the field a CSS selector picks out.
-    ///
-    /// The scoped-form variant of [`Dom::fill`]: `/user-settings` renders two
-    /// forms carrying the same test ids, so those steps addressed the field
-    /// through its owning `form[action=…]`.
+    /// Replaces the contents of the field a CSS selector picks out — the
+    /// scoped-form variant of [`Dom::fill`], for `/user-settings`, which renders
+    /// two forms carrying the same test ids.
     async fn fill_css(&self, selector: &str, value: &str) -> Result<()>;
 
     /// Clicks the element a CSS selector picks out, once it is clickable.
@@ -88,12 +84,11 @@ pub trait Dom {
 
     /// Clicks a control that navigates, and waits for the navigation to land.
     ///
-    /// `WebDriver`'s Element Click returns as soon as the click is dispatched,
-    /// so a form POST answered with a redirect is still in flight when the next
-    /// line runs — which is what Playwright's
-    /// `waitForLoadState("domcontentloaded")` covered. Waiting for the *current
-    /// document* to go stale is what detects it, and unlike watching the URL it
-    /// still works for a POST that redirects back to the page it came from.
+    /// `WebDriver`'s Element Click returns as soon as the click is dispatched, so
+    /// a form POST answered with a redirect is still in flight when the next line
+    /// runs. Waiting for the *current document* to go stale is what detects it,
+    /// and unlike watching the URL it still works for a POST that redirects back
+    /// to the page it came from.
     async fn submit_css(&self, selector: &str) -> Result<()>;
 
     /// [`Dom::submit_css`] addressed by `data-testid`.
@@ -114,33 +109,28 @@ pub trait Dom {
     async fn row_with_text(&self, text: &str) -> Result<WebElement>;
 
     /// Waits for some element rendering exactly `text` to be displayed,
-    /// Playwright's `getByText`.
-    ///
-    /// Matches the innermost element carrying the text, as `getByText` does —
-    /// otherwise every ancestor up to `<body>` would match too.
+    /// Playwright's `getByText`. Matches the innermost element carrying the text,
+    /// as `getByText` does — otherwise every ancestor up to `<body>` matches.
     async fn expect_text_somewhere(&self, text: &str) -> Result<()>;
 
     /// Evaluates a script and hands back the JSON it returned.
     async fn eval(&self, script: &str) -> Result<serde_json::Value>;
 
-    /// Finds an element and reads its text in one go, reporting `None` when it
-    /// is not there *or* went away mid-read.
+    /// Finds an element and reads its text in one go, reporting `None` when it is
+    /// not there *or* went away mid-read.
     ///
-    /// The shape every "does this region say X yet?" poll needs. Doing it in
-    /// two steps races the in-place swaps: the element is found, the list pane
-    /// is replaced, and the read fails with a stale-reference error — which is
-    /// the poll's answer ("not yet"), not a fault.
+    /// Doing it in two steps races the in-place swaps: the element is found, the
+    /// list pane is replaced, and the read fails with a stale-reference error —
+    /// which is the poll's answer ("not yet"), not a fault.
     async fn text_of_css(&self, selector: &str) -> Result<Option<String>>;
 
     /// [`Dom::text_of_css`] addressed by `data-testid`.
     async fn text_of_test_id(&self, id: &str) -> Result<Option<String>>;
 
     /// The rendered text of every element a CSS selector matches, in document
-    /// order.
-    ///
-    /// Playwright's `toHaveText([...])` compared exactly this, and pinned the
-    /// count along the way — a row that should have been hidden fails on the
-    /// comparison rather than passing unnoticed at the end of the list.
+    /// order. `toHaveText([...])` compared exactly this, and pinned the count
+    /// along the way — a row that should have been hidden fails on the comparison
+    /// rather than passing unnoticed at the end of the list.
     async fn texts_of(&self, selector: &str) -> Result<Vec<String>>;
 
     /// Is the checkbox ticked? Playwright's `toBeChecked`.
@@ -156,40 +146,34 @@ pub trait Dom {
     async fn computed_style(&self, selector: &str, property: &str) -> Result<String>;
 
     /// The first matching element's border box, as `(x, y, width, height)` in
-    /// viewport coordinates — Playwright's `boundingBox`.
-    ///
-    /// Read through `getBoundingClientRect` rather than `WebElement::rect`,
-    /// which reports document coordinates and so disagrees once the page has
-    /// scrolled.
+    /// viewport coordinates — Playwright's `boundingBox`. Read through
+    /// `getBoundingClientRect` rather than `WebElement::rect`, which reports
+    /// document coordinates and disagrees once the page has scrolled.
     async fn bounding_box(&self, selector: &str) -> Result<(f64, f64, f64, f64)>;
 
-    /// Clicks the page body, then presses a key — the suite's "I press the X
-    /// key" step.
-    ///
-    /// The shortcuts are bound on `document`, so a key sent while a field
+    /// Clicks the page body, then presses a key — the suite's "I press the X key"
+    /// step. The shortcuts are bound on `document`, so a key sent while a field
     /// holds focus is typed into the field instead of acting.
     async fn press(&self, key: &str) -> Result<()>;
 
     /// Presses a key without moving focus first.
     ///
-    /// The help overlay puts focus on its own Esc button, and clicking the
-    /// body to "focus nothing" would both blur it and trip its
-    /// click-outside-to-close handler — so the scenarios that drive the
-    /// overlay use this instead.
+    /// The help overlay puts focus on its own Esc button, and clicking the body
+    /// to "focus nothing" would both blur it and trip its click-outside-to-close
+    /// handler.
     async fn press_focused(&self, key: &str) -> Result<()>;
 }
 
 /// Clicks an element once it is actually clickable.
 ///
 /// Playwright checks actionability before every click and waits for it;
-/// `WebElement::click` does not, and dispatches into a disabled control
-/// happily. The reading pane's Summarize toggle starts disabled and is enabled
-/// only once `/api/entries/{id}/neighbors` resolves, so a click that does not
-/// wait lands on the disabled button, fires nothing, and fails several steps
-/// later with no summary and no explanation.
+/// `WebElement::click` does not, and dispatches into a disabled control happily.
+/// The reading pane's Summarize toggle starts disabled and is enabled only once
+/// the neighbors call resolves, so a click that does not wait fires nothing and
+/// fails several steps later with no explanation.
 ///
-/// [`Dom::click`] and [`Dom::click_css`] already wait; this is for the callers
-/// that have found the element themselves, usually by scoping to a row.
+/// [`Dom::click`] and [`Dom::click_css`] already wait; this is for callers that
+/// have found the element themselves, usually by scoping to a row.
 ///
 /// # Errors
 ///
@@ -208,9 +192,8 @@ pub async fn click_when_ready(element: &WebElement) -> Result<()> {
 /// Clicks a control that navigates, and waits for the navigation to land.
 ///
 /// The element-handle form of [`Dom::submit_css`], for the row-scoped controls
-/// — a feed's Refresh, a category's Delete — that are found by walking a table
-/// rather than by selector. Without the wait, the assertion that follows reads
-/// the *old* page, where nothing has changed yet.
+/// found by walking a table rather than by selector. Without the wait, the
+/// assertion that follows reads the *old* page.
 ///
 /// # Errors
 ///
@@ -229,12 +212,11 @@ pub async fn submit_element(driver: &WebDriver, element: &WebElement) -> Result<
 
 /// The text an element contains, as Playwright compared it.
 ///
-/// **Not** `WebElement::text`, which is `WebDriver`'s "Get Element Text" and
-/// returns *rendered* text — put through `text-transform`, so a heading styled
-/// `uppercase` reads `READING FEED` where the markup says `Reading Feed`.
-/// Playwright's `toContainText` / `toHaveText` / `hasText` all read
-/// `textContent` instead, so every assertion ported from them has to as well,
-/// or it compares against the stylesheet rather than the page's content.
+/// **Not** `WebElement::text`, which returns *rendered* text — put through
+/// `text-transform`, so a heading styled `uppercase` reads `READING FEED` where
+/// the markup says `Reading Feed`. Playwright's matchers all read `textContent`
+/// instead, so every assertion ported from them has to as well, or it compares
+/// against the stylesheet rather than the page's content.
 #[allow(async_fn_in_trait)]
 pub trait TextContent {
     /// The element's `textContent`, untouched by CSS.
@@ -662,12 +644,11 @@ async fn all(driver: &WebDriver, by: By) -> Result<Vec<WebElement>> {
 ///
 /// Playwright's default is **substring, case-insensitive** — not the exact
 /// comparison the name suggests. Matching exactly instead makes a button
-/// labelled "Load more entries" invisible to a step asking for "Load more",
-/// and a label the stylesheet uppercases invisible to everything.
+/// labelled "Load more entries" invisible to a step asking for "Load more".
 ///
-/// The name comes from the rendered text or an `aria-label`; both are in use
-/// here. `XPath` 1.0 has no case-insensitive compare, so both sides are folded
-/// with `translate`.
+/// The name comes from the rendered text or an `aria-label`, both in use here.
+/// `XPath` 1.0 has no case-insensitive compare, so both sides are folded with
+/// `translate`.
 fn named_role_xpath(tag: &str, name: &str) -> String {
     const UPPER: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const LOWER: &str = "abcdefghijklmnopqrstuvwxyz";

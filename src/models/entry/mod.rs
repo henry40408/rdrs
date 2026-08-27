@@ -66,17 +66,14 @@ impl EntryWithFeed {
     /// Base URL for resolving relative URLs inside this entry's content.
     ///
     /// `entry.link` first: it names the document the markup was authored
-    /// against, so it resolves the entry's own relative paths most accurately.
-    /// It is optional, though — an RSS `<item>` is valid with only a `<guid>` —
-    /// so fall back to the feed's declared site, then to the feed URL itself,
-    /// which a synced feed always has.
+    /// against. It is optional — an RSS `<item>` is valid with only a `<guid>` —
+    /// so it falls back to the feed's declared site, then to the feed URL.
     ///
-    /// Never returns `None`, and that is the point: it is what lets
-    /// [`crate::services::sanitize_html`] treat an image URL it cannot resolve
-    /// as markup to drop rather than markup to pass through. A feed that omits
-    /// `<link>` used to leave `<img src="//evil.tld/x.gif">` unrewritten and so
-    /// unproxied, which in a client without our CSP (a third-party `GReader`
-    /// app) fetches straight from the attacker — the reader's IP and a read
+    /// Never returns `None`, and that is the point: it lets
+    /// [`crate::services::sanitize_html`] treat an unresolvable image URL as
+    /// markup to drop rather than pass through. A feed omitting `<link>` used to
+    /// leave `<img src="//evil.tld/x.gif">` unproxied, which in a client without
+    /// our CSP fetches straight from the attacker — the reader's IP and a read
     /// receipt with it.
     pub fn content_base_url(&self) -> &str {
         [self.entry.link.as_deref(), self.site_url.as_deref()]
@@ -97,11 +94,10 @@ pub struct EntryFilter {
     pub search: Option<String>,
     pub has_summary: Option<bool>,
     /// Snapshot boundary for the unread filter — a UTC `YYYY-MM-DD HH:MM:SS`
-    /// string, the same format `datetime('now')` writes into `entry.read_at`.
-    /// When set together with `unread_only`, entries read at-or-after this
-    /// instant still count as unread, so reading-pane navigation can return
-    /// to entries the reader just finished during this page view. Ignored
-    /// when `unread_only` is false.
+    /// string, the format `datetime('now')` writes into `entry.read_at`. With
+    /// `unread_only`, entries read at-or-after this instant still count as
+    /// unread, so reading-pane navigation can return to what the reader just
+    /// finished. Ignored when `unread_only` is false.
     pub read_after: Option<String>,
     /// Parsed boolean query AST for the global `/search` page. Set by the
     /// search handler from the `?q=` string; `None` on every other list path
@@ -163,10 +159,9 @@ pub struct ContinuationParams {
 }
 
 /// Flat row for the `EntryWithFeed` join. `sqlx::FromRow` matches by column
-/// NAME, and the join has duplicate base names (`e.title`/`f.title`,
-/// `e.id`/`c.id`), so the `ENTRY_WITH_FEED_COLUMNS_*` lists alias every column
-/// to the field names below. `has_icon` is an integer (COUNT or 0/1 CASE) that
-/// maps to the `bool` `feed_has_icon` in the conversion.
+/// NAME and the join has duplicate base names (`e.title`/`f.title`), so the
+/// `ENTRY_WITH_FEED_COLUMNS_*` lists alias every column to the fields below.
+/// `has_icon` is an integer that maps to the `bool` `feed_has_icon`.
 #[derive(sqlx::FromRow)]
 struct EntryWithFeedRow {
     id: i64,
@@ -233,11 +228,10 @@ const ENTRY_WITH_FEED_COLUMNS_JOIN: &str = "e.id AS id, e.feed_id AS feed_id, e.
 
 // --- dynamic-query execution helpers ---------------------------------------
 //
-// Several list/count queries are built at runtime (filter conditions +
-// continuation cursor) into a SQL `String` with `$N` placeholders and a
-// parallel `Vec<Bind>`. These helpers dispatch on the backend and apply the
-// binds in order. Runtime strings are wrapped in `sqlx::AssertSqlSafe` (every
-// fragment is built by this module from `filters`, never from user input).
+// Several list/count queries are built at runtime (filter conditions + cursor)
+// into a SQL `String` with `$N` placeholders and a parallel `Vec<Bind>`. These
+// dispatch on the backend and apply the binds in order. Runtime strings are
+// wrapped in `sqlx::AssertSqlSafe` — every fragment is built by this module.
 
 async fn fetch_entries_with_feed(
     db: &Db,
@@ -529,11 +523,10 @@ pub async fn list_by_user(
         EntrySortOrder::StarredAt => "e.starred_at DESC",
     };
 
-    // Force the right entry index for the high-traffic list pages. The
-    // SQLite planner otherwise picks `category -> feed -> entry` and walks
-    // every row before sorting (worst case for a single-user instance that
-    // owns 100% of entries). The hint only applies to the published-order
-    // sort; the read_at / starred_at sorts have their own dedicated indexes.
+    // Force the right entry index for the high-traffic list pages: the SQLite
+    // planner otherwise picks `category -> feed -> entry` and walks every row
+    // before sorting. The hint only applies to the published-order sort; the
+    // read_at / starred_at sorts have their own indexes, and
     // `Dialect::index_hint` drops the SQLite-only `INDEXED BY` on PostgreSQL.
     let entry_hint = if sort_order == EntrySortOrder::PublishedAt {
         dialect.index_hint(published_sort_entry_hint(filter))
@@ -617,12 +610,10 @@ pub async fn count_unread_by_feed(
 
 /// Returns a map of `feed_id` -> unread count for the feeds of one category.
 ///
-/// The sidebar's feed list asks per category rather than reusing
-/// `count_unread_by_feed`, which aggregates every feed the account has — the
-/// point of loading feeds lazily is to keep a 1000-feed subscription off the
-/// hot path, and a whole-account GROUP BY would put it right back.
-/// `user_id` stays in the WHERE clause so a guessed `category_id` cannot read
-/// another account's counts.
+/// Per category rather than reusing `count_unread_by_feed`, which aggregates
+/// every feed the account has: the point of loading feeds lazily is to keep a
+/// 1000-feed subscription off the hot path. `user_id` stays in the WHERE clause
+/// so a guessed `category_id` cannot read another account's counts.
 pub async fn count_unread_by_feed_in_category(
     db: &Db,
     user_id: i64,
@@ -675,37 +666,33 @@ pub enum UpsertOutcome {
 
 /// Upsert an entry, returning [`UpsertOutcome`] without re-reading the full row.
 ///
-/// This is the lean variant used by the feed-sync hot loop, which only needs
-/// the outcome flag. It avoids the full-row `find_by_id` re-read that
-/// [`upsert_entry`] performs and looks the existing row up by `id` only. Wrap a
-/// sync loop in a single transaction (see `feed_sync`) to collapse the per-entry
-/// commits (`upsert_entry_id_tx`).
-// Shared upsert statements. `datetime('now')` is kept (not a bound `Utc::now()`)
-// so `updated_at` matches the TEXT format of the `datetime('now')` column
-// DEFAULTs — the composite pagination cursor compares timestamps as strings, so
-// all entry timestamps must share one format. On PG the dispatch-macro
-// `pg_rewrite` shim rewrites it to `now()`. `published_at` is bound as a
-// seconds-truncated `NaiveDateTime` (see the upsert fns), which sqlx encodes as
-// the same `%Y-%m-%d %H:%M:%S` TEXT on SQLite and as a `timestamp` on PG.
-// Kept to `id` only: `UNIQUE(feed_id, guid)` makes this an index-only lookup
-// that never touches the row. Selecting the comparable columns here instead
-// would force a full row read (a multi-KB `content` marshalled into a Rust
-// String) on every entry of every poll — measurably slower than the write it
-// would save. The no-op check therefore lives in the UPDATE's WHERE clause.
+/// The lean variant used by the feed-sync hot loop, which only needs the outcome
+/// flag: it looks the existing row up by `id` alone and skips the full-row
+/// `find_by_id` re-read [`upsert_entry`] performs. Wrap a sync loop in a single
+/// transaction (see `feed_sync`) to collapse the per-entry commits.
+// Shared upsert statements. `datetime('now')` is kept rather than a bound
+// `Utc::now()` so `updated_at` matches the TEXT format of the column DEFAULTs —
+// the composite pagination cursor compares timestamps as strings, so every entry
+// timestamp must share one format. `pg_rewrite` turns it into `now()` on PG.
+// `published_at` is bound as a seconds-truncated `NaiveDateTime`, which sqlx
+// encodes as the same TEXT on SQLite and as a `timestamp` on PG.
+// Kept to `id` only: `UNIQUE(feed_id, guid)` makes this an index-only lookup that
+// never touches the row. Selecting the comparable columns would force a full row
+// read (a multi-KB `content` marshalled into a String) on every entry of every
+// poll — slower than the write it would save. The no-op check therefore lives in
+// the UPDATE's WHERE clause.
 const UPSERT_SELECT_SQL: &str = "SELECT id FROM entry WHERE guid = $1 AND feed_id = $2";
 // The UPDATE is guarded by a "something actually differs" predicate so a poll
-// that re-serves byte-identical articles writes nothing at all: feeds resend
-// their whole window every time, and without this every entry is rewritten
-// (and WAL-logged) on every sync. `rows_affected() == 0` then means "already
-// current", which is what distinguishes `Updated` from `Unchanged`.
+// that re-serves byte-identical articles writes nothing: feeds resend their whole
+// window every time, and without this every entry is rewritten (and WAL-logged)
+// on every sync. `rows_affected() == 0` then means "already current", which is
+// what distinguishes `Updated` from `Unchanged`.
 //
 // The predicate is the one genuine dialect fork here — SQLite spells NULL-safe
-// inequality `IS NOT`, PostgreSQL `IS DISTINCT FROM`. It is kept as two
-// literals rather than a `pg_rewrite` rule on purpose: that shim does blind
-// string substitution, and rewriting `IS NOT` there would also hit every
-// `IS NOT NULL` in the codebase. `content_text` is derived from `content`, so
-// comparing `content` covers it; `$N` placeholders are referenced twice, which
-// both backends accept (see `UPSERT_INSERT_SQL`).
+// inequality `IS NOT`, PostgreSQL `IS DISTINCT FROM`. Two literals rather than a
+// `pg_rewrite` rule on purpose: that shim substitutes blindly, so an `IS NOT`
+// rule would also hit every `IS NOT NULL` in the codebase. `content_text` is
+// derived from `content`, so comparing `content` covers it.
 const UPSERT_UPDATE_SQL_SQLITE: &str = "UPDATE entry SET title = $1, link = $2, content = $3, summary = $4, author = $5, content_text = $6, updated_at = datetime('now') WHERE id = $7 AND (title IS NOT $1 OR link IS NOT $2 OR content IS NOT $3 OR summary IS NOT $4 OR author IS NOT $5)";
 const UPSERT_UPDATE_SQL_PG: &str = "UPDATE entry SET title = $1, link = $2, content = $3, summary = $4, author = $5, content_text = $6, updated_at = now() WHERE id = $7 AND (title IS DISTINCT FROM $1 OR link IS DISTINCT FROM $2 OR content IS DISTINCT FROM $3 OR summary IS DISTINCT FROM $4 OR author IS DISTINCT FROM $5)";
 const UPSERT_INSERT_SQL: &str = "INSERT INTO entry (feed_id, guid, title, link, content, summary, author, published_at, content_text) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9 WHERE NOT EXISTS (SELECT 1 FROM entry_tombstone WHERE feed_id = $1 AND guid = $2) RETURNING id";
@@ -788,10 +775,9 @@ async fn upsert_update(db: &Db, u: &UpsertUpdate<'_>) -> Result<u64, sqlx::Error
 }
 
 /// Upsert an entry, returning [`UpsertOutcome`] without re-reading the full row.
-/// The tombstone-guarded insert uses `RETURNING id`, so a `Some` row means an
-/// insert happened (its id) and `None` means the guid is tombstoned. An existing
-/// row that already matches the incoming values yields
-/// [`UpsertOutcome::Unchanged`] without issuing a write.
+/// The tombstone-guarded insert uses `RETURNING id`, so `Some` means an insert
+/// happened and `None` means the guid is tombstoned. A row that already matches
+/// yields [`UpsertOutcome::Unchanged`] without issuing a write.
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert_entry_id(
     db: &Db,
@@ -804,11 +790,10 @@ pub async fn upsert_entry_id(
     author: Option<&str>,
     published_at: Option<DateTime<Utc>>,
 ) -> AppResult<UpsertOutcome> {
-    // Bind published_at as a seconds-truncated NaiveDateTime: sqlx encodes it as
-    // the `%Y-%m-%d %H:%M:%S` TEXT the SQLite composite cursor compares against,
-    // and as a `timestamp` that assignment-casts into the column's `timestamptz`
-    // (UTC session) on PG. A raw `%Y-%m-%d %H:%M:%S` *string* bind is rejected by
-    // PG here — text does not coerce into a timestamptz column.
+    // Bound as a seconds-truncated NaiveDateTime: sqlx encodes it as the
+    // `%Y-%m-%d %H:%M:%S` TEXT the SQLite composite cursor compares against, and
+    // as a `timestamp` that assignment-casts into PG's `timestamptz`. A raw
+    // string bind is rejected by PG — text does not coerce into that column.
     let published_at_ts = published_at.map(|dt| dt.naive_utc().trunc_subsecs(0));
     let content_text = content.map(strip_to_search_text);
 
@@ -873,11 +858,10 @@ pub async fn upsert_entry_id_tx(
     author: Option<&str>,
     published_at: Option<DateTime<Utc>>,
 ) -> AppResult<UpsertOutcome> {
-    // Bind published_at as a seconds-truncated NaiveDateTime: sqlx encodes it as
-    // the `%Y-%m-%d %H:%M:%S` TEXT the SQLite composite cursor compares against,
-    // and as a `timestamp` that assignment-casts into the column's `timestamptz`
-    // (UTC session) on PG. A raw `%Y-%m-%d %H:%M:%S` *string* bind is rejected by
-    // PG here — text does not coerce into a timestamptz column.
+    // Bound as a seconds-truncated NaiveDateTime: sqlx encodes it as the
+    // `%Y-%m-%d %H:%M:%S` TEXT the SQLite composite cursor compares against, and
+    // as a `timestamp` that assignment-casts into PG's `timestamptz`. A raw
+    // string bind is rejected by PG — text does not coerce into that column.
     let published_at_ts = published_at.map(|dt| dt.naive_utc().trunc_subsecs(0));
     let content_text = content.map(strip_to_search_text);
 
@@ -960,13 +944,12 @@ fn retention_victims_sql(dialect: Dialect) -> String {
 }
 
 /// Delete up to `batch_size` read, aged, non-starred entries belonging to users
-/// who have opted into retention (`user_settings.retention_read_days > 0`),
-/// recording a tombstone for each. Returns the number of entries deleted.
+/// who have opted into retention, recording a tombstone for each. Returns the
+/// number deleted.
 ///
-/// One batch runs in a single transaction so the tombstone+delete pair is
-/// atomic against a concurrent feed refresh. Victims are gathered first (Rust
-/// side) so the delete targets exact ids rather than re-running a `LIMIT`
-/// without `ORDER BY`. Each user's own threshold is applied via the join.
+/// One batch runs in a single transaction so the tombstone+delete pair is atomic
+/// against a concurrent feed refresh. Victims are gathered Rust-side so the
+/// delete targets exact ids rather than re-running a `LIMIT` without `ORDER BY`.
 pub async fn prune_read_retention_batch(db: &Db, batch_size: usize) -> AppResult<u64> {
     let sql = retention_victims_sql(Dialect::from_db(db));
     let mut tx = db.begin().await?;
@@ -995,14 +978,12 @@ pub async fn prune_read_retention_batch(db: &Db, batch_size: usize) -> AppResult
         return Ok(0);
     }
 
-    // Tombstone + delete as two set-based statements rather than a 2-per-victim
-    // loop: at BATCH_SIZE = 500 that is 2 statements per batch instead of 1000,
-    // which shortens the window the batch holds SQLite's single write lock and
-    // keeps a large retention drain from stalling interactive writes. The
-    // tombstone insert reads feed_id/guid back out of `entry` itself, so only
-    // the ids need binding and both statements target the identical id set.
-    // (The `WHERE id IN (...)` also disambiguates SQLite's
-    // `INSERT ... SELECT ... ON CONFLICT` parse, which requires a WHERE clause.)
+    // Two set-based statements rather than a 2-per-victim loop: at BATCH_SIZE
+    // 500 that is 2 statements per batch instead of 1000, which shortens the
+    // window the batch holds SQLite's single write lock. The tombstone insert
+    // reads feed_id/guid back out of `entry`, so only the ids need binding and
+    // both statements target the identical set. (The `WHERE id IN (...)` also
+    // disambiguates SQLite's `INSERT ... SELECT ... ON CONFLICT` parse.)
     let in_clause = (0..victims.len())
         .map(|i| format!("${}", i + 1))
         .collect::<Vec<_>>()
@@ -1039,10 +1020,8 @@ pub async fn prune_read_retention_batch(db: &Db, batch_size: usize) -> AppResult
 }
 
 /// Upsert an entry and return the resulting [`Entry`] plus whether it was new.
-///
-/// Thin wrapper over [`upsert_entry_id`] for callers that need the full record
-/// (tests, summary worker/cleanup seeding). The feed-sync hot path should call
-/// [`upsert_entry_id`] directly to skip the extra full-row read this performs.
+/// A thin wrapper over [`upsert_entry_id`] for callers that need the full record;
+/// the feed-sync hot path calls that directly to skip the extra row read.
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert_entry(
     db: &Db,
@@ -1167,11 +1146,10 @@ pub async fn toggle_star(db: &Db, id: i64) -> AppResult<Entry> {
     find_by_id(db, id).await?.ok_or(AppError::EntryNotFound)
 }
 
-/// Set the starred state for an entry, scoped to the owning user. Idempotent
-/// — a no-op if the entry is already in the desired state. Returns the
-/// resulting `EntryWithFeed` plus a `changed` bool (parallels
-/// `set_read_for_user`). `None` when the entry does not exist or belongs to
-/// a different user (callers treat both as 404).
+/// Set the starred state for an entry, scoped to the owning user. Idempotent.
+/// Returns the resulting `EntryWithFeed` plus a `changed` bool (parallels
+/// `set_read_for_user`), or `None` when the entry does not exist or belongs to
+/// another user — callers treat both as 404.
 pub async fn set_starred_for_user(
     db: &Db,
     user_id: i64,
@@ -1197,11 +1175,10 @@ pub async fn set_starred_for_user(
         .map(|ewf| (ewf, changed)))
 }
 
-/// Store the article fetched by "Fetch Full Content", scoped to the owning
-/// user. Overwrites any previous fetch, so pressing the button again is a
-/// refresh rather than a no-op.
+/// Store the article fetched by "Fetch Full Content", scoped to the owning user.
+/// Overwrites any previous fetch, so pressing the button again is a refresh.
 ///
-/// `html` is the *raw* extracted markup. It is sanitised on the way out, never
+/// `html` is the *raw* extracted markup: it is sanitised on the way out, never
 /// on the way in — see [`Entry::full_content`].
 pub async fn set_full_content_for_user(
     db: &Db,
@@ -1227,12 +1204,10 @@ pub async fn set_full_content_for_user(
     Ok(())
 }
 
-/// Set the read state for an entry, scoped to the owning user. Idempotent —
-/// a no-op if the entry is already in the desired state. Returns the
-/// resulting `EntryWithFeed` (or `None` if the entry does not exist or
-/// belongs to a different user), plus a bool indicating whether the call
-/// actually changed state (used by handlers to decide whether to emit a
-/// flash toast).
+/// Set the read state for an entry, scoped to the owning user. Idempotent.
+/// Returns the resulting `EntryWithFeed` (or `None` when the entry does not
+/// exist or belongs to another user) plus whether the call actually changed
+/// state, which handlers use to decide on a flash toast.
 pub async fn set_read_for_user(
     db: &Db,
     user_id: i64,
@@ -1391,11 +1366,10 @@ pub async fn list_by_user_with_continuation(
     };
 
     // Page-0 (cursorless) index hint. Without it the planner walks
-    // category->feed->entry and temp-B-tree-sorts the whole corpus before
-    // LIMIT. Mirrors `list_by_user`'s hint, but only when there is no
-    // continuation predicate — at depth the predicate already drives the sort
-    // index, so we leave that proven-fast plan untouched. Only the
-    // published-order sorts have dedicated indexes.
+    // category->feed->entry and temp-B-tree-sorts the whole corpus before LIMIT.
+    // Mirrors `list_by_user`'s hint, but only without a continuation predicate —
+    // at depth the predicate already drives the sort index, so that proven-fast
+    // plan is left untouched. Only published-order sorts have dedicated indexes.
     let entry_hint = if pagination.sort_order == EntrySortOrder::PublishedAt
         && pagination.continuation.is_none()
     {
@@ -1424,9 +1398,9 @@ pub async fn list_by_user_with_continuation(
 
 /// Apply common filter conditions to query builder.
 /// True when no `EntryFilter` field would add a predicate against the `entry`
-/// table itself. Used to gate the `INDEXED BY idx_entry_sort_ts` hint: without
-/// any entry-side filter, scanning the sort index DESC with LIMIT is far
-/// cheaper than the planner's default `category -> feed -> entry` walk.
+/// table itself. Gates the `INDEXED BY idx_entry_sort_ts` hint: with no
+/// entry-side filter, scanning the sort index DESC with LIMIT is far cheaper
+/// than the planner's default `category -> feed -> entry` walk.
 pub async fn mark_all_read_by_feed(
     db: &Db,
     feed_id: i64,
@@ -1515,12 +1489,10 @@ pub struct EntryNeighbors {
     pub next_id: Option<i64>,
 }
 
-/// Find neighboring entries (prev/next) for a given entry within a user's entries.
-/// Entries are ordered by `COALESCE(published_at`, `created_at`) DESC.
-/// - `prev_id`: the entry that comes before (newer/higher in list)
-/// - `next_id`: the entry that comes after (older/lower in list)
-///
-/// Uses `EntryFilter` to support all filtering conditions (unread, starred, read, feed, category, `has_summary`).
+/// Find neighboring entries (prev/next) for an entry within a user's entries,
+/// ordered by `COALESCE(published_at, created_at)` DESC: `prev_id` is newer
+/// (higher in the list), `next_id` older. Honours every `EntryFilter`
+/// condition.
 pub async fn find_neighbors(
     db: &Db,
     user_id: i64,
@@ -1605,23 +1577,20 @@ pub async fn find_neighbors(
         format!(" AND {}", next_conditions.join(" AND "))
     };
 
-    // Pin the published-order index and force the entry table to drive the
-    // join so the planner walks it in sort order and stops at LIMIT 1.
+    // Pin the published-order index and force the entry table to drive the join,
+    // so the planner walks it in sort order and stops at LIMIT 1.
     //
-    // The snapshot-widened unread predicate `(read_at IS NULL OR
-    // read_at >= ?)` needs special handling. `published_sort_entry_hint`
-    // returns no hint for unread, and the OR otherwise makes the planner pick
-    // a MULTI-INDEX OR that pulls the whole read-majority of the table into a
-    // temp B-tree just to take one row — an O(table) scan that grows with
-    // inbox size (~2ms/call at 50k entries, ~8ms at 200k, exec only). Pinning
-    // `idx_entry_sort_ts` and using CROSS JOIN to force entry-first ordering
-    // turns that into an indexed range scan that short-circuits at the first
-    // matching neighbour (~21µs, flat with inbox size), identical results.
+    // The snapshot-widened unread predicate `(read_at IS NULL OR read_at >= ?)`
+    // needs this: `published_sort_entry_hint` returns no hint for unread, and the
+    // OR otherwise makes the planner pick a MULTI-INDEX OR that pulls the whole
+    // read-majority of the table into a temp B-tree to take one row — O(table),
+    // growing with inbox size (~2ms/call at 50k entries, ~8ms at 200k). Pinning
+    // `idx_entry_sort_ts` with a CROSS JOIN turns that into an indexed range scan
+    // that short-circuits at the first match (~21µs, flat), identical results.
     //
     // Gated on `read_after`: only the snapshot OR triggers the bad plan. The
-    // strict `read_at IS NULL` path (no `read_after`) keeps its prior plan,
-    // which can still use the partial `idx_entry_unread_feed` and so must not
-    // be force-pinned to the full sort index.
+    // strict `read_at IS NULL` path can still use the partial
+    // `idx_entry_unread_feed`, so it must not be force-pinned to the sort index.
     // `Dialect::index_hint` drops the SQLite-only `INDEXED BY` on PostgreSQL.
     let (raw_hint, join_kw) = if filter.unread_only && filter.read_after.is_some() {
         (" INDEXED BY idx_entry_sort_ts", "CROSS JOIN")
@@ -2000,7 +1969,6 @@ mod tests {
         let category_id = create_test_category(&db, user_id, "Tech").await;
         let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
-        // Insert new entry
         let (entry, is_new) = upsert_entry(
             &db,
             feed_id,
@@ -2020,7 +1988,6 @@ mod tests {
         assert!(entry.read_at.is_none());
         assert!(entry.starred_at.is_none());
 
-        // Update existing entry
         let (updated, is_new) = upsert_entry(
             &db,
             feed_id,
@@ -2272,7 +2239,6 @@ mod tests {
 
         assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 5);
 
-        // Mark 2 as read
         let entries = list_by_feed(&db, feed_id, 10, 0).await.unwrap();
         mark_as_read(&db, entries[0].id).await.unwrap();
         mark_as_read(&db, entries[1].id).await.unwrap();
@@ -2287,7 +2253,6 @@ mod tests {
         let category_id = create_test_category(&db, user_id, "Tech").await;
         let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
-        // Create entries with different titles
         upsert_entry(
             &db,
             feed_id,
@@ -2450,7 +2415,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Mark entry1 as read
         mark_as_read(&db, entry1.id).await.unwrap();
         // Star entry2
         toggle_star(&db, entry2.id).await.unwrap();
@@ -2487,7 +2451,6 @@ mod tests {
         let category_id = create_test_category(&db, user_id, "Tech").await;
         let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
-        // Create 5 entries that match the search
         for i in 0..5 {
             upsert_entry(
                 &db,
@@ -2509,19 +2472,16 @@ mod tests {
             ..Default::default()
         };
 
-        // First page (limit 2)
         let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 2, 0)
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
 
-        // Second page
         let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 2, 2)
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
 
-        // Third page (only 1 remaining)
         let results = list_by_user(&db, user_id, &filter, EntrySortOrder::default(), 2, 4)
             .await
             .unwrap();
@@ -2942,7 +2902,6 @@ mod tests {
         let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
         let feed2_id = create_test_feed(&db, category2_id, "https://example2.com/feed.xml").await;
 
-        // Create entries for user 1
         let (entry1, _) = upsert_entry(
             &db,
             feed_id,
@@ -2983,7 +2942,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Create entry for user 2
         let (other_entry, _) = upsert_entry(
             &db,
             feed2_id,
@@ -3002,7 +2960,6 @@ mod tests {
         assert_eq!(count_unread_by_user(&db, user_id).await.unwrap(), 3);
         assert_eq!(count_unread_by_user(&db, user2_id).await.unwrap(), 1);
 
-        // Mark entries 1 and 2 as read (user 1)
         let marked = mark_read_by_ids(&db, user_id, &[entry1.id, entry2.id])
             .await
             .unwrap();
@@ -3020,7 +2977,6 @@ mod tests {
         // User 2's entry should still be unread
         assert_eq!(count_unread_by_user(&db, user2_id).await.unwrap(), 1);
 
-        // Mark already-read entries again - should return 0
         let marked = mark_read_by_ids(&db, user_id, &[entry1.id, entry2.id])
             .await
             .unwrap();
@@ -3030,7 +2986,6 @@ mod tests {
         let marked = mark_read_by_ids(&db, user_id, &[]).await.unwrap();
         assert_eq!(marked, 0);
 
-        // Mark remaining entry
         let marked = mark_read_by_ids(&db, user_id, &[entry3.id]).await.unwrap();
         assert_eq!(marked, 1);
 
@@ -3045,7 +3000,6 @@ mod tests {
         let category_id = create_test_category(&db, user_id, "Tech").await;
         let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
-        // First upsert: new row
         let first = upsert_entry_id(
             &db,
             feed_id,
@@ -3066,7 +3020,6 @@ mod tests {
         let row = find_by_id(&db, id1).await.unwrap().unwrap();
         assert_eq!(row.title.as_deref(), Some("Title"));
 
-        // Second upsert with same guid+feed: update, same id
         let second = upsert_entry_id(
             &db,
             feed_id,
@@ -3406,7 +3359,6 @@ mod tests {
                 .is_none()
         );
 
-        // Mark read then mark unread by ids
         assert_eq!(
             mark_read_by_ids(&db, user_id, &[e1.id, e2.id])
                 .await
@@ -3432,7 +3384,6 @@ mod tests {
         let category_id = create_test_category(&db, user_id, "Tech").await;
         let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
-        // Create 5 entries with distinct timestamps
         let mut entries = Vec::new();
         for i in 0..5 {
             let published = Utc::now() + chrono::Duration::seconds(i * 10);
@@ -3456,12 +3407,8 @@ mod tests {
         star_entry(&db, entries[1].id).await.unwrap();
         star_entry(&db, entries[3].id).await.unwrap();
 
-        // From entry 3 (starred), with starred_only filter:
-        // prev should be entry 1 (the only other starred entry that is newer... wait, entry 3 is newer)
-        // Actually entries are ordered by published_at DESC, so entry 4 is newest.
-        // entry 3 published_at = now+30s, entry 1 published_at = now+10s
-        // prev (newer than entry 3) = none starred that is newer
-        // next (older than entry 3) = entry 1 (starred, older)
+        // Entries are ordered by published_at DESC, so among the starred ones
+        // entry 3 (now+30s) has no newer sibling and entry 1 (now+10s) is older.
         let filter = EntryFilter {
             starred_only: true,
             ..Default::default()
@@ -3580,7 +3527,6 @@ mod tests {
         let category_id = create_test_category(&db, user_id, "Tech").await;
         let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
 
-        // Create 4 entries with distinct timestamps
         let mut entries = Vec::new();
         for i in 0..4 {
             let published = Utc::now() + chrono::Duration::seconds(i * 10);
@@ -3600,7 +3546,6 @@ mod tests {
             entries.push(entry);
         }
 
-        // Mark entries 0 and 2 as read
         mark_as_read(&db, entries[0].id).await.unwrap();
         mark_as_read(&db, entries[2].id).await.unwrap();
 
@@ -3926,7 +3871,6 @@ mod tests {
             .unwrap();
         }
 
-        // Get id of "newest" entry (highest id, latest ts)
         let max_id = crate::query_scalar!(&db, i64, "SELECT MAX(id) FROM entry").unwrap();
 
         let pagination = ContinuationParams {
@@ -3997,11 +3941,10 @@ mod tests {
         }
     }
 
-    /// Captures the EXPLAIN QUERY PLAN output for a SELECT. Concatenates all
-    /// `detail` columns so callers can `assert!(plan.contains("idx_entry_…"))`
-    /// to lock in the planner choice. The bound values are placeholders — the
-    /// planner only needs parameter count to match, so `n_params` dummy `i64`s
-    /// are bound (one per `$N` placeholder).
+    /// Captures the EXPLAIN QUERY PLAN output for a SELECT, concatenating every
+    /// `detail` column so callers can `assert!(plan.contains("idx_entry_…"))`.
+    /// The planner only needs the parameter count to match, so `n_params` dummy
+    /// `i64`s are bound.
     async fn explain_plan_for(db: &Db, sql: &str, n_params: usize) -> String {
         let explain_sql = format!("EXPLAIN QUERY PLAN {sql}");
         let rows: Vec<(i64, i64, i64, String)> = match db.inner() {
@@ -4122,17 +4065,12 @@ mod tests {
 
     #[tokio::test]
     async fn continuation_page0_unfiltered_uses_sort_ts_index() {
-        // Regression guard for the page-0 index hint added to
+        // Regression guard for the page-0 index hint in
         // `list_by_user_with_continuation`. Without `INDEXED BY idx_entry_sort_ts`
         // the planner walks category->feed->entry and temp-B-tree-sorts the whole
         // corpus before LIMIT — a ~350× slowdown on a large instance. The
-        // behavioral walk test (`test_continuation_walk_is_gapless_unfiltered`)
-        // would NOT catch a dropped hint because results are identical. This test
-        // pins the query plan directly.
-        //
-        // Mirrors the same pattern as `list_by_user_no_predicate_uses_sort_ts_index`:
-        // replicate the SQL shape the builder emits for the cursorless case and
-        // assert EXPLAIN QUERY PLAN mentions the index.
+        // behavioral walk test would not catch a dropped hint, because the results
+        // are identical, so this pins the query plan directly.
         let db = setup_db().await;
         let user_id = create_test_user(&db, "u").await;
         let cat_id = create_test_category(&db, user_id, "c").await;
@@ -4148,13 +4086,10 @@ mod tests {
             .unwrap();
         }
 
-        // Hand-built copy of the SQL `list_by_user_with_continuation` emits for:
-        //   filter = EntryFilter::default(), sort_order = PublishedAt,
-        //   continuation = None, oldest_first = false, ot = None, nt = None.
-        // The entry hint resolves to " INDEXED BY idx_entry_sort_ts" because
-        // `is_no_entry_side_predicate` is true and sort_order is PublishedAt.
-        // The ORDER BY includes the tie-breaker `e.id DESC` that the continuation
-        // builder always appends (unlike list_by_user which omits it).
+        // Hand-built copy of the SQL `list_by_user_with_continuation` emits for a
+        // default filter, PublishedAt order and no continuation. The entry hint
+        // resolves to `INDEXED BY idx_entry_sort_ts`, and the ORDER BY includes
+        // the tie-breaker `e.id DESC` the continuation builder always appends.
         let sql = r"
             SELECT e.id
             FROM entry e INDEXED BY idx_entry_sort_ts
@@ -4177,21 +4112,17 @@ mod tests {
     }
 
     /// Locks the query plan for the snapshot-widened unread neighbours query.
-    /// Without the `idx_entry_sort_ts` hint + entry-first CROSS JOIN that
-    /// `find_neighbors` emits for unread filters, the planner answers the
-    /// `(read_at IS NULL OR read_at >= ?)` predicate with a MULTI-INDEX OR
-    /// that scans the read-majority of the table into a temp B-tree — an
-    /// O(table) scan per call that grows unbounded with inbox size. The hint
-    /// turns it into an indexed range scan that short-circuits at LIMIT 1.
+    /// Without the `idx_entry_sort_ts` hint and entry-first CROSS JOIN, the
+    /// planner answers `(read_at IS NULL OR read_at >= ?)` with a MULTI-INDEX OR
+    /// that scans the read-majority of the table into a temp B-tree — O(table)
+    /// per call, growing unbounded with inbox size.
     #[tokio::test]
     async fn find_neighbors_unread_read_after_uses_sort_ts_not_multi_index_or() {
         let db = setup_db().await;
         let _ = create_test_user(&db, "u").await;
-        // Mirrors the next-side SQL `find_neighbors` builds for an unread
-        // filter with `read_after` set (see the join_kw / entry_hint branch).
-        // Each `$N` placeholder is distinct (the builder binds the sort_ts value
-        // twice rather than reusing one slot); only the parameter count matters
-        // to the planner.
+        // Mirrors the next-side SQL `find_neighbors` builds for an unread filter
+        // with `read_after` set. Each `$N` is distinct (the builder binds the
+        // sort_ts value twice); only the parameter count matters to the planner.
         let sql = r"
             SELECT e.id
             FROM entry e INDEXED BY idx_entry_sort_ts
@@ -4345,7 +4276,6 @@ mod tests {
         // Opt-in disabled (default 0): nothing pruned.
         assert_eq!(prune_read_retention_batch(&db, 500).await.unwrap(), 0);
 
-        // Enable retention at 30 days for the feed's owner.
         let user_id_check = crate::query_scalar!(
             &db,
             i64,

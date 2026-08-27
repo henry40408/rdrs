@@ -104,9 +104,7 @@ async fn login(server: &mut TestServer, username: &str, password: &str) {
     common::apply_csrf(server, &login);
 }
 
-// ============================================================================
-// Case 1: Failed-summary clear deletes the record
-// ============================================================================
+// --- Case 1: Failed-summary clear deletes the record ---
 
 #[tokio::test]
 async fn test_cancel_clears_failed_summary() {
@@ -114,7 +112,6 @@ async fn test_cancel_clears_failed_summary() {
     let (uid, eid) = setup_user_with_entry(&app.db, "user1", "vulture-mango-77-quilt").await;
     login(&mut app.server, "user1", "vulture-mango-77-quilt").await;
 
-    // Seed a failed summary record
     rdrs::models::entry_summary::upsert_pending(&app.db, uid, eid)
         .await
         .unwrap();
@@ -129,34 +126,27 @@ async fn test_cancel_clears_failed_summary() {
         .await;
     response.assert_status_ok();
 
-    // Assert the summary record is gone
     let gone = rdrs::models::entry_summary::find_by_user_and_entry(&app.db, uid, eid)
         .await
         .unwrap();
     assert!(gone.is_none(), "expected summary record to be deleted");
 }
 
-// ============================================================================
-// Case 2: Non-owner returns 404
-// ============================================================================
+// --- Case 2: Non-owner returns 404 ---
 
 #[tokio::test]
 async fn test_cancel_non_owner_returns_404() {
     let mut app = create_test_app(default_test_config(), "test_cancel_non_owner").await;
 
-    // Create owner user with an entry
     let (_uid1, eid) = setup_user_with_entry(&app.db, "owner", "vulture-mango-77-quilt").await;
 
-    // Create a second user who does NOT own that entry
     let password_hash = auth::hash_password("password456").unwrap();
     user::create_user(&app.db, "attacker", &password_hash, Role::User)
         .await
         .unwrap();
 
-    // Login as attacker
     login(&mut app.server, "attacker", "password456").await;
 
-    // Try to cancel the owner's entry
     let response = app
         .server
         .post(&format!("/entries/{eid}/summarize/cancel"))
@@ -164,9 +154,7 @@ async fn test_cancel_non_owner_returns_404() {
     response.assert_status_not_found();
 }
 
-// ============================================================================
-// Case: summarize POST emits a Pending event on the EventBus
-// ============================================================================
+// --- Case: summarize POST emits a Pending event on the EventBus ---
 
 #[tokio::test]
 async fn summarize_emits_pending_event() {
@@ -194,9 +182,7 @@ async fn summarize_emits_pending_event() {
     ));
 }
 
-// ============================================================================
-// Case 3: In-flight token is cancelled and removed from the registry
-// ============================================================================
+// --- Case 3: In-flight token is cancelled and removed from the registry ---
 
 #[tokio::test]
 async fn test_cancel_removes_inflight_token() {
@@ -209,7 +195,6 @@ async fn test_cancel_removes_inflight_token() {
         .await
         .unwrap();
 
-    // Insert a CancellationToken into the registry
     let cancel_token = CancellationToken::new();
     let cloned_token = cancel_token.clone();
     {
@@ -224,13 +209,11 @@ async fn test_cancel_removes_inflight_token() {
         .await;
     response.assert_status_ok();
 
-    // Assert the cloned token is now cancelled
     assert!(
         cloned_token.is_cancelled(),
         "expected token to be cancelled"
     );
 
-    // Assert the token has been removed from the registry
     assert!(
         app.state
             .summary_cancels

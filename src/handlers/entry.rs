@@ -43,7 +43,6 @@ pub async fn get_entry_neighbors(
     Query(query): Query<NeighborsQuery>,
 ) -> AppResult<Json<entry::EntryNeighbors>> {
     let user_id = auth_user.user.id;
-    // Verify entry belongs to user
     let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
@@ -74,7 +73,6 @@ pub async fn fetch_full_content(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<FetchFullContentResponse>> {
-    // Verify entry exists and belongs to user
     let user_id = auth_user.user.id;
     let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
         .await?
@@ -87,7 +85,6 @@ pub async fn fetch_full_content(
         return Err(AppError::EntryNotFound);
     }
 
-    // Check if entry has a link
     let link = entry_with_feed
         .entry
         .link
@@ -95,7 +92,6 @@ pub async fn fetch_full_content(
 
     let custom_referrer = entry_with_feed.custom_referrer;
 
-    // Fetch and extract content
     let extracted = fetch_and_extract(&link, &state.config.user_agent).await?;
 
     // Sanitize the content (use the entry link as base URL for relative images)
@@ -162,7 +158,6 @@ pub async fn summarize_entry(
         .await?
         .ok_or(AppError::EntryNotFound)?;
 
-    // Verify entry belongs to user
     let cat = category::find_by_id(&state.db, entry_with_feed.category_id)
         .await?
         .ok_or(AppError::CategoryNotFound)?;
@@ -170,14 +165,12 @@ pub async fn summarize_entry(
         return Err(AppError::EntryNotFound);
     }
 
-    // Check if entry has a link
     let link = entry_with_feed
         .entry
         .link
         .clone()
         .ok_or_else(|| AppError::Validation("Entry has no link to summarize".to_string()))?;
 
-    // Verify Kagi is configured
     let config = user_settings::get_save_services_config(&state.db, user_id).await?;
     let kagi = config
         .kagi
@@ -187,10 +180,8 @@ pub async fn summarize_entry(
         return Err(AppError::Validation("Kagi is not configured".to_string()));
     }
 
-    // Create pending record in DB
     entry_summary::upsert_pending(&state.db, user_id, id).await?;
 
-    // Set pending status in cache
     state.summary_cache.set_pending(user_id, id);
 
     let job = SummaryJob {
@@ -206,7 +197,6 @@ pub async fn summarize_entry(
         })?
         .map_err(|e| AppError::Internal(format!("Failed to queue summary job: {e}")))?;
 
-    // Return pending status
     Ok(Json(SummaryResponse {
         status: SummaryStatus::Pending,
         summary_text: None,
@@ -233,7 +223,6 @@ pub async fn get_entry_summary(
         }));
     }
 
-    // Verify entry ownership and get from DB
     let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
@@ -245,7 +234,6 @@ pub async fn get_entry_summary(
         return Err(AppError::EntryNotFound);
     }
 
-    // Get from DB
     let result = if let Some(db_summary) =
         entry_summary::find_by_user_and_entry(&state.db, user_id, id).await?
     {
@@ -273,7 +261,6 @@ pub async fn delete_entry_summary(
 ) -> AppResult<Json<serde_json::Value>> {
     let user_id = auth_user.user.id;
 
-    // Verify entry ownership and delete from DB
     let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
@@ -285,7 +272,6 @@ pub async fn delete_entry_summary(
         return Err(AppError::EntryNotFound);
     }
 
-    // Delete from DB
     entry_summary::delete(&state.db, user_id, id).await?;
 
     // Remove from cache
@@ -303,13 +289,11 @@ pub async fn save_to_services(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<SaveToServicesResponse>> {
-    // Get entry and verify ownership
     let user_id = auth_user.user.id;
     let entry_with_feed = entry::find_by_id_with_feed(&state.db, id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
 
-    // Verify entry belongs to user
     let cat = category::find_by_id(&state.db, entry_with_feed.category_id)
         .await?
         .ok_or(AppError::CategoryNotFound)?;
@@ -317,14 +301,12 @@ pub async fn save_to_services(
         return Err(AppError::EntryNotFound);
     }
 
-    // Check if entry has a link
     let link = entry_with_feed
         .entry
         .link
         .clone()
         .ok_or_else(|| AppError::Validation("Entry has no link to save".to_string()))?;
 
-    // Get save services config
     let save_config = user_settings::get_save_services_config(&state.db, user_id).await?;
 
     if !save_config.has_any_service() {

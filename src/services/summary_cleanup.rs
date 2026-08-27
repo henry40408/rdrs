@@ -172,7 +172,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Create a summary
         entry_summary::upsert_pending(&db, user_id, entry.id)
             .await
             .unwrap();
@@ -180,7 +179,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify it exists
         assert!(entry_summary::exists(&db, user_id, entry.id).await.unwrap());
 
         // Manually set created_at to 25 hours ago
@@ -192,11 +190,9 @@ mod tests {
         )
         .unwrap();
 
-        // Delete entries older than 24 hours
         let deleted = entry_summary::delete_expired(&db, 24).await.unwrap();
         assert_eq!(deleted, 1);
 
-        // Verify it's gone
         assert!(!entry_summary::exists(&db, user_id, entry.id).await.unwrap());
     }
 
@@ -205,7 +201,6 @@ mod tests {
         let db = setup_db().await;
         let cancel_token = CancellationToken::new();
 
-        // Start cleanup worker with a long interval (won't trigger during test)
         let handle = start_cleanup_worker(db, 1000, 24, cancel_token.clone());
 
         // Cancel immediately
@@ -223,7 +218,6 @@ mod tests {
     async fn test_cleanup_worker_runs_cleanup_on_interval() {
         let db = setup_db().await;
 
-        // Create test data with an expired summary
         let user_id = user::create_user(&db, "testuser", "hash", Role::User)
             .await
             .unwrap()
@@ -263,7 +257,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Create an expired summary (25 hours old)
         entry_summary::upsert_pending(&db, user_id, entry_obj.id)
             .await
             .unwrap();
@@ -279,15 +272,12 @@ mod tests {
         )
         .unwrap();
 
-        // Verify summary exists before cleanup
         let exists_before = entry_summary::exists(&db, 1, 1).await.unwrap();
         assert!(exists_before);
 
-        // Run cleanup directly (simulating what the worker does)
         let deleted = entry_summary::delete_expired(&db, 24).await.unwrap();
         assert_eq!(deleted, 1);
 
-        // Verify summary was deleted
         let exists_after = entry_summary::exists(&db, 1, 1).await.unwrap();
         assert!(!exists_after);
     }

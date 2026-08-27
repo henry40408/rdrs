@@ -47,7 +47,6 @@ fn generate_favicons() {
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir);
 
-    // Read SVG file
     let svg_data = std::fs::read("favicon.svg").expect("Failed to read favicon.svg");
 
     // Parse SVG
@@ -118,7 +117,6 @@ fn generate_ico(tree: &resvg::usvg::Tree, out_path: &Path) {
 
     let mut icon_dir = ico::IconDir::new(ico::ResourceType::Icon);
 
-    // Add 16x16 and 32x32 images
     for size in [16u32, 32u32] {
         let png_data = render_svg_to_png(tree, size, None);
         let img = image::load_from_memory(&png_data).expect("Failed to load PNG");

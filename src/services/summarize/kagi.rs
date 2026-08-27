@@ -73,7 +73,6 @@ async fn summarize_url_with_base(
         .build()
         .map_err(|e| AppError::Internal(format!("Failed to build HTTP client: {e}")))?;
 
-    // Build the API URL with query parameters
     let mut api_url = url::Url::parse(&format!("{base}/mother/summary_labs"))
         .map_err(|e| AppError::Internal(format!("Failed to parse Kagi API URL: {e}")))?;
 

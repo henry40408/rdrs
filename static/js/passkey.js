@@ -1,14 +1,8 @@
-// static/js/passkey.js — <rdrs-passkeys> custom element.
-//
-// Self-contained WebAuthn UI: lists registered passkeys, registers
-// new ones, supports rename + delete. The SSR /user-settings page
-// mounts <rdrs-passkeys></rdrs-passkeys> in the passkey section;
-// this element handles all the in-page UX while the underlying
-// /api/passkey* and /api/passkeys/* JSON endpoints remain in place
-// (WebAuthn requires JS, this is the planned exception).
+// static/js/passkey.js — <rdrs-passkeys>, the self-contained WebAuthn UI mounted
+// by the SSR /user-settings page. WebAuthn requires JS, so the JSON
+// /api/passkey* endpoints behind it are the planned exception to SSR-first.
 
-// `?v=` is substituted at serve time (see handlers/static_assets.rs) so this
-// nested import is cache-busted like the top-level <script> tags.
+// `?v=` is substituted at serve time so this nested import is cache-busted.
 import { escapeHtml } from '/static/js/utils.js?v=__RDRS_ASSET_VERSION__';
 
 function base64urlToBuffer(base64url) {
@@ -28,9 +22,8 @@ function bufferToBase64url(buffer) {
 }
 
 // Adding or removing a passkey changes which credentials can open the account,
-// so the server requires the session to have proved itself within the last few
-// minutes (middleware::auth::RecentlyAuthenticated) and answers 403 with this
-// exact message otherwise.
+// so the server requires a recently-proved session
+// (middleware::auth::RecentlyAuthenticated) and 403s with this exact message.
 const REAUTH_MESSAGE = 'Reauthentication required';
 
 // A <dialog> rather than prompt(): prompt() shows the password in clear text
@@ -62,16 +55,14 @@ function promptForPassword() {
     });
 }
 
-// Run `send`, and if the server asks for re-authentication, collect the
-// password, re-authenticate, and run it again — exactly once. `send` must be
-// replayable, which is why the caller passes a thunk rather than a Response:
+// Run `send`, and on a re-authentication demand collect the password and run it
+// again — exactly once. The caller passes a thunk rather than a Response because
 // the retry re-issues the request from scratch.
 async function withReauth(send) {
     let response = await send();
     if (response.status !== 403) return response;
 
-    // Read the body via a clone; the caller still needs the original if this
-    // turns out to be an ordinary 403.
+    // Via a clone: the caller still needs the original on an ordinary 403.
     const data = await response.clone().json().catch(() => ({}));
     if (data.error !== REAUTH_MESSAGE) return response;
 
@@ -201,9 +192,9 @@ class RdrsPasskeys extends HTMLElement {
         try {
             btn.disabled = true;
             btn.textContent = 'Registering...';
-            // Only the start of the ceremony can ask for re-authentication —
-            // the server checks there so the password prompt lands before the
-            // authenticator prompt, and so a retry still has its challenge.
+            // Only the start of the ceremony can ask for re-authentication, so
+            // the password prompt lands before the authenticator prompt and a
+            // retry still has its challenge.
             const startR = await withReauth(() => fetch('/api/passkey/register/start', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
             }));

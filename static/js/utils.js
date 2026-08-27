@@ -1,10 +1,4 @@
-// Shared utility functions for RDRS components
-
-/**
- * Escape HTML special characters to prevent XSS.
- * @param {string} text
- * @returns {string}
- */
+/** Escape HTML special characters to prevent XSS. */
 export function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
@@ -12,13 +6,7 @@ export function escapeHtml(text) {
     return div.innerHTML;
 }
 
-/**
- * Return a debounced wrapper around `fn` that delays invocation until `ms`
- * milliseconds have elapsed since the last call.
- * @param {Function} fn
- * @param {number} ms
- * @returns {Function}
- */
+/** Delay `fn` until `ms` have elapsed since the last call. */
 export function debounce(fn, ms) {
     let t;
     return function (...args) {

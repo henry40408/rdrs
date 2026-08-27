@@ -1,51 +1,38 @@
-//! Per-request timing, the HTTP-side counterpart to sqlx's `sqlx::query`
-//! statement log.
+//! Per-request timing, the HTTP-side counterpart to sqlx's statement log.
 //!
-//! Until this existed, nothing in the process recorded how long a request
-//! took: `sqlx::query` (DEBUG, with `elapsed`) covered the database and
-//! stopped there, so a page that felt slow could not be attributed to query
-//! time, template rendering, an upstream fetch, or a lock held somewhere in
-//! between. This middleware closes that gap with one event per request.
+//! Until this existed nothing recorded how long a request took: `sqlx::query`
+//! covered the database and stopped there, so a page that felt slow could not be
+//! attributed to query time, template rendering, an upstream fetch, or a lock
+//! held somewhere in between.
 //!
-//! **Levels mirror the sqlx convention deliberately.** Every request is a
-//! DEBUG `http.request`, and one at or beyond [`SLOW_REQUEST_THRESHOLD`] is a
-//! WARN `http.slow_request` instead. That split is what makes the default
-//! filter (`error,rdrs=info`, see `main::init_tracing`) useful without being
-//! noisy: a healthy deployment logs nothing per request, while a request that
-//! blew past a second surfaces on its own. Turn the full stream on with
-//! `RUST_LOG=rdrs=debug` or, narrowed to this module,
-//! `RUST_LOG=rdrs=info,rdrs::middleware::request_log=debug`.
+//! **Levels mirror the sqlx convention deliberately.** Every request is a DEBUG
+//! `http.request`, and one at or beyond [`SLOW_REQUEST_THRESHOLD`] a WARN
+//! `http.slow_request` instead. That split is what makes the default filter
+//! useful without being noisy: a healthy deployment logs nothing per request,
+//! while a request that blew past a second surfaces on its own.
 //!
-//! **The `route` field is the matched route template, never the request
-//! path.** `/invite/{token}` carries a single-use invite credential *in the
-//! path*, and `handlers::proxy` takes a signed URL the same way; logging
-//! `uri().path()` would write both into a file that outlives the credential
-//! and is routinely shipped to a log aggregator. [`MatchedPath`] gives the
-//! template the router matched (`/invite/{token}`), which is also the label
-//! worth aggregating on — a per-token path would be a distinct series in
-//! every metrics backend. A request that matched no route has no template,
-//! and its path is attacker-controlled text (log injection, plus whatever a
-//! scanner put in the URL), so it is labelled [`UNMATCHED_ROUTE`] rather than
-//! logged verbatim.
+//! **The `route` field is the matched route template, never the request path.**
+//! `/invite/{token}` carries a single-use credential *in the path*, and the image
+//! proxy takes a signed URL the same way; logging `uri().path()` would write both
+//! into a file that outlives the credential and is routinely shipped to an
+//! aggregator. [`MatchedPath`] is also the label worth aggregating on — a
+//! per-token path would be a distinct series in every metrics backend. A request
+//! that matched no route has no template, and its path is attacker-controlled
+//! text, so it is labelled [`UNMATCHED_ROUTE`].
 //!
-//! **What the duration covers.** Timing runs from entry into this layer to
-//! the moment the inner stack yields the response *head*, which is where
-//! every other layer's work (auth, CSRF, `ETag` hashing, compression) and the
-//! whole handler live. It does not include streaming the body to the client,
-//! so it is a server-side service time, not a client-observed one — the same
-//! thing `tower_http`'s `TraceLayer` reports as `latency`. The visible
-//! consequence is `/events`: an SSE handler returns its head immediately and
-//! then streams for minutes, so its entry reads as a fast request rather than
-//! a multi-minute one. That is the intended reading; a connection-lifetime
-//! number would trip the slow-request threshold on every SSE client.
+//! **What the duration covers.** From entry into this layer to the moment the
+//! inner stack yields the response *head*, which is where every other layer's
+//! work and the whole handler live. It does not include streaming the body, so
+//! it is server-side service time rather than client-observed — the same thing
+//! `TraceLayer` reports as `latency`. The visible consequence is `/events`: an
+//! SSE handler returns its head immediately and then streams for minutes, so it
+//! reads as a fast request. That is intended; a connection-lifetime number would
+//! trip the slow threshold on every SSE client.
 //!
-//! Layered **outermost** in `create_router`, for the same reason the security
-//! headers are: several inner layers (`forward_auth`'s redirects, both CSRF
-//! guards' 403s) short-circuit without calling `next`, and `/events` sits
-//! outside the `core` stack entirely. Only the outermost position sees all of
-//! them. It still runs after routing — axum populates [`MatchedPath`] when it
-//! matches, before handing the request to the layered service — which is what
-//! makes the template available here at all.
+//! Layered **outermost**, for the same reason the security headers are: several
+//! inner layers short-circuit without calling `next`, and `/events` sits outside
+//! the `core` stack. It still runs after routing, which is what makes the
+//! template available here at all.
 
 use std::time::{Duration, Instant};
 
@@ -56,13 +43,13 @@ use axum::{
     response::Response,
 };
 
-/// A request taking at least this long is logged at WARN as
-/// `http.slow_request` instead of DEBUG.
+/// A request taking at least this long is logged at WARN as `http.slow_request`
+/// instead of DEBUG.
 ///
-/// One second, matching sqlx's own `slow_statements_duration` default so the
-/// HTTP and SQL slow logs agree on what "slow" means. It sits well under
-/// `services::http::SERVER_REQUEST_TIMEOUT`, so a request that the timeout
-/// layer eventually kills is warned about first.
+/// One second, matching sqlx's own `slow_statements_duration` default so the HTTP
+/// and SQL slow logs agree on what "slow" means. Well under
+/// `services::http::SERVER_REQUEST_TIMEOUT`, so a request the timeout eventually
+/// kills is warned about first.
 pub const SLOW_REQUEST_THRESHOLD: Duration = Duration::from_secs(1);
 
 /// The `route` value for a request that matched no route (a 404 from the
@@ -97,13 +84,11 @@ fn route_label(extensions: &Extensions) -> &str {
 ///
 /// Split out of [`log_request_duration`] so both branches can be exercised
 /// against an exact duration: reaching the WARN branch through the middleware
-/// itself would need a test that genuinely blocks for
-/// [`SLOW_REQUEST_THRESHOLD`].
+/// would need a test that genuinely blocks for [`SLOW_REQUEST_THRESHOLD`].
 ///
-/// `elapsed` is attached twice on purpose, following the pattern
-/// `sqlx::query` uses: `elapsed` is the human-readable `Duration` debug
-/// (`1.96ms`) that reads well in the console formats, `elapsed_ms` the plain
-/// number to filter and aggregate on under `RDRS_LOG_FORMAT=json`.
+/// `elapsed` is attached twice on purpose, following `sqlx::query`: the
+/// human-readable `Duration` debug for the console formats, and a plain
+/// `elapsed_ms` to filter and aggregate on under `RDRS_LOG_FORMAT=json`.
 fn log_completed(method: &Method, route: &str, status: u16, elapsed: Duration) {
     let elapsed_ms = as_millis_f64(elapsed);
 

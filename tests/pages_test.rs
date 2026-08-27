@@ -1,9 +1,5 @@
-//! Additional tests for page handlers and edge cases
-//!
-//! This test file covers additional scenarios for:
-//! - Page templates rendering
-//! - Masquerading behavior in pages
-//! - Flash message handling
+//! Additional tests for page handlers and edge cases: template rendering,
+//! masquerading, and flash messages.
 
 mod common;
 use common::default_test_config;
@@ -78,9 +74,7 @@ async fn login(server: &mut TestServer, username: &str) {
     common::apply_csrf(server, &login);
 }
 
-// ============================================================================
-// Page Rendering Tests
-// ============================================================================
+// --- Page Rendering Tests ---
 
 #[tokio::test]
 async fn test_unread_page_renders_ssr_layout() {
@@ -154,7 +148,6 @@ async fn test_unread_page_while_masquerading() {
 
     login(&mut app.server, "admin").await;
 
-    // Start masquerading as user via the SSR form endpoint.
     app.server
         .post(&format!("/admin/users/{user_id}/masquerade"))
         .await
@@ -171,7 +164,6 @@ async fn test_unread_page_while_masquerading() {
     assert!(body.contains(r#""is_admin":true"#));
     assert!(body.contains(r#""is_masquerading":true"#));
 
-    // Verify current user API returns masqueraded user
     let response = app.server.get("/api/user").await;
     response.assert_status_ok();
     let api_body: serde_json::Value = response.json();
@@ -446,7 +438,6 @@ async fn test_admin_page_while_masquerading() {
 
     login(&mut app.server, "admin").await;
 
-    // Start masquerading via the SSR form endpoint.
     app.server
         .post(&format!("/admin/users/{user_id}/masquerade"))
         .await
@@ -953,18 +944,14 @@ async fn test_user_settings_page_with_flash() {
     assert!(body.contains("Settings saved"));
 }
 
-// ============================================================================
-// Entry Page with Save Services Tests
-// ============================================================================
+// --- Entry Page with Save Services Tests ---
 
 // `has-save-services` and `has-kagi-configured` attributes are no longer
 // embedded server-side — `<rdrs-entries-page>` fetches `/api/user-settings`
 // after mount and sets them on `<rdrs-entry-list>` client-side. Coverage
 // for that wiring lives in the e2e suite.
 
-// ============================================================================
-// Regular User Permissions Tests
-// ============================================================================
+// --- Regular User Permissions Tests ---
 
 #[tokio::test]
 async fn test_regular_user_unread_page_no_admin_link() {
@@ -995,15 +982,11 @@ async fn test_regular_user_cannot_access_admin_page() {
     response.assert_status_see_other();
 }
 
-// Coverage for non-admin users hitting admin endpoints lives in the
-// /admin SSR page test (`test_regular_user_cannot_access_admin_page` above)
-// and the /admin/users/{id}/* form-action handlers reuse the same AdminUser
-// extractor, so any non-admin caller gets the same redirect/forbidden flow.
-// The dedicated GET /api/admin/users endpoint was removed in PR-5 T2.
+// Non-admin coverage lives in the /admin SSR page test above; the
+// /admin/users/{id}/* form actions reuse the same AdminUser extractor, so any
+// non-admin caller gets the same flow.
 
-// ============================================================================
-// User Settings Page with Existing Config
-// ============================================================================
+// --- User Settings Page with Existing Config ---
 
 #[tokio::test]
 async fn test_api_user_settings_returns_linkding_configured() {
@@ -1054,9 +1037,7 @@ async fn test_api_user_settings_returns_custom_entries_per_page() {
     assert_eq!(body["entries_per_page"], 100);
 }
 
-// ============================================================================
-// Archive Entry Pages Tests
-// ============================================================================
+// --- Archive Entry Pages Tests ---
 
 #[tokio::test]
 async fn test_read_entries_page() {
@@ -1242,9 +1223,7 @@ async fn test_search_page_has_syntax_help_panel() {
     assert!(body.contains("is:unread"));
 }
 
-// ============================================================================
-// Category Entries Page Tests
-// ============================================================================
+// --- Category Entries Page Tests ---
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page() {
@@ -1440,14 +1419,12 @@ async fn test_category_entries_page_other_user() {
     )
     .await;
 
-    // Register alice (owner of the category)
     app.server
         .post("/api/setup")
         .json(&json!({ "username": "alice_cou", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
 
-    // Register bob (the cross-tenant user)
     common::seed_account(
         &app.db,
         "bob_cou",
@@ -1456,7 +1433,6 @@ async fn test_category_entries_page_other_user() {
     )
     .await;
 
-    // Get alice's user_id and create her category
     let alice_id: i64 = rdrs::query_scalar!(
         &app.db,
         i64,
@@ -1468,7 +1444,6 @@ async fn test_category_entries_page_other_user() {
         .unwrap();
     let cat_id: i64 = cat.id;
 
-    // Log in as bob
     let __login = app
         .server
         .post("/api/session")
@@ -1563,10 +1538,9 @@ async fn test_category_entries_page_load_more_fragment() {
     );
 }
 
-/// `GET /categories/{id}/entries?pane=1` — the category-switch fragment
-/// `app.js` swaps in place of a document reload. It carries the whole left
-/// column (header included, unlike the Load-More / search fragments) and an
-/// emptied reading pane, and it stays empty even when `?entry=` is present:
+/// `GET /categories/{id}/entries?pane=1` — the category-switch fragment `app.js`
+/// swaps in place of a document reload. It carries the whole left column, header
+/// included, plus an emptied reading pane, and stays empty even with `?entry=`:
 /// switching category closes the entry that belonged to the previous one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_entries_page_pane_fragment() {
@@ -2129,11 +2103,10 @@ async fn test_category_entries_hides_mark_above_while_searching() {
     );
 }
 
-/// `POST /feeds/{id}/entries/mark-read` — same as
-/// `test_category_mark_read_scoped_search` but scoped to a feed, guarding
-/// against a copy-paste argument-order bug in `feed_mark_read_form` /
-/// `category_mark_read_form` (they must pass `Some(id)/None` vs
-/// `None/Some(id)` correctly into the shared `mark_read_scoped` helper).
+/// `POST /feeds/{id}/entries/mark-read` — the feed-scoped twin of
+/// `test_category_mark_read_scoped_search`, guarding against an argument-order
+/// bug in the two form handlers, which must pass `Some(id)/None` the right way
+/// round into the shared `mark_read_scoped` helper.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_mark_read_scoped_search() {
     let mut app = create_test_app_named(default_test_config(), "test_feed_mark_read_scoped").await;
@@ -2237,12 +2210,11 @@ async fn test_feed_mark_read_scoped_search() {
     );
 }
 
-/// On the `?status=all` tab, `matching_count` must equal the number of
-/// entries `mark_read_by_filter` will actually mark (unread + matching
-/// search), not the number of entries matching the active tab's filter.
-/// With one matching-read and one matching-unread entry, the rendered
-/// "Mark N matching" count must be 1, and posting the mark-read action must
-/// mark exactly that one entry (leaving the already-read match untouched).
+/// On the `?status=all` tab, `matching_count` must equal the number of entries
+/// `mark_read_by_filter` will actually mark (unread *and* matching), not the
+/// number matching the tab's filter. With one matching-read and one
+/// matching-unread entry the count must be 1, and the action must leave the
+/// already-read match untouched.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
     let mut app = create_test_app_named(
@@ -2359,9 +2331,7 @@ async fn test_category_matching_count_reflects_unread_only_on_all_tab() {
     );
 }
 
-// ============================================================================
-// Feed Entries Page Tests
-// ============================================================================
+// --- Feed Entries Page Tests ---
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_feed_entries_page() {
@@ -2730,14 +2700,12 @@ async fn test_feed_entries_page_other_user() {
     let mut app =
         create_test_app_named(default_test_config(), "test_feed_entries_page_other_user").await;
 
-    // Register alice (owner of the feed)
     app.server
         .post("/api/setup")
         .json(&json!({ "username": "alice_fou", "password": "vulture-mango-77-quilt" }))
         .await
         .assert_status(StatusCode::CREATED);
 
-    // Register bob (the cross-tenant user)
     common::seed_account(
         &app.db,
         "bob_fou",
@@ -2746,7 +2714,6 @@ async fn test_feed_entries_page_other_user() {
     )
     .await;
 
-    // Get alice's user_id and create her feed
     let alice_id: i64 = rdrs::query_scalar!(
         &app.db,
         i64,
@@ -2773,7 +2740,6 @@ async fn test_feed_entries_page_other_user() {
     .unwrap();
     let feed_id: i64 = feed.id;
 
-    // Log in as bob
     let __login = app
         .server
         .post("/api/session")
@@ -2864,15 +2830,11 @@ async fn test_feed_entries_page_load_more_fragment() {
     );
 }
 
-// ============================================================================
-// SSR Data Embedding Tests
-// ============================================================================
+// --- SSR Data Embedding Tests ---
 
 // SSR-emitted continuation cursor tests are obsolete after the entries-family
-// CSR migration — `/` no longer SSR-renders entries, so there's no SSR JSON
-// to inspect. Composite-cursor regression coverage lives in
-// `e2e/tests/ssr-no-double-render.spec.ts` (Load More + back-dated blocks),
-// which exercises the same `/reader/api/0/stream/contents` cursor end-to-end.
+// CSR migration. Composite-cursor regression coverage lives in the e2e suite,
+// which exercises the same `stream/contents` cursor end-to-end.
 
 #[tokio::test]
 async fn test_feeds_page_renders_ssr_rows() {
@@ -2915,11 +2877,10 @@ async fn test_feeds_page_renders_ssr_rows() {
     assert!(!body.contains("/static/js/pages/feeds.js"));
 }
 
-/// The two timestamps on every feed row are computed from rules a user cannot
-/// guess (three date signals collapsed to a max, plus 304s that move only one
-/// of them). The page has to state them, and state the same numbers
-/// `compute_freshness` applies — hence the thresholds coming from the
-/// constants rather than being retyped into the template.
+/// The two timestamps on every feed row are computed from rules a reader cannot
+/// guess — three date signals collapsed to a max, plus 304s that move only one
+/// of them — so the page must state the same numbers `compute_freshness`
+/// applies, which is why the thresholds come from the constants.
 #[tokio::test]
 async fn test_feeds_page_explains_freshness_rules() {
     let mut app = create_test_app(default_test_config()).await;
@@ -3283,9 +3244,7 @@ async fn test_admin_page_explains_why_account_creation_is_unavailable() {
     assert!(!body.contains("data-testid=\"admin-create-user-form\""));
 }
 
-// ============================================================================
-// SSR /feeds filter / sort tests
-// ============================================================================
+// --- SSR /feeds filter / sort tests ---
 
 #[tokio::test]
 async fn test_feeds_page_filter_errors_only_renders_error_rows() {
@@ -3401,10 +3360,9 @@ async fn test_feeds_page_filter_by_category_excludes_other_rows() {
 // ============================================================================
 // Pre-login shell vs. logged-in chrome separation
 //
-// `templates/base.html` is the slim pre-login shell (only `rdrs-flash.js`).
-// All logged-in chrome (kb-help, sidebar, app.js + the body-mounted
-// `<rdrs-kb-help>` overlay) lives in `templates/app_layout.html` and ships
-// only on per-route templates that extend it.
+// `templates/base.html` is the slim pre-login shell (only `rdrs-flash.js`). All
+// logged-in chrome lives in `templates/app_layout.html` and ships only on the
+// per-route templates that extend it.
 // ============================================================================
 
 #[tokio::test]
@@ -3466,15 +3424,12 @@ async fn test_logged_in_page_loads_full_chrome() {
     assert!(!body.contains("rdrs-kb-pending.js"));
 }
 
-// ============================================================================
-// SSR / (unread) — PR-10 T1
-// ============================================================================
+// --- SSR / (unread) — PR-10 T1 ---
 
 #[tokio::test]
 async fn test_unread_page_renders_entry_rows() {
     let mut app = create_test_app_named(default_test_config(), "test_pages_unread_ssr").await;
 
-    // Register and login as alice
     app.server
         .post("/api/setup")
         .json(&json!({ "username": "alice_unread", "password": "vulture-mango-77-quilt" }))
@@ -3488,7 +3443,6 @@ async fn test_unread_page_renders_entry_rows() {
     __login.assert_status_ok();
     common::apply_csrf(&mut app.server, &__login);
 
-    // Get user id
     let user_id: i64 = rdrs::query_scalar!(
         &app.db,
         i64,
@@ -3496,7 +3450,6 @@ async fn test_unread_page_renders_entry_rows() {
     )
     .unwrap();
 
-    // Seed: category + feed + 3 entries (2 unread, 1 read)
     let cat = rdrs::models::category::create_category(&app.db, user_id, "Tech")
         .await
         .unwrap();
@@ -3557,7 +3510,6 @@ async fn test_unread_page_renders_entry_rows() {
     .unwrap();
     let entry_three_id = e3.id;
 
-    // Mark entry three as read
     rdrs::models::entry::mark_as_read(&app.db, entry_three_id)
         .await
         .unwrap();
@@ -3611,9 +3563,7 @@ async fn test_unread_page_renders_entry_rows() {
     );
 }
 
-// ============================================================================
-// SSR entries family — PR-10 T2
-// ============================================================================
+// --- SSR entries family — PR-10 T2 ---
 
 #[tokio::test]
 async fn test_entries_page_renders_ssr_rows() {
@@ -3639,7 +3589,6 @@ async fn test_entries_page_renders_ssr_rows() {
     )
     .unwrap();
 
-    // Seed: 3 entries — all visible on /entries (no filter exclusions).
     let cat = rdrs::models::category::create_category(&app.db, user_id, "Tech")
         .await
         .unwrap();
@@ -3797,7 +3746,6 @@ async fn test_read_entries_page_renders_ssr_rows() {
     .unwrap();
     let (read_one_id, read_two_id, unread_id) = (e1.id, e2.id, e3.id);
 
-    // Mark two entries as read; leave one unread.
     rdrs::models::entry::mark_as_read(&app.db, read_one_id)
         .await
         .unwrap();
@@ -4021,7 +3969,6 @@ async fn test_summarized_entries_page_renders_ssr_rows() {
     .unwrap();
     let (sum_one_id, sum_two_id) = (e1.id, e2.id);
 
-    // Insert entry_summary rows for the two matching entries.
     rdrs::db_execute!(
         &app.db,
         "INSERT INTO entry_summary (user_id, entry_id, status, summary_text) \
@@ -4180,14 +4127,12 @@ fn extract_snapshot_value(html: &str) -> Option<String> {
     Some(rest[..j].to_string())
 }
 
-/// Reading past the end of the loaded page used to lose the reader's place:
-/// the entry they opened became read, Load More re-queried the *unread* list
-/// without it, and the row `app.js` was waiting for in order to highlight the
-/// selection never arrived (issue #482).
+/// Reading past the end of the loaded page used to lose the reader's place: the
+/// entry they opened became read, Load More re-queried the *unread* list without
+/// it, and the row `app.js` was waiting for never arrived (issue #482).
 ///
-/// The page now paginates against its own render instant, so an entry read
-/// while reading that page stays in its pages — the same snapshot rule the
-/// neighbours navigation has always used.
+/// The page now paginates against its own render instant, the same snapshot rule
+/// the neighbours navigation has always used.
 #[tokio::test]
 async fn test_unread_load_more_keeps_an_entry_read_during_this_page_view() {
     let mut app = create_test_app_named(default_test_config(), "test_unread_snapshot").await;
