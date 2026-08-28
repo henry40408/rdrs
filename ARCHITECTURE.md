@@ -626,9 +626,10 @@ In-memory, per-user caches reduce repeated work on hot read paths:
 ### Progressive Web App
 
 The app is installable and survives a lost connection, without giving up the
-SSR-first model. There is no offline reading and no client-side data store: the
-whole point of the design below is that nothing belonging to a reader is ever
-written to disk by the browser.
+SSR-first model. By default nothing belonging to a reader is written to disk by
+the browser at all; **offline reading is the one opt-in that changes that**, and
+the design below is arranged so that switching it off restores the original
+property rather than merely leaving it unused.
 
 **Manifest.** `static/manifest.webmanifest`, linked from `base.html` with the
 usual `?v=` build stamp and served from under `/static/` — that prefix is
@@ -659,11 +660,13 @@ than `base.html`, so `/login` and `/setup` never register one.
 **What the worker does, and what it must never do.** Every signed-in response is
 `Cache-Control: no-store` + `Vary: Cookie`, and the Cache API honours neither —
 `cache.put` stores whatever it is handed. The rule is therefore enforced in the
-worker as an *allowlist*, which cannot drift as routes are added:
+worker as an *allowlist* over the shell cache it owns (`rdrs-shell-<version>`),
+which cannot drift as routes are added:
 
 - **Navigations** — network-first (with navigation preload, to pay back the
-  latency the worker itself adds), falling back to the precached `/offline` page.
-  The response is never stored.
+  latency the worker itself adds), falling back to the reader's saved library for
+  `/` and `/entries/*` and to the precached `/offline` page otherwise. The
+  response is never stored.
 - **Same-origin `GET`s under `/static/`** — cache-first, populated on first use.
   Safe because those URLs are cookie-free, version-stamped and `immutable`, and
   the whole cache is keyed by build version and dropped on activate. Turned off
@@ -674,12 +677,18 @@ worker as an *allowlist*, which cannot drift as routes are added:
   `worker_may_cache_static` derives the worker's half of the decision *from that
   function* — the Cache API ignores `Cache-Control`, so the worker has to be told
   separately, and two copies of the rule would drift.
-- **Everything else** — `/api/*`, `/events`, feed icons, proxied images — passes
-  straight through and is never written anywhere.
+- **Feed icons and proxied images** — network-first, falling back to a copy
+  already in the reader's offline cache. Never *populated* here: what goes into
+  that cache is the reader's budget to spend, and a worker that quietly stored
+  every image scrolled past would be spending it behind their back.
+- **Everything else** — `/api/*`, `/events`, entry fragments — passes straight
+  through and is never written anywhere.
 
 The precache is deliberately just `/offline` and `app.css`: the rest of the app
 shell is only reachable from navigations, which fail offline, so precaching it
-would buy nothing and cost every visitor the download up front.
+would buy nothing and cost every visitor the download up front. A reader who
+turns offline reading on gets the shell into *their own* cache instead — see
+below.
 
 **Offline page.** `GET /offline` (`pages::offline_page`) renders `offline.html`
 with no auth extractor and no user data, and answers `public, max-age=3600`.
@@ -688,6 +697,98 @@ stamping `no-store` on a request that carries a session, and it is what tells
 `slide_session_cookie` the response is publicly cacheable and must not have a
 session cookie appended. `/sw.js` and `/offline` are both in all three
 middleware skip lists for the same reason.
+
+### Offline reading
+
+Opt-in, bounded, and per-reader. `user_settings.offline_keep` is the number of
+entries the browser may hold; `0` is the default and means the browser stores
+nothing of the reader's, which is the property the rest of the PWA design
+depends on.
+
+**What is stored is the server's own markup.** The client mirrors
+`GET /entries/{id}/fragment` responses — the same reading-pane HTML a click
+produces — so there is exactly one renderer whether a pane is being displayed or
+saved. No client-side templating, no JSON-to-DOM layer, nothing to keep in step
+with the Askama templates.
+
+**The prefetch must not consume the queue.** Opening an entry marks it read, and
+a sync opens all of them, so the mirroring fetch carries `?offline=1`
+(`FragmentQuery::is_prefetch`) which renders the entry exactly as it is and
+dispatches no write. The pre-existing `is_speculative_load` check cannot carry
+this: it reads `Sec-Purpose`, and `Sec-` headers are forbidden to `fetch()`.
+
+**What to hold** comes from `GET /api/offline/manifest` (`handlers::offline`):
+ids, an `updated_at` per entry, the budget, and an opaque `cache_key`. The set
+is `entry::list_offline_set` — newest unread first up to the budget, starred
+entries filling whatever is left. Deliberately no titles or content: the client
+already has the markup, and repeating it would put a second copy of the reader's
+data on the wire every sync.
+
+**The cache is its own ledger.** `static/js/offline.js` stores each pane under
+the canonical `/entries/{id}/fragment` — the URL a click produces — with its
+`updated_at` in an `x-rdrs-offline-version` header. There is no separate index:
+the cache keys *are* the list, and `updated_at` moves on exactly the writes that
+can change the rendered pane (content, full content, read and star state). Every
+response is **rebuilt** before storage rather than put as it arrived, which drops
+`Vary: Cookie` (honoured by `cache.match`, while the worker's own `Request`
+carries no cookie header — a stored copy could otherwise never match again),
+`Set-Cookie`, and the `no-store` the Cache API ignores anyway.
+
+Alongside the panes it stores the article images (budgeted; see the constants in
+that file) and the `/static/` assets the saved pages need, gathered off the live
+document and out of `app.css` for the fonts. Without the latter the library page
+is markup with no stylesheet and no `app.js`, so a click on a row is a real
+navigation to a fragment URL that resolves to nothing.
+
+**Reads are split by who can retry.** The service worker answers navigations and
+`<img>` loads, because a page cannot rescue either — one replaces the document
+before any script runs, the other has no interception point. A reading pane is
+neither: `performSwap` issues that fetch itself and, when it throws, asks
+`window.rdrsOffline.fragment()` for the saved copy. Keeping it page-originated
+means the request stays visible to anything watching the network, the E2E
+harness's CDP interception included.
+
+**Per-reader, and gone on sign-out.** The cache is named
+`rdrs-offline-<secret::offline_id(user_id)>` — an opaque tag rather than a user
+id, because the name is handed to page JavaScript. `offline.js` deletes every
+cache that is not the current key *before its first network call*, using the
+`data-offline-key` the server renders onto `<html>`; signing in as someone else
+is only possible online, so that is the first moment after a switch at which the
+previous account's articles can go. The worker also intercepts `POST /logout`
+and `DELETE /api/session` and drops every `rdrs-offline-*` cache when one
+succeeds — the only place all three sign-out paths are observable.
+
+**Offline, only reading works, and the rest says so.** `offline.js` marks every
+control that reaches the server — every `form` (including the `method="get"`
+ones, Load More and the search box), every link the worker cannot answer, and
+the selects that submit themselves — with `data-offline-disabled`, which the
+stylesheet gives `pointer-events: none`. The rule is stated as the *allowlist*
+of what still works (opening a saved entry; `/` and `/entries/offline`, which
+the worker serves) because that list is three items and stable, where a list of
+the controls that need the network is dozens and falls behind the next one
+added. A `MutationObserver`, running only while offline, keeps the marks true
+across swaps and `<rdrs-sidebar>`'s own re-renders.
+
+Nothing is queued for later. What replaces that is not losing the reader's
+place: `performSwap` used to answer a failed GET with a real navigation, so a
+dead Load More threw them off the list they still had onto the offline page.
+With `offline.js` present it stays put and raises a flash instead.
+
+**Offline is decided by evidence, not by `navigator.onLine`.** That flag reports
+having a network interface, not anything answering on it: it stays true behind a
+captive portal, and Chrome leaves it true under DevTools' own offline emulation,
+so a UI driven by it is disabled in neither case. `setOffline` is instead driven
+by requests — the sync's manifest fetch, and `performSwap` reporting a fetch
+that threw through `window.rdrsOffline.networkFailed()`. Recovery is a probe
+every 30 s while offline, because the only proof the connection is back is a
+request that succeeds and the `online` event cannot be relied on to prompt one.
+
+The consequence worth knowing: a page already open when the connection dies
+learns of it from its own *first failed request*, not the moment it happens. So
+that request must not be the thing that goes wrong — hence `performSwap`
+keeping the reader on their list rather than navigating. A page loaded *after*
+the fact needs no such luck: `offline.js`'s boot sync fails immediately and
+everything is disabled before the reader touches anything.
 
 ### External Services
 

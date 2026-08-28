@@ -81,3 +81,250 @@ async fn cache_holds_only_public_assets(world: &mut RdrsWorld) -> Result<()> {
     }
     Ok(())
 }
+
+/// The preferences form, driven rather than seeded: the number the reader types
+/// is what decides whether anything of theirs goes to disk at all, so the path
+/// that sets it is worth exercising.
+async fn set_offline_keep(world: &mut RdrsWorld, keep: &str) -> Result<()> {
+    world.goto("/user-settings").await?;
+    let driver = world.driver()?;
+    driver.expect_visible("offline-keep").await?;
+    driver.fill("offline-keep", keep).await?;
+    driver
+        .submit_css(r#"form[action="/user-settings/preferences"] button[type=submit]"#)
+        .await?;
+    world.expect_path("/user-settings").await
+}
+
+#[given(expr = "I keep {int} entries for offline reading")]
+async fn keep_entries_offline(world: &mut RdrsWorld, keep: u32) -> Result<()> {
+    set_offline_keep(world, &keep.to_string()).await
+}
+
+#[when("I stop keeping entries for offline reading")]
+async fn stop_keeping_entries_offline(world: &mut RdrsWorld) -> Result<()> {
+    set_offline_keep(world, "0").await?;
+    // The wipe is `offline.js`'s first act on the next load, before its manifest
+    // fetch — so the redirect above is enough to have triggered it, but not to
+    // have finished it.
+    let driver = world.driver()?;
+    eventually("the saved entries to be dropped", || async {
+        let names: Vec<String> = driver
+            .execute_async(
+                r"
+                const done = arguments[arguments.length - 1];
+                caches.keys().then((names) => done(names.filter((n) => n.startsWith('rdrs-offline-'))));
+                ",
+                Vec::new(),
+            )
+            .await?
+            .convert()?;
+        Ok(names.is_empty())
+    })
+    .await
+}
+
+/// Waits for the sync to have mirrored the queue. Polls the cache rather than
+/// the network, because "saved" is a statement about what is on disk — a
+/// completed fetch that was never stored is exactly the failure worth catching.
+#[given("my entries have been saved for offline reading")]
+async fn entries_are_saved_offline(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    eventually("the entry list to be mirrored into the offline cache", || async {
+        let paths: Vec<String> = driver
+            .execute_async(
+                r"
+                const done = arguments[arguments.length - 1];
+                (async () => {
+                    const names = (await caches.keys()).filter((n) => n.startsWith('rdrs-offline-'));
+                    const paths = [];
+                    for (const name of names) {
+                        const cache = await caches.open(name);
+                        for (const request of await cache.keys()) {
+                            paths.push(new URL(request.url).pathname);
+                        }
+                    }
+                    done(paths);
+                })();
+                ",
+                Vec::new(),
+            )
+            .await?
+            .convert()?;
+        // The library page is stored last, so its presence means the fragments
+        // it lists are already there. `utils.js` is named by no document — only
+        // by an `import` inside `app.js` — so requiring it is what proves the
+        // asset walk is transitive rather than a scrape of the current page.
+        Ok(paths.iter().any(|p| p == "/entries/offline")
+            && paths.iter().any(|p| p == "/static/js/utils.js")
+            && paths.iter().filter(|p| p.ends_with("/fragment")).count() == 3)
+    })
+    .await?;
+
+    // The asset walk scans source text, so a comment that merely *talks* about
+    // an import reads exactly like one — `offline.js`'s own prose about `url()`
+    // once had it requesting `/static/js/...` on every sync. A cached path with
+    // no file extension is what that looks like from out here.
+    let paths: Vec<String> = driver
+        .execute_async(
+            r"
+            const done = arguments[arguments.length - 1];
+            (async () => {
+                const names = (await caches.keys()).filter((n) => n.startsWith('rdrs-offline-'));
+                const paths = [];
+                for (const name of names) {
+                    const cache = await caches.open(name);
+                    for (const request of await cache.keys()) {
+                        paths.push(new URL(request.url).pathname);
+                    }
+                }
+                done(paths);
+            })();
+            ",
+            Vec::new(),
+        )
+        .await?
+        .convert()?;
+    for path in paths.iter().filter(|p| p.starts_with("/static/")) {
+        ensure!(
+            path.rsplit('/')
+                .next()
+                .is_some_and(|name| name.contains('.') && !name.ends_with('.')),
+            "{path} was saved as a static asset but does not name a file"
+        );
+    }
+    Ok(())
+}
+
+/// Every `/static/` URL this document has asked the network for, from the
+/// browser's own resource timings — which cover `fetch()` as well as tags, and
+/// so cover the sync.
+///
+/// The alternative was a CDP interception rule, but "a path that names no file"
+/// is a shape the pattern language cannot say without lookarounds, and the
+/// first attempt at spelling it silently matched nothing.
+async fn requested_static_paths(world: &mut RdrsWorld) -> Result<Vec<String>> {
+    Ok(world
+        .driver()?
+        .execute(
+            r"
+            return performance.getEntriesByType('resource')
+                .map((e) => new URL(e.name).pathname)
+                .filter((p) => p.startsWith('/static/'));
+            ",
+            Vec::new(),
+        )
+        .await?
+        .convert()?)
+}
+
+/// `offline.js` finds the assets a saved page needs by scanning stylesheets and
+/// modules for references, and source text does not distinguish a real `url()`
+/// or `import` from a comment describing one. Its own prose about the scan had
+/// it requesting `/static/js/...` on every sync — a 404 each time, and visible
+/// enough in the network panel that a reader asked about it.
+#[then("nothing has been asked of the server that names no file")]
+async fn no_unservable_static(world: &mut RdrsWorld) -> Result<()> {
+    let paths = requested_static_paths(world).await?;
+    ensure!(
+        !paths.is_empty(),
+        "sanity: the page is expected to have loaded some static assets"
+    );
+    for path in &paths {
+        let name = path.rsplit('/').next().unwrap_or_default();
+        ensure!(
+            name.contains('.') && !name.ends_with('.'),
+            "the sync asked for {path}, which can name no file the server has"
+        );
+    }
+    Ok(())
+}
+
+/// The three shapes a control that reaches the server takes: a form (Load More
+/// and the search box are `method="get"`, and fail offline just as a mutation
+/// does), a link, and a select that submits itself on change.
+///
+/// Asserted as "every one of them", not as a list of the interesting ones,
+/// because the point of the rule in `offline.js` is that it is stated as the
+/// short allowlist of what *does* work — a test that named the controls would
+/// fall behind the next one added exactly as an implementation denylist would.
+#[then("every control that needs the server is disabled")]
+async fn server_bound_controls_disabled(world: &mut RdrsWorld) -> Result<()> {
+    let leaked: Vec<String> = world
+        .driver()?
+        .execute(
+            r##"
+            const WORKS_OFFLINE = 'a[data-swap="#reading-pane"], a[href="/"], a[href="/entries/offline"]';
+            const SERVER_BOUND = 'form, a[href], select[data-mark-read-scope], select[data-status-select]';
+            return [...document.querySelectorAll(SERVER_BOUND)]
+                .filter((el) => !el.matches(WORKS_OFFLINE))
+                .filter((el) => !el.hasAttribute('data-offline-disabled'))
+                .map((el) => el.tagName.toLowerCase() + (el.getAttribute('action') || el.getAttribute('href') || ''));
+            "##,
+            Vec::new(),
+        )
+        .await?
+        .convert()?;
+
+    ensure!(
+        leaked.is_empty(),
+        "these reach the server but are still live offline: {leaked:?}"
+    );
+    Ok(())
+}
+
+/// The control that prompted all of this: a `method="get"` form, so a guard
+/// that only looked at POSTs let it through, and `performSwap`'s fallback for a
+/// failed GET was a real navigation — which offline meant being thrown off the
+/// list onto whatever the worker had.
+/// An entry that was never saved, so its fragment fetch fails with nothing to
+/// fall back on. `performSwap` used to answer that with a real navigation,
+/// which offline meant the reader losing the list they still had for whatever
+/// the service worker could produce — the same dead end Load More had.
+///
+/// Not by title: the background feed and this scenario's both number their
+/// entries from one, so a title is ambiguous here.
+#[when("I open the first entry in the list")]
+async fn open_first_entry(world: &mut RdrsWorld) -> Result<()> {
+    let link = world
+        .driver()?
+        .css(r##".entry-item a[data-swap="#reading-pane"]"##)
+        .await?;
+    rdrs_e2e::dom::click_when_ready(&link).await
+}
+
+#[then("Load More is disabled")]
+async fn load_more_disabled(world: &mut RdrsWorld) -> Result<()> {
+    world
+        .driver()?
+        .expect_attr("#load-more", "aria-disabled", Some("true"))
+        .await
+}
+
+/// The other half: disabling everything would be trivially correct and useless.
+#[then("opening a saved entry is still offered")]
+async fn opening_an_entry_still_offered(world: &mut RdrsWorld) -> Result<()> {
+    let live: bool = world
+        .driver()?
+        .execute(
+            r##"
+            const link = document.querySelector('.entry-item a[data-swap="#reading-pane"]');
+            return Boolean(link) && !link.hasAttribute('data-offline-disabled');
+            "##,
+            Vec::new(),
+        )
+        .await?
+        .convert()?;
+    ensure!(live, "no entry in the saved list can be opened");
+    Ok(())
+}
+
+/// Either half of the offline story satisfies this: `offline.js` blocks the
+/// submit outright when the browser reports no connection, and `performSwap`
+/// says the same thing when the request it sent anyway never came back. Which
+/// one fires depends on whether the browser updated `navigator.onLine`, which
+/// is exactly the judgement this feature refuses to depend on.
+#[then("I am told the action has to wait for the connection")]
+async fn told_the_action_must_wait(world: &mut RdrsWorld) -> Result<()> {
+    world.driver()?.expect_text("flash-message", "wait").await
+}

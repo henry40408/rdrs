@@ -430,12 +430,38 @@ async function performSwap(url, init, defaultTarget, options) {
         // Falling through to `location.href` would hard-navigate to a fragment
         // URL the user has already moved past.
         if (isPaneNav && navSeq !== paneNavSeq) return false;
-        if (method !== 'GET' && window.flash) {
-            window.flash.error('Action failed — please try again.');
+        // This is the first thing to notice a connection dropping mid-session,
+        // and it is what tells `offline.js` — which then disables the controls
+        // that cannot work and starts probing for the connection's return.
+        // Nothing else would have noticed yet: `navigator.onLine` is a flag the
+        // browser is free to get wrong (and does), while a request that threw is
+        // evidence.
+        const offline = window.rdrsOffline?.networkFailed?.() === true;
+        // A reading pane the reader saved for offline reading is still on this
+        // device, and reaching for it here rather than in the service worker is
+        // what keeps this fetch an ordinary page request. `offline.js` publishes
+        // the lookup, exactly like `window.flash` above; without that module —
+        // a scriptless reader, or the feature switched off — there is nothing
+        // to fall back to and the branches below take over.
+        response = method === 'GET' ? await savedFragment(url) : null;
+        if (!response) {
+            // A hard navigation here would answer a dead Load More by throwing
+            // the reader off the list they were reading — the offline page, or
+            // whatever the worker has, in place of the page they still had. So
+            // once we know the connection is gone, stay put and say so. Without
+            // `offline.js` the old fallback stands: something is wrong with the
+            // server and a real navigation is the honest way to surface it.
+            if (window.flash && (method !== 'GET' || offline)) {
+                // Deliberately not phrased as "you are offline": from here a
+                // dead connection and a dead server are indistinguishable.
+                window.flash.error('Could not reach the server — that will have to wait for the connection.');
+            } else {
+                window.location.href = fallbackUrl;
+            }
             return false;
         }
-        window.location.href = fallbackUrl;
-        return false;
+        // A saved pane falls through to the response handling below, so it is
+        // swapped in by exactly the same code that swaps a fetched one.
     }
     // Superseded while the headers were in flight — abort loses this race when
     // the reply was already buffered.
@@ -536,6 +562,20 @@ async function performSwap(url, init, defaultTarget, options) {
     applyFlashTemplates(parsed);
     document.dispatchEvent(new CustomEvent('rdrs:swap-complete'));
     return true;
+}
+
+/**
+ * The reading pane `offline.js` saved for `url`, or `null` when there is none —
+ * the feature is off, the module never loaded, or this entry was outside the
+ * budget. Errors are swallowed for the same reason: every one of them means the
+ * same thing here, which is that there is nothing to show but the fallback.
+ */
+async function savedFragment(url) {
+    try {
+        return (await window.rdrsOffline?.fragment(url)) || null;
+    } catch {
+        return null;
+    }
 }
 
 function entryIdFromSwapUrl(url) {

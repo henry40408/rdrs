@@ -2626,6 +2626,34 @@ summary {
     text-align: center;
 }
 
+/* The two links on /offline sit side by side rather than stacked: "Saved
+   entries" and "Try again" are alternatives, not a sequence. */
+.auth-card .link a + a {
+    margin-left: var(--space-4);
+}
+
+/* ===== Offline reading ===== */
+
+/* `offline.js` marks every control that reaches the server while the browser
+   reports no connection — forms (including the GET ones: Load More, search),
+   links other than the ones the service worker can answer, and the selects that
+   submit themselves.
+
+   They stay in the layout rather than disappearing: a row of buttons that
+   vanishes is a page that jumps under the reader's thumb, and a Load More that
+   is visibly out of reach explains the state better than an empty space where
+   it used to be. `pointer-events` is what makes the disabling real for a mouse;
+   the keyboard and the `j`/`k`/`s`/`m` shortcuts go through `offline.js`, which
+   answers with a message rather than silence.
+
+   Not the `disabled` property, which `setFormBusy` already owns on these same
+   controls — two owners of one attribute is how a button ends up stuck grey
+   after the connection returns. */
+[data-offline-disabled] {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
 /* "or use password" divider on the auth screens. */
 .auth-divider {
     text-align: center;

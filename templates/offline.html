@@ -7,13 +7,21 @@
    network, so it must stay true for every visitor and every moment: no user
    data, no counts, no flash. The way out is an ordinary link rather than a
    scripted retry — the page has to work when the scripts it would need are the
-   very thing that failed to load. #}
+   very thing that failed to load.
+
+   That constraint is also why the saved-entries link is unconditional. This one
+   page is shared by every reader and cached before any of them has an opinion
+   about offline reading, so it cannot know whether there is a library to reach.
+   With one, the worker answers `/entries/offline` from the cache; without one,
+   that navigation fails and lands the reader back here — which the text above
+   the link has already explained. #}
 <div class="auth-layout">
     <div class="auth-card" data-testid="offline-page">
         <h1>rdrs</h1>
         <p class="offline-message">You are offline.</p>
-        <p class="offline-message muted">Feeds and articles live on the server, so there is nothing to read until the connection is back.</p>
+        <p class="offline-message muted">Feeds live on the server, so syncing, searching and marking entries have to wait for the connection. Anything you saved for offline reading is still here.</p>
         <div class="link">
+            <a href="/entries/offline" data-testid="offline-library-link">Saved entries</a>
             <a href="/">Try again</a>
         </div>
     </div>

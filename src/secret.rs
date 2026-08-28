@@ -11,7 +11,10 @@
 //! - [`DOMAIN_SESSION`] signs the session cookie, so `<token>.<hmac>` is rejected
 //!   before any database work and a leaked `session.session_token` is not usable
 //!   on its own;
-//! - [`DOMAIN_AUDIT`] derives the `sid` printed into audit log lines.
+//! - [`DOMAIN_AUDIT`] derives the `sid` printed into audit log lines;
+//! - [`DOMAIN_OFFLINE`] derives the opaque per-user name of the browser's
+//!   offline cache, so the worker can tell one reader's stored articles from
+//!   another's without ever being handed a user id.
 //!
 //! The prefixes are not decoration: two uses that MAC the same message under the
 //! same key produce the same tag, and the CSRF token derives from the session
@@ -40,6 +43,8 @@ pub const DOMAIN_SESSION: &[u8] = b"session:";
 pub const DOMAIN_CSRF: &[u8] = b"csrf:";
 /// Domain-separation prefix for audit-log session identifiers.
 pub const DOMAIN_AUDIT: &[u8] = b"audit:";
+/// Domain-separation prefix for the per-user offline-cache namespace.
+pub const DOMAIN_OFFLINE: &[u8] = b"offline:";
 /// Domain-separation prefix for account-invite tokens.
 ///
 /// Used to *store* an invite rather than sign one: `user_invite.token_hash` holds
@@ -156,6 +161,19 @@ pub fn verify_csrf(secret: &[u8], session_token: &str, submitted: &str) -> bool 
 /// session.
 pub fn audit_id(secret: &[u8], token: &str) -> String {
     hex_encode(&tag(secret, DOMAIN_AUDIT, &[token.as_bytes()])[..8])
+}
+
+/// Opaque namespace for one user's offline cache, as the browser sees it.
+///
+/// The service worker names its caches after this and wipes any that do not
+/// match the value the current page reports, which is what keeps one reader's
+/// articles from surviving into another's session on a shared device. It is
+/// handed to client JavaScript, so it must not be the user id: that leaks the
+/// account's position in the table and is guessable across deployments. The
+/// tag is not a credential — nothing is authorised by it — so a truncated one
+/// is enough to be collision-free in practice.
+pub fn offline_id(secret: &[u8], user_id: i64) -> String {
+    hex_encode(&tag(secret, DOMAIN_OFFLINE, &[&user_id.to_le_bytes()])[..8])
 }
 
 #[cfg(test)]

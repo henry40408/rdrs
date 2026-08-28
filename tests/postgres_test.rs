@@ -313,6 +313,34 @@ async fn pg_dialect_smoke() {
     assert_eq!(deleted, 1, "the 40-day-old read entry must be pruned");
     assert!(entry::find_by_id(&db, target).await.unwrap().is_none());
 
+    // --- offline reading: the settings upsert and the two-query union --------
+    // `update_offline_keep` writes through an `ON CONFLICT DO NOTHING` insert,
+    // and `list_offline_set` unions two `list_by_user` calls — both of which
+    // this backend renders differently, so neither is proven by the SQLite run.
+    user_settings::update_offline_keep(&db, user_id, 5)
+        .await
+        .unwrap();
+    assert_eq!(
+        user_settings::get_offline_keep(&db, user_id).await.unwrap(),
+        5
+    );
+    let offline = entry::list_offline_set(&db, user_id, 5).await.unwrap();
+    assert!(
+        !offline.is_empty(),
+        "unread entries remain, so the offline set must not be empty"
+    );
+    assert!(
+        offline.len() <= 5,
+        "the set must respect the budget it was given"
+    );
+    assert!(
+        entry::list_offline_set(&db, user_id, 0)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a zero budget is offline reading switched off"
+    );
+
     // --- statistics: DATE()/to_char bucket + read_at range --------------------
     // Read one of the remaining entries "today" for a non-empty daily bucket.
     let read_today = page2[0].entry.id;
