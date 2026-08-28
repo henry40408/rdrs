@@ -44,14 +44,22 @@ Feature: Offline reading
     And I visit "/"
     Then I see 3 entries in the entry list
 
-  Scenario: Nothing offline throws the reader off the list they still have
+  # The order here is the design, not convenience. A page loaded while online
+  # has no way to learn the connection died: `navigator.onLine` reports having
+  # an interface rather than anything answering on it, and browsers disagree on
+  # whether they even fire the event — Chrome on CI does not under network
+  # emulation, where the author's did. So the first failed request is what
+  # reveals it, and that request must therefore not be the thing that goes
+  # wrong: it keeps the reader on their list and says why, and from then on
+  # everything that needs the server is out of reach.
+  Scenario: The first thing to fail offline explains itself and disables the rest
     Given I have a feed "Long Feed" with 51 test entries in category "Long Category"
     When I open the inbox
     And the network goes offline
-    Then Load More is disabled
-    When I open the first entry in the list
+    And I open the first entry in the list
     Then I am told the action has to wait for the connection
     And I see 50 entries in the entry list
+    And Load More is disabled
 
   Scenario: Everything that needs the server is visibly out of reach
     Given I keep 10 entries for offline reading

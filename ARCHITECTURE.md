@@ -781,8 +781,14 @@ so a UI driven by it is disabled in neither case. `setOffline` is instead driven
 by requests — the sync's manifest fetch, and `performSwap` reporting a fetch
 that threw through `window.rdrsOffline.networkFailed()`. Recovery is a probe
 every 30 s while offline, because the only proof the connection is back is a
-request that succeeds and the `online` event cannot be relied on to prompt
-one.
+request that succeeds and the `online` event cannot be relied on to prompt one.
+
+The consequence worth knowing: a page already open when the connection dies
+learns of it from its own *first failed request*, not the moment it happens. So
+that request must not be the thing that goes wrong — hence `performSwap`
+keeping the reader on their list rather than navigating. A page loaded *after*
+the fact needs no such luck: `offline.js`'s boot sync fails immediately and
+everything is disabled before the reader touches anything.
 
 ### External Services
 
