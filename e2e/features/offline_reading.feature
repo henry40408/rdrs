@@ -44,14 +44,32 @@ Feature: Offline reading
     And I visit "/"
     Then I see 3 entries in the entry list
 
-  Scenario: Actions that need the server say so instead of failing silently
+  Scenario: Nothing offline throws the reader off the list they still have
+    Given I have a feed "Long Feed" with 51 test entries in category "Long Category"
+    When I open the inbox
+    And the network goes offline
+    Then Load More is disabled
+    When I open the first entry in the list
+    Then I am told the action has to wait for the connection
+    And I see 50 entries in the entry list
+
+  Scenario: Everything that needs the server is visibly out of reach
+    Given I keep 10 entries for offline reading
+    And a service worker controls the page
+    And my entries have been saved for offline reading
+    When the network goes offline
+    And I visit "/entries/offline"
+    Then every control that needs the server is disabled
+    And opening a saved entry is still offered
+
+  Scenario: A shortcut that reaches the server says so rather than failing
     Given I keep 10 entries for offline reading
     And a service worker controls the page
     And my entries have been saved for offline reading
     When the network goes offline
     And I visit "/entries/offline"
     And I click the entry titled "Test Entry 1"
-    And I try to mark the open entry unread
+    And I press the "m" key
     Then I am told the action has to wait for the connection
 
   Scenario: A comment that describes an import does not become a request

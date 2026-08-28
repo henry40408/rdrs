@@ -279,7 +279,7 @@ async function cacheShellAssets(cache) {
  * drop what has left the set, and re-store the library page that lists it.
  */
 async function sync() {
-  if (!('caches' in window) || !navigator.onLine) return;
+  if (!('caches' in window)) return;
 
   const page = pageConfig();
   await dropForeignCaches(page.key);
@@ -290,9 +290,12 @@ async function sync() {
     const response = await fetch(MANIFEST_URL, { credentials: 'same-origin' });
     if (!response.ok) return;
     manifest = await response.json();
+    setOffline(false);
   } catch {
     // Offline, or the session ended under us. Either way the cache we already
-    // hold is the reader's own and stays exactly as it is.
+    // hold is the reader's own and stays exactly as it is. This request is also
+    // the app's connection probe — see [`setOffline`].
+    setOffline(true);
     return;
   }
 
@@ -460,49 +463,146 @@ function flash(level, message) {
 }
 
 /**
- * Stop the actions that need a server, and say so.
+ * What still works with no connection, as a selector.
  *
- * `navigator.onLine` is a hint, not a fact — it is true on a captive portal
- * that answers nothing. That is tolerable here because this is presentation
- * only: a POST that slips through fails exactly as it did before, and
- * `performSwap` already falls back to a real navigation.
+ * Stated this way round because it is the short, stable half: opening a saved
+ * entry, and the two destinations the service worker answers from the cache.
+ * Everything else on a page — every form, every other link, the selects that
+ * submit themselves — reaches the server. Enumerating *those* would be a list
+ * of dozens that silently falls behind the next control someone adds.
  */
+const WORKS_OFFLINE = 'a[data-swap="#reading-pane"], a[href="/"], a[href="/entries/offline"]';
+
+/**
+ * Controls that reach the server. `form` covers the GET ones too — Load More
+ * and the search box are `method="get"`, and offline they fail exactly as a
+ * mutation does; an earlier version of this guard checked for POST and let the
+ * reader click Load More into a dead end.
+ */
+const SERVER_BOUND = 'form, a[href], select[data-mark-read-scope], select[data-status-select]';
+
+/** Flag every server-bound control for the CSS and for [`blockOffline`]. */
+function markServerBound() {
+  for (const el of document.querySelectorAll(SERVER_BOUND)) {
+    const disable = offlineNow && !el.matches(WORKS_OFFLINE);
+    el.toggleAttribute('data-offline-disabled', disable);
+    // `disabled` is deliberately not set: `setFormBusy` in app.js owns that
+    // property on these same controls, and two owners of one attribute is how
+    // a button ends up stuck greyed out after the connection returns.
+    if (disable) {
+      el.setAttribute('aria-disabled', 'true');
+    } else if (el.getAttribute('aria-disabled') === 'true') {
+      el.removeAttribute('aria-disabled');
+    }
+  }
+}
+
+/**
+ * Swallow an activation of something that cannot work, and say why.
+ *
+ * The CSS gives these `pointer-events: none`, so a mouse never gets here — this
+ * is for the keyboard, and for the shortcuts in `app.js` that submit a form
+ * programmatically. Capture phase, so neither the swap helper nor a native
+ * submit sees it; same-node listeners still run, which leaves `csrf.js` free to
+ * do its (now pointless, and harmless) token rewrite.
+ */
+function blockOffline(event) {
+  if (!offlineNow) return;
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target?.closest('[data-offline-disabled]')) return;
+  event.preventDefault();
+  event.stopPropagation();
+  flash('warning', 'You are offline — that will have to wait for the connection.');
+}
+
+/**
+ * Keep the disabled state true as the page changes under it.
+ *
+ * Every swap replaces markup wholesale and `<rdrs-sidebar>` rebuilds its own
+ * `innerHTML`, so a single pass at the moment the connection drops goes stale
+ * immediately. An observer rather than a list of hooks because there is no one
+ * event that covers all of them — and it only runs while offline, which is a
+ * state the reader is not in for most of the session.
+ */
+let offlineObserver = null;
+
+function watchForNewControls() {
+  if (offlineObserver) return;
+  offlineObserver = new MutationObserver(() => markServerBound());
+  offlineObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+function stopWatching() {
+  offlineObserver?.disconnect();
+  offlineObserver = null;
+}
+
+/**
+ * How long to wait before probing again while offline.
+ *
+ * There has to be a poll, because the only reliable evidence that the
+ * connection is back is a request that succeeds, and the `online` event cannot
+ * be relied on to prompt one — see [`setOffline`]. One request per interval,
+ * failing immediately, is what that costs.
+ */
+const RECHECK_MS = 30000;
+
+let offlineNow = !navigator.onLine;
+let offlineKeep = 0;
+let recheckTimer = 0;
+
+/**
+ * Whether the app currently believes it cannot reach the server.
+ *
+ * Deliberately *not* `navigator.onLine`. That flag is a statement about having
+ * a network interface, not about anything answering on it: it stays true behind
+ * a captive portal, and Chrome leaves it true under DevTools' own offline
+ * emulation, so a UI driven by it is disabled in neither case. What this tracks
+ * instead is evidence — a request that threw, or one that came back — which is
+ * the same thing the reader is judging by.
+ */
+function setOffline(next) {
+  if (next === offlineNow) return offlineNow;
+  offlineNow = next;
+  document.documentElement.toggleAttribute('data-offline', next);
+  markServerBound();
+  clearTimeout(recheckTimer);
+  if (next) {
+    watchForNewControls();
+    if (offlineKeep > 0) flash('info', 'You are offline. Saved entries are still readable.');
+    recheckTimer = setTimeout(() => scheduleSync(), RECHECK_MS);
+  } else {
+    stopWatching();
+  }
+  return offlineNow;
+}
+
+/** Stop the controls that need a server, and say so. */
 function installOfflineGuards(keep) {
-  const paint = () => {
-    document.documentElement.toggleAttribute('data-offline', !navigator.onLine);
-  };
+  offlineKeep = keep;
+  // Paint the state we were constructed with; `setOffline` only acts on change.
+  document.documentElement.toggleAttribute('data-offline', offlineNow);
+  markServerBound();
+  if (offlineNow) watchForNewControls();
 
-  window.addEventListener('online', () => {
-    paint();
-    scheduleSync();
-  });
-  window.addEventListener('offline', () => {
-    paint();
-    if (keep > 0) flash('info', 'You are offline. Saved entries are still readable.');
-  });
-  paint();
+  // The events are still worth listening to — when the browser does report the
+  // transition it is the fastest signal there is — they are just not the only
+  // ones. Going "online" only schedules a sync; that request is what actually
+  // decides the state.
+  window.addEventListener('online', () => scheduleSync());
+  window.addEventListener('offline', () => setOffline(true));
 
-  document.addEventListener(
-    'submit',
-    (event) => {
-      if (navigator.onLine) return;
-      const form = event.target;
-      if (!(form instanceof HTMLFormElement)) return;
-      if ((form.getAttribute('method') || 'get').toUpperCase() !== 'POST') return;
-      event.preventDefault();
-      // Capture phase, so neither the swap helper nor a native submit gets the
-      // event. Same-node listeners still run, which is what leaves `csrf.js`
-      // free to do its (now pointless, and harmless) token rewrite.
-      event.stopPropagation();
-      flash('warning', 'You are offline — that will have to wait for the connection.');
-    },
-    true,
-  );
+  for (const type of ['click', 'submit', 'change']) {
+    document.addEventListener(type, blockOffline, true);
+  }
 }
 
 if ('serviceWorker' in navigator && 'caches' in window) {
   const { keep } = pageConfig();
-  window.rdrsOffline = { fragment: savedFragment };
+  // `performSwap` owns the fetch that fails first when a connection drops
+  // mid-session, so it reports that here rather than waiting for the next sync
+  // to notice. Same arrangement as `window.flash`.
+  window.rdrsOffline = { fragment: savedFragment, networkFailed: () => setOffline(true) };
   installOfflineGuards(keep);
   // After paint, and after `pwa.js` has had its chance to register the worker:
   // a sync that beats the registration writes a cache nothing is yet able to

@@ -240,12 +240,83 @@ async fn no_unservable_static(world: &mut RdrsWorld) -> Result<()> {
     Ok(())
 }
 
-#[when("I try to mark the open entry unread")]
-async fn try_to_mark_unread(world: &mut RdrsWorld) -> Result<()> {
+/// The three shapes a control that reaches the server takes: a form (Load More
+/// and the search box are `method="get"`, and fail offline just as a mutation
+/// does), a link, and a select that submits itself on change.
+///
+/// Asserted as "every one of them", not as a list of the interesting ones,
+/// because the point of the rule in `offline.js` is that it is stated as the
+/// short allowlist of what *does* work — a test that named the controls would
+/// fall behind the next one added exactly as an implementation denylist would.
+#[then("every control that needs the server is disabled")]
+async fn server_bound_controls_disabled(world: &mut RdrsWorld) -> Result<()> {
+    let leaked: Vec<String> = world
+        .driver()?
+        .execute(
+            r##"
+            const WORKS_OFFLINE = 'a[data-swap="#reading-pane"], a[href="/"], a[href="/entries/offline"]';
+            const SERVER_BOUND = 'form, a[href], select[data-mark-read-scope], select[data-status-select]';
+            return [...document.querySelectorAll(SERVER_BOUND)]
+                .filter((el) => !el.matches(WORKS_OFFLINE))
+                .filter((el) => !el.hasAttribute('data-offline-disabled'))
+                .map((el) => el.tagName.toLowerCase() + (el.getAttribute('action') || el.getAttribute('href') || ''));
+            "##,
+            Vec::new(),
+        )
+        .await?
+        .convert()?;
+
+    ensure!(
+        leaked.is_empty(),
+        "these reach the server but are still live offline: {leaked:?}"
+    );
+    Ok(())
+}
+
+/// The control that prompted all of this: a `method="get"` form, so a guard
+/// that only looked at POSTs let it through, and `performSwap`'s fallback for a
+/// failed GET was a real navigation — which offline meant being thrown off the
+/// list onto whatever the worker had.
+/// An entry that was never saved, so its fragment fetch fails with nothing to
+/// fall back on. `performSwap` used to answer that with a real navigation,
+/// which offline meant the reader losing the list they still had for whatever
+/// the service worker could produce — the same dead end Load More had.
+///
+/// Not by title: the background feed and this scenario's both number their
+/// entries from one, so a title is ambiguous here.
+#[when("I open the first entry in the list")]
+async fn open_first_entry(world: &mut RdrsWorld) -> Result<()> {
+    let link = world
+        .driver()?
+        .css(r##".entry-item a[data-swap="#reading-pane"]"##)
+        .await?;
+    rdrs_e2e::dom::click_when_ready(&link).await
+}
+
+#[then("Load More is disabled")]
+async fn load_more_disabled(world: &mut RdrsWorld) -> Result<()> {
     world
         .driver()?
-        .click_css(r#"#reading-pane form[action$="/unread"] button"#)
+        .expect_attr("#load-more", "aria-disabled", Some("true"))
         .await
+}
+
+/// The other half: disabling everything would be trivially correct and useless.
+#[then("opening a saved entry is still offered")]
+async fn opening_an_entry_still_offered(world: &mut RdrsWorld) -> Result<()> {
+    let live: bool = world
+        .driver()?
+        .execute(
+            r##"
+            const link = document.querySelector('.entry-item a[data-swap="#reading-pane"]');
+            return Boolean(link) && !link.hasAttribute('data-offline-disabled');
+            "##,
+            Vec::new(),
+        )
+        .await?
+        .convert()?;
+    ensure!(live, "no entry in the saved list can be opened");
+    Ok(())
 }
 
 /// Either half of the offline story satisfies this: `offline.js` blocks the

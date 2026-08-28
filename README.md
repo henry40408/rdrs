@@ -488,9 +488,10 @@ With the connection gone, opening the app lands you on that list and articles
 open as usual.
 
 What does *not* work offline is anything that has to reach the server: marking
-read, starring, search, fetching full content, summarising. Those buttons dim
-and tell you to wait rather than failing quietly; they are not queued up for
-later.
+read, starring, Load More, search, fetching full content, summarising. Those
+controls grey out and stop responding rather than failing quietly, and nothing
+is queued up for later — but you keep the page you were on instead of being
+thrown back to an error.
 
 Saved entries are scoped to your account and are deleted when you sign out, when
 you switch accounts on the same browser, and when you set the number back to

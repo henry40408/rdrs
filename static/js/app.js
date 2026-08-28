@@ -430,6 +430,13 @@ async function performSwap(url, init, defaultTarget, options) {
         // Falling through to `location.href` would hard-navigate to a fragment
         // URL the user has already moved past.
         if (isPaneNav && navSeq !== paneNavSeq) return false;
+        // This is the first thing to notice a connection dropping mid-session,
+        // and it is what tells `offline.js` — which then disables the controls
+        // that cannot work and starts probing for the connection's return.
+        // Nothing else would have noticed yet: `navigator.onLine` is a flag the
+        // browser is free to get wrong (and does), while a request that threw is
+        // evidence.
+        const offline = window.rdrsOffline?.networkFailed?.() === true;
         // A reading pane the reader saved for offline reading is still on this
         // device, and reaching for it here rather than in the service worker is
         // what keeps this fetch an ordinary page request. `offline.js` publishes
@@ -438,15 +445,15 @@ async function performSwap(url, init, defaultTarget, options) {
         // to fall back to and the branches below take over.
         response = method === 'GET' ? await savedFragment(url) : null;
         if (!response) {
-            if (method !== 'GET' && window.flash) {
-                // The fetch threw, so the request never got an answer: no
-                // network, or no server. Both mean waiting rather than retrying,
-                // and this is the reliable half of the offline story —
-                // `offline.js` blocks the submit when `navigator.onLine` says
-                // the connection is gone, but that flag is a hint the browser is
-                // free to get wrong, while a request that actually threw is
-                // evidence. Deliberately not phrased as "you are offline": from
-                // here the two are indistinguishable.
+            // A hard navigation here would answer a dead Load More by throwing
+            // the reader off the list they were reading — the offline page, or
+            // whatever the worker has, in place of the page they still had. So
+            // once we know the connection is gone, stay put and say so. Without
+            // `offline.js` the old fallback stands: something is wrong with the
+            // server and a real navigation is the honest way to surface it.
+            if (window.flash && (method !== 'GET' || offline)) {
+                // Deliberately not phrased as "you are offline": from here a
+                // dead connection and a dead server are indistinguishable.
                 window.flash.error('Could not reach the server — that will have to wait for the connection.');
             } else {
                 window.location.href = fallbackUrl;

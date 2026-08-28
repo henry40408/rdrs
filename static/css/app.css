@@ -2634,19 +2634,24 @@ summary {
 
 /* ===== Offline reading ===== */
 
-/* `data-offline` is set on <html> by offline.js whenever the browser reports no
-   connection. Everything it dims is a form action that reaches the server:
-   starring, marking read, fetching an article, summarising. They stay in the
-   layout — a row of buttons that disappears is a page that jumps under the
-   reader's thumb — and stay focusable, because `offline.js` answers a submit
-   with an explanation rather than silence.
+/* `offline.js` marks every control that reaches the server while the browser
+   reports no connection — forms (including the GET ones: Load More, search),
+   links other than the ones the service worker can answer, and the selects that
+   submit themselves.
 
-   `navigator.onLine` is a hint (it is true behind a captive portal), which is
-   why this is styling and not `disabled`: being wrong here costs an unnecessary
-   grey button, not a lost action. */
-[data-offline] .rp-action,
-[data-offline] .rail-actions form {
+   They stay in the layout rather than disappearing: a row of buttons that
+   vanishes is a page that jumps under the reader's thumb, and a Load More that
+   is visibly out of reach explains the state better than an empty space where
+   it used to be. `pointer-events` is what makes the disabling real for a mouse;
+   the keyboard and the `j`/`k`/`s`/`m` shortcuts go through `offline.js`, which
+   answers with a message rather than silence.
+
+   Not the `disabled` property, which `setFormBusy` already owns on these same
+   controls — two owners of one attribute is how a button ends up stuck grey
+   after the connection returns. */
+[data-offline-disabled] {
     opacity: 0.45;
+    pointer-events: none;
 }
 
 /* "or use password" divider on the auth screens. */

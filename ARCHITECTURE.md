@@ -758,12 +758,31 @@ previous account's articles can go. The worker also intercepts `POST /logout`
 and `DELETE /api/session` and drops every `rdrs-offline-*` cache when one
 succeeds — the only place all three sign-out paths are observable.
 
-**Offline actions** are not queued. `offline.js` dims the server-bound buttons
-and blocks their submit while `navigator.onLine` reports no connection, and
-`performSwap` reports a thrown mutation as "could not reach the server" rather
-than "please try again". The flag is a hint (it is true behind a captive
-portal), which is why blocking it is presentation and the message on the thrown
-request is the load-bearing half.
+**Offline, only reading works, and the rest says so.** `offline.js` marks every
+control that reaches the server — every `form` (including the `method="get"`
+ones, Load More and the search box), every link the worker cannot answer, and
+the selects that submit themselves — with `data-offline-disabled`, which the
+stylesheet gives `pointer-events: none`. The rule is stated as the *allowlist*
+of what still works (opening a saved entry; `/` and `/entries/offline`, which
+the worker serves) because that list is three items and stable, where a list of
+the controls that need the network is dozens and falls behind the next one
+added. A `MutationObserver`, running only while offline, keeps the marks true
+across swaps and `<rdrs-sidebar>`'s own re-renders.
+
+Nothing is queued for later. What replaces that is not losing the reader's
+place: `performSwap` used to answer a failed GET with a real navigation, so a
+dead Load More threw them off the list they still had onto the offline page.
+With `offline.js` present it stays put and raises a flash instead.
+
+**Offline is decided by evidence, not by `navigator.onLine`.** That flag reports
+having a network interface, not anything answering on it: it stays true behind a
+captive portal, and Chrome leaves it true under DevTools' own offline emulation,
+so a UI driven by it is disabled in neither case. `setOffline` is instead driven
+by requests — the sync's manifest fetch, and `performSwap` reporting a fetch
+that threw through `window.rdrsOffline.networkFailed()`. Recovery is a probe
+every 30 s while offline, because the only proof the connection is back is a
+request that succeeds and the `online` event cannot be relied on to prompt
+one.
 
 ### External Services
 
