@@ -547,19 +547,29 @@ function stopWatching() {
  */
 const RECHECK_MS = 30000;
 
-let offlineNow = !navigator.onLine;
+/**
+ * Whether the app believes it cannot reach the server.
+ *
+ * Starts optimistic rather than seeded from `navigator.onLine`. The flag is
+ * unreliable in *both* directions and the false one is the expensive one: a
+ * headless browser in a container reports `false` at startup often enough to
+ * have disabled the whole app across a third of a CI run, each time in a
+ * different place. Being briefly wrong the other way costs one request that
+ * fails and then says so — which is the design here anyway.
+ */
+let offlineNow = false;
 let offlineKeep = 0;
 let recheckTimer = 0;
 
 /**
- * Whether the app currently believes it cannot reach the server.
+ * Move [`offlineNow`], and everything that hangs off it, to `next`.
  *
- * Deliberately *not* `navigator.onLine`. That flag is a statement about having
- * a network interface, not about anything answering on it: it stays true behind
- * a captive portal, and Chrome leaves it true under DevTools' own offline
- * emulation, so a UI driven by it is disabled in neither case. What this tracks
- * instead is evidence — a request that threw, or one that came back — which is
- * the same thing the reader is judging by.
+ * The state is deliberately *not* `navigator.onLine`. That flag is a statement
+ * about having a network interface, not about anything answering on it: it
+ * stays true behind a captive portal, and Chrome leaves it true under DevTools'
+ * own offline emulation, so a UI driven by it is disabled in neither case. What
+ * this tracks instead is evidence — a request that threw, or one that came
+ * back — which is the same thing the reader is judging by.
  */
 function setOffline(next) {
   if (next === offlineNow) return offlineNow;
@@ -580,15 +590,11 @@ function setOffline(next) {
 /** Stop the controls that need a server, and say so. */
 function installOfflineGuards(keep) {
   offlineKeep = keep;
-  // Paint the state we were constructed with; `setOffline` only acts on change.
-  document.documentElement.toggleAttribute('data-offline', offlineNow);
-  markServerBound();
-  if (offlineNow) watchForNewControls();
 
-  // The events are still worth listening to — when the browser does report the
-  // transition it is the fastest signal there is — they are just not the only
-  // ones. Going "online" only schedules a sync; that request is what actually
-  // decides the state.
+  // The events are still worth listening to — a browser reporting the
+  // *transition* is the fastest signal there is, and far better founded than
+  // the same flag read cold at startup. They are just not the only signal.
+  // Going "online" only schedules a sync; that request is what decides.
   window.addEventListener('online', () => scheduleSync());
   window.addEventListener('offline', () => setOffline(true));
 
