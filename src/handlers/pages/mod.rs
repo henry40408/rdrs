@@ -647,8 +647,7 @@ pub async fn login_page(
 
     let setup_available = crate::models::user::count(&state.db)
         .await
-        .ok()
-        .is_some_and(|count| state.config.can_setup(count));
+        .is_ok_and(|count| state.config.can_setup(count));
 
     (
         flash.clone(),
@@ -701,8 +700,7 @@ pub async fn setup_page(
 ) -> Response {
     let can_setup = crate::models::user::count(&state.db)
         .await
-        .ok()
-        .is_some_and(|count| state.config.can_setup(count));
+        .is_ok_and(|count| state.config.can_setup(count));
 
     if !can_setup {
         return Redirect::to("/login").into_response();
@@ -1003,8 +1001,7 @@ pub async fn admin_page(
 
     let can_create_account = crate::models::user::count(&state.db)
         .await
-        .ok()
-        .is_some_and(|count| state.config.can_create_account(count));
+        .is_ok_and(|count| state.config.can_create_account(count));
 
     // Mirrors `handlers::admin::require_recent_authentication` exactly: a
     // forward-auth session has no rdrs password to confirm, and a session

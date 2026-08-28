@@ -350,8 +350,7 @@ pub async fn login_form(
         Err(e) => {
             let setup_available = user::count(&state.db)
                 .await
-                .ok()
-                .is_some_and(|count| state.config.can_setup(count));
+                .is_ok_and(|count| state.config.can_setup(count));
             crate::handlers::pages::LoginTemplate {
                 setup_available,
                 flash_messages: Vec::new(),

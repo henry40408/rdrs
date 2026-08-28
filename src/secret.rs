@@ -101,7 +101,7 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
         return None;
     }
     let mut out = Vec::with_capacity(bytes.len() / 2);
-    for pair in bytes.chunks_exact(2) {
+    for pair in bytes.as_chunks::<2>().0 {
         let hi = char::from(pair[0]).to_digit(16)?;
         let lo = char::from(pair[1]).to_digit(16)?;
         out.push(u8::try_from(hi * 16 + lo).expect("two hex digits fit in a byte"));
