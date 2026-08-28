@@ -18,6 +18,12 @@ ignore = [
     # silences the separate `yanked = "deny"` check for the same crate.
     "RUSTSEC-2026-0105",
     "core2@0.4.0",
+    # chacha20 0.10.0 is yanked, and so is 0.10.1 — 0.10.2 is the only release
+    # left standing and it is a day old, inside the cooldown we hold new
+    # dependency versions to. Reached transitively through `rand`, never called
+    # directly by rdrs. Accepted deliberately and briefly: drop this entry and
+    # take 0.10.2 once it has aged. Tracked in issue #520.
+    "chacha20@0.10.0",
     # paste (proc-macro helper) is no longer maintained; still pulled in
     # transitively, no maintained replacement wired up.
     "RUSTSEC-2024-0436",
