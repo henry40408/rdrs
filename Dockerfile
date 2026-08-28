@@ -20,7 +20,10 @@ RUN apt-get update \
 
 # Zig 0.14.1 avoids the libc++-19 bindgen requirement that 0.15+ introduces.
 ARG ZIG_VERSION=0.14.1
-ARG ZIGBUILD_VERSION=0.22.3
+# 0.23.0 or newer: Rust 1.98 passes `--fix-cortex-a53-843419` to the linker on
+# aarch64, which zig's does not accept. cargo-zigbuild filters it out as of
+# rust-cross/cargo-zigbuild#452 — without that the arm64 leg fails to link.
+ARG ZIGBUILD_VERSION=0.23.0
 RUN cargo install cargo-zigbuild --version "${ZIGBUILD_VERSION}" --locked
 RUN set -eux; \
     case "$(uname -m)" in \
