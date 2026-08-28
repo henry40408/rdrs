@@ -159,7 +159,85 @@ async fn entries_are_saved_offline(world: &mut RdrsWorld) -> Result<()> {
             && paths.iter().any(|p| p == "/static/js/utils.js")
             && paths.iter().filter(|p| p.ends_with("/fragment")).count() == 3)
     })
-    .await
+    .await?;
+
+    // The asset walk scans source text, so a comment that merely *talks* about
+    // an import reads exactly like one — `offline.js`'s own prose about `url()`
+    // once had it requesting `/static/js/...` on every sync. A cached path with
+    // no file extension is what that looks like from out here.
+    let paths: Vec<String> = driver
+        .execute_async(
+            r"
+            const done = arguments[arguments.length - 1];
+            (async () => {
+                const names = (await caches.keys()).filter((n) => n.startsWith('rdrs-offline-'));
+                const paths = [];
+                for (const name of names) {
+                    const cache = await caches.open(name);
+                    for (const request of await cache.keys()) {
+                        paths.push(new URL(request.url).pathname);
+                    }
+                }
+                done(paths);
+            })();
+            ",
+            Vec::new(),
+        )
+        .await?
+        .convert()?;
+    for path in paths.iter().filter(|p| p.starts_with("/static/")) {
+        ensure!(
+            path.rsplit('/')
+                .next()
+                .is_some_and(|name| name.contains('.') && !name.ends_with('.')),
+            "{path} was saved as a static asset but does not name a file"
+        );
+    }
+    Ok(())
+}
+
+/// Every `/static/` URL this document has asked the network for, from the
+/// browser's own resource timings — which cover `fetch()` as well as tags, and
+/// so cover the sync.
+///
+/// The alternative was a CDP interception rule, but "a path that names no file"
+/// is a shape the pattern language cannot say without lookarounds, and the
+/// first attempt at spelling it silently matched nothing.
+async fn requested_static_paths(world: &mut RdrsWorld) -> Result<Vec<String>> {
+    Ok(world
+        .driver()?
+        .execute(
+            r"
+            return performance.getEntriesByType('resource')
+                .map((e) => new URL(e.name).pathname)
+                .filter((p) => p.startsWith('/static/'));
+            ",
+            Vec::new(),
+        )
+        .await?
+        .convert()?)
+}
+
+/// `offline.js` finds the assets a saved page needs by scanning stylesheets and
+/// modules for references, and source text does not distinguish a real `url()`
+/// or `import` from a comment describing one. Its own prose about the scan had
+/// it requesting `/static/js/...` on every sync — a 404 each time, and visible
+/// enough in the network panel that a reader asked about it.
+#[then("nothing has been asked of the server that names no file")]
+async fn no_unservable_static(world: &mut RdrsWorld) -> Result<()> {
+    let paths = requested_static_paths(world).await?;
+    ensure!(
+        !paths.is_empty(),
+        "sanity: the page is expected to have loaded some static assets"
+    );
+    for path in &paths {
+        let name = path.rsplit('/').next().unwrap_or_default();
+        ensure!(
+            name.contains('.') && !name.ends_with('.'),
+            "the sync asked for {path}, which can name no file the server has"
+        );
+    }
+    Ok(())
 }
 
 #[when("I try to mark the open entry unread")]

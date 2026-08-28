@@ -164,22 +164,45 @@ async function cacheImage(cache, url, remaining) {
 }
 
 /**
- * Same-origin `/static/` URLs referenced from inside a fetched asset: `url(...)`
- * in a stylesheet, import specifiers in a module. Resolved against `from`,
- * because a module's specifier may be relative to itself (`'./utils.js'`).
+ * Extensions the static handler actually serves.
+ *
+ * [`referencesIn`] reads *source text*, so it cannot tell a real import from a
+ * mention of one in a comment — this module's own prose about `url(…)` being
+ * the first casualty, which turned into a 404 for `/static/js/...` on every
+ * sync. Demanding a real asset extension is what keeps an example in a comment
+ * from becoming a request.
  */
-function referencesIn(text, from) {
+const ASSET_EXTENSION = /\.(?:js|css|woff2?|png|svg|ico|webmanifest)$/i;
+
+/**
+ * Same-origin `/static/` URLs referenced from inside a fetched asset: a
+ * stylesheet's `url(…)` targets, a module's import specifiers. Resolved against
+ * `from`, because a module's specifier may be relative to itself
+ * (`'./utils.js'`).
+ *
+ * Each pattern is applied only to the kind of file it belongs to. Running the
+ * stylesheet one over JavaScript matched the tail of `bufferToBase64url(buffer)`
+ * and sent the sync looking for `/static/js/buffer` — a reminder that these are
+ * substring matches over source text, not parses of it. [`ASSET_EXTENSION`] is
+ * the backstop for whatever the next such coincidence turns out to be.
+ */
+function referencesIn(text, from, isStylesheet) {
   const base = new URL(from, location.origin);
   const found = new Set();
-  const specs = [
-    ...text.matchAll(/url\(["']?([^)"']+)/g),
-    ...text.matchAll(/\bfrom\s+["']([^"']+)["']/g),
-    ...text.matchAll(/\bimport\s+["']([^"']+)["']/g),
-  ];
+  const specs = isStylesheet
+    ? [...text.matchAll(/\burl\(["']?([^)"']+)/g)]
+    : [
+        ...text.matchAll(/\bfrom\s+["']([^"']+)["']/g),
+        ...text.matchAll(/\bimport\s+["']([^"']+)["']/g),
+      ];
   for (const [, spec] of specs) {
     try {
       const url = new URL(spec, base);
-      if (url.origin === location.origin && url.pathname.startsWith('/static/')) {
+      if (
+        url.origin === location.origin &&
+        url.pathname.startsWith('/static/') &&
+        ASSET_EXTENSION.test(url.pathname)
+      ) {
         found.add(url.pathname + url.search);
       }
     } catch {
@@ -245,7 +268,8 @@ async function cacheShellAssets(cache) {
     // it, once per font, on every sync.
     const type = stored?.headers.get('content-type') || '';
     if (!/javascript|css/.test(type)) continue;
-    for (const found of referencesIn(await stored.text(), url)) pending.push(found);
+    const references = referencesIn(await stored.text(), url, type.includes('css'));
+    for (const found of references) pending.push(found);
   }
   return seen;
 }

@@ -54,6 +54,12 @@ Feature: Offline reading
     And I try to mark the open entry unread
     Then I am told the action has to wait for the connection
 
+  Scenario: A comment that describes an import does not become a request
+    Given I keep 10 entries for offline reading
+    And a service worker controls the page
+    And my entries have been saved for offline reading
+    Then nothing has been asked of the server that names no file
+
   Scenario: Turning offline reading off throws the saved entries away
     Given I keep 10 entries for offline reading
     And a service worker controls the page
