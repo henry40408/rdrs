@@ -30,7 +30,8 @@ Privacy-focused, lightweight, and designed for personal use.
 - **Google Reader API** - Compatible with GReader clients (FeedMe, Read You, etc.)
 - **Multi-User Support** - Role-based access control with admin panel
 - **Session Management** - View active sessions (device, IP, last active) and sign out other devices from Settings; GReader API tokens are tracked and revocable separately from browser sessions
-- **Installable (PWA)** - Add to your home screen or dock and run it in its own window; a lost connection shows RDRS's own offline page instead of the browser's error. Nothing you read is stored on the device
+- **Installable (PWA)** - Add to your home screen or dock and run it in its own window; a lost connection shows RDRS's own offline page instead of the browser's error
+- **Offline reading** - Optionally keep your newest unread entries, and your starred ones, readable on the train. Off by default: at zero, nothing you read is stored on the device
 - **Docker Ready** - Single-binary deployment with all assets embedded, multi-platform container images
 
 ## Quick Start
@@ -464,14 +465,36 @@ The prompt appears once you are signed in. The sign-in page deliberately
 registers no service worker, so a browser that never gets past it stays a plain
 browser.
 
-**There is no offline reading.** Feeds and articles live on the server and are
-never written to the device — the service worker keeps only the static assets
-(CSS, JavaScript, fonts, icons) and a small offline page, so a navigation with
-no connection lands somewhere legible rather than on the browser's error page.
+**Nothing of yours is stored on the device unless you ask for it.** Out of the
+box the service worker keeps only the static assets (CSS, JavaScript, fonts,
+icons) and a small offline page, so a navigation with no connection lands
+somewhere legible rather than on the browser's error page.
 
 Browsers only allow service workers on a secure origin, so installing works on
 `http://localhost` for a local trial and needs HTTPS anywhere else. See
 [Production Notes](#production-notes) for putting RDRS behind TLS.
+
+### Offline reading
+
+Set **Keep offline** in *Settings → Preferences* to the number of entries you
+want available without a connection — `0`, the default, keeps none and stores
+nothing. Anything above that mirrors your newest unread entries into the
+browser, with your starred ones filling whatever budget is left over, and their
+images along with them.
+
+While you are online it syncs quietly in the background; **/entries/offline**
+lists exactly what is currently saved, so you can check before you lose signal.
+With the connection gone, opening the app lands you on that list and articles
+open as usual.
+
+What does *not* work offline is anything that has to reach the server: marking
+read, starring, search, fetching full content, summarising. Those buttons dim
+and tell you to wait rather than failing quietly; they are not queued up for
+later.
+
+Saved entries are scoped to your account and are deleted when you sign out, when
+you switch accounts on the same browser, and when you set the number back to
+`0`.
 
 ## Docker
 

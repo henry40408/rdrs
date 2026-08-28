@@ -430,12 +430,31 @@ async function performSwap(url, init, defaultTarget, options) {
         // Falling through to `location.href` would hard-navigate to a fragment
         // URL the user has already moved past.
         if (isPaneNav && navSeq !== paneNavSeq) return false;
-        if (method !== 'GET' && window.flash) {
-            window.flash.error('Action failed — please try again.');
+        // A reading pane the reader saved for offline reading is still on this
+        // device, and reaching for it here rather than in the service worker is
+        // what keeps this fetch an ordinary page request. `offline.js` publishes
+        // the lookup, exactly like `window.flash` above; without that module —
+        // a scriptless reader, or the feature switched off — there is nothing
+        // to fall back to and the branches below take over.
+        response = method === 'GET' ? await savedFragment(url) : null;
+        if (!response) {
+            if (method !== 'GET' && window.flash) {
+                // The fetch threw, so the request never got an answer: no
+                // network, or no server. Both mean waiting rather than retrying,
+                // and this is the reliable half of the offline story —
+                // `offline.js` blocks the submit when `navigator.onLine` says
+                // the connection is gone, but that flag is a hint the browser is
+                // free to get wrong, while a request that actually threw is
+                // evidence. Deliberately not phrased as "you are offline": from
+                // here the two are indistinguishable.
+                window.flash.error('Could not reach the server — that will have to wait for the connection.');
+            } else {
+                window.location.href = fallbackUrl;
+            }
             return false;
         }
-        window.location.href = fallbackUrl;
-        return false;
+        // A saved pane falls through to the response handling below, so it is
+        // swapped in by exactly the same code that swaps a fetched one.
     }
     // Superseded while the headers were in flight — abort loses this race when
     // the reply was already buffered.
@@ -536,6 +555,20 @@ async function performSwap(url, init, defaultTarget, options) {
     applyFlashTemplates(parsed);
     document.dispatchEvent(new CustomEvent('rdrs:swap-complete'));
     return true;
+}
+
+/**
+ * The reading pane `offline.js` saved for `url`, or `null` when there is none —
+ * the feature is off, the module never loaded, or this entry was outside the
+ * budget. Errors are swallowed for the same reason: every one of them means the
+ * same thing here, which is that there is nothing to show but the fallback.
+ */
+async function savedFragment(url) {
+    try {
+        return (await window.rdrsOffline?.fragment(url)) || null;
+    } catch {
+        return null;
+    }
 }
 
 function entryIdFromSwapUrl(url) {

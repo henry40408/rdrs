@@ -310,7 +310,7 @@ pub async fn entry_fragment(
     // needs the entry — a scriptless reader is opening it just as much.
     let found = entry::find_by_id_for_user(&state.db, user_id, entry_id).await?;
 
-    let speculative = is_speculative_load(&headers);
+    let speculative = is_speculative_load(&headers) || query.is_prefetch();
     let mark_read = !speculative && found.as_ref().is_some_and(|e| e.entry.read_at.is_none());
 
     // `/entries/{id}/fragment` renders only the `<template data-swap-target>`
@@ -420,9 +420,23 @@ pub struct FragmentQuery {
     /// is stored. Anything else — including absence — renders the fetched
     /// article, so the way back is simply dropping the parameter.
     pub view: Option<String>,
+    /// `1` marks the request an offline-sync prefetch: render the pane as the
+    /// entry actually is and change nothing.
+    ///
+    /// Without it, mirroring a reader's queue for offline reading would mark
+    /// every entry in it read — opening an entry is what marks it read, and a
+    /// sync opens all of them. The existing `is_speculative_load` check cannot
+    /// carry this: it reads `Sec-Purpose`, and `Sec-` headers are forbidden to
+    /// `fetch()`, so the client physically cannot set one.
+    pub offline: Option<u8>,
 }
 
 impl FragmentQuery {
+    /// Whether this request must leave the entry alone. See [`Self::offline`].
+    fn is_prefetch(&self) -> bool {
+        self.offline == Some(1)
+    }
+
     fn content_view(&self) -> ContentView {
         match self.view.as_deref() {
             Some("original") => ContentView::Original,

@@ -29,6 +29,21 @@ pub const ENTRIES_PER_PAGE_SUGGESTIONS: &[i64] = &[10, 25, 50, 100];
 /// values and `label` support is inconsistent across browsers.
 pub const RETENTION_READ_DAYS_SUGGESTIONS: &[i64] = &[0, 7, 30, 90, 365];
 
+/// Offline reading is off: the browser keeps nothing belonging to the reader.
+/// The default, and what every account did before the setting existed.
+pub const OFFLINE_KEEP_OFF: i64 = 0;
+
+/// Upper bound on the entries a client mirrors for offline reading. The cap
+/// exists because the reader is spending their *device's* disk, not the
+/// server's, and every kept entry drags its images along with it.
+pub const MAX_OFFLINE_KEEP: i64 = 200;
+
+/// Same contract as [`ENTRIES_PER_PAGE_SUGGESTIONS`], for `offline_keep`
+/// against [`update_offline_keep`]. `0` leads because it is the default and
+/// means "off"; the form's help text carries that meaning, since a
+/// `<datalist>` on a number input renders bare values.
+pub const OFFLINE_KEEP_SUGGESTIONS: &[i64] = &[0, 25, 50, 100, 200];
+
 /// Sidebar ordering: categories (and the open category's feeds) A-Z by name.
 /// The order the list queries already return, so the client leaves them alone.
 pub const SIDEBAR_SORT_NAME: &str = "name";
@@ -75,6 +90,8 @@ pub struct UserSettings {
     pub theme: Option<String>, // "dark", "light", or NULL (system)
     pub sidebar_sort: String,  // "name" or "unread"
     pub sidebar_hide_read: bool,
+    /// Newest unread entries to keep readable offline, or [`OFFLINE_KEEP_OFF`].
+    pub offline_keep: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -93,7 +110,7 @@ pub async fn find_by_user_id(db: &Db, user_id: i64) -> AppResult<Option<UserSett
     query_opt!(
         db,
         UserSettings,
-        "SELECT id, user_id, entries_per_page, retention_read_days, save_services, theme, sidebar_sort, sidebar_hide_read, created_at, updated_at FROM user_settings WHERE user_id = $1",
+        "SELECT id, user_id, entries_per_page, retention_read_days, save_services, theme, sidebar_sort, sidebar_hide_read, offline_keep, created_at, updated_at FROM user_settings WHERE user_id = $1",
         user_id
     )
     .map_err(AppError::Database)
@@ -291,6 +308,44 @@ pub async fn update_sidebar_prefs(
     Ok(())
 }
 
+/// How many entries this user keeps readable offline. Accounts with no
+/// `user_settings` row yet get [`OFFLINE_KEEP_OFF`] — offline reading is
+/// opt-in, so "no row" must never mean "start writing articles to disk".
+pub async fn get_offline_keep(db: &Db, user_id: i64) -> AppResult<i64> {
+    Ok(find_by_user_id(db, user_id)
+        .await?
+        .map_or(OFFLINE_KEEP_OFF, |settings| settings.offline_keep))
+}
+
+/// Set the offline-reading budget. Out-of-range values are rejected rather
+/// than clamped: this one spends the reader's disk, so a typo silently
+/// becoming 200 entries is the wrong failure.
+pub async fn update_offline_keep(db: &Db, user_id: i64, keep: i64) -> AppResult<()> {
+    if !(OFFLINE_KEEP_OFF..=MAX_OFFLINE_KEEP).contains(&keep) {
+        return Err(AppError::Validation(format!(
+            "offline_keep must be between {OFFLINE_KEEP_OFF} and {MAX_OFFLINE_KEEP}"
+        )));
+    }
+    // Ensure a row exists, then update (mirrors update_sidebar_prefs).
+    db_execute!(
+        db,
+        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
+         ON CONFLICT(user_id) DO NOTHING",
+        user_id,
+        DEFAULT_ENTRIES_PER_PAGE
+    )
+    .map_err(AppError::Database)?;
+    db_execute!(
+        db,
+        "UPDATE user_settings SET offline_keep = $1, updated_at = $2 WHERE user_id = $3",
+        keep,
+        Utc::now(),
+        user_id
+    )
+    .map_err(AppError::Database)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,6 +353,45 @@ mod tests {
 
     async fn setup_db() -> Db {
         Db::connect_in_memory().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn offline_keep_defaults_to_off() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+
+        // No settings row at all — the case a brand-new account is in, and the
+        // one where "on" would mean writing articles to a disk nobody asked to
+        // have them written to.
+        assert_eq!(
+            get_offline_keep(&db, user.id).await.unwrap(),
+            OFFLINE_KEEP_OFF
+        );
+    }
+
+    #[tokio::test]
+    async fn offline_keep_round_trips_and_rejects_out_of_range() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+
+        update_offline_keep(&db, user.id, 50).await.unwrap();
+        assert_eq!(get_offline_keep(&db, user.id).await.unwrap(), 50);
+
+        for bad in [-1, MAX_OFFLINE_KEEP + 1] {
+            assert!(
+                update_offline_keep(&db, user.id, bad).await.is_err(),
+                "{bad} should be rejected"
+            );
+        }
+        assert_eq!(
+            get_offline_keep(&db, user.id).await.unwrap(),
+            50,
+            "a rejected write must not disturb the stored value"
+        );
     }
 
     #[tokio::test]

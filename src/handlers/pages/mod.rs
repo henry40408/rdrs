@@ -1046,6 +1046,7 @@ pub async fn user_settings_page(
         theme,
         entries_per_page,
         retention_read_days,
+        offline_keep,
         sidebar_prefs,
         linkding_configured,
         linkding_api_url,
@@ -1061,6 +1062,9 @@ pub async fn user_settings_page(
         let retention_read_days = user_settings::get_retention_read_days(&state.db, user_id)
             .await
             .unwrap_or(0);
+        let offline_keep = user_settings::get_offline_keep(&state.db, user_id)
+            .await
+            .unwrap_or(user_settings::OFFLINE_KEEP_OFF);
         let sidebar_prefs = user_settings::get_sidebar_prefs(&state.db, user_id)
             .await
             .unwrap_or_default();
@@ -1082,6 +1086,7 @@ pub async fn user_settings_page(
             theme,
             entries_per_page,
             retention_read_days,
+            offline_keep,
             sidebar_prefs,
             linkding_configured,
             linkding_api_url,
@@ -1183,6 +1188,8 @@ pub async fn user_settings_page(
             retention_read_days,
             entries_per_page_suggestions: user_settings::ENTRIES_PER_PAGE_SUGGESTIONS,
             retention_read_days_suggestions: user_settings::RETENTION_READ_DAYS_SUGGESTIONS,
+            offline_keep_suggestions: user_settings::OFFLINE_KEEP_SUGGESTIONS,
+            offline_keep,
             sidebar_sort: sidebar_prefs.sort,
             sidebar_hide_read: sidebar_prefs.hide_read,
             password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
@@ -1826,6 +1833,83 @@ pub async fn starred_entries_page(
                 empty_detail: "Star an entry and it'll wait for you here.",
                 path: "/entries/starred".to_string(),
                 show_tab_bar: true,
+                mark_as_read_scope: None,
+                breadcrumb_items: vec![],
+                header_feed_icon_id: None,
+                active_category_id: None,
+                active_feed_id: None,
+                filter_tabs: None,
+                status_filter: None,
+                show_mark_above: false,
+                onboarding: false,
+                snapshot_at: snapshot_now(),
+                search: None,
+                search_action: None,
+                matching_count: None,
+            },
+        },
+    )
+        .into_response()
+}
+
+/// Serves `/entries/offline` — the entries this reader's browser is holding
+/// for offline reading, and the page the service worker falls back to when a
+/// navigation cannot reach the server.
+///
+/// No Load More, no search, no bulk actions: every one of those needs the
+/// network, and this page's whole job is to be the one that does not. It is a
+/// perfectly ordinary page while online, which is what makes it testable and
+/// what lets a reader check what they will actually have on the plane.
+pub async fn offline_entries_page(
+    auth_user: PageAuthUser,
+    State(state): State<AppState>,
+    flash: Flash,
+    Query(query): Query<EntriesQuery>,
+) -> Response {
+    let user_id = auth_user.user.id;
+    let keep = user_settings::get_offline_keep(&state.db, user_id)
+        .await
+        .unwrap_or(user_settings::OFFLINE_KEEP_OFF);
+    let entries = entry::list_offline_set(&state.db, user_id, keep)
+        .await
+        .unwrap_or_default();
+    let ids: Vec<i64> = entries.iter().map(|e| e.entry.id).collect();
+    let statuses = entry_summary::get_statuses_for_entries(&state.db, user_id, &ids)
+        .await
+        .unwrap_or_default();
+    let entries: Vec<EntryRowView> = entries
+        .iter()
+        .map(|e| row_view_from(e, statuses.get(&e.entry.id).copied()))
+        .collect();
+
+    let layout = build_app_layout(&state, &auth_user, &flash).await;
+    let reading_pane = maybe_build_reading_pane(&state, user_id, query.entry).await;
+
+    (
+        flash,
+        OfflineEntriesTemplate {
+            title: "Offline",
+            git_version: crate::GIT_VERSION,
+            layout,
+            entries,
+            reading_pane,
+            next_cursor: None,
+            csrf_token: auth_user.csrf_token.clone(),
+            entries_layout: EntriesLayoutContext {
+                active: "offline",
+                description: None,
+                empty_title: if keep == user_settings::OFFLINE_KEEP_OFF {
+                    "Offline reading is off"
+                } else {
+                    "Nothing saved yet"
+                },
+                empty_detail: if keep == user_settings::OFFLINE_KEEP_OFF {
+                    "Turn it on in Settings to keep entries readable without a connection."
+                } else {
+                    "Entries are mirrored while you are online. Come back once something has synced."
+                },
+                path: "/entries/offline".to_string(),
+                show_tab_bar: false,
                 mark_as_read_scope: None,
                 breadcrumb_items: vec![],
                 header_feed_icon_id: None,
@@ -2698,6 +2782,16 @@ pub struct AppLayoutContext {
     /// read from each page's own `csrf_token`, because not every page that
     /// extends this one has one.
     pub csrf_token: String,
+    /// Opaque name of this reader's offline cache (`secret::offline_id`), and
+    /// their offline budget.
+    ///
+    /// Rendered into the document rather than left to `/api/offline/manifest`
+    /// because `offline.js` has to be able to drop *another* account's cached
+    /// articles before it makes a single network call — on a shared device the
+    /// window between "signed in as someone else" and "the sync came back" is
+    /// exactly when those articles must already be gone.
+    pub offline_key: String,
+    pub offline_keep: i64,
 }
 
 /// Build the shared layout context for a logged-in page response.
@@ -2748,6 +2842,8 @@ pub async fn build_app_layout(
         is_admin,
         total_unread: sidebar.total_unread,
         csrf_token: auth_user.csrf_token.clone(),
+        offline_key: crate::secret::offline_id(&state.config.secret, auth_user.user.id),
+        offline_keep: chrome.offline_keep,
     }
 }
 
@@ -2860,6 +2956,10 @@ pub struct UserSettingsTemplate {
     /// tests that prove the handler accepts every one of them.
     pub entries_per_page_suggestions: &'static [i64],
     pub retention_read_days_suggestions: &'static [i64],
+    pub offline_keep_suggestions: &'static [i64],
+    /// Entries this reader keeps readable without a connection, or
+    /// [`user_settings::OFFLINE_KEEP_OFF`].
+    pub offline_keep: i64,
     /// Selected option of the sidebar-ordering `<select>`: `"name"` or
     /// `"unread"` (see `user_settings::parse_sidebar_sort`).
     pub sidebar_sort: &'static str,
@@ -3349,6 +3449,32 @@ pub struct StarredEntriesTemplate {
 }
 
 impl IntoResponse for StarredEntriesTemplate {
+    fn into_response(self) -> Response {
+        match self.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+/// Per-route template for `/entries/offline`.
+#[derive(Template)]
+#[template(path = "offline_entries.html")]
+pub struct OfflineEntriesTemplate {
+    pub title: &'static str,
+    pub git_version: &'static str,
+    pub layout: AppLayoutContext,
+    pub entries: Vec<EntryRowView>,
+    pub reading_pane: Option<ReadingPaneView>,
+    /// Always `None`: the whole set is rendered in one go. Load More needs the
+    /// network, which is the one thing this page cannot assume.
+    pub next_cursor: Option<String>,
+    pub entries_layout: EntriesLayoutContext,
+    /// See [`StarredEntriesTemplate::csrf_token`].
+    pub csrf_token: String,
+}
+
+impl IntoResponse for OfflineEntriesTemplate {
     fn into_response(self) -> Response {
         match self.render() {
             Ok(html) => Html(html).into_response(),

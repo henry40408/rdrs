@@ -2626,6 +2626,29 @@ summary {
     text-align: center;
 }
 
+/* The two links on /offline sit side by side rather than stacked: "Saved
+   entries" and "Try again" are alternatives, not a sequence. */
+.auth-card .link a + a {
+    margin-left: var(--space-4);
+}
+
+/* ===== Offline reading ===== */
+
+/* `data-offline` is set on <html> by offline.js whenever the browser reports no
+   connection. Everything it dims is a form action that reaches the server:
+   starring, marking read, fetching an article, summarising. They stay in the
+   layout — a row of buttons that disappears is a page that jumps under the
+   reader's thumb — and stay focusable, because `offline.js` answers a submit
+   with an explanation rather than silence.
+
+   `navigator.onLine` is a hint (it is true behind a captive portal), which is
+   why this is styling and not `disabled`: being wrong here costs an unnecessary
+   grey button, not a lost action. */
+[data-offline] .rp-action,
+[data-offline] .rail-actions form {
+    opacity: 0.45;
+}
+
 /* "or use password" divider on the auth screens. */
 .auth-divider {
     text-align: center;

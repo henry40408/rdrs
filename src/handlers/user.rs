@@ -164,6 +164,8 @@ pub struct ChromeData {
     pub total_unread: i64,
     pub total_summarized: i64,
     pub sidebar_prefs: user_settings::SidebarPrefs,
+    /// See [`crate::services::CachedChrome::offline_keep`].
+    pub offline_keep: i64,
     /// Only set when `original_user_id` is passed (i.e. session is
     /// masquerading). `None` outside the masquerade path.
     pub original_user_is_admin: Option<bool>,
@@ -200,6 +202,7 @@ pub async fn read_chrome_data(
             total_unread: cached.total_unread,
             total_summarized: cached.total_summarized,
             sidebar_prefs: cached.sidebar_prefs,
+            offline_keep: cached.offline_keep,
             original_user_is_admin,
         };
     }
@@ -216,6 +219,9 @@ pub async fn read_chrome_data(
         .map_or_else(user_settings::SidebarPrefs::default, |s| {
             user_settings::sidebar_prefs_of(s)
         });
+    let offline_keep = settings
+        .as_ref()
+        .map_or(user_settings::OFFLINE_KEEP_OFF, |s| s.offline_keep);
     let cats = category::list_by_user(&state.db, user_id)
         .await
         .unwrap_or_default();
@@ -246,6 +252,7 @@ pub async fn read_chrome_data(
         total_unread,
         total_summarized,
         sidebar_prefs,
+        offline_keep,
     };
 
     // Skip caching the "no content yet" state — an account with no feeds and no
@@ -265,6 +272,7 @@ pub async fn read_chrome_data(
         total_unread: fresh.total_unread,
         total_summarized: fresh.total_summarized,
         sidebar_prefs: fresh.sidebar_prefs,
+        offline_keep: fresh.offline_keep,
         original_user_is_admin,
     }
 }
@@ -699,6 +707,10 @@ pub struct UpdatePreferencesForm {
     /// An unchecked checkbox sends nothing at all, so presence — not value —
     /// is what turns this on.
     pub sidebar_hide_read: Option<String>,
+    /// Entries to keep readable offline, `0` for off. Optional so a POST from a
+    /// page rendered before this field existed leaves the setting alone rather
+    /// than silently switching offline reading off.
+    pub offline_keep: Option<i64>,
 }
 
 pub async fn update_preferences_form(
@@ -728,6 +740,9 @@ pub async fn update_preferences_form(
         user_settings::update_retention_read_days(&state.db, user_id, retention_read_days).await?;
         user_settings::update_sidebar_prefs(&state.db, user_id, &sidebar_sort, sidebar_hide_read)
             .await?;
+        if let Some(keep) = req.offline_keep {
+            user_settings::update_offline_keep(&state.db, user_id, keep).await?;
+        }
         Ok(())
     }
     .await;

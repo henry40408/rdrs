@@ -178,6 +178,17 @@
                         </label>
                         <span class="muted text-xs">The category or feed you are currently reading stays listed.</span>
                     </div>
+                    <div class="form-group">
+                        <label for="offline-keep">Keep offline (entries)</label>
+                        <input type="number" id="offline-keep" name="offline_keep" value="{{ offline_keep }}" min="0" max="200" list="offline-keep-list" autocomplete="off" data-testid="offline-keep" required>
+                        <datalist id="offline-keep-list">
+                            {% for v in offline_keep_suggestions %}<option value="{{ v }}">{% endfor %}
+                        </datalist>
+                        {# The disk being spent is the reader's, on their own device, so
+                           the trade-off is stated where the number is chosen rather than
+                           buried in documentation they will not read. #}
+                        <span class="muted text-xs">(0 = off, max 200) Stores these articles in this browser so you can read them without a connection. Newest unread first, then starred. <a href="/entries/offline" data-testid="offline-library-link">See what is saved</a>.</span>
+                    </div>
                     <button type="submit">Save Preferences</button>
                 </form>
 

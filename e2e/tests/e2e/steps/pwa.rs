@@ -81,3 +81,101 @@ async fn cache_holds_only_public_assets(world: &mut RdrsWorld) -> Result<()> {
     }
     Ok(())
 }
+
+/// The preferences form, driven rather than seeded: the number the reader types
+/// is what decides whether anything of theirs goes to disk at all, so the path
+/// that sets it is worth exercising.
+async fn set_offline_keep(world: &mut RdrsWorld, keep: &str) -> Result<()> {
+    world.goto("/user-settings").await?;
+    let driver = world.driver()?;
+    driver.expect_visible("offline-keep").await?;
+    driver.fill("offline-keep", keep).await?;
+    driver
+        .submit_css(r#"form[action="/user-settings/preferences"] button[type=submit]"#)
+        .await?;
+    world.expect_path("/user-settings").await
+}
+
+#[given(expr = "I keep {int} entries for offline reading")]
+async fn keep_entries_offline(world: &mut RdrsWorld, keep: u32) -> Result<()> {
+    set_offline_keep(world, &keep.to_string()).await
+}
+
+#[when("I stop keeping entries for offline reading")]
+async fn stop_keeping_entries_offline(world: &mut RdrsWorld) -> Result<()> {
+    set_offline_keep(world, "0").await?;
+    // The wipe is `offline.js`'s first act on the next load, before its manifest
+    // fetch — so the redirect above is enough to have triggered it, but not to
+    // have finished it.
+    let driver = world.driver()?;
+    eventually("the saved entries to be dropped", || async {
+        let names: Vec<String> = driver
+            .execute_async(
+                r"
+                const done = arguments[arguments.length - 1];
+                caches.keys().then((names) => done(names.filter((n) => n.startsWith('rdrs-offline-'))));
+                ",
+                Vec::new(),
+            )
+            .await?
+            .convert()?;
+        Ok(names.is_empty())
+    })
+    .await
+}
+
+/// Waits for the sync to have mirrored the queue. Polls the cache rather than
+/// the network, because "saved" is a statement about what is on disk — a
+/// completed fetch that was never stored is exactly the failure worth catching.
+#[given("my entries have been saved for offline reading")]
+async fn entries_are_saved_offline(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    eventually("the entry list to be mirrored into the offline cache", || async {
+        let paths: Vec<String> = driver
+            .execute_async(
+                r"
+                const done = arguments[arguments.length - 1];
+                (async () => {
+                    const names = (await caches.keys()).filter((n) => n.startsWith('rdrs-offline-'));
+                    const paths = [];
+                    for (const name of names) {
+                        const cache = await caches.open(name);
+                        for (const request of await cache.keys()) {
+                            paths.push(new URL(request.url).pathname);
+                        }
+                    }
+                    done(paths);
+                })();
+                ",
+                Vec::new(),
+            )
+            .await?
+            .convert()?;
+        // The library page is stored last, so its presence means the fragments
+        // it lists are already there. `utils.js` is named by no document — only
+        // by an `import` inside `app.js` — so requiring it is what proves the
+        // asset walk is transitive rather than a scrape of the current page.
+        Ok(paths.iter().any(|p| p == "/entries/offline")
+            && paths.iter().any(|p| p == "/static/js/utils.js")
+            && paths.iter().filter(|p| p.ends_with("/fragment")).count() == 3)
+    })
+    .await
+}
+
+#[when("I try to mark the open entry unread")]
+async fn try_to_mark_unread(world: &mut RdrsWorld) -> Result<()> {
+    world
+        .driver()?
+        .click_css(r#"#reading-pane form[action$="/unread"] button"#)
+        .await
+}
+
+/// Either half of the offline story satisfies this: `offline.js` blocks the
+/// submit outright when the browser reports no connection, and `performSwap`
+/// says the same thing when the request it sent anyway never came back. Which
+/// one fires depends on whether the browser updated `navigator.onLine`, which
+/// is exactly the judgement this feature refuses to depend on.
+#[then("I am told the action has to wait for the connection")]
+async fn told_the_action_must_wait(world: &mut RdrsWorld) -> Result<()> {
+    world.driver()?.expect_text("flash-message", "wait").await
+}

@@ -5,16 +5,33 @@
  * worker's default scope is the directory it was served from, and one scoped to
  * the static-asset prefix could never see the navigations it exists to catch.
  *
- * ## What it must never cache
+ * ## What it may cache, and what it must never
  *
  * Every logged-in response is `Cache-Control: no-store` + `Vary: Cookie`, and the
  * Cache API honours neither: `cache.put` stores whatever it is handed. So the
- * rule is enforced here instead, as an allowlist rather than a denylist —
- * only same-origin `GET`s under `/static/` are stored, plus the one precached
- * `/offline` page, which carries no user data by construction. Navigations,
- * `/api/*`, `/events`, feed icons and proxied images are passed straight to the
- * network and their responses are never written anywhere. A denylist would have
- * to stay in sync with every route added later; this cannot drift.
+ * rule is enforced here instead, as an allowlist rather than a denylist. This
+ * worker writes to exactly one cache, `rdrs-shell-<version>`, and only
+ * same-origin `GET`s under `/static/` plus the precached `/offline` page ever
+ * go into it. Navigations, `/api/*`, `/events`, feed icons and proxied images
+ * are passed straight to the network and their responses are never written
+ * here. A denylist would have to stay in sync with every route added later;
+ * this cannot drift.
+ *
+ * ## The offline caches, which this worker only reads
+ *
+ * `rdrs-offline-<key>` holds the reader's saved articles. It is opt-in
+ * (`offline_keep`, off by default), namespaced by an opaque per-user key, and
+ * **written entirely by `static/js/offline.js`** — a page has the session, the
+ * budget and the manifest, and splitting the decision of what to keep across
+ * two files is how the two halves come to disagree.
+ *
+ * The worker reads from it for the two request kinds a page cannot rescue on
+ * its own: navigations, which replace the document before any script of ours
+ * runs, and `<img>` loads, which no page-level code can retry. A reading pane
+ * is neither — `performSwap` issues that fetch itself and asks `offline.js` for
+ * the saved copy when it fails, which keeps the request page-originated and so
+ * still visible to anything watching the network. The worker also deletes every
+ * one of these caches the moment it sees a sign-out.
  *
  * ## Why static assets are safe to store
  *
@@ -31,6 +48,15 @@
 const VERSION = '__RDRS_ASSET_VERSION__';
 const CACHE = `rdrs-shell-${VERSION}`;
 const OFFLINE_URL = '/offline';
+
+/**
+ * Name prefix of the reader's saved-article caches. Written by `offline.js`,
+ * read here, and dropped wholesale on sign-out.
+ */
+const OFFLINE_PREFIX = 'rdrs-offline-';
+
+/** The page listing what those caches hold. See `pages::offline_entries_page`. */
+const LIBRARY_URL = '/entries/offline';
 
 /**
  * Whether `/static/` responses may be kept. Substituted server-side.
@@ -81,16 +107,50 @@ self.addEventListener('activate', (event) => {
       if (self.registration.navigationPreload) {
         await self.registration.navigationPreload.enable();
       }
+      // Everything but this build's shell cache goes — except the reader's
+      // saved articles, which are data rather than assets. Keying those by
+      // build version would throw away the whole offline library on every
+      // deploy, which is precisely when a reader is least able to rebuild it.
       const names = await caches.keys();
       await Promise.all(
-        names.filter((name) => name !== CACHE).map((name) => caches.delete(name)),
+        names
+          .filter((name) => name !== CACHE && !name.startsWith(OFFLINE_PREFIX))
+          .map((name) => caches.delete(name)),
       );
       await self.clients.claim();
     })(),
   );
 });
 
-/** Network-first, with the precached offline page as the only fallback. */
+/**
+ * The reader's saved-article cache, or `null` when offline reading is off.
+ *
+ * Found by scanning rather than remembered: a worker is torn down and restarted
+ * at the browser's discretion, so anything it "knows" between events has to be
+ * re-derived. `offline.js` deletes every cache but the current account's before
+ * its first network call of a page load, so in practice at most one matches —
+ * and if a second somehow lingers, taking none is the safe answer rather than
+ * guessing which reader it belongs to.
+ */
+async function offlineCache() {
+  const names = (await caches.keys()).filter((name) => name.startsWith(OFFLINE_PREFIX));
+  return names.length === 1 ? caches.open(names[0]) : null;
+}
+
+/** A saved copy of `key`, or `undefined`. */
+async function savedResponse(key) {
+  const cache = await offlineCache();
+  return cache ? cache.match(key) : undefined;
+}
+
+/**
+ * Network-first, falling back to the reader's offline library and then to the
+ * precached apology page.
+ *
+ * The library stands in for the entry-list paths only. Answering *every* dead
+ * navigation with it would put a list of articles under the URL of the feeds
+ * page or the settings page, which is a worse lie than an honest error.
+ */
 async function handleNavigation(event) {
   try {
     const preloaded = await event.preloadResponse;
@@ -99,6 +159,13 @@ async function handleNavigation(event) {
     }
     return await fetch(event.request);
   } catch (error) {
+    const path = new URL(event.request.url).pathname;
+    if (path === '/' || path === LIBRARY_URL || path.startsWith('/entries')) {
+      const library = await savedResponse(LIBRARY_URL);
+      if (library) {
+        return library;
+      }
+    }
     const cached = await caches.match(OFFLINE_URL);
     if (cached) {
       return cached;
@@ -109,37 +176,119 @@ async function handleNavigation(event) {
   }
 }
 
-/** Cache-first. Safe only because these URLs are version-stamped and public. */
-async function handleStaticAsset(request) {
-  const cached = await caches.match(request);
-  if (cached) {
-    return cached;
+/**
+ * Network-first, falling back to a saved copy — the same shape as
+ * [`handleFragment`], and for the same reason: the cache is only ever consulted
+ * on the failure path, so an online reader pays nothing for a feature they may
+ * not even have switched on.
+ *
+ * Deliberately *not* "populate on first use" like the static assets either.
+ * What belongs in the offline cache is decided by `offline.js` against the
+ * reader's budget; a worker that quietly added every image scrolled past would
+ * be spending that budget behind their back.
+ */
+async function handleSavedImage(request, key) {
+  try {
+    return await fetch(request);
+  } catch (error) {
+    const saved = await savedResponse(key);
+    if (saved) {
+      return saved;
+    }
+    throw error;
   }
+}
+
+/**
+ * Pass a sign-out through and, if it took, drop every saved article with it.
+ *
+ * This is the only place a sign-out is reliably observable: it can be triggered
+ * from the scripted nav, the scriptless fallback form or a session revoked in
+ * another tab, and only the worker sees all three. A network failure leaves the
+ * caches alone — the reader is still signed in.
+ */
+async function handleSignOut(request) {
   const response = await fetch(request);
-  // `basic` means same-origin and fully readable — an opaque or error response
-  // would poison the cache with something that can never be served correctly.
-  if (response.ok && response.type === 'basic') {
-    const cache = await caches.open(CACHE);
-    cache.put(request, response.clone());
+  if (response.status < 500) {
+    const names = await caches.keys();
+    await Promise.all(
+      names.filter((name) => name.startsWith(OFFLINE_PREFIX)).map((name) => caches.delete(name)),
+    );
   }
   return response;
 }
 
+/**
+ * Cache-first, then network, then the reader's saved copy.
+ *
+ * The first hop is safe only because these URLs are version-stamped and public,
+ * and is skipped entirely on a dev build — see [`CACHE_STATIC_ASSETS`].
+ *
+ * The last hop is what makes a saved article *readable* rather than merely
+ * present: the library page is server-rendered markup that still needs
+ * `app.css` and `app.js` to look like the app and to open an entry at all.
+ * `offline.js` puts them in the reader's own cache for exactly this, and
+ * reaching for them only after the network has failed means an online reader
+ * can never be served a stale asset — which is the one thing the dev-build
+ * opt-out above exists to prevent.
+ */
+async function handleStaticAsset(request, key) {
+  if (CACHE_STATIC_ASSETS) {
+    const cached = await (await caches.open(CACHE)).match(request);
+    if (cached) {
+      return cached;
+    }
+  }
+  try {
+    const response = await fetch(request);
+    // `basic` means same-origin and fully readable — an opaque or error response
+    // would poison the cache with something that can never be served correctly.
+    if (CACHE_STATIC_ASSETS && response.ok && response.type === 'basic') {
+      const cache = await caches.open(CACHE);
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    const saved = await savedResponse(key);
+    if (saved) {
+      return saved;
+    }
+    throw error;
+  }
+}
+
+/** Images a saved article points at: proxied pictures and feed favicons. */
+const SAVED_IMAGE_PATH = /^\/(api\/proxy\/image|api\/feeds\/\d+\/icon)$/;
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  if (request.method !== 'GET') {
-    return;
-  }
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) {
+    return;
+  }
+  if (request.method !== 'GET') {
+    // The one non-GET the worker looks at, and it does not cache the response —
+    // it uses the fact that a sign-out happened to throw the saved articles
+    // away. `DELETE /api/session` is the scripted path, `POST /logout` the
+    // scriptless one.
+    if (
+      (request.method === 'POST' && url.pathname === '/logout') ||
+      (request.method === 'DELETE' && url.pathname === '/api/session')
+    ) {
+      event.respondWith(handleSignOut(request));
+    }
     return;
   }
   if (request.mode === 'navigate') {
     event.respondWith(handleNavigation(event));
     return;
   }
-  if (CACHE_STATIC_ASSETS && url.pathname.startsWith('/static/')) {
-    event.respondWith(handleStaticAsset(request));
+  if (url.pathname.startsWith('/static/')) {
+    event.respondWith(handleStaticAsset(request, url.pathname + url.search));
+    return;
+  }
+  if (SAVED_IMAGE_PATH.test(url.pathname)) {
+    event.respondWith(handleSavedImage(request, url.pathname + url.search));
   }
   // Anything else falls through to the network untouched — see the module note
   // on why this is an allowlist.

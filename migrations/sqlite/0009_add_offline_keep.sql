@@ -1,0 +1,11 @@
+-- How many entries this reader keeps readable without a connection.
+--
+-- `0` — the default, and the behaviour that shipped before this column — means
+-- offline reading is off and the browser stores nothing belonging to the
+-- reader. Any other value is a cap on the newest unread entries the client
+-- mirrors into its cache; starred entries ride along on top of it, since the
+-- reader has already said those matter.
+--
+-- Stored per user rather than per device on purpose: it is a statement about
+-- what the reader consents to having on disk, not about one browser's storage.
+ALTER TABLE user_settings ADD COLUMN offline_keep INTEGER NOT NULL DEFAULT 0;

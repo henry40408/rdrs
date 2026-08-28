@@ -1,7 +1,12 @@
 {% extends "base.html" %}
 {% import "macros.html" as macros %}
 
-{% block html_attrs %}{% if let Some(t) = layout.theme %} data-theme="{{ t }}"{% endif %}{% endblock %}
+{# `data-offline-*` is on the root element rather than in a bootstrap
+   `<script type="application/json">` because `offline.js` reads it before its
+   first network call, to wipe any cache belonging to a different account. Two
+   attributes cost ~45 bytes; the sidebar's JSON bootstrap pays for itself by
+   replacing a round trip, and this would not. #}
+{% block html_attrs %}{% if let Some(t) = layout.theme %} data-theme="{{ t }}"{% endif %} data-offline-key="{{ layout.offline_key }}" data-offline-keep="{{ layout.offline_keep }}"{% endblock %}
 
 {% block title %}{{ title }} - RDRS{% endblock %}
 
@@ -20,6 +25,10 @@
        /setup never register one — see static/js/pwa.js. No modulepreload: it
        runs on `load` and must not compete with the modules that paint. #}
     <script type="module" src="/static/js/pwa.js?v={{ layout.git_version }}"></script>
+    {# Offline reading: mirrors the reader's queue into the worker's cache and
+       blocks the actions that cannot work without a connection. Like pwa.js it
+       runs after paint and carries no modulepreload. #}
+    <script type="module" src="/static/js/offline.js?v={{ layout.git_version }}"></script>
     {% block page_script %}{% endblock %}
 {% endblock %}
 

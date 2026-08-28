@@ -26,6 +26,7 @@ const FILES: &[(&str, &str)] = &[
     ("js/csrf.js", include_str!("../../static/js/csrf.js")),
     ("js/login.js", include_str!("../../static/js/login.js")),
     ("js/passkey.js", include_str!("../../static/js/passkey.js")),
+    ("js/offline.js", include_str!("../../static/js/offline.js")),
     ("js/pwa.js", include_str!("../../static/js/pwa.js")),
     ("js/setup.js", include_str!("../../static/js/setup.js")),
     ("js/search.js", include_str!("../../static/js/search.js")),
@@ -371,6 +372,19 @@ mod tests {
         assert!(
             SERVICE_WORKER.contains("'/offline'"),
             "sw.js must name the /offline route it falls back to"
+        );
+    }
+
+    /// The worker's other route reference. `/entries/offline` is the reader's
+    /// saved-article library, and the worker answers dead entry-list
+    /// navigations with the cached copy of it; renaming the route without
+    /// editing the worker turns that fallback into a permanent miss, visible
+    /// only as the apology page appearing where the library should be.
+    #[test]
+    fn service_worker_offline_library_matches_the_route() {
+        assert!(
+            SERVICE_WORKER.contains("'/entries/offline'"),
+            "sw.js must name the /entries/offline route it serves saved articles from"
         );
     }
 

@@ -111,6 +111,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/user", get(handlers::user::get_current_user))
         .route("/api/me", get(handlers::user::get_me))
         .route("/api/sidebar", get(handlers::user::get_sidebar))
+        // The sync ledger for offline reading: which entries the browser
+        // should be holding, and under what cache name.
+        .route("/api/offline/manifest", get(handlers::offline::manifest))
         .route(
             "/api/sidebar/categories/{id}/feeds",
             get(handlers::user::get_sidebar_category_feeds),
@@ -234,6 +237,14 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/entries/summarized",
             get(handlers::pages::summarized_entries_page),
+        )
+        // The reader's offline library, and the page the service worker falls
+        // back to for a navigation it cannot reach the network for. A literal
+        // segment, so axum's trie resolves it ahead of the `{id}` route below
+        // regardless of registration order.
+        .route(
+            "/entries/offline",
+            get(handlers::pages::offline_entries_page),
         )
         .route("/entries/{id}", get(handlers::pages::entry_page))
         // Fragment endpoint for the reading pane. Registered after /entries/{id} so

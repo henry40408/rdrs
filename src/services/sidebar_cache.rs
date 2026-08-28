@@ -18,6 +18,11 @@ pub struct CachedChrome {
     /// Cached alongside the data it applies to, and busted by the preferences
     /// form like every other field here.
     pub sidebar_prefs: crate::models::user_settings::SidebarPrefs,
+    /// Entries the reader keeps readable offline. Cached here for the same
+    /// reason as `sidebar_prefs`: it lives in the row this cache already reads,
+    /// so carrying it costs nothing and reading it separately would cost a
+    /// query on every page render.
+    pub offline_keep: i64,
 }
 
 /// Stamp identifying how many times a user's entry has been busted. Taken
@@ -160,6 +165,7 @@ mod tests {
             total_unread: unread,
             total_summarized: 0,
             sidebar_prefs: crate::models::user_settings::SidebarPrefs::default(),
+            offline_keep: crate::models::user_settings::OFFLINE_KEEP_OFF,
         }
     }
 

@@ -555,6 +555,70 @@ pub async fn list_by_user(
         .map_err(AppError::Database)
 }
 
+/// The entries a client mirrors for offline reading, newest first.
+///
+/// `keep` is the whole budget, not a per-category one: the reader asked for
+/// "N entries on my disk" and gets exactly N. Unread entries claim the slots
+/// first, since that is the queue someone takes onto a plane; starred entries
+/// fill whatever is left, which in practice means the read-and-starred ones —
+/// an unread starred entry is already in the first set.
+///
+/// `keep == 0` is offline reading switched off and returns nothing without
+/// touching the database.
+pub async fn list_offline_set(db: &Db, user_id: i64, keep: i64) -> AppResult<Vec<EntryWithFeed>> {
+    if keep <= 0 {
+        return Ok(Vec::new());
+    }
+
+    let unread = list_by_user(
+        db,
+        user_id,
+        &EntryFilter {
+            unread_only: true,
+            ..Default::default()
+        },
+        EntrySortOrder::PublishedAt,
+        keep,
+        0,
+    )
+    .await?;
+
+    let mut seen: std::collections::HashSet<i64> = unread.iter().map(|e| e.entry.id).collect();
+    let mut set = unread;
+
+    let remaining = keep - set.len() as i64;
+    if remaining > 0 {
+        let starred = list_by_user(
+            db,
+            user_id,
+            &EntryFilter {
+                starred_only: true,
+                ..Default::default()
+            },
+            EntrySortOrder::StarredAt,
+            remaining,
+            0,
+        )
+        .await?;
+        // The two queries overlap (an unread entry can be starred), so the
+        // second one is filtered rather than trusted to fit `remaining`. That
+        // leaves the set short of the budget by the size of the overlap, which
+        // is the honest answer: a deduplicated union has no more members.
+        set.extend(starred.into_iter().filter(|e| seen.insert(e.entry.id)));
+    }
+
+    set.sort_by(|a, b| {
+        let key = |e: &EntryWithFeed| {
+            (
+                e.entry.published_at.unwrap_or(e.entry.created_at),
+                e.entry.id,
+            )
+        };
+        key(b).cmp(&key(a))
+    });
+    Ok(set)
+}
+
 pub async fn count_by_user(db: &Db, user_id: i64, filter: &EntryFilter) -> AppResult<i64> {
     let dialect = Dialect::from_db(db);
     let mut conditions = vec!["c.user_id = $1".to_string()];
@@ -1960,6 +2024,120 @@ mod tests {
         .await
         .unwrap()
         .id
+    }
+
+    /// `count` entries on one feed, oldest first, so the last id returned is
+    /// the newest by `published_at`.
+    async fn seed_offline_entries(db: &Db, feed_id: i64, count: usize) -> Vec<i64> {
+        let mut ids = Vec::with_capacity(count);
+        for i in 0..count {
+            let (entry, _) = upsert_entry(
+                db,
+                feed_id,
+                &format!("guid-{i}"),
+                Some(&format!("Entry {i}")),
+                None,
+                Some("body"),
+                None,
+                None,
+                Some(Utc::now() - chrono::Duration::minutes((count - i) as i64)),
+            )
+            .await
+            .unwrap();
+            ids.push(entry.id);
+        }
+        ids
+    }
+
+    #[tokio::test]
+    async fn offline_set_is_empty_when_the_budget_is_zero() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "reader").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+        seed_offline_entries(&db, feed_id, 3).await;
+
+        assert!(list_offline_set(&db, user_id, 0).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn offline_set_takes_the_newest_unread_first() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "reader").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+        let ids = seed_offline_entries(&db, feed_id, 5).await;
+
+        let set = list_offline_set(&db, user_id, 2).await.unwrap();
+        let got: Vec<i64> = set.iter().map(|e| e.entry.id).collect();
+        assert_eq!(got, vec![ids[4], ids[3]]);
+    }
+
+    #[tokio::test]
+    async fn offline_set_fills_the_remaining_budget_with_starred() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "reader").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+        let ids = seed_offline_entries(&db, feed_id, 4).await;
+
+        // Oldest entry: read, so it is out of the unread half, but starred, so
+        // it is exactly what the leftover budget is for.
+        mark_as_read(&db, ids[0]).await.unwrap();
+        star_entry(&db, ids[0]).await.unwrap();
+
+        let set = list_offline_set(&db, user_id, 4).await.unwrap();
+        let got: Vec<i64> = set.iter().map(|e| e.entry.id).collect();
+        assert!(
+            got.contains(&ids[0]),
+            "a starred read entry belongs offline"
+        );
+        assert_eq!(got.len(), 4, "three unread plus the starred one");
+        // Still newest-first overall, so the list reads like every other one.
+        assert_eq!(got[0], ids[3]);
+    }
+
+    #[tokio::test]
+    async fn offline_set_never_repeats_an_entry_that_is_both() {
+        let db = setup_db().await;
+        let user_id = create_test_user(&db, "reader").await;
+        let category_id = create_test_category(&db, user_id, "Tech").await;
+        let feed_id = create_test_feed(&db, category_id, "https://example.com/feed.xml").await;
+        let ids = seed_offline_entries(&db, feed_id, 2).await;
+
+        // Unread *and* starred: in both queries, and a duplicate here would be
+        // a duplicate row on the library page and a wasted slot in the budget.
+        star_entry(&db, ids[0]).await.unwrap();
+
+        let set = list_offline_set(&db, user_id, 10).await.unwrap();
+        let got: Vec<i64> = set.iter().map(|e| e.entry.id).collect();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got.iter().filter(|id| **id == ids[0]).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn offline_set_is_scoped_to_the_reader() {
+        let db = setup_db().await;
+        let mine = create_test_user(&db, "reader").await;
+        let theirs = create_test_user(&db, "other").await;
+        let my_cat = create_test_category(&db, mine, "Tech").await;
+        let their_cat = create_test_category(&db, theirs, "Tech").await;
+        let my_feed = create_test_feed(&db, my_cat, "https://example.com/a.xml").await;
+        let their_feed = create_test_feed(&db, their_cat, "https://example.com/b.xml").await;
+        let my_ids = seed_offline_entries(&db, my_feed, 2).await;
+        let their_ids = seed_offline_entries(&db, their_feed, 2).await;
+
+        let got: Vec<i64> = list_offline_set(&db, mine, 50)
+            .await
+            .unwrap()
+            .iter()
+            .map(|e| e.entry.id)
+            .collect();
+
+        assert_eq!(got.len(), my_ids.len());
+        for id in their_ids {
+            assert!(!got.contains(&id));
+        }
     }
 
     #[tokio::test]

@@ -8,8 +8,10 @@ Feature: Installable app and offline fallback
 
   The worker is registered from the signed-in layout, and precaches exactly two
   things: the offline page and the stylesheet it needs. Nothing that belongs to
-  a reader may ever reach that cache, because every signed-in response is
-  `no-store` and the Cache API honours no such header.
+  a reader may ever reach *that* cache, because every signed-in response is
+  `no-store` and the Cache API honours no such header. Saved articles live in
+  their own per-reader cache, which nothing here turns on — see
+  `offline_reading.feature`.
 
   Scenario: A service worker takes control of the signed-in app
     Given I am signed in
@@ -22,7 +24,7 @@ Feature: Installable app and offline fallback
     And I visit "/entries"
     Then I see the offline page
 
-  Scenario: The worker caches nothing that belongs to the reader
+  Scenario: The worker caches nothing that belongs to the reader by default
     Given I am signed in
     And a service worker controls the page
     Then the worker's cache holds nothing but public assets
