@@ -124,11 +124,25 @@ async fn stop_keeping_entries_offline(world: &mut RdrsWorld) -> Result<()> {
     .await
 }
 
+/// The background's three entries, which is what most of this feature's
+/// scenarios have.
+#[given("my entries have been saved for offline reading")]
+async fn entries_are_saved_offline(world: &mut RdrsWorld) -> Result<()> {
+    wait_for_saved_entries(world, 3).await
+}
+
+/// The same wait for a queue the scenario sized itself: showing that the page
+/// size no longer strands anything needs more entries saved than one page of
+/// the list holds.
+#[given(expr = "{int} entries have been saved for offline reading")]
+async fn counted_entries_are_saved_offline(world: &mut RdrsWorld, count: usize) -> Result<()> {
+    wait_for_saved_entries(world, count).await
+}
+
 /// Waits for the sync to have mirrored the queue. Polls the cache rather than
 /// the network, because "saved" is a statement about what is on disk — a
 /// completed fetch that was never stored is exactly the failure worth catching.
-#[given("my entries have been saved for offline reading")]
-async fn entries_are_saved_offline(world: &mut RdrsWorld) -> Result<()> {
+async fn wait_for_saved_entries(world: &mut RdrsWorld, count: usize) -> Result<()> {
     let driver = world.driver()?;
     eventually("the entry list to be mirrored into the offline cache", || async {
         let paths: Vec<String> = driver
@@ -157,7 +171,7 @@ async fn entries_are_saved_offline(world: &mut RdrsWorld) -> Result<()> {
         // asset walk is transitive rather than a scrape of the current page.
         Ok(paths.iter().any(|p| p == "/entries/offline")
             && paths.iter().any(|p| p == "/static/js/utils.js")
-            && paths.iter().filter(|p| p.ends_with("/fragment")).count() == 3)
+            && paths.iter().filter(|p| p.ends_with("/fragment")).count() == count)
     })
     .await?;
 
@@ -327,4 +341,67 @@ async fn opening_an_entry_still_offered(world: &mut RdrsWorld) -> Result<()> {
 #[then("I am told the action has to wait for the connection")]
 async fn told_the_action_must_wait(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.expect_text("flash-message", "wait").await
+}
+
+#[then("the sidebar offers the saved entries")]
+async fn sidebar_offers_the_library(world: &mut RdrsWorld) -> Result<()> {
+    world.driver()?.expect_visible("nav-offline").await
+}
+
+#[then("the sidebar does not offer the saved entries")]
+async fn sidebar_omits_the_library(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    // Absence only means something once the sidebar has painted: it renders
+    // itself, so before that every item is missing and this would pass against
+    // an empty page.
+    driver.expect_visible("nav-unread").await?;
+    driver.expect_absent("nav-offline").await
+}
+
+/// The scriptless navigation, as a string. With scripting on, a browser parses
+/// `<noscript>` children as text rather than elements, so the fallback nav
+/// cannot be queried — but its source is right there, which is enough to say
+/// whether the server put the link in it.
+async fn scriptless_nav(world: &mut RdrsWorld) -> Result<String> {
+    Ok(world
+        .driver()?
+        .execute(
+            "return document.querySelector('noscript')?.textContent || '';",
+            Vec::new(),
+        )
+        .await?
+        .convert()?)
+}
+
+#[then("the scriptless navigation offers the saved entries")]
+async fn scriptless_nav_offers_the_library(world: &mut RdrsWorld) -> Result<()> {
+    let nav = scriptless_nav(world).await?;
+    ensure!(
+        nav.contains(r#"href="/entries/offline""#),
+        "the scriptless navigation has no way to the saved entries: {nav}"
+    );
+    Ok(())
+}
+
+#[then("the scriptless navigation does not offer the saved entries")]
+async fn scriptless_nav_omits_the_library(world: &mut RdrsWorld) -> Result<()> {
+    let nav = scriptless_nav(world).await?;
+    ensure!(
+        !nav.contains("/entries/offline"),
+        "the scriptless navigation offers a library nothing is being saved to: {nav}"
+    );
+    Ok(())
+}
+
+/// The click the whole gap comes down to. Offline this is a real navigation the
+/// service worker answers from the cache, which is why the link has to be one
+/// of the few `offline.js` leaves live.
+#[when("I open the saved entries from the sidebar")]
+async fn open_the_library_from_the_sidebar(world: &mut RdrsWorld) -> Result<()> {
+    let link = world
+        .driver()?
+        .css(r#"rdrs-sidebar [data-testid="nav-offline"]"#)
+        .await?;
+    rdrs_e2e::dom::click_when_ready(&link).await?;
+    world.expect_path("/entries/offline").await
 }

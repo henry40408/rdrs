@@ -86,6 +86,34 @@ Feature: Offline reading
     And my entries have been saved for offline reading
     Then nothing has been asked of the server that names no file
 
+  # A list page holds 50 rows and Load More reaches the server, so with the
+  # connection gone everything past the first page is out of reach — however
+  # much of it the browser is actually holding. The library is where all of it
+  # is, and the sidebar is the only way in.
+  Scenario: Everything saved is one click away when Load More cannot help
+    Given I have a feed "Long Feed" with 51 test entries in category "Long Category"
+    And I keep 200 entries for offline reading
+    And a service worker controls the page
+    And 54 entries have been saved for offline reading
+    When I open the inbox
+    And the network goes offline
+    And I open the first entry in the list
+    Then Load More is disabled
+    And I see 50 entries in the entry list
+    When I open the saved entries from the sidebar
+    Then I see 54 entries in the entry list
+
+  Scenario: Both navigations lead to the library once entries are being saved
+    Given I keep 10 entries for offline reading
+    When I open the inbox
+    Then the sidebar offers the saved entries
+    And the scriptless navigation offers the saved entries
+
+  Scenario: Neither offers it while nothing is being saved
+    When I open the inbox
+    Then the sidebar does not offer the saved entries
+    And the scriptless navigation does not offer the saved entries
+
   Scenario: Turning offline reading off throws the saved entries away
     Given I keep 10 entries for offline reading
     And a service worker controls the page

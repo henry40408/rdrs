@@ -748,6 +748,18 @@ neither: `performSwap` issues that fetch itself and, when it throws, asks
 means the request stays visible to anything watching the network, the E2E
 harness's CDP interception included.
 
+**The library page is the way to all of it.** `GET /entries/offline`
+(`pages::offline_entries_page`) lists the whole saved set at once — no Load
+More, no search, no bulk actions, because every one of those needs the network.
+That is also why it is not optional chrome: an ordinary list is capped at
+`entries_per_page` and its Load More reaches the server, so offline a reader
+would otherwise see only the first page of what their own browser is holding.
+`<rdrs-sidebar>` offers the link, and `app_layout.html`'s scriptless nav a plain
+one, whenever `offline_keep > 0` — read off the `data-offline-key`'s companion
+`data-offline-keep`, so the sidebar's own payload does not have to carry a value
+that only changes across a full page load. The worker answers dead `/` and
+`/entries/*` navigations with the cached copy of this page.
+
 **Per-reader, and gone on sign-out.** The cache is named
 `rdrs-offline-<secret::offline_id(user_id)>` — an opaque tag rather than a user
 id, because the name is handed to page JavaScript. `offline.js` deletes every

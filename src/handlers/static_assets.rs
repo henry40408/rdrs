@@ -388,6 +388,24 @@ mod tests {
         );
     }
 
+    /// The third reference to that route, and the only one a reader can click.
+    /// `rdrs-sidebar.js` writes its own markup with no Askama counterpart, so a
+    /// link dropped from it goes missing silently — and with it every way into
+    /// the library, since Load More reaches the server and a list truncated at
+    /// the page size is exactly what a reader offline cannot extend.
+    #[test]
+    fn the_sidebar_offers_the_offline_library() {
+        let sidebar = FILES
+            .iter()
+            .find(|(name, _)| *name == "js/components/rdrs-sidebar.js")
+            .expect("the sidebar component is embedded")
+            .1;
+        assert!(
+            sidebar.contains(r#"href="/entries/offline""#),
+            "the sidebar must link /entries/offline — nothing else does"
+        );
+    }
+
     /// The worker script as it is actually served, placeholders substituted.
     async fn served_worker_body() -> String {
         let resp = service_worker().await;
