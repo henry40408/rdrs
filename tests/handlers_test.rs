@@ -5275,6 +5275,12 @@ async fn test_entries_load_more_returns_row_fragments() {
     common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    // Pinned rather than left to the default: this test is about append
+    // semantics, and the row counts below should not move the next time
+    // `DEFAULT_ENTRIES_PER_PAGE` does.
+    rdrs::models::user_settings::upsert(&app.db, user_id, 50)
+        .await
+        .unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "LoadMore Cat")
         .await
         .unwrap();

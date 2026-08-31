@@ -110,6 +110,16 @@ async fn can_sign_in_with(world: &mut RdrsWorld, password: String) -> Result<()>
     world.expect_path("/").await
 }
 
+#[when(expr = "I set entries per page to {string}")]
+async fn set_entries_per_page(world: &mut RdrsWorld, count: String) -> Result<()> {
+    let driver = world.driver()?;
+    driver.fill("entries-per-page", &count).await?;
+    driver
+        .submit_css(&format!("{PREFERENCES_FORM} button[type=submit]"))
+        .await?;
+    world.expect_path("/user-settings").await
+}
+
 #[when(expr = "I set the retention period to {string} days")]
 async fn set_retention(world: &mut RdrsWorld, days: String) -> Result<()> {
     let driver = world.driver()?;

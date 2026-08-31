@@ -149,7 +149,7 @@
                     </div>
                     <div class="form-group">
                         <label for="entries-per-page">Entries per page</label>
-                        <input type="number" id="entries-per-page" name="entries_per_page" value="{{ entries_per_page }}" min="10" max="100" list="entries-per-page-list" autocomplete="off" required>
+                        <input type="number" id="entries-per-page" name="entries_per_page" value="{{ entries_per_page }}" min="10" max="100" list="entries-per-page-list" autocomplete="off" data-testid="entries-per-page" required>
                         <datalist id="entries-per-page-list">
                             {% for v in entries_per_page_suggestions %}<option value="{{ v }}">{% endfor %}
                         </datalist>
