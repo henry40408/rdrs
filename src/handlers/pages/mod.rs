@@ -282,6 +282,26 @@ pub(crate) fn row_view_from(
     }
 }
 
+/// How many rows a list page renders before it offers Load More.
+///
+/// Read per request rather than folded into the cached chrome: this is the
+/// reader's own `entries_per_page`, and a cached copy shows up as a list that
+/// ignores the number they just saved.
+///
+/// Clamped rather than trusted. `upsert` enforces the range on the way in, but
+/// the value survives in a row that other code paths create, and every caller
+/// below casts it to `usize` — a negative or absurd number here would be a
+/// panic or an unbounded query rather than a wrong-looking page.
+async fn entries_page_size(state: &AppState, user_id: i64) -> i64 {
+    user_settings::get_entries_per_page(&state.db, user_id)
+        .await
+        .unwrap_or(user_settings::DEFAULT_ENTRIES_PER_PAGE)
+        .clamp(
+            user_settings::MIN_ENTRIES_PER_PAGE,
+            user_settings::MAX_ENTRIES_PER_PAGE,
+        )
+}
+
 /// Fetch a page of entries and map them to `EntryRowView`s.
 /// Returns `(rows, next_cursor)` where `next_cursor` is `Some(<sort_ts>|<id>)`
 /// (an opaque composite cursor token) when more results exist beyond this page.
@@ -306,7 +326,7 @@ pub(crate) async fn build_entries_page(
             entry::list_by_user_with_continuation(&state.db, user_id, &filter, &params).await?;
         #[allow(
             clippy::cast_sign_loss,
-            reason = "`page_size` is a small positive constant (PAGE_SIZE = 50)"
+            reason = "`entries_page_size` clamps to MIN..=MAX_ENTRIES_PER_PAGE, so this is small and positive"
         )]
         let kept_len = rows.len().min(page_size as usize);
         // The next cursor comes from the last KEPT row — the sentinel row beyond
@@ -813,8 +833,8 @@ pub async fn unread_page(
     flash: Flash,
     Query(query): Query<EntriesQuery>,
 ) -> Response {
-    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
+    let page_size = entries_page_size(&state, user_id).await;
     let filter = entry::EntryFilter {
         unread_only: true,
         // Absent on a normal page load — only the Load-More form echoes it —
@@ -833,7 +853,7 @@ pub async fn unread_page(
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            PAGE_SIZE,
+            page_size,
             cursor,
         )
         .await;
@@ -857,7 +877,7 @@ pub async fn unread_page(
         user_id,
         filter,
         entry::EntrySortOrder::PublishedAt,
-        PAGE_SIZE,
+        page_size,
         None,
     )
     .await;
@@ -1480,8 +1500,8 @@ pub async fn entries_page(
     flash: Flash,
     Query(query): Query<EntriesQuery>,
 ) -> Response {
-    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
+    let page_size = entries_page_size(&state, user_id).await;
     let filter = entry::EntryFilter::default();
 
     if query.fragment == Some(1) {
@@ -1494,7 +1514,7 @@ pub async fn entries_page(
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            PAGE_SIZE,
+            page_size,
             cursor,
         )
         .await;
@@ -1519,7 +1539,7 @@ pub async fn entries_page(
         user_id,
         filter,
         entry::EntrySortOrder::PublishedAt,
-        PAGE_SIZE,
+        page_size,
         None,
     )
     .await;
@@ -1672,8 +1692,8 @@ pub async fn read_entries_page(
     flash: Flash,
     Query(query): Query<EntriesQuery>,
 ) -> Response {
-    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
+    let page_size = entries_page_size(&state, user_id).await;
     let filter = entry::EntryFilter {
         read_only: true,
         ..Default::default()
@@ -1689,7 +1709,7 @@ pub async fn read_entries_page(
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            PAGE_SIZE,
+            page_size,
             cursor,
         )
         .await;
@@ -1714,7 +1734,7 @@ pub async fn read_entries_page(
         user_id,
         filter,
         entry::EntrySortOrder::PublishedAt,
-        PAGE_SIZE,
+        page_size,
         None,
     )
     .await;
@@ -1765,8 +1785,8 @@ pub async fn starred_entries_page(
     flash: Flash,
     Query(query): Query<EntriesQuery>,
 ) -> Response {
-    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
+    let page_size = entries_page_size(&state, user_id).await;
     let filter = entry::EntryFilter {
         starred_only: true,
         ..Default::default()
@@ -1782,7 +1802,7 @@ pub async fn starred_entries_page(
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            PAGE_SIZE,
+            page_size,
             cursor,
         )
         .await;
@@ -1807,7 +1827,7 @@ pub async fn starred_entries_page(
         user_id,
         filter,
         entry::EntrySortOrder::PublishedAt,
-        PAGE_SIZE,
+        page_size,
         None,
     )
     .await;
@@ -1935,8 +1955,8 @@ pub async fn summarized_entries_page(
     flash: Flash,
     Query(query): Query<EntriesQuery>,
 ) -> Response {
-    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
+    let page_size = entries_page_size(&state, user_id).await;
     let filter = entry::EntryFilter {
         has_summary: Some(true),
         ..Default::default()
@@ -1952,7 +1972,7 @@ pub async fn summarized_entries_page(
             user_id,
             filter,
             entry::EntrySortOrder::PublishedAt,
-            PAGE_SIZE,
+            page_size,
             cursor,
         )
         .await;
@@ -1977,7 +1997,7 @@ pub async fn summarized_entries_page(
         user_id,
         filter,
         entry::EntrySortOrder::PublishedAt,
-        PAGE_SIZE,
+        page_size,
         None,
     )
     .await;
@@ -2028,8 +2048,8 @@ pub async fn category_entries_page(
     Query(query): Query<EntriesQuery>,
     flash: Flash,
 ) -> Result<Response, AppError> {
-    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
+    let page_size = entries_page_size(&state, user_id).await;
 
     let lookup = async {
         let cat = category::find_by_id_and_user(&state.db, id, user_id)
@@ -2082,7 +2102,7 @@ pub async fn category_entries_page(
         user_id,
         filter,
         entry::EntrySortOrder::PublishedAt,
-        PAGE_SIZE,
+        page_size,
         cursor,
     )
     .await;
@@ -2335,8 +2355,8 @@ pub async fn feed_entries_page(
     Query(query): Query<EntriesQuery>,
     flash: Flash,
 ) -> Result<Response, AppError> {
-    const PAGE_SIZE: i64 = 50;
     let user_id = auth_user.user.id;
+    let page_size = entries_page_size(&state, user_id).await;
 
     let lookup = async {
         let f = feed::find_by_id(&state.db, id)
@@ -2405,7 +2425,7 @@ pub async fn feed_entries_page(
         user_id,
         filter,
         entry::EntrySortOrder::PublishedAt,
-        PAGE_SIZE,
+        page_size,
         cursor,
     )
     .await;

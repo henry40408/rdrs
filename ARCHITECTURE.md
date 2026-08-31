@@ -526,6 +526,11 @@ the floor. The entries-family routes answer with four shapes:
   search, which `NeighborsQuery` has no field for and the server therefore
   answers across the unsearched set.
 - **Load More** — `?fragment=1&after=<cursor>` appends rows before `#load-more`.
+  How many rows a page holds is the reader's own `entries_per_page`, via
+  `entries_page_size` — read per request rather than from the cached chrome, and
+  clamped to `MIN..=MAX_ENTRIES_PER_PAGE` because the value reaches a SQL `LIMIT`
+  and a `usize` cast. Both the full render and the fragment arm ask for it, so
+  the appended page is the same size as the first.
 - **list refresh** — `?fragment=1` (no cursor) re-renders `[data-entries-list]`
   and the "Mark N matching" slot, leaving the focused search box alone. That box
   lives in a drawer above `.list-pane-header`, opened by the filter-bar

@@ -58,7 +58,7 @@ Feature: Offline reading
     And the network goes offline
     And I open the first entry in the list
     Then I am told the action has to wait for the connection
-    And I see 50 entries in the entry list
+    And I see 30 entries in the entry list
     And Load More is disabled
 
   Scenario: Everything that needs the server is visibly out of reach
@@ -86,8 +86,8 @@ Feature: Offline reading
     And my entries have been saved for offline reading
     Then nothing has been asked of the server that names no file
 
-  # A list page holds 50 rows and Load More reaches the server, so with the
-  # connection gone everything past the first page is out of reach — however
+  # A list page holds one page of rows and Load More reaches the server, so with
+  # the connection gone everything past the first page is out of reach — however
   # much of it the browser is actually holding. The library is where all of it
   # is, and the sidebar is the only way in.
   Scenario: Everything saved is one click away when Load More cannot help
@@ -99,7 +99,7 @@ Feature: Offline reading
     And the network goes offline
     And I open the first entry in the list
     Then Load More is disabled
-    And I see 50 entries in the entry list
+    And I see 30 entries in the entry list
     When I open the saved entries from the sidebar
     Then I see 54 entries in the entry list
 

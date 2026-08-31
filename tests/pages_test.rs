@@ -4110,6 +4110,12 @@ async fn test_unread_load_more_uses_keyset_cursor() {
     common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    // Pinned rather than left to the default: this test is about the keyset
+    // cursor, and its row counts should not move the next time
+    // `DEFAULT_ENTRIES_PER_PAGE` does.
+    rdrs::models::user_settings::upsert(&app.db, user_id, 50)
+        .await
+        .unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "K")
         .await
         .unwrap();
@@ -4208,6 +4214,145 @@ fn extract_snapshot_value(html: &str) -> Option<String> {
     Some(rest[..j].to_string())
 }
 
+/// Seed `count` entries on a fresh account and hand back its user id.
+async fn seed_paging_account(app: &mut TestApp, name: &str, count: u32) -> i64 {
+    app.server
+        .post("/api/setup")
+        .json(&json!({ "username": name, "password": "vulture-mango-77-quilt" }))
+        .await
+        .assert_status(StatusCode::CREATED);
+    let login = app
+        .server
+        .post("/api/session")
+        .json(&json!({ "username": name, "password": "vulture-mango-77-quilt" }))
+        .await;
+    login.assert_status_ok();
+    common::apply_csrf(&mut app.server, &login);
+
+    let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    let cat = rdrs::models::category::create_category(&app.db, user_id, "P")
+        .await
+        .unwrap();
+    let feed = rdrs::models::feed::create_feed(
+        &app.db,
+        &rdrs::models::feed::CreateFeedParams {
+            category_id: cat.id,
+            url: "https://x/paging-feed",
+            title: Some("P Feed"),
+            description: None,
+            site_url: None,
+            custom_user_agent: None,
+            http2_disabled: None,
+            custom_referrer: None,
+        },
+    )
+    .await
+    .unwrap();
+    for i in 0..count {
+        rdrs::models::entry::upsert_entry(
+            &app.db,
+            feed.id,
+            &format!("pg-{i}"),
+            Some(&format!("P {i}")),
+            None,
+            None,
+            None,
+            None,
+            Some(
+                chrono::Utc
+                    .with_ymd_and_hms(2024, 1, 1, 0, i / 60, i % 60)
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap();
+    }
+    user_id
+}
+
+/// `entries_per_page` used to decide nothing at all: every list handler
+/// paginated by a hardcoded 50 and the preference was read only to fill in its
+/// own field on the settings form.
+///
+/// Checked across two views and the Load-More branch because the constant was
+/// declared once per handler, and once more inside the fragment arm of each —
+/// a fix that reached only the full render would leave the second page a
+/// different size from the first.
+#[tokio::test]
+async fn test_entries_per_page_decides_what_a_list_renders() {
+    let mut app = create_test_app_named(default_test_config(), "test_per_page").await;
+    let user_id = seed_paging_account(&mut app, "pageuser", 25).await;
+
+    rdrs::models::user_settings::upsert(&app.db, user_id, 10)
+        .await
+        .unwrap();
+
+    for path in ["/", "/entries"] {
+        let html = app.server.get(path).await.text();
+        assert_eq!(
+            extract_entry_ids(&html).len(),
+            10,
+            "{path} should render the reader's page size, not a constant"
+        );
+        assert!(
+            html.contains("id=\"load-more\""),
+            "{path} holds 25 entries at 10 a page, so a second page is owed"
+        );
+    }
+
+    let html = app.server.get("/").await.text();
+    let cursor = extract_after_value(&html).expect("Load More must carry a cursor");
+    let fragment = app
+        .server
+        .get("/")
+        .add_query_param("fragment", "1")
+        .add_query_param("after", cursor)
+        .await
+        .text();
+    assert_eq!(
+        extract_entry_ids(&fragment).len(),
+        10,
+        "the appended page must be the same size as the first"
+    );
+
+    // Raised past the total: one page, and nothing left to ask for.
+    rdrs::models::user_settings::upsert(&app.db, user_id, 25)
+        .await
+        .unwrap();
+    let html = app.server.get("/").await.text();
+    assert_eq!(extract_entry_ids(&html).len(), 25);
+    assert!(!html.contains("id=\"load-more\""));
+}
+
+/// `upsert` refuses anything outside 10..=100, but it is not the only writer of
+/// that column, and the value reaches a SQL `LIMIT` and a `usize` cast. A
+/// negative one is not a smaller page — it is no limit at all, which is the
+/// reader's entire backlog in one response.
+#[tokio::test]
+async fn test_a_nonsense_stored_page_size_is_clamped() {
+    let mut app = create_test_app_named(default_test_config(), "test_per_page_clamp").await;
+    let user_id = seed_paging_account(&mut app, "clampuser", 25).await;
+
+    rdrs::models::user_settings::upsert(&app.db, user_id, 10)
+        .await
+        .unwrap();
+    rdrs::db_execute!(
+        &app.db,
+        "UPDATE user_settings SET entries_per_page = $1 WHERE user_id = $2",
+        -5i64,
+        user_id
+    )
+    .unwrap();
+
+    let html = app.server.get("/").await.text();
+
+    assert_eq!(
+        extract_entry_ids(&html).len(),
+        10,
+        "a negative page size must fall back to the floor, not to every entry"
+    );
+}
+
 /// Reading past the end of the loaded page used to lose the reader's place: the
 /// entry they opened became read, Load More re-queried the *unread* list without
 /// it, and the row `app.js` was waiting for never arrived (issue #482).
@@ -4232,6 +4377,12 @@ async fn test_unread_load_more_keeps_an_entry_read_during_this_page_view() {
     common::apply_csrf(&mut app.server, &__login);
 
     let user_id: i64 = rdrs::query_scalar!(&app.db, i64, "SELECT id FROM user LIMIT 1").unwrap();
+    // Pinned rather than left to the default: this test is about the snapshot
+    // that keeps a just-read entry on the page being viewed, and its row counts
+    // should not move the next time `DEFAULT_ENTRIES_PER_PAGE` does.
+    rdrs::models::user_settings::upsert(&app.db, user_id, 50)
+        .await
+        .unwrap();
     let cat = rdrs::models::category::create_category(&app.db, user_id, "S")
         .await
         .unwrap();
