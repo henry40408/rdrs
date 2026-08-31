@@ -314,6 +314,34 @@ async fn library_says_so_when_offline_reading_is_off() {
     assert!(body.contains("Settings"));
 }
 
+/// The reason this page exists at all. Every other list stops at a page of 50
+/// and offers Load More, which reaches the server — so with the connection gone
+/// a reader could otherwise see only the first page of a library their own
+/// browser is holding in full.
+#[tokio::test]
+async fn library_lists_the_whole_budget_past_the_first_page_of_a_list() {
+    let mut app = create_test_app(default_test_config()).await;
+    seed_users(&app.db).await;
+    let ids = seed_entries(&app.db, "reader", 55).await;
+    set_keep(&app.db, "reader", 200).await;
+    login(&mut app.server, "reader").await;
+
+    let inbox = app.server.get("/").await.text();
+    assert!(
+        inbox.contains("id=\"load-more\""),
+        "sanity: 55 entries is expected to leave a second page of the inbox"
+    );
+
+    let body = app.server.get("/entries/offline").await.text();
+    for id in &ids {
+        assert!(
+            body.contains(&format!("entry-row-{id}")),
+            "entry {id} is saved but the library page does not list it"
+        );
+    }
+    assert!(!body.contains("id=\"load-more\""));
+}
+
 #[tokio::test]
 async fn library_requires_a_session() {
     let app = create_test_app(default_test_config()).await;
@@ -422,6 +450,40 @@ async fn signed_in_pages_carry_the_cache_name_and_budget() {
     assert!(body.contains("data-offline-key=\""));
     assert!(body.contains("data-offline-keep=\"50\""));
     assert!(body.contains("/static/js/offline.js"));
+}
+
+/// The scriptless half of the way in. `<rdrs-sidebar>` renders the link for
+/// everyone else, but a reader with no JavaScript has only this nav — and with
+/// Load More out of reach offline, a page they cannot navigate away from is a
+/// page they cannot get past.
+#[tokio::test]
+async fn the_scriptless_navigation_leads_to_the_library() {
+    let mut app = create_test_app(default_test_config()).await;
+    seed_users(&app.db).await;
+    seed_entries(&app.db, "reader", 1).await;
+    set_keep(&app.db, "reader", 50).await;
+    login(&mut app.server, "reader").await;
+
+    let body = app.server.get("/").await.text();
+
+    assert!(body.contains("href=\"/entries/offline\""));
+}
+
+/// The other state, in its own app: the chrome a page is built from is read
+/// once per session and cached, so one request cannot observe the setting on
+/// both sides of a change.
+#[tokio::test]
+async fn the_scriptless_navigation_omits_the_library_while_nothing_is_saved() {
+    let mut app = create_test_app(default_test_config()).await;
+    seed_users(&app.db).await;
+    seed_entries(&app.db, "reader", 1).await;
+    login(&mut app.server, "reader").await;
+
+    let body = app.server.get("/").await.text();
+
+    // A link to a page nothing is being saved to is an invitation to an empty
+    // list.
+    assert!(!body.contains("/entries/offline"));
 }
 
 #[tokio::test]

@@ -37,6 +37,7 @@ const ICON = {
   shield: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v5c0 5-3.5 8-8 9.5C7.5 19 4 16 4 11V6z"/></svg>',
   menu: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>',
   close: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  download: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11"/><path d="m8 10.5 4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>',
 };
 
 const SIDEBAR_CACHE_KEY = 'rdrs.sidebar.v1';
@@ -156,6 +157,18 @@ function arrangeSidebarRows(rows, prefs, keepId) {
         out = out.slice().sort((a, b) => b.unread_count - a.unread_count);
     }
     return out;
+}
+
+/// Whether this reader keeps a library for offline reading.
+///
+/// Read off `<html data-offline-keep>`, where the server already renders it for
+/// `offline.js`, rather than added to the sidebar's own payload: that payload is
+/// revalidated in the background and mirrored in sessionStorage, while this
+/// number only ever changes across a full page load. Carrying it there would
+/// give one value two lifetimes.
+function offlineLibraryKept() {
+    const keep = Number.parseInt(document.documentElement.dataset.offlineKeep || '0', 10);
+    return Number.isFinite(keep) && keep > 0;
 }
 
 /// Shared by `render()` and `_applyActive()` so the class a fresh render paints
@@ -589,6 +602,19 @@ class RdrsSidebar extends HTMLElement {
                 <span>App</span>
             </a>` : '';
 
+        // The only route into the saved-article library, and the reason it
+        // needs one: everything else on a list reaches the server, Load More
+        // included, so a reader whose connection dropped partway down a page is
+        // left with whatever happened to be rendered and no way to the rest of
+        // what their own browser is holding. Offered only above
+        // `offline_keep = 0`, where nothing is stored and the destination would
+        // be a permanently empty page.
+        const offlineLink = offlineLibraryKept() ? `
+            <a href="/entries/offline" class="sidebar-item${isActive('offline')}" data-nav="offline" data-testid="nav-offline">
+                <span class="sidebar-item-icon">${ICON.download}</span>
+                <span>Offline</span>
+            </a>` : '';
+
         const adminLink = isAdmin ? `
             <a href="/admin" class="sidebar-item${isActive('admin')}" data-nav="admin" data-testid="nav-admin">
                 <span class="sidebar-item-icon">${ICON.shield}</span>
@@ -640,7 +666,7 @@ class RdrsSidebar extends HTMLElement {
             <a href="/entries" class="sidebar-item${isActive('entries')}" data-nav="entries" data-testid="nav-entries">
                 <span class="sidebar-item-icon">${ICON.list}</span>
                 <span>All Entries</span>
-            </a>
+            </a>${offlineLink}
         </div>
         ${categoriesHtml}
         <div class="sidebar-section">

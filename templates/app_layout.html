@@ -63,6 +63,9 @@
             <a href="/entries">All</a>
             <a href="/entries/starred">Starred</a>
             <a href="/entries/summarized">Summarized</a>
+            {# Only for readers who turned offline reading on, which also keeps
+               this off the byte budget measured above for everyone else. #}
+            {% if layout.offline_keep > 0 %}<a href="/entries/offline">Offline</a>{% endif %}
             <a href="/categories">Categories</a>
             <a href="/feeds">Feeds</a>
             <a href="/search">Search</a>
