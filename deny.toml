@@ -18,25 +18,9 @@ ignore = [
     # silences the separate `yanked = "deny"` check for the same crate.
     "RUSTSEC-2026-0105",
     "core2@0.4.0",
-    # chacha20 0.10.0 is yanked, and so is 0.10.1 — 0.10.2 is the only release
-    # left standing and it is a day old, inside the cooldown we hold new
-    # dependency versions to. Reached transitively through `rand`, never called
-    # directly by rdrs. Accepted deliberately and briefly: drop this entry and
-    # take 0.10.2 once it has aged. Tracked in issue #520.
-    "chacha20@0.10.0",
     # paste (proc-macro helper) is no longer maintained; still pulled in
     # transitively, no maintained replacement wired up.
     "RUSTSEC-2024-0436",
-    # ttf-parser (RUSTSEC-2026-0192) and rustybuzz (RUSTSEC-2026-0206) are both
-    # unmaintained, pulled in transitively via the same resvg/usvg text stack we
-    # use only as a build-dependency for favicon rendering. Neither has a
-    # maintained fix — ttf-parser 0.25.1 and rustybuzz 0.20.1 are the latest
-    # releases and resvg 0.47.0 (our current, latest) still pins them — so they
-    # can't be cleared by a version bump; revisit when the resvg chain drops or
-    # replaces them. Tracked in issue #346 (the ammonia/anyhow entries there are
-    # now resolved).
-    "RUSTSEC-2026-0192",
-    "RUSTSEC-2026-0206",
 ]
 
 [licenses]
