@@ -786,6 +786,25 @@ the controls that need the network is dozens and falls behind the next one
 added. A `MutationObserver`, running only while offline, keeps the marks true
 across swaps and `<rdrs-sidebar>`'s own re-renders.
 
+**The connection is a lamp, not an announcement.** `<html data-offline>` is
+`setOffline`'s whole published interface: the stylesheet greys out the controls
+above from it, and `<rdrs-sidebar>`'s connection lamp — a dot in the sidebar
+header, amber and captioned "Offline" while the attribute is set, muted green
+with the word left to screen readers otherwise — is CSS reacting to the same
+attribute rather than state the component holds. Offline the dot breathes
+(`conn-breathe`, 2.6 s), because offline is a *wait*: `setOffline` re-probes
+every 30 s and a solid light reads as a dead indicator where a breathing one
+says the app is still trying. Only offline; the light a reader looks at all day
+holds still, and the sheet's global `prefers-reduced-motion` rule stops the
+breath for anyone who asked it to. That is deliberate: the sidebar
+rebuilds its own `innerHTML` on every mark-as-read, and a lamp kept as a
+property would need re-applying after each one, with the render that forgot
+leaving a green light and no connection. On narrow screens the sidebar is a
+closed drawer, so the hamburger carries the offline half of it as a badge —
+only that half, since a permanent "all is well" marker on the button is exactly
+the noise this replaced. Losing a connection used to raise a flash banner too;
+a state that comes and goes on its own belongs in a light that is always there.
+
 Nothing is queued for later. What replaces that is not losing the reader's
 place: `performSwap` used to answer a failed GET with a real navigation, so a
 dead Load More threw them off the list they still had onto the offline page.

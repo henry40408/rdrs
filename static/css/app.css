@@ -384,6 +384,7 @@ body:has(.nav-fallback) .main-content {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: var(--space-2);
     flex-shrink: 0;
 }
 
@@ -410,6 +411,56 @@ body:has(.nav-fallback) .main-content {
     line-height: 1;
 }
 .sidebar-close .ico { width: 20px; height: 20px; }
+
+/* ===== Connection lamp =====
+   State, not an announcement: `offline.js` toggles `<html data-offline>` and
+   everything here reacts to it, which is why this replaced a flash banner that
+   covered part of the list every time a connection blinked.
+
+   `margin-left: auto` rather than the header's own space-between, so the lamp
+   sits against the right edge in both layouts — on mobile the close button
+   joins the row and space-between would strand the lamp in the middle. */
+.conn-status {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: none;
+    font-size: var(--font-xs);
+    color: var(--color-text-muted);
+}
+
+.conn-dot {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--color-success);
+    /* The healthy state is the one on screen all day; it reads as reassurance
+       at this weight and as decoration at full strength. */
+    opacity: 0.5;
+}
+
+/* Offline is a wait, not a verdict: `offline.js` re-probes every 30 s, and a
+   light that breathes says the app is still trying where a solid one reads as
+   a dead indicator. Slow enough (2.6 s against the summary badge's 1 s) to sit
+   in the corner of the eye without pulling it, and it never dims past the
+   point of being readable as amber. The global `prefers-reduced-motion` rule
+   stops it; the word beside it carries the state either way. */
+@keyframes conn-breathe {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+:root[data-offline] .conn-dot {
+    background: var(--color-warning);
+    opacity: 1;
+    animation: conn-breathe 2.6s ease-in-out infinite;
+}
+
+.conn-state--offline { display: none; }
+:root[data-offline] .conn-state--online { display: none; }
+:root[data-offline] .conn-state--offline { display: inline; }
 
 .sidebar-nav {
     flex: 1;
@@ -2821,6 +2872,22 @@ summary {
 
     .sidebar-toggle {
         display: flex;
+    }
+
+    /* The lamp itself lives in the drawer, which is closed here — so the
+       hamburger carries the offline half of it. Only that half: a badge that
+       said "everything is fine" would sit on the button all day. */
+    :root[data-offline] .sidebar-toggle::after {
+        content: "";
+        position: absolute;
+        top: -3px;
+        right: -3px;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--color-warning);
+        border: 2px solid var(--color-bg);
+        animation: conn-breathe 2.6s ease-in-out infinite;
     }
 
     .main-content {

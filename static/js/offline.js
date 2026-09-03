@@ -65,12 +65,15 @@ function prefetchUrl(id) {
   return `${fragmentPath(id)}?offline=1`;
 }
 
-/** Reader's cache name and budget, as the server rendered them into the page. */
-function pageConfig() {
-  const root = document.documentElement;
-  const key = root.dataset.offlineKey || '';
-  const keep = Number.parseInt(root.dataset.offlineKeep || '0', 10);
-  return { key, keep: Number.isFinite(keep) ? keep : 0 };
+/**
+ * The reader's cache key, as the server rendered it into the page.
+ *
+ * The budget lives beside it in `data-offline-keep`, but only the manifest's
+ * copy is acted on: it is minted by the session that just answered, while the
+ * document's may predate a change to the setting.
+ */
+function pageCacheKey() {
+  return document.documentElement.dataset.offlineKey || '';
 }
 
 /**
@@ -281,9 +284,9 @@ async function cacheShellAssets(cache) {
 async function sync() {
   if (!('caches' in window)) return;
 
-  const page = pageConfig();
-  await dropForeignCaches(page.key);
-  if (!page.key) return;
+  const pageKey = pageCacheKey();
+  await dropForeignCaches(pageKey);
+  if (!pageKey) return;
 
   let manifest;
   try {
@@ -302,7 +305,7 @@ async function sync() {
   // The manifest's key wins over the page's: the document may have been
   // rendered before a masquerade started or ended, and this one was minted for
   // the session that just answered.
-  if (manifest.cache_key !== page.key) await dropForeignCaches(manifest.cache_key);
+  if (manifest.cache_key !== pageKey) await dropForeignCaches(manifest.cache_key);
 
   const name = CACHE_PREFIX + manifest.cache_key;
   if (!manifest.keep || manifest.keep <= 0) {
@@ -428,7 +431,7 @@ function scheduleSync(delay = 0) {
  * after them.
  */
 async function readerCache() {
-  const { key } = pageConfig();
+  const key = pageCacheKey();
   if (!key) return null;
   const name = CACHE_PREFIX + key;
   return (await caches.has(name)) ? caches.open(name) : null;
@@ -558,7 +561,6 @@ const RECHECK_MS = 30000;
  * fails and then says so — which is the design here anyway.
  */
 let offlineNow = false;
-let offlineKeep = 0;
 let recheckTimer = 0;
 
 /**
@@ -570,6 +572,12 @@ let recheckTimer = 0;
  * own offline emulation, so a UI driven by it is disabled in neither case. What
  * this tracks instead is evidence — a request that threw, or one that came
  * back — which is the same thing the reader is judging by.
+ *
+ * `data-offline` on the root element is the whole published interface: the CSS
+ * greys out the controls marked below, and the sidebar's connection lamp reads
+ * the same attribute. Losing a connection used to raise a toast as well, which
+ * put a banner over the list on every blink — a state that comes and goes on
+ * its own belongs in a light that is always there, not in a message.
  */
 function setOffline(next) {
   if (next === offlineNow) return offlineNow;
@@ -579,7 +587,6 @@ function setOffline(next) {
   clearTimeout(recheckTimer);
   if (next) {
     watchForNewControls();
-    if (offlineKeep > 0) flash('info', 'You are offline. Saved entries are still readable.');
     recheckTimer = setTimeout(() => scheduleSync(), RECHECK_MS);
   } else {
     stopWatching();
@@ -588,9 +595,7 @@ function setOffline(next) {
 }
 
 /** Stop the controls that need a server, and say so. */
-function installOfflineGuards(keep) {
-  offlineKeep = keep;
-
+function installOfflineGuards() {
   // The events are still worth listening to — a browser reporting the
   // *transition* is the fastest signal there is, and far better founded than
   // the same flag read cold at startup. They are just not the only signal.
@@ -604,12 +609,11 @@ function installOfflineGuards(keep) {
 }
 
 if ('serviceWorker' in navigator && 'caches' in window) {
-  const { keep } = pageConfig();
   // `performSwap` owns the fetch that fails first when a connection drops
   // mid-session, so it reports that here rather than waiting for the next sync
   // to notice. Same arrangement as `window.flash`.
   window.rdrsOffline = { fragment: savedFragment, networkFailed: () => setOffline(true) };
-  installOfflineGuards(keep);
+  installOfflineGuards();
   // After paint, and after `pwa.js` has had its chance to register the worker:
   // a sync that beats the registration writes a cache nothing is yet able to
   // read from.
