@@ -157,12 +157,12 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
             Ok(Event::Start(e)) => {
                 let tag_name = e.name();
 
-                if tag_name.as_ref() == b"body" {
+                if tag_name.as_ref() == "body" {
                     in_body = true;
                     continue;
                 }
 
-                if !in_body || tag_name.as_ref() != b"outline" {
+                if !in_body || tag_name.as_ref() != "outline" {
                     continue;
                 }
 
@@ -172,13 +172,10 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                 let mut html_url: Option<String> = None;
 
                 for attr in e.attributes().flatten() {
-                    let key = String::from_utf8_lossy(attr.key.as_ref()).to_lowercase();
+                    let key = attr.key.as_ref().to_lowercase();
                     let value = attr
-                        .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
-                        .map_or_else(
-                            |_| String::from_utf8_lossy(&attr.value).to_string(),
-                            |v| v.to_string(),
-                        );
+                        .normalized_value(XmlVersion::Implicit1_0)
+                        .map_or_else(|_| attr.value.to_string(), |v| v.to_string());
 
                     match key.as_str() {
                         "text" => text = Some(value),
@@ -225,7 +222,7 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
             Ok(Event::Empty(e)) => {
                 let tag_name = e.name();
 
-                if !in_body || tag_name.as_ref() != b"outline" {
+                if !in_body || tag_name.as_ref() != "outline" {
                     continue;
                 }
 
@@ -236,13 +233,10 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                 let mut html_url: Option<String> = None;
 
                 for attr in e.attributes().flatten() {
-                    let key = String::from_utf8_lossy(attr.key.as_ref()).to_lowercase();
+                    let key = attr.key.as_ref().to_lowercase();
                     let value = attr
-                        .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
-                        .map_or_else(
-                            |_| String::from_utf8_lossy(&attr.value).to_string(),
-                            |v| v.to_string(),
-                        );
+                        .normalized_value(XmlVersion::Implicit1_0)
+                        .map_or_else(|_| attr.value.to_string(), |v| v.to_string());
 
                     match key.as_str() {
                         "text" => text = Some(value),
@@ -273,9 +267,9 @@ pub fn parse_opml(content: &str) -> AppResult<Vec<OpmlOutline>> {
                 // Empty outline without xmlUrl is ignored (empty category)
             }
             Ok(Event::End(e)) => {
-                if e.name().as_ref() == b"body" {
+                if e.name().as_ref() == "body" {
                     in_body = false;
-                } else if e.name().as_ref() == b"outline" && depth > 0 {
+                } else if e.name().as_ref() == "outline" && depth > 0 {
                     depth -= 1;
                     if depth == 0 {
                         // End of category
@@ -512,6 +506,39 @@ mod tests {
         assert!(opml.contains("text=\"Tech\""));
         assert!(opml.contains("xmlUrl=\"https://blog.rust-lang.org/feed.xml\""));
         assert!(opml.contains("htmlUrl=\"https://blog.rust-lang.org\""));
+    }
+
+    /// Attribute values arrive escaped, and a query string is where that shows
+    /// up in real subscription lists — `&` in a feed URL is `&amp;` on the wire.
+    /// The normalization that undoes it is one call, and porting to quick-xml
+    /// 0.42 rewrote that call, so this pins the result rather than the API.
+    #[test]
+    fn test_parse_opml_unescapes_attribute_entities() {
+        let opml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>Test</title></head>
+  <body>
+    <outline text="News &amp; Views">
+      <outline type="rss" text="Tom &amp; Jerry"
+               xmlUrl="https://example.com/feed?a=1&amp;b=2"
+               htmlUrl="https://example.com/?x=1&amp;y=2"/>
+    </outline>
+  </body>
+</opml>"#;
+
+        let result = parse_opml(opml).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].category_name, "News & Views");
+        assert_eq!(result[0].feeds.len(), 1);
+        assert_eq!(
+            result[0].feeds[0].xml_url,
+            "https://example.com/feed?a=1&b=2"
+        );
+        assert_eq!(
+            result[0].feeds[0].html_url,
+            Some("https://example.com/?x=1&y=2".to_string())
+        );
+        assert_eq!(result[0].feeds[0].title, Some("Tom & Jerry".to_string()));
     }
 
     #[test]
