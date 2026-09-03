@@ -61,6 +61,18 @@ Feature: Offline reading
     And I see 30 entries in the entry list
     And Load More is disabled
 
+  # A connection is a state, not an event. It used to be announced with a flash
+  # banner, which meant a message over the list every time one blinked and
+  # nothing at all once it was dismissed. The lamp is CSS reacting to
+  # `<html data-offline>`, so it is still right after the sidebar rebuilds its
+  # own markup — which it does on every mark-as-read.
+  Scenario: The sidebar lamp is what reports the connection
+    When I open the inbox
+    Then the sidebar shows the connection is up
+    When the network goes offline
+    And I open the first entry in the list
+    Then the sidebar shows the connection is gone
+
   Scenario: Everything that needs the server is visibly out of reach
     Given I keep 10 entries for offline reading
     And a service worker controls the page

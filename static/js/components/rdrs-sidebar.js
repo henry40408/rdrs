@@ -40,6 +40,26 @@ const ICON = {
   download: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11"/><path d="m8 10.5 4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>',
 };
 
+/// The connection lamp, as a constant rather than as state this component
+/// tracks.
+///
+/// `offline.js` owns the judgement and publishes it as `<html data-offline>`;
+/// everything below is a CSS reaction to that attribute. Which is the point:
+/// this sidebar rebuilds its own `innerHTML` on every mark-as-read, so a lamp
+/// driven by a property here would need re-applying after each render, and the
+/// one render that forgot would leave the reader looking at a green light with
+/// no connection.
+///
+/// Colour is never the only channel: offline also puts the word on screen, and
+/// online keeps it for screen readers alone — a green dot is the state the
+/// reader sees all day, and it earns no words.
+const CONNECTION_LAMP = `
+        <span class="conn-status" role="status" data-testid="connection-status">
+            <span class="conn-dot" aria-hidden="true"></span>
+            <span class="conn-state conn-state--online sr-only">Online</span>
+            <span class="conn-state conn-state--offline" data-testid="connection-offline">Offline</span>
+        </span>`;
+
 const SIDEBAR_CACHE_KEY = 'rdrs.sidebar.v1';
 
 /// Per-category feed lists, mirrored so revisiting a category paints from the
@@ -645,6 +665,7 @@ class RdrsSidebar extends HTMLElement {
     ${masqBanner}
     <div class="sidebar-header">
         <a href="/" class="sidebar-logo">rdrs</a>
+        ${CONNECTION_LAMP}
         <button class="sidebar-close" type="button" aria-label="Close menu">${ICON.close}</button>
     </div>
     <nav class="sidebar-nav">

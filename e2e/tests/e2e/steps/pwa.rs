@@ -343,6 +343,27 @@ async fn told_the_action_must_wait(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.expect_text("flash-message", "wait").await
 }
 
+/// Online is the quiet half: the lamp is there, and the word "Offline" is not.
+/// It is in the markup either way — `display: none` is what the assertion is
+/// about, since a lamp whose two states share a rendering is no lamp.
+#[then("the sidebar shows the connection is up")]
+async fn sidebar_shows_connection_up(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    driver.expect_visible("connection-status").await?;
+    driver.expect_hidden("connection-offline").await
+}
+
+/// Polled, not read once: the connection is only *known* to be gone after a
+/// request has failed, and the flip happens whenever that request gives up.
+#[then("the sidebar shows the connection is gone")]
+async fn sidebar_shows_connection_gone(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    eventually("the connection lamp to report offline", || async {
+        driver.is_visible("connection-offline").await
+    })
+    .await
+}
+
 #[then("the sidebar offers the saved entries")]
 async fn sidebar_offers_the_library(world: &mut RdrsWorld) -> Result<()> {
     world.driver()?.expect_visible("nav-offline").await
