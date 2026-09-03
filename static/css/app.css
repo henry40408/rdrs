@@ -441,9 +441,21 @@ body:has(.nav-fallback) .main-content {
     opacity: 0.5;
 }
 
+/* Offline is a wait, not a verdict: `offline.js` re-probes every 30 s, and a
+   light that breathes says the app is still trying where a solid one reads as
+   a dead indicator. Slow enough (2.6 s against the summary badge's 1 s) to sit
+   in the corner of the eye without pulling it, and it never dims past the
+   point of being readable as amber. The global `prefers-reduced-motion` rule
+   stops it; the word beside it carries the state either way. */
+@keyframes conn-breathe {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
 :root[data-offline] .conn-dot {
     background: var(--color-warning);
     opacity: 1;
+    animation: conn-breathe 2.6s ease-in-out infinite;
 }
 
 .conn-state--offline { display: none; }
@@ -2875,6 +2887,7 @@ summary {
         border-radius: 50%;
         background: var(--color-warning);
         border: 2px solid var(--color-bg);
+        animation: conn-breathe 2.6s ease-in-out infinite;
     }
 
     .main-content {

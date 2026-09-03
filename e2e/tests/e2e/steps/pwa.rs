@@ -350,7 +350,15 @@ async fn told_the_action_must_wait(world: &mut RdrsWorld) -> Result<()> {
 async fn sidebar_shows_connection_up(world: &mut RdrsWorld) -> Result<()> {
     let driver = world.driver()?;
     driver.expect_visible("connection-status").await?;
-    driver.expect_hidden("connection-offline").await
+    driver.expect_hidden("connection-offline").await?;
+    // The half that is easy to lose: whatever the offline lamp does, the one a
+    // reader looks at all day has to hold still.
+    let animation = driver.computed_style(".conn-dot", "animation-name").await?;
+    ensure!(
+        animation == "none",
+        "the lamp is animated while the connection is up: {animation}"
+    );
+    Ok(())
 }
 
 /// Polled, not read once: the connection is only *known* to be gone after a
@@ -362,6 +370,25 @@ async fn sidebar_shows_connection_gone(world: &mut RdrsWorld) -> Result<()> {
         driver.is_visible("connection-offline").await
     })
     .await
+}
+
+/// Offline is a wait, not a verdict: the app re-probes on a timer, and the
+/// breath is the only sign it is still trying. Asserted as "an animation is
+/// running, and it does not stop" rather than by keyframe name, which would pin
+/// the CSS rather than the behaviour.
+#[then("the lamp is breathing")]
+async fn lamp_is_breathing(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    let animation = driver.computed_style(".conn-dot", "animation-name").await?;
+    ensure!(animation != "none", "the offline lamp sits solid");
+    let cycles = driver
+        .computed_style(".conn-dot", "animation-iteration-count")
+        .await?;
+    ensure!(
+        cycles == "infinite",
+        "the lamp stops breathing after {cycles} cycles, while the connection stays gone"
+    );
+    Ok(())
 }
 
 #[then("the sidebar offers the saved entries")]

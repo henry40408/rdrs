@@ -72,6 +72,7 @@ Feature: Offline reading
     When the network goes offline
     And I open the first entry in the list
     Then the sidebar shows the connection is gone
+    And the lamp is breathing
 
   Scenario: Everything that needs the server is visibly out of reach
     Given I keep 10 entries for offline reading

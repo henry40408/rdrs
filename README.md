@@ -486,9 +486,10 @@ While you are online it syncs quietly in the background; **/entries/offline**
 lists exactly what is currently saved, so you can check before you lose signal.
 With the connection gone, opening the app lands you on that list and articles
 open as usual. The dot beside the *rdrs* wordmark in the sidebar is the app's
-own read on the connection: muted green while the server is answering, amber
-and captioned **Offline** once a request has failed, back to green on the next
-one that succeeds.
+own read on the connection: a steady muted green while the server is answering,
+and once a request has failed, amber, captioned **Offline**, and slowly
+breathing for as long as the app keeps retrying. It goes back to green and
+holds still on the next request that succeeds.
 
 What does *not* work offline is anything that has to reach the server: marking
 read, starring, Load More, search, fetching full content, summarising. Those
