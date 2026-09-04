@@ -717,3 +717,60 @@ async fn banner_centered_on_touch_tablet(world: &mut RdrsWorld) -> Result<()> {
     );
     Ok(())
 }
+
+/// Every checkbox row in a form: the label's box against the box of whatever
+/// follows it.
+///
+/// Checked over all of them rather than by test id, so a checkbox added later
+/// is covered without anyone remembering to extend this. The 44px tap rule
+/// makes these labels `inline-flex`, and an inline label lets the hint after it
+/// continue along the label's own last line — which is the layout this catches.
+#[then("every checkbox hint starts on its own line")]
+async fn checkbox_hints_start_on_their_own_line(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    let measured = driver
+        .eval(
+            r#"
+            return Array.from(document.querySelectorAll('input[type="checkbox"]'))
+              .map((input) => {
+                const label = input.closest('label');
+                const hint = label && label.nextElementSibling;
+                if (!label || !hint) return null;
+                const box = label.getBoundingClientRect();
+                return {
+                  id: input.id,
+                  labelBottom: box.bottom,
+                  labelHeight: box.height,
+                  hintTop: hint.getBoundingClientRect().top,
+                };
+              })
+              .filter(Boolean);
+            "#,
+        )
+        .await?;
+    let rows = measured.as_array().cloned().unwrap_or_default();
+    ensure!(
+        !rows.is_empty(),
+        "no checkbox is followed by a hint — this assertion would pass vacuously"
+    );
+    for row in rows {
+        let id = row["id"].as_str().unwrap_or("(unnamed)").to_owned();
+        let label_bottom = row["labelBottom"].as_f64().unwrap_or_default();
+        let hint_top = row["hintTop"].as_f64().unwrap_or_default();
+        // Half a pixel of slack for subpixel rounding. A hint sharing the
+        // label's line sits a whole line-height above its bottom edge, not a
+        // fraction of a pixel.
+        ensure!(
+            hint_top >= label_bottom - 0.5,
+            "`{id}`'s hint starts at {hint_top}, above the label's bottom edge at {label_bottom} — it is running alongside the label instead of under it"
+        );
+        // The other half of the trade-off: the reason those labels are flex at
+        // all is the 44px tap row, so pushing the hint down must not cost it.
+        let label_height = row["labelHeight"].as_f64().unwrap_or_default();
+        ensure!(
+            label_height >= 44.0,
+            "`{id}`'s tap row is only {label_height}px tall"
+        );
+    }
+    Ok(())
+}

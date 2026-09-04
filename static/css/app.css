@@ -3244,6 +3244,18 @@ summary {
         gap: var(--space-2);
         min-height: var(--touch-min);
     }
+
+    /* …but a form field's label is the row, and the helper text after it
+       belongs underneath. `inline-flex` above makes the label an inline box, so
+       that text flows on into the label's own last line — which is what a
+       settings page's checkbox rows looked like. `flex` puts it back on its own
+       line; `fit-content` keeps the tap target hugging the words rather than
+       stretching a silent toggle across the full width of the form. */
+    .form-group > label:has(> input[type="checkbox"]),
+    .form-group > label:has(> input[type="radio"]) {
+        display: flex;
+        width: fit-content;
+    }
     input[type="checkbox"],
     input[type="radio"] {
         width: 1.25rem;
