@@ -197,7 +197,7 @@
                         {# Named outright rather than described vaguely: the reader is
                            being asked to consent to a tracking pixel, and "invisible
                            1x1 image" is the only honest way to say what that is. #}
-                        <span class="muted text-xs">Adds an invisible 1&times;1 image to each entry's content, so opening one is recorded even when it happens in another reader app. Only this server sees the request &mdash; nothing leaves this instance. Shows up as an open rate on <a href="/feeds">Feeds</a> and <a href="/statistics">Statistics</a>, which is a better guide to a low-value feed than the read count.</span>
+                        <span class="muted text-xs">Adds an invisible 1&times;1 image to each entry's content, so opening one is recorded even when it happens in another reader app. Only this server sees the request &mdash; nothing leaves this instance. Shows up as an open rate on <a href="/feeds">Feeds</a> and <a href="/statistics">Statistics</a>, which is a better guide to a low-value feed than the read count. <strong>Counts only entries that arrive after you switch this on</strong>, so the rate starts out empty and fills in as your feeds update &mdash; articles already in your library carry no image and are left out of the total.</span>
                     </div>
                     <button type="submit">Save Preferences</button>
                 </form>
