@@ -32,6 +32,7 @@ Privacy-focused, lightweight, and designed for personal use.
 - **Session Management** - View active sessions (device, IP, last active) and sign out other devices from Settings; GReader API tokens are tracked and revocable separately from browser sessions
 - **Installable (PWA)** - Add to your home screen or dock and run it in its own window; a lost connection shows RDRS's own offline page instead of the browser's error
 - **Offline reading** - Optionally keep your newest unread entries, and your starred ones, readable on the train. Off by default: at zero, nothing you read is stored on the device
+- **Open tracking** - Optionally measure which feeds you actually read, not just which ones you mark read, and see the rate per feed on Feeds and Statistics. Off by default; the 1×1 image it adds to your entries is served by your own instance and reported to nobody else
 - **Docker Ready** - Single-binary deployment with all assets embedded, multi-platform container images
 
 ## Quick Start

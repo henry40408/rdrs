@@ -189,6 +189,16 @@
                            buried in documentation they will not read. #}
                         <span class="muted text-xs">(0 = off, max 200) Stores these articles in this browser so you can read them without a connection. Newest unread first, then starred. <a href="/entries/offline" data-testid="offline-library-link">See what is saved</a>.</span>
                     </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="pixel-tracking" name="pixel_tracking" value="1"{% if pixel_tracking_enabled %} checked{% endif %} data-testid="pixel-tracking">
+                            Track which entries get opened
+                        </label>
+                        {# Named outright rather than described vaguely: the reader is
+                           being asked to consent to a tracking pixel, and "invisible
+                           1x1 image" is the only honest way to say what that is. #}
+                        <span class="muted text-xs">Adds an invisible 1&times;1 image to each entry's content, so opening one is recorded even when it happens in another reader app. Only this server sees the request &mdash; nothing leaves this instance. Shows up as an open rate on <a href="/feeds">Feeds</a> and <a href="/statistics">Statistics</a>, which is a better guide to a low-value feed than the read count.</span>
+                    </div>
                     <button type="submit">Save Preferences</button>
                 </form>
 

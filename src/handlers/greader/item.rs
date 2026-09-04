@@ -8,7 +8,8 @@ use std::collections::HashMap;
 
 use crate::AppState;
 use crate::error::{AppError, AppResult};
-use crate::models::{category, entry, entry_summary, feed};
+use crate::models::{category, entry, entry_summary, feed, user_settings};
+use crate::services::pixel::PixelContext;
 use crate::services::sanitize_html;
 
 use super::auth::GReaderUser;
@@ -130,13 +131,24 @@ pub async fn stream_contents(
     let secret = &state.config.secret;
     let proxy_base_url = state.config.public_base_url.as_deref();
     let no_content = query.no_content.unwrap_or(false);
+    // One settings read for the whole page: a client syncing a thousand items
+    // would otherwise pay a query per item for a value that cannot change
+    // mid-response.
+    let pixel = PixelContext {
+        user_id,
+        enabled_at: user_settings::get_pixel_tracking_enabled_at(&state.db, user_id).await?,
+        secret,
+        // Absolute: this content is rendered inside another app, where a
+        // root-relative URL would resolve against that app's own host.
+        base_url: proxy_base_url,
+    };
     let items: Vec<GReaderItem> = entries
         .iter()
         .map(|ewf| {
             let status = summary_statuses
                 .get(&ewf.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status, secret, no_content, proxy_base_url)
+            entry_with_feed_to_greader_item(ewf, status, secret, no_content, proxy_base_url, pixel)
         })
         .collect();
 
@@ -373,13 +385,19 @@ async fn fetch_items_by_ids(
 
     let secret = &state.config.secret;
     let proxy_base_url = state.config.public_base_url.as_deref();
+    let pixel = PixelContext {
+        user_id,
+        enabled_at: user_settings::get_pixel_tracking_enabled_at(&state.db, user_id).await?,
+        secret,
+        base_url: proxy_base_url,
+    };
     let items: Vec<GReaderItem> = entries
         .iter()
         .map(|ewf| {
             let status = summary_statuses
                 .get(&ewf.entry.id)
                 .map(|s| s.as_str().to_string());
-            entry_with_feed_to_greader_item(ewf, status, secret, false, proxy_base_url)
+            entry_with_feed_to_greader_item(ewf, status, secret, false, proxy_base_url, pixel)
         })
         .collect();
 
@@ -471,6 +489,7 @@ fn entry_with_feed_to_greader_item(
     secret: &[u8],
     no_content: bool,
     proxy_base_url: Option<&str>,
+    pixel: PixelContext<'_>,
 ) -> GReaderItem {
     let e = &ewf.entry;
 
@@ -498,18 +517,26 @@ fn entry_with_feed_to_greader_item(
     // When no_content is set, skip all HTML sanitization (list view doesn't need content).
     // Otherwise, sanitize entry.content once and reuse for both the GReader `summary` field
     // and the RDRS `_content` extension field to avoid double HTML processing.
+    // The pixel is appended to the *sanitised* string in both arms — the
+    // sanitiser strips 1x1 images and proxies every `<img src>`, so injecting
+    // first would destroy it. See `services::pixel`.
     let (sanitized_entry_content, sanitized_summary) = if no_content {
         (None, String::new())
     } else {
         let sc: Option<String> = e
             .content
             .as_deref()
-            .map(|c| sanitize_html(c, secret, base_url, referrer, proxy_base_url));
+            .map(|c| sanitize_html(c, secret, base_url, referrer, proxy_base_url))
+            .map(|c| pixel.maybe_inject(c, e.id, e.created_at));
         let ss = if let Some(ref sc) = sc {
             sc.clone()
         } else {
             let fallback = e.summary.as_deref().unwrap_or("");
-            sanitize_html(fallback, secret, base_url, referrer, proxy_base_url)
+            pixel.maybe_inject(
+                sanitize_html(fallback, secret, base_url, referrer, proxy_base_url),
+                e.id,
+                e.created_at,
+            )
         };
         (sc, ss)
     };

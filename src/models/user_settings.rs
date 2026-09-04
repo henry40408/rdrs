@@ -92,6 +92,10 @@ pub struct UserSettings {
     pub sidebar_hide_read: bool,
     /// Newest unread entries to keep readable offline, or [`OFFLINE_KEEP_OFF`].
     pub offline_keep: i64,
+    /// When this reader opted into open tracking, or `None` for opted out.
+    /// Doubles as the baseline the open rate is measured from — see
+    /// [`update_pixel_tracking`].
+    pub pixel_tracking_enabled_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -110,7 +114,7 @@ pub async fn find_by_user_id(db: &Db, user_id: i64) -> AppResult<Option<UserSett
     query_opt!(
         db,
         UserSettings,
-        "SELECT id, user_id, entries_per_page, retention_read_days, save_services, theme, sidebar_sort, sidebar_hide_read, offline_keep, created_at, updated_at FROM user_settings WHERE user_id = $1",
+        "SELECT id, user_id, entries_per_page, retention_read_days, save_services, theme, sidebar_sort, sidebar_hide_read, offline_keep, pixel_tracking_enabled_at, created_at, updated_at FROM user_settings WHERE user_id = $1",
         user_id
     )
     .map_err(AppError::Database)
@@ -346,6 +350,57 @@ pub async fn update_offline_keep(db: &Db, user_id: i64, keep: i64) -> AppResult<
     Ok(())
 }
 
+/// When this reader opted into open tracking, or `None` for opted out.
+/// Accounts with no `user_settings` row yet are opted out — tracking is
+/// opt-in, so "no row" must never mean "start recording".
+pub async fn get_pixel_tracking_enabled_at(
+    db: &Db,
+    user_id: i64,
+) -> AppResult<Option<DateTime<Utc>>> {
+    Ok(find_by_user_id(db, user_id)
+        .await?
+        .and_then(|settings| settings.pixel_tracking_enabled_at))
+}
+
+/// Turn open tracking on or off.
+///
+/// Enabling is `COALESCE`d against the stored value, so it takes effect only on
+/// the NULL -> enabled transition: the timestamp is the baseline the open rate
+/// is measured from, and re-saving the preferences form — which every other
+/// preference change does — would otherwise reset the denominator and throw away
+/// every entry tracked so far.
+///
+/// Disabling clears the baseline but keeps the `entry_open` rows, so turning it
+/// back on resumes from the data already collected rather than starting over.
+///
+/// Written with the `datetime('now')` literal rather than a bound `Utc::now()`:
+/// the value is compared against `entry.created_at` column-to-column, and on
+/// `SQLite` a bound timestamp encodes in a different format that does not
+/// compare correctly. See `models::entry_open`.
+pub async fn update_pixel_tracking(db: &Db, user_id: i64, enabled: bool) -> AppResult<()> {
+    // Ensure a row exists, then update (mirrors update_theme).
+    db_execute!(
+        db,
+        "INSERT INTO user_settings (user_id, entries_per_page) VALUES ($1, $2) \
+         ON CONFLICT(user_id) DO NOTHING",
+        user_id,
+        DEFAULT_ENTRIES_PER_PAGE
+    )
+    .map_err(AppError::Database)?;
+    let sql = if enabled {
+        "UPDATE user_settings \
+         SET pixel_tracking_enabled_at = COALESCE(pixel_tracking_enabled_at, datetime('now')), \
+             updated_at = datetime('now') \
+         WHERE user_id = $1"
+    } else {
+        "UPDATE user_settings \
+         SET pixel_tracking_enabled_at = NULL, updated_at = datetime('now') \
+         WHERE user_id = $1"
+    };
+    db_execute!(db, sql, user_id).map_err(AppError::Database)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,6 +408,64 @@ mod tests {
 
     async fn setup_db() -> Db {
         Db::connect_in_memory().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn pixel_tracking_defaults_to_opted_out() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+
+        // No settings row at all — a brand-new account must not be tracking.
+        assert_eq!(
+            get_pixel_tracking_enabled_at(&db, user.id).await.unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn enabling_pixel_tracking_twice_keeps_the_original_baseline() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+
+        update_pixel_tracking(&db, user.id, true).await.unwrap();
+        let first = get_pixel_tracking_enabled_at(&db, user.id)
+            .await
+            .unwrap()
+            .expect("enabling records a baseline");
+
+        // Every other preference change re-submits this form. Moving the
+        // baseline forward each time would silently reset the denominator.
+        update_pixel_tracking(&db, user.id, true).await.unwrap();
+        assert_eq!(
+            get_pixel_tracking_enabled_at(&db, user.id).await.unwrap(),
+            Some(first)
+        );
+    }
+
+    #[tokio::test]
+    async fn disabling_pixel_tracking_clears_the_baseline() {
+        let db = setup_db().await;
+        let user = user::create_user(&db, "testuser", "hash", Role::User)
+            .await
+            .unwrap();
+
+        update_pixel_tracking(&db, user.id, true).await.unwrap();
+        assert!(
+            get_pixel_tracking_enabled_at(&db, user.id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        update_pixel_tracking(&db, user.id, false).await.unwrap();
+        assert_eq!(
+            get_pixel_tracking_enabled_at(&db, user.id).await.unwrap(),
+            None
+        );
     }
 
     #[tokio::test]

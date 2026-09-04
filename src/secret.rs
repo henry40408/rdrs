@@ -14,7 +14,9 @@
 //! - [`DOMAIN_AUDIT`] derives the `sid` printed into audit log lines;
 //! - [`DOMAIN_OFFLINE`] derives the opaque per-user name of the browser's
 //!   offline cache, so the worker can tell one reader's stored articles from
-//!   another's without ever being handed a user id.
+//!   another's without ever being handed a user id;
+//! - [`DOMAIN_PIXEL`] signs the open-tracking pixel URL, which is the endpoint's
+//!   only authority — it is fetched by clients that carry no session.
 //!
 //! The prefixes are not decoration: two uses that MAC the same message under the
 //! same key produce the same tag, and the CSRF token derives from the session
@@ -52,6 +54,8 @@ pub const DOMAIN_OFFLINE: &[u8] = b"offline:";
 /// database copy useless on its own for minting links, and lets the column be
 /// compared with an ordinary indexed lookup rather than a row-by-row scan.
 pub const DOMAIN_INVITE: &[u8] = b"invite:";
+/// Domain-separation prefix for open-tracking pixel URLs.
+pub const DOMAIN_PIXEL: &[u8] = b"pixel:";
 
 /// Separates the session token from its signature in the cookie value.
 ///
@@ -174,6 +178,51 @@ pub fn audit_id(secret: &[u8], token: &str) -> String {
 /// is enough to be collision-free in practice.
 pub fn offline_id(secret: &[u8], user_id: i64) -> String {
     hex_encode(&tag(secret, DOMAIN_OFFLINE, &[&user_id.to_le_bytes()])[..8])
+}
+
+/// Bytes of the derived tag kept in a pixel token. Wider than the image proxy's
+/// 8 because nothing here pays for the length — the URL carries only two ids,
+/// where a proxy URL already carries a base64 upstream URL — and a forged token
+/// writes a bogus open into the reader's own statistics, which no later check
+/// can tell apart from a real one.
+const PIXEL_SIG_BYTES: usize = 16;
+
+/// Signature for the open-tracking pixel of `entry_id` as seen by `user_id`.
+///
+/// The two ids are the whole message, each a fixed 8 bytes, so the pair cannot
+/// be re-cut into a different pair that MACs the same. This is the pixel
+/// endpoint's *only* authority: it is fetched by external readers that carry no
+/// session cookie, so an unsigned or guessable URL would let anyone write into
+/// another account's open counts.
+pub fn pixel_sig(secret: &[u8], user_id: i64, entry_id: i64) -> String {
+    let t = tag(
+        secret,
+        DOMAIN_PIXEL,
+        &[&user_id.to_le_bytes(), &entry_id.to_le_bytes()],
+    );
+    hex_encode(&t[..PIXEL_SIG_BYTES])
+}
+
+/// Constant-time check of a submitted pixel signature. `false` for a malformed
+/// (non-hex) or mismatched token.
+///
+/// The explicit length check is load-bearing: `verify_truncated_left` accepts
+/// *any* prefix down to 4 bytes, so without it a 4-byte guess would verify
+/// against a 16-byte signature and reduce the search to 2^32.
+pub fn verify_pixel_sig(secret: &[u8], user_id: i64, entry_id: i64, candidate: &str) -> bool {
+    let Some(bytes) = hex_decode(candidate) else {
+        return false;
+    };
+    if bytes.len() != PIXEL_SIG_BYTES {
+        return false;
+    }
+    mac(
+        secret,
+        DOMAIN_PIXEL,
+        &[&user_id.to_le_bytes(), &entry_id.to_le_bytes()],
+    )
+    .verify_truncated_left(&bytes)
+    .is_ok()
 }
 
 #[cfg(test)]
@@ -313,5 +362,52 @@ mod tests {
             &[b"https://example.com/a.png"],
             &t[..8]
         ));
+    }
+
+    #[test]
+    fn pixel_sig_round_trips() {
+        let sig = pixel_sig(SECRET, 7, 42);
+        assert_eq!(sig.len(), PIXEL_SIG_BYTES * 2);
+        assert!(sig.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(verify_pixel_sig(SECRET, 7, 42, &sig));
+    }
+
+    #[test]
+    fn pixel_sig_binds_both_ids_and_the_key() {
+        let sig = pixel_sig(SECRET, 7, 42);
+        // Swapping either id, or the pair as a whole, must not verify — one
+        // reader's token cannot record an open for another's entry.
+        assert!(!verify_pixel_sig(SECRET, 8, 42, &sig));
+        assert!(!verify_pixel_sig(SECRET, 7, 43, &sig));
+        assert!(!verify_pixel_sig(SECRET, 42, 7, &sig));
+        assert!(!verify_pixel_sig(
+            b"another key that is long enough",
+            7,
+            42,
+            &sig
+        ));
+    }
+
+    #[test]
+    fn pixel_sig_rejects_malformed_and_truncated_candidates() {
+        let sig = pixel_sig(SECRET, 7, 42);
+        // A prefix of a valid signature is the one that would otherwise slip
+        // through: `verify_truncated_left` accepts short tags by design.
+        assert!(!verify_pixel_sig(SECRET, 7, 42, &sig[..8]));
+        assert!(!verify_pixel_sig(SECRET, 7, 42, &sig[..sig.len() - 2]));
+        assert!(!verify_pixel_sig(SECRET, 7, 42, &format!("{sig}00")));
+        assert!(!verify_pixel_sig(SECRET, 7, 42, "zzzz"));
+        assert!(!verify_pixel_sig(SECRET, 7, 42, ""));
+    }
+
+    #[test]
+    fn pixel_domain_separates_from_the_image_proxy() {
+        // Both sign under the same root key; only the domain keeps a pixel
+        // token from being mintable through the proxy's signer, and vice versa.
+        let msg: &[&[u8]] = &[&7i64.to_le_bytes(), &42i64.to_le_bytes()];
+        assert_ne!(
+            tag(SECRET, DOMAIN_PIXEL, msg),
+            tag(SECRET, DOMAIN_IMAGE, msg)
+        );
     }
 }

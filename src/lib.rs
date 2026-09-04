@@ -352,6 +352,14 @@ pub fn create_router(state: AppState) -> Router {
         )
         // Proxy routes
         .route("/api/proxy/image", get(handlers::proxy::proxy_image))
+        // Open-tracking pixel. Authorised by the HMAC in its own path, like the
+        // image proxy above and unlike everything that takes an `AuthUser`
+        // extractor: the clients that fetch it — external `GReader` readers
+        // rendering synced content — have no session cookie to send. It sits at
+        // the root rather than under `/api` so the URL a client caches is short
+        // and ends in `.gif`; the middleware skip lists name `/p/` for
+        // that reason (CSRF needs no entry: `csrf_guard` exempts GET already).
+        .route("/p/{token}", get(handlers::pixel::tracking_pixel))
         // Passkey routes
         .route(
             "/api/passkey/register/start",

@@ -1,6 +1,7 @@
 pub mod api_token;
 pub mod category;
 pub mod entry;
+pub mod entry_open;
 pub mod entry_summary;
 pub mod feed;
 pub mod image;

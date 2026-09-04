@@ -112,6 +112,30 @@
                     </div>
                 </div>
 
+                {% if let Some(since) = tracked_since %}
+                <div class="stats-section" data-testid="stats-open-rate">
+                    <h2>Feeds by Open Rate</h2>
+                    {# Lowest first: this list exists to be acted on, and the
+                       action is unsubscribing from what is at the top of it. #}
+                    <p class="muted text-xs">How often a feed's entries actually get opened, lowest first. Tracked since {{ since }}; feeds with fewer than {{ min_tracked_for_rate }} tracked entries are not listed.</p>
+                    {% if open_rate_feeds.is_empty() %}
+                        <p class="empty-state-compact">No feed has enough tracked entries yet.</p>
+                    {% else %}
+                        {% for f in open_rate_feeds %}
+                            <div class="stats-bar-row">
+                                <div class="stats-bar-row-header">
+                                    <span>{{ f.title }}</span>
+                                    <span class="muted">{{ f.percent }}% ({{ f.opened }}/{{ f.tracked }})</span>
+                                </div>
+                                <div class="stats-progress">
+                                    <div class="stats-progress-fill pct-{{ f.width_percent }}"></div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+                </div>
+                {% endif %}
+
                 {% if let Some(a) = admin %}
                 <div class="stats-admin-section">
                     <h2>Site-wide Statistics</h2>

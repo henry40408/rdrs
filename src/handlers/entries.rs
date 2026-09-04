@@ -13,7 +13,9 @@ use crate::{
     middleware::flash::{FlashMessage, FlashRedirect},
     models::{entry, entry_summary, user_settings},
     services::{
-        SummaryJob, SummaryStatus, fetch_and_extract, sanitize_html, sanitize_summary,
+        SummaryJob, SummaryStatus, fetch_and_extract,
+        pixel::PixelContext,
+        sanitize_html, sanitize_summary,
         save::{BookmarkData, linkding},
         strip_tracking_params,
     },
@@ -506,6 +508,18 @@ pub(crate) async fn build_reading_pane_view(
         referrer,
         proxy_base_url,
     );
+    // Strictly after `sanitize_html`, never before: the sanitiser strips 1x1
+    // images and rewrites every `<img src>` through the image proxy, either of
+    // which destroys the pixel. See `services::pixel`.
+    let content_html = PixelContext {
+        user_id,
+        enabled_at: user_settings::get_pixel_tracking_enabled_at(&state.db, user_id).await?,
+        secret: &state.config.secret,
+        // Rendered into this origin's own page, so a root-relative URL is both
+        // enough and cheaper than baking in a host that may be misconfigured.
+        base_url: None,
+    }
+    .maybe_inject(content_html, entry_id, ewf.entry.created_at);
 
     let (summary_text, summary_in_flight, summary_error) =
         resolve_summary(state, user_id, entry_id).await?;

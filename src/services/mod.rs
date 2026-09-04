@@ -11,6 +11,7 @@ pub mod icon_fetcher;
 pub mod image_proxy;
 pub mod opml;
 pub mod page_cache;
+pub mod pixel;
 pub mod readability;
 pub mod sanitize;
 pub mod save;

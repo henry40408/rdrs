@@ -711,6 +711,9 @@ pub struct UpdatePreferencesForm {
     /// page rendered before this field existed leaves the setting alone rather
     /// than silently switching offline reading off.
     pub offline_keep: Option<i64>,
+    /// Open tracking. Like `sidebar_hide_read`, presence — not value — turns it
+    /// on, because an unchecked checkbox sends nothing at all.
+    pub pixel_tracking: Option<String>,
 }
 
 pub async fn update_preferences_form(
@@ -733,6 +736,7 @@ pub async fn update_preferences_form(
         .unwrap_or(user_settings::DEFAULT_SIDEBAR_SORT)
         .to_string();
     let sidebar_hide_read = req.sidebar_hide_read.is_some();
+    let pixel_tracking = req.pixel_tracking.is_some();
 
     let result: AppResult<()> = async {
         user_settings::upsert(&state.db, user_id, epp).await?;
@@ -743,6 +747,7 @@ pub async fn update_preferences_form(
         if let Some(keep) = req.offline_keep {
             user_settings::update_offline_keep(&state.db, user_id, keep).await?;
         }
+        user_settings::update_pixel_tracking(&state.db, user_id, pixel_tracking).await?;
         Ok(())
     }
     .await;

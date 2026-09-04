@@ -28,7 +28,7 @@ use rdrs::models::user::Role;
 use rdrs::models::{
     api_token, category, entry,
     entry::{ContinuationCursor, ContinuationParams, EntryFilter, EntrySortOrder},
-    feed, session, statistics, user, user_settings,
+    entry_open, feed, session, statistics, user, user_settings,
 };
 
 /// Connect to the test Postgres and wipe every table so the run is isolated and
@@ -620,4 +620,77 @@ async fn pg_dialect_smoke() {
             .unwrap()
             .is_none()
     );
+
+    // --- open tracking: the opt-in baseline, column-to-column ----------------
+    // The one comparison this feature rests on is `entry.created_at >=
+    // user_settings.pixel_tracking_enabled_at`, and it is written column to
+    // column precisely because a *bound* timestamp encodes differently on
+    // SQLite. On PG both sides are `TIMESTAMPTZ` and the `datetime('now')` write
+    // goes through `pg_rewrite`, so only a live server proves the pair agrees.
+    user_settings::update_pixel_tracking(&db, user_id, true)
+        .await
+        .unwrap();
+    let enabled_at = user_settings::get_pixel_tracking_enabled_at(&db, user_id)
+        .await
+        .unwrap()
+        .expect("enabling records a baseline");
+
+    // An entry created after the opt-in records; the seeded backlog does not.
+    let (fresh, _) = entry::upsert_entry(
+        &db,
+        feed_id,
+        "pg-pixel-fresh",
+        Some("Fresh"),
+        Some("https://example.com/pg-pixel-fresh"),
+        Some("<p>Fresh.</p>"),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        entry_open::record_open(&db, user_id, fresh.id)
+            .await
+            .unwrap(),
+        "an entry created after the opt-in is inside the window"
+    );
+    assert!(
+        !entry_open::record_open(&db, user_id, fresh.id)
+            .await
+            .unwrap(),
+        "`ON CONFLICT DO NOTHING` makes a repeat hit a no-op"
+    );
+
+    let rates = entry_open::open_rates_by_feed(&db, user_id).await.unwrap();
+    let rate = rates
+        .iter()
+        .find(|r| r.feed_id == feed_id)
+        .expect("the feed is listed once the reader has opted in");
+    assert_eq!(
+        (rate.tracked, rate.opened),
+        (1, 1),
+        "only the post-opt-in entry is in the denominator"
+    );
+
+    let window = entry_open::tracking_window(&db, user_id).await.unwrap();
+    assert_eq!(window.enabled_at, Some(enabled_at));
+    assert!(
+        window.tracked_since().is_some(),
+        "an opted-in reader has a baseline to report"
+    );
+
+    // Re-saving the preferences form must not move the baseline forward.
+    user_settings::update_pixel_tracking(&db, user_id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        user_settings::get_pixel_tracking_enabled_at(&db, user_id)
+            .await
+            .unwrap(),
+        Some(enabled_at)
+    );
+    user_settings::update_pixel_tracking(&db, user_id, false)
+        .await
+        .unwrap();
 }
