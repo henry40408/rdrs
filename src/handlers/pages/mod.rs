@@ -423,6 +423,8 @@ async fn maybe_build_reading_pane(
         has_save,
         has_kagi,
         crate::handlers::entries::ContentView::Full,
+        // A list page rendered with `?entry=` is the reader looking at it.
+        crate::handlers::entries::RenderPurpose::Reader,
     )
     .await
     .ok()

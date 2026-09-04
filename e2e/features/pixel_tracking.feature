@@ -32,6 +32,20 @@ Feature: Open tracking
     And I click the entry titled "Test Entry 1"
     Then the reading pane carries no tracking pixel
 
+  # The sibling of "Saving the queue does not mark the queue read" in
+  # offline_reading.feature: mirroring the queue fetches the images an entry
+  # references so the article is readable without a connection, and the pixel is
+  # an image. Fetching it would report an open for every entry the reader has
+  # merely queued.
+  Scenario: Mirroring entries for offline reading is not an open
+    Given I have open tracking turned on
+    And I have a feed "Mirrored Feed" with 5 test entries in category "Tracking"
+    And I keep 10 entries for offline reading
+    And a service worker controls the page
+    And 5 entries have been saved for offline reading
+    When I am on the feeds page
+    Then the open rate for "Mirrored Feed" is "0% (0/5)"
+
   Scenario: A feed with too little data reports nothing rather than a bad number
     Given I have open tracking turned on
     And I have a feed "Sparse Feed" with 2 test entries in category "Tracking"

@@ -345,6 +345,48 @@ async fn greader_content_carries_an_absolute_pixel() {
     );
 }
 
+#[tokio::test]
+async fn the_offline_mirror_fragment_carries_no_pixel() {
+    let mut app = create_test_app(default_test_config()).await;
+    seed_users(&app.db).await;
+    let entries = seed_entries(&app.db, "reader", 1).await;
+    enable_tracking(&app.db, "reader").await;
+    login(&mut app.server, "reader").await;
+
+    // `?offline=1` is the service worker mirroring the queue, not a reader
+    // opening anything — the same request that must not mark the entry read.
+    // `offline.js` fetches every same-origin `<img src>` in what it caches, so a
+    // pixel here would report an open for every entry merely queued.
+    let response = app
+        .server
+        .get(&format!("/entries/{}/fragment?offline=1", entries[0]))
+        .await;
+    response.assert_status_ok();
+    assert!(
+        !response.text().contains("/p/"),
+        "the offline mirror must not carry a pixel"
+    );
+
+    // The same holds for a browser prefetching or prerendering the fragment.
+    let response = app
+        .server
+        .get(&format!("/entries/{}/fragment", entries[0]))
+        .add_header("sec-purpose", "prefetch")
+        .await;
+    response.assert_status_ok();
+    assert!(
+        !response.text().contains("/p/"),
+        "a speculative fetch must not carry a pixel"
+    );
+
+    // A real open still does, or the feature would record nothing at all.
+    let response = app
+        .server
+        .get(&format!("/entries/{}/fragment", entries[0]))
+        .await;
+    assert!(response.text().contains("/p/"));
+}
+
 // --- The read-side UI ---
 
 #[tokio::test]
