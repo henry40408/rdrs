@@ -13,7 +13,9 @@ use crate::{
     middleware::flash::{FlashMessage, FlashRedirect},
     models::{entry, entry_summary, user_settings},
     services::{
-        SummaryJob, SummaryStatus, fetch_and_extract, sanitize_html, sanitize_summary,
+        SummaryJob, SummaryStatus, fetch_and_extract,
+        pixel::PixelContext,
+        sanitize_html, sanitize_summary,
         save::{BookmarkData, linkding},
         strip_tracking_params,
     },
@@ -351,7 +353,13 @@ pub async fn entry_fragment(
     }
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
-    let pane = build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, view).await?;
+    let purpose = if speculative {
+        RenderPurpose::Speculative
+    } else {
+        RenderPurpose::Reader
+    };
+    let pane =
+        build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, view, purpose).await?;
     let row = row_view_from(&ewf, status);
 
     // Kept behind the render simply to stay off the critical path.
@@ -390,8 +398,16 @@ pub async fn summary_fragment(
         .await?
         .ok_or(AppError::EntryNotFound)?;
     // has_save/has_kagi are irrelevant to the summary container; pass false.
-    let pane =
-        build_reading_pane_view(&state, user_id, &ewf, false, false, ContentView::Full).await?;
+    let pane = build_reading_pane_view(
+        &state,
+        user_id,
+        &ewf,
+        false,
+        false,
+        ContentView::Full,
+        RenderPurpose::Reader,
+    )
+    .await?;
     Ok(SummaryFragment {
         pane,
         csrf_token: auth_user.csrf_token,
@@ -460,6 +476,22 @@ pub(crate) enum ContentView {
     Original,
 }
 
+/// Who a reading-pane render is actually for.
+///
+/// Only the open-tracking pixel reads this, and it is the same distinction
+/// `mark_read` already makes: mirroring the queue for offline reading, or a
+/// browser speculatively fetching an entry, is not the reader opening anything.
+/// The pixel is an `<img>`, so anything that renders — or merely walks the
+/// images of — such a copy would report an open nobody performed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RenderPurpose {
+    /// A reader is looking at this now.
+    Reader,
+    /// A copy taken ahead of time: the service worker's `?offline=1` mirror, or
+    /// a `Sec-Purpose` prefetch/prerender.
+    Speculative,
+}
+
 /// Build a `ReadingPaneView` from an already-loaded `EntryWithFeed`. The
 /// sanitizer and summary lookup happen here so callers that already hold the
 /// entry — `entry_fragment` loads it inside its write transaction — don't re-hit
@@ -479,6 +511,7 @@ pub(crate) async fn build_reading_pane_view(
     has_save: bool,
     has_kagi: bool,
     view: ContentView,
+    purpose: RenderPurpose,
 ) -> AppResult<ReadingPaneView> {
     let entry_id = ewf.entry.id;
     // A stored fetched article wins unless the reader asked for the original,
@@ -506,6 +539,30 @@ pub(crate) async fn build_reading_pane_view(
         referrer,
         proxy_base_url,
     );
+    // Strictly after `sanitize_html`, never before: the sanitiser strips 1x1
+    // images and rewrites every `<img src>` through the image proxy, either of
+    // which destroys the pixel. See `services::pixel`.
+    //
+    // Skipped entirely for a speculative render: `offline.js` walks the images
+    // of everything it mirrors, so a pixel in that copy would report an open for
+    // every entry merely queued for offline reading. It does not find one today
+    // only because the fragment's `<img>`s sit inside a `<template>`, which
+    // `querySelectorAll` does not descend into — an accident, not a guarantee.
+    let enabled_at = match purpose {
+        RenderPurpose::Reader => {
+            user_settings::get_pixel_tracking_enabled_at(&state.db, user_id).await?
+        }
+        RenderPurpose::Speculative => None,
+    };
+    let content_html = PixelContext {
+        user_id,
+        enabled_at,
+        secret: &state.config.secret,
+        // Rendered into this origin's own page, so a root-relative URL is both
+        // enough and cheaper than baking in a host that may be misconfigured.
+        base_url: None,
+    }
+    .maybe_inject(content_html, entry_id, ewf.entry.created_at);
 
     let (summary_text, summary_in_flight, summary_error) =
         resolve_summary(state, user_id, entry_id).await?;
@@ -1019,9 +1076,16 @@ pub async fn fetch_full_content_form(
             message: format!("Failed to fetch full content: {e}"),
         },
     };
-    let pane =
-        build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, ContentView::Full)
-            .await?;
+    let pane = build_reading_pane_view(
+        &state,
+        user_id,
+        &ewf,
+        has_save,
+        has_kagi,
+        ContentView::Full,
+        RenderPurpose::Reader,
+    )
+    .await?;
     // The scriptless path now reaches here and gets a redirect, so its message
     // has to ride along as a cookie — and it can finally be the truthful one,
     // because the page it lands on renders the article this just stored.
@@ -1109,9 +1173,16 @@ pub async fn save_entry_form(
     };
 
     let (has_save, has_kagi) = load_pane_action_flags(&state, user_id).await?;
-    let pane =
-        build_reading_pane_view(&state, user_id, &ewf, has_save, has_kagi, ContentView::Full)
-            .await?;
+    let pane = build_reading_pane_view(
+        &state,
+        user_id,
+        &ewf,
+        has_save,
+        has_kagi,
+        ContentView::Full,
+        RenderPurpose::Reader,
+    )
+    .await?;
     // Save's entire effect is on the bookmarking service; nothing about the
     // entry changes. Without carrying this message the scriptless reader gets a
     // redirect back to an identical page and no way to tell it worked.

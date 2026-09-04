@@ -379,6 +379,49 @@ impl Seed {
         Ok(())
     }
 
+    /// Opt a reader into open tracking, as the preferences checkbox does.
+    ///
+    /// `datetime('now')` rather than a bound timestamp, because the value is
+    /// compared against `entry.created_at` column-to-column and sqlx encodes a
+    /// bound timestamp in a format that does not compare — see
+    /// `models::entry_open`. Entries seeded *before* this runs carry no pixel:
+    /// the opt-in is the baseline the rate is measured from.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the statement is rejected.
+    pub async fn enable_pixel_tracking(&self, user_id: i64) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO user_settings (user_id, pixel_tracking_enabled_at) \
+             VALUES (?, datetime('now')) \
+             ON CONFLICT(user_id) DO UPDATE SET pixel_tracking_enabled_at = datetime('now')",
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Record every entry of a feed as opened, the way an external client
+    /// fetching each pixel during a sync would — the case a browser-driven
+    /// scenario cannot reach.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the statement is rejected.
+    pub async fn record_opens_for_feed(&self, user_id: i64, feed_id: i64) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO entry_open (user_id, entry_id) \
+             SELECT ?, id FROM entry WHERE feed_id = ? \
+             ON CONFLICT (user_id, entry_id) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(feed_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// # Errors
     ///
     /// Fails when the statement is rejected.

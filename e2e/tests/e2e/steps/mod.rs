@@ -19,6 +19,7 @@ pub mod keyboard;
 pub mod morph;
 pub mod onboarding;
 pub mod organize;
+pub mod pixel_tracking;
 pub mod preferences;
 pub mod pwa;
 pub mod reading_pane;

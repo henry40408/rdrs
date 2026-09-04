@@ -85,6 +85,10 @@ const ANON_SKIP_PREFIXES: &[&str] = &[
     "/health",
     "/sw.js",
     "/offline",
+    // The open-tracking pixel, fetched by clients that hold no session and
+    // would discard the cookie anyway — minting one per image request would put
+    // a pointless `Set-Cookie` on every entry a client syncs.
+    "/p/",
 ];
 
 /// Upper bound on a buffered request body when reading the `_csrf` field. Browser

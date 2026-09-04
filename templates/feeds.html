@@ -51,6 +51,7 @@
                             <option value="title"{% if active_sort == "title" %} selected{% endif %}>Title</option>
                             <option value="unread"{% if active_sort == "unread" %} selected{% endif %}>Unread Count</option>
                             <option value="category"{% if active_sort == "category" %} selected{% endif %}>Category</option>
+                            {% if open_rate_shown %}<option value="open_rate"{% if active_sort == "open_rate" %} selected{% endif %}>Open Rate (lowest first)</option>{% endif %}
                         </select>
                     </div>
                     <div class="form-group form-group-inline feed-filter-links">
@@ -92,6 +93,7 @@
                             <th>Title</th>
                             <th>Category</th>
                             <th>Unread</th>
+                            {% if open_rate_shown %}<th>Open Rate</th>{% endif %}
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -117,6 +119,11 @@
                                 <td data-label="Unread"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %}>
                                     {% if feed.unread_count > 0 %}<strong>{{ feed.unread_count }}</strong>{% else %}0{% endif %}
                                 </td>
+                                {% if open_rate_shown %}
+                                <td data-label="Open Rate"{% if feed.fetch_error.is_some() %} class="feed-error-no-border"{% endif %} data-testid="feed-open-rate">
+                                    {% if let Some(label) = feed.open_rate_label %}{{ label }}{% else %}<span class="muted" title="Needs at least {{ min_tracked_for_rate }} tracked entries">&mdash;</span>{% endif %}
+                                </td>
+                                {% endif %}
                                 <td class="actions{% if feed.fetch_error.is_some() %} feed-error-no-border{% endif %}">
                                     <a href="/feeds/{{ feed.id }}/entries">entries</a>
                                     <form method="post" action="/feeds/{{ feed.id }}/refresh" class="form-inline">
@@ -132,12 +139,12 @@
                             </tr>
                             {% if let Some(err) = feed.fetch_error %}
                                 <tr class="error-row" data-feed-id="{{ feed.id }}" data-is-error-row="true">
-                                    <td colspan="4" class="error-text feed-error-cell">Error: {{ err }}</td>
+                                    <td colspan="{% if open_rate_shown %}5{% else %}4{% endif %}" class="error-text feed-error-cell">Error: {{ err }}</td>
                                 </tr>
                             {% endif %}
                         {% endfor %}
                         {% if feeds.is_empty() %}
-                            <tr><td colspan="4" class="empty-state-compact">No feeds yet — add one using the form above.</td></tr>
+                            <tr><td colspan="{% if open_rate_shown %}5{% else %}4{% endif %}" class="empty-state-compact">No feeds yet — add one using the form above.</td></tr>
                         {% endif %}
                     </tbody>
                 </table>

@@ -423,6 +423,8 @@ async fn maybe_build_reading_pane(
         has_save,
         has_kagi,
         crate::handlers::entries::ContentView::Full,
+        // A list page rendered with `?entry=` is the reader looking at it.
+        crate::handlers::entries::RenderPurpose::Reader,
     )
     .await
     .ok()
@@ -1065,6 +1067,7 @@ pub async fn user_settings_page(
         retention_read_days,
         offline_keep,
         sidebar_prefs,
+        pixel_tracking_enabled,
         linkding_configured,
         linkding_api_url,
         kagi_configured,
@@ -1085,6 +1088,11 @@ pub async fn user_settings_page(
         let sidebar_prefs = user_settings::get_sidebar_prefs(&state.db, user_id)
             .await
             .unwrap_or_default();
+        let pixel_tracking_enabled =
+            user_settings::get_pixel_tracking_enabled_at(&state.db, user_id)
+                .await
+                .unwrap_or(None)
+                .is_some();
         let save_config = user_settings::get_save_services_config(&state.db, user_id)
             .await
             .unwrap_or_default();
@@ -1105,6 +1113,7 @@ pub async fn user_settings_page(
             retention_read_days,
             offline_keep,
             sidebar_prefs,
+            pixel_tracking_enabled,
             linkding_configured,
             linkding_api_url,
             kagi_configured,
@@ -1209,6 +1218,7 @@ pub async fn user_settings_page(
             offline_keep,
             sidebar_sort: sidebar_prefs.sort,
             sidebar_hide_read: sidebar_prefs.hide_read,
+            pixel_tracking_enabled,
             password_min_length: crate::auth::PASSWORD_MIN_LENGTH,
             password_max_length: crate::auth::PASSWORD_MAX_LENGTH,
             linkding_configured,
@@ -1245,6 +1255,14 @@ pub async fn feeds_page(
     let layout = build_app_layout(&state, &auth_user, &flash).await;
     let user_id = auth_user.user.id;
 
+    // Gated on the setting rather than on the aggregate being non-empty: a
+    // reader who has opted in but has no feeds yet should still see the column
+    // they turned on.
+    let open_rate_shown = user_settings::get_pixel_tracking_enabled_at(&state.db, user_id)
+        .await
+        .unwrap_or(None)
+        .is_some();
+
     let (mut rows, categories, total_feed_count) = {
         let cats = category::list_by_user(&state.db, user_id)
             .await
@@ -1255,6 +1273,15 @@ pub async fn feeds_page(
         let unread_map = entry::count_unread_by_feed(&state.db, user_id)
             .await
             .unwrap_or_default();
+        // One aggregate for the page rather than a count per row — see
+        // `entry_open::open_rates_by_feed`.
+        let open_rates: std::collections::HashMap<i64, crate::models::entry_open::FeedOpenRate> =
+            crate::models::entry_open::open_rates_by_feed(&state.db, user_id)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|r| (r.feed_id, r))
+                .collect();
 
         let cat_map: std::collections::HashMap<i64, String> =
             cats.iter().map(|cat| (cat.id, cat.name.clone())).collect();
@@ -1292,6 +1319,14 @@ pub async fn feeds_page(
                 };
                 let (freshness_class, freshness_key) =
                     compute_freshness(f.feed_updated_at, f.fetched_at);
+                let open_rate = open_rates.get(&f.id);
+                let open_rate_percent =
+                    open_rate.and_then(crate::models::entry_open::FeedOpenRate::percent);
+                // The raw counts ride along with the percentage: "40%" alone
+                // hides whether it rests on two entries or two hundred.
+                let open_rate_label = open_rate_percent
+                    .zip(open_rate)
+                    .map(|(pct, r)| format!("{pct}% ({}/{})", r.opened, r.tracked));
                 FeedRowView {
                     title: f.title.clone().unwrap_or_else(|| f.url.clone()),
                     category_name: cat_map
@@ -1310,6 +1345,8 @@ pub async fn feeds_page(
                     feed_updated_at_datetime: updated_dt,
                     freshness_class,
                     freshness_key,
+                    open_rate_label,
+                    open_rate_percent,
                 }
             })
             .collect();
@@ -1347,6 +1384,11 @@ pub async fn feeds_page(
     match active_sort.as_str() {
         "unread" => rows.sort_by_key(|b| std::cmp::Reverse(b.unread_count)),
         "category" => rows.sort_by(|a, b| a.category_name.cmp(&b.category_name)),
+        // Ascending, so the feeds nobody opens surface first — that ordering is
+        // the point of the metric. The `is_none()` leader pushes feeds with too
+        // few tracked entries to the bottom (`false < true`): they are not
+        // candidates for unsubscribing, they are feeds with nothing to say yet.
+        "open_rate" => rows.sort_by_key(|a| (a.open_rate_percent.is_none(), a.open_rate_percent)),
         _ => rows.sort_by_key(|a| a.title.to_lowercase()),
     }
     let active_filter = match active_filter_raw.as_str() {
@@ -1391,6 +1433,8 @@ pub async fn feeds_page(
             filter_links,
             fresh_max_days: time_format::FRESH_MAX_DAYS,
             warning_max_days: time_format::WARNING_MAX_DAYS,
+            open_rate_shown,
+            min_tracked_for_rate: crate::models::entry_open::MIN_TRACKED_FOR_RATE,
         },
     )
 }
@@ -2981,6 +3025,8 @@ pub struct UserSettingsTemplate {
     /// `"unread"` (see `user_settings::parse_sidebar_sort`).
     pub sidebar_sort: &'static str,
     pub sidebar_hide_read: bool,
+    /// Whether this reader is tracking which entries get opened.
+    pub pixel_tracking_enabled: bool,
     /// Same purpose as on [`SetupTemplate`]: the "Change Password" field's
     /// browser-side hint is generated from the server's own policy constants.
     pub password_min_length: usize,
@@ -3085,6 +3131,18 @@ pub struct FeedStatsView {
     pub width_percent: u8,
 }
 
+/// One row in the "Feeds by Open Rate" list. The bar is the rate itself rather
+/// than a share of some maximum — 20% means a fifth of the feed's entries were
+/// opened, and scaling that against the best-performing feed would make a bad
+/// feed look average on a quiet week.
+pub struct FeedOpenRateView {
+    pub title: String,
+    pub percent: i64,
+    pub opened: i64,
+    pub tracked: i64,
+    pub width_percent: u8,
+}
+
 /// `count` as a whole percentage of `max`, for the statistics bar charts.
 ///
 /// Whole numbers because the template selects a `pct-N` utility class instead of
@@ -3164,6 +3222,17 @@ pub struct StatisticsTemplate {
     pub daily_read_counts: Vec<DailyReadView>,
     pub categories: Vec<CategoryStatsView>,
     pub top_feeds: Vec<FeedStatsView>,
+    /// The unsubscribe shortlist: feeds whose entries arrive and are never
+    /// opened, lowest rate first. Empty when the reader is opted out of
+    /// tracking, or when no feed has reached the sample floor yet.
+    pub open_rate_feeds: Vec<FeedOpenRateView>,
+    /// Start of the window `open_rate_feeds` actually covers, `None` when
+    /// tracking is off. Shown because retention prunes entries out from under
+    /// the metric, so it is usually later than the opt-in date.
+    pub tracked_since: Option<String>,
+    /// Suppression threshold, so the section's note states the same number the
+    /// code applies.
+    pub min_tracked_for_rate: i64,
     pub admin: Option<AdminStatsView>,
     pub admin_db: Option<AdminDatabaseStatsView>,
 }
@@ -3221,6 +3290,12 @@ pub struct FeedRowView {
     pub feed_updated_at_datetime: String,
     pub freshness_class: String,
     pub freshness_key: String,
+    /// `"42% (10/24)"`, or `None` while the feed has too few tracked entries
+    /// for the number to mean anything (`entry_open::MIN_TRACKED_FOR_RATE`).
+    pub open_rate_label: Option<String>,
+    /// The same percentage as a sort key. `None` sorts last: a feed that cannot
+    /// report yet is not a candidate for unsubscribing.
+    pub open_rate_percent: Option<i64>,
 }
 
 /// Category option for selects + sidebar counts on `/feeds`.
@@ -3257,6 +3332,12 @@ pub struct FeedsTemplate {
     /// numbers `compute_freshness` actually applies.
     pub fresh_max_days: i64,
     pub warning_max_days: i64,
+    /// Gates the whole "Open rate" column: a reader who never opted in has no
+    /// data behind it, and a column of dashes is worse than no column.
+    pub open_rate_shown: bool,
+    /// Tracked entries a feed needs before its rate is shown, for the `—`
+    /// tooltip to state the same number the code applies.
+    pub min_tracked_for_rate: i64,
 }
 
 impl IntoResponse for FeedsTemplate {
@@ -3768,6 +3849,39 @@ pub async fn statistics_page(
         })
         .collect();
 
+    // Period-independent, unlike everything above it: the open rate is measured
+    // from the opt-in date, and re-cutting it by the page's date filter would
+    // report a denominator the pixels were never served for.
+    let mut open_rate_feeds: Vec<FeedOpenRateView> =
+        crate::models::entry_open::open_rates_by_feed(&state.db, user_id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|r| {
+                let percent = r.percent()?;
+                Some(FeedOpenRateView {
+                    title: r.title.unwrap_or_else(|| "(untitled feed)".to_string()),
+                    percent,
+                    opened: r.opened,
+                    tracked: r.tracked,
+                    width_percent: u8::try_from(percent.clamp(0, 100)).unwrap_or(100),
+                })
+            })
+            .collect();
+    // Ascending: the feeds worth dropping belong at the top, which is the whole
+    // reason this section is not just "Top Feeds" upside down.
+    open_rate_feeds.sort_by_key(|f| (f.percent, f.title.to_lowercase()));
+    open_rate_feeds.truncate(10);
+
+    let tracked_since = crate::models::entry_open::tracking_window(&state.db, user_id)
+        .await
+        .unwrap_or(crate::models::entry_open::TrackingWindow {
+            enabled_at: None,
+            oldest_tracked: None,
+        })
+        .tracked_since()
+        .map(|t| t.format("%Y-%m-%d").to_string());
+
     let admin = match (admin_counts, admin_entry_stats) {
         (Some(c), Some(e)) => Some(AdminStatsView {
             total_users: c.total_users,
@@ -3809,6 +3923,9 @@ pub async fn statistics_page(
             daily_read_counts,
             categories,
             top_feeds,
+            open_rate_feeds,
+            tracked_since,
+            min_tracked_for_rate: crate::models::entry_open::MIN_TRACKED_FOR_RATE,
             admin,
             admin_db,
         },

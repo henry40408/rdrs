@@ -13,6 +13,7 @@ pub mod invite;
 pub mod offline;
 pub mod pages;
 pub mod passkey;
+pub mod pixel;
 pub mod proxy;
 pub mod static_assets;
 pub mod summarizer;
