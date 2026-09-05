@@ -3068,6 +3068,39 @@ async fn test_update_linkding_form() {
     assert_eq!(location, "/user-settings");
 }
 
+/// End to end for the credential-at-rest fix: what the form stores must not be
+/// legible in the database, and must still come back out through the app.
+#[tokio::test]
+async fn a_saved_linkding_token_is_encrypted_in_the_database() {
+    let mut app = create_test_app_named(default_test_config(), "linkding_token_encrypted").await;
+    setup_authenticated_user(&mut app.server).await;
+
+    let response = app
+        .server
+        .post("/user-settings/linkding")
+        .form(&json!({
+            "api_url": "https://linkding.example.com",
+            "api_token": "SUPERSECRETTOKEN123",
+        }))
+        .await;
+    response.assert_status(StatusCode::SEE_OTHER);
+
+    let stored: String = rdrs::query_scalar!(
+        &app.db,
+        String,
+        "SELECT save_services FROM user_settings LIMIT 1",
+    )
+    .unwrap();
+    assert!(
+        !stored.contains("SUPERSECRETTOKEN123"),
+        "the token must not be legible in the column, got: {stored}"
+    );
+
+    // And the page still reports it as configured, i.e. the value round-trips.
+    let page = app.server.get("/user-settings").await;
+    assert!(page.text().contains("linkding.example.com"));
+}
+
 #[tokio::test]
 async fn test_update_kagi_form() {
     let mut server = create_test_server(default_test_config()).await;
@@ -6715,12 +6748,10 @@ async fn password_fields_advertise_the_server_side_policy() {
 /// redirect sets. The link is shown once and never stored in recoverable form,
 /// so this is exactly what an admin has to do — read it off the screen.
 fn invite_path_from(response: &axum_test::TestResponse) -> String {
-    let flash = response.cookie("flash");
-    // The value is the flash JSON, but a cookie value cannot carry spaces or
-    // quotes unescaped, so what arrives here is percent-encoded. Searching the
-    // decoded text is enough — the path itself is URL-safe base64 and survives
-    // encoding untouched.
-    let raw = flash.value().replace("%2F", "/");
+    // The cookie carries base64(percent-encoded JSON) plus the middleware's
+    // signature; `flash_text` undoes both. Searching the decoded text is enough
+    // — the path itself is URL-safe base64 and survives encoding untouched.
+    let raw = flash_text(response).replace("%2F", "/");
     let start = raw
         .find("/invite/")
         .unwrap_or_else(|| panic!("expected a link in the flash, got {raw:?}"));

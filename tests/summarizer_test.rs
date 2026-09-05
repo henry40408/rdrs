@@ -63,7 +63,7 @@ async fn configure_kagi(app: &TestApp, user_id: i64) {
             language: None,
         }),
     };
-    user_settings::update_save_services(&app.db, user_id, &cfg)
+    user_settings::update_save_services(&app.db, user_id, &cfg, None)
         .await
         .unwrap();
 }

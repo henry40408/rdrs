@@ -768,7 +768,7 @@ class RdrsSidebar extends HTMLElement {
                         window.flash.warning('You are signed in via your reverse proxy. To end your session, log out at your proxy or SSO provider, then reload this page to keep using the app.');
                     } else {
                         // Normal cookie/password session: fully logged out server-side.
-                        window.flash.redirect(d.redirect_to, 'info', 'You have been logged out.');
+                        window.flash.redirect(d.redirect_to);
                     }
                 } else {
                     window.flash.error('Logout failed');

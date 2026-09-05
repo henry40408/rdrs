@@ -30,12 +30,6 @@ class RdrsFlash extends HTMLElement {
         // below. This element's job from here is `show()`.
     }
 
-    /** Set a flash message cookie for next page load. */
-    set(level, message) {
-        const messages = [{ level, message }];
-        document.cookie = 'flash=' + encodeURIComponent(JSON.stringify(messages)) + '; path=/; SameSite=Lax';
-    }
-
     /** Show a flash message immediately on the page. */
     show(level, message) {
         if (!this.parentNode) {
@@ -113,8 +107,16 @@ class RdrsFlash extends HTMLElement {
         }
     }
 
-    redirect(url, level, message) {
-        this.set(level, message);
+    /**
+     * Navigate, leaving the banner to the server.
+     *
+     * This used to write the flash cookie itself. It cannot any more: the
+     * cookie is signed so that only this server can put words in a banner, and
+     * a key the browser holds would defeat the point. The endpoints these
+     * callers hit set the flash on their own response instead, so the banner is
+     * already waiting at `url`.
+     */
+    redirect(url) {
         window.location.href = url;
     }
 }
@@ -180,5 +182,5 @@ window.flash = {
     info(message) { this._el.info(message); },
     warning(message) { this._el.warning(message); },
     clear() { this._el.clear(); },
-    redirect(url, level, message) { this._el.redirect(url, level, message); },
+    redirect(url) { this._el.redirect(url); },
 };

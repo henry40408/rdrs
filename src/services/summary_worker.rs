@@ -63,16 +63,26 @@ pub struct SummaryJob {
 /// worker creates one on dequeue (if absent) and removes it when the job ends.
 pub type CancelRegistry = Arc<Mutex<HashMap<(i64, i64), CancellationToken>>>;
 
+/// The process-wide handles every summary job needs, bundled so the worker's
+/// signature stays readable as it grows.
+#[derive(Clone)]
+pub struct SummaryWorkerContext {
+    pub cache: Arc<SummaryCache>,
+    pub sidebar_cache: Arc<SidebarCache>,
+    pub cancels: CancelRegistry,
+    pub events: EventBus,
+    /// Opens the stored Kagi credential; `None` on an install with a generated
+    /// `RDRS_SECRET`, where credentials are stored in the clear.
+    pub service_token_key: Option<Vec<u8>>,
+}
+
 /// Drains the queue one job at a time — Kagi is rate-limited per key, so
 /// concurrency here would buy nothing but 429s.
 pub fn start_summary_worker(
     mut rx: mpsc::Receiver<SummaryJob>,
-    cache: Arc<SummaryCache>,
-    sidebar_cache: Arc<SidebarCache>,
     db: Db,
-    cancels: CancelRegistry,
     cancel_token: CancellationToken,
-    events: EventBus,
+    ctx: SummaryWorkerContext,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         // Background priority: DB operations yield to interactive work on SQLite.
@@ -85,7 +95,7 @@ pub fn start_summary_worker(
                     tracing::info!(event = "summary.worker_stopping", "summary worker stopping, draining remaining jobs");
                     // Drain remaining jobs before exiting
                     while let Ok(job) = rx.try_recv() {
-                        process_summary_job(&job, &cache, &sidebar_cache, &db, &cancels, &events).await;
+                        process_summary_job(&job, &db, &ctx).await;
                     }
                     break;
                 }
@@ -97,21 +107,15 @@ pub fn start_summary_worker(
                 }
             };
 
-            process_summary_job(&job, &cache, &sidebar_cache, &db, &cancels, &events).await;
+            process_summary_job(&job, &db, &ctx).await;
         }
 
         tracing::info!(event = "summary.worker_stopped", "summary worker stopped");
     })
 }
 
-async fn process_summary_job(
-    job: &SummaryJob,
-    cache: &Arc<SummaryCache>,
-    sidebar_cache: &Arc<SidebarCache>,
-    db: &Db,
-    cancels: &CancelRegistry,
-    events: &EventBus,
-) {
+async fn process_summary_job(job: &SummaryJob, db: &Db, ctx: &SummaryWorkerContext) {
+    let cancels = &ctx.cancels;
     let key = (job.user_id, job.entry_id);
 
     // Get-or-create this job's cancellation token. Covers startup-recovered
@@ -128,19 +132,22 @@ async fn process_summary_job(
         return;
     }
 
-    run_summary_job_body(job, cache, sidebar_cache, db, &token, events).await;
+    run_summary_job_body(job, db, &token, ctx).await;
 
     cancels.lock().unwrap().remove(&key);
 }
 
 async fn run_summary_job_body(
     job: &SummaryJob,
-    cache: &Arc<SummaryCache>,
-    sidebar_cache: &Arc<SidebarCache>,
     db: &Db,
     token: &CancellationToken,
-    events: &EventBus,
+    ctx: &SummaryWorkerContext,
 ) {
+    let cache = &ctx.cache;
+    let sidebar_cache = &ctx.sidebar_cache;
+    let events = &ctx.events;
+    let service_token_key = ctx.service_token_key.as_deref();
+
     tracing::debug!(
         event = "summary.processing",
         user_id = job.user_id,
@@ -168,8 +175,10 @@ async fn run_summary_job_body(
 
     let user_id = job.user_id;
     let entry_id = job.entry_id;
-    let kagi_config = match user_settings::get_save_services_config(db, user_id).await {
-        Ok(config) => config.kagi,
+    let kagi_config = match user_settings::get_save_services_config(db, user_id, service_token_key)
+        .await
+    {
+        Ok(config) => config.or_default().kagi,
         Err(e) => {
             tracing::error!(event = "summary.settings_load_failed", user_id, entry_id, error = %e, "failed to load user settings");
             let error_msg = "Failed to load Kagi settings".to_string();
@@ -408,12 +417,15 @@ mod tests {
 
         let handle = start_summary_worker(
             rx,
-            cache,
-            Arc::new(SidebarCache::default()),
             db,
-            registry(),
             cancel_token.clone(),
-            EventBus::new(8),
+            SummaryWorkerContext {
+                cache,
+                sidebar_cache: Arc::new(SidebarCache::default()),
+                cancels: registry(),
+                events: EventBus::new(8),
+                service_token_key: None,
+            },
         );
 
         // Send a job (it won't be processed properly without Kagi config, but that's OK)
@@ -442,12 +454,15 @@ mod tests {
 
         let handle = start_summary_worker(
             rx,
-            cache,
-            Arc::new(SidebarCache::default()),
             db,
-            registry(),
             cancel_token,
-            EventBus::new(8),
+            SummaryWorkerContext {
+                cache,
+                sidebar_cache: Arc::new(SidebarCache::default()),
+                cancels: registry(),
+                events: EventBus::new(8),
+                service_token_key: None,
+            },
         );
 
         drop(tx);
@@ -688,7 +703,18 @@ mod tests {
             entry_link: "https://example.com/x".to_string(),
         };
 
-        process_summary_job(&job, &cache, &sidebar, &db, &cancels, &EventBus::new(8)).await;
+        process_summary_job(
+            &job,
+            &db,
+            &SummaryWorkerContext {
+                cache: cache.clone(),
+                sidebar_cache: sidebar,
+                cancels,
+                events: EventBus::new(8),
+                service_token_key: None,
+            },
+        )
+        .await;
 
         // The set_processing UPDATE hits 0 rows (no summary row exists) ->
         // AppError::NotFound -> worker removes the stale cache entry instead
@@ -721,12 +747,15 @@ mod tests {
 
         let handle = start_summary_worker(
             rx,
-            cache.clone(),
-            Arc::new(SidebarCache::default()),
             db,
-            registry(),
             cancel_token.clone(),
-            EventBus::new(8),
+            SummaryWorkerContext {
+                cache: cache.clone(),
+                sidebar_cache: Arc::new(SidebarCache::default()),
+                cancels: registry(),
+                events: EventBus::new(8),
+                service_token_key: None,
+            },
         );
 
         for i in 1..=3 {
@@ -798,12 +827,15 @@ mod tests {
 
         let handle = start_summary_worker(
             rx,
-            cache,
-            Arc::new(SidebarCache::default()),
             db,
-            registry(),
             cancel_token.clone(),
-            bus,
+            SummaryWorkerContext {
+                cache,
+                sidebar_cache: Arc::new(SidebarCache::default()),
+                cancels: registry(),
+                events: bus,
+                service_token_key: None,
+            },
         );
         tx.send(SummaryJob {
             user_id,

@@ -923,7 +923,9 @@ async fn test_categories_page_with_flash() {
         .get("/categories")
         .add_cookie(cookie::Cookie::new(
             "flash",
-            r#"[{"level":"success","message":"Category created successfully"}]"#,
+            common::signed_flash_value(
+                r#"[{"level":"success","message":"Category created successfully"}]"#,
+            ),
         ))
         .await;
 
@@ -946,7 +948,7 @@ async fn test_feeds_page_with_flash() {
         .get("/feeds")
         .add_cookie(cookie::Cookie::new(
             "flash",
-            r#"[{"level":"error","message":"Failed to add feed"}]"#,
+            common::signed_flash_value(r#"[{"level":"error","message":"Failed to add feed"}]"#),
         ))
         .await;
 
@@ -968,7 +970,7 @@ async fn test_entries_page_with_flash() {
         .get("/entries")
         .add_cookie(cookie::Cookie::new(
             "flash",
-            r#"[{"level":"info","message":"Entries refreshed"}]"#,
+            common::signed_flash_value(r#"[{"level":"info","message":"Entries refreshed"}]"#),
         ))
         .await;
 
@@ -1021,7 +1023,7 @@ async fn test_user_settings_page_with_flash() {
         .get("/user-settings")
         .add_cookie(cookie::Cookie::new(
             "flash",
-            r#"[{"level":"success","message":"Settings saved"}]"#,
+            common::signed_flash_value(r#"[{"level":"success","message":"Settings saved"}]"#),
         ))
         .await;
 

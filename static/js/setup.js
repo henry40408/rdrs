@@ -29,7 +29,7 @@ if (form) {
             });
 
             if (response.ok) {
-                flash.redirect('/login', 'success', 'Account created. Please sign in.');
+                flash.redirect('/login');
             } else {
                 const data = await response.json();
                 errorDiv.textContent = data.error || 'Could not create the account';

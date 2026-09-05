@@ -148,10 +148,10 @@ impl IntoResponse for SummarizerTemplate {
 }
 
 async fn kagi_configured(state: &AppState, user_id: i64) -> bool {
-    user_settings::get_save_services_config(&state.db, user_id)
+    user_settings::get_save_services_config(&state.db, user_id, state.config.service_token_key())
         .await
         .ok()
-        .and_then(|c| c.kagi)
+        .and_then(|c| c.or_default().kagi)
         .is_some_and(|k| k.is_configured())
 }
 
@@ -268,8 +268,14 @@ pub async fn item(
         ));
     };
 
-    let kagi = match user_settings::get_save_services_config(&state.db, auth_user.user.id).await {
-        Ok(c) => c.kagi,
+    let kagi = match user_settings::get_save_services_config(
+        &state.db,
+        auth_user.user.id,
+        state.config.service_token_key(),
+    )
+    .await
+    {
+        Ok(c) => c.or_default().kagi,
         Err(_) => None,
     };
     let Some(config) =

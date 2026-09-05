@@ -580,6 +580,10 @@ async fn a_failed_save_reaches_a_scriptless_reader() {
             }),
             kagi: None,
         },
+        // Matches `default_test_config()`, whose secret is configured rather
+        // than generated — the seeded value has to be sealed the same way the
+        // handler would seal it.
+        Some(&[0u8; 32]),
     )
     .await
     .unwrap();

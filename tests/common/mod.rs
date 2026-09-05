@@ -6,6 +6,7 @@
 //! shared-memory database name to stay isolated from the other test binaries.
 
 use axum_test::{TestResponse, TestServer};
+use base64::Engine as _;
 use rdrs::Config;
 
 /// A fresh, default-configured [`rdrs::middleware::RateLimiter`] for an
@@ -85,6 +86,21 @@ pub async fn seed_account(
 #[allow(dead_code)] // only the suites that assert on flash text need it
 pub fn flash_text(response: &TestResponse) -> String {
     let raw = response.cookie("flash").value().to_string();
+    percent_decode(&flash_payload(&raw))
+}
+
+/// Strip the signature the flash middleware appends and undo its base64,
+/// leaving the percent-encoded JSON the cookie used to carry directly.
+fn flash_payload(value: &str) -> String {
+    let encoded = value.rsplit_once('.').map_or(value, |(payload, _)| payload);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_else(|| value.to_string())
+}
+
+fn percent_decode(raw: &str) -> String {
     let bytes = raw.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -101,6 +117,22 @@ pub fn flash_text(response: &TestResponse) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A flash cookie signed the way the middleware signs one, for tests that seed
+/// a banner instead of performing the action that produces it. An unsigned
+/// cookie is dropped on the way in — that is the point of the signature — so a
+/// hand-written one has to be signed here too.
+#[allow(dead_code)] // only the suites that seed a flash need it
+pub fn signed_flash_value(json: &str) -> String {
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json);
+    let tag = rdrs::secret::tag(
+        &[0u8; 32],
+        rdrs::secret::DOMAIN_FLASH,
+        &[encoded.as_bytes()],
+    );
+    let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(tag);
+    format!("{encoded}.{signature}")
 }
 
 /// Default in-memory `Config` shared across the integration test suites.

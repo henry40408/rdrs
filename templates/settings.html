@@ -120,7 +120,7 @@
                                 <td><code>RDRS_SECRET</code></td>
                                 <td class="settings-col-current" data-label="Current">{% if secret_generated %}<span class="muted">Auto-generated</span>{% else %}<span class="success-text">Configured</span>{% endif %}</td>
                                 <td data-label="Default"><em>(auto-generated)</em></td>
-                                <td data-label="Description">Secret key for image proxy URLs</td>
+                                <td data-label="Description">Root key for session cookies, image proxy URLs, and encrypting saved Linkding/Kagi credentials.{% if secret_generated %} <strong>Auto-generated keys change on every restart</strong>, so integration credentials are stored unencrypted rather than being locked away by a key that will not survive the next boot. Set this to a fixed value to have them encrypted at rest.{% endif %}</td>
                             </tr>
                         </tbody>
                     </table>
