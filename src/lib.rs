@@ -26,6 +26,7 @@ pub use config::Config;
 pub use db::Db;
 pub use middleware::auth::{SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_HOST};
 pub use models::{Role, User};
+pub use utils::url_validation::FetchPolicy;
 pub use version::GIT_VERSION;
 
 use services::{SidebarCache, SummaryCache, SummaryJob};

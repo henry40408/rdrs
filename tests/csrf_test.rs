@@ -166,6 +166,7 @@ async fn logged_out_page_request_emits_exactly_one_set_cookie_per_name() {
 #[tokio::test]
 async fn secure_anonymous_session_round_trips_and_does_not_remint_csrf_cookie() {
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         cookie_secure: true,
         ..default_test_config()
     };
@@ -286,6 +287,7 @@ async fn a_stale_csrf_cookie_is_reminted_and_unblocks_the_next_post() {
 #[tokio::test]
 async fn a_leftover_unprefixed_csrf_cookie_is_evicted_on_a_secure_deployment() {
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         cookie_secure: true,
         ..default_test_config()
     };

@@ -107,6 +107,7 @@ pub fn flash_text(response: &TestResponse) -> String {
 #[allow(dead_code)] // a few suites build their own Config inline
 pub fn default_test_config() -> Config {
     Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         database_url: ":memory:".to_string(),
         server_bind: "127.0.0.1:8080".parse().unwrap(),
         multi_user_enabled: true,

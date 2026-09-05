@@ -11,10 +11,12 @@ use super::sidebar_cache::SidebarCache;
 use crate::db::Db;
 use crate::models::feed;
 use crate::services::EventBus;
+use crate::utils::url_validation::FetchPolicy;
 
 pub fn start_background_sync(
     db: Db,
     user_agent: String,
+    fetch_allow_private: FetchPolicy,
     cancel_token: CancellationToken,
     sidebar_cache: Arc<SidebarCache>,
     events: EventBus,
@@ -45,7 +47,8 @@ pub fn start_background_sync(
 
                     debug!(event = "sync.tick", bucket, "running background sync for bucket");
 
-                    let results = feed_sync::refresh_bucket(db.clone(), bucket, &user_agent).await;
+                    let results = feed_sync::refresh_bucket(db.clone(), bucket, &user_agent, &fetch_allow_private)
+                        .await;
 
                     let success_count = results.iter().filter(|(_, r)| r.is_ok()).count();
                     let fail_count = results.iter().filter(|(_, r)| r.is_err()).count();
@@ -109,6 +112,7 @@ mod tests {
         let handle = start_background_sync(
             db,
             "Test-Agent/1.0".to_string(),
+            FetchPolicy::default(),
             cancel_token.clone(),
             Arc::new(SidebarCache::default()),
             EventBus::new(8),
@@ -133,6 +137,7 @@ mod tests {
         let handle = start_background_sync(
             db,
             "Test-Agent/1.0".to_string(),
+            FetchPolicy::default(),
             cancel_token.clone(),
             Arc::new(SidebarCache::default()),
             EventBus::new(8),

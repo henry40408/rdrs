@@ -4,6 +4,8 @@ use rand::Rng;
 use std::env;
 use std::net::{IpAddr, SocketAddr};
 
+use crate::utils::url_validation::FetchPolicy;
+
 /// Default user agent for HTTP requests (transparent and responsible crawling)
 pub const DEFAULT_USER_AGENT: &str = concat!(
     "RDRS/",
@@ -45,6 +47,12 @@ pub struct Config {
     /// every browser session and breaks every cached image-proxy URL on restart.
     pub secret_generated: bool,
     pub user_agent: String,
+    /// Hosts the SSRF guard lets the feed, icon and discovery fetchers reach
+    /// despite resolving inward — from `RDRS_FETCH_ALLOW_PRIVATE_HOSTS`. Empty
+    /// by default, which is the safe reading of "a feed URL is attacker
+    /// influenced"; a self-hoster subscribing to something on their own LAN
+    /// names it here.
+    pub fetch_allow_private: FetchPolicy,
     pub webauthn_rp_id: String,
     pub webauthn_rp_origin: String,
     pub webauthn_rp_name: String,
@@ -441,6 +449,10 @@ impl Config {
             &nonblank(&get, "RDRS_TRUSTED_PROXY_NETWORKS").unwrap_or_default(),
         )?;
 
+        let fetch_allow_private = FetchPolicy::parse(
+            &nonblank(&get, "RDRS_FETCH_ALLOW_PRIVATE_HOSTS").unwrap_or_default(),
+        )?;
+
         let public_base_url = nonblank(&get, "RDRS_PUBLIC_BASE_URL");
         // Passed raw, not through `nonblank`: `parse_cookie_secure` does its own
         // trimming and has to tell "unset" from "unrecognized" itself.
@@ -483,6 +495,7 @@ impl Config {
             secret_generated,
             user_agent: nonblank(&get, "RDRS_USER_AGENT")
                 .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()),
+            fetch_allow_private,
             webauthn_rp_id: nonblank(&get, "RDRS_WEBAUTHN_RP_ID")
                 .unwrap_or_else(|| "localhost".to_string()),
             webauthn_rp_origin: nonblank(&get, "RDRS_WEBAUTHN_RP_ORIGIN")
@@ -685,6 +698,7 @@ mod tests {
             secret: vec![0u8; 32],
             secret_generated: false,
             user_agent: DEFAULT_USER_AGENT.to_string(),
+            fetch_allow_private: FetchPolicy::default(),
             webauthn_rp_id: "localhost".to_string(),
             webauthn_rp_origin: "http://localhost:8080".to_string(),
             webauthn_rp_name: "rdrs".to_string(),
@@ -736,6 +750,45 @@ mod tests {
                 .map(|(_, v)| (*v).to_string())
         })
         .expect("from_map should succeed")
+    }
+
+    #[test]
+    fn fetch_allow_private_defaults_to_allowing_nothing() {
+        let config = from_vars(&[]);
+        let private = url::Url::parse("http://192.168.1.10/feed.xml").unwrap();
+        assert!(config.fetch_allow_private.validate(&private).is_err());
+    }
+
+    #[test]
+    fn fetch_allow_private_opts_named_hosts_back_in() {
+        let config = from_vars(&[("RDRS_FETCH_ALLOW_PRIVATE_HOSTS", "192.168.0.0/16,nas.local")]);
+        assert!(
+            config
+                .fetch_allow_private
+                .validate(&url::Url::parse("http://192.168.1.10/feed.xml").unwrap())
+                .is_ok()
+        );
+        assert!(
+            config
+                .fetch_allow_private
+                .validate(&url::Url::parse("http://nas.local/feed.xml").unwrap())
+                .is_ok()
+        );
+        assert!(
+            config
+                .fetch_allow_private
+                .validate(&url::Url::parse("http://127.0.0.1/feed.xml").unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn fetch_allow_private_rejects_a_malformed_entry_at_startup() {
+        let err = Config::from_map(|k| {
+            (k == "RDRS_FETCH_ALLOW_PRIVATE_HOSTS").then(|| "10.0.0.0/64".into())
+        })
+        .expect_err("a malformed allow list must fail startup");
+        assert!(err.contains("RDRS_FETCH_ALLOW_PRIVATE_HOSTS"), "{err}");
     }
 
     #[test]

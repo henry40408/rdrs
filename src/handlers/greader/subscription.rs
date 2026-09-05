@@ -121,7 +121,12 @@ pub async fn subscription_edit(
             let user_agent = state.config.user_agent.clone();
 
             // Discover feed metadata
-            let discovered = feed_discovery::discover_feed(&feed_url, &user_agent).await?;
+            let discovered = feed_discovery::discover_feed(
+                &feed_url,
+                &user_agent,
+                &state.config.fetch_allow_private,
+            )
+            .await?;
 
             // Find or create category
             let category_id = if let Some(label_name) = label {
@@ -301,7 +306,8 @@ pub async fn quickadd(
     let user_agent = state.config.user_agent.clone();
 
     // Discover feed
-    let discovered = feed_discovery::discover_feed(&url, &user_agent).await?;
+    let discovered =
+        feed_discovery::discover_feed(&url, &user_agent, &state.config.fetch_allow_private).await?;
     let feed_url = discovered.feed_url.clone();
 
     if feed::find_by_url_for_user(&state.db, &discovered.feed_url, user_id)
@@ -379,7 +385,13 @@ pub async fn import(
     body: String,
 ) -> AppResult<([(&'static str, String); 1], String)> {
     let outlines = opml::parse_opml(&body)?;
-    let summary = opml::import_outlines(&state.db, auth.user.id, outlines).await?;
+    let summary = opml::import_outlines(
+        &state.db,
+        auth.user.id,
+        outlines,
+        &state.config.fetch_allow_private,
+    )
+    .await?;
     Ok(super::ok_with_affected(
         i64::try_from(summary.feeds_added).unwrap_or(i64::MAX),
     ))

@@ -1170,7 +1170,19 @@ one is not there today.
 
 - All HTML content sanitized with Ammonia
 - SQL injection prevented via parameterized queries throughout (including dynamic filter conditions)
-- SSRF protection in readability fetcher and image proxy (shared validation module)
+- SSRF protection on every outbound fetch of a URL the app did not choose:
+  readability, the image proxy, feed discovery, feed sync, the icon fetcher and
+  OPML import all go through `utils/url_validation`. The image proxy and
+  readability apply `validate_url` directly; the feed-side paths take a
+  `FetchPolicy`, which is `validate_url` plus the hosts a deployment opted back
+  in to via `RDRS_FETCH_ALLOW_PRIVATE_HOSTS` (a LAN feed is ordinary use for a
+  self-hosted reader). A non-http(s) scheme is refused whatever the allow list
+  says. The image proxy's `If-None-Match` 304 is answered *after* signature
+  verification: ahead of it, an unsigned request could mint a cacheable 304 that
+  echoed its own `s` back as the `ETag`.
+  Redirects and DNS resolution are **not** yet covered — `SHARED_CLIENT` still
+  follows redirects with no per-hop check, and a hostname is validated as a
+  string rather than by its resolved addresses
 
 ## Deployment
 

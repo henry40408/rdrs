@@ -176,6 +176,7 @@ async fn main() {
     let background_handle = services::start_background_sync(
         db.clone(),
         config.user_agent.clone(),
+        config.fetch_allow_private.clone(),
         cancel_token.clone(),
         sidebar_cache.clone(),
         events.clone(),
