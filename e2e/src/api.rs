@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
+use base64::Engine as _;
 use percent_encoding::percent_decode_str;
 use reqwest::header::{HeaderValue, SET_COOKIE};
 use reqwest::{Client, StatusCode, redirect};
@@ -200,7 +201,23 @@ impl Api {
             .into_iter()
             .find(|cookie| cookie.starts_with("flash="))
             .context("no flash cookie on the create-account response")?;
-        let decoded = percent_decode_str(&flash).decode_utf8_lossy().into_owned();
+        // The cookie value is base64(percent-encoded JSON) followed by the
+        // signature the flash middleware appends; undo both before looking for
+        // the link.
+        let payload = flash
+            .strip_prefix("flash=")
+            .and_then(|rest| rest.split(';').next())
+            .and_then(|value| value.rsplit_once('.'))
+            .and_then(|(encoded, _signature)| {
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(encoded)
+                    .ok()
+            })
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_else(|| flash.clone());
+        let decoded = percent_decode_str(&payload)
+            .decode_utf8_lossy()
+            .into_owned();
         let path = crate::invite_path_re()
             .find(&decoded)
             .with_context(|| format!("no invite link in flash: {decoded}"))?;

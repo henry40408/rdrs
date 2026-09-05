@@ -83,6 +83,10 @@ pub struct UserSettingsResponse {
     pub linkding_api_url: String,
     pub kagi_configured: bool,
     pub kagi_language: String,
+    /// Stored credentials exist but this `RDRS_SECRET` cannot decrypt them.
+    /// Distinct from "not configured": re-entering overwrites a value a
+    /// restored secret would have brought back.
+    pub credentials_unreadable: bool,
 }
 
 /// Bundled settings payload for the CSR user-settings page (theme,
@@ -100,9 +104,17 @@ pub async fn get_user_settings(
     let theme = user_settings::get_theme(&state.db, user_id)
         .await
         .unwrap_or(None);
-    let save_config = user_settings::get_save_services_config(&state.db, user_id)
-        .await
-        .unwrap_or_default();
+    let stored = user_settings::get_save_services_config(
+        &state.db,
+        user_id,
+        state.config.service_token_key(),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        user_settings::StoredServices::Config(crate::services::save::SaveServicesConfig::default())
+    });
+    let credentials_unreadable = stored.is_undecryptable();
+    let save_config = stored.or_default();
 
     let linkding = save_config.linkding.as_ref();
     let linkding_configured =
@@ -121,6 +133,7 @@ pub async fn get_user_settings(
         linkding_api_url,
         kagi_configured,
         kagi_language,
+        credentials_unreadable,
     };
 
     Ok(Json(response))
@@ -779,7 +792,16 @@ pub async fn update_linkding_form(
     let clear = req.clear.is_some();
 
     let result: AppResult<()> = async {
-        let mut config = user_settings::get_save_services_config(&state.db, user_id).await?;
+        // `or_default` rather than an error: submitting the form is how a user
+        // recovers from an unreadable value, and the settings page is where
+        // that state is explained.
+        let mut config = user_settings::get_save_services_config(
+            &state.db,
+            user_id,
+            state.config.service_token_key(),
+        )
+        .await?
+        .or_default();
 
         if clear {
             config.linkding = None;
@@ -802,7 +824,13 @@ pub async fn update_linkding_form(
             }
         }
 
-        user_settings::update_save_services(&state.db, user_id, &config).await?;
+        user_settings::update_save_services(
+            &state.db,
+            user_id,
+            &config,
+            state.config.service_token_key(),
+        )
+        .await?;
         Ok(())
     }
     .await;
@@ -839,9 +867,24 @@ pub async fn update_kagi_form(
 
     if clear {
         let result: AppResult<()> = async {
-            let mut config = user_settings::get_save_services_config(&state.db, user_id).await?;
+            // `or_default` rather than an error: submitting the form is how a user
+            // recovers from an unreadable value, and the settings page is where
+            // that state is explained.
+            let mut config = user_settings::get_save_services_config(
+                &state.db,
+                user_id,
+                state.config.service_token_key(),
+            )
+            .await?
+            .or_default();
             config.kagi = None;
-            user_settings::update_save_services(&state.db, user_id, &config).await?;
+            user_settings::update_save_services(
+                &state.db,
+                user_id,
+                &config,
+                state.config.service_token_key(),
+            )
+            .await?;
             Ok(())
         }
         .await;
@@ -868,7 +911,16 @@ pub async fn update_kagi_form(
     let language = req.language.filter(|s| !s.is_empty());
 
     let result: AppResult<()> = async {
-        let mut config = user_settings::get_save_services_config(&state.db, user_id).await?;
+        // `or_default` rather than an error: submitting the form is how a user
+        // recovers from an unreadable value, and the settings page is where
+        // that state is explained.
+        let mut config = user_settings::get_save_services_config(
+            &state.db,
+            user_id,
+            state.config.service_token_key(),
+        )
+        .await?
+        .or_default();
 
         if session_token.is_some() || has_language_field {
             let current = config.kagi.unwrap_or(KagiConfig {
@@ -888,7 +940,13 @@ pub async fn update_kagi_form(
             config.kagi = None;
         }
 
-        user_settings::update_save_services(&state.db, user_id, &config).await?;
+        user_settings::update_save_services(
+            &state.db,
+            user_id,
+            &config,
+            state.config.service_token_key(),
+        )
+        .await?;
         Ok(())
     }
     .await;

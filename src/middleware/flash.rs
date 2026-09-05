@@ -1,9 +1,10 @@
 use axum::{
-    extract::FromRequestParts,
+    extract::{FromRequestParts, State},
     http::request::Parts,
     response::{IntoResponse, IntoResponseParts, Response, ResponseParts},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -102,6 +103,180 @@ impl FlashMessage {
         self.timestamp.to_rfc3339()
     }
 }
+
+/// Sign the flash cookie on the way out and verify it on the way in.
+///
+/// The cookie carries JSON the server wrote, and the templates escape it, so a
+/// forged one cannot inject markup — but it can put arbitrary text in a banner
+/// that looks like the server speaking ("Your account has been suspended,
+/// contact …"). Anything that can write a cookie for this host can do that: a
+/// sibling app on another port, a subdomain, an XSS elsewhere on the
+/// registrable domain. The signature makes the banner say only what this server
+/// said.
+///
+/// It lives in a middleware rather than in [`SetFlash`] because the flash is
+/// constructed in ~100 handlers, none of which hold the secret; threading it
+/// through every `FlashRedirect::error(…)` call site would be a far larger
+/// change than the guarantee is worth. Here the values are rewritten in one
+/// place, and the extractor keeps seeing the plain JSON it always did.
+pub async fn sign_flash_cookies(
+    State(state): State<crate::AppState>,
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let secret = state.config.secret.clone();
+
+    verify_cookie_headers(req.headers_mut(), &secret);
+
+    let mut resp = next.run(req).await;
+    sign_set_cookie_headers(resp.headers_mut(), &secret);
+    resp
+}
+
+/// Rewrite every `Cookie` header in place, so the flash cookie carries only its
+/// payload and an unsigned one is gone before any extractor sees it.
+///
+/// A client may split its cookies across several `Cookie` headers, so this
+/// rebuilds all of them: reading only the first and replacing the lot would
+/// silently drop the session cookie riding in the second.
+fn verify_cookie_headers(headers: &mut axum::http::HeaderMap, secret: &[u8]) {
+    let existing: Vec<axum::http::HeaderValue> = headers
+        .get_all(axum::http::header::COOKIE)
+        .iter()
+        .cloned()
+        .collect();
+    if !existing
+        .iter()
+        .any(|v| v.to_str().is_ok_and(|s| s.contains(FLASH_COOKIE_NAME)))
+    {
+        return;
+    }
+
+    headers.remove(axum::http::header::COOKIE);
+    for value in existing {
+        let rewritten = value
+            .to_str()
+            .ok()
+            .and_then(|cookies| verify_cookie_header(cookies, secret))
+            .and_then(|s| axum::http::HeaderValue::from_str(&s).ok());
+        match rewritten {
+            // Every cookie in this header was a rejected flash: drop the header
+            // rather than sending an empty one.
+            Some(v) if v.is_empty() => {}
+            Some(v) => {
+                headers.append(axum::http::header::COOKIE, v);
+            }
+            None => {
+                headers.append(axum::http::header::COOKIE, value);
+            }
+        }
+    }
+}
+
+/// Rewrite one `Cookie` header's worth of pairs. `None` when it carries no
+/// flash cookie, so an untouched header keeps its original value.
+fn verify_cookie_header(cookies: &str, secret: &[u8]) -> Option<String> {
+    let prefix = format!("{FLASH_COOKIE_NAME}=");
+    if !cookies.contains(&prefix) {
+        return None;
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    for pair in cookies.split(';') {
+        let trimmed = pair.trim();
+        let Some(value) = trimmed.strip_prefix(&prefix) else {
+            out.push(trimmed.to_string());
+            continue;
+        };
+        if let Some(payload) = verify_flash_value(value, secret) {
+            out.push(format!("{prefix}{payload}"));
+        }
+        // Unsigned or wrongly signed: dropped, so the extractor sees no flash.
+    }
+
+    Some(out.join("; "))
+}
+
+/// Split `payload~signature`, check the tag, and decode the payload back to the
+/// JSON the extractor expects.
+///
+/// The payload travels base64url-encoded rather than as raw JSON. A signature
+/// only means anything if the bytes signed are the bytes checked, and raw JSON
+/// in a cookie is not safe from that: quotes, braces and commas are outside the
+/// cookie-value grammar, so a client is free to percent-encode them on the way
+/// back and the value would no longer match what was signed. base64url has no
+/// such characters.
+fn verify_flash_value(value: &str, secret: &[u8]) -> Option<String> {
+    let (encoded, signature) = value.rsplit_once(SIGNATURE_SEPARATOR)?;
+    let expected = crate::secret::tag(secret, crate::secret::DOMAIN_FLASH, &[encoded.as_bytes()]);
+    // The signature covers the exact bytes the client sent back, so a
+    // constant-time comparison is not load-bearing here; equality on the
+    // base64 form is enough to reject a forgery.
+    if signature != URL_SAFE_NO_PAD.encode(expected) {
+        return None;
+    }
+    String::from_utf8(URL_SAFE_NO_PAD.decode(encoded).ok()?).ok()
+}
+
+/// Append the signature to every outgoing flash cookie.
+fn sign_set_cookie_headers(headers: &mut axum::http::HeaderMap, secret: &[u8]) {
+    let prefix = format!("{FLASH_COOKIE_NAME}=");
+    let existing: Vec<axum::http::HeaderValue> = headers
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .cloned()
+        .collect();
+    if !existing
+        .iter()
+        .any(|v| v.to_str().is_ok_and(|s| s.starts_with(&prefix)))
+    {
+        return;
+    }
+
+    headers.remove(axum::http::header::SET_COOKIE);
+    for value in existing {
+        let signed = value
+            .to_str()
+            .ok()
+            .and_then(|cookie| sign_set_cookie(cookie, &prefix, secret))
+            .and_then(|s| axum::http::HeaderValue::from_str(&s).ok());
+        headers.append(axum::http::header::SET_COOKIE, signed.unwrap_or(value));
+    }
+}
+
+/// `None` when the cookie is not a flash cookie, or is the empty removal
+/// cookie — signing that one would change the value the browser matches on and
+/// leave the flash undeletable.
+fn sign_set_cookie(cookie: &str, prefix: &str, secret: &[u8]) -> Option<String> {
+    let rest = cookie.strip_prefix(prefix)?;
+    let (payload, attributes) = match rest.split_once(';') {
+        Some((value, attributes)) => (value, Some(attributes)),
+        None => (rest, None),
+    };
+    if payload.is_empty() {
+        return None;
+    }
+
+    // Encoded, not raw: see `verify_flash_value` for why the signed bytes have
+    // to be ones a client will hand back unchanged.
+    let encoded = URL_SAFE_NO_PAD.encode(payload);
+    let tag = crate::secret::tag(secret, crate::secret::DOMAIN_FLASH, &[encoded.as_bytes()]);
+    let signed = format!(
+        "{prefix}{encoded}{SIGNATURE_SEPARATOR}{}",
+        URL_SAFE_NO_PAD.encode(tag)
+    );
+    Some(match attributes {
+        Some(attributes) => format!("{signed};{attributes}"),
+        None => signed,
+    })
+}
+
+/// Separates the flash payload from its signature. Both sides are base64url,
+/// whose alphabet does not include this character — and unlike `~`, a `.` is
+/// inside the cookie-value set every client sends back verbatim rather than
+/// percent-encoding. The session cookie uses the same separator for the same
+/// reason.
+const SIGNATURE_SEPARATOR: char = '.';
 
 const MAX_FLASH_MESSAGES: usize = 3;
 
@@ -260,6 +435,109 @@ impl IntoResponse for FlashRedirect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
+
+    fn signed(payload: &str) -> String {
+        sign_set_cookie(
+            &format!("flash={payload}; Path=/; HttpOnly"),
+            "flash=",
+            SECRET,
+        )
+        .expect("a non-empty flash cookie is signed")
+    }
+
+    /// What the browser sends back: name=value, attributes dropped.
+    fn cookie_value(set_cookie: &str) -> &str {
+        set_cookie
+            .strip_prefix("flash=")
+            .and_then(|rest| rest.split(';').next())
+            .expect("a flash Set-Cookie")
+    }
+
+    #[test]
+    fn a_signed_cookie_survives_the_round_trip() {
+        let payload = r#"[{"level":"success","message":"Saved."}]"#;
+        let value = signed(payload);
+        let rewritten =
+            verify_cookie_header(&format!("flash={}", cookie_value(&value)), SECRET).unwrap();
+        assert_eq!(rewritten, format!("flash={payload}"));
+    }
+
+    /// The point of signing: anything that can write a cookie for this host —
+    /// a sibling app on another port, a subdomain — must not be able to put
+    /// words in the server's mouth.
+    #[test]
+    fn an_unsigned_or_forged_cookie_is_dropped() {
+        let forged = r#"[{"level":"error","message":"Your account is suspended."}]"#;
+
+        assert_eq!(
+            verify_cookie_header(&format!("flash={forged}"), SECRET).unwrap(),
+            ""
+        );
+
+        let other = sign_set_cookie(
+            &format!("flash={forged}"),
+            "flash=",
+            b"another key entirely",
+        )
+        .unwrap();
+        assert_eq!(
+            verify_cookie_header(&format!("flash={}", cookie_value(&other)), SECRET).unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn a_tampered_payload_is_dropped() {
+        let value = signed(r#"[{"level":"success","message":"Saved."}]"#);
+        let (_, signature) = cookie_value(&value)
+            .rsplit_once(SIGNATURE_SEPARATOR)
+            .unwrap();
+
+        let swapped_payload = r#"[{"level":"error","message":"Suspended."}]"#;
+        let swapped = format!("flash={swapped_payload}{SIGNATURE_SEPARATOR}{signature}");
+        assert_eq!(verify_cookie_header(&swapped, SECRET).unwrap(), "");
+    }
+
+    #[test]
+    fn other_cookies_are_left_alone() {
+        let flash = signed(r#"[{"level":"info","message":"Hi."}]"#);
+        let cookies = format!(
+            "__Host-session=abc.def; flash={}; csrf_token=xyz",
+            cookie_value(&flash)
+        );
+        let rewritten = verify_cookie_header(&cookies, SECRET).unwrap();
+        assert!(rewritten.starts_with("__Host-session=abc.def; "));
+        assert!(rewritten.ends_with("; csrf_token=xyz"));
+    }
+
+    #[test]
+    fn a_request_without_a_flash_cookie_is_untouched() {
+        assert_eq!(verify_cookie_header("__Host-session=abc.def", SECRET), None);
+    }
+
+    /// The removal cookie is matched by name *and value*; signing an empty
+    /// value would change what the browser compares and leave the flash
+    /// undeletable, so it is left alone.
+    #[test]
+    fn the_removal_cookie_is_not_signed() {
+        assert_eq!(sign_set_cookie("flash=; Path=/", "flash=", SECRET), None);
+    }
+
+    #[test]
+    fn a_non_flash_set_cookie_is_not_touched() {
+        assert_eq!(
+            sign_set_cookie("csrf_token=abc; Path=/", "flash=", SECRET),
+            None
+        );
+    }
+
+    #[test]
+    fn signing_keeps_the_cookie_attributes() {
+        let value = signed(r#"[{"level":"info","message":"Hi."}]"#);
+        assert!(value.contains("; Path=/; HttpOnly"), "got: {value}");
+    }
 
     #[test]
     fn test_flash_message_serialization() {

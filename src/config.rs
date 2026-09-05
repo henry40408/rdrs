@@ -432,6 +432,19 @@ impl Config {
         Self::from_map(|key| env::var(key).ok())
     }
 
+    /// The key third-party service credentials are encrypted with at rest, or
+    /// `None` when there is nothing durable to encrypt with.
+    ///
+    /// A generated [`Config::secret`] is new on every restart. Encrypting with
+    /// it would turn a restart into permanent loss of the user's Linkding and
+    /// Kagi tokens — worse than the plaintext storage it replaces, and for no
+    /// gain, since a key that only exists in this process protects nothing that
+    /// outlives it. So an install that never set `RDRS_SECRET` keeps storing
+    /// them as it did before, and `/admin` says so.
+    pub fn service_token_key(&self) -> Option<&[u8]> {
+        (!self.secret_generated).then_some(self.secret.as_slice())
+    }
+
     /// Build the config from an arbitrary key→value lookup.
     ///
     /// `from_env` is the one-line adapter over the real environment; tests pass

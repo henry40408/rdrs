@@ -207,6 +207,19 @@
                 <h2>Integrations</h2>
                 <p class="muted">Connect external services to save articles.</p>
 
+                {# Stored credentials that will not decrypt read as "not configured"
+                   everywhere else, which would invite an overwrite of a value a
+                   restored RDRS_SECRET would have brought back. Say so instead. #}
+                {% if credentials_unreadable %}
+                <div class="banner banner--warning" role="alert" data-testid="credentials-unreadable">
+                    <span class="banner-icon" aria-hidden="true"></span>
+                    <div class="banner-body">
+                        <span class="sr-only">Warning: </span>
+                        <span class="banner-message">Your saved integration credentials cannot be decrypted with the current <code>RDRS_SECRET</code>. They are still stored. Restore the previous secret to recover them, or re-enter them below to replace them.</span>
+                    </div>
+                </div>
+                {% endif %}
+
                 <h3>Linkding</h3>
                 <p class="muted">
                     <a href="https://github.com/sissbruecker/linkding" target="_blank" rel="noopener noreferrer">Linkding</a>

@@ -54,10 +54,17 @@ pub async fn setup(
     headers: HeaderMap,
     connect: Option<Extension<ConnectInfo<SocketAddr>>>,
     Json(req): Json<SetupRequest>,
-) -> AppResult<(StatusCode, Json<SetupResponse>)> {
+) -> AppResult<(StatusCode, SetFlash, Json<SetupResponse>)> {
     let peer = connect.map(|Extension(ConnectInfo(addr))| addr.ip());
     let user = perform_setup(&state, &headers, peer, &req, "POST /api/setup").await?;
-    Ok((StatusCode::CREATED, Json(user)))
+    // Set here rather than by the caller's JavaScript: a flash cookie is signed
+    // (see `middleware::flash`), so only the server can mint one. The client
+    // navigates to /login and the banner is waiting for it.
+    Ok((
+        StatusCode::CREATED,
+        SetFlash::success("Account created. Please sign in."),
+        Json(user),
+    ))
 }
 
 /// The first-account creation itself, shared by the JSON endpoint above and the
@@ -493,17 +500,7 @@ pub async fn logout_form(
 ) -> AppResult<Response> {
     let (headers, jar, body) = destroy_session(&state, jar, auth_user).await?;
 
-    // Forward-auth with no logout URL configured: the proxy re-injects the
-    // identity on the next request, so bouncing to /login would silently sign
-    // the reader back in. Say so rather than pretending, matching what the
-    // scripted path flashes.
-    let flash = if body.via_forward_auth && !body.logout_url_configured {
-        SetFlash::warning(
-            "You are signed in via your reverse proxy. To end your session, log out at your proxy or SSO provider.",
-        )
-    } else {
-        SetFlash::info("You have been logged out.")
-    };
+    let flash = logged_out_flash(&body);
 
     Ok((headers, jar, flash, Redirect::to(&body.redirect_to)).into_response())
 }
@@ -515,10 +512,30 @@ pub async fn logout(
 ) -> AppResult<(
     [(HeaderName, HeaderValue); 1],
     CookieJar,
+    SetFlash,
     Json<LogoutResponse>,
 )> {
     let (headers, jar, body) = destroy_session(&state, jar, auth_user).await?;
-    Ok((headers, jar, Json(body)))
+    // The banner is set here rather than by the caller's JavaScript. A flash
+    // cookie is signed (see `middleware::flash`), so only the server can mint
+    // one — and the client only needs to navigate afterwards.
+    let flash = logged_out_flash(&body);
+    Ok((headers, jar, flash, Json(body)))
+}
+
+/// The sign-out banner, shared by the scripted and scriptless endpoints.
+///
+/// Forward-auth with no logout URL configured: the proxy re-injects the
+/// identity on the next request, so bouncing to /login would silently sign the
+/// reader back in. Say so rather than pretending.
+fn logged_out_flash(body: &LogoutResponse) -> SetFlash {
+    if body.via_forward_auth && !body.logout_url_configured {
+        SetFlash::warning(
+            "You are signed in via your reverse proxy. To end your session, log out at your proxy or SSO provider.",
+        )
+    } else {
+        SetFlash::info("You have been logged out.")
+    }
 }
 
 /// Shared core: destroy the session, clear every cookie it could be carried

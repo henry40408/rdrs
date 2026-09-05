@@ -420,7 +420,15 @@ pub(crate) async fn load_pane_action_flags(
     state: &AppState,
     user_id: i64,
 ) -> AppResult<(bool, bool)> {
-    let cfg = crate::models::user_settings::get_save_services_config(&state.db, user_id).await?;
+    // Chrome only: an unreadable credential shows the same as an absent one,
+    // and the settings page is where the reason is explained.
+    let cfg = crate::models::user_settings::get_save_services_config(
+        &state.db,
+        user_id,
+        state.config.service_token_key(),
+    )
+    .await?
+    .or_default();
     let has_save = cfg.has_any_service();
     let has_kagi = cfg
         .kagi
@@ -1116,7 +1124,13 @@ pub async fn save_entry_form(
     let ewf = entry::find_by_id_for_user(&state.db, user_id, entry_id)
         .await?
         .ok_or(AppError::EntryNotFound)?;
-    let save_config = user_settings::get_save_services_config(&state.db, user_id).await?;
+    let save_config = user_settings::get_save_services_config(
+        &state.db,
+        user_id,
+        state.config.service_token_key(),
+    )
+    .await?
+    .usable()?;
 
     let link = ewf
         .entry

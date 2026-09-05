@@ -1282,7 +1282,7 @@ async fn test_flash_message_displayed_on_login_page() {
         .get("/login")
         .add_cookie(cookie::Cookie::new(
             "flash",
-            r#"[{"level":"success","message":"Test flash message"}]"#,
+            common::signed_flash_value(r#"[{"level":"success","message":"Test flash message"}]"#),
         ))
         .await;
 
@@ -1293,6 +1293,69 @@ async fn test_flash_message_displayed_on_login_page() {
     assert!(body.contains(r#"role="status""#));
 }
 
+/// A cookie the server did not sign must not become a banner. Anything able to
+/// write a cookie for this host — a sibling app on another port, a subdomain,
+/// an XSS elsewhere on the registrable domain — could otherwise put words in
+/// the server's mouth, and a banner is exactly where a reader trusts them.
+#[tokio::test]
+async fn a_forged_flash_cookie_is_not_rendered() {
+    let server = create_test_server(default_test_config()).await;
+    let forged = r#"[{"level":"error","message":"Your account has been suspended."}]"#;
+
+    // Unsigned, exactly as a foreign writer would leave it.
+    let response = server
+        .get("/login")
+        .add_cookie(cookie::Cookie::new("flash", forged))
+        .await;
+    response.assert_status_ok();
+    assert!(!response.text().contains("Your account has been suspended."));
+
+    // Signed with the wrong key: the payload is intact, the tag is not.
+    let mut wrong_key = common::signed_flash_value(forged);
+    let last = wrong_key.pop().expect("a signature is present");
+    wrong_key.push(if last == 'A' { 'B' } else { 'A' });
+
+    let response = server
+        .get("/login")
+        .add_cookie(cookie::Cookie::new("flash", wrong_key))
+        .await;
+    response.assert_status_ok();
+    assert!(!response.text().contains("Your account has been suspended."));
+}
+
+/// The scripted endpoints set their own banner now. They used to leave it to
+/// the caller's JavaScript, which wrote the cookie itself — impossible once the
+/// cookie is signed, and the wrong place for it either way: a banner is the
+/// server speaking.
+#[tokio::test]
+async fn the_scripted_endpoints_set_their_own_flash() {
+    let server = create_test_server(default_test_config()).await;
+
+    let created = server
+        .post("/api/setup")
+        .json(&json!({ "username": "flashy", "password": "vulture-mango-77-quilt" }))
+        .await;
+    created.assert_status(StatusCode::CREATED);
+    assert!(
+        common::flash_text(&created).contains("Account created"),
+        "setup must flash for the client that only navigates"
+    );
+
+    let signed_in = server
+        .post("/api/session")
+        .json(&json!({ "username": "flashy", "password": "vulture-mango-77-quilt" }))
+        .await;
+    signed_in.assert_status_ok();
+    let csrf = signed_in.cookie("csrf_token").value().to_string();
+
+    let logged_out = server
+        .delete("/api/session")
+        .add_header("x-csrf-token", csrf)
+        .await;
+    logged_out.assert_status_ok();
+    assert!(common::flash_text(&logged_out).contains("You have been logged out."));
+}
+
 #[tokio::test]
 async fn test_flash_message_cleared_after_display() {
     let server = create_test_server(default_test_config()).await;
@@ -1301,7 +1364,7 @@ async fn test_flash_message_cleared_after_display() {
         .get("/login")
         .add_cookie(cookie::Cookie::new(
             "flash",
-            r#"[{"level":"info","message":"First message"}]"#,
+            common::signed_flash_value(r#"[{"level":"info","message":"First message"}]"#),
         ))
         .await;
 
@@ -1343,7 +1406,7 @@ async fn test_flash_message_on_unread_page() {
         .get("/")
         .add_cookie(cookie::Cookie::new(
             "flash",
-            r#"[{"level":"warning","message":"Warning test"}]"#,
+            common::signed_flash_value(r#"[{"level":"warning","message":"Warning test"}]"#),
         ))
         .await;
 

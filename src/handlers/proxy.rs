@@ -202,6 +202,14 @@ pub async fn proxy_image(
         return Err(AppError::ImageTooLarge);
     }
 
+    // The bytes decide, not the label. Accommodating an origin that mislabels
+    // an image is worth doing; relaying something that is not an image at all
+    // under this server's name is not. Serving the sniffed type also stops a
+    // wrong label from travelling any further.
+    let content_type = sniff_image_type(&bytes)
+        .ok_or(AppError::UnsupportedImageType)?
+        .to_string();
+
     // Return the image with appropriate headers. The ETag lets the browser
     // revalidate cheaply on its next visit (see the `If-None-Match` 304
     // short-circuit above).
@@ -217,9 +225,87 @@ pub async fn proxy_image(
         .into_response())
 }
 
+/// Whether the origin's `Content-Type` is one this proxy will consider.
+///
+/// `application/octet-stream` used to be accepted outright, for the servers
+/// that never set a real type. That made the proxy a relay for arbitrary bytes,
+/// passed through under the origin's own label. It is still accepted, but only
+/// as "unlabelled": [`sniff_image_type`] then has to recognise the actual bytes
+/// before anything is served.
 fn is_valid_image_type(content_type: &str) -> bool {
     let ct = content_type.to_lowercase();
-    ct.starts_with("image/") || ct == "application/octet-stream" // Some servers don't set proper content-type
+    ct.starts_with("image/") || ct == "application/octet-stream"
+}
+
+/// The image type the first bytes of `body` actually are, or `None` for
+/// anything not recognised as an image.
+///
+/// Signatures rather than a crate: the list is short, it does not change, and
+/// this is a security check — a dependency here would be one more thing to
+/// trust for very little.
+///
+/// SVG is deliberately included. It is scriptable, unlike every other entry
+/// here, but feeds embed SVG constantly (every shields.io badge in a release
+/// feed), and the two things that would make a proxied SVG dangerous are
+/// already shut: `X-Content-Type-Options: nosniff` and a CSP with no
+/// `unsafe-inline` apply to this response like any other, so script inside one
+/// does not run even when the URL is opened directly.
+fn sniff_image_type(body: &[u8]) -> Option<&'static str> {
+    const SIGNATURES: &[(&[u8], &str)] = &[
+        (b"\x89PNG\r\n\x1a\n", "image/png"),
+        (b"\xff\xd8\xff", "image/jpeg"),
+        (b"GIF87a", "image/gif"),
+        (b"GIF89a", "image/gif"),
+        (b"BM", "image/bmp"),
+        (b"\x00\x00\x01\x00", "image/x-icon"),
+        (b"II*\x00", "image/tiff"),
+        (b"MM\x00*", "image/tiff"),
+    ];
+
+    for (magic, mime) in SIGNATURES {
+        if body.starts_with(magic) {
+            return Some(mime);
+        }
+    }
+
+    // RIFF containers carry the format in bytes 8..12.
+    if body.starts_with(b"RIFF") && body.get(8..12) == Some(b"WEBP".as_slice()) {
+        return Some("image/webp");
+    }
+
+    // ISO-BMFF: AVIF and HEIC declare their brand in the `ftyp` box.
+    if body.get(4..8) == Some(b"ftyp".as_slice()) {
+        return match body.get(8..12) {
+            Some(b"avif" | b"avis") => Some("image/avif"),
+            Some(b"heic" | b"heix" | b"mif1") => Some("image/heic"),
+            _ => None,
+        };
+    }
+
+    is_svg(body).then_some("image/svg+xml")
+}
+
+/// SVG has no magic number — it is XML — so this looks for the root element
+/// within the leading bytes, allowing for an XML declaration, a doctype or a
+/// comment ahead of it.
+fn is_svg(body: &[u8]) -> bool {
+    const SNIFF_LIMIT: usize = 1024;
+
+    let head = &body[..body.len().min(SNIFF_LIMIT)];
+    // Not UTF-8 within the window: whatever it is, it is not an SVG document
+    // this server should re-serve. `from_utf8` on a truncated multi-byte
+    // character would also fail, which is fine — an SVG root element is ASCII
+    // and lands well inside the window.
+    let Ok(text) = std::str::from_utf8(head) else {
+        return false;
+    };
+
+    let text = text.trim_start().to_ascii_lowercase();
+    text.starts_with("<svg")
+        || ((text.starts_with("<?xml")
+            || text.starts_with("<!doctype")
+            || text.starts_with("<!--"))
+            && text.contains("<svg"))
 }
 
 #[cfg(test)]
@@ -325,5 +411,74 @@ mod tests {
         assert!(is_valid_image_type("application/octet-stream"));
         assert!(!is_valid_image_type("text/html"));
         assert!(!is_valid_image_type("application/javascript"));
+    }
+
+    #[test]
+    fn sniffs_the_formats_a_feed_actually_carries() {
+        for (bytes, expected) in [
+            (b"\x89PNG\r\n\x1a\n\x00\x00".as_slice(), "image/png"),
+            (b"\xff\xd8\xff\xe0JFIF".as_slice(), "image/jpeg"),
+            (b"GIF89a....".as_slice(), "image/gif"),
+            (b"RIFF\x00\x00\x00\x00WEBPVP8 ".as_slice(), "image/webp"),
+            (b"\x00\x00\x00\x20ftypavif\x00".as_slice(), "image/avif"),
+            (b"BM\x00\x00".as_slice(), "image/bmp"),
+        ] {
+            assert_eq!(sniff_image_type(bytes), Some(expected));
+        }
+    }
+
+    /// Kept on purpose: a release feed is full of shields.io badges, and the
+    /// scriptable part of SVG is already shut off by `nosniff` and the CSP.
+    #[test]
+    fn svg_is_still_proxied() {
+        assert_eq!(
+            sniff_image_type(br#"<svg xmlns="http://www.w3.org/2000/svg"></svg>"#),
+            Some("image/svg+xml")
+        );
+        assert_eq!(
+            sniff_image_type(b"<?xml version=\"1.0\"?>\n<svg viewBox=\"0 0 1 1\"/>"),
+            Some("image/svg+xml")
+        );
+        assert_eq!(
+            sniff_image_type(b"  \n\t<SVG width=\"10\"></SVG>"),
+            Some("image/svg+xml")
+        );
+    }
+
+    /// The hole this closes: `application/octet-stream` used to be waved
+    /// through, so whatever the origin sent was relayed under this server's
+    /// name.
+    #[test]
+    fn refuses_bytes_that_are_not_an_image() {
+        for bytes in [
+            b"<!DOCTYPE html><html><body>hi</body></html>".as_slice(),
+            b"alert('hi')".as_slice(),
+            b"{\"secret\":\"value\"}".as_slice(),
+            b"%PDF-1.7".as_slice(),
+            b"".as_slice(),
+            // Close to a signature but not one: an `ftyp` box of a video brand.
+            b"\x00\x00\x00\x20ftypmp42".as_slice(),
+            // An HTML document that merely mentions svg somewhere.
+            b"<html><p>about &lt;svg&gt; files</p></html>".as_slice(),
+        ] {
+            assert_eq!(
+                sniff_image_type(bytes),
+                None,
+                "must not be served as an image: {:?}",
+                String::from_utf8_lossy(&bytes[..bytes.len().min(24)])
+            );
+        }
+    }
+
+    #[test]
+    fn sniffing_does_not_panic_on_short_or_binary_bodies() {
+        for bytes in [
+            b"".as_slice(),
+            b"\x89".as_slice(),
+            b"RIFF".as_slice(),
+            b"\xff\xfe\xfd".as_slice(),
+        ] {
+            let _ = sniff_image_type(bytes);
+        }
     }
 }

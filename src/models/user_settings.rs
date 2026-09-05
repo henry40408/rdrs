@@ -100,13 +100,79 @@ pub struct UserSettings {
     pub updated_at: DateTime<Utc>,
 }
 
+/// What the `save_services` column held, once the key was applied to it.
+///
+/// The third arm matters: before encryption a corrupt value could quietly
+/// become "nothing configured", and that is exactly the wrong answer for a
+/// *sealed* value. A rotated `RDRS_SECRET` would show the settings page as
+/// empty, the user would re-enter their token, and the write would overwrite a
+/// value that was only ever unreadable, not lost. So callers are made to see
+/// the difference.
+#[derive(Debug, Clone)]
+pub enum StoredServices {
+    /// Nothing stored, or stored and read successfully.
+    Config(SaveServicesConfig),
+    /// A value written by [`crate::secret::seal`] that this key cannot open.
+    Undecryptable,
+}
+
+impl StoredServices {
+    /// The stored configuration, or the empty one when it cannot be read.
+    ///
+    /// For paths that only *use* credentials — a value that cannot be decrypted
+    /// is unusable either way. Anything that goes on to **write** must handle
+    /// [`StoredServices::Undecryptable`] itself rather than calling this.
+    pub fn or_default(self) -> SaveServicesConfig {
+        match self {
+            StoredServices::Config(config) => config,
+            StoredServices::Undecryptable => SaveServicesConfig::default(),
+        }
+    }
+
+    pub fn is_undecryptable(&self) -> bool {
+        matches!(self, StoredServices::Undecryptable)
+    }
+
+    /// The stored configuration, or an error naming the real reason for paths
+    /// the user triggered — saving a bookmark, asking for a summary.
+    ///
+    /// "Kagi is not configured" would be a lie when the credential is there and
+    /// merely unreadable, and it invites the user to re-enter it and overwrite
+    /// a value that a restored `RDRS_SECRET` would have brought back.
+    pub fn usable(self) -> AppResult<SaveServicesConfig> {
+        match self {
+            StoredServices::Config(config) => Ok(config),
+            StoredServices::Undecryptable => Err(AppError::Validation(
+                "Stored service credentials cannot be decrypted with the current RDRS_SECRET. \
+                 Restore the previous secret, or re-enter the credentials in settings."
+                    .to_string(),
+            )),
+        }
+    }
+}
+
 impl UserSettings {
-    /// Parse `save_services` JSON into `SaveServicesConfig`
-    pub fn get_save_services_config(&self) -> SaveServicesConfig {
-        self.save_services
-            .as_ref()
-            .and_then(|json| SaveServicesConfig::from_json(json).ok())
-            .unwrap_or_default()
+    /// Read `save_services` with `key`, if one is configured.
+    ///
+    /// Accepts both shapes on purpose: a value written before encryption is
+    /// plain JSON, and re-reading it must keep working until the next write
+    /// seals it. `key` is `None` when `RDRS_SECRET` was generated rather than
+    /// configured — see [`crate::config::Config::service_token_key`].
+    pub fn get_save_services_config(&self, key: Option<&[u8]>) -> StoredServices {
+        let Some(stored) = self.save_services.as_deref() else {
+            return StoredServices::Config(SaveServicesConfig::default());
+        };
+
+        let json = if crate::secret::is_sealed(stored) {
+            match key.and_then(|key| crate::secret::open(key, stored)) {
+                Some(json) => json,
+                None => return StoredServices::Undecryptable,
+            }
+        } else {
+            stored.to_string()
+        };
+
+        StoredServices::Config(SaveServicesConfig::from_json(&json).unwrap_or_default())
     }
 }
 
@@ -152,23 +218,41 @@ pub async fn upsert(db: &Db, user_id: i64, entries_per_page: i64) -> AppResult<U
         ))
 }
 
-/// Get `SaveServicesConfig` for a user
-pub async fn get_save_services_config(db: &Db, user_id: i64) -> AppResult<SaveServicesConfig> {
+/// Read a user's `SaveServicesConfig`, decrypting it with `key` when the value
+/// was sealed. See [`StoredServices`] for why the unreadable case is its own
+/// arm rather than an empty config.
+pub async fn get_save_services_config(
+    db: &Db,
+    user_id: i64,
+    key: Option<&[u8]>,
+) -> AppResult<StoredServices> {
     match find_by_user_id(db, user_id).await? {
-        Some(settings) => Ok(settings.get_save_services_config()),
-        None => Ok(SaveServicesConfig::default()),
+        Some(settings) => Ok(settings.get_save_services_config(key)),
+        None => Ok(StoredServices::Config(SaveServicesConfig::default())),
     }
 }
 
 /// Update `save_services` configuration for a user
+/// Write a user's `SaveServicesConfig`, sealed with `key` when one is
+/// available.
+///
+/// `key` is `None` only when `RDRS_SECRET` was generated rather than
+/// configured, in which case the value stays plaintext: that key changes on
+/// every restart, so encrypting with it would destroy the credential at the
+/// next boot rather than protect it.
 pub async fn update_save_services(
     db: &Db,
     user_id: i64,
     config: &SaveServicesConfig,
+    key: Option<&[u8]>,
 ) -> AppResult<UserSettings> {
     let json = config
         .to_json()
         .map_err(|e| AppError::Internal(format!("Failed to serialize save_services: {e}")))?;
+    let json = match key {
+        Some(key) => crate::secret::seal(key, &json),
+        None => json,
+    };
 
     db_execute!(
         db,
@@ -408,6 +492,129 @@ mod tests {
 
     async fn setup_db() -> Db {
         Db::connect_in_memory().await.unwrap()
+    }
+
+    const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
+
+    fn linkding_config(token: &str) -> SaveServicesConfig {
+        SaveServicesConfig {
+            linkding: Some(crate::services::save::linkding::LinkdingConfig {
+                api_url: "https://linkding.example.com".to_string(),
+                api_token: token.to_string(),
+            }),
+            kagi: None,
+        }
+    }
+
+    async fn stored_column(db: &Db, user_id: i64) -> String {
+        crate::query_scalar!(
+            db,
+            String,
+            "SELECT save_services FROM user_settings WHERE user_id = $1",
+            user_id
+        )
+        .unwrap()
+    }
+
+    async fn seeded_user(db: &Db) -> i64 {
+        user::create_user(db, "settingsuser", "hash", Role::User)
+            .await
+            .unwrap()
+            .id
+    }
+
+    #[tokio::test]
+    async fn a_stored_token_is_not_readable_in_the_column() {
+        let db = setup_db().await;
+        let user_id = seeded_user(&db).await;
+
+        update_save_services(&db, user_id, &linkding_config("SUPERSECRET123"), Some(KEY))
+            .await
+            .unwrap();
+
+        // The whole point: a database dump does not hand over the token.
+        let column = stored_column(&db, user_id).await;
+        assert!(!column.contains("SUPERSECRET123"), "column was: {column}");
+        assert!(crate::secret::is_sealed(&column));
+
+        let read = get_save_services_config(&db, user_id, Some(KEY))
+            .await
+            .unwrap()
+            .or_default();
+        assert_eq!(
+            read.linkding.unwrap().api_token,
+            "SUPERSECRET123",
+            "the value must survive the round trip"
+        );
+    }
+
+    /// Rows written before encryption existed are plain JSON. They must stay
+    /// readable, and the next write must seal them — that is the whole
+    /// migration, and it costs no downtime.
+    #[tokio::test]
+    async fn a_legacy_plaintext_row_is_read_then_sealed_on_the_next_write() {
+        let db = setup_db().await;
+        let user_id = seeded_user(&db).await;
+
+        update_save_services(&db, user_id, &linkding_config("LEGACY123"), None)
+            .await
+            .unwrap();
+        assert!(stored_column(&db, user_id).await.contains("LEGACY123"));
+
+        let read = get_save_services_config(&db, user_id, Some(KEY))
+            .await
+            .unwrap()
+            .or_default();
+        assert_eq!(read.linkding.unwrap().api_token, "LEGACY123");
+
+        update_save_services(&db, user_id, &linkding_config("LEGACY123"), Some(KEY))
+            .await
+            .unwrap();
+        assert!(!stored_column(&db, user_id).await.contains("LEGACY123"));
+    }
+
+    /// The failure mode encryption introduces: a rotated secret must not read
+    /// as "nothing configured", or the user re-enters a credential and
+    /// overwrites one that the old secret would still have opened.
+    #[tokio::test]
+    async fn a_wrong_key_reports_undecryptable_rather_than_empty() {
+        let db = setup_db().await;
+        let user_id = seeded_user(&db).await;
+
+        update_save_services(&db, user_id, &linkding_config("SUPERSECRET123"), Some(KEY))
+            .await
+            .unwrap();
+
+        let stored = get_save_services_config(&db, user_id, Some(b"a different key, long enough"))
+            .await
+            .unwrap();
+        assert!(stored.is_undecryptable());
+        assert!(stored.clone().usable().is_err());
+        // `or_default` still yields the empty config for chrome that only asks
+        // "is anything configured".
+        assert!(!stored.or_default().has_any_service());
+    }
+
+    /// An install with a generated `RDRS_SECRET` gets `None`, and must keep
+    /// storing plaintext: that key is new on every boot, so sealing with it
+    /// would destroy the credential at the next restart.
+    #[tokio::test]
+    async fn without_a_key_the_value_stays_plaintext_and_readable() {
+        let db = setup_db().await;
+        let user_id = seeded_user(&db).await;
+
+        update_save_services(&db, user_id, &linkding_config("PLAIN123"), None)
+            .await
+            .unwrap();
+
+        assert!(!crate::secret::is_sealed(
+            &stored_column(&db, user_id).await
+        ));
+        let read = get_save_services_config(&db, user_id, None)
+            .await
+            .unwrap()
+            .or_default();
+        assert_eq!(read.linkding.unwrap().api_token, "PLAIN123");
     }
 
     #[tokio::test]

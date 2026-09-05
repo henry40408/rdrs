@@ -52,11 +52,21 @@ Visit `http://localhost:8080`, which opens the one-time setup page, and create
 the administrator account.
 
 > **`RDRS_SECRET`** — the one key rdrs signs everything with: session cookies,
-> image-proxy URLs, and the Google Reader post token. If left unset, a random
-> key is generated on each startup, so every restart signs every signed-in user
-> out and breaks every image-proxy URL already cached by a GReader client until
-> its next sync. Set it to a persistent value (e.g. `openssl rand -base64 32`)
-> so both survive restarts.
+> image-proxy URLs, the flash-message cookie, and the Google Reader post token.
+> It also **encrypts your Linkding and Kagi credentials at rest**. If left
+> unset, a random key is generated on each startup, so every restart signs every
+> signed-in user out and breaks every image-proxy URL already cached by a
+> GReader client until its next sync — and those credentials are stored
+> unencrypted, because a key that does not survive the restart would lock them
+> away for good rather than protect them. Set it to a persistent value (e.g.
+> `openssl rand -base64 32`).
+>
+> Encryption at rest here covers the data leaving without the environment — a
+> database dump, a backup archive, someone opening the SQLite file. It is not a
+> defence against a compromised server, where the key is readable anyway.
+> **Changing `RDRS_SECRET` later makes existing credentials unreadable**: the
+> settings page says so plainly and you re-enter them, but restoring the old
+> value brings them back, so do not overwrite them in a panic.
 
 ### Building from Source
 

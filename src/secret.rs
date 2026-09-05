@@ -30,6 +30,7 @@
 //! tokens they are matched against the database rather than signed, and they live
 //! in their own `api_token` table, so a leaked one is not a leaked web session.
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
@@ -56,6 +57,11 @@ pub const DOMAIN_OFFLINE: &[u8] = b"offline:";
 pub const DOMAIN_INVITE: &[u8] = b"invite:";
 /// Domain-separation prefix for open-tracking pixel URLs.
 pub const DOMAIN_PIXEL: &[u8] = b"pixel:";
+/// Domain-separation prefix for the key that encrypts third-party service
+/// credentials at rest — see [`seal`].
+pub const DOMAIN_SERVICE_TOKENS: &[u8] = b"service-tokens:";
+/// Domain-separation prefix for the flash-message cookie signature.
+pub const DOMAIN_FLASH: &[u8] = b"flash:";
 
 /// Separates the session token from its signature in the cookie value.
 ///
@@ -91,6 +97,76 @@ pub fn tag(secret: &[u8], domain: &[u8], parts: &[&[u8]]) -> [u8; 32] {
 /// rejected.
 pub fn verify_tag(secret: &[u8], domain: &[u8], parts: &[&[u8]], candidate: &[u8]) -> bool {
     mac(secret, domain, parts).verify_slice(candidate).is_ok()
+}
+
+/// Marks a value written by [`seal`], and pins the construction it was written
+/// with. A future change of cipher or key derivation gets `rdrs.v2.` and both
+/// stay readable.
+const SEALED_PREFIX: &str = "rdrs.v1.";
+
+/// Encrypt a third-party credential for storage.
+///
+/// What this defends against is narrow and worth stating: the key is derived
+/// from `RDRS_SECRET`, which lives on the same host as the database, so this
+/// does nothing against a compromised server. It covers the case where the
+/// *data* leaves without the environment — a database dump, a backup archive, a
+/// SQL injection that can read rows, someone opening the SQLite file to look
+/// around. That is the common way these leak, which is why it is worth doing at
+/// all.
+///
+/// `XChaCha20-Poly1305` for its 24-byte nonce: random nonces are safe at any
+/// volume this will see, with no counter to keep or reuse to get wrong.
+pub fn seal(secret: &[u8], plaintext: &str) -> String {
+    use chacha20poly1305::aead::Aead;
+    use chacha20poly1305::{KeyInit as AeadKeyInit, XChaCha20Poly1305, XNonce};
+    use rand::Rng;
+
+    let key = tag(secret, DOMAIN_SERVICE_TOKENS, &[]);
+    let cipher = XChaCha20Poly1305::new((&key).into());
+
+    let mut nonce_bytes = [0u8; 24];
+    rand::rng().fill_bytes(&mut nonce_bytes);
+    let nonce = XNonce::from(nonce_bytes);
+
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext.as_bytes())
+        .expect("XChaCha20-Poly1305 encryption cannot fail for an in-memory plaintext");
+
+    let mut payload = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
+    payload.extend_from_slice(&nonce_bytes);
+    payload.extend_from_slice(&ciphertext);
+
+    format!("{SEALED_PREFIX}{}", URL_SAFE_NO_PAD.encode(payload))
+}
+
+/// Whether `stored` was written by [`seal`], as opposed to being a plaintext
+/// value from before encryption existed.
+pub fn is_sealed(stored: &str) -> bool {
+    stored.starts_with(SEALED_PREFIX)
+}
+
+/// Decrypt a value written by [`seal`].
+///
+/// `None` means the value cannot be read with this key — a rotated
+/// `RDRS_SECRET`, or a truncated column. Callers must not treat that as "not
+/// configured": overwriting on that assumption is how a recoverable key mistake
+/// becomes lost data.
+pub fn open(secret: &[u8], stored: &str) -> Option<String> {
+    use chacha20poly1305::aead::Aead;
+    use chacha20poly1305::{KeyInit as AeadKeyInit, XChaCha20Poly1305, XNonce};
+
+    let payload = URL_SAFE_NO_PAD
+        .decode(stored.strip_prefix(SEALED_PREFIX)?)
+        .ok()?;
+    let (nonce_bytes, ciphertext) = payload.split_at_checked(24)?;
+
+    let key = tag(secret, DOMAIN_SERVICE_TOKENS, &[]);
+    let cipher = XChaCha20Poly1305::new((&key).into());
+
+    let plaintext = cipher
+        .decrypt(&XNonce::try_from(nonce_bytes).ok()?, ciphertext)
+        .ok()?;
+    String::from_utf8(plaintext).ok()
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -230,6 +306,68 @@ mod tests {
     use super::*;
 
     const SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn sealed_values_round_trip() {
+        let sealed = seal(SECRET, "SUPERSECRETTOKEN123");
+        assert_eq!(
+            open(SECRET, &sealed).as_deref(),
+            Some("SUPERSECRETTOKEN123")
+        );
+    }
+
+    /// The point of the exercise: a database dump must not contain the token.
+    #[test]
+    fn a_sealed_value_does_not_contain_its_plaintext() {
+        let sealed = seal(SECRET, "SUPERSECRETTOKEN123");
+        assert!(!sealed.contains("SUPERSECRETTOKEN123"));
+        assert!(is_sealed(&sealed));
+    }
+
+    #[test]
+    fn each_seal_uses_a_fresh_nonce() {
+        // Equal plaintexts must not produce equal ciphertexts, or a dump would
+        // show which accounts share a token.
+        let a = seal(SECRET, "same");
+        let b = seal(SECRET, "same");
+        assert_ne!(a, b);
+        assert_eq!(open(SECRET, &a).as_deref(), Some("same"));
+        assert_eq!(open(SECRET, &b).as_deref(), Some("same"));
+    }
+
+    #[test]
+    fn another_key_cannot_open_it() {
+        let sealed = seal(SECRET, "token");
+        assert_eq!(open(b"another key that is long enough", &sealed), None);
+    }
+
+    #[test]
+    fn tampering_is_detected() {
+        let sealed = seal(SECRET, "token");
+        // Flip the last payload character; Poly1305 must reject the result
+        // rather than yielding garbage plaintext.
+        let mut chars: Vec<char> = sealed.chars().collect();
+        let last = chars.len() - 1;
+        chars[last] = if chars[last] == 'A' { 'B' } else { 'A' };
+        let tampered: String = chars.into_iter().collect();
+        assert_eq!(open(SECRET, &tampered), None);
+    }
+
+    #[test]
+    fn plaintext_is_not_mistaken_for_a_sealed_value() {
+        let legacy = r#"{"linkding":{"api_token":"plain"}}"#;
+        assert!(!is_sealed(legacy));
+        assert_eq!(open(SECRET, legacy), None);
+    }
+
+    #[test]
+    fn a_truncated_payload_is_rejected_rather_than_panicking() {
+        // Shorter than the 24-byte nonce: `split_at` would panic, so `open`
+        // uses the checked form.
+        assert_eq!(open(SECRET, "rdrs.v1.AAAA"), None);
+        assert_eq!(open(SECRET, "rdrs.v1."), None);
+        assert_eq!(open(SECRET, "rdrs.v1.!!!not-base64!!!"), None);
+    }
 
     #[test]
     fn session_signature_round_trips() {

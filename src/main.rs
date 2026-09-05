@@ -120,12 +120,15 @@ async fn main() {
 
     let summary_worker_handle = services::start_summary_worker(
         summary_rx,
-        summary_cache.clone(),
-        sidebar_cache.clone(),
         db.clone(),
-        summary_cancels.clone(),
         cancel_token.clone(),
-        events.clone(),
+        rdrs::services::summary_worker::SummaryWorkerContext {
+            cache: summary_cache.clone(),
+            sidebar_cache: sidebar_cache.clone(),
+            cancels: summary_cancels.clone(),
+            events: events.clone(),
+            service_token_key: config.service_token_key().map(<[u8]>::to_vec),
+        },
     );
 
     // Recover incomplete summary jobs from database

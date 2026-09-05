@@ -171,7 +171,13 @@ pub async fn summarize_entry(
         .clone()
         .ok_or_else(|| AppError::Validation("Entry has no link to summarize".to_string()))?;
 
-    let config = user_settings::get_save_services_config(&state.db, user_id).await?;
+    let config = user_settings::get_save_services_config(
+        &state.db,
+        user_id,
+        state.config.service_token_key(),
+    )
+    .await?
+    .usable()?;
     let kagi = config
         .kagi
         .ok_or_else(|| AppError::Validation("Kagi is not configured".to_string()))?;
@@ -307,7 +313,13 @@ pub async fn save_to_services(
         .clone()
         .ok_or_else(|| AppError::Validation("Entry has no link to save".to_string()))?;
 
-    let save_config = user_settings::get_save_services_config(&state.db, user_id).await?;
+    let save_config = user_settings::get_save_services_config(
+        &state.db,
+        user_id,
+        state.config.service_token_key(),
+    )
+    .await?
+    .usable()?;
 
     if !save_config.has_any_service() {
         return Err(AppError::Validation(

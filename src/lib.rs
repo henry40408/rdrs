@@ -453,6 +453,14 @@ pub fn create_router(state: AppState) -> Router {
             state.clone(),
             middleware::forward_auth::forward_auth,
         ))
+        // Sign the flash cookie on the way out, verify it on the way in.
+        // Outside the handlers (which write the cookie) and outside the
+        // extractor (which reads it), so both keep seeing plain JSON while the
+        // browser only ever holds a signed value.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::flash::sign_flash_cookies,
+        ))
         // First-line CSRF defence: reject provably cross-site state-changing
         // requests. Header-only and stateless, so its position in the stack is
         // immaterial; the synchronizer-token guard is layered on separately.

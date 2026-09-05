@@ -1072,6 +1072,7 @@ pub async fn user_settings_page(
         linkding_api_url,
         kagi_configured,
         kagi_language,
+        credentials_unreadable,
     ) = {
         let theme = user_settings::get_theme(&state.db, user_id)
             .await
@@ -1093,9 +1094,19 @@ pub async fn user_settings_page(
                 .await
                 .unwrap_or(None)
                 .is_some();
-        let save_config = user_settings::get_save_services_config(&state.db, user_id)
-            .await
-            .unwrap_or_default();
+        let save_config = user_settings::get_save_services_config(
+            &state.db,
+            user_id,
+            state.config.service_token_key(),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            user_settings::StoredServices::Config(
+                crate::services::save::SaveServicesConfig::default(),
+            )
+        });
+        let credentials_unreadable = save_config.is_undecryptable();
+        let save_config = save_config.or_default();
 
         let linkding = save_config.linkding.as_ref();
         let linkding_configured = linkding
@@ -1118,6 +1129,7 @@ pub async fn user_settings_page(
             linkding_api_url,
             kagi_configured,
             kagi_language,
+            credentials_unreadable,
         )
     };
 
@@ -1225,6 +1237,7 @@ pub async fn user_settings_page(
             linkding_api_url,
             kagi_configured,
             kagi_language,
+            credentials_unreadable,
         },
     )
 }
@@ -3035,6 +3048,11 @@ pub struct UserSettingsTemplate {
     pub linkding_api_url: String,
     pub kagi_configured: bool,
     pub kagi_language: Option<String>,
+    /// Integration credentials are stored but unreadable with the current
+    /// `RDRS_SECRET`. Renders a warning rather than letting the forms read as
+    /// "not configured", which would invite an overwrite of a value a restored
+    /// secret would have brought back.
+    pub credentials_unreadable: bool,
 }
 
 impl IntoResponse for UserSettingsTemplate {

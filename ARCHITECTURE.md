@@ -1168,6 +1168,28 @@ one is not there today.
 
 ### Input Sanitization
 
+- Third-party service credentials (Linkding, Kagi) are encrypted at rest with
+  `XChaCha20-Poly1305`, under a key derived from `RDRS_SECRET` with its own
+  domain separation (`secret::seal`/`secret::open`). Values written before this
+  are plain JSON and stay readable; the next write seals them, so the migration
+  needs no downtime and no schema change. An install whose `RDRS_SECRET` was
+  *generated* keeps storing plaintext on purpose — that key changes every
+  restart. A value that will not decrypt is surfaced as such rather than read as
+  "not configured", which would invite an overwrite of a recoverable credential
+- The flash cookie is HMAC-signed (`secret::DOMAIN_FLASH`) by
+  `middleware::flash::sign_flash_cookies`, which signs on the way out and
+  verifies on the way in, so the ~100 handlers that build a `FlashRedirect` need
+  no secret. The payload travels base64url-encoded: a signature is only worth
+  anything if the bytes signed are the bytes checked, and raw JSON in a cookie
+  is free to come back percent-encoded. Without this, anything able to write a
+  cookie for the host — a sibling app on another port, a subdomain — could put
+  its own words in a server-styled banner
+- The image proxy decides what it serves by **sniffing magic bytes**, not by the
+  origin's `Content-Type`, and serves the sniffed type. `application/octet-stream`
+  is accepted as "unlabelled" rather than waved through, which is what used to
+  make the proxy a relay for arbitrary bytes. SVG stays allowed — feeds are full
+  of badges — because `nosniff` plus a CSP with no `unsafe-inline` already stop
+  script inside a proxied SVG from running
 - All HTML content sanitized with Ammonia
 - SQL injection prevented via parameterized queries throughout (including dynamic filter conditions)
 - SSRF protection on every outbound fetch of a URL the app did not choose —
