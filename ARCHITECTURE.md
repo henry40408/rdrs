@@ -1170,19 +1170,29 @@ one is not there today.
 
 - All HTML content sanitized with Ammonia
 - SQL injection prevented via parameterized queries throughout (including dynamic filter conditions)
-- SSRF protection on every outbound fetch of a URL the app did not choose:
+- SSRF protection on every outbound fetch of a URL the app did not choose —
   readability, the image proxy, feed discovery, feed sync, the icon fetcher and
-  OPML import all go through `utils/url_validation`. The image proxy and
-  readability apply `validate_url` directly; the feed-side paths take a
-  `FetchPolicy`, which is `validate_url` plus the hosts a deployment opted back
-  in to via `RDRS_FETCH_ALLOW_PRIVATE_HOSTS` (a LAN feed is ordinary use for a
-  self-hosted reader). A non-http(s) scheme is refused whatever the allow list
-  says. The image proxy's `If-None-Match` 304 is answered *after* signature
+  OPML import. All of them hold a `services::fetch::Fetcher`, which is the only
+  HTTP client in the process that reaches an attacker-influenced address, and
+  which enforces the guard in three places rather than one:
+  - the **URL** is checked before the request (`utils/url_validation`);
+  - **every redirect hop** is re-checked before it is followed, capped at 5, so
+    a public URL cannot answer `302 Location: http://127.0.0.1:…`;
+  - **every DNS answer** is filtered at connect time, so a public-looking name
+    that resolves to `10.0.0.1` — or resolves differently the second time —
+    never connects. There is no check-then-connect window to race.
+
+  What counts as unreachable is wider than RFC 1918: loopback, link-local,
+  CGNAT (`100.64/10`, what Tailscale hands out), benchmarking, multicast,
+  reserved, IPv6 ULA and link-local, and IPv4-mapped forms of all of them. A
+  deployment opts individual hosts back in with `RDRS_FETCH_ALLOW_PRIVATE_HOSTS`
+  (a LAN feed is ordinary use for a self-hosted reader); a non-http(s) scheme is
+  refused whatever the allow list says. Linkding and Kagi deliberately build
+  their own clients — those addresses are the ones the *user* typed.
+
+  The image proxy's `If-None-Match` 304 is answered *after* signature
   verification: ahead of it, an unsigned request could mint a cacheable 304 that
   echoed its own `s` back as the `ETag`.
-  Redirects and DNS resolution are **not** yet covered — `SHARED_CLIENT` still
-  follows redirects with no per-hop check, and a hostname is validated as a
-  string rather than by its resolved addresses
 
 ## Deployment
 

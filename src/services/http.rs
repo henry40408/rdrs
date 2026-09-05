@@ -1,5 +1,4 @@
 use std::future::Future;
-use std::sync::LazyLock;
 use std::time::Duration;
 
 use reqwest::{Response, StatusCode};
@@ -23,34 +22,20 @@ pub const FEED_SYNC_TIMEOUT: Duration = Duration::from_secs(90);
 /// Timeout for enqueuing background jobs from HTTP handlers (5s)
 pub const JOB_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Process-wide, connection-pooled HTTP client, built once and reused everywhere.
-///
-/// A `reqwest::Client` owns a connection pool; reusing one keeps upstream
-/// connections alive across requests instead of doing a fresh TCP+TLS handshake
-/// every time. Building a client per request (the old pattern across the image
-/// proxy and the feed/icon/readability fetchers) discarded that pool on every
-/// call. Per-request settings that used to live on the builder are applied on the
-/// `RequestBuilder` instead: the `User-Agent` as a header, and a shorter timeout
-/// via `RequestBuilder::timeout` (e.g. `ICON_TIMEOUT`). The client carries
-/// `DEFAULT_TIMEOUT` as the baseline so a caller that sets neither is still
-/// bounded.
-pub static SHARED_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        .timeout(DEFAULT_TIMEOUT)
-        .build()
-        .expect("failed to build shared HTTP client")
-});
-
-/// HTTP/1.1-only variant of [`SHARED_CLIENT`], for feeds that opt out of HTTP/2
-/// (`feed.http2_disabled`). `http1_only()` is a client-level setting and cannot
-/// be overridden per request, so those feeds need their own pooled client.
-pub static SHARED_CLIENT_H1: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        .timeout(DEFAULT_TIMEOUT)
-        .http1_only()
-        .build()
-        .expect("failed to build HTTP/1.1-only shared client")
-});
+// There is deliberately no process-wide client here any more.
+//
+// A `reqwest::Client` owns a connection pool, so one shared instance is still
+// what the fetchers use — but it now lives on `services::fetch::Fetcher`, which
+// builds it with the SSRF redirect and DNS guards attached. A bare
+// `SHARED_CLIENT` sitting in this module was too easy to reach for, and a caller
+// that reached for it silently opted out of those guards. Talking to an endpoint
+// the *user configured* (Linkding, Kagi) is the one case that builds its own
+// client, and those do it locally where the trust decision is visible.
+//
+// Per-request settings still ride on the `RequestBuilder`: the `User-Agent` as a
+// header, and a shorter timeout via `RequestBuilder::timeout` (e.g.
+// `ICON_TIMEOUT`). The client carries `DEFAULT_TIMEOUT` as the baseline so a
+// caller that sets neither is still bounded.
 
 /// Configuration for retry behavior
 #[derive(Debug, Clone)]

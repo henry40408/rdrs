@@ -3,8 +3,8 @@ use scraper::{Html, Selector};
 use url::Url;
 
 use crate::error::{AppError, AppResult};
-use crate::services::http::{RetryConfig, SHARED_CLIENT, send_with_retry_on_error};
-use crate::utils::url_validation::FetchPolicy;
+use crate::services::fetch::Fetcher;
+use crate::services::http::{RetryConfig, send_with_retry_on_error};
 
 #[derive(Debug, Clone)]
 pub struct DiscoveredFeed {
@@ -17,13 +17,13 @@ pub struct DiscoveredFeed {
 pub async fn discover_feed(
     url: &str,
     user_agent: &str,
-    policy: &FetchPolicy,
+    fetcher: &Fetcher,
 ) -> AppResult<DiscoveredFeed> {
     // SSRF guard before any network I/O: this URL comes from whoever is adding
     // the subscription, and the same check has to run again on the feed link
     // discovered inside the HTML below — that one comes from the *page*.
     let parsed_url = Url::parse(url).map_err(|_e| AppError::InvalidUrl)?;
-    policy
+    fetcher
         .validate(&parsed_url)
         .map_err(|_e| AppError::InvalidUrl)?;
 
@@ -32,7 +32,10 @@ pub async fn discover_feed(
     let url_owned = url.to_string();
 
     let response = send_with_retry_on_error(&retry_config, || {
-        SHARED_CLIENT.get(&url_owned).header(USER_AGENT, user_agent)
+        fetcher
+            .client(false)
+            .get(&url_owned)
+            .header(USER_AGENT, user_agent)
     })
     .await
     .map_err(|e| AppError::FetchError(e.to_string()))?;
@@ -61,13 +64,16 @@ pub async fn discover_feed(
     // It's HTML, try to find feed links
     let feed_url = find_feed_link_in_html(&body, &parsed_url)?;
     let parsed_feed_url = Url::parse(&feed_url).map_err(|_e| AppError::InvalidUrl)?;
-    policy
+    fetcher
         .validate(&parsed_feed_url)
         .map_err(|_e| AppError::InvalidUrl)?;
 
     // Fetch and parse the discovered feed
     let feed_response = send_with_retry_on_error(&retry_config, || {
-        SHARED_CLIENT.get(&feed_url).header(USER_AGENT, user_agent)
+        fetcher
+            .client(false)
+            .get(&feed_url)
+            .header(USER_AGENT, user_agent)
     })
     .await
     .map_err(|e| AppError::FetchError(e.to_string()))?;
@@ -150,15 +156,16 @@ fn parse_feed_content(feed_url: &str, content: &str) -> AppResult<DiscoveredFeed
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::url_validation::FetchPolicy;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    /// The suites here point every fetcher at a `wiremock` server, which binds
-    /// loopback — exactly what the SSRF guard exists to refuse. Allowing that
-    /// one address is what a deployment does for a LAN feed, so the tests take
-    /// the same route rather than a bypass of their own.
-    fn loopback_policy() -> FetchPolicy {
-        FetchPolicy::parse("127.0.0.1").expect("valid allow list")
+    /// Every suite here drives a `wiremock` server, which binds loopback — what
+    /// the guard exists to refuse. Allowing that one address is the same opt-in
+    /// a deployment uses for a LAN feed, not a bypass of its own.
+    fn loopback_fetcher() -> Fetcher {
+        Fetcher::new(FetchPolicy::parse("127.0.0.1").expect("valid allow list"))
+            .expect("the guarded client must build")
     }
 
     const RSS: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel>
@@ -176,7 +183,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert_eq!(result.title.as_deref(), Some("Example Feed"));
@@ -210,7 +217,7 @@ mod tests {
         let result = discover_feed(
             &format!("{}/", server.uri()),
             "RDRS-Test/1.0",
-            &loopback_policy(),
+            &loopback_fetcher(),
         )
         .await
         .unwrap();
@@ -220,13 +227,13 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_invalid_url() {
-        let result = discover_feed("not a url", "ua", &loopback_policy()).await;
+        let result = discover_feed("not a url", "ua", &loopback_fetcher()).await;
         assert!(matches!(result, Err(AppError::InvalidUrl)));
     }
 
     #[tokio::test]
     async fn rejects_non_http_scheme() {
-        let result = discover_feed("ftp://example.com", "ua", &loopback_policy()).await;
+        let result = discover_feed("ftp://example.com", "ua", &loopback_fetcher()).await;
         assert!(matches!(result, Err(AppError::InvalidUrl)));
     }
 
@@ -241,7 +248,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &FetchPolicy::default()).await;
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &Fetcher::default()).await;
         assert!(matches!(result, Err(AppError::InvalidUrl)));
     }
 
@@ -266,7 +273,7 @@ mod tests {
         let result = discover_feed(
             &format!("{}/", server.uri()),
             "RDRS-Test/1.0",
-            &loopback_policy(),
+            &loopback_fetcher(),
         )
         .await;
         assert!(matches!(result, Err(AppError::InvalidUrl)));
@@ -284,7 +291,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert_eq!(result.title.as_deref(), Some("Example Feed"));
@@ -306,7 +313,7 @@ mod tests {
         let result = discover_feed(
             &format!("{}/", server.uri()),
             "RDRS-Test/1.0",
-            &loopback_policy(),
+            &loopback_fetcher(),
         )
         .await;
         assert!(matches!(result, Err(AppError::NoFeedFound)));
@@ -319,7 +326,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(404))
             .mount(&server)
             .await;
-        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_policy()).await;
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher()).await;
         assert!(matches!(result, Err(AppError::FetchError(_))));
     }
 
@@ -346,7 +353,7 @@ mod tests {
         let result = discover_feed(
             &format!("{}/", server.uri()),
             "RDRS-Test/1.0",
-            &loopback_policy(),
+            &loopback_fetcher(),
         )
         .await;
         assert!(matches!(result, Err(AppError::FetchError(_))));
@@ -363,7 +370,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_policy()).await;
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher()).await;
         assert!(matches!(result, Err(AppError::FeedParseError(_))));
     }
 
@@ -380,7 +387,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         // MockServer verifies .expect(1) on drop

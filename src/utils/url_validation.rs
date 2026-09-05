@@ -142,17 +142,30 @@ impl FetchPolicy {
         }
     }
 
-    fn allows(&self, host: &str) -> bool {
+    /// Whether this host was named in the allow list, either as a hostname or
+    /// as an address inside one of its networks.
+    ///
+    /// A hostname match is deliberately all-or-nothing: naming `nas.local` says
+    /// "this host is mine", so `services::fetch` accepts whatever it resolves
+    /// to rather than re-judging the address.
+    pub(crate) fn allows(&self, host: &str) -> bool {
         let bare = host
             .strip_prefix('[')
             .and_then(|h| h.strip_suffix(']'))
             .unwrap_or(host);
 
         if let Ok(ip) = bare.parse::<IpAddr>() {
-            return self.nets.iter().any(|net| net.contains(&ip));
+            return self.allows_ip(&ip);
         }
 
         self.hosts.iter().any(|allowed| allowed == host)
+    }
+
+    /// Whether an address falls inside one of the allow list's networks. Used
+    /// on addresses a hostname *resolved* to, where there is no name left to
+    /// match — see `services::fetch`.
+    pub(crate) fn allows_ip(&self, ip: &IpAddr) -> bool {
+        self.nets.iter().any(|net| net.contains(ip))
     }
 }
 
@@ -163,7 +176,17 @@ fn host_net(ip: IpAddr) -> IpNet {
     }
 }
 
-fn is_private_ip(ip: &IpAddr) -> bool {
+/// Whether an address is one the server must never be talked into reaching.
+///
+/// "Private" here means *not reachable from the public internet*, which is
+/// wider than RFC 1918: a reader that refuses `192.168.0.1` but follows
+/// `100.100.100.100` into a Tailscale network has not stopped anything. The
+/// std predicates that would say this in one call (`is_global`, `is_shared`)
+/// are still unstable, so the ranges are listed here.
+///
+/// Made `pub(crate)` for the fetch guard, which applies the same rule to the
+/// addresses a *hostname* resolves to — see `services::fetch`.
+pub(crate) fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(ipv4) => {
             ipv4.is_loopback()
@@ -172,8 +195,33 @@ fn is_private_ip(ip: &IpAddr) -> bool {
                 || ipv4.is_broadcast()
                 || ipv4.is_documentation()
                 || ipv4.is_unspecified()
+                // 100.64.0.0/10, carrier-grade NAT — and what Tailscale hands out
+                || (ipv4.octets()[0] == 100 && (64..128).contains(&ipv4.octets()[1]))
+                // 198.18.0.0/15, benchmarking
+                || (ipv4.octets()[0] == 198 && (18..20).contains(&ipv4.octets()[1]))
+                // 240.0.0.0/4 reserved, and 224.0.0.0/4 multicast: neither is a
+                // host that can serve a feed, and both are reachable on a LAN
+                || ipv4.octets()[0] >= 224
         }
-        IpAddr::V6(ipv6) => ipv6.is_loopback() || ipv6.is_unspecified(),
+        IpAddr::V6(ipv6) => {
+            // An IPv4-mapped address is the same host by another spelling:
+            // `::ffff:127.0.0.1` must not walk past a check that only looked at
+            // the v6 rules.
+            if let Some(mapped) = ipv6.to_ipv4_mapped() {
+                return is_private_ip(&IpAddr::V4(mapped));
+            }
+
+            ipv6.is_loopback()
+                || ipv6.is_unspecified()
+                // fc00::/7 unique-local, the v6 answer to RFC 1918
+                || (ipv6.segments()[0] & 0xfe00) == 0xfc00
+                // fe80::/10 link-local
+                || (ipv6.segments()[0] & 0xffc0) == 0xfe80
+                // 2001:db8::/32 documentation
+                || (ipv6.segments()[0] == 0x2001 && ipv6.segments()[1] == 0x0db8)
+                // ff00::/8 multicast
+                || ipv6.is_multicast()
+        }
     }
 }
 
@@ -321,8 +369,50 @@ mod tests {
 
     #[test]
     fn test_is_private_ip_ipv6_public() {
-        let ip: IpAddr = "2001:db8::1".parse().unwrap();
+        let ip: IpAddr = "2606:4700::1111".parse().unwrap();
         assert!(!is_private_ip(&ip));
+    }
+
+    /// Ranges that are just as unreachable from the internet as RFC 1918, and
+    /// just as reachable from the server: refusing `192.168.0.1` while
+    /// following `100.100.100.100` into a Tailscale network stops nothing.
+    #[test]
+    fn blocks_the_ranges_that_are_private_without_being_rfc_1918() {
+        for addr in [
+            "100.64.0.1",         // CGNAT / Tailscale
+            "100.127.255.254",    // CGNAT, top of range
+            "198.18.0.1",         // benchmarking
+            "240.0.0.1",          // reserved
+            "224.0.0.1",          // multicast
+            "fd00::1",            // IPv6 unique-local
+            "fe80::1",            // IPv6 link-local
+            "2001:db8::1",        // IPv6 documentation
+            "ff02::1",            // IPv6 multicast
+            "::ffff:127.0.0.1",   // IPv4-mapped loopback
+            "::ffff:192.168.1.1", // IPv4-mapped RFC 1918
+        ] {
+            let ip: IpAddr = addr.parse().unwrap();
+            assert!(is_private_ip(&ip), "{addr} must be treated as private");
+        }
+    }
+
+    #[test]
+    fn leaves_neighbouring_public_ranges_alone() {
+        // Each is adjacent to a blocked range and must stay reachable:
+        // 100.63/100.128 flank CGNAT, 198.17/198.20 flank benchmarking,
+        // 172.67 looks like RFC 1918 but sits above 172.31, and
+        // `::ffff:1.1.1.1` is a mapped *public* address.
+        for addr in [
+            "100.63.255.255",
+            "100.128.0.1",
+            "198.17.255.255",
+            "198.20.0.1",
+            "172.67.219.169",
+            "::ffff:1.1.1.1",
+        ] {
+            let ip: IpAddr = addr.parse().unwrap();
+            assert!(!is_private_ip(&ip), "{addr} must stay reachable");
+        }
     }
 
     #[test]

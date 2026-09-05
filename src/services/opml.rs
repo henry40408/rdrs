@@ -9,8 +9,8 @@ use std::io::Cursor;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::{category, category::Category, feed, feed::Feed};
+use crate::services::fetch::Fetcher;
 use crate::services::html_entities::decode_html_entities;
-use crate::utils::url_validation::FetchPolicy;
 use url::Url;
 
 #[derive(Debug, Clone)]
@@ -363,7 +363,7 @@ pub async fn import_outlines(
     db: &Db,
     user_id: i64,
     outlines: Vec<OpmlOutline>,
-    policy: &FetchPolicy,
+    fetcher: &Fetcher,
 ) -> AppResult<ImportSummary> {
     let mut summary = ImportSummary::default();
 
@@ -381,7 +381,7 @@ pub async fn import_outlines(
             // often someone else's export — and nothing downstream would ask
             // again until the sync worker tried to fetch it.
             let allowed =
-                Url::parse(&opml_feed.xml_url).is_ok_and(|url| policy.validate(&url).is_ok());
+                Url::parse(&opml_feed.xml_url).is_ok_and(|url| fetcher.validate(&url).is_ok());
             if !allowed {
                 summary.feeds_failed += 1;
                 tracing::warn!(
@@ -437,7 +437,7 @@ pub async fn import_outlines(
 mod import_tests {
     use super::*;
     use crate::models::user::{self, Role};
-    use crate::utils::url_validation::FetchPolicy;
+    use crate::services::fetch::Fetcher;
 
     /// An OPML file is usually someone else's export, so its `xmlUrl` values are
     /// no more trusted than a typed URL — and nothing downstream would question
@@ -470,7 +470,7 @@ mod import_tests {
             ],
         }];
 
-        let summary = import_outlines(&db, u.id, outlines, &FetchPolicy::default())
+        let summary = import_outlines(&db, u.id, outlines, &Fetcher::default())
             .await
             .unwrap();
 

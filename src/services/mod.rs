@@ -5,6 +5,7 @@ pub mod entry_retention;
 pub mod events;
 pub mod feed_discovery;
 pub mod feed_sync;
+pub mod fetch;
 pub mod html_entities;
 pub mod http;
 pub mod icon_fetcher;
@@ -27,6 +28,7 @@ pub use entry_retention::start_retention_worker;
 pub use events::{EventBus, EventKind, SummaryEventData, UserEvent};
 pub use feed_discovery::{DiscoveredFeed, discover_feed};
 pub use feed_sync::{SyncResult, refresh_feed};
+pub use fetch::Fetcher;
 pub use html_entities::decode_html_entities;
 pub use image_proxy::{
     create_proxy_url, create_proxy_url_with_referrer, sign_url, sign_url_with_referrer,

@@ -33,6 +33,7 @@ async fn build_router(config: Config) -> axum::Router {
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _rx) = services::create_summary_channel(10);
     let state = AppState {
+        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
         db,
         config: Arc::new(config),
         webauthn: Arc::new(webauthn),

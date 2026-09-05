@@ -3,8 +3,8 @@ use reqwest::header::USER_AGENT;
 use url::Url;
 
 use crate::error::{AppError, AppResult};
-use crate::services::http::{RetryConfig, SHARED_CLIENT, send_with_retry_on_error};
-use crate::utils::url_validation;
+use crate::services::fetch::Fetcher;
+use crate::services::http::{RetryConfig, send_with_retry_on_error};
 
 #[derive(Debug)]
 pub struct ExtractedContent {
@@ -13,12 +13,19 @@ pub struct ExtractedContent {
 }
 
 /// Fetches HTML from URL and extracts readable content using readability crate.
-pub async fn fetch_and_extract(url: &str, user_agent: &str) -> AppResult<ExtractedContent> {
+pub async fn fetch_and_extract(
+    url: &str,
+    user_agent: &str,
+    fetcher: &Fetcher,
+) -> AppResult<ExtractedContent> {
     // Parse and validate URL (SSRF protection) before touching the network.
+    // `fetcher` re-checks every redirect hop and resolved address on its own.
     let parsed_url = Url::parse(url).map_err(|_e| AppError::InvalidUrl)?;
-    url_validation::validate_url(&parsed_url).map_err(|_e| AppError::InvalidUrl)?;
+    fetcher
+        .validate(&parsed_url)
+        .map_err(|_e| AppError::InvalidUrl)?;
 
-    fetch_and_extract_validated(url, &parsed_url, user_agent).await
+    fetch_and_extract_validated(url, &parsed_url, user_agent, fetcher).await
 }
 
 /// Fetch + extract for an already-validated URL. Split out from
@@ -28,11 +35,15 @@ async fn fetch_and_extract_validated(
     url: &str,
     parsed_url: &Url,
     user_agent: &str,
+    fetcher: &Fetcher,
 ) -> AppResult<ExtractedContent> {
-    // Fetch HTML via the shared, connection-pooled client (User-Agent per request).
+    // Fetch HTML via the guarded, connection-pooled client (User-Agent per request).
     let url_owned = url.to_string();
     let response = send_with_retry_on_error(&RetryConfig::default(), || {
-        SHARED_CLIENT.get(&url_owned).header(USER_AGENT, user_agent)
+        fetcher
+            .client(false)
+            .get(&url_owned)
+            .header(USER_AGENT, user_agent)
     })
     .await
     .map_err(|e| AppError::FetchError(e.to_string()))?;
@@ -59,8 +70,17 @@ async fn fetch_and_extract_validated(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::url_validation::FetchPolicy;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Every suite here drives a `wiremock` server, which binds loopback — what
+    /// the guard exists to refuse. Allowing that one address is the same opt-in
+    /// a deployment uses for a LAN feed, not a bypass of its own.
+    fn loopback_fetcher() -> Fetcher {
+        Fetcher::new(FetchPolicy::parse("127.0.0.1").expect("valid allow list"))
+            .expect("the guarded client must build")
+    }
 
     const ARTICLE_HTML: &str = r"<!DOCTYPE html>
 <html>
@@ -82,7 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_malformed_url() {
-        let err = fetch_and_extract("not a url", "RDRS-Test/1.0")
+        let err = fetch_and_extract("not a url", "RDRS-Test/1.0", &Fetcher::default())
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::InvalidUrl));
@@ -90,17 +110,25 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_blocked_loopback_host() {
-        let err = fetch_and_extract("http://localhost/article", "RDRS-Test/1.0")
-            .await
-            .unwrap_err();
+        let err = fetch_and_extract(
+            "http://localhost/article",
+            "RDRS-Test/1.0",
+            &Fetcher::default(),
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(err, AppError::InvalidUrl));
     }
 
     #[tokio::test]
     async fn rejects_non_http_scheme() {
-        let err = fetch_and_extract("ftp://example.com/article", "RDRS-Test/1.0")
-            .await
-            .unwrap_err();
+        let err = fetch_and_extract(
+            "ftp://example.com/article",
+            "RDRS-Test/1.0",
+            &Fetcher::default(),
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(err, AppError::InvalidUrl));
     }
 
@@ -119,9 +147,10 @@ mod tests {
 
         let url = format!("{}/article", server.uri());
         let parsed = Url::parse(&url).unwrap();
-        let extracted = fetch_and_extract_validated(&url, &parsed, "RDRS-Test/1.0")
-            .await
-            .unwrap();
+        let extracted =
+            fetch_and_extract_validated(&url, &parsed, "RDRS-Test/1.0", &loopback_fetcher())
+                .await
+                .unwrap();
 
         assert_eq!(extracted.title.as_deref(), Some("The Readable Title"));
         assert!(
@@ -149,9 +178,10 @@ mod tests {
 
         let url = server.uri();
         let parsed = Url::parse(&url).unwrap();
-        let extracted = fetch_and_extract_validated(&url, &parsed, "RDRS-Test/1.0")
-            .await
-            .unwrap();
+        let extracted =
+            fetch_and_extract_validated(&url, &parsed, "RDRS-Test/1.0", &loopback_fetcher())
+                .await
+                .unwrap();
 
         assert!(
             extracted.title.is_none(),
@@ -170,7 +200,7 @@ mod tests {
 
         let url = format!("{}/missing", server.uri());
         let parsed = Url::parse(&url).unwrap();
-        let err = fetch_and_extract_validated(&url, &parsed, "RDRS-Test/1.0")
+        let err = fetch_and_extract_validated(&url, &parsed, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap_err();
 

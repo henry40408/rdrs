@@ -52,6 +52,12 @@ pub fn reclaim_memory() {
 pub struct AppState {
     pub db: Db,
     pub config: Arc<Config>,
+    /// The one way out to a URL the app did not choose — a feed, a page one
+    /// links to, an image inside an entry. Holds the pooled clients along with
+    /// the policy that vets every redirect hop and DNS answer, so a handler
+    /// cannot reach the network past the guard by accident. See
+    /// [`services::fetch`].
+    pub fetcher: services::Fetcher,
     pub webauthn: Arc<Webauthn>,
     pub summary_cache: Arc<SummaryCache>,
     pub summary_tx: mpsc::Sender<SummaryJob>,

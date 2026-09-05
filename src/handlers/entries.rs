@@ -1056,7 +1056,7 @@ pub async fn fetch_full_content_form(
 
     // Only the outcome differs between these arms — the pane is built the same
     // way either side, from `ewf`, which the success arm updates in place.
-    let flash = match fetch_and_extract(&link, &state.config.user_agent).await {
+    let flash = match fetch_and_extract(&link, &state.config.user_agent, &state.fetcher).await {
         Ok(extracted) => {
             // Store the *raw* extraction and let the pane sanitise it like any
             // other body. Persisting is what makes this survive a refresh, a
