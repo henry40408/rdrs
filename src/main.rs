@@ -156,9 +156,18 @@ async fn main() {
     let content_text_backfill_handle =
         services::start_content_text_backfill(db.clone(), cancel_token.clone());
 
+    // Built once: each `Fetcher` owns two connection pools, and every guarded
+    // fetch in the process shares them.
+    let fetcher = rdrs::services::Fetcher::new(config.fetch_allow_private.clone())
+        .unwrap_or_else(|e| {
+            tracing::error!(event = "startup.fetcher_failed", error = %e, "failed to build the guarded HTTP client");
+            std::process::exit(1);
+        });
+
     let state = AppState {
         db: db.clone(),
         config: Arc::new(config.clone()),
+        fetcher: fetcher.clone(),
         webauthn: Arc::new(webauthn),
         summary_cache,
         summary_tx,
@@ -176,7 +185,7 @@ async fn main() {
     let background_handle = services::start_background_sync(
         db.clone(),
         config.user_agent.clone(),
-        config.fetch_allow_private.clone(),
+        fetcher.clone(),
         cancel_token.clone(),
         sidebar_cache.clone(),
         events.clone(),

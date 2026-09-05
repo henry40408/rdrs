@@ -46,16 +46,13 @@ pub async fn create_feed_form(
         return FlashRedirect::error("/feeds", "Invalid category").into_response();
     }
 
-    let discovered =
-        match feed_discovery::discover_feed(&url, &user_agent, &state.config.fetch_allow_private)
-            .await
-        {
-            Ok(d) => d,
-            Err(e) => {
-                return FlashRedirect::error("/feeds", format!("Failed to discover feed: {e}"))
-                    .into_response();
-            }
-        };
+    let discovered = match feed_discovery::discover_feed(&url, &user_agent, &state.fetcher).await {
+        Ok(d) => d,
+        Err(e) => {
+            return FlashRedirect::error("/feeds", format!("Failed to discover feed: {e}"))
+                .into_response();
+        }
+    };
 
     let create_url = discovered.feed_url.clone();
     let create_title = discovered.title.clone();
@@ -165,8 +162,7 @@ pub async fn edit_feed_form(
     // Editing the URL was the one way into the feed table that asked nothing of
     // the value at all — not even a scheme — so it could point the sync worker
     // at anything reachable from the server.
-    let url_ok =
-        Url::parse(&new_url).is_ok_and(|u| state.config.fetch_allow_private.validate(&u).is_ok());
+    let url_ok = Url::parse(&new_url).is_ok_and(|u| state.fetcher.validate(&u).is_ok());
     if !url_ok {
         return FlashRedirect::error(
             edit_path,
@@ -292,7 +288,7 @@ pub async fn refresh_feed_form(
         state.db.clone(),
         id,
         &state.config.user_agent,
-        &state.config.fetch_allow_private,
+        &state.fetcher,
     )
     .await
     {
@@ -341,19 +337,14 @@ pub async fn fetch_metadata_form(
     };
 
     let user_agent = state.config.user_agent.clone();
-    let discovered = match feed_discovery::discover_feed(
-        &feed.url,
-        &user_agent,
-        &state.config.fetch_allow_private,
-    )
-    .await
-    {
-        Ok(d) => d,
-        Err(e) => {
-            return FlashRedirect::error(edit_path, format!("Failed to fetch metadata: {e}"))
-                .into_response();
-        }
-    };
+    let discovered =
+        match feed_discovery::discover_feed(&feed.url, &user_agent, &state.fetcher).await {
+            Ok(d) => d,
+            Err(e) => {
+                return FlashRedirect::error(edit_path, format!("Failed to fetch metadata: {e}"))
+                    .into_response();
+            }
+        };
 
     let category_id = feed.category_id;
     let result = feed::update_feed(
@@ -441,13 +432,7 @@ pub async fn import_opml_form(
         }
     };
     let user_id = auth_user.user.id;
-    let result = opml::import_outlines(
-        &state.db,
-        user_id,
-        outlines,
-        &state.config.fetch_allow_private,
-    )
-    .await;
+    let result = opml::import_outlines(&state.db, user_id, outlines, &state.fetcher).await;
     // The import dropped its transient OPML parse tree and per-feed buffers;
     // return those freed pages to the OS now instead of waiting for the
     // allocator's lazy purge.

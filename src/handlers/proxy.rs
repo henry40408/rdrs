@@ -10,9 +10,8 @@ use url::Url;
 use crate::{
     AppState,
     error::{AppError, AppResult},
-    services::http::{RetryConfig, SHARED_CLIENT, send_with_retry_on_error},
+    services::http::{RetryConfig, send_with_retry_on_error},
     services::{verify_signature, verify_signature_with_referrer},
-    utils::url_validation,
 };
 
 const MAX_IMAGE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
@@ -119,9 +118,14 @@ pub async fn proxy_image(
         return Err(AppError::InvalidSignature);
     }
 
-    // Parse and validate the URL
+    // Parse and validate the URL. The fetcher re-checks every redirect hop and
+    // every resolved address as it goes; this refuses the obvious cases before
+    // a connection is opened at all.
     let url = Url::parse(&url_str).map_err(|_e| AppError::InvalidImageUrl)?;
-    url_validation::validate_url(&url).map_err(|_e| AppError::InvalidImageUrl)?;
+    state
+        .fetcher
+        .validate(&url)
+        .map_err(|_e| AppError::InvalidImageUrl)?;
 
     // A proxied image is immutable for a given URL, and the request signature
     // `s` is a stable per-URL token — so it doubles as the ETag. When the
@@ -141,7 +145,9 @@ pub async fn proxy_image(
     let url_str = url.to_string();
     let user_agent = state.config.user_agent.clone();
     let response = send_with_retry_on_error(&RetryConfig::default(), || {
-        let mut req = SHARED_CLIENT
+        let mut req = state
+            .fetcher
+            .client(false)
             .get(&url_str)
             .header("User-Agent", &user_agent);
         if let Some(ref referrer) = referrer {

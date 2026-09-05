@@ -7,12 +7,10 @@ use url::Url;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::{entry, feed, image};
-use crate::services::http::{
-    FEED_SYNC_TIMEOUT, RetryConfig, SHARED_CLIENT, SHARED_CLIENT_H1, send_with_retry_on_error,
-};
+use crate::services::fetch::Fetcher;
+use crate::services::http::{FEED_SYNC_TIMEOUT, RetryConfig, send_with_retry_on_error};
 use crate::services::icon_fetcher;
 use crate::utils::datetime::parse_timestamp;
-use crate::utils::url_validation::FetchPolicy;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SyncResult {
@@ -41,7 +39,7 @@ pub async fn refresh_feed(
     db: Db,
     feed_id: i64,
     default_user_agent: &str,
-    policy: &FetchPolicy,
+    fetcher: &Fetcher,
 ) -> AppResult<SyncResult> {
     let feed_data = feed::find_by_id(&db, feed_id)
         .await?
@@ -51,7 +49,7 @@ pub async fn refresh_feed(
     // row predating this guard, or one written by an OPML import, still reaches
     // the network from here every sync cycle.
     let parsed_url = Url::parse(&feed_data.url).map_err(|_e| AppError::InvalidUrl)?;
-    if let Err(e) = policy.validate(&parsed_url) {
+    if let Err(e) = fetcher.validate(&parsed_url) {
         let error_msg = e.to_string();
         let _ =
             feed::update_fetch_result(&db, feed_id, Utc::now(), Some(&error_msg), None, None, None)
@@ -69,11 +67,7 @@ pub async fn refresh_feed(
     // other feeds share the default pooled client. `http1_only()` is a
     // client-level setting and cannot be applied per request, which is why this
     // one knob still selects between two shared clients.
-    let client = if feed_data.http2_disabled {
-        &*SHARED_CLIENT_H1
-    } else {
-        &*SHARED_CLIENT
-    };
+    let client = fetcher.client(feed_data.http2_disabled);
 
     let mut headers = HeaderMap::new();
 
@@ -220,7 +214,7 @@ pub async fn refresh_feed(
             logo_url.as_deref(),
             feed_data.site_url.as_deref(),
             effective_user_agent,
-            policy,
+            fetcher,
         )
         .await
         {
@@ -378,7 +372,7 @@ pub async fn refresh_bucket(
     db: Db,
     bucket: u8,
     user_agent: &str,
-    policy: &FetchPolicy,
+    fetcher: &Fetcher,
 ) -> Vec<(i64, Result<SyncResult, String>)> {
     let feeds = match feed::list_by_bucket(&db, bucket).await {
         Ok(f) => f,
@@ -409,12 +403,12 @@ pub async fn refresh_bucket(
         for feed_data in chunk {
             let db = db.clone();
             let ua = user_agent.to_string();
-            let policy = policy.clone();
+            let fetcher = fetcher.clone();
             let feed_id = feed_data.id;
             set.spawn(async move {
                 let result = tokio::time::timeout(
                     FEED_SYNC_TIMEOUT,
-                    refresh_feed(db, feed_id, &ua, &policy),
+                    refresh_feed(db, feed_id, &ua, &fetcher),
                 )
                 .await;
                 (feed_id, result)
@@ -478,13 +472,14 @@ mod tests {
     use crate::models::entry;
     use crate::models::user::Role;
     use crate::models::{category, feed, user};
+    use crate::utils::url_validation::FetchPolicy;
 
-    /// The suites here point every fetcher at a `wiremock` server, which binds
-    /// loopback — exactly what the SSRF guard exists to refuse. Allowing that
-    /// one address is what a deployment does for a LAN feed, so the tests take
-    /// the same route rather than a bypass of their own.
-    fn loopback_policy() -> FetchPolicy {
-        FetchPolicy::parse("127.0.0.1").expect("valid allow list")
+    /// Every suite here drives a `wiremock` server, which binds loopback — what
+    /// the guard exists to refuse. Allowing that one address is the same opt-in
+    /// a deployment uses for a LAN feed, not a bypass of its own.
+    fn loopback_fetcher() -> Fetcher {
+        Fetcher::new(FetchPolicy::parse("127.0.0.1").expect("valid allow list"))
+            .expect("the guarded client must build")
     }
     use crate::utils::datetime::normalize_timezone_format;
     use chrono::{Datelike, Timelike};
@@ -584,20 +579,53 @@ mod tests {
         let pool = seeded_pool("feed_sync_blocked_url").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
-        let err = refresh_feed(
-            pool.clone(),
-            feed_id,
-            "RDRS-Test/1.0",
-            &FetchPolicy::default(),
-        )
-        .await
-        .unwrap_err();
+        let err = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &Fetcher::default())
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::InvalidUrl));
 
         // The refusal is recorded like any other fetch failure, so the feed does
         // not look silently healthy in the UI.
         let stored = feed::find_by_id(&pool, feed_id).await.unwrap().unwrap();
         assert!(stored.fetch_error.is_some());
+    }
+
+    /// The URL on the feed row passes every check; only the `Location` it
+    /// answers with points inward. Nothing the sync worker can see before
+    /// connecting would catch this — the client has to.
+    #[tokio::test]
+    async fn refresh_feed_does_not_follow_a_redirect_into_a_blocked_range() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("location", "http://169.254.169.254/latest/meta-data/"),
+            )
+            .mount(&server)
+            .await;
+
+        let pool = seeded_pool("feed_sync_blocked_redirect").await;
+        let feed_id = seed_feed(&pool, &server.uri()).await;
+
+        let err = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_fetcher())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::FetchError(_)), "got: {err:?}");
+
+        // Naming the redirect matters: without the guard this same fetch fails
+        // too, but only after connecting to the blocked address and timing out.
+        let stored = feed::find_by_id(&pool, feed_id).await.unwrap().unwrap();
+        let recorded = stored.fetch_error.unwrap_or_default();
+        assert!(recorded.contains("redirect"), "got: {recorded}");
+
+        let imported: i64 = crate::query_scalar!(
+            &pool,
+            i64,
+            "SELECT COUNT(*) FROM entry WHERE feed_id = $1",
+            feed_id
+        )
+        .unwrap();
+        assert_eq!(imported, 0, "a refused fetch must not import anything");
     }
 
     // ---------------------------------------------------------------------------
@@ -619,7 +647,7 @@ mod tests {
         let pool = seeded_pool("feed_sync_happy").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
-        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_policy())
+        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert_eq!(result.new_entries, 2);
@@ -633,7 +661,7 @@ mod tests {
     #[tokio::test]
     async fn feed_not_found() {
         let pool = seeded_pool("feed_sync_not_found").await;
-        let err = refresh_feed(pool, 999_999, "RDRS-Test/1.0", &loopback_policy())
+        let err = refresh_feed(pool, 999_999, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap_err();
         assert!(
@@ -674,12 +702,12 @@ mod tests {
         let pool = seeded_pool("feed_sync_update").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
-        let first = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_policy())
+        let first = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert_eq!(first.new_entries, 2);
 
-        let second = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_policy())
+        let second = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert_eq!(second.new_entries, 0);
@@ -705,12 +733,12 @@ mod tests {
         let pool = seeded_pool("feed_sync_identical").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
-        let first = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_policy())
+        let first = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert_eq!(first.new_entries, 2);
 
-        let second = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_policy())
+        let second = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert_eq!(second.new_entries, 0);
@@ -742,7 +770,7 @@ mod tests {
         // Tombstone g1 before the sync
         entry::insert_tombstone(&pool, feed_id, "g1").await.unwrap();
 
-        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_policy())
+        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert_eq!(result.new_entries, 1, "g1 should be skipped");
@@ -768,7 +796,7 @@ mod tests {
         let pool = seeded_pool("feed_sync_304").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
-        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_policy())
+        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert_eq!(result.new_entries, 0);
@@ -790,7 +818,7 @@ mod tests {
         let pool = seeded_pool("feed_sync_fetch_err").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
-        let err = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_policy())
+        let err = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap_err();
         assert!(
@@ -829,7 +857,7 @@ mod tests {
         let pool = seeded_pool("feed_sync_parse_err").await;
         let feed_id = seed_feed(&pool, &server.uri()).await;
 
-        let err = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_policy())
+        let err = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap_err();
         assert!(
@@ -871,7 +899,7 @@ mod tests {
         .await
         .unwrap();
 
-        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_policy())
+        let result = refresh_feed(pool.clone(), feed_id, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert_eq!(result.new_entries, 0);
@@ -903,7 +931,7 @@ mod tests {
             pool.clone(),
             feed_id,
             "RDRS-Default/1.0",
-            &loopback_policy(),
+            &loopback_fetcher(),
         )
         .await
         .unwrap();
@@ -919,7 +947,7 @@ mod tests {
     async fn refresh_bucket_empty() {
         let pool = seeded_pool("feed_sync_bucket_empty").await;
         // Use bucket 255 — no feeds hashed there in our empty DB
-        let results = refresh_bucket(pool, 255, "RDRS-Test/1.0", &loopback_policy()).await;
+        let results = refresh_bucket(pool, 255, "RDRS-Test/1.0", &loopback_fetcher()).await;
         assert!(results.is_empty());
     }
 
@@ -954,7 +982,7 @@ mod tests {
             .bucket
             .expect("bucket should be set on create") as u8;
 
-        let results = refresh_bucket(pool, bucket, "RDRS-Test/1.0", &loopback_policy()).await;
+        let results = refresh_bucket(pool, bucket, "RDRS-Test/1.0", &loopback_fetcher()).await;
 
         assert!(!results.is_empty(), "expected at least one result");
         let matching = results.iter().find(|(id, _)| *id == feed_id);

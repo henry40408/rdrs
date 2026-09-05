@@ -3,8 +3,8 @@ use tracing::debug;
 use url::Url;
 
 use crate::error::AppResult;
-use crate::services::http::{ICON_TIMEOUT, RetryConfig, SHARED_CLIENT, send_with_retry_on_error};
-use crate::utils::url_validation::FetchPolicy;
+use crate::services::fetch::Fetcher;
+use crate::services::http::{ICON_TIMEOUT, RetryConfig, send_with_retry_on_error};
 
 const MAX_ICON_SIZE: usize = 256 * 1024; // 256KB
 
@@ -19,10 +19,10 @@ pub async fn fetch_feed_icon(
     logo_url: Option<&str>,
     site_url: Option<&str>,
     user_agent: &str,
-    policy: &FetchPolicy,
+    fetcher: &Fetcher,
 ) -> AppResult<Option<FetchedImage>> {
     if let Some(url) = icon_url
-        && let Ok(Some(img)) = fetch_image(url, user_agent, policy).await
+        && let Ok(Some(img)) = fetch_image(url, user_agent, fetcher).await
     {
         debug!(
             event = "icon.fetched",
@@ -34,7 +34,7 @@ pub async fn fetch_feed_icon(
     }
 
     if let Some(url) = logo_url
-        && let Ok(Some(img)) = fetch_image(url, user_agent, policy).await
+        && let Ok(Some(img)) = fetch_image(url, user_agent, fetcher).await
     {
         debug!(
             event = "icon.fetched",
@@ -47,7 +47,7 @@ pub async fn fetch_feed_icon(
 
     // Fallback to favicon
     if let Some(url) = site_url
-        && let Ok(Some(img)) = fetch_favicon(url, user_agent, policy).await
+        && let Ok(Some(img)) = fetch_favicon(url, user_agent, fetcher).await
     {
         return Ok(Some(img));
     }
@@ -58,7 +58,7 @@ pub async fn fetch_feed_icon(
 async fn fetch_image(
     url: &str,
     user_agent: &str,
-    policy: &FetchPolicy,
+    fetcher: &Fetcher,
 ) -> AppResult<Option<FetchedImage>> {
     // Every icon URL here is attacker-controlled in the ordinary case: `<icon>`,
     // `<logo>` and the favicon `<link>` all come out of a document the feed
@@ -74,7 +74,7 @@ async fn fetch_image(
         );
         return Ok(None);
     };
-    if let Err(e) = policy.validate(&parsed) {
+    if let Err(e) = fetcher.validate(&parsed) {
         debug!(event = "icon.rejected", reason = "blocked_url", url, error = %e, "image URL points somewhere private");
         return Ok(None);
     }
@@ -83,7 +83,8 @@ async fn fetch_image(
     let url_owned = url.to_string();
 
     let response = match send_with_retry_on_error(&retry_config, || {
-        SHARED_CLIENT
+        fetcher
+            .client(false)
             .get(&url_owned)
             .timeout(ICON_TIMEOUT)
             .header(USER_AGENT, user_agent)
@@ -159,12 +160,12 @@ async fn fetch_image(
 async fn fetch_favicon(
     site_url: &str,
     user_agent: &str,
-    policy: &FetchPolicy,
+    fetcher: &Fetcher,
 ) -> AppResult<Option<FetchedImage>> {
     let Ok(base_url) = Url::parse(site_url) else {
         return Ok(None);
     };
-    if let Err(e) = policy.validate(&base_url) {
+    if let Err(e) = fetcher.validate(&base_url) {
         debug!(event = "icon.rejected", reason = "blocked_url", url = site_url, error = %e, "site URL points somewhere private");
         return Ok(None);
     }
@@ -172,7 +173,7 @@ async fn fetch_favicon(
     let Ok(favicon_url) = base_url.join("/favicon.ico") else {
         return Ok(None);
     };
-    if let Ok(Some(img)) = fetch_image(favicon_url.as_str(), user_agent, policy).await {
+    if let Ok(Some(img)) = fetch_image(favicon_url.as_str(), user_agent, fetcher).await {
         debug!(event = "icon.fetched", source = "favicon_ico", url = %favicon_url, "fetched favicon");
         return Ok(Some(img));
     }
@@ -181,7 +182,8 @@ async fn fetch_favicon(
     let site_url_owned = site_url.to_string();
 
     let html = match send_with_retry_on_error(&retry_config, || {
-        SHARED_CLIENT
+        fetcher
+            .client(false)
             .get(&site_url_owned)
             .timeout(ICON_TIMEOUT)
             .header(USER_AGENT, user_agent)
@@ -196,7 +198,7 @@ async fn fetch_favicon(
     };
 
     if let Some(icon_url) = extract_favicon_from_html(&html, &base_url)
-        && let Ok(Some(img)) = fetch_image(&icon_url, user_agent, policy).await
+        && let Ok(Some(img)) = fetch_image(&icon_url, user_agent, fetcher).await
     {
         debug!(
             event = "icon.fetched",
@@ -267,15 +269,16 @@ fn resolve_url(href: &str, base_url: &Url) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::url_validation::FetchPolicy;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    /// The suites here point every fetcher at a `wiremock` server, which binds
-    /// loopback — exactly what the SSRF guard exists to refuse. Allowing that
-    /// one address is what a deployment does for a LAN feed, so the tests take
-    /// the same route rather than a bypass of their own.
-    fn loopback_policy() -> FetchPolicy {
-        FetchPolicy::parse("127.0.0.1").expect("valid allow list")
+    /// Every suite here drives a `wiremock` server, which binds loopback — what
+    /// the guard exists to refuse. Allowing that one address is the same opt-in
+    /// a deployment uses for a LAN feed, not a bypass of its own.
+    fn loopback_fetcher() -> Fetcher {
+        Fetcher::new(FetchPolicy::parse("127.0.0.1").expect("valid allow list"))
+            .expect("the guarded client must build")
     }
 
     const PNG_BYTES: &[u8] = &[0x89, 0x50, 0x4E, 0x47]; // PNG magic; non-empty
@@ -291,7 +294,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let img = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        let img = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap()
             .unwrap();
@@ -311,7 +314,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let img = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        let img = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap()
             .unwrap();
@@ -325,7 +328,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(404))
             .mount(&server)
             .await;
-        let result = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        let result = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert!(result.is_none());
@@ -342,7 +345,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let result = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        let result = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert!(result.is_none());
@@ -355,7 +358,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_bytes(PNG_BYTES.to_vec()))
             .mount(&server)
             .await;
-        let result = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        let result = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert!(result.is_none());
@@ -372,7 +375,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let result = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        let result = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert!(result.is_none());
@@ -389,7 +392,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let result = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        let result = fetch_image(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert!(result.is_none());
@@ -407,7 +410,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let img = fetch_favicon(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        let img = fetch_favicon(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap()
             .unwrap();
@@ -451,7 +454,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = fetch_favicon(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        let result = fetch_favicon(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert!(result.is_some());
@@ -484,7 +487,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = fetch_favicon(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+        let result = fetch_favicon(&server.uri(), "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert!(result.is_none());
@@ -512,7 +515,7 @@ mod tests {
             Some("http://169.254.169.254/logo.png"),
             Some(&server.uri()),
             "RDRS-Test/1.0",
-            &FetchPolicy::default(),
+            &Fetcher::default(),
         )
         .await
         .unwrap();
@@ -551,7 +554,7 @@ mod tests {
             Some(&logo_url),
             None,
             "RDRS-Test/1.0",
-            &loopback_policy(),
+            &loopback_fetcher(),
         )
         .await
         .unwrap();
@@ -591,7 +594,7 @@ mod tests {
             Some(&logo_url),
             None,
             "RDRS-Test/1.0",
-            &loopback_policy(),
+            &loopback_fetcher(),
         )
         .await
         .unwrap();
@@ -606,7 +609,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_feed_icon_all_none() {
-        let result = fetch_feed_icon(None, None, None, "RDRS-Test/1.0", &loopback_policy())
+        let result = fetch_feed_icon(None, None, None, "RDRS-Test/1.0", &loopback_fetcher())
             .await
             .unwrap();
         assert!(result.is_none());

@@ -24,6 +24,7 @@ async fn create_test_app(config: Config) -> TestApp {
     let (summary_tx, _summary_rx) = services::create_summary_channel(10);
 
     let state = AppState {
+        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
         db: db.clone(),
         config: Arc::new(config),
         webauthn: Arc::new(webauthn),

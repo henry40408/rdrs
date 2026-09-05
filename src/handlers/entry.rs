@@ -92,7 +92,7 @@ pub async fn fetch_full_content(
 
     let custom_referrer = entry_with_feed.custom_referrer;
 
-    let extracted = fetch_and_extract(&link, &state.config.user_agent).await?;
+    let extracted = fetch_and_extract(&link, &state.config.user_agent, &state.fetcher).await?;
 
     // Sanitize the content (use the entry link as base URL for relative images)
     let sanitized_content = sanitize_html(

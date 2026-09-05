@@ -82,6 +82,7 @@ async fn create_server(mut mutate: impl FnMut(&mut Config)) -> (TestServer, Db) 
     let summary_cache = services::create_summary_cache(100, 24);
     let (summary_tx, _rx) = services::create_summary_channel(10);
     let state = AppState {
+        fetcher: rdrs::services::Fetcher::new(config.fetch_allow_private.clone()).unwrap(),
         db: db.clone(),
         config: Arc::new(config),
         webauthn: Arc::new(webauthn),
