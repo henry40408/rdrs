@@ -338,6 +338,80 @@ async fn flash_shows_timestamp(world: &mut RdrsWorld) -> Result<()> {
     .await
 }
 
+/// The four actions on a feed row must share one horizontal axis.
+///
+/// They are a mix of `<a>` and `<button>`-inside-`<form>`, which is how the row
+/// went ragged: a form laid out as a block puts its button on a *line box*, so
+/// the button rides the line's baseline while the anchors sit at the top of
+/// their own boxes. How far apart that lands depends on the strut — the form's
+/// inherited font metrics — which is why the report came from iPadOS Safari and
+/// Chromium showed nothing wrong.
+///
+/// So the measurement is taken twice: as rendered, and again with the row's
+/// `line-height` inflated through the CSSOM. The second pass is what
+/// reproduces the bug on the browser CI actually has — with the block form it
+/// pulls `refresh` and `delete` off the axis, and with the flex form the four
+/// stay put no matter what the strut does.
+#[then("the actions on a feed row line up on one axis")]
+async fn feed_actions_share_an_axis(world: &mut RdrsWorld) -> Result<()> {
+    let driver = world.driver()?;
+    let measured = driver
+        .execute(
+            r"
+            const cell = document.querySelector('.feeds-table tbody tr td.actions');
+            if (!cell) return { error: 'no actions cell' };
+            // A form is a wrapper; what the reader sees is its button.
+            const items = [...cell.children].map((el) =>
+              el.tagName === 'FORM' ? el.querySelector('button') : el,
+            );
+            if (items.some((el) => !el)) return { error: 'a form has no button' };
+
+            const measure = () => {
+              const rows = items.map((el) => {
+                const r = el.getBoundingClientRect();
+                return { label: el.textContent.trim(), center: r.top + r.height / 2 };
+              });
+              const centers = rows.map((r) => r.center);
+              return {
+                spread: Math.max(...centers) - Math.min(...centers),
+                detail: rows.map((r) => `${r.label}@${r.center.toFixed(1)}`).join(' '),
+              };
+            };
+
+            const rendered = measure();
+            // Stands in for a browser whose strut is taller than the button's
+            // own line box. Set through the CSSOM rather than an injected
+            // <style>, which the CSP would refuse.
+            const original = cell.style.lineHeight;
+            cell.style.lineHeight = '3';
+            const inflated = measure();
+            cell.style.lineHeight = original;
+
+            return { count: items.length, rendered, inflated };
+            ",
+            vec![],
+        )
+        .await?;
+    let measured = measured.json();
+
+    ensure!(
+        measured.get("error").is_none(),
+        "could not measure the actions cell: {measured}"
+    );
+    let count = measured["count"].as_u64().unwrap_or_default();
+    ensure!(count == 4, "expected 4 actions, found {count}: {measured}");
+
+    for pass in ["rendered", "inflated"] {
+        let spread = measured[pass]["spread"].as_f64().unwrap_or(f64::INFINITY);
+        ensure!(
+            spread < 1.0,
+            "{pass}: the actions are {spread:.1}px apart vertically: {}",
+            measured[pass]["detail"]
+        );
+    }
+    Ok(())
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 async fn feed_row(world: &RdrsWorld, title: &str) -> Result<WebElement> {

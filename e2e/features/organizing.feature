@@ -10,6 +10,7 @@ Feature: Organizing feeds and categories
     When I add a feed from the mock RSS server under "My Category"
     Then I see a success flash "Feed added"
     And the feeds table contains "Test Feed"
+    And the actions on a feed row line up on one axis
 
   Scenario: Creating a category via the form adds it to the categories table
     Given I am on the categories page
