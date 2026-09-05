@@ -1,6 +1,7 @@
 use std::fmt;
 use std::net::IpAddr;
 
+use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use url::Url;
 
 /// Error type for URL validation failures.
@@ -72,6 +73,94 @@ pub fn validate_url(url: &Url) -> Result<(), UrlValidationError> {
     }
 
     Ok(())
+}
+
+/// The hosts a deployment has deliberately opted back in to, on top of the
+/// blanket block in [`validate_url`].
+///
+/// A blanket block is wrong for a self-hosted reader: subscribing to a feed on
+/// the same LAN (a Gitea instance, a NAS, another reader) is ordinary use, and
+/// every suite here points the fetchers at a loopback mock server. So the deny
+/// stays the default and a deployment names its exceptions, rather than the
+/// guard being skippable wholesale.
+///
+/// An entry is a hostname (`nas.local`), an IP (`127.0.0.1`) or a CIDR block
+/// (`192.168.0.0/16`). A hostname entry only lifts the name-based rules: this
+/// layer does not resolve DNS, so a public name pointing at a private address
+/// is not caught here either way.
+#[derive(Debug, Clone, Default)]
+pub struct FetchPolicy {
+    nets: Vec<IpNet>,
+    hosts: Vec<String>,
+}
+
+impl FetchPolicy {
+    /// Parse a comma-separated allow list. Empty or whitespace-only yields a
+    /// policy that permits nothing beyond [`validate_url`].
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        let mut nets = Vec::new();
+        let mut hosts = Vec::new();
+
+        for part in raw.split(',') {
+            let s = part.trim();
+            if s.is_empty() {
+                continue;
+            }
+            if let Ok(net) = s.parse::<IpNet>() {
+                nets.push(net);
+            } else if let Ok(ip) = s.parse::<IpAddr>() {
+                nets.push(host_net(ip));
+            } else if s.contains('/') || s.contains(char::is_whitespace) {
+                return Err(format!(
+                    "invalid host, IP or CIDR in RDRS_FETCH_ALLOW_PRIVATE_HOSTS: '{s}'"
+                ));
+            } else {
+                hosts.push(s.to_lowercase());
+            }
+        }
+
+        Ok(Self { nets, hosts })
+    }
+
+    /// [`validate_url`] with this policy's exceptions applied.
+    ///
+    /// A non-http(s) scheme and a missing host stay fatal: those are not
+    /// "points somewhere private", they are "not a fetchable URL at all", and
+    /// no allow-list entry should turn `file:///etc/passwd` into a feed.
+    pub fn validate(&self, url: &Url) -> Result<(), UrlValidationError> {
+        match validate_url(url) {
+            Ok(()) => Ok(()),
+            Err(UrlValidationError::InvalidScheme) => Err(UrlValidationError::InvalidScheme),
+            Err(UrlValidationError::NoHost) => Err(UrlValidationError::NoHost),
+            Err(blocked) => {
+                if url.host_str().is_some_and(|host| self.allows(host)) {
+                    Ok(())
+                } else {
+                    Err(blocked)
+                }
+            }
+        }
+    }
+
+    fn allows(&self, host: &str) -> bool {
+        let bare = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host);
+
+        if let Ok(ip) = bare.parse::<IpAddr>() {
+            return self.nets.iter().any(|net| net.contains(&ip));
+        }
+
+        self.hosts.iter().any(|allowed| allowed == host)
+    }
+}
+
+fn host_net(ip: IpAddr) -> IpNet {
+    match ip {
+        IpAddr::V4(v4) => IpNet::V4(Ipv4Net::new(v4, 32).expect("host prefix is valid")),
+        IpAddr::V6(v6) => IpNet::V6(Ipv6Net::new(v6, 128).expect("host prefix is valid")),
+    }
 }
 
 fn is_private_ip(ip: &IpAddr) -> bool {
@@ -234,5 +323,118 @@ mod tests {
     fn test_is_private_ip_ipv6_public() {
         let ip: IpAddr = "2001:db8::1".parse().unwrap();
         assert!(!is_private_ip(&ip));
+    }
+
+    #[test]
+    fn empty_policy_allows_nothing_extra() {
+        let policy = FetchPolicy::default();
+        assert!(
+            policy
+                .validate(&Url::parse("http://127.0.0.1:8080/rss.xml").unwrap())
+                .is_err()
+        );
+        assert!(
+            policy
+                .validate(&Url::parse("https://example.com/rss.xml").unwrap())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn policy_allows_listed_ip() {
+        let policy = FetchPolicy::parse("127.0.0.1").unwrap();
+        assert!(
+            policy
+                .validate(&Url::parse("http://127.0.0.1:8080/rss.xml").unwrap())
+                .is_ok()
+        );
+        // A neighbouring loopback address is not the one that was listed.
+        assert!(
+            policy
+                .validate(&Url::parse("http://127.0.0.2/rss.xml").unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn policy_allows_listed_cidr() {
+        let policy = FetchPolicy::parse("192.168.0.0/16, 10.0.0.0/8").unwrap();
+        assert!(
+            policy
+                .validate(&Url::parse("http://192.168.1.5/feed").unwrap())
+                .is_ok()
+        );
+        assert!(
+            policy
+                .validate(&Url::parse("http://10.1.2.3/feed").unwrap())
+                .is_ok()
+        );
+        assert!(
+            policy
+                .validate(&Url::parse("http://172.16.0.1/feed").unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn policy_allows_listed_hostname() {
+        let policy = FetchPolicy::parse("nas.local,localhost").unwrap();
+        assert!(
+            policy
+                .validate(&Url::parse("http://nas.local/feed.xml").unwrap())
+                .is_ok()
+        );
+        assert!(
+            policy
+                .validate(&Url::parse("http://localhost:3000/feed.xml").unwrap())
+                .is_ok()
+        );
+        assert!(
+            policy
+                .validate(&Url::parse("http://other.local/feed.xml").unwrap())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn policy_allows_listed_ipv6() {
+        let policy = FetchPolicy::parse("::1").unwrap();
+        assert!(
+            policy
+                .validate(&Url::parse("http://[::1]:8080/feed").unwrap())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn policy_never_lifts_scheme_or_host_rules() {
+        // Both entries are pointless for these two URLs on purpose: an allow
+        // list names hosts that may be *reached*, it never widens what counts
+        // as a fetchable URL.
+        let policy = FetchPolicy::parse("127.0.0.1,localhost").unwrap();
+        assert!(matches!(
+            policy.validate(&Url::parse("file:///etc/passwd").unwrap()),
+            Err(UrlValidationError::InvalidScheme)
+        ));
+        assert!(matches!(
+            policy.validate(&Url::parse("ftp://localhost/x").unwrap()),
+            Err(UrlValidationError::InvalidScheme)
+        ));
+    }
+
+    #[test]
+    fn policy_parse_rejects_malformed_entries() {
+        assert!(FetchPolicy::parse("192.168.0.0/99").is_err());
+        assert!(FetchPolicy::parse("not a host").is_err());
+    }
+
+    #[test]
+    fn policy_parse_ignores_blank_entries() {
+        let policy = FetchPolicy::parse("  ,, 127.0.0.1 ,").unwrap();
+        assert!(
+            policy
+                .validate(&Url::parse("http://127.0.0.1/feed").unwrap())
+                .is_ok()
+        );
     }
 }

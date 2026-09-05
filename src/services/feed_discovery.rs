@@ -4,6 +4,7 @@ use url::Url;
 
 use crate::error::{AppError, AppResult};
 use crate::services::http::{RetryConfig, SHARED_CLIENT, send_with_retry_on_error};
+use crate::utils::url_validation::FetchPolicy;
 
 #[derive(Debug, Clone)]
 pub struct DiscoveredFeed {
@@ -13,13 +14,18 @@ pub struct DiscoveredFeed {
     pub site_url: Option<String>,
 }
 
-pub async fn discover_feed(url: &str, user_agent: &str) -> AppResult<DiscoveredFeed> {
-    // Validate URL
+pub async fn discover_feed(
+    url: &str,
+    user_agent: &str,
+    policy: &FetchPolicy,
+) -> AppResult<DiscoveredFeed> {
+    // SSRF guard before any network I/O: this URL comes from whoever is adding
+    // the subscription, and the same check has to run again on the feed link
+    // discovered inside the HTML below — that one comes from the *page*.
     let parsed_url = Url::parse(url).map_err(|_e| AppError::InvalidUrl)?;
-
-    if parsed_url.scheme() != "http" && parsed_url.scheme() != "https" {
-        return Err(AppError::InvalidUrl);
-    }
+    policy
+        .validate(&parsed_url)
+        .map_err(|_e| AppError::InvalidUrl)?;
 
     // Fetch the URL via the shared, connection-pooled client (UA per request).
     let retry_config = RetryConfig::default();
@@ -54,6 +60,10 @@ pub async fn discover_feed(url: &str, user_agent: &str) -> AppResult<DiscoveredF
 
     // It's HTML, try to find feed links
     let feed_url = find_feed_link_in_html(&body, &parsed_url)?;
+    let parsed_feed_url = Url::parse(&feed_url).map_err(|_e| AppError::InvalidUrl)?;
+    policy
+        .validate(&parsed_feed_url)
+        .map_err(|_e| AppError::InvalidUrl)?;
 
     // Fetch and parse the discovered feed
     let feed_response = send_with_retry_on_error(&retry_config, || {
@@ -143,6 +153,14 @@ mod tests {
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    /// The suites here point every fetcher at a `wiremock` server, which binds
+    /// loopback — exactly what the SSRF guard exists to refuse. Allowing that
+    /// one address is what a deployment does for a LAN feed, so the tests take
+    /// the same route rather than a bypass of their own.
+    fn loopback_policy() -> FetchPolicy {
+        FetchPolicy::parse("127.0.0.1").expect("valid allow list")
+    }
+
     const RSS: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel>
         <title>Example Feed</title><description>Desc</description>
         <link>https://example.com</link></channel></rss>"#;
@@ -158,7 +176,9 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let result = discover_feed(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+            .await
+            .unwrap();
         assert_eq!(result.title.as_deref(), Some("Example Feed"));
         assert_eq!(result.description.as_deref(), Some("Desc"));
     }
@@ -187,22 +207,68 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let result = discover_feed(&format!("{}/", server.uri()), "RDRS-Test/1.0")
-            .await
-            .unwrap();
+        let result = discover_feed(
+            &format!("{}/", server.uri()),
+            "RDRS-Test/1.0",
+            &loopback_policy(),
+        )
+        .await
+        .unwrap();
         assert_eq!(result.feed_url, format!("{}/feed.xml", server.uri()));
         assert_eq!(result.title.as_deref(), Some("Example Feed"));
     }
 
     #[tokio::test]
     async fn rejects_invalid_url() {
-        let result = discover_feed("not a url", "ua").await;
+        let result = discover_feed("not a url", "ua", &loopback_policy()).await;
         assert!(matches!(result, Err(AppError::InvalidUrl)));
     }
 
     #[tokio::test]
     async fn rejects_non_http_scheme() {
-        let result = discover_feed("ftp://example.com", "ua").await;
+        let result = discover_feed("ftp://example.com", "ua", &loopback_policy()).await;
+        assert!(matches!(result, Err(AppError::InvalidUrl)));
+    }
+
+    #[tokio::test]
+    async fn rejects_a_private_address_the_policy_does_not_allow() {
+        // The mock server is up and would answer, but nothing should reach it:
+        // the guard runs before any network I/O.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(RSS))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &FetchPolicy::default()).await;
+        assert!(matches!(result, Err(AppError::InvalidUrl)));
+    }
+
+    /// The URL a page *claims* is its feed is as untrusted as the page: a public
+    /// site can point `<link rel=alternate>` at the reader's own network.
+    #[tokio::test]
+    async fn rejects_a_discovered_feed_link_pointing_inward() {
+        let server = MockServer::start().await;
+        let html = r#"<html><head>
+            <link rel="alternate" type="application/rss+xml" href="http://169.254.169.254/latest/meta-data/">
+            </head><body>hi</body></html>"#;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string(html),
+            )
+            .mount(&server)
+            .await;
+
+        let result = discover_feed(
+            &format!("{}/", server.uri()),
+            "RDRS-Test/1.0",
+            &loopback_policy(),
+        )
+        .await;
         assert!(matches!(result, Err(AppError::InvalidUrl)));
     }
 
@@ -218,7 +284,9 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let result = discover_feed(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+            .await
+            .unwrap();
         assert_eq!(result.title.as_deref(), Some("Example Feed"));
     }
 
@@ -235,7 +303,12 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let result = discover_feed(&format!("{}/", server.uri()), "RDRS-Test/1.0").await;
+        let result = discover_feed(
+            &format!("{}/", server.uri()),
+            "RDRS-Test/1.0",
+            &loopback_policy(),
+        )
+        .await;
         assert!(matches!(result, Err(AppError::NoFeedFound)));
     }
 
@@ -246,7 +319,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(404))
             .mount(&server)
             .await;
-        let result = discover_feed(&server.uri(), "RDRS-Test/1.0").await;
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_policy()).await;
         assert!(matches!(result, Err(AppError::FetchError(_))));
     }
 
@@ -270,7 +343,12 @@ mod tests {
             .respond_with(ResponseTemplate::new(500))
             .mount(&server)
             .await;
-        let result = discover_feed(&format!("{}/", server.uri()), "RDRS-Test/1.0").await;
+        let result = discover_feed(
+            &format!("{}/", server.uri()),
+            "RDRS-Test/1.0",
+            &loopback_policy(),
+        )
+        .await;
         assert!(matches!(result, Err(AppError::FetchError(_))));
     }
 
@@ -285,7 +363,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let result = discover_feed(&server.uri(), "RDRS-Test/1.0").await;
+        let result = discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_policy()).await;
         assert!(matches!(result, Err(AppError::FeedParseError(_))));
     }
 
@@ -302,7 +380,9 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        discover_feed(&server.uri(), "RDRS-Test/1.0").await.unwrap();
+        discover_feed(&server.uri(), "RDRS-Test/1.0", &loopback_policy())
+            .await
+            .unwrap();
         // MockServer verifies .expect(1) on drop
     }
 

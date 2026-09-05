@@ -788,6 +788,7 @@ async fn test_settings_page_renders_ssr_content() {
 #[tokio::test]
 async fn test_settings_page_reflects_custom_config() {
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         database_url: "/data/custom.sqlite3".to_string(),
         server_bind: "0.0.0.0:9090".parse().unwrap(),
         user_agent: "Custom-Agent/2.0".to_string(),
@@ -822,6 +823,7 @@ async fn test_settings_page_reflects_custom_config() {
 #[tokio::test]
 async fn test_settings_page_reflects_auto_generated_image_proxy_secret() {
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         secret_generated: true,
         ..default_test_config()
     };
@@ -841,6 +843,7 @@ async fn test_settings_page_reflects_auto_generated_image_proxy_secret() {
 #[tokio::test]
 async fn test_settings_page_redacts_database_password() {
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         database_url: "postgres://rdrs:sup3rs3cret@db.internal:5432/rdrs".to_string(),
         ..default_test_config()
     };
@@ -874,6 +877,7 @@ async fn test_settings_page_forbidden_for_non_admin() {
 #[tokio::test]
 async fn test_login_page_hides_signup_when_disabled() {
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         ..default_test_config()
     };
     let app = create_test_app(config).await;
@@ -890,6 +894,7 @@ async fn test_login_page_hides_signup_when_disabled() {
 #[tokio::test]
 async fn setup_page_redirects_once_the_instance_has_an_account() {
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         ..default_test_config()
     };
     let app = create_test_app(config).await;
@@ -3308,6 +3313,7 @@ async fn test_admin_page_explains_why_account_creation_is_unavailable() {
     // admin looking for a button that was never rendered. The heading stays and
     // the body says which variable turns it on.
     let mut app = create_test_app(Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         multi_user_enabled: false,
         ..default_test_config()
     })

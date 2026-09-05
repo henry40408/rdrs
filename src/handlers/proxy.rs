@@ -60,33 +60,46 @@ fn verify_proxy_signature(
     }
 }
 
+/// The 304 answer to a revalidation request, or `None` if the client did not
+/// send a matching validator.
+///
+/// `signature` reaches the response as an `ETag`, so it goes through
+/// `HeaderValue::from_str` rather than being formatted straight into the header
+/// list: a percent-decoded CR/LF in the query would otherwise fail deeper in the
+/// response path, where there is no longer a way to answer the request.
+fn not_modified(headers: &HeaderMap, signature: &str) -> Option<Response> {
+    let etag = format!("\"{signature}\"");
+
+    let matches = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v == etag || v == "*");
+    if !matches {
+        return None;
+    }
+
+    let etag = header::HeaderValue::from_str(&etag).ok()?;
+
+    Some(
+        (
+            StatusCode::NOT_MODIFIED,
+            [
+                (header::ETAG, etag),
+                (
+                    header::CACHE_CONTROL,
+                    header::HeaderValue::from_static(DEFAULT_CACHE_CONTROL),
+                ),
+            ],
+        )
+            .into_response(),
+    )
+}
+
 pub async fn proxy_image(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<ProxyQuery>,
 ) -> AppResult<Response> {
-    // A proxied image is immutable for a given URL, and the request signature
-    // `s` is a stable per-URL token — so it doubles as the ETag. When the
-    // browser revalidates a cached image it sends `If-None-Match`; answer 304
-    // immediately and skip the origin round-trip entirely. This mirrors
-    // miniflux's media proxy and is what makes a refresh / post-TTL revisit
-    // cheap instead of re-downloading every image from origin.
-    let etag = format!("\"{}\"", query.s);
-    if headers
-        .get(header::IF_NONE_MATCH)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v == etag || v == "*")
-    {
-        return Ok((
-            StatusCode::NOT_MODIFIED,
-            [
-                (header::ETAG, etag),
-                (header::CACHE_CONTROL, DEFAULT_CACHE_CONTROL.to_string()),
-            ],
-        )
-            .into_response());
-    }
-
     // Decode the base64 URL
     let url_bytes = URL_SAFE_NO_PAD
         .decode(&query.url)
@@ -109,6 +122,20 @@ pub async fn proxy_image(
     // Parse and validate the URL
     let url = Url::parse(&url_str).map_err(|_e| AppError::InvalidImageUrl)?;
     url_validation::validate_url(&url).map_err(|_e| AppError::InvalidImageUrl)?;
+
+    // A proxied image is immutable for a given URL, and the request signature
+    // `s` is a stable per-URL token — so it doubles as the ETag. When the
+    // browser revalidates a cached image it sends `If-None-Match`; answer 304
+    // immediately and skip the origin round-trip entirely. This mirrors
+    // miniflux's media proxy and is what makes a refresh / post-TTL revisit
+    // cheap instead of re-downloading every image from origin.
+    //
+    // It runs *after* the signature check on purpose: ahead of it, anyone could
+    // send `If-None-Match: *` with an unsigned URL and get a cacheable 304 whose
+    // `ETag` echoed their own input back.
+    if let Some(response) = not_modified(&headers, &query.s) {
+        return Ok(response);
+    }
 
     // Fetch the image through the shared, connection-pooled client.
     let url_str = url.to_string();
@@ -171,13 +198,13 @@ pub async fn proxy_image(
 
     // Return the image with appropriate headers. The ETag lets the browser
     // revalidate cheaply on its next visit (see the `If-None-Match` 304
-    // short-circuit at the top of this handler).
+    // short-circuit above).
     Ok((
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, content_type),
             (header::CACHE_CONTROL, cache_control),
-            (header::ETAG, etag),
+            (header::ETAG, format!("\"{}\"", query.s)),
         ],
         bytes,
     )

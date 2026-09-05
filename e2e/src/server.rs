@@ -111,6 +111,10 @@ impl Harness {
             // off the hot read path.
             .env("RDRS_DISABLE_SIDEBAR_CACHE", "1")
             .env("RDRS_KAGI_API_BASE", &kagi_url)
+            // The mock feed upstream binds loopback, which the SSRF guard
+            // refuses by default. This is the same opt-in a self-hoster uses to
+            // subscribe to something on their own LAN, not a test-only bypass.
+            .env("RDRS_FETCH_ALLOW_PRIVATE_HOSTS", "127.0.0.1")
             // Inherited, so a refusal to start is visible in the test output
             // rather than swallowed into a pipe nobody reads.
             .stdout(Stdio::inherit())

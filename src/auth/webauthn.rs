@@ -29,6 +29,7 @@ mod tests {
             secret: vec![0u8; 32],
             secret_generated: false,
             user_agent: "test".to_string(),
+            fetch_allow_private: crate::utils::url_validation::FetchPolicy::default(),
             webauthn_rp_id: "localhost".to_string(),
             webauthn_rp_origin: "http://localhost:8080".to_string(),
             webauthn_rp_name: "rdrs".to_string(),

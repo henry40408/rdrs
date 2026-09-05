@@ -19,6 +19,7 @@ struct TestApp {
 async fn create_test_app(_name: &str) -> TestApp {
     let db = Db::connect_in_memory().await.unwrap();
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         database_url: ":memory:".to_string(),
         server_bind: "127.0.0.1:8080".parse().unwrap(),
         multi_user_enabled: true,

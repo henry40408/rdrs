@@ -173,6 +173,7 @@ async fn test_register_disabled_still_allows_first_account() {
     // first (admin) account — otherwise a source build is unusable. Subsequent
     // registrations stay blocked.
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         ..default_test_config()
     };
     let server = create_test_server(config).await;
@@ -200,6 +201,7 @@ async fn test_register_disabled_still_allows_first_account() {
 #[tokio::test]
 async fn test_register_multi_user_disabled() {
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         multi_user_enabled: false,
         ..default_test_config()
     };
@@ -1492,6 +1494,7 @@ async fn login_session_cookie(server: &TestServer) -> String {
 #[tokio::test]
 async fn test_session_cookie_secure_when_enabled() {
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         cookie_secure: true,
         ..default_test_config()
     };
@@ -1545,6 +1548,7 @@ async fn test_unprefixed_cookie_still_authenticates_when_secure_enabled() {
     // so an old-style cookie is simulated by signing a session token directly with
     // the shared secret, bypassing the cookie-minting handlers.
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         cookie_secure: true,
         ..default_test_config()
     };
@@ -1768,6 +1772,7 @@ async fn test_logout_removal_cookie_is_not_overwritten_by_slide() {
 #[tokio::test]
 async fn test_logout_clears_prefixed_cookies_when_secure_enabled() {
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         cookie_secure: true,
         ..default_test_config()
     };

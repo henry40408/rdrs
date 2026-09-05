@@ -4568,12 +4568,17 @@ async fn test_entry_fragment_document_nav_preserves_referer_scope() {
 async fn test_proxy_image_304_on_if_none_match() {
     let app = create_test_app_named(default_test_config(), "test_proxy_image_inm").await;
 
+    // Signed with the test config's secret: the 304 short-circuit sits behind
+    // signature verification, so an unsigned `s` never reaches it.
+    let signature = rdrs::services::sign_url(PROXY_TEST_IMAGE_URL, &[0u8; 32]);
     let response = app
         .server
-        .get("/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=sometoken")
+        .get(&format!(
+            "/api/proxy/image?url={PROXY_TEST_IMAGE_URL_B64}&s={signature}"
+        ))
         .add_header(
             header::IF_NONE_MATCH,
-            HeaderValue::from_static("\"sometoken\""),
+            HeaderValue::from_str(&format!("\"{signature}\"")).unwrap(),
         )
         .await;
 
@@ -4583,7 +4588,31 @@ async fn test_proxy_image_304_on_if_none_match() {
         .get(header::ETAG)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    assert_eq!(etag, "\"sometoken\"");
+    assert_eq!(etag, format!("\"{signature}\""));
+}
+
+/// The 304 short-circuit must not answer ahead of the signature check: before
+/// this it did, so anyone could send `If-None-Match: *` with a URL they never
+/// signed and get back a cacheable 304 whose `ETag` echoed their own input.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn proxy_image_304_requires_a_valid_signature() {
+    let app = create_test_app_named(default_test_config(), "test_proxy_image_304_unsigned").await;
+
+    for signature in ["sometoken", "*"] {
+        let response = app
+            .server
+            .get(&format!(
+                "/api/proxy/image?url={PROXY_TEST_IMAGE_URL_B64}&s={signature}"
+            ))
+            .add_header(header::IF_NONE_MATCH, HeaderValue::from_static("*"))
+            .await;
+
+        response.assert_status(StatusCode::BAD_REQUEST);
+        assert!(
+            response.maybe_header(header::ETAG).is_none(),
+            "a rejected request must not echo the attacker's `s` back as an ETag"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -5396,6 +5425,59 @@ async fn test_edit_feed_form_empty_url() {
     assert_eq!(url, "https://empty-url-test.example.com/feed.xml");
 }
 
+/// Editing the URL used to write whatever was typed straight into the feed
+/// table — no scheme check, no SSRF guard — so the sync worker would then fetch
+/// it every cycle.
+#[tokio::test]
+async fn edit_feed_form_refuses_a_private_url() {
+    let mut app = create_test_app_named(default_test_config(), "test_edit_feed_private_url").await;
+    setup_authenticated_user(&mut app.server).await;
+    let (cat_id, feed_id) = insert_test_feed(
+        &app,
+        "Tech",
+        "https://private-url-test.example.com/feed.xml",
+    )
+    .await;
+
+    for url in [
+        "http://169.254.169.254/latest/meta-data/",
+        "http://192.168.1.5/feed.xml",
+        "file:///etc/passwd",
+    ] {
+        let response = app
+            .server
+            .post(&format!("/feeds/{feed_id}/edit"))
+            .form(&json!({
+                "url": url,
+                "title": "Test Feed",
+                "description": "",
+                "site_url": "",
+                "category_id": cat_id,
+                "custom_user_agent": "",
+                "custom_referrer": "",
+            }))
+            .await;
+
+        response.assert_status(StatusCode::SEE_OTHER);
+        assert_eq!(
+            response.header(header::LOCATION),
+            format!("/feeds/{feed_id}/edit")
+        );
+
+        let stored: String = rdrs::query_scalar!(
+            &app.db,
+            String,
+            "SELECT url FROM feed WHERE id = $1",
+            feed_id
+        )
+        .unwrap();
+        assert_eq!(
+            stored, "https://private-url-test.example.com/feed.xml",
+            "{url} must not reach the feed table"
+        );
+    }
+}
+
 #[tokio::test]
 async fn test_edit_feed_form_not_found() {
     let mut app = create_test_app_named(default_test_config(), "test_edit_feed_not_found").await;
@@ -6088,11 +6170,17 @@ async fn test_static_asset_keeps_its_cache_control() {
     );
 }
 
+/// The image URL the proxy tests sign, and its base64url form as it appears in
+/// the `url` query parameter.
+const PROXY_TEST_IMAGE_URL: &str = "https://example.com/a.png";
+const PROXY_TEST_IMAGE_URL_B64: &str = "aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw";
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_image_proxy_keeps_upstream_cache_control() {
-    // A genuine upstream fetch can't be exercised here: the shared SSRF guard
-    // rejects loopback/private addresses with no test escape hatch, and every
-    // mock HTTP server available binds to one. `choose_cache_control` itself is
+    // A genuine upstream fetch can't be exercised here: the proxy's SSRF guard
+    // rejects loopback/private addresses — the image proxy takes no allow list,
+    // unlike the feed fetchers — and every mock HTTP server available binds to
+    // one. `choose_cache_control` itself is
     // covered by handlers/proxy.rs's unit tests; what this adds is that the
     // cache_control *middleware*, which runs after the handler on every
     // response, does not clobber the `Cache-Control` the proxy already set —
@@ -6107,12 +6195,17 @@ async fn test_image_proxy_keeps_upstream_cache_control() {
     // has a session cookie").
     setup_authenticated_user(&mut app.server).await;
 
+    // Signed with the test config's secret: the 304 short-circuit sits behind
+    // signature verification, so an unsigned `s` never reaches it.
+    let signature = rdrs::services::sign_url(PROXY_TEST_IMAGE_URL, &[0u8; 32]);
     let response = app
         .server
-        .get("/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=sometoken")
+        .get(&format!(
+            "/api/proxy/image?url={PROXY_TEST_IMAGE_URL_B64}&s={signature}"
+        ))
         .add_header(
             header::IF_NONE_MATCH,
-            HeaderValue::from_static("\"sometoken\""),
+            HeaderValue::from_str(&format!("\"{signature}\"")).unwrap(),
         )
         .await;
 
@@ -6136,12 +6229,17 @@ async fn authenticated_cacheable_response_carries_no_set_cookie() {
     .await;
     setup_authenticated_user(&mut app.server).await;
 
+    // Signed with the test config's secret: the 304 short-circuit sits behind
+    // signature verification, so an unsigned `s` never reaches it.
+    let signature = rdrs::services::sign_url(PROXY_TEST_IMAGE_URL, &[0u8; 32]);
     let response = app
         .server
-        .get("/api/proxy/image?url=aHR0cHM6Ly9leGFtcGxlLmNvbS9hLnBuZw&s=sometoken")
+        .get(&format!(
+            "/api/proxy/image?url={PROXY_TEST_IMAGE_URL_B64}&s={signature}"
+        ))
         .add_header(
             header::IF_NONE_MATCH,
-            HeaderValue::from_static("\"sometoken\""),
+            HeaderValue::from_str(&format!("\"{signature}\"")).unwrap(),
         )
         .await;
 
@@ -6897,6 +6995,7 @@ async fn creating_an_account_requires_recent_authentication() {
 #[tokio::test]
 async fn a_single_user_instance_refuses_a_second_account() {
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         multi_user_enabled: false,
         ..default_test_config()
     };
@@ -6961,6 +7060,7 @@ async fn the_one_time_link_is_absolute_when_a_public_base_url_is_configured() {
     // generates: `RDRS_PUBLIC_BASE_URL` when set, relative otherwise — never
     // the client-supplied Host header.
     let config = Config {
+        fetch_allow_private: rdrs::FetchPolicy::parse("127.0.0.1").unwrap(),
         public_base_url: Some("https://reader.example.com".to_string()),
         ..default_test_config()
     };

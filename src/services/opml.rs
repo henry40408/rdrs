@@ -10,6 +10,8 @@ use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::{category, category::Category, feed, feed::Feed};
 use crate::services::html_entities::decode_html_entities;
+use crate::utils::url_validation::FetchPolicy;
+use url::Url;
 
 #[derive(Debug, Clone)]
 pub struct OpmlFeed {
@@ -361,6 +363,7 @@ pub async fn import_outlines(
     db: &Db,
     user_id: i64,
     outlines: Vec<OpmlOutline>,
+    policy: &FetchPolicy,
 ) -> AppResult<ImportSummary> {
     let mut summary = ImportSummary::default();
 
@@ -374,6 +377,21 @@ pub async fn import_outlines(
         };
 
         for opml_feed in outline.feeds {
+            // An OPML file is as attacker-influenced as a typed URL — it is
+            // often someone else's export — and nothing downstream would ask
+            // again until the sync worker tried to fetch it.
+            let allowed =
+                Url::parse(&opml_feed.xml_url).is_ok_and(|url| policy.validate(&url).is_ok());
+            if !allowed {
+                summary.feeds_failed += 1;
+                tracing::warn!(
+                    event = "opml.feed_import_rejected",
+                    url = %opml_feed.xml_url,
+                    "skipping OPML feed whose URL is not fetchable"
+                );
+                continue;
+            }
+
             if feed::find_by_url_and_category(db, &opml_feed.xml_url, cat.id)
                 .await?
                 .is_some()
@@ -413,6 +431,56 @@ pub async fn import_outlines(
     }
 
     Ok(summary)
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::*;
+    use crate::models::user::{self, Role};
+    use crate::utils::url_validation::FetchPolicy;
+
+    /// An OPML file is usually someone else's export, so its `xmlUrl` values are
+    /// no more trusted than a typed URL — and nothing downstream would question
+    /// them until the sync worker fetched them.
+    #[tokio::test]
+    async fn import_rejects_feeds_pointing_at_private_addresses() {
+        let db = Db::connect_in_memory().await.unwrap();
+        let u = user::create_user(&db, "opmluser", "hash", Role::User)
+            .await
+            .unwrap();
+
+        let outlines = vec![OpmlOutline {
+            category_name: "Imported".to_string(),
+            feeds: vec![
+                OpmlFeed {
+                    title: Some("Public".to_string()),
+                    xml_url: "https://example.com/feed.xml".to_string(),
+                    html_url: None,
+                },
+                OpmlFeed {
+                    title: Some("Metadata service".to_string()),
+                    xml_url: "http://169.254.169.254/latest/meta-data/".to_string(),
+                    html_url: None,
+                },
+                OpmlFeed {
+                    title: Some("Not a URL".to_string()),
+                    xml_url: "file:///etc/passwd".to_string(),
+                    html_url: None,
+                },
+            ],
+        }];
+
+        let summary = import_outlines(&db, u.id, outlines, &FetchPolicy::default())
+            .await
+            .unwrap();
+
+        assert_eq!(summary.feeds_added, 1);
+        assert_eq!(summary.feeds_failed, 2);
+
+        let stored = feed::list_by_user(&db, u.id).await.unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].url, "https://example.com/feed.xml");
+    }
 }
 
 #[cfg(test)]

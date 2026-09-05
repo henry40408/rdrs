@@ -12,6 +12,7 @@ use crate::middleware::AuthUser;
 use crate::middleware::flash::FlashRedirect;
 use crate::models::{category, feed};
 use crate::services::{feed_discovery, feed_sync, opml};
+use url::Url;
 
 // Form-action POST endpoints for the SSR /feeds page. Each accepts
 // application/x-www-form-urlencoded (or multipart for import) bodies and
@@ -45,13 +46,16 @@ pub async fn create_feed_form(
         return FlashRedirect::error("/feeds", "Invalid category").into_response();
     }
 
-    let discovered = match feed_discovery::discover_feed(&url, &user_agent).await {
-        Ok(d) => d,
-        Err(e) => {
-            return FlashRedirect::error("/feeds", format!("Failed to discover feed: {e}"))
-                .into_response();
-        }
-    };
+    let discovered =
+        match feed_discovery::discover_feed(&url, &user_agent, &state.config.fetch_allow_private)
+            .await
+        {
+            Ok(d) => d,
+            Err(e) => {
+                return FlashRedirect::error("/feeds", format!("Failed to discover feed: {e}"))
+                    .into_response();
+            }
+        };
 
     let create_url = discovered.feed_url.clone();
     let create_title = discovered.title.clone();
@@ -157,6 +161,19 @@ pub async fn edit_feed_form(
     }
     let user_id = auth_user.user.id;
     let new_category_id = req.category_id;
+
+    // Editing the URL was the one way into the feed table that asked nothing of
+    // the value at all — not even a scheme — so it could point the sync worker
+    // at anything reachable from the server.
+    let url_ok =
+        Url::parse(&new_url).is_ok_and(|u| state.config.fetch_allow_private.validate(&u).is_ok());
+    if !url_ok {
+        return FlashRedirect::error(
+            edit_path,
+            "Feed URL must be an http(s) address that does not point to a private or local host",
+        )
+        .into_response();
+    }
 
     let result: AppResult<()> = async {
         let f = feed::find_by_id(&state.db, id)
@@ -271,7 +288,14 @@ pub async fn refresh_feed_form(
     if !owned {
         return FlashRedirect::error("/feeds", "Feed not found").into_response();
     }
-    match feed_sync::refresh_feed(state.db.clone(), id, &state.config.user_agent).await {
+    match feed_sync::refresh_feed(
+        state.db.clone(),
+        id,
+        &state.config.user_agent,
+        &state.config.fetch_allow_private,
+    )
+    .await
+    {
         Ok(r) => {
             if r.new_entries > 0 || r.updated_entries > 0 {
                 state.sidebar_cache.bust(user_id);
@@ -317,7 +341,13 @@ pub async fn fetch_metadata_form(
     };
 
     let user_agent = state.config.user_agent.clone();
-    let discovered = match feed_discovery::discover_feed(&feed.url, &user_agent).await {
+    let discovered = match feed_discovery::discover_feed(
+        &feed.url,
+        &user_agent,
+        &state.config.fetch_allow_private,
+    )
+    .await
+    {
         Ok(d) => d,
         Err(e) => {
             return FlashRedirect::error(edit_path, format!("Failed to fetch metadata: {e}"))
@@ -411,7 +441,13 @@ pub async fn import_opml_form(
         }
     };
     let user_id = auth_user.user.id;
-    let result = opml::import_outlines(&state.db, user_id, outlines).await;
+    let result = opml::import_outlines(
+        &state.db,
+        user_id,
+        outlines,
+        &state.config.fetch_allow_private,
+    )
+    .await;
     // The import dropped its transient OPML parse tree and per-feed buffers;
     // return those freed pages to the OS now instead of waiting for the
     // allocator's lazy purge.
