@@ -1893,8 +1893,28 @@ td input[type="text"] {
 /* ===== Actions (Table cell actions) ===== */
 .actions {
     display: flex;
+    /* Not the default `stretch`: with it, each item grows to the row height and
+       positions its own text, which is how the row ended up ragged — see the
+       form rule below. */
+    align-items: center;
     gap: var(--space-3);
     flex-wrap: wrap;
+}
+
+/* A form wrapping a submit button has to be a flex box, not a block.
+   `entries` and `edit` are plain <a>s — flex items whose text sits at the top
+   of their box — while `refresh` and `delete` are a <button> inside a <form>.
+   As a block, the form lays that button out on a *line box*, so the button
+   rides the line's baseline rather than sitting at the top, and the baseline is
+   set by the strut: the form's inherited font, which is larger than the
+   button's `--font-xs`. The result is the four actions alternating up and down,
+   by however much those two fonts differ — invisible on some engines and
+   obvious on others (reported on iPadOS Safari). Making the form a flex
+   container removes the line box, and `align-items: center` above then lines
+   all four up on the same axis. */
+.actions .form-inline {
+    display: flex;
+    align-items: center;
 }
 
 /* Plain <a> actions and .action-link form-submit buttons share the same
@@ -2015,7 +2035,13 @@ td input[type="text"] {
 
 /* Keep a two-word action ("new link") on one line; breaking inside a label
    makes the wrapped lines unreadable. */
+/* Same reason as `.actions .form-inline`: a form holding a submit button is a
+   flex box so the button is not laid out on a line box and pushed off the row's
+   axis. Every action here is a form, so the ragged effect is uniform rather
+   than alternating — still worth not having. */
 .admin-actions > form {
+    display: flex;
+    align-items: center;
     white-space: nowrap;
 }
 
