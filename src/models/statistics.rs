@@ -154,6 +154,23 @@ pub struct AdminDatabaseStats {
     pub tombstone_count: i64,
 }
 
+/// The read-count half of [`get_personal_overview`], hoisted to a constant so
+/// the query-plan regression test asserts against the SQL that actually runs.
+///
+/// The `INNER JOIN` to `category` is what forces the plan through a `feed_id`
+/// -keyed index, which is why this needs `idx_entry_feed_read_sort` rather than
+/// the sort-keyed `idx_entry_read_sort` — see the 0011 migration.
+const READ_ENTRIES_SQL: &str = r"
+        SELECT COUNT(e.id)
+        FROM entry e
+        INNER JOIN feed f ON e.feed_id = f.id
+        INNER JOIN category c ON f.category_id = c.id
+        WHERE c.user_id = $1
+          AND COALESCE(e.published_at, e.created_at) >= $2
+          AND COALESCE(e.published_at, e.created_at) < $3
+          AND e.read_at IS NOT NULL
+        ";
+
 /// `from` and `to` are date strings in `YYYY-MM-DD` format. The range is
 /// `[from, to)` — i.e. `from` is inclusive and `to` is exclusive.
 pub async fn get_personal_overview(
@@ -187,24 +204,8 @@ pub async fn get_personal_overview(
     // cohort* as total_entries — i.e. entries published in the period that
     // have since been read/starred (whenever) — not "reading activity in the
     // period". This keeps Read ⊆ Total so Unread and Read Rate stay coherent.
-    let read_entries: i64 = query_scalar!(
-        db,
-        i64,
-        r"
-        SELECT COUNT(e.id)
-        FROM entry e
-        INNER JOIN feed f ON e.feed_id = f.id
-        INNER JOIN category c ON f.category_id = c.id
-        WHERE c.user_id = $1
-          AND COALESCE(e.published_at, e.created_at) >= $2
-          AND COALESCE(e.published_at, e.created_at) < $3
-          AND e.read_at IS NOT NULL
-        ",
-        user_id,
-        from,
-        to,
-    )
-    .map_err(AppError::Database)?;
+    let read_entries: i64 =
+        query_scalar!(db, i64, READ_ENTRIES_SQL, user_id, from, to).map_err(AppError::Database)?;
 
     let starred_entries: i64 = query_scalar!(
         db,
@@ -1087,6 +1088,48 @@ mod tests {
             (s.avg_new_entries_per_day - 1.0).abs() < 1e-6,
             "avg was {}",
             s.avg_new_entries_per_day
+        );
+    }
+
+    /// The read count is the one statistics query that joins entry -> feed ->
+    /// category *and* filters on `read_at`, so without a partial index keyed on
+    /// `feed_id` the planner falls back to `idx_entry_feed_sort` and reads
+    /// `read_at` off the table row — once per matching entry, against the widest
+    /// table in the schema. Measured on a 648 MB production database that was
+    /// 49k page misses and 1.4 s for the all-time period, versus 488 misses and
+    /// 4 ms once covered. The plan is the only observable that fails *before*
+    /// the index exists and passes after, so it is what this pins.
+    #[tokio::test]
+    async fn test_read_entries_query_is_index_covered() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
+        let e = insert_entry(&db, feed_id, "g1", "2024-01-05").await;
+        mark_read(&db, e, "2024-01-06").await;
+
+        let DbInner::Sqlite(pool) = db.inner() else {
+            unreachable!("connect_in_memory is always SQLite")
+        };
+        // EXPLAIN QUERY PLAN yields (id, parent, notused, detail); only the
+        // last column carries the index name.
+        let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {READ_ENTRIES_SQL}"
+        )))
+        .bind(user_id)
+        .bind(parse_ymd("2024-01-01"))
+        .bind(parse_ymd("2024-02-01"))
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        let plan = rows.into_iter().map(|r| r.3).collect::<Vec<_>>().join("\n");
+
+        assert!(
+            plan.contains("idx_entry_feed_read_sort"),
+            "read count must be served by the partial index, plan was:\n{plan}"
+        );
+        assert!(
+            !plan.contains("idx_entry_feed_sort"),
+            "falling back to the non-covering index means a table lookup per row, plan was:\n{plan}"
         );
     }
 }

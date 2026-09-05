@@ -1,0 +1,22 @@
+-- Serve the statistics page's per-user "read entries in this period" count from
+-- an index alone, instead of one row lookup per matching entry.
+--
+-- `get_personal_overview`'s read count joins entry -> feed -> category to scope
+-- by user, so the planner must lead with a `feed_id`-keyed index and
+-- `idx_entry_feed_sort` is the only candidate. That index does not carry
+-- `read_at`, so `read_at IS NOT NULL` can only be evaluated against the table
+-- row — and `entry` is the widest table in the schema (`content` plus
+-- `full_content`), so every one of those lookups is a random page read into a
+-- structure orders of magnitude larger than the index. On a 648 MB production
+-- database the all-time period cost 49k page misses and 1.4 s, while the four
+-- other queries on the same page — all covered — finished in single-digit ms.
+--
+-- The existing `idx_entry_read_sort` cannot help: it is keyed on the sort
+-- timestamp only, so it cannot satisfy the join's `feed_id` lookup. Hence the
+-- same partial predicate, re-keyed with `feed_id` first.
+--
+-- Partial rather than a plain three-column index so it stays proportional to
+-- the read subset and adds nothing to the write path for unread rows, matching
+-- how `idx_entry_read_sort` and `idx_entry_unread_sort` are already built.
+CREATE INDEX IF NOT EXISTS idx_entry_feed_read_sort
+    ON entry(feed_id, (COALESCE(published_at, created_at))) WHERE read_at IS NOT NULL;
