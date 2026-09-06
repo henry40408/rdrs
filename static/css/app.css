@@ -43,6 +43,20 @@
     font-display: swap;
     src: url('/static/fonts/ibm-plex-mono-600-latin.woff2') format('woff2');
 }
+/* Star ratings. Feeds that grade with ★ routinely reach for the half-star
+   U+2BEA, which no macOS system font carries at all (0 of 671 locally), so it
+   renders as tofu; the whole star U+2605 does resolve, but only via a CJK serif
+   that clashes with Newsreader beside it. `unicode-range` keeps this face out
+   of the cascade for every other character, so the ~900 bytes are fetched only
+   by readers who actually subscribe to such a feed. */
+@font-face {
+    font-family: 'Noto Sans Symbols 2';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('/static/fonts/noto-sans-symbols2-stars.woff2') format('woff2');
+    unicode-range: U+2605-2606, U+2BE8-2BEB;
+}
 
 /* ===== Design Tokens ===== */
 :root {
@@ -67,10 +81,10 @@
     --font-3xl: 2rem;
 
     /* Font families — "Wire Room" */
-    --font-display: 'Newsreader', Georgia, serif;   /* serif display + reading */
-    --font-body: 'Newsreader', Georgia, serif;
-    --font-ui: 'Archivo', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'IBM Plex Mono', 'SF Mono', ui-monospace, monospace;
+    --font-display: 'Noto Sans Symbols 2', 'Newsreader', Georgia, serif;   /* serif display + reading */
+    --font-body: 'Noto Sans Symbols 2', 'Newsreader', Georgia, serif;
+    --font-ui: 'Noto Sans Symbols 2', 'Archivo', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'Noto Sans Symbols 2', 'IBM Plex Mono', 'SF Mono', ui-monospace, monospace;
 
     /* Border radius */
     --radius-sm: 3px;
