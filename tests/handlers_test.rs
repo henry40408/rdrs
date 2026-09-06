@@ -2337,6 +2337,43 @@ async fn test_static_font_serves_woff2() {
     assert_eq!(&body[0..4], b"wOF2", "font must be a valid woff2 payload");
 }
 
+/// Feeds that grade with stars use the half-star U+2BEA, which no system font
+/// on macOS carries; without a face scoped to it the title renders as tofu.
+#[tokio::test]
+async fn test_static_star_font_serves_and_css_scopes_it() {
+    let server = create_test_server(default_test_config()).await;
+
+    let response = server
+        .get("/static/fonts/noto-sans-symbols2-stars.woff2")
+        .await;
+    response.assert_status_ok();
+    let body = response.into_bytes();
+    assert_eq!(&body[0..4], b"wOF2", "font must be a valid woff2 payload");
+
+    // The face only helps if the cascade reaches it, and `unicode-range` is what
+    // keeps it from also displacing Newsreader for ordinary latin text.
+    let css = server.get("/static/css/app.css").await.text();
+    assert!(
+        css.contains("/static/fonts/noto-sans-symbols2-stars.woff2"),
+        "app.css must reference the star font"
+    );
+    assert!(
+        css.contains("unicode-range: U+2605-2606, U+2BE8-2BEB;"),
+        "star font must stay scoped to the star code points"
+    );
+    for stack in ["--font-display", "--font-body", "--font-ui", "--font-mono"] {
+        let decl = css
+            .split(&format!("{stack}:"))
+            .nth(1)
+            .unwrap_or_else(|| panic!("{stack} must be defined"));
+        let decl = decl.split(';').next().unwrap();
+        assert!(
+            decl.trim_start().starts_with("'Noto Sans Symbols 2'"),
+            "{stack} must list the star font first, got: {decl}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn test_static_font_not_found() {
     let server = create_test_server(default_test_config()).await;
