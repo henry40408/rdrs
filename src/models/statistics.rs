@@ -251,25 +251,25 @@ pub async fn get_personal_overview(
     })
 }
 
-/// Days with no reads are included as zeros, so the chart has no gaps.
-/// `from` and `to` are `YYYY-MM-DD`; the range is `[from, to)`.
-pub async fn get_daily_read_counts(
-    db: &Db,
-    user_id: i64,
-    from: &str,
-    to: &str,
-) -> AppResult<Vec<DailyReadCount>> {
-    // Ad-hoc `(date_string, count)` rows, fetched as a tuple and post-processed
-    // in Rust to fill zero-count days. Only the day bucket dialect-forks; the
-    // range bounds are bound as dates (see `parse_ymd`) so the raw comparison
-    // works on both backends without wrapping the column.
+/// The daily-read chart query, built here rather than inline so the query-plan
+/// regression test asserts against the SQL that actually runs.
+///
+/// Ad-hoc `(date_string, count)` rows, fetched as a tuple and post-processed in
+/// Rust to fill zero-count days. Only the day bucket dialect-forks; the range
+/// bounds are bound as dates (see `parse_ymd`) so the raw comparison works on
+/// both backends without wrapping the column.
+///
+/// The `INNER JOIN` to `category` scopes by user, and `read_at` is compared as a
+/// range — a split that needs `idx_entry_feed_read_at` (`feed_id` for the join,
+/// `read_at` for the range) to stay off the table entirely. See the 0012
+/// migration for what the other candidate indexes cost.
+fn daily_read_counts_sql(db: &Db) -> String {
     let day_bucket = if db.is_postgres() {
-        "to_char(e.read_at, 'YYYY-MM-DD')".to_string()
+        "to_char(e.read_at, 'YYYY-MM-DD')"
     } else {
-        "DATE(e.read_at)".to_string()
+        "DATE(e.read_at)"
     };
-    let (from_d, to_d) = (parse_ymd(from), parse_ymd(to));
-    let sql = format!(
+    format!(
         "SELECT {day_bucket} AS read_date, COUNT(e.id) AS cnt \
          FROM entry e \
          INNER JOIN feed f ON e.feed_id = f.id \
@@ -279,7 +279,19 @@ pub async fn get_daily_read_counts(
            AND e.read_at < $3 \
          GROUP BY read_date \
          ORDER BY read_date"
-    );
+    )
+}
+
+/// Days with no reads are included as zeros, so the chart has no gaps.
+/// `from` and `to` are `YYYY-MM-DD`; the range is `[from, to)`.
+pub async fn get_daily_read_counts(
+    db: &Db,
+    user_id: i64,
+    from: &str,
+    to: &str,
+) -> AppResult<Vec<DailyReadCount>> {
+    let (from_d, to_d) = (parse_ymd(from), parse_ymd(to));
+    let sql = daily_read_counts_sql(db);
     let rows: Vec<(String, i64)> = match db.inner() {
         DbInner::Sqlite(pool) => {
             sqlx::query_as::<sqlx::Sqlite, (String, i64)>(sqlx::AssertSqlSafe(sql))
@@ -1130,6 +1142,78 @@ mod tests {
         assert!(
             !plan.contains("idx_entry_feed_sort"),
             "falling back to the non-covering index means a table lookup per row, plan was:\n{plan}"
+        );
+    }
+
+    /// The daily-read chart is the other statistics query that joins entry ->
+    /// feed -> category, and unlike the read count it filters `read_at` as a
+    /// *range* rather than for NULL-ness. 0011's index cannot serve that: it
+    /// keys the sort timestamp, so `read_at` comes off the table row, once per
+    /// candidate. On a 714 MB production database that was 160k page misses and
+    /// 765 ms cold for an 8-day window; `idx_entry_feed_read_at` covers it at
+    /// 125 misses.
+    ///
+    /// Asserting on COVERING specifically is the point — refreshing the planner
+    /// statistics also moves this plan off 0011's index, onto
+    /// `idx_entry_read_at`, which still costs a table lookup per row to reach
+    /// `feed_id` for the join. Only a covering plan is free of that, and only
+    /// the plan is observable before the index exists.
+    #[tokio::test]
+    async fn test_daily_read_counts_query_is_index_covered() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
+        let e = insert_entry(&db, feed_id, "g1", "2024-01-05").await;
+        mark_read(&db, e, "2024-01-06").await;
+
+        let DbInner::Sqlite(pool) = db.inner() else {
+            unreachable!("connect_in_memory is always SQLite")
+        };
+        let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {}",
+            daily_read_counts_sql(&db)
+        )))
+        .bind(user_id)
+        .bind(parse_ymd("2024-01-01"))
+        .bind(parse_ymd("2024-02-01"))
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        let plan = rows.into_iter().map(|r| r.3).collect::<Vec<_>>().join("\n");
+
+        assert!(
+            plan.contains("COVERING INDEX idx_entry_feed_read_at"),
+            "the daily chart must be served by the index alone, plan was:\n{plan}"
+        );
+    }
+
+    /// Zero-count days are filled in Rust, so the SQL change above must not have
+    /// altered what the chart actually reports.
+    #[tokio::test]
+    async fn test_daily_read_counts_fills_gaps_and_counts_reads() {
+        let db = setup_db().await;
+        let user_id = create_user_with_data(&db).await;
+        let feed_id = get_feed_id(&db, user_id).await;
+        for (i, day) in ["2024-01-01", "2024-01-01", "2024-01-03"]
+            .iter()
+            .enumerate()
+        {
+            let e = insert_entry(&db, feed_id, &format!("g{i}"), "2023-12-01").await;
+            mark_read(&db, e, &format!("{day} 09:00:00")).await;
+        }
+        // Read outside the window: excluded even though the entry qualifies.
+        let outside = insert_entry(&db, feed_id, "outside", "2023-12-01").await;
+        mark_read(&db, outside, "2024-02-10 09:00:00").await;
+
+        let daily = get_daily_read_counts(&db, user_id, "2024-01-01", "2024-01-04")
+            .await
+            .unwrap();
+
+        let counts: Vec<i64> = daily.iter().map(|d| d.count).collect();
+        assert_eq!(counts, vec![2, 0, 1], "2024-01-02 must be a filled zero");
+        assert_eq!(
+            daily.first().unwrap().date,
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
         );
     }
 }

@@ -67,6 +67,15 @@ pub fn start_retention_worker(
                             Ok(false) => {}
                             Err(e) => tracing::error!(event = "retention.maintenance_failed", error = %e, "retention maintenance failed"),
                         }
+                    } else if let Err(e) = db.optimize().await {
+                        // Statistics go stale as the table grows, which has
+                        // nothing to do with whether a prune found anything to
+                        // delete — and on a deployment where nobody opted into
+                        // retention, `total` is always 0, so gating the refresh
+                        // on it means the planner never gets fresh numbers. Only
+                        // the freelist-driven VACUUM genuinely needs the prune to
+                        // have run, so that half stays inside `run_maintenance`.
+                        tracing::error!(event = "retention.optimize_failed", error = %e, "planner statistics refresh failed");
                     }
                 }
             }
@@ -82,7 +91,7 @@ pub fn start_retention_worker(
 /// Post-prune maintenance: refresh planner stats, gated full VACUUM, truncating
 /// WAL checkpoint. Returns whether a VACUUM ran. Must run outside a transaction.
 pub async fn run_maintenance(db: &Db) -> AppResult<bool> {
-    db_execute!(db, "PRAGMA optimize;").map_err(AppError::Database)?;
+    db.optimize().await.map_err(AppError::Database)?;
 
     let page_count: i64 =
         query_scalar!(db, i64, "PRAGMA page_count;").map_err(AppError::Database)?;
@@ -112,6 +121,68 @@ mod tests {
         let db = setup_pool().await;
         // Fresh DB: ~0 freelist -> no VACUUM, but must not error.
         assert!(!run_maintenance(&db).await.unwrap());
+    }
+
+    /// Regression: the statistics refresh used to sit inside the `total > 0`
+    /// branch, so a deployment where nobody opted into retention — `total` is
+    /// then always 0 — never got one, and its planner statistics aged
+    /// indefinitely. Only the freelist-driven VACUUM depends on a prune having
+    /// happened; the refresh does not.
+    ///
+    /// An index with no `sqlite_stat1` row is what `PRAGMA optimize` acts on, so
+    /// that is what this leaves for the tick to find. File-backed because
+    /// `Db::connect` already refreshes on open, so the index has to be created
+    /// afterwards and survive on disk.
+    #[tokio::test]
+    async fn test_worker_refreshes_statistics_without_a_prune() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.sqlite3");
+        let db = Db::connect(path.to_str().unwrap(), crate::config::Backend::Sqlite)
+            .await
+            .unwrap();
+
+        let crate::db::DbInner::Sqlite(pool) = db.inner() else {
+            unreachable!("connected with Backend::Sqlite")
+        };
+        for stmt in [
+            "CREATE TABLE probe (id INTEGER PRIMARY KEY, k INTEGER)",
+            "CREATE INDEX probe_k ON probe(k)",
+            "INSERT INTO probe (k) WITH RECURSIVE s(i) AS \
+             (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < 200) SELECT i FROM s",
+            "ANALYZE",
+            "CREATE INDEX probe_k_id ON probe(k, id)",
+        ] {
+            sqlx::query(stmt).execute(pool).await.unwrap();
+        }
+
+        // Nobody opted into retention, so the tick prunes nothing. The interval
+        // fires immediately on the first tick, so the refresh lands right away.
+        let token = CancellationToken::new();
+        let handle = start_retention_worker(db.clone(), 1000, token.clone());
+
+        let refreshed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let stat: Option<String> =
+                    sqlx::query_scalar("SELECT stat FROM sqlite_stat1 WHERE idx = 'probe_k_id'")
+                        .fetch_optional(pool)
+                        .await
+                        .unwrap();
+                if stat.is_some() {
+                    return stat;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+
+        token.cancel();
+        handle.await.unwrap();
+
+        assert_eq!(
+            refreshed.ok().flatten().as_deref(),
+            Some("200 1 1"),
+            "a tick that pruned nothing must still refresh planner statistics"
+        );
     }
 
     #[tokio::test]

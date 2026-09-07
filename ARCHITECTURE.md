@@ -195,6 +195,8 @@ The schema has 11 tables:
 
 `struct Db` wraps `enum DbInner { Sqlite(SqlitePool), Postgres(PgPool) }` — a single sqlx pool for whichever backend `DATABASE_URL` selected at startup. Every query flows through the `query_*!` / `db_execute!` dispatch macros, so SQL and binds are written once; the few genuine dialect differences are isolated behind `entry::filters::Dialect` and the `pg_rewrite` shim (`datetime('now')`→`now()`, `to_char` cursor comparisons, `make_interval`, quoted `"user"`). One fork suits neither: the entry upsert's NULL-safe inequality (`IS NOT` on SQLite, `IS DISTINCT FROM` on PostgreSQL) is a pair of `UPSERT_UPDATE_SQL_SQLITE` / `_PG` literals dispatched by hand in `models/entry/mod.rs`, because `pg_rewrite` substitutes blindly and a rule for `IS NOT` would also rewrite every `IS NOT NULL`. PG connections pin `TimeZone=UTC` so timestamp-string cursors stay byte-identical to SQLite.
 
+**Planner statistics (SQLite only).** SQLite never refreshes `sqlite_stat1` on its own, and a stale set is not inert — it silently costs a plan, most sharply for an index a migration just added, which has no statistics at all. `Db::optimize()` (`PRAGMA optimize`) runs once at the end of `connect()` and on every retention tick; `analysis_limit=400` is set per connection so the ANALYZE it may trigger stays bounded on a large database. `PRAGMA optimize` decides for itself whether anything is worth re-analyzing, so the common case costs microseconds. On PostgreSQL this is a no-op — autoanalyze covers it.
+
 **Write-priority scheduling (SQLite only).** SQLite has a single writer under WAL, so background writes must yield to interactive ones. `Db` carries a `Priority` (`User` by default in `AppState`; background workers call `db.background()`) and a shared `SqliteSched`: `admit()` gates a background write until no `User` write is in flight. Reads are never gated (WAL readers don't block the writer). On PostgreSQL this is a no-op — MVCC has real writer concurrency.
 
 ### Models
@@ -442,9 +444,10 @@ error and is cleared by the next success.
 ### Entry Retention
 
 **Retention Worker** (`entry_retention.rs`):
-- Opt-in per user via `user_settings.retention_read_days` (`0` = disabled); a no-op when nobody has opted in.
+- Opt-in per user via `user_settings.retention_read_days` (`0` = disabled); prunes nothing when nobody has opted in.
 - Runs every 24 hours, pruning entries that are read, older than the configured window, and not starred, in batches.
 - Each pruned entry records an `entry_tombstone` (`feed_id`, `guid`) so the next feed sync does not re-insert it. Tombstones cascade-delete with their feed.
+- The tick is also where periodic SQLite maintenance lives. A prune that deleted something runs `run_maintenance` — planner statistics, a VACUUM gated on the freelist reaching 20% of the file, and a truncating WAL checkpoint. A tick that deleted nothing still refreshes the statistics: they go stale as the tables grow regardless of retention, so gating that on a prune would leave an opted-out deployment's planner permanently out of date.
 
 ### Content Processing
 

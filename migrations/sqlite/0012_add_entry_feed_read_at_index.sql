@@ -1,0 +1,29 @@
+-- Serve the statistics page's daily read chart from an index alone, and stop it
+-- depending on how fresh the planner's statistics happen to be.
+--
+-- `get_daily_read_counts` joins entry -> feed -> category to scope by user and
+-- filters on a `read_at` *range*. 0011's `idx_entry_feed_read_sort` is keyed on
+-- `(feed_id, COALESCE(published_at, created_at))`, so the planner can satisfy
+-- the join with it but not the range: `read_at` is only in the partial index's
+-- WHERE clause, not its key, so every candidate row needs a table lookup to
+-- read the column. On a 714 MB production database where every entry had been
+-- read, that walked all 64,574 rows for an 8-day window: 160,118 page misses,
+-- 765 ms cold, against single-digit ms for the other twelve queries on the page.
+--
+-- Refreshing the statistics (0012's companion change, `PRAGMA optimize`) moves
+-- the planner onto `idx_entry_read_at` and fixes the *short* ranges, but not the
+-- problem: that index carries `(read_at, rowid)` and no `feed_id`, so joining
+-- feed still costs one table lookup per row in range. Measured on the same
+-- database, the 90-day range was still 23,570 page misses and 842 ms cold.
+--
+-- Keying `feed_id` first (for the join) and `read_at` second (for the range)
+-- covers both, and `id` is the rowid the index already carries — so the query
+-- never touches the table. That took the 90-day range to 268 page misses and
+-- 14 ms, *without* fresh statistics, which is the point: the plan no longer
+-- hinges on them.
+--
+-- Partial on the same predicate as `idx_entry_feed_read_sort`, both to keep it
+-- proportional to the read subset and because SQLite infers `read_at IS NOT
+-- NULL` from the `read_at >= ?` bound, so the range query still qualifies.
+CREATE INDEX IF NOT EXISTS idx_entry_feed_read_at
+    ON entry(feed_id, read_at) WHERE read_at IS NOT NULL;
