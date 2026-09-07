@@ -148,9 +148,13 @@ async fn main() {
         services::start_cleanup_worker(db.clone(), 1, 24, cancel_token.clone());
 
     // Start read-entry retention worker (every 24h; per-user opt-in via
-    // user_settings.retention_read_days, 0 = disabled). No-op when nobody opted in.
-    let retention_worker_handle =
-        services::start_retention_worker(db.clone(), 24, cancel_token.clone());
+    // user_settings.retention_read_days, 0 = disabled). Prunes nothing when
+    // nobody opted in, but still refreshes planner statistics periodically.
+    let retention_worker_handle = services::start_retention_worker(
+        db.clone(),
+        Duration::from_secs(24 * 3600),
+        cancel_token.clone(),
+    );
 
     // Backfill entry.content_text for rows predating migration v10 in the
     // background so startup is not blocked. Idempotent and one-shot: a
