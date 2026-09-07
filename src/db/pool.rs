@@ -141,7 +141,14 @@ impl Db {
                     .busy_timeout(Duration::from_secs(5))
                     .pragma("cache_size", "-20000")
                     .pragma("mmap_size", "134217728")
-                    .pragma("temp_store", "MEMORY");
+                    .pragma("temp_store", "MEMORY")
+                    // Caps how much of each index `PRAGMA optimize` samples.
+                    // Without it ANALYZE reads every index in full, which on a
+                    // large database blocks the connection for as long as that
+                    // takes; 400 is the figure SQLite's own documentation
+                    // recommends, and it produced the same plans here as an
+                    // unlimited run.
+                    .pragma("analysis_limit", "400");
                 let pool = SqlitePoolOptions::new()
                     .max_connections(5)
                     .connect_with(opts)
@@ -174,6 +181,21 @@ impl Db {
             priority: Priority::User,
         };
         db.migrate().await?;
+        // Planner statistics do not maintain themselves, and a stale set is not
+        // inert: it silently costs a plan. A production database whose
+        // `sqlite_stat1` still described half its current row count — and had no
+        // entry at all for the index 0011 added — sent the statistics page's
+        // daily-read query through a non-covering index: 160k page misses for
+        // what the refreshed plan did in 1.8k. The retention worker refreshes
+        // them, but only after a prune that actually deleted something, so a
+        // deployment with retention switched off never gets one. Migrations also
+        // add indexes with no statistics at all, which is exactly when the
+        // planner is most likely to misjudge them.
+        //
+        // Cheap enough for the startup path: a no-op returns in microseconds,
+        // and the one refresh that was actually needed took 420 ms on a 714 MB
+        // database.
+        db.optimize().await?;
         Ok(db)
     }
 
@@ -232,6 +254,18 @@ impl Db {
             }
         }
         None
+    }
+
+    /// Refresh stale `SQLite` planner statistics; a no-op on `PostgreSQL`, where
+    /// autoanalyze covers it. `PRAGMA optimize` decides for itself which tables
+    /// are worth re-analyzing, so calling it when nothing is stale costs
+    /// microseconds; `analysis_limit` (set per-connection in [`Db::connect`])
+    /// bounds the work when something is.
+    pub async fn optimize(&self) -> Result<(), sqlx::Error> {
+        if let DbInner::Sqlite(pool) = &self.inner {
+            sqlx::query("PRAGMA optimize;").execute(pool).await?;
+        }
+        Ok(())
     }
 
     /// Run the backend's embedded migrations. Migrations use `IF NOT EXISTS`,
@@ -779,5 +813,56 @@ mod tests {
                 "every concurrent transaction must have committed"
             );
         }
+    }
+
+    /// Regression: an index added by a migration carries no planner statistics,
+    /// and nothing in the app used to supply them — the only refresh lived
+    /// behind a retention prune that a deployment may never perform. That is how
+    /// a production database ended up costing the statistics page 160k page
+    /// misses on a plan the refreshed statistics reject.
+    ///
+    /// A *new index with no `sqlite_stat1` row* is precisely the condition
+    /// `PRAGMA optimize` acts on (verified against SQLite 3.51: a merely
+    /// inaccurate row is left alone, a missing one triggers ANALYZE), so it is
+    /// what this reproduces. Needs a *file* database: the refresh happens on
+    /// reconnect, which an in-memory pool cannot survive.
+    #[tokio::test]
+    async fn connect_refreshes_statistics_for_an_unanalyzed_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.sqlite3");
+        let path = path.to_str().unwrap();
+
+        let db = Db::connect(path, Backend::Sqlite).await.unwrap();
+        if let DbInner::Sqlite(pool) = &db.inner {
+            for stmt in [
+                "CREATE TABLE probe (id INTEGER PRIMARY KEY, k INTEGER)",
+                "CREATE INDEX probe_k ON probe(k)",
+                "INSERT INTO probe (k) WITH RECURSIVE s(i) AS \
+                 (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < 200) SELECT i FROM s",
+                "ANALYZE",
+                // Stands in for the index a migration adds: present in the
+                // schema, absent from sqlite_stat1.
+                "CREATE INDEX probe_k_id ON probe(k, id)",
+            ] {
+                sqlx::query(stmt).execute(pool).await.unwrap();
+            }
+        }
+        db.shutdown().await;
+
+        let db = Db::connect(path, Backend::Sqlite).await.unwrap();
+        let DbInner::Sqlite(pool) = &db.inner else {
+            unreachable!("connected with Backend::Sqlite")
+        };
+        let stat: Option<String> =
+            sqlx::query_scalar("SELECT stat FROM sqlite_stat1 WHERE idx = 'probe_k_id'")
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            stat.as_deref(),
+            Some("200 1 1"),
+            "connecting must leave the new index with statistics the planner can use"
+        );
     }
 }
