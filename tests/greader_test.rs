@@ -50,7 +50,12 @@ async fn create_test_app(config: Config) -> TestApp {
 }
 
 /// Register and login a user via session cookie. Returns `user_id`.
-async fn setup_authenticated_user(app: &TestApp) -> i64 {
+///
+/// Also pins the session's CSRF token as a default request header, which is
+/// what `static/js/csrf.js` does by patching `window.fetch`. The `GReader` paths
+/// are not exempt from `csrf_guard`, so a cookie-authenticated POST has to
+/// echo the token — a browser always does, and these tests are browsers.
+async fn setup_authenticated_user(app: &mut TestApp) -> i64 {
     app.server
         .post("/api/setup")
         .json(&json!({
@@ -60,14 +65,22 @@ async fn setup_authenticated_user(app: &TestApp) -> i64 {
         .await
         .assert_status(StatusCode::CREATED);
 
-    app.server
+    let login = app
+        .server
         .post("/api/session")
         .json(&json!({
             "username": "testuser",
             "password": "vulture-mango-77-quilt"
         }))
-        .await
-        .assert_status_ok();
+        .await;
+    login.assert_status_ok();
+
+    let csrf = login
+        .cookie(rdrs::middleware::csrf::CSRF_COOKIE_NAME)
+        .value()
+        .to_string();
+    app.server
+        .add_header(rdrs::middleware::csrf::CSRF_HEADER, csrf);
 
     rdrs::models::user::find_by_username(&app.db, "testuser")
         .await
@@ -128,8 +141,8 @@ async fn create_test_entries(db: &Db, feed_id: i64, count: usize) -> Vec<i64> {
 
 #[tokio::test]
 async fn test_client_login_success() {
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     let form = vec![
         ("Email", "testuser".to_string()),
@@ -157,8 +170,8 @@ async fn test_client_login_success() {
 
 #[tokio::test]
 async fn test_client_login_invalid_password() {
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     let form = vec![
         ("Email", "testuser".to_string()),
@@ -182,8 +195,8 @@ async fn test_client_login_nonexistent_user() {
 
 #[tokio::test]
 async fn test_client_login_token_used_for_api() {
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     let form = vec![
         ("Email", "testuser".to_string()),
@@ -334,11 +347,11 @@ async fn test_web_session_token_is_rejected_in_the_authorization_header() {
 
 #[tokio::test]
 async fn test_web_session_cookie_still_works_for_greader() {
-    let app = create_test_app(default_test_config()).await;
+    let mut app = create_test_app(default_test_config()).await;
     // setup_authenticated_user logs in via POST /api/session; the TestServer's
     // cookie jar (save_cookies) picks up the resulting session cookie
     // automatically, so no Authorization header is sent below.
-    setup_authenticated_user(&app).await;
+    setup_authenticated_user(&mut app).await;
 
     let response = app.server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
@@ -346,8 +359,8 @@ async fn test_web_session_cookie_still_works_for_greader() {
 
 #[tokio::test]
 async fn test_post_token_works_for_both_credential_kinds() {
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     // Cookie credential.
     let cookie_token_resp = app.server.get("/reader/api/0/token").await;
@@ -434,8 +447,8 @@ async fn test_post_token_works_for_both_credential_kinds() {
 
 #[tokio::test]
 async fn test_expired_api_token_is_lazily_deleted() {
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     let form = vec![
         ("Email", "testuser".to_string()),
@@ -535,8 +548,8 @@ async fn test_client_login_rate_limit_applies_to_greader_php_prefix() {
 
 #[tokio::test]
 async fn test_subscription_list_empty() {
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     let response = app.server.get("/reader/api/0/subscription/list").await;
     response.assert_status_ok();
@@ -547,8 +560,8 @@ async fn test_subscription_list_empty() {
 
 #[tokio::test]
 async fn test_subscription_list_with_feeds() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
 
@@ -570,8 +583,8 @@ async fn test_subscription_list_with_feeds() {
 
 #[tokio::test]
 async fn test_subscription_edit_unsubscribe() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let feed_url = "https://example.com/tech.xml";
     create_test_feed(&app.db, user_id, "Tech", feed_url).await;
@@ -599,8 +612,8 @@ async fn test_subscription_edit_unsubscribe() {
 
 #[tokio::test]
 async fn test_subscription_edit_rename() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let feed_url = "https://example.com/feed.xml";
     create_test_feed(&app.db, user_id, "Tech", feed_url).await;
@@ -628,8 +641,8 @@ async fn test_subscription_edit_rename() {
 
 #[tokio::test]
 async fn test_stream_contents_reading_list() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -652,8 +665,8 @@ async fn test_stream_contents_reading_list() {
 
 #[tokio::test]
 async fn test_stream_contents_with_limit() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -680,8 +693,8 @@ async fn test_stream_contents_negative_n_does_not_return_everything() {
     // SQLite treats as unbounded (n=-2 → LIMIT -1), and `take(count as usize)`
     // wrapped to a huge value — together dumping the user's entire entry set in
     // one response. The count must clamp to 0.
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -703,8 +716,8 @@ async fn test_stream_contents_negative_n_does_not_return_everything() {
 async fn test_stream_contents_composite_cursor_no_skip_on_backdated() {
     // Regression for #164: legacy `e.id < c` cursor skipped entries with
     // high ids and old timestamps. Composite cursor must visit them.
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
 
@@ -768,8 +781,8 @@ async fn test_stream_contents_composite_cursor_no_skip_on_backdated() {
 
 #[tokio::test]
 async fn test_stream_contents_starred_empty() {
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     let response = app
         .server
@@ -786,8 +799,8 @@ async fn test_stream_contents_starred_empty() {
 
 #[tokio::test]
 async fn test_stream_items_ids() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -809,8 +822,8 @@ async fn test_stream_items_ids() {
 
 #[tokio::test]
 async fn test_edit_tag_mark_read() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -837,8 +850,8 @@ async fn test_edit_tag_mark_read() {
 
 #[tokio::test]
 async fn test_edit_tag_mark_read_multiple() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -874,8 +887,8 @@ async fn test_edit_tag_mark_read_multiple() {
 
 #[tokio::test]
 async fn test_edit_tag_mark_read_rejects_unknown_entry() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -915,8 +928,8 @@ async fn test_edit_tag_mark_read_rejects_unknown_entry() {
 
 #[tokio::test]
 async fn test_edit_tag_star_and_unstar() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -964,8 +977,8 @@ async fn test_edit_tag_star_and_unstar() {
 
 #[tokio::test]
 async fn test_mark_all_as_read() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -1006,8 +1019,8 @@ async fn test_mark_all_as_read() {
 /// JS can report a real number.
 #[tokio::test]
 async fn test_mark_all_as_read_reports_affected_count() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -1042,8 +1055,8 @@ async fn test_mark_all_as_read_reports_affected_count() {
 /// posted — the distinction the old DOM-counting flash could not make.
 #[tokio::test]
 async fn test_edit_tag_affected_count_excludes_already_read() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -1090,8 +1103,8 @@ async fn test_edit_tag_affected_count_excludes_already_read() {
 
 #[tokio::test]
 async fn test_unread_count_empty() {
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     let response = app.server.get("/reader/api/0/unread-count").await;
     response.assert_status_ok();
@@ -1102,8 +1115,8 @@ async fn test_unread_count_empty() {
 
 #[tokio::test]
 async fn test_unread_count_with_entries() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
@@ -1178,8 +1191,8 @@ const RSS_FIXTURE: &str = r#"<?xml version="1.0"?><rss version="2.0"><channel>
 
 #[tokio::test]
 async fn test_subscription_subscribe_missing_stream_id() {
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     // POST ac=subscribe without `s` → 400 Bad Request
     let form = vec![("ac", "subscribe".to_string())];
@@ -1193,8 +1206,8 @@ async fn test_subscription_subscribe_missing_stream_id() {
 
 #[tokio::test]
 async fn test_subscription_subscribe_bad_prefix() {
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     // Stream ID must start with "feed/"; bare URL should be rejected with 400
     let form = vec![
@@ -1211,8 +1224,8 @@ async fn test_subscription_subscribe_bad_prefix() {
 
 #[tokio::test]
 async fn test_subscription_subscribe_empty_url() {
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     // "feed/" with nothing after the slash → empty URL → 400
     let form = vec![("ac", "subscribe".to_string()), ("s", "feed/".to_string())];
@@ -1226,8 +1239,8 @@ async fn test_subscription_subscribe_empty_url() {
 
 #[tokio::test]
 async fn test_subscription_edit_feed_not_found() {
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     // ac=edit with a URL that doesn't exist in the DB → 404
     let form = vec![
@@ -1247,8 +1260,8 @@ async fn test_subscription_edit_feed_not_found() {
 
 #[tokio::test]
 async fn test_subscription_edit_add_label_moves_category() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let feed_url = "https://example.com/feed-to-move.xml";
     create_test_feed(&app.db, user_id, "OldCat", feed_url).await;
@@ -1294,8 +1307,8 @@ async fn test_subscription_subscribe_success() {
         .mount(&mock_server)
         .await;
 
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let feed_url = mock_server.uri();
     let form = vec![
@@ -1329,8 +1342,8 @@ async fn test_subscription_subscribe_with_label() {
         .mount(&mock_server)
         .await;
 
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let feed_url = mock_server.uri();
     let form = vec![
@@ -1371,8 +1384,8 @@ async fn test_subscription_subscribe_duplicate() {
         .mount(&mock_server)
         .await;
 
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     // Pre-create the feed in the DB (same URL the mock server serves)
     let feed_url = mock_server.uri();
@@ -1404,8 +1417,8 @@ async fn test_quickadd_success() {
         .mount(&mock_server)
         .await;
 
-    let app = create_test_app(default_test_config()).await;
-    setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
 
     let feed_url = mock_server.uri();
     let form = vec![("quickadd", feed_url.clone())];
@@ -1453,8 +1466,8 @@ async fn expect_sidebar_event(
 
 #[tokio::test]
 async fn test_edit_tag_emits_sidebar_event() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
     let entry_ids = create_test_entries(&app.db, feed_id, 1).await;
@@ -1478,8 +1491,8 @@ async fn test_edit_tag_emits_sidebar_event() {
 
 #[tokio::test]
 async fn test_mark_all_as_read_emits_sidebar_event() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
     let (_cat_id, feed_id) =
         create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
     create_test_entries(&app.db, feed_id, 3).await;
@@ -1497,8 +1510,8 @@ async fn test_mark_all_as_read_emits_sidebar_event() {
 
 #[tokio::test]
 async fn test_rename_tag_emits_sidebar_event() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
     create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
     let mut sub = app.state.events.subscribe();
 
@@ -1517,8 +1530,8 @@ async fn test_rename_tag_emits_sidebar_event() {
 
 #[tokio::test]
 async fn test_disable_tag_emits_sidebar_event() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
     create_test_feed(&app.db, user_id, "Tech", "https://example.com/feed.xml").await;
     let mut sub = app.state.events.subscribe();
 
@@ -1543,8 +1556,8 @@ async fn test_disable_tag_emits_sidebar_event() {
 /// same host is same-site and still sends it.
 #[tokio::test]
 async fn test_same_site_forged_post_cannot_unsubscribe() {
-    let app = create_test_app(default_test_config()).await;
-    let user_id = setup_authenticated_user(&app).await;
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
 
     let feed_url = "https://example.com/tech.xml";
     create_test_feed(&app.db, user_id, "Tech", feed_url).await;
@@ -1570,4 +1583,136 @@ async fn test_same_site_forged_post_cannot_unsubscribe() {
         1,
         "a same-site forged POST unsubscribed the feed"
     );
+}
+
+/// A browser credential on the `GReader` surface must prove it holds the
+/// session's CSRF token. `csrf_guard` used to exempt these paths outright on
+/// the grounds that they are bearer-authenticated, but `GReaderUser` also
+/// accepts the session cookie and `verify_post_token_if_needed` waives the
+/// `GReader` `T` token for that credential — so nothing but `csrf_origin_guard`
+/// stood in front of a cookie-authenticated mutation.
+#[tokio::test]
+async fn test_cookie_authenticated_greader_post_requires_the_csrf_token() {
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+
+    let feed_url = "https://example.com/tech.xml";
+    create_test_feed(&app.db, user_id, "Tech", feed_url).await;
+
+    // Drop the token header the browser would send, keeping the session cookie.
+    app.server.clear_headers();
+
+    let form = vec![
+        ("ac", "unsubscribe".to_string()),
+        ("s", format!("feed/{feed_url}")),
+    ];
+    let response = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        // Same-origin, so the first line lets it through and the token guard
+        // is what has to catch it.
+        .add_header("sec-fetch-site", "same-origin")
+        .form(&form)
+        .await;
+    response.assert_status_forbidden();
+
+    let response = app.server.get("/reader/api/0/subscription/list").await;
+    let body: serde_json::Value = response.json();
+    assert_eq!(
+        body["subscriptions"].as_array().unwrap().len(),
+        1,
+        "a cookie POST with no CSRF token unsubscribed the feed"
+    );
+}
+
+/// The FreshRSS-compatible prefix reaches the same handlers, so it must be
+/// gated the same way — a prefix-based exemption is easy to get half right.
+#[tokio::test]
+async fn test_greader_php_prefix_also_requires_the_csrf_token() {
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+
+    let feed_url = "https://example.com/tech.xml";
+    create_test_feed(&app.db, user_id, "Tech", feed_url).await;
+
+    app.server.clear_headers();
+
+    let form = vec![
+        ("ac", "unsubscribe".to_string()),
+        ("s", format!("feed/{feed_url}")),
+    ];
+    let response = app
+        .server
+        .post("/api/greader.php/reader/api/0/subscription/edit")
+        .add_header("sec-fetch-site", "same-origin")
+        .form(&form)
+        .await;
+    response.assert_status_forbidden();
+}
+
+/// A native client holds no session cookie, so the cookie-less pass-through in
+/// `csrf_guard` still lets it through with no token of any kind. This is what
+/// the removed path exemption used to buy, and it has to survive without it.
+#[tokio::test]
+async fn test_bearer_client_without_a_cookie_needs_no_csrf_token() {
+    let mut app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&mut app).await;
+
+    let feed_url = "https://example.com/tech.xml";
+    create_test_feed(&app.db, user_id, "Tech", feed_url).await;
+
+    let login = app
+        .server
+        .post("/accounts/ClientLogin")
+        .form(&vec![
+            ("Email", "testuser".to_string()),
+            ("Passwd", "vulture-mango-77-quilt".to_string()),
+        ])
+        .await;
+    login.assert_status_ok();
+    let token = login
+        .text()
+        .lines()
+        .find_map(|l| l.strip_prefix("Auth="))
+        .expect("ClientLogin returns an Auth token")
+        .to_string();
+
+    // A native client: no cookies, no CSRF header, bearer credential only.
+    app.server.clear_headers();
+    app.server.clear_cookies();
+
+    let form = vec![
+        ("ac", "unsubscribe".to_string()),
+        ("s", format!("feed/{feed_url}")),
+    ];
+    let response = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        .add_header("Authorization", format!("GoogleLogin auth={token}"))
+        .form(&form)
+        .await;
+    response.assert_status_ok();
+}
+
+/// `ClientLogin` keeps its exemption: it exchanges a password for a token, so a
+/// forged call carries credentials the attacker already has and its response is
+/// unreadable cross-origin. A logged-in operator minting a client token by hand
+/// would otherwise need a token they have no way to attach.
+#[tokio::test]
+async fn test_client_login_stays_exempt_from_the_token_guard() {
+    let mut app = create_test_app(default_test_config()).await;
+    setup_authenticated_user(&mut app).await;
+
+    app.server.clear_headers();
+
+    let response = app
+        .server
+        .post("/accounts/ClientLogin")
+        .add_header("sec-fetch-site", "same-origin")
+        .form(&vec![
+            ("Email", "testuser".to_string()),
+            ("Passwd", "vulture-mango-77-quilt".to_string()),
+        ])
+        .await;
+    response.assert_status_ok();
 }

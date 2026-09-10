@@ -443,10 +443,10 @@ fn verify_post_token_if_needed(
     token: Option<&str>,
 ) -> AppResult<()> {
     if auth.via_cookie {
-        // A web session reaching here has already cleared `csrf_origin_guard`,
-        // which is what protects this surface: `SameSite=Lax` alone would not,
-        // since it withholds the cookie only from *cross*-site requests and a
-        // sibling subdomain or another port on the same host is same-site.
+        // A cookie credential reaching here has cleared both CSRF layers —
+        // `csrf_guard` no longer exempts these paths — so it has already proven
+        // it holds the session's token. Requiring `T` on top would add nothing
+        // and would break the web UI, which sends `X-CSRF-Token` but no `T`.
         return Ok(());
     }
 

@@ -11,9 +11,7 @@
 //!   sibling subdomain or another port on the same host, and neither
 //!   `SameSite=Lax` (which withholds the session cookie only from *cross*-site
 //!   requests) nor the port-blind `Origin` fallback below would stop such a
-//!   caller. That matters most on the Google Reader surface, which
-//!   [`CSRF_SKIP_PREFIXES`] exempts from the token guard and which skips its own
-//!   `T` post token for cookie credentials, leaving this guard alone.
+//!   caller.
 //! - **`Origin`** is the fallback for a browser that omits it. Its host is
 //!   compared against the request's own `Host`; a mismatch — or an opaque
 //!   `Origin: null` — is rejected.
@@ -72,10 +70,16 @@ pub const CSRF_HEADER: &str = "x-csrf-token";
 /// The form field carrying the token on a body-submitted POST.
 const CSRF_FIELD: &str = "_csrf";
 
-/// Path prefixes exempt from the synchronizer-token guard: the Google Reader
-/// surface authenticates by bearer token or its own `T` post token, not by an
-/// ambient cookie, so a browser CSRF cannot forge those calls.
-const CSRF_SKIP_PREFIXES: &[&str] = &["/reader", "/accounts", "/api/greader.php"];
+/// The one route still exempt from the synchronizer-token guard. `ClientLogin`
+/// exchanges a username and password for an API token, so a forged call has to
+/// carry credentials the attacker already knows, and its response is unreadable
+/// cross-origin. What is left — logging a victim's client into the *attacker's*
+/// account — is login-CSRF, which [`csrf_origin_guard`] already stops. Gating it
+/// would only break a logged-in operator minting a client token by hand.
+///
+/// Registered under both the bare path and the FreshRSS-compatible
+/// `/api/greader.php` prefix, hence the suffix match rather than a prefix one.
+const CSRF_SKIP_SUFFIX: &str = "/accounts/ClientLogin";
 
 /// Path prefixes for which no anonymous session is minted: static assets, the
 /// service worker and health must stay cacheable, and the machine APIs get their
@@ -341,16 +345,22 @@ pub async fn anonymous_session(
 ///
 /// `multipart/form-data` bodies are passed through unread: the one multipart
 /// route validates the field itself, since re-streaming a file upload here would
-/// be wasteful. The Google Reader prefixes are skipped entirely — they
-/// authenticate by bearer token.
+/// be wasteful.
+///
+/// The Google Reader surface is *not* exempt, despite its own clients being
+/// unable to carry a token: they authenticate by bearer header and so hold no
+/// session cookie, which the cookie-less pass-through below already lets
+/// through. Exempting the paths instead would have skipped the one case that
+/// does need checking — a browser calling `/reader/api/0/*` with an ambient
+/// cookie, which `GReaderUser` accepts as a credential and for which
+/// `verify_post_token_if_needed` then waives the `GReader` `T` token, leaving
+/// nothing but [`csrf_origin_guard`] in front of it. `static/js/csrf.js`
+/// already puts `X-CSRF-Token` on those `fetch` calls and no template posts a
+/// form to those paths, so requiring it costs the app nothing. The cost is a
+/// client sending *both* a bearer header and a live session cookie: it now
+/// needs the token too. [`CSRF_SKIP_SUFFIX`] carves out the sole exception.
 pub async fn csrf_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
-    if is_safe(req.method()) {
-        return next.run(req).await;
-    }
-    if CSRF_SKIP_PREFIXES
-        .iter()
-        .any(|p| req.uri().path().starts_with(p))
-    {
+    if is_safe(req.method()) || req.uri().path().ends_with(CSRF_SKIP_SUFFIX) {
         return next.run(req).await;
     }
 
