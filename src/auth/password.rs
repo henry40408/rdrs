@@ -2,7 +2,7 @@ use std::sync::LazyLock;
 
 use argon2::{
     Algorithm, Argon2, Params, Version,
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
+    password_hash::{PasswordHasher, PasswordVerifier, phc::SaltString},
 };
 
 use crate::error::{AppError, AppResult};
@@ -38,8 +38,8 @@ static HASHER: LazyLock<Argon2<'static>> = LazyLock::new(|| {
 /// salt are freshly random per process: no string a caller could send verifies
 /// against it, and the digest is not a constant to fingerprint.
 static DUMMY_HASH: LazyLock<String> = LazyLock::new(|| {
-    let filler = SaltString::generate(&mut OsRng);
-    hash_password(filler.as_str()).expect("hashing with valid params cannot fail")
+    let filler = SaltString::generate();
+    hash_password(&filler).expect("hashing with valid params cannot fail")
 });
 
 /// Shortest password rdrs will accept for a *new* credential.
@@ -152,10 +152,8 @@ fn weakness_message(estimate: &zxcvbn::Entropy) -> String {
 }
 
 pub fn hash_password(password: &str) -> AppResult<String> {
-    let salt = SaltString::generate(&mut OsRng);
-
     HASHER
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map(|hash| hash.to_string())
         .map_err(|e| AppError::Internal(format!("Password hashing failed: {e}")))
 }
@@ -179,17 +177,15 @@ pub fn verify_dummy_password(password: &str) {
 }
 
 pub fn verify_password(password: &str, hash: &str) -> bool {
-    let Ok(parsed_hash) = PasswordHash::new(hash) else {
-        return false;
-    };
-
     Argon2::default()
-        .verify_password(password.as_bytes(), &parsed_hash)
+        .verify_password(password.as_bytes(), hash)
         .is_ok()
 }
 
 #[cfg(test)]
 mod tests {
+    use argon2::password_hash::phc::PasswordHash;
+
     use super::*;
 
     #[test]
@@ -386,10 +382,7 @@ mod tests {
         // parameters from the stored hash, so a hash produced with strong
         // (default) params and one produced with minimal params must both
         // verify. This is what makes weakening hash params in test/CI safe.
-        let strong = Argon2::default()
-            .hash_password(b"pw", &SaltString::generate(&mut OsRng))
-            .unwrap()
-            .to_string();
+        let strong = Argon2::default().hash_password(b"pw").unwrap().to_string();
         let weak_params = Params::new(
             Params::MIN_M_COST,
             Params::MIN_T_COST,
@@ -398,7 +391,7 @@ mod tests {
         )
         .unwrap();
         let weak = Argon2::new(Algorithm::Argon2id, Version::V0x13, weak_params)
-            .hash_password(b"pw", &SaltString::generate(&mut OsRng))
+            .hash_password(b"pw")
             .unwrap()
             .to_string();
 
