@@ -1531,3 +1531,43 @@ async fn test_disable_tag_emits_sidebar_event() {
 
     expect_sidebar_event(&mut sub, user_id, "disable-tag").await;
 }
+
+/// A `Sec-Fetch-Site: same-site` forged POST — no CSRF token, no `GReader` `T`
+/// post token — must not be able to unsubscribe a feed.
+///
+/// This surface is exempt from the synchronizer-token guard
+/// (`CSRF_SKIP_PREFIXES`) and `verify_post_token_if_needed` skips the `T` token
+/// for cookie credentials, so `csrf_origin_guard` is its only CSRF defence.
+/// `SameSite=Lax` does not cover the gap: it withholds the session cookie only
+/// from *cross*-site requests, while a sibling subdomain or another port on the
+/// same host is same-site and still sends it.
+#[tokio::test]
+async fn test_same_site_forged_post_cannot_unsubscribe() {
+    let app = create_test_app(default_test_config()).await;
+    let user_id = setup_authenticated_user(&app).await;
+
+    let feed_url = "https://example.com/tech.xml";
+    create_test_feed(&app.db, user_id, "Tech", feed_url).await;
+
+    let form = vec![
+        ("ac", "unsubscribe".to_string()),
+        ("s", format!("feed/{feed_url}")),
+    ];
+    let response = app
+        .server
+        .post("/reader/api/0/subscription/edit")
+        .add_header("sec-fetch-site", "same-site")
+        .add_header("origin", "https://other.example.com")
+        .add_header("host", "app.example.com")
+        .form(&form)
+        .await;
+    response.assert_status_forbidden();
+
+    let response = app.server.get("/reader/api/0/subscription/list").await;
+    let body: serde_json::Value = response.json();
+    assert_eq!(
+        body["subscriptions"].as_array().unwrap().len(),
+        1,
+        "a same-site forged POST unsubscribed the feed"
+    );
+}
