@@ -906,8 +906,11 @@ Two independent lines, so a bypass of one is not a bypass of both.
   `none`, and rejects anything else — including `same-site`, which a browser
   sends for a sibling subdomain or another port on the same host. Neither is
   same-origin, `SameSite=Lax` still hands them the session cookie, and cookies
-  ignore ports entirely, so allowing `same-site` would leave the GReader surface
-  below forgeable. Where `Sec-Fetch-Site` is absent, an `Origin` whose host does
+  ignore ports entirely, so a `same-site` caller arrives with the victim's
+  credentials attached. It once had the GReader surface to itself, which is what
+  made this reachable; that surface now sits behind the token guard too, and
+  this line stays strict so nothing else has to depend on it. Where
+  `Sec-Fetch-Site` is absent, an `Origin` whose host does
   not match the request's `Host` is rejected (an opaque `Origin: null` counts as
   cross-site); that comparison is host-only, so it survives a TLS-terminating
   proxy where the browser's `https://` `Origin` meets a scheme-less forwarded
@@ -925,12 +928,18 @@ Two independent lines, so a bypass of one is not a bypass of both.
   `csrf_token` cookie, which `static/js/csrf.js` copies onto same-origin `fetch`
   requests and into native POST forms; the cookie is never trusted as the
   credential, only the derived MAC is. `multipart/form-data` is passed through and
-  self-validated by the OPML-import handler (which also accepts `X-CSRF-Token`);
-  the GReader prefixes are skipped, because their clients are usually
-  bearer-authenticated and cannot carry a token. Those prefixes *do* also accept
-  the session cookie, and `verify_post_token_if_needed` waives the GReader `T`
-  post token for that credential, so on the cookie path the first line above is
-  the only CSRF defence — which is why it must reject `same-site`. A request with **no**
+  self-validated by the OPML-import handler (which also accepts `X-CSRF-Token`).
+  The GReader paths are **not** exempt. Their own clients authenticate by bearer
+  header and so hold no session cookie, which the cookie-less pass-through below
+  already covers; exempting the paths instead skipped the one case that needs
+  checking — a browser calling `/reader/api/0/*` with an ambient cookie, which
+  `GReaderUser` accepts as a credential and for which `verify_post_token_if_needed`
+  waives the GReader `T` token. `static/js/csrf.js` already puts the header on
+  those `fetch` calls and no template posts a form to them, so the requirement
+  costs the app nothing. `ClientLogin` is the sole exception (`CSRF_SKIP_SUFFIX`):
+  it trades a password for a token, so a forged call carries credentials the
+  attacker already holds and its response is unreadable cross-origin, leaving only
+  login-CSRF — which the first line already stops. A request with **no**
   session cookie is passed through, not rejected — a forged authenticated action
   must ride the victim's cookie, and login-CSRF is already caught by the first
   line.
