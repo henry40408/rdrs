@@ -30,3 +30,28 @@ where
         .time_to_live(ttl)
         .build()
 }
+
+/// How long the site-wide database figures on `/statistics` may lag reality.
+///
+/// Matches `SidebarCache`'s TTL, and for the same reason: nothing busts this
+/// cache explicitly, because nothing a *request* does moves these numbers.
+/// Entries arrive from feed sync and leave via the retention worker's prune and
+/// `VACUUM`, all on their own schedules, so the TTL is the whole invalidation
+/// strategy rather than a backstop for one.
+pub const ADMIN_DB_STATS_TTL: Duration = Duration::from_secs(60);
+
+/// Memoizes the admin block's site-wide database figures — everything
+/// `models::statistics::get_admin_database_stats` returns.
+///
+/// Site-wide and period-independent, so the key is `()`: one slot serves every
+/// admin and every period button. That is the point — the figures are a full
+/// `COUNT(*)` over `entry`, another over `entry_tombstone` and the page-count
+/// PRAGMAs, and without this they are recomputed on every render of a page
+/// whose other queries are all index-covered. On a 567 MB / 70k-entry database
+/// they were 612 of the default view's ~1,370 page misses.
+pub type AdminDbStatsCache = Cache<(), crate::models::statistics::AdminDatabaseStats>;
+
+/// Build the [`AdminDbStatsCache`]. One slot, because the key is `()`.
+pub fn new_admin_db_stats_cache() -> AdminDbStatsCache {
+    new_page_cache(1, ADMIN_DB_STATS_TTL)
+}

@@ -62,6 +62,10 @@ pub struct AppState {
     pub summary_cache: Arc<SummaryCache>,
     pub summary_tx: mpsc::Sender<SummaryJob>,
     pub sidebar_cache: Arc<SidebarCache>,
+    /// Site-wide database figures for the `/statistics` admin block. Global and
+    /// period-independent, and expensive enough to dominate that page without
+    /// memoization — see [`services::page_cache::AdminDbStatsCache`].
+    pub admin_db_stats_cache: services::AdminDbStatsCache,
     pub summary_cancels: services::CancelRegistry,
     pub summarizer_inflight: handlers::summarizer::InFlightRegistry,
     pub events: services::EventBus,

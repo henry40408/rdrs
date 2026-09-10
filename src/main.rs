@@ -179,6 +179,7 @@ async fn main() {
         summary_cache,
         summary_tx,
         sidebar_cache: sidebar_cache.clone(),
+        admin_db_stats_cache: services::new_admin_db_stats_cache(),
         summary_cancels,
         summarizer_inflight: rdrs::handlers::summarizer::new_inflight_registry(),
         events: events.clone(),
