@@ -443,7 +443,10 @@ fn verify_post_token_if_needed(
     token: Option<&str>,
 ) -> AppResult<()> {
     if auth.via_cookie {
-        // Cookie auth has SameSite protection, skip POST token
+        // A web session reaching here has already cleared `csrf_origin_guard`,
+        // which is what protects this surface: `SameSite=Lax` alone would not,
+        // since it withholds the cookie only from *cross*-site requests and a
+        // sibling subdomain or another port on the same host is same-site.
         return Ok(());
     }
 

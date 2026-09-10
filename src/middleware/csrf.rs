@@ -6,8 +6,14 @@
 //! only ever *rejects* a provably cross-site one, so it never breaks a
 //! legitimate caller:
 //!
-//! - **`Sec-Fetch-Site`** is authoritative when present: `same-origin`,
-//!   `same-site` and `none` are allowed, only `cross-site` is rejected.
+//! - **`Sec-Fetch-Site`** is authoritative when present: only `same-origin` and
+//!   `none` are allowed. `same-site` is *not* — a browser sends it for a
+//!   sibling subdomain or another port on the same host, and neither
+//!   `SameSite=Lax` (which withholds the session cookie only from *cross*-site
+//!   requests) nor the port-blind `Origin` fallback below would stop such a
+//!   caller. That matters most on the Google Reader surface, which
+//!   [`CSRF_SKIP_PREFIXES`] exempts from the token guard and which skips its own
+//!   `T` post token for cookie credentials, leaving this guard alone.
 //! - **`Origin`** is the fallback for a browser that omits it. Its host is
 //!   compared against the request's own `Host`; a mismatch — or an opaque
 //!   `Origin: null` — is rejected.
@@ -189,9 +195,13 @@ fn is_safe(method: &Method) -> bool {
 fn is_cross_site(req: &Request) -> bool {
     let headers = req.headers();
 
-    // `Sec-Fetch-Site` is authoritative where the browser sends it.
-    if let Some(site) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
-        return site.eq_ignore_ascii_case("cross-site");
+    // `Sec-Fetch-Site` is authoritative where the browser sends it: only the two
+    // values that prove the request did not come from another site are allowed,
+    // and anything else — `same-site`, `cross-site`, or a value we do not know —
+    // is rejected. An empty value is treated as absent.
+    let site = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok());
+    if let Some(site) = site.filter(|s| !s.is_empty()) {
+        return !(site.eq_ignore_ascii_case("same-origin") || site.eq_ignore_ascii_case("none"));
     }
 
     // Fall back to comparing the Origin's host with the request's own Host.
@@ -499,21 +509,42 @@ mod tests {
 
     #[test]
     fn sec_fetch_site_is_authoritative() {
-        for allowed in ["same-origin", "same-site", "none", "SAME-ORIGIN"] {
+        for allowed in ["same-origin", "none", "SAME-ORIGIN"] {
             assert!(
                 !is_cross_site(&req(Method::POST, &[("sec-fetch-site", allowed)])),
                 "{allowed} must be allowed"
             );
         }
-        assert!(is_cross_site(&req(
-            Method::POST,
-            &[("sec-fetch-site", "cross-site")]
-        )));
+        for rejected in ["cross-site", "same-site", "SAME-SITE", "nonsense"] {
+            assert!(
+                is_cross_site(&req(Method::POST, &[("sec-fetch-site", rejected)])),
+                "{rejected} must be rejected"
+            );
+        }
         // It wins over a same-looking Origin/Host, in both directions.
         assert!(is_cross_site(&req(
             Method::POST,
             &[
                 ("sec-fetch-site", "cross-site"),
+                ("origin", "https://app.example.com"),
+                ("host", "app.example.com"),
+            ]
+        )));
+        // A sibling subdomain reports `same-site` while its Origin still differs;
+        // the header decides before the port-blind Origin fallback can allow it.
+        assert!(is_cross_site(&req(
+            Method::POST,
+            &[
+                ("sec-fetch-site", "same-site"),
+                ("origin", "https://other.example.com"),
+                ("host", "app.example.com"),
+            ]
+        )));
+        // An empty value carries no information, so the Origin check still runs.
+        assert!(!is_cross_site(&req(
+            Method::POST,
+            &[
+                ("sec-fetch-site", ""),
                 ("origin", "https://app.example.com"),
                 ("host", "app.example.com"),
             ]

@@ -902,14 +902,18 @@ Two independent lines, so a bypass of one is not a bypass of both.
 
 - **First line — `middleware::csrf::csrf_origin_guard`** (in place). A
   header-only, stateless check layered over the whole router. On every
-  state-changing method it rejects a request the browser reports as cross-site
-  (`Sec-Fetch-Site: cross-site`) or that carries an `Origin` whose host does not
-  match the request's `Host` (an opaque `Origin: null` counts as cross-site).
-  Requests with neither header — native GReader clients, `curl`, server-to-server
-  calls, all bearer-authenticated rather than cookie-authenticated — are not a
-  CSRF vector and pass through. `Sec-Fetch-Site` is trusted first; the `Origin`
-  path compares host only, so it survives a TLS-terminating proxy where the
-  browser's `https://` `Origin` meets a scheme-less forwarded `Host`.
+  state-changing method it allows only a `Sec-Fetch-Site` of `same-origin` or
+  `none`, and rejects anything else — including `same-site`, which a browser
+  sends for a sibling subdomain or another port on the same host. Neither is
+  same-origin, `SameSite=Lax` still hands them the session cookie, and cookies
+  ignore ports entirely, so allowing `same-site` would leave the GReader surface
+  below forgeable. Where `Sec-Fetch-Site` is absent, an `Origin` whose host does
+  not match the request's `Host` is rejected (an opaque `Origin: null` counts as
+  cross-site); that comparison is host-only, so it survives a TLS-terminating
+  proxy where the browser's `https://` `Origin` meets a scheme-less forwarded
+  `Host`. Requests with neither header — native GReader clients, `curl`,
+  server-to-server calls, all bearer-authenticated rather than
+  cookie-authenticated — are not a CSRF vector and pass through.
 - **Second line — synchronizer token** (`middleware::csrf::csrf_guard`, in
   place). A per-session token, `secret::derive_csrf` = HMAC of the session token
   under the `csrf:` domain, so it needs no column and no query and cannot equal
@@ -922,7 +926,11 @@ Two independent lines, so a bypass of one is not a bypass of both.
   requests and into native POST forms; the cookie is never trusted as the
   credential, only the derived MAC is. `multipart/form-data` is passed through and
   self-validated by the OPML-import handler (which also accepts `X-CSRF-Token`);
-  the GReader prefixes are skipped (bearer-authenticated). A request with **no**
+  the GReader prefixes are skipped, because their clients are usually
+  bearer-authenticated and cannot carry a token. Those prefixes *do* also accept
+  the session cookie, and `verify_post_token_if_needed` waives the GReader `T`
+  post token for that credential, so on the cookie path the first line above is
+  the only CSRF defence — which is why it must reject `same-site`. A request with **no**
   session cookie is passed through, not rejected — a forged authenticated action
   must ride the victim's cookie, and login-CSRF is already caught by the first
   line.
